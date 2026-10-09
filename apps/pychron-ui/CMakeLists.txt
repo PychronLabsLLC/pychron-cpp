@@ -16,6 +16,7 @@ add_library(pychron_ui_lib STATIC
   src/heater_dock.cpp
   src/canvas_items.cpp
   src/canvas_view.cpp
+  src/dock_layouts.cpp
   src/log_dock.cpp
   src/log_model.cpp
   src/log_filter_proxy.cpp
@@ -79,6 +80,7 @@ add_library(pychron_ui_lib STATIC
   src/heater_dock.hpp
   src/canvas_items.hpp
   src/canvas_view.hpp
+  src/dock_layouts.hpp
   src/log_dock.hpp
   src/log_model.hpp
   src/log_filter_proxy.hpp
