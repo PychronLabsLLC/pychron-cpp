@@ -227,7 +227,7 @@ TEST_F(LineLocks, ValveHistoryCarriesOnAcrossRuns) {
     wall_ += seconds(5);
     ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "ui"));
     ASSERT_TRUE(line->set_locked("A", true));
-    EXPECT_FALSE(line->actuate("A", SwitchOp::Close, "ui"));  // refused: no part of the history
+    EXPECT_FALSE(line->actuate("A", SwitchOp::Close, "ui"));  // refused: counted as that, and nothing else
     line->stop();
   }
   wall_ += seconds(3600);  // the line was down, the valve stayed open
@@ -242,6 +242,7 @@ TEST_F(LineLocks, ValveHistoryCarriesOnAcrossRuns) {
   EXPECT_EQ(a.opens, 2);
   EXPECT_EQ(a.closes, 1);
   EXPECT_EQ(a.failures, 0);
+  EXPECT_EQ(a.refusals, 1);
   EXPECT_EQ(a.open_time, seconds(30));
   EXPECT_EQ(a.last_actuation, WallTime{seconds(1'000'035)});
   EXPECT_EQ(a.since, WallTime{seconds(1'000'035)});  // found as it was left

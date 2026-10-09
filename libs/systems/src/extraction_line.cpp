@@ -723,6 +723,7 @@ void ExtractionLine::load_state() {
       s.opens = count("opens");
       s.closes = count("closes");
       s.failures = count("failures");
+      s.refusals = count("refusals");
       s.open_time = std::chrono::seconds(count("open_seconds"));
       s.last_actuation = time("last_actuation");
       s.since = time("since");
@@ -754,6 +755,7 @@ void ExtractionLine::save_state() {
     h.insert("opens", history.opens);
     h.insert("closes", history.closes);
     h.insert("failures", history.failures);
+    h.insert("refusals", history.refusals);
     h.insert("open_seconds", static_cast<std::int64_t>(history.open_time.count()));
     const auto unix_seconds = [](WallTime t) { return static_cast<std::int64_t>(t.time_since_epoch().count()); };
     if (history.last_actuation) h.insert("last_actuation", unix_seconds(*history.last_actuation));

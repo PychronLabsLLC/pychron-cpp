@@ -388,7 +388,7 @@ TEST(SwitchManager, ReadBackMismatchIsProtocolAndRecordsHardwareState) {
 }
 
 // Commands carried out and commands that failed are counted; a refusal sends
-// nothing and counts as neither.
+// nothing, counts as neither, and is counted on its own.
 TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
   Fixture f({valve("A", "1"), valve("B", "2", {"A"}), manual("M")});
   EXPECT_EQ(f.mgr->info("A")->stats, SwitchStats{});
@@ -406,8 +406,15 @@ TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
   EXPECT_EQ(a.opens, 2);
   EXPECT_EQ(a.closes, 1);
   EXPECT_EQ(a.failures, 2);
+  EXPECT_EQ(a.refusals, 0);
   EXPECT_EQ(a.last_actuation, systems::WallTime{1'000'000s});  // a failure is not an actuation
-  EXPECT_EQ(f.mgr->info("B")->stats, SwitchStats{});
+  SwitchStats refused;
+  refused.refusals = 1;
+  EXPECT_EQ(f.mgr->info("B")->stats, refused);
+  ASSERT_TRUE(f.mgr->lock("A"));
+  ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Close, "op"));  // locked: refused
+  EXPECT_EQ(f.mgr->info("A")->stats.refusals, 1);
+  EXPECT_EQ(f.mgr->info("A")->stats.failures, 2);
   EXPECT_EQ(f.mgr->info("M")->stats.opens, 1);
 }
 

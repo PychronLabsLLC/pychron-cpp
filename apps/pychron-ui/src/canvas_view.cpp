@@ -352,9 +352,9 @@ QStringList CanvasView::valve_details(const CoreBridge::State& state, const std:
   if (!info->second.owner.empty()) line += tr(", owned by %1").arg(QString::fromStdString(info->second.owner));
   lines += line;
 
-  if (h.opens == 0 && h.closes == 0 && h.failures == 0) return lines << tr("Never actuated");
+  if (h.opens == 0 && h.closes == 0 && h.failures == 0 && h.refusals == 0) return lines << tr("Never actuated");
   if (h.last_actuation) lines += tr("Last actuated %1").arg(moment(*h.last_actuation, now));
-  lines += tr("Opened %L1, closed %L2, failed %L3").arg(h.opens).arg(h.closes).arg(h.failures);
+  lines += tr("Opened %L1, closed %L2, failed %L3, refused %L4").arg(h.opens).arg(h.closes).arg(h.failures).arg(h.refusals);
   // A spell still running counts up to now.
   std::chrono::seconds open = h.open_time;
   if (valve == ValveState::Open && h.since && wall > *h.since) open += wall - *h.since;

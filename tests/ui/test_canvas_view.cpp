@@ -108,6 +108,10 @@ class TestCanvasView : public QObject {
     QVERIFY(a->toolTip().contains(QStringLiteral("Last failure: ")));
     QVERIFY(a->toolTip().contains(QStringLiteral("interlocked")));
     QCOMPARE(a->state(), ValveState::Closed);
+    // A refusal is in the valve's history, apart from the commands that failed.
+    QTRY_VERIFY2(a->toolTip().contains(QStringLiteral("Opened 0, closed 0, failed 0, refused 1")), qPrintable(a->toolTip()));
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_VERIFY2(a->toolTip().contains(QStringLiteral("refused 2")), qPrintable(a->toolTip()));
   }
 
   // The tooltip says what the valve is, its state and since when, and what
@@ -193,6 +197,7 @@ class TestCanvasView : public QObject {
     h.opens = 1204;
     h.closes = 1203;
     h.failures = 3;
+    h.refusals = 12;
     h.since = ago(2 * 3600 + 13 * 60);
     h.last_actuation = ago(3 * 86400);
     h.open_time = seconds(40 * 3600);
@@ -202,9 +207,21 @@ class TestCanvasView : public QObject {
     QCOMPARE(ui::CanvasView::valve_details(state, "V", now),
              (QStringList{QStringLiteral("Bone to turbo"), QStringLiteral("Open since 12:47:00 (2 h 13 min)"),
                           QStringLiteral("Last actuated %1").arg(locale.toString(now.addDays(-3), QStringLiteral("d MMM yyyy HH:mm"))),
-                          QStringLiteral("Opened %1, closed %2, failed 3").arg(locale.toString(1204), locale.toString(1203)),
+                          QStringLiteral("Opened %1, closed %2, failed 3, refused 12").arg(locale.toString(1204), locale.toString(1203)),
                           QStringLiteral("Time open 1 d 18 h")}));  // 40 h ended, 2 h 13 min running
     QCOMPARE(ui::CanvasView::valve_details(state, "nope", now), QStringList{QStringLiteral("State unknown")});
+  }
+
+  // A command that was sent and failed is in the valve's history at once.
+  void failedCommandIsCountedInTheTooltip() {
+    ui::ValveItem* c = view_->valve("C");
+    QVERIFY(line_->transport("valve_bus") != nullptr);
+    line_->transport("valve_bus")->close();
+    bridge_->actuate("C", SwitchOp::Open);
+    QTRY_VERIFY(c->is_flashing());
+    QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("failed 1, refused 0")), qPrintable(c->toolTip()));
+    bridge_->actuate("C", SwitchOp::Open);
+    QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("failed 2, refused 0")), qPrintable(c->toolTip()));
   }
 
   void lockedValveDrawsBlueBorderAndUnlockClearsIt() {

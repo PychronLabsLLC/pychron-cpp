@@ -112,6 +112,7 @@ struct SwitchStats {
   std::int64_t opens = 0;     // commands carried out (a manual valve: reports taken)
   std::int64_t closes = 0;
   std::int64_t failures = 0;  // commands sent that failed or read back wrong; a refusal sends nothing and is not one
+  std::int64_t refusals = 0;  // commands not sent: the switch was locked, another's, or interlocked
   std::optional<WallTime> last_actuation;  // the last command carried out
   // When the recorded state last changed. Unset when that is not known: the
   // state is a first reading, or came out of Unknown.

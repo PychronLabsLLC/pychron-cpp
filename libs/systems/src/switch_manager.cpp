@@ -243,7 +243,10 @@ Result<void> SwitchManager::command(std::string_view name, SwitchOp op, const st
     if (allowed && op == SwitchOp::Open) allowed = check_interlocks(*e);
   }
   // Published outside state_ so handlers may query the manager.
-  if (!allowed) return failed(*e, std::move(allowed).error());
+  if (!allowed) {
+    count(*e, &SwitchStats::refusals);
+    return failed(*e, std::move(allowed).error());
+  }
 
   const auto target = target_of(op);
   if (e->spec.kind == SwitchKind::ManualValve) {
@@ -350,7 +353,7 @@ bool SwitchManager::record(Entry& e, ValveState s) {
 void SwitchManager::count(Entry& e, std::int64_t SwitchStats::* what) {
   std::lock_guard lk(state_);
   ++(e.stats.*what);
-  if (what != &SwitchStats::failures) e.stats.last_actuation = wall_();
+  if (what == &SwitchStats::opens || what == &SwitchStats::closes) e.stats.last_actuation = wall_();
 }
 
 void SwitchManager::seed_stats(std::string_view name, SwitchStats stats) {
