@@ -393,6 +393,36 @@ has the setup.
   (`docs/superpowers/plans/2026-10-08-static-analysis-backlog.md`, Phase 3).
   Only lines you change are held to the checks; when you are changing a
   function anyway, clear what it has.
+## C++ conventions
+
+C++20 (`CMAKE_CXX_STANDARD` in the top-level `CMakeLists.txt`); do not set a
+standard per target. Follow the C++ Core Guidelines where this file is silent.
+
+- Errors are values: a function that can fail returns
+  `pychron::Result<T>` (`libs/core` `error.hpp`). `libs/` throws only for a
+  mistake in the calling code (`Scheduler::stop()` from a job on its own
+  dispatcher) and, in `libs/scripting`, to hand a Python error back to
+  pybind11.
+- Ownership is RAII. Prefer a value or a stack object; `std::unique_ptr` when
+  the heap is needed; `std::shared_ptr` only when ownership really is shared.
+  A `new` goes straight into a smart pointer (a factory with a private
+  constructor cannot use `std::make_unique`), with two exceptions: Qt code,
+  where a parent owns the child, and an object meant to live for the whole
+  process. No `delete` outside Qt code.
+- Rule of zero: a type that manages nothing declares no destructor, copy or
+  move. A type that does manage a resource declares all five, or deletes the
+  ones it does not support.
+- `const` by default, `constexpr` where the value is known at compile time,
+  and `[[nodiscard]]` on a result that must not be dropped. A mistake the
+  compiler can refuse (a strong type, a `concept`, a `static_assert`) is
+  better than one a test has to find.
+- A standard algorithm or range instead of a hand-written loop when it says
+  the same thing more plainly; not when it does not.
+- Headers use `#pragma once`.
+- Code that adds a thread, or shares state with one, is run under
+  `-DPYCHRON_SANITIZE=thread` before it lands: CI runs ASan and UBSan only.
+  TSan and ASan cannot be combined in one build.
+- A change made for speed comes with a measurement, before and after.
 
 ## Lifetime rules
 
