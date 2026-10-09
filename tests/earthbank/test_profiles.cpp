@@ -278,6 +278,27 @@ TEST_F(Profiles, AFileThatCannotBeReadIsAnErrorNotEmpty) {
   EXPECT_EQ(slurp(file()), text);
 }
 
+// A link to a file that is not there (a dotfiles directory not mounted) is
+// not "no profiles" either: read as none, the next save would replace the
+// user's link with a file of its own.
+TEST_F(Profiles, ALinkToNothingIsAnErrorNotEmpty) {
+  const fs::path target = dir_ / "not-mounted" / "profiles.toml";
+  std::error_code ec;
+  fs::create_symlink(target, file(), ec);
+  if (ec) GTEST_SKIP() << "no symbolic link can be made here: " << ec.message();
+  const auto loaded = load_profiles(file());
+  ASSERT_FALSE(loaded.has_value());
+  EXPECT_EQ(loaded.error().kind, ErrorKind::Io) << loaded.error().what;
+  EXPECT_TRUE(has(loaded.error().what, file().string())) << loaded.error().what;
+  EXPECT_TRUE(has(loaded.error().what, "link")) << loaded.error().what;
+
+  const auto saved = save_profiles(earthbank::Profiles{}, file());
+  ASSERT_FALSE(saved.has_value());
+  EXPECT_EQ(saved.error().kind, ErrorKind::Io) << saved.error().what;
+  EXPECT_TRUE(fs::is_symlink(file())) << "the user's link was replaced";
+  EXPECT_EQ(fs::read_symlink(file()), target);
+}
+
 TEST_F(Profiles, SaveMakesTheDirectory) {
   const fs::path deep = dir_ / "pychron" / "earthbank" / "profiles.toml";
   earthbank::Profiles one;

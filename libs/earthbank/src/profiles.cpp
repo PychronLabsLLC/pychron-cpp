@@ -399,6 +399,16 @@ std::string text_of(const json& entry, const char* key) {
   return found->get<std::string>();
 }
 
+// An error when `file` is a symbolic link to something that is not there:
+// not a file that is missing, for the link is the user's own (a dotfiles
+// directory that is not mounted), and a save would replace it.
+std::optional<Error> dangling_link(const fs::path& file) {
+  std::error_code ec;
+  if (!fs::is_symlink(file, ec) || ec) return std::nullopt;
+  if (fs::exists(file, ec) || ec) return std::nullopt;
+  return Error{ErrorKind::Io, utf8(file) + ": is a symbolic link to a file that is not there", ""};
+}
+
 }  // namespace
 
 const Profile* Profiles::find(std::string_view name) const {
@@ -427,7 +437,10 @@ Result<Profiles> load_profiles(const fs::path& file) {
   std::error_code ec;
   const bool there = fs::exists(file, ec);
   if (ec) return fail(ErrorKind::Io, utf8(file) + ": cannot be looked for: " + ec.message());
-  if (!there) return Profiles{};
+  if (!there) {
+    if (auto link = dangling_link(file)) return fail(std::move(*link));
+    return Profiles{};
+  }
   const auto text = read_file(file);
   if (!text) return fail(text.error());
   return parse_profiles(*text, utf8(file));
@@ -448,6 +461,7 @@ Result<void> save_profiles(const Profiles& profiles, const fs::path& file) {
   if (back->active != tidy.active || back->profiles != tidy.profiles)
     return refused(where, "these profiles would not be read back as they are");
 
+  if (auto link = dangling_link(file)) return fail(std::move(*link));
   std::error_code ec;
   if (file.has_parent_path()) {
     fs::create_directories(file.parent_path(), ec);
