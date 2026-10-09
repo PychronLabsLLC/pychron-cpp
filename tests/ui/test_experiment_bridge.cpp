@@ -15,7 +15,6 @@
 
 using pychron::ui::ExperimentBridge;
 namespace exec = pychron::experiment::executor;
-namespace meas = pychron::experiment::measurement;
 
 class TestExperimentBridge : public QObject {
   Q_OBJECT
@@ -70,7 +69,7 @@ class TestExperimentBridge : public QObject {
     connect(bridge.get(), &ExperimentBridge::queueEnded, this, [&](const pychron::experiment::lab::QueueEnded& e) {
       on_gui();
       ended = e.result;
-      log.push_back("ended");
+      log.emplace_back("ended");
     });
 
     const auto queue = sim.queue();

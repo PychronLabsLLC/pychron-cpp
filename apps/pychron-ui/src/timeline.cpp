@@ -6,6 +6,8 @@
 #include <QHelpEvent>
 #include <QPainter>
 #include <QToolTip>
+#include <ranges>
+#include <utility>
 
 #include "queue_table_model.hpp"
 #include "theme.hpp"
@@ -87,7 +89,7 @@ void TimelineModel::on_state(const experiment::run::RunStateChanged& e) {
   const double t = seconds(e.ts);
   close_run(e.run_id, t);
   if (final_state(e.to)) {
-    if (it->second >= 1 && it->second <= static_cast<int>(busy_.size())) busy_[static_cast<std::size_t>(it->second - 1)] = false;
+    if (it->second >= 1 && std::cmp_less_equal(it->second, busy_.size())) busy_[static_cast<std::size_t>(it->second - 1)] = false;
     return;
   }
   if (e.to == RunState::Pending) return;
@@ -150,8 +152,8 @@ QRectF TimelineView::segment_rect(const TimelineSegment& s) const {
 
 const TimelineSegment* TimelineView::segment_at(QPoint p) const {
   const auto& segs = model_.segments();
-  for (auto it = segs.rbegin(); it != segs.rend(); ++it)
-    if (segment_rect(*it).contains(p)) return &*it;
+  for (const auto& seg : std::views::reverse(segs))
+    if (segment_rect(seg).contains(p)) return &seg;
   return nullptr;
 }
 

@@ -206,9 +206,9 @@ class FluxModelsTest : public QObject {
     QCOMPARE(cell(m, 1, FluxMonitorModel::Identifier), QString("NM-7"));
     QCOMPARE(cell(m, 0, FluxMonitorModel::SavedJ), QString("1.0000e-03"));
     QCOMPARE(cell(m, 1, FluxMonitorModel::SavedJ), QString());
-    for (int c : {int(FluxMonitorModel::N), int(FluxMonitorModel::MeanJ), int(FluxMonitorModel::MeanJErr),
-                  int(FluxMonitorModel::MeanPercent), int(FluxMonitorModel::Mswd), int(FluxMonitorModel::PredJ),
-                  int(FluxMonitorModel::PredJErr), int(FluxMonitorModel::PredPercent), int(FluxMonitorModel::Dev)})
+    for (int c : {static_cast<int>(FluxMonitorModel::N), static_cast<int>(FluxMonitorModel::MeanJ), static_cast<int>(FluxMonitorModel::MeanJErr),
+                  static_cast<int>(FluxMonitorModel::MeanPercent), static_cast<int>(FluxMonitorModel::Mswd), static_cast<int>(FluxMonitorModel::PredJ),
+                  static_cast<int>(FluxMonitorModel::PredJErr), static_cast<int>(FluxMonitorModel::PredPercent), static_cast<int>(FluxMonitorModel::Dev)})
       QCOMPARE(cell(m, 0, c), QString());
     QCOMPARE(m.data(m.index(0, FluxMonitorModel::Fit), Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
     QVERIFY(!(m.flags(m.index(0, FluxMonitorModel::Fit)) & Qt::ItemIsUserCheckable));
@@ -274,8 +274,8 @@ class FluxModelsTest : public QObject {
     QCOMPARE(cell(m, 2, FluxMonitorModel::MeanJ), QString());
     // ... and what the fit predicts is not, whatever the positions hold there.
     for (int row = 0; row < 3; ++row)
-      for (int c : {int(FluxMonitorModel::PredJ), int(FluxMonitorModel::PredJErr), int(FluxMonitorModel::PredPercent),
-                    int(FluxMonitorModel::Dev)})
+      for (int c : {static_cast<int>(FluxMonitorModel::PredJ), static_cast<int>(FluxMonitorModel::PredJErr), static_cast<int>(FluxMonitorModel::PredPercent),
+                    static_cast<int>(FluxMonitorModel::Dev)})
         QCOMPARE(cell(m, row, c), QString());
 
     // A click is reported as ever; the model changes nothing by itself.
@@ -292,8 +292,8 @@ class FluxModelsTest : public QObject {
     QCOMPARE(um.rowCount(), 1);
     QCOMPARE(cell(um, 0, FluxUnknownModel::Identifier), QString("26-4"));
     QCOMPARE(cell(um, 0, FluxUnknownModel::SavedJ), QString("2.0000e-03"));
-    for (int c : {int(FluxUnknownModel::PredJ), int(FluxUnknownModel::PredJErr), int(FluxUnknownModel::PredPercent),
-                  int(FluxUnknownModel::Dev)})
+    for (int c : {static_cast<int>(FluxUnknownModel::PredJ), static_cast<int>(FluxUnknownModel::PredJErr), static_cast<int>(FluxUnknownModel::PredPercent),
+                  static_cast<int>(FluxUnknownModel::Dev)})
       QCOMPARE(cell(um, 0, c), QString());
 
     // A fit takes over, and gives way again.

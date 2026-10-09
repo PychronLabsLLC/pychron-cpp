@@ -322,7 +322,7 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
     const std::string k(pp::to_string(fits.target));
     pp::SaveOutcome out;
     for (const auto& a : fits.analyses)
-      if (a.heads.count(k) == 0 || a.heads.at(k) != head_[{a.uuid, k}]) {
+      if (!a.heads.contains(k) || a.heads.at(k) != head_[{a.uuid, k}]) {
         out.conflict = "someone else saved first";
         return out;
       }
@@ -350,7 +350,7 @@ class RevisionMemorySource : public pp::MemorySource, public pp::IRevisionSource
     for (const auto& a : fits.analyses)
       for (const auto& refit : a.isotopes) {
         const std::string k = refit.fit.kind == pp::SeriesKind::Baseline ? "baselines" : "intercepts";
-        if (a.heads.count(k) == 0 || a.heads.at(k) != head_[{a.uuid, k}]) {
+        if (!a.heads.contains(k) || a.heads.at(k) != head_[{a.uuid, k}]) {
           out.conflict = "someone else saved first";
           return out;
         }

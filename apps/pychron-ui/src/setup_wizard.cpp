@@ -452,7 +452,7 @@ Result<Value> SetupWizard::value_of(const Field& field) const {
       int index = -1;
       if (auto* combo = qobject_cast<QComboBox*>(field.editor)) index = combo->currentIndex();
       else if (auto* group = field.editor->findChild<QButtonGroup*>()) index = group->checkedId();
-      if (index < 0 || index >= static_cast<int>(q.choices.size())) return fail(ErrorKind::Config, "choose one");
+      if (index < 0 || std::cmp_greater_equal(index, q.choices.size())) return fail(ErrorKind::Config, "choose one");
       return Value{q.choices[static_cast<std::size_t>(index)]};
     }
     case QuestionType::Table: {
@@ -544,7 +544,7 @@ int SetupWizard::nextId() const {
   if (id == kReady) return kDone;
   const int from = id == kWelcome ? -1 : id == kLocation ? 0 : id - kFirstGroup + 1;
   if (id == kWelcome) return kLocation;
-  for (int g = std::max(from, 0); g < static_cast<int>(groups_.size()); ++g) {
+  for (int g = std::max(from, 0); std::cmp_less(g, groups_.size()); ++g) {
     if (group_has_questions(g)) return kFirstGroup + g;
   }
   return kReady;
@@ -705,7 +705,7 @@ void SetupWizard::prepare_ready() {
   for (std::size_t g = 0; g < groups_.size(); ++g) {
     bool heading = false;
     for (const auto& f : fields_) {
-      if (f.group != static_cast<int>(g) || !is_asked(f.question, *answers)) continue;
+      if (std::cmp_not_equal(f.group, g) || !is_asked(f.question, *answers)) continue;
       auto it = answers->find(f.question.id);
       if (it == answers->end()) continue;
       if (!heading) {

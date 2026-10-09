@@ -24,6 +24,7 @@
 #include <QTableWidget>
 #include <QTimeZone>
 #include <QVBoxLayout>
+#include <utility>
 
 #include "scene_view.hpp"
 #include "theme.hpp"
@@ -65,7 +66,7 @@ void set_cell(QTableWidget* t, int row, int col, const QString& text, const QStr
 // Name | Value | ±1σ | % | Units
 void fill_section(QTableWidget* t, const pp::RecallSection& s) {
   t->setRowCount(static_cast<int>(s.rows.size()));
-  for (int i = 0; i < static_cast<int>(s.rows.size()); ++i) {
+  for (int i = 0; std::cmp_less(i, s.rows.size()); ++i) {
     const auto& r = s.rows[static_cast<std::size_t>(i)];
     set_cell(t, i, 0, qs(r.name), qs(r.note));
     if (r.value) {
@@ -314,7 +315,7 @@ void RecallWindow::display() {
   fill_evolutions();
 
   budget_->setRowCount(static_cast<int>(model_.error_budget.size()));
-  for (int i = 0; i < static_cast<int>(model_.error_budget.size()); ++i) {
+  for (int i = 0; std::cmp_less(i, model_.error_budget.size()); ++i) {
     const auto& c = model_.error_budget[static_cast<std::size_t>(i)];
     set_cell(budget_, i, 0, qs(c.name));
     set_cell(budget_, i, 1, QString::number(c.percent, 'f', 3));
@@ -344,7 +345,7 @@ void RecallWindow::fill_isotopes() {
   isotopes_->setColumnCount(static_cast<int>(headers.size()));
   isotopes_->setHorizontalHeaderLabels(headers);
   isotopes_->setRowCount(static_cast<int>(model_.isotopes.size()));
-  for (int r = 0; r < static_cast<int>(model_.isotopes.size()); ++r) {
+  for (int r = 0; std::cmp_less(r, model_.isotopes.size()); ++r) {
     const auto& iso = model_.isotopes[static_cast<std::size_t>(r)];
     int c = 0;
     set_cell(isotopes_, r, c++, qs(iso.key));
@@ -498,7 +499,7 @@ void RecallWindow::update_edit_state() {
   pp::IRevisionSource* revisions = source_.revisions();
   bool has_heads = analysis_ != nullptr;
   for (const auto& e : edited_)
-    if (analysis_ && !analysis_->heads.count(e.kind == pp::SeriesKind::Baseline ? "baselines" : "intercepts"))
+    if (analysis_ && !analysis_->heads.contains(e.kind == pp::SeriesKind::Baseline ? "baselines" : "intercepts"))
       has_heads = false;
   const bool pending = !edits_.empty() && !edited_.empty();
   revert_->setEnabled(!edits_.empty());
@@ -586,7 +587,7 @@ void RecallWindow::fill_history() {
   history_ = std::move(*list);
   const QSignalBlocker block(revisions_);
   revisions_->setRowCount(static_cast<int>(history_.size()));
-  for (int i = 0; i < static_cast<int>(history_.size()); ++i) {
+  for (int i = 0; std::cmp_less(i, history_.size()); ++i) {
     const auto& h = history_[static_cast<std::size_t>(i)];
     set_cell(revisions_, i, 0, QString::number(h.seq) + (h.head ? QStringLiteral(" ●") : QString()),
              h.head ? tr("current (head)") : QString());
@@ -632,10 +633,10 @@ void RecallWindow::show_revisions() {
     revision_content_->setColumnCount(static_cast<int>(headers.size()));
     revision_content_->setHorizontalHeaderLabels(headers);
     revision_content_->setRowCount(static_cast<int>(t->rows.size()));
-    for (int i = 0; i < static_cast<int>(t->rows.size()); ++i) {
+    for (int i = 0; std::cmp_less(i, t->rows.size()); ++i) {
       const auto& row = t->rows[static_cast<std::size_t>(i)];
       set_cell(revision_content_, i, 0, qs(row.key));
-      for (int c = 0; c < static_cast<int>(row.cells.size()); ++c) set_cell(revision_content_, i, c + 1, qs(row.cells[static_cast<std::size_t>(c)]));
+      for (int c = 0; std::cmp_less(c, row.cells.size()); ++c) set_cell(revision_content_, i, c + 1, qs(row.cells[static_cast<std::size_t>(c)]));
     }
     const auto& h = history_[static_cast<std::size_t>(rows[0])];
     history_note_->setText(tr("%1 by %2, %3").arg(qs(h.message.empty() ? h.changeset_kind : h.message), qs(h.author),
@@ -656,7 +657,7 @@ void RecallWindow::show_revisions() {
   revision_content_->setColumnCount(static_cast<int>(headers.size()));
   revision_content_->setHorizontalHeaderLabels(headers);
   revision_content_->setRowCount(static_cast<int>(diff.rows.size()));
-  for (int i = 0; i < static_cast<int>(diff.rows.size()); ++i) {
+  for (int i = 0; std::cmp_less(i, diff.rows.size()); ++i) {
     const auto& row = diff.rows[static_cast<std::size_t>(i)];
     set_cell(revision_content_, i, 0, qs(row.key), qs(std::string(pp::to_string(row.state))));
     const QColor row_color = row.state == pp::DiffState::Added     ? theme().diff_added
@@ -699,7 +700,7 @@ void RecallWindow::update_restore_state() {
   } else if (const auto row = static_cast<std::size_t>(selected.front().row());
              row >= history_.size() || history_[row].head) {
     why = tr("That revision is already the current one");
-  } else if (!analysis_ || !analysis_->heads.count(std::string(pp::to_string(history_[row].kind)))) {
+  } else if (!analysis_ || !analysis_->heads.contains(std::string(pp::to_string(history_[row].kind)))) {
     why = tr("This analysis has no current revision of that kind");
   }
   restore_->setEnabled(why.isEmpty());

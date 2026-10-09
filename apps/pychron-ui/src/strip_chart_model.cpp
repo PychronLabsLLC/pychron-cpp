@@ -37,7 +37,7 @@ StripChartModel::StripChartModel(std::vector<DetectorSeries> detectors)
 void StripChartModel::append(const spectrometer::IntensityReading& r) {
   const auto& row = r.reading;
   bool known = false;
-  for (const auto& kv : row.values) known = known || index_.count(kv.first) > 0;
+  for (const auto& kv : row.values) known = known || index_.contains(kv.first);
   if (!known) return;
 
   if (origin_ && row.ts < last_ts_) clear();

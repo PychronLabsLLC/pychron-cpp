@@ -61,7 +61,7 @@ class CoreBridge : public QObject {
   CoreBridge& operator=(const CoreBridge&) = delete;
 
   const State& state() const noexcept { return state_; }
-  bool pending(const std::string& name) const { return state_.pending.count(name) != 0; }
+  bool pending(const std::string& name) const { return state_.pending.contains(name); }
 
   // Immutable topology; safe to read from the main thread at any time.
   const canvas::Canvas* canvas() const noexcept { return line_.canvas(); }

@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <map>
 #include <mutex>
+#include <ranges>
 #include <thread>
 #include <vector>
 
@@ -43,8 +44,8 @@ struct Heard {
     QObject::connect(&bridge, &LaserBridge::driverChanged, [this](bool w) { drivers.push_back(w); });
   }
   const Result<void>* result(const QString& what) const {
-    for (auto it = finished.rbegin(); it != finished.rend(); ++it) {
-      if (it->first == what) return &it->second;
+    for (const auto& it : std::views::reverse(finished)) {
+      if (it.first == what) return &it.second;
     }
     return nullptr;
   }

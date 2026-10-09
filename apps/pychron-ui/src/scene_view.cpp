@@ -20,6 +20,7 @@
 #include <QRubberBand>
 #include <QToolTip>
 #include <QVBoxLayout>
+#include <utility>
 
 #include <qcustomplot.h>
 
@@ -524,7 +525,7 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
 }
 
 std::optional<QPoint> SceneView::point_position(const std::string& uuid, int panel) const {
-  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return std::nullopt;
+  if (panel < 0 || std::cmp_greater_equal(panel, rects_.size())) return std::nullopt;
   const auto& info = rects_[panel];
   std::vector<HitPoint> candidates = info.points;
   for (const auto& b : info.boxes) candidates.push_back(b.point);
@@ -564,14 +565,14 @@ QString SceneView::tooltip_at(const QPoint& pos) const {
 
 QStringList SceneView::texts(int panel) const {
   QStringList out;
-  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return out;
+  if (panel < 0 || std::cmp_greater_equal(panel, rects_.size())) return out;
   for (const auto& t : rects_[panel].texts) out << t;
   return out;
 }
 
 QList<QRectF> SceneView::span_rects(int panel) const {
   QList<QRectF> out;
-  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return out;
+  if (panel < 0 || std::cmp_greater_equal(panel, rects_.size())) return out;
   for (const QCPItemRect* box : rects_[panel].spans)
     out << QRectF(box->topLeft->pixelPosition(), box->bottomRight->pixelPosition()).normalized();
   return out;

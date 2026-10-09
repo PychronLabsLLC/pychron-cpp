@@ -25,6 +25,7 @@
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace pychron::ui {
 
@@ -182,7 +183,7 @@ void ScriptEditorWindow::fill_tree() {
   }
   auto* lib = new QTreeWidgetItem(tree_, {QStringLiteral("lib")});
   for (const auto& f : experiment::lab::lab_scripts(lab_)) {
-    const bool in_lib = f.name.rfind("lib:", 0) == 0;
+    const bool in_lib = f.name.starts_with("lib:");
     QTreeWidgetItem* parent = in_lib ? lib : groups[q(scripting::to_string(f.kind))];
     auto* item = new QTreeWidgetItem(parent, {q(in_lib ? f.name.substr(4) : f.name)});
     item->setData(0, Qt::UserRole, q(f.path.string()));
@@ -202,7 +203,7 @@ QStringList ScriptEditorWindow::script_names() const {
 
 ScriptEditorWindow::Document* ScriptEditorWindow::current() const {
   const int i = tabs_->currentIndex();
-  return i >= 0 && i < static_cast<int>(docs_.size()) ? docs_[static_cast<std::size_t>(i)].get() : nullptr;
+  return i >= 0 && std::cmp_less(i, docs_.size()) ? docs_[static_cast<std::size_t>(i)].get() : nullptr;
 }
 
 ScriptEditorWindow::Document* ScriptEditorWindow::find(const ScriptFile& file) const {
@@ -322,7 +323,7 @@ bool ScriptEditorWindow::resolve_unsaved(Document& doc) {
 }
 
 bool ScriptEditorWindow::close_document(int index) {
-  if (index < 0 || index >= static_cast<int>(docs_.size())) return false;
+  if (index < 0 || std::cmp_greater_equal(index, docs_.size())) return false;
   Document& d = *docs_[static_cast<std::size_t>(index)];
   if (!resolve_unsaved(d)) return false;
   tabs_->removeTab(index);

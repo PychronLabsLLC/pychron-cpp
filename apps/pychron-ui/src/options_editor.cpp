@@ -23,6 +23,7 @@
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace pychron::ui {
 
@@ -421,27 +422,27 @@ void OptionsEditor::rebuild() {
         if (next == -2) return;
         if (options_.set_rows(key, rows)) {
           rebuild();
-          if (lists_.count(lkey)) lists_[lkey].list->setCurrentRow(std::min<int>(next, static_cast<int>(rows.size()) - 1));
+          if (lists_.contains(lkey)) lists_[lkey].list->setCurrentRow(std::min<int>(next, static_cast<int>(rows.size()) - 1));
           emit changed();
         }
       };
       connect(add, &QPushButton::clicked, this, [this, key, edit_rows] {
         edit_rows([this, key](std::vector<pp::Options>& rows, int cur) {
-          pp::Options row = cur >= 0 && cur < static_cast<int>(rows.size()) ? rows[cur] : options_.new_row(key);
+          pp::Options row = cur >= 0 && std::cmp_less(cur, rows.size()) ? rows[cur] : options_.new_row(key);
           rows.push_back(row);
           return static_cast<int>(rows.size()) - 1;
         });
       });
       connect(remove, &QPushButton::clicked, this, [edit_rows] {
         edit_rows([](std::vector<pp::Options>& rows, int cur) {
-          if (cur < 0 || cur >= static_cast<int>(rows.size())) return -2;
+          if (cur < 0 || std::cmp_greater_equal(cur, rows.size())) return -2;
           rows.erase(rows.begin() + cur);
           return std::max(0, cur - 1);
         });
       });
       connect(up, &QPushButton::clicked, this, [edit_rows] {
         edit_rows([](std::vector<pp::Options>& rows, int cur) {
-          if (cur <= 0 || cur >= static_cast<int>(rows.size())) return -2;
+          if (cur <= 0 || std::cmp_greater_equal(cur, rows.size())) return -2;
           std::swap(rows[cur], rows[cur - 1]);
           return cur - 1;
         });
@@ -471,7 +472,7 @@ void OptionsEditor::rebuild() {
     pages_->addWidget(scroll);
   }
   for (auto& [k, ui] : lists_) {
-    const int r = selected_rows.count(k) ? selected_rows[k] : -1;
+    const int r = selected_rows.contains(k) ? selected_rows[k] : -1;
     ui.list->setCurrentRow(r >= 0 && r < ui.list->count() ? r : (ui.list->count() > 0 ? 0 : -1));
   }
   set_current_section(section_shown >= 0 && section_shown < pages_->count() ? section_shown : 0);
@@ -492,13 +493,13 @@ void OptionsEditor::build_row_form(const QString& lkey) {
   const int row = ui.list->currentRow();
   const std::string key = lkey.toStdString();
   const auto all = options_.rows(key);
-  if (row >= 0 && row < static_cast<int>(all.size())) {
+  if (row >= 0 && std::cmp_less(row, all.size())) {
     const pp::Options& r = all[row];
     for (const auto& f : r.schema()->fields) {
       const std::string fkey = f.key;
       QWidget* e = make_editor(f, r, [this, key, row, fkey, lkey](pp::OptionValue value) -> Result<void> {
         auto rows = options_.rows(key);
-        if (row >= static_cast<int>(rows.size())) return fail(ErrorKind::Config, "row is gone");
+        if (std::cmp_greater_equal(row, rows.size())) return fail(ErrorKind::Config, "row is gone");
         auto ok = rows[row].set(fkey, std::move(value));
         if (!ok) return ok;
         if (auto s = options_.set_rows(key, rows); !s) return s;
@@ -519,7 +520,7 @@ void OptionsEditor::refresh_enabled() {
   for (const auto& [lkey, ui] : lists_) {
     const int row = ui.list->currentRow();
     const auto rows = options_.rows(lkey.toStdString());
-    if (row < 0 || row >= static_cast<int>(rows.size())) continue;
+    if (row < 0 || std::cmp_greater_equal(row, rows.size())) continue;
     for (const auto& [key, w] : ui.editors)
       w->setEnabled(condition_holds(w->property("enabled_when").toString().toStdString(), rows[row]));
   }

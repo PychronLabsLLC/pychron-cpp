@@ -17,7 +17,7 @@ QString qs(const std::string& s) { return QString::fromStdString(s); }
 // Row tint by analysis type (legacy use_analysis_colors).
 QColor type_color(const std::string& t) {
   if (t == "unknown") return {};
-  if (t.rfind("blank", 0) == 0) return theme().row_blank;
+  if (t.starts_with("blank")) return theme().row_blank;
   if (t == "air") return theme().row_air;
   if (t == "cocktail") return theme().row_cocktail;
   if (t == "detector_ic") return theme().row_detector_ic;

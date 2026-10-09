@@ -10,7 +10,6 @@ using pychron::experiment::run::RunStateChanged;
 using pychron::ui::TimelineModel;
 using pychron::ui::TimelineSegment;
 using pychron::ui::TimelineView;
-namespace exec = pychron::experiment::executor;
 
 namespace {
 

@@ -430,7 +430,7 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
       if (painter->font().pointSizeF() > 0) {
         font.setPointSizeF(painter->font().pointSizeF() * shrink);
       } else {
-        font.setPixelSize(std::max(1, int(painter->font().pixelSize() * shrink)));
+        font.setPixelSize(std::max(1, static_cast<int>(painter->font().pixelSize() * shrink)));
       }
       if (QFontMetricsF(font).horizontalAdvance(label_) <= room.width()) {
         break;
@@ -438,7 +438,7 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     }
     painter->setFont(font);
     painter->drawText(room, Qt::AlignCenter,
-                      painter->fontMetrics().elidedText(label_, Qt::ElideRight, int(std::ceil(room.width()))));
+                      painter->fontMetrics().elidedText(label_, Qt::ElideRight, static_cast<int>(std::ceil(room.width()))));
     painter->restore();
   }
   paint_symbol(*painter, symbol_, glyph, region_);

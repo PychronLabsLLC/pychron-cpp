@@ -816,7 +816,7 @@ Result<int> PackagesWindow::save_pdf(const QString& path) {
     if (!levels) return fail(levels.error());
     out.levels = std::move(*levels);
     for (const auto& l : out.levels)
-      if (l.level.holder && !out.holders.count(*l.level.holder)) {
+      if (l.level.holder && !out.holders.contains(*l.level.holder)) {
         auto h = entry::load_holder(s, *l.level.holder);
         if (!h) return fail(h.error());
         if (*h) out.holders.emplace(*l.level.holder, **h);

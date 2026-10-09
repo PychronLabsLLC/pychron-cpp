@@ -92,7 +92,7 @@ HeaterDock::HeaterDock(CoreBridge& bridge, QWidget* parent)
 
   connect(&bridge_, &CoreBridge::heaterSample, this, [this](const HeaterSample& s) {
     show_sample(s);
-    if (s.readback && rows_.count(s.heater)) {
+    if (s.readback && rows_.contains(s.heater)) {
       spectrometer::IntensityReading reading;
       reading.reading.ts = s.ts;
       reading.reading.values[s.heater] = spectrometer::Value{*s.readback, std::nullopt, std::nullopt, false};

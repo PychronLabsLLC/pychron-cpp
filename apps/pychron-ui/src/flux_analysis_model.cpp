@@ -1,5 +1,7 @@
 #include "flux_analysis_model.hpp"
 
+#include <utility>
+
 #include "flux_model_support.hpp"
 
 namespace pychron::ui {
@@ -21,7 +23,7 @@ void FluxAnalysisModel::set_position(const processing::FittedPosition* position)
 }
 
 const processing::FittedPosition::UsedAnalysis* FluxAnalysisModel::at(int row) const {
-  if (!position_ || row < 0 || row >= static_cast<int>(position_->analyses.size())) return nullptr;
+  if (!position_ || row < 0 || std::cmp_greater_equal(row, position_->analyses.size())) return nullptr;
   return &position_->analyses[static_cast<std::size_t>(row)];
 }
 

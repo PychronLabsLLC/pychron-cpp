@@ -81,7 +81,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
     set_focus(SeriesKey{parts.value(0).toStdString(), parts.value(1).toStdString(), kind_});
   });
   connect(tabs_, &QTabBar::currentChanged, this, [this](int i) {
-    if (i >= 0 && i < static_cast<int>(std::size(kKinds))) set_kind(kKinds[i]);
+    if (i >= 0 && std::cmp_less(i, std::size(kKinds))) set_kind(kKinds[i]);
   });
   refresh_.setInterval(kRefreshMs);
   connect(&refresh_, &QTimer::timeout, this, [this] {
@@ -201,7 +201,7 @@ void EvolutionsView::set_kind(SeriesKind kind) {
   if (kind == kind_) return;
   kind_ = kind;
   if (focus_) focus_->kind = kind;  // the same isotope on the same detector, if it has this kind
-  for (int i = 0; i < static_cast<int>(std::size(kKinds)); ++i)
+  for (int i = 0; std::cmp_less(i, std::size(kKinds)); ++i)
     if (kKinds[i] == kind && tabs_->currentIndex() != i) tabs_->setCurrentIndex(i);
   rebuild();
   refresh();
@@ -267,7 +267,7 @@ void EvolutionsView::refresh() {
       ix.push_back(line.time_zero);
       iy.push_back(line.fit->value);
       for (auto idx : line.fit->filtered_idx)
-        if (idx < static_cast<std::size_t>(line.t.size())) {
+        if (std::cmp_less(idx, line.t.size())) {
           ex.push_back(line.t[static_cast<qsizetype>(idx)]);
           ey.push_back(line.v[static_cast<qsizetype>(idx)]);
         }

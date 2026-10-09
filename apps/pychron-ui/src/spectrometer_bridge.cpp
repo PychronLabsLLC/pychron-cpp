@@ -119,7 +119,7 @@ QStringList SpectrometerBridge::isotopes_for(const QString& detector) const {
   const std::string det = detector.toStdString();
   QStringList out;
   for (const auto& point : table_.points()) {
-    if (point.values.count(det) != 0) {
+    if (point.values.contains(det)) {
       out.push_back(QString::fromStdString(point.isotope));
     }
   }

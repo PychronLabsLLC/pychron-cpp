@@ -532,7 +532,7 @@ void ConditionalsEditorWindow::closeEvent(QCloseEvent* event) {
     return;
   }
   // Discarded edits are gone the next time the window shows.
-  if (model_.modified() || file_names().contains(was) == false) {
+  if (model_.modified() || !file_names().contains(was)) {
     if (file_names().contains(was)) load(was);
     else if (const QStringList names = file_names(); !names.isEmpty()) load(names.first());
     else show_nothing();

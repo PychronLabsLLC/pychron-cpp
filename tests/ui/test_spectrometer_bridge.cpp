@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <ranges>
 #include <thread>
 #include <vector>
 
@@ -48,9 +49,9 @@ class TestSpectrometerBridge : public QObject {
     return n;
   }
   const Finished* last(const QString& what) const {
-    for (auto it = finished_.rbegin(); it != finished_.rend(); ++it) {
-      if (it->what == what) {
-        return &*it;
+    for (const auto& it : std::views::reverse(finished_)) {
+      if (it.what == what) {
+        return &it;
       }
     }
     return nullptr;

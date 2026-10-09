@@ -56,7 +56,7 @@ class FluxPositionModel : public QAbstractTableModel {
   // What fitted() gives carries the fit's prediction (j, j_err, dev_percent).
   bool predicted() const noexcept { return fit_ != nullptr; }
   const processing::LevelPosition* input(int row) const;
-  bool saved(int hole) const { return skip_.count(hole) == 0; }
+  bool saved(int hole) const { return !skip_.contains(hole); }
 
  private:
   void rebuild();

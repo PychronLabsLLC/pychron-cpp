@@ -1,5 +1,7 @@
 #include "flux_model_support.hpp"
 
+#include <utility>
+
 namespace pychron::ui {
 
 void FluxPositionModel::rebuild() {
@@ -42,12 +44,12 @@ void FluxPositionModel::set_skip(const std::set<int>& skip_positions) {
 
 const processing::FittedPosition* FluxPositionModel::fitted(int row) const {
   const auto* positions = evaluated();
-  if (!positions || row < 0 || row >= static_cast<int>(rows_.size())) return nullptr;
+  if (!positions || row < 0 || std::cmp_greater_equal(row, rows_.size())) return nullptr;
   return &(*positions)[rows_[static_cast<std::size_t>(row)]];
 }
 
 const processing::LevelPosition* FluxPositionModel::input(int row) const {
-  if (evaluated() || !inputs_ || row < 0 || row >= static_cast<int>(rows_.size())) return nullptr;
+  if (evaluated() || !inputs_ || row < 0 || std::cmp_greater_equal(row, rows_.size())) return nullptr;
   return &inputs_->positions[rows_[static_cast<std::size_t>(row)]];
 }
 
@@ -58,7 +60,7 @@ int FluxPositionModel::hole_at(int row) const {
 }
 
 int FluxPositionModel::row_of(int hole) const {
-  for (int r = 0; r < static_cast<int>(rows_.size()); ++r)
+  for (int r = 0; std::cmp_less(r, rows_.size()); ++r)
     if (hole_at(r) == hole) return r;
   return -1;
 }

@@ -594,8 +594,8 @@ class TestCanvasView : public QObject {
       painter.end();
       int dark = 0;
       // the upper part only: a plain box centers its name lower down
-      for (int y = int(area.top()) + 2; y < int(area.center().y()) - 8; ++y)
-        for (int x = int(area.left()) + 2; x < int(area.right()) - 2; ++x) dark += image.pixelColor(x, y).lightness() < 100;
+      for (int y = static_cast<int>(area.top()) + 2; y < static_cast<int>(area.center().y()) - 8; ++y)
+        for (int x = static_cast<int>(area.left()) + 2; x < static_cast<int>(area.right()) - 2; ++x) dark += image.pixelColor(x, y).lightness() < 100;
       return dark;
     };
     ui::StageItem plain("Jan", "Jan", {58, 83}, Qt::white);

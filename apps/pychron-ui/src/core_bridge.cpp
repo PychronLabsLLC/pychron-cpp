@@ -243,7 +243,7 @@ void CoreBridge::on_snapshot(const Snapshot& e) {
     state_.pressures[name] = value;
   }
   for (auto& [name, info] : state_.switches) {
-    info.locked = e.locked.count(name) != 0;
+    info.locked = e.locked.contains(name);
   }
   emit snapshot(e);
 }

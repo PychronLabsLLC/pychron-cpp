@@ -482,14 +482,14 @@ class TestPreferences : public QObject {
     QVERIFY(page->status()->text().contains(QStringLiteral("Listening on 0.0.0.0:9500")));
 
     page->enabled()->setChecked(true);
-    page->where()->setCurrentIndex(int(ui::MetricsPage::ThisComputer));
+    page->where()->setCurrentIndex(static_cast<int>(ui::MetricsPage::ThisComputer));
     page->port()->setValue(9464);
     config::MetricsConfig got = d.values().line->metrics;
     QVERIFY(got.enabled);
     QCOMPARE(got.bind, std::string("127.0.0.1"));
     QCOMPARE(got.port, std::int64_t{9464});
 
-    page->where()->setCurrentIndex(int(ui::MetricsPage::OneAddress));
+    page->where()->setCurrentIndex(static_cast<int>(ui::MetricsPage::OneAddress));
     QVERIFY(page->address()->isEnabled());
     page->address()->setText(QStringLiteral(" 192.168.1.20 "));
     QCOMPARE(d.values().line->metrics.bind, std::string("192.168.1.20"));
@@ -514,7 +514,7 @@ class TestPreferences : public QObject {
       return QString();
     });
     d.show();
-    d.metrics_page()->where()->setCurrentIndex(int(ui::MetricsPage::OneAddress));
+    d.metrics_page()->where()->setCurrentIndex(static_cast<int>(ui::MetricsPage::OneAddress));
     d.metrics_page()->address()->setText(QStringLiteral("labpc.local"));
     click(d.buttons(), QDialogButtonBox::Ok);
     QVERIFY(d.isVisible());
