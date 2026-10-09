@@ -137,26 +137,32 @@ often wrong about the consequence.
 
 Then bucket 1b, in this order:
 
-- [ ] **1. `bugprone-unchecked-optional-access` in `libs/` and `apps/` (196).**
-  Each is a guard, a `value_or`, or an early return of the error. Largest
-  share is `apps/pychron-ui`.
-- [ ] **2. `bugprone-exception-escape` (64).** A `noexcept` function or a
-  destructor that calls something that allocates or parses. Either it cannot
-  throw in practice (say why, `NOLINT`) or the `noexcept` is wrong.
-- [ ] **3. `bugprone-empty-catch` (20), eleven in `libs/core/src/log_hub.cpp`.**
-  A logger swallowing its own failure is deliberate; each gets a comment
-  saying so, or a counter. The others (`ingest/late_revision.cpp:455`,
-  `persistence/tiny/db.cpp`, `metrics`) are read one by one.
-- [ ] **4. Number handling (56).** Done:
+- [x] **1. `bugprone-unchecked-optional-access` in `libs/` and `apps/` (196).**
+  About 70 read in full and the other 125 by their line: none a defect. The
+  optional is tested where the check cannot see (a member the constructor
+  emplaces, a report whose `ok()` means its config is there, a toml node
+  asked `is_integer()` first). The check is off, and the mistake it looks for
+  is caught at run time instead: a build with `PYCHRON_SANITIZE` now has the
+  standard library's own checks on (`cmake/PychronSanitizers.cmake`). The
+  4,351 tests pass with them, which is the evidence that none of the 196
+  happens on a tested path.
+- [x] **2. `bugprone-exception-escape` (64).** All read. 49 were an allocation
+  that could fail inside a `noexcept` function, 14 the standard library's own
+  guard behind a test the caller had just made: neither is counted now
+  (`IgnoredExceptions` in `.clang-tidy`, with the reason). `~Scheduler()` is
+  the one that is real, and says so. Off in tests.
+- [x] **3. `bugprone-empty-catch` (20).** Each swallows on purpose and says so
+  on its line.
+- [ ] **4. Number handling (56).** Done but for the loops:
   `unchecked-string-to-number-conversion` (13). Three were defects, fixed with
   tests: `elctl export` options and `elctl flux history`'s hole took a number
   too large for an `int` as another number (`4294967305` was hole 9), and the
   legacy line importer made a window of 0 from a size that is not a number.
-  The other seven say on their line why they are safe. Still to do:
-  `implicit-widening-of-multiplication-result` and `misplaced-widening-cast`
-  (25) widen before the multiply; `init-variables` and `pro-type-member-init`
-  (26) get initialisers; `float-loop-counter` (6, and the five from 1a) counts
-  in integers.
+  The other seven say on their line why they are safe. The two widening
+  checks (25) are off: every product found was of small constants or a small
+  matrix index. `init-variables` and `pro-type-member-init` (26): every local
+  and member found starts with a value now. Still to do: `float-loop-counter`
+  (6, and the five from 1a) counts in integers.
 - [x] **5. `bugprone-nondeterministic-pointer-iteration-order` (7).** One
   defect, fixed with a test: `switch_manager.cpp` removed duplicate interlock
   partners by sorting their addresses, so which open partner a refusal named

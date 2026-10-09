@@ -215,7 +215,11 @@ python3 tools/quality_check.py
 
 Static analysis does not replace the sanitizers. `dev` and `dev-ui` build
 without them; add `-DPYCHRON_SANITIZE=address,undefined` to the configure (CI
-does, on clang) and run the tests of what you changed under them.
+does, on clang) and run the tests of what you changed under them. A sanitizer
+build also turns on the standard library's own checks (`_GLIBCXX_ASSERTIONS`,
+libc++'s hardening): an empty `std::optional` dereferenced or a container
+indexed past its end stops the test there. That is why clang-tidy's
+`bugprone-unchecked-optional-access` is off (its reason is in `.clang-tidy`).
 
 ### Importing legacy data
 

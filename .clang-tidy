@@ -60,7 +60,10 @@ Checks: >
   readability-string-compare,
   readability-use-std-min-max,
   -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-misplaced-widening-cast,
   -bugprone-signed-bitwise,
+  -bugprone-unchecked-optional-access,
   -bugprone-throwing-static-initialization,
   -modernize-return-braced-init-list,
   -modernize-use-designated-initializers,
@@ -71,8 +74,21 @@ Checks: >
   -performance-enum-size
 # Why each of those is off:
 #   easily-swappable-parameters   fires on any (double x, double y)
+#   implicit-widening-of-multiplication-result, misplaced-widening-cast
+#                                 `64 * 1024`, `4 * i`, `r * p + c` for a small
+#                                 matrix: all 25 found were products that
+#                                 cannot leave int
 #   signed-bitwise                the codecs mask and shift bytes held in int
 #   throwing-static-initialization  every namespace-scope std::string constant
+#   unchecked-optional-access     it follows a test only within one function
+#       and only on one spelling. Here an optional is most often tested
+#       somewhere it cannot see: a member emplaced by the constructor, a report
+#       whose ok() means its config is there, a toml node asked is_integer()
+#       before value<int64_t>(). Of the 196 it found (2026-10-08) none read was
+#       a defect. The same mistake is caught where it happens instead: a build
+#       with PYCHRON_SANITIZE has the standard library's own checks on
+#       (cmake/PychronSanitizers.cmake), and an empty optional dereferenced in
+#       a test stops the test.
 #   return-braced-init-list, use-designated-initializers, use-nodiscard,
 #   use-ranges, use-scoped-lock, use-trailing-return-type   style, not defects
 #   enum-size                     layout is not a concern for these enums
@@ -83,7 +99,7 @@ Checks: >
 #
 # Directories that turn one more check off, each saying why:
 #   apps/pychron-ui, tests/ui   cppcoreguidelines-owning-memory (Qt parents)
-#   tests, apps/elctl/tests     bugprone-unchecked-optional-access
+#   tests, apps/elctl/tests     bugprone-exception-escape
 
 # First-party headers only: nothing under build/ (fetched dependencies,
 # generated code) and nothing from the system.

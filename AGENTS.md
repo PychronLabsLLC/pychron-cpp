@@ -55,7 +55,9 @@ See `docs/dev_setup.md` for setup and `CMakePresets.json` for presets (CI uses
 
 - CI (`.github/workflows/ci.yml`) builds with clang + ASan/UBSan on macOS,
   gcc 14 and clang 18 + ASan/UBSan on Ubuntu 24.04, and MSVC.
-- `-DPYCHRON_SANITIZE=address,undefined` enables ASan/UBSan.
+- `-DPYCHRON_SANITIZE=address,undefined` enables ASan/UBSan, and with them
+  the standard library's own checks (an empty optional dereferenced, an index
+  past the end): static analysis does not look for those here, this does.
 - gcc 13 (the Ubuntu 24.04 default `g++`) warns where the CI compilers do not;
   build it with `-DPYCHRON_WARNINGS_AS_ERRORS=OFF`.
 - `-DPYCHRON_SCRIPTING=OFF` drops the embedded CPython dependency.
