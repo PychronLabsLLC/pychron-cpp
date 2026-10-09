@@ -180,7 +180,13 @@ sudo apt install clang-tidy cppcheck    # Ubuntu
 ```bash
 cmake --preset dev-ui               # writes build/dev-ui/compile_commands.json
 python3 tools/quality_check.py
+git config core.hooksPath tools/githooks   # once per clone: the check runs before every push
 ```
+
+With the hook on, `git push` is refused while the C++ the branch changes has
+findings, or while the check cannot run (a tool or the build directory is
+missing). A push that changes no C++ is not slowed. CI does not run on
+`develop`, so the hook is what holds work landing there to the checks.
 
 - Exit status 0 is clean, 1 is findings, 2 means the check could not run, or
   not on every file (a tool or the compile database is missing, or a source

@@ -22,8 +22,11 @@ Day to day:
   `BREAKING CHANGE:` footer a breaking change (still a minor bump while the
   version is 0.x). `chore`, `docs`, `refactor`, `test`, `ci` and `build`
   release nothing on their own.
-- To land: rebase the branch on `origin/develop`, run the tests, merge into
-  `develop` and push. No pull request is needed for `develop`.
+- To land: rebase the branch on `origin/develop`, run the static analysis
+  (`python3 tools/quality_check.py`, below) and the tests on the rebased
+  branch, merge into `develop` and push. No pull request is needed for
+  `develop`. If `origin/develop` moves again before the push, that is another
+  rebase and another run: what is pushed is what was tested.
 - CI does not run on `develop` or on work branches, only on `main` and on pull
   requests into it. The tests you run locally are the only ones before a
   release: run them.
@@ -378,8 +381,18 @@ has the setup.
   the check out of `.clang-tidy` or adding to `cmake/cppcheck.supp` to get one
   change through.
 - `--fix` applies clang-tidy's fix-its; read the diff it makes and rebuild.
+- A push is refused while it reports anything: `tools/githooks/pre-push` runs
+  it. The hook is switched on once per clone with
+  `git config core.hooksPath tools/githooks` (every worktree of the clone then
+  has it); check `git config --get core.hooksPath` in a fresh clone and set it
+  if it is empty. Do not push with `--no-verify` to get past a finding.
 - It is not in CI, and it does not replace building with
   `-DPYCHRON_SANITIZE=address,undefined` and running the tests.
+- The tree is not at zero: about 670 findings of the performance and C-array
+  checks are left in old code
+  (`docs/superpowers/plans/2026-10-08-static-analysis-backlog.md`, Phase 3).
+  Only lines you change are held to the checks; when you are changing a
+  function anyway, clear what it has.
 
 ## Lifetime rules
 
