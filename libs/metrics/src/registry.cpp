@@ -195,7 +195,7 @@ struct Registry::Impl {
     if (handler) {
       try {
         handler(full);
-      } catch (...) {  // a handler's failure is not the caller's
+      } catch (...) {  // NOLINT(bugprone-empty-catch): a handler's failure is not the caller's
       }
     }
     return s;
@@ -267,7 +267,7 @@ std::string Registry::render() {
     for (const auto& [id, collect] : impl_->collectors->items) {
       try {
         collect(*this);
-      } catch (...) {  // one source's failure leaves the rest of the scrape
+      } catch (...) {  // NOLINT(bugprone-empty-catch): one source's failure leaves the rest of the scrape
       }
     }
   }

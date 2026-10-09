@@ -68,7 +68,7 @@ Result<std::optional<double>> ScriptHeader::number(std::string_view key) const {
     std::size_t used = 0;
     double d = std::stod(*v, &used);
     if (used == v->size()) return std::optional<double>{d};
-  } catch (const std::exception&) {
+  } catch (const std::exception&) {  // NOLINT(bugprone-empty-catch): falls through to the error below
   }
   return fail(ErrorKind::Config, "script header '" + std::string(key) + "' is not a number: " + *v);
 }

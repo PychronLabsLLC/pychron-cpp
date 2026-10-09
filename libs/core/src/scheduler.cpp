@@ -51,6 +51,7 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
   }
 }
 
+// NOLINTNEXTLINE(bugprone-exception-escape): stop(), as said inside
 Scheduler::~Scheduler() {
   // stop() throws only when a job destroys its own scheduler, which cannot be
   // carried out: terminating says so.

@@ -186,7 +186,7 @@ std::vector<CameraFound> list_opencv_cameras() {
       const double fps = cap.get(cv::CAP_PROP_FPS);
       camera.fps = std::isfinite(fps) && fps > 0 ? fps : 0.0;
       found.push_back(std::move(camera));
-    } catch (const std::exception&) {
+    } catch (const std::exception&) {  // NOLINT(bugprone-empty-catch): see below
       // not a camera this build can open
     }
   }

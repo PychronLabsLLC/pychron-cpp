@@ -47,7 +47,7 @@ TEST(LakeshoreCodec, SetpointsIgnoreTheLocale) {
   // A comma-decimal locale must not turn 77.5 into "77,500".
   try {
     std::locale::global(std::locale("de_DE.UTF-8"));
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): no such locale on this machine: the test runs in the one there is
   }
   EXPECT_EQ(ls::set_setpoint(1, 77.5)->tx, to_bytes("SETP 1,77.500\n"));
   std::locale::global(std::locale::classic());

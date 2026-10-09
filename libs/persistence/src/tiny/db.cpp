@@ -124,7 +124,7 @@ Db::Db(QString connection_name, Dialect dialect) : name_(std::move(connection_na
 Db::~Db() {
   try {
     manager()->removeConnection(name_);
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): a destructor has no one to tell
   }
 }
 
@@ -232,7 +232,7 @@ void Db::rollback() noexcept {
       else if (conn().inTransaction())
         (void)run([&] { conn().rollBack(); });
     }
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): best effort: the connection may be what failed
   }
   in_tx_ = false;
 }

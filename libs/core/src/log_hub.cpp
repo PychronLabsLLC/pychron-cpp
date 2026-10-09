@@ -183,7 +183,7 @@ struct LogHub::Impl {
     if (!last_error_report.compare_exchange_strong(last, now)) return;
     try {
       std::cerr << "pychron logging error: " << what << '\n';
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): nowhere left to report that reporting failed
     }
   }
 
@@ -194,7 +194,7 @@ struct LogHub::Impl {
       } else {
         std::cerr << "[error] logging: " << message << '\n';
       }
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): nowhere left to report that reporting failed
     }
   }
 
@@ -241,21 +241,21 @@ struct LogHub::Impl {
       if (level >= LogLevel::Error) sync_flush();
     } catch (const std::exception& e) {
       report_spdlog_error(e.what());
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): nothing to say of an exception that has no what()
     }
 
     if (echo_stderr) {
       try {
         std::lock_guard lock(echo_mutex);
         std::cerr << '[' << to_string(level) << "] " << name << ": " << message << '\n';
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): stderr is gone; the file and the bus still have the line
       }
     }
 
     if (bus != nullptr) {
       try {
         bus->publish(Log{level, std::string(name), std::string(message), clock->now()});
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): a subscriber's failure is not the logger's
       }
     }
   }
@@ -302,7 +302,7 @@ struct LogHub::Impl {
       lock.unlock();
       if (!barrier_sink->wait_until(target, deadline)) return;
       if (file_sink) file_sink->flush();
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): a flush that could not be made; the next one is tried as usual
     }
   }
 
@@ -466,7 +466,7 @@ std::string terminate_text() {
   if (hub) {
     try {
       hub->crash_flush(terminate_text());
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): terminating already
     }
   }
   hub.reset();
@@ -634,7 +634,7 @@ LogHub::~LogHub() {
   if (impl_->flusher.joinable()) impl_->flusher.join();
   try {
     impl_->sync_flush();
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): a destructor has no one to tell
   }
   // Loggers first; the pool's destructor drains whatever is still queued and
   // joins the writer thread.
@@ -650,7 +650,7 @@ void LogHub::flush() {
     impl_->sync_flush();
   } catch (const std::exception& e) {
     impl_->report_spdlog_error(e.what());
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): nothing to say of an exception that has no what()
   }
 }
 

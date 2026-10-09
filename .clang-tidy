@@ -91,6 +91,16 @@ HeaderFilterRegex: '.*/(libs|apps|tests)/.*'
 ExcludeHeaderFilterRegex: '.*/build/.*'
 
 CheckOptions:
+  # What is left is an exception the code itself throws, or one from the
+  # system. Not counted:
+  #   bad_alloc, bad_array_new_length, length_error: out of memory inside a
+  #     noexcept function or a destructor terminates, which is the outcome
+  #     wanted, and is no reason to drop the noexcept;
+  #   out_of_range, bad_variant_access, bad_optional_access, bad_function_call:
+  #     the library's own guard in substr(), bitset::test(), Result's
+  #     operator* and std::function, behind a test the caller has just made
+  #     (the 2026-10-08 backlog read all fifteen of these: none can happen).
+  bugprone-exception-escape.IgnoredExceptions: 'bad_alloc,bad_array_new_length,length_error,out_of_range,bad_variant_access,bad_optional_access,bad_function_call'
   misc-unused-parameters.StrictMode: false
   performance-unnecessary-value-param.AllowedTypes: 'QModelIndex;QPoint;QPointF;QSize;QSizeF;QRect;QRectF;QColor'
   bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: true

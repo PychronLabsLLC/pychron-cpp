@@ -59,7 +59,7 @@ void SignalBus::dispatch(std::type_index type, const void* event) const {
   for (const auto& e : *snapshot) {
     try {
       e.handler(event);
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): see below
       // A faulty subscriber must not take down the publishing thread.
     }
   }

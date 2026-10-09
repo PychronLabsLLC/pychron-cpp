@@ -157,7 +157,7 @@ struct MetricsServer::Impl {
       try {
         io.run();
         return;  // out of work: the server is shutting down
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): see below
         // That request is lost; the rest go on.
       }
     }

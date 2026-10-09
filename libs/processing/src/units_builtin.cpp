@@ -354,7 +354,7 @@ class EditsUnit final : public Unit {
       if (eq == std::string::npos) continue;
       try {
         groups[g.substr(0, eq)] = std::stoi(g.substr(eq + 1));
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): a group that is not a number is skipped, like one with no '='
       }
     }
     Dataset d = *dataset_in(in);
