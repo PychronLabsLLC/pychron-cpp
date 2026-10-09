@@ -179,6 +179,11 @@ See [data analysis](06-data-analysis.md) and the
 
 ## Interface quirks
 
+- A panel has disappeared (Log, Alarms, Heaters, Evolutions, ...): it was
+  closed, or floated off to a screen that is no longer there. Bring the
+  window to the front and choose **Window > Panels** to tick it back on, or
+  **Window > Reset Layout** to put every panel of that window back as
+  installed.
 - The theme is always light. Preferences are per user; out-of-range saved
   values silently fall back to defaults.
 - An unsaved-queue-edits prompt can block Quit, or switching install in

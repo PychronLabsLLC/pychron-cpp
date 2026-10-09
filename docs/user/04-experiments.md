@@ -201,6 +201,12 @@ menu bar while the window is active: **Queue**, **Rows**, **Scripts**,
 | Bottom | **Executor**: the Start / Stop / Cancel / Abort / Truncate buttons, status, a timeline, events and tripped conditionals. |
 | Right | **Evolutions**: the isotope signals of the run being measured, with fits. |
 
+The panels around the table can be closed, moved and floated (the Executor
+can be moved but not closed). **Window > Panels**, **Window > Reset Layout**
+and **Window > Arrangements** bring them back, restore the installed layout
+and keep layouts under a name: see "Panels and arrangements" in
+[the extraction line chapter](02-extraction-line.md).
+
 Rows that have a problem are coloured, and hovering over them lists the
 problems. A row that is running or finished has a coloured Status
 (success, failed, cancelled or aborted).

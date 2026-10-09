@@ -288,6 +288,36 @@ For hardware faults, set `"*.wire" = "trace"` under `[logging.levels]` or
 use **Set logger level...** and send the log (or a `trace` capture,
 below) along with the problem report.
 
+## Panels and arrangements
+
+The docks around the canvas (**Alarms**, **Cryo**, **Heaters**, **Log**) are
+panels: each can be closed, dragged to another edge, stacked as tabs with
+another, or pulled out to float as its own small window. Three commands in
+the **Window** menu look after them. They act on the window in front, so
+click the extraction line window first.
+
+| Command | What it does |
+|---|---|
+| **Window > Panels** | Lists the window's panels, ticked when shown. Choose one to show or hide it. This is how a closed panel comes back. |
+| **Window > Reset Layout** | Puts every panel back where it was when the program was installed: all shown, none floating. The window keeps its size and position, and your saved arrangements are untouched. |
+| **Window > Arrangements** | Your own named layouts. **Save Arrangement As...** keeps where the panels are now, and the window's size and position, under a name. Choosing a name applies it. **Delete** removes one. |
+
+A name is 1 to 64 characters and cannot contain `/` or `\`. Saving under a
+name that exists (capitals do not count) asks before replacing it. Deleting
+does not ask.
+
+The layout is remembered when you close the program and restored at the next
+start. It is kept per user and per line, as are the arrangements: a line
+with a cryostat does not share them with one without.
+
+The Experiment and Spectrometer windows have panels too, and the same three
+commands work there. Each window has its own arrangements: one saved in the
+extraction line window is not offered in the experiment window.
+
+If an arrangement cannot be applied (the saved layout is damaged), the
+panels go back to the installed layout and the log shows
+`WARN [ui] arrangement “name” not applied: ...`.
+
 ## Simulation versus real hardware
 
 - `kind = "sim"` on a transport makes that transport a simulated one. A

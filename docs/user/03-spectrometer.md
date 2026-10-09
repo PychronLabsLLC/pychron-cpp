@@ -48,7 +48,10 @@ Close it before running something that wants the spectrometer to itself.
 | Right dock **Intensities** | A table of each detector's latest value. |
 
 Docks can be dragged, floated and resized; the layout is remembered per
-spectrometer and per user.
+spectrometer and per user. **Window > Panels** shows or hides Intensities
+(Controls cannot be closed), **Window > Reset Layout** puts both back, and
+**Window > Arrangements** keeps layouts under a name: see "Panels and
+arrangements" in [the extraction line chapter](02-extraction-line.md).
 
 ### Strip chart
 
