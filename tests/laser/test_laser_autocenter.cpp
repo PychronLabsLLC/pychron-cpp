@@ -20,7 +20,6 @@ using namespace pychron::extraction;
 using namespace pychron::laser;
 using namespace pychron::laser::harness;
 using namespace std::chrono_literals;
-namespace fs = std::filesystem;
 using vision::AutocenterReason;
 using Outcome = AutocenterOutcome::Result;
 

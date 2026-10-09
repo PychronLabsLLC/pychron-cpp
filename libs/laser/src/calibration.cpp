@@ -77,7 +77,7 @@ Result<Solution> solve(const TrayMap& map, std::span<const CalibrationPoint> poi
 
   // Centroids, then the rotation that best turns the map's vectors onto the
   // stage's: atan2 of the summed cross and dot products.
-  const double n = static_cast<double>(points.size());
+  const auto n = static_cast<double>(points.size());
   double pmx = 0, pmy = 0, qmx = 0, qmy = 0;
   for (std::size_t i = 0; i < points.size(); ++i) {
     pmx += holes[i]->x / n;

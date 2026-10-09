@@ -136,7 +136,7 @@ std::size_t raster_steps(const Pattern& p) {
   const double total = p.length + 2 * p.offset;
   double n = std::floor(total / p.dx + 1e-9);
   if (!(n < 4.0 * static_cast<double>(kMaxPatternPoints))) return 4 * kMaxPatternPoints;  // also NaN and inf
-  if (n < 0) n = 0;
+  n = std::max<double>(n, 0);
   if (std::fmod(n, 2.0) != 0) n += 1;
   return static_cast<std::size_t>(n) + 1;
 }

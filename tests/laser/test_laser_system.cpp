@@ -33,7 +33,6 @@ using namespace pychron;
 using namespace pychron::extraction;
 using namespace pychron::laser;
 using namespace std::chrono_literals;
-namespace fs = std::filesystem;
 
 using namespace pychron::laser::harness;
 

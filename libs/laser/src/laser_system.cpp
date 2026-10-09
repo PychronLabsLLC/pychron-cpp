@@ -823,7 +823,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
     moving_.store(false);
     return false;
   }
-  if (static_cast<int>(frames.size()) < camera_->frames_per_step) return give_up(stage, vision::AutocenterReason::Camera);
+  if (std::cmp_less(frames.size(), camera_->frames_per_step)) return give_up(stage, vision::AutocenterReason::Camera);
   std::vector<vision::FrameView> views;
   for (const auto& frame : frames) views.push_back(frame.view());
   const vision::AutocenterStep step = c.controller.step(views);
