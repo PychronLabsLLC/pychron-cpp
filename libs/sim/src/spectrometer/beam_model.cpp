@@ -63,6 +63,7 @@ const BeamDetector* BeamModel::find_locked(std::string_view name) const {
 }
 
 BeamDetector* BeamModel::find_locked(std::string_view name) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): the const overload does the finding; this object is not const
   return const_cast<BeamDetector*>(std::as_const(*this).find_locked(name));
 }
 

@@ -266,8 +266,9 @@ Result<std::optional<BlobData>> load_blob(Db& db, const Sha256Digest& sha) {
   b.codec = to_std((*row)->value("codec"));
   b.n_points = opt_int((*row)->value("n_points"));
   const QByteArray bytes = (*row)->value("bytes").toByteArray();
-  b.bytes.assign(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + bytes.size());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the column's bytes
+  const auto* first = reinterpret_cast<const std::uint8_t*>(bytes.constData());
+  b.bytes.assign(first, first + bytes.size());
   return std::optional<BlobData>{std::move(b)};
 }
 

@@ -113,9 +113,11 @@ inline QVariant qv(long long i) { return QVariant(static_cast<qlonglong>(i)); }
 inline QVariant qv(long i) { return QVariant(static_cast<qlonglong>(i)); }
 inline QVariant qv(bool b) { return QVariant(b); }
 inline QVariant qv(const Sha256Digest& d) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes for a QByteArray
   return QVariant(QByteArray(reinterpret_cast<const char*>(d.data()), static_cast<qsizetype>(d.size())));
 }
 inline QVariant qv(const Bytes& b) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes for a QByteArray
   return QVariant(QByteArray(reinterpret_cast<const char*>(b.data()), static_cast<qsizetype>(b.size())));
 }
 template <class T>

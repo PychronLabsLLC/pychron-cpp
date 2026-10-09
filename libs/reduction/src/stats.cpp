@@ -36,6 +36,7 @@ double apply_kind(double sem, double sd, double mswd_value, MeanErrorKind kind) 
 // Regularized lower incomplete gamma P(a, x) (Numerical Recipes gammp).
 double gamma_p(double a, double x) {
   if (x <= 0.0 || a <= 0.0) return 0.0;
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): lgamma writes the sign to a global that nothing here reads
   const double gln = std::lgamma(a);
   if (x < a + 1.0) {
     double ap = a, sum = 1.0 / a, del = sum;
@@ -99,8 +100,10 @@ double beta_cf(double a, double b, double x) {
 double beta_i(double a, double b, double x) {
   if (x <= 0.0) return 0.0;
   if (x >= 1.0) return 1.0;
+  // NOLINTBEGIN(concurrency-mt-unsafe): lgamma writes the sign to a global that nothing here reads
   const double front =
       std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) + a * std::log(x) + b * std::log1p(-x));
+  // NOLINTEND(concurrency-mt-unsafe)
   if (x < (a + 1.0) / (a + b + 2.0)) return front * beta_cf(a, b, x) / a;
   return 1.0 - front * beta_cf(b, a, 1.0 - x) / b;
 }

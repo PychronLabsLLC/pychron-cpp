@@ -10,6 +10,7 @@ using namespace pychron::persistence;
 
 namespace {
 std::span<const std::uint8_t> as_bytes(std::string_view s) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the text's bytes
   return {reinterpret_cast<const std::uint8_t*>(s.data()), s.size()};
 }
 }  // namespace

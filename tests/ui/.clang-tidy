@@ -1,8 +1,6 @@
-# NewDeleteLeaks is off for the same reason as owning-memory.
-# Qt hands a new'd child to its parent: that is the ownership model here, and
-# the check cannot see it (it wants gsl::owner on every `new QLabel(this)`).
-# CallAndMessage: QVERIFY(p != nullptr) returns when p is null, which the
+# Qt tests: what apps/pychron-ui/.clang-tidy turns off, for the same reasons,
+# and CallAndMessage: QVERIFY(p != nullptr) returns when p is null, which the
 # analyzer does not see, so every use of p after it is reported.
 # Adds to tests/.clang-tidy.
 InheritParentConfig: true
-Checks: '-cppcoreguidelines-owning-memory,-clang-analyzer-cplusplus.NewDeleteLeaks,-clang-analyzer-core.CallAndMessage'
+Checks: '-cppcoreguidelines-owning-memory,-clang-analyzer-cplusplus.NewDeleteLeaks,-cppcoreguidelines-pro-type-static-cast-downcast,-cppcoreguidelines-misleading-capture-default-by-value,-clang-analyzer-core.CallAndMessage'

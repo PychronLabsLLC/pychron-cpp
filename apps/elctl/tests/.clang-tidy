@@ -1,3 +1,4 @@
 # A fixture's destructor that throws ends the test program, and so fails it.
+# A test sets the environment and the locale before the threads it starts.
 InheritParentConfig: true
-Checks: '-bugprone-exception-escape'
+Checks: '-bugprone-exception-escape,-concurrency-mt-unsafe'

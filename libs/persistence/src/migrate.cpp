@@ -100,6 +100,7 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
     Pending p{};
     if (!parse_file_name(m.file, p.version, p.description))
       return fail(ErrorKind::Config, std::string("migration file name must be NNNN_<name>.sql: ") + m.file);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the embedded file's bytes as text
     p.text = std::string_view(reinterpret_cast<const char*>(m.data), m.size);
     p.checksum = sha256(p.text);
     known.push_back(std::move(p));
@@ -117,6 +118,7 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
       const QByteArray sum = r.value("checksum").toByteArray();
       applied[r.value("version").toInt()] = AppliedMigration{
           r.value("version").toInt(), to_std(r.value("description")),
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the digest's bytes
           to_hex(std::span(reinterpret_cast<const std::uint8_t*>(sum.constData()), static_cast<std::size_t>(sum.size())))};
     }
     return applied;

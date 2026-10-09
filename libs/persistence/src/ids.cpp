@@ -40,6 +40,7 @@ Uuid Uuid::v7() {
 }
 
 Uuid Uuid::v5(const Uuid& ns, std::string_view name) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the id's bytes as a string
   std::string input(reinterpret_cast<const char*>(ns.bytes().data()), ns.bytes().size());
   input.append(name);
   const auto digest = sha1(input);

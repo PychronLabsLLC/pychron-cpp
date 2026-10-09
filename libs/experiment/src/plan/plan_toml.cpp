@@ -61,12 +61,14 @@ const toml::node* find_node(const toml::table& root, std::string_view path) {
   auto p = parse_path(path);
   if (!p) return nullptr;
   // find_node does not modify; the const_cast only shares the traversal.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): as said above
   return find_node(const_cast<toml::table&>(root), *p);
 }
 
 bool path_addressable(const toml::table& root, std::string_view path) {
   auto segs = parse_path(path);
   if (!segs) return false;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): find_node does not modify; only the traversal is shared
   auto& mroot = const_cast<toml::table&>(root);
   if (find_node(mroot, *segs)) return true;
   if (segs->back().index) return false;

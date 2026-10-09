@@ -49,6 +49,7 @@ void compress(std::array<std::uint32_t, 5>& h, const std::uint8_t* p) {
 
 std::array<std::uint8_t, 20> sha1(std::string_view bytes) {
   std::array<std::uint32_t, 5> h{0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the text's bytes
   const auto* p = reinterpret_cast<const std::uint8_t*>(bytes.data());
   std::size_t n = bytes.size();
   const std::uint64_t bits = std::uint64_t{n} * 8;

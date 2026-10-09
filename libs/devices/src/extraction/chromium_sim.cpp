@@ -145,6 +145,7 @@ double ChromiumSim::output() const {
 
 ChromiumSim::Microns ChromiumSim::position() const {
   std::lock_guard lock(mutex_);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): reading the position is what moves a simulated stage on
   const_cast<ChromiumSim*>(this)->advance();
   return {std::llround(at_[0]), std::llround(at_[1]), std::llround(at_[2])};
 }

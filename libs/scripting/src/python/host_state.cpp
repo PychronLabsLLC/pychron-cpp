@@ -204,6 +204,7 @@ void HostState::raise(const Error& error) {
     exc = rt.hardware(std::string(to_string(error.kind)), error.what, error.device);
   last_error_ = error;
   last_exception_ = exc;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): CPython's own idiom: a type object is an object
   PyErr_SetObject(reinterpret_cast<PyObject*>(Py_TYPE(exc.ptr())), exc.ptr());
   throw py::error_already_set();
 }

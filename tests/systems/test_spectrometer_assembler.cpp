@@ -230,6 +230,7 @@ struct Rig {
     };
     o.make_driver = [this](const cfg::DriverConfig& dc, Transport& t,
                            const SpectrometerContext&) -> Result<std::unique_ptr<Device>> {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): the test made it
       auto& probe = static_cast<ProbeTransport&>(t);
       std::unique_ptr<Device> d;
       auto make = [&](auto driver) {

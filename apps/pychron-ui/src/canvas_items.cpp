@@ -424,6 +424,7 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->save();
     QFont font = painter->font();
     // Font sizes round, so step down until the name fits; elided past that.
+    // NOLINTNEXTLINE(bugprone-float-loop-counter): a ratio shrunk until the name fits, not a count
     for (double shrink = room.width() / label.width(); shrink < 1 && shrink > 0.3; shrink *= 0.95) {
       if (painter->font().pointSizeF() > 0) {
         font.setPointSizeF(painter->font().pointSizeF() * shrink);

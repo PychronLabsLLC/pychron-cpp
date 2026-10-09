@@ -75,6 +75,7 @@ void Sha256::update(std::span<const std::uint8_t> bytes) {
 }
 
 void Sha256::update(std::string_view bytes) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the text's bytes
   update(std::span(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
 }
 

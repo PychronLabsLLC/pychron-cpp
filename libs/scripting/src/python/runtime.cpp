@@ -185,6 +185,7 @@ void use_bundled_python() {
 #ifdef _WIN32
     _putenv_s("PYTHONHOME", value.c_str());
 #else
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): once, before the interpreter and any thread of it exist
     setenv("PYTHONHOME", value.c_str(), 1);
 #endif
     return;

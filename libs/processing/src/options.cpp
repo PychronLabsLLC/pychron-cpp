@@ -369,6 +369,7 @@ void validate_all(Options& o, std::vector<std::string>& warnings) {
     for (auto& r : rows) validate_all(r, warnings);
 }
 
+// NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved): what it holds is moved out, by kind, below
 void put(toml::table& root, const std::string& dotted, toml::node&& node_value) {
   toml::table* t = &root;
   std::size_t start = 0;

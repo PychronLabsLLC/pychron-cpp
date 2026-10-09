@@ -74,6 +74,7 @@ TEST_F(RegistryTest, CreatesDriverWithNameTransportAndOptions) {
   auto* g = capability<IPressureGauge>(**d);
   ASSERT_NE(g, nullptr);
   EXPECT_DOUBLE_EQ(*g->read_pressure(), 2.5);
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): the factory under test was asked for this type
   EXPECT_EQ(&static_cast<EchoGauge&>(**d).transport(), sim_.get());
 }
 
