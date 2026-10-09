@@ -474,6 +474,7 @@ ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const Le
     std::vector<const FittedPosition::UsedAnalysis*> drawn;
     for (const auto& a : p.analyses)
       if (a.j) drawn.push_back(&a);
+    // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by record id, not by address
     std::sort(drawn.begin(), drawn.end(), [](auto* a, auto* b) { return a->record_id < b->record_id; });
     const double n = static_cast<double>(drawn.size());
     const double step = (kind == FluxAbscissa::Angle ? 4.0 : (hi - lo) * 0.04) / std::max(n - 1.0, 1.0);

@@ -146,6 +146,7 @@ BrowsePage browse_summaries(const std::vector<AnalysisSummary>& rows, const Brow
   std::vector<const AnalysisSummary*> hits;
   for (const auto& r : rows)
     if (matches(q, r, newest)) hits.push_back(&r);
+  // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by newer(), not by address
   std::sort(hits.begin(), hits.end(), [](const auto* a, const auto* b) { return newer(*a, *b); });
   BrowsePage page;
   page.total = hits.size();

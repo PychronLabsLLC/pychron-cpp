@@ -154,6 +154,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
       gd.style = group_style(d, graph, group, group_rows, MarkerShape::Circle);
       gd.items = items;
       std::vector<const DatasetItem*> ordered = items;
+      // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by increment and time, not by address
       std::stable_sort(ordered.begin(), ordered.end(), [](const auto* a, const auto* b) {
         const auto& x = *a->analysis->analysis;
         const auto& y = *b->analysis->analysis;

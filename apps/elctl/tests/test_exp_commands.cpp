@@ -65,6 +65,7 @@ class ElctlExpTest : public ElctlTest {
     const auto open = text.find('"', text.find(':', key));
     if (open == std::string::npos) return std::nullopt;
     int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the count of fields read is checked
     if (std::sscanf(text.c_str() + open, "\"%d-%d-%dT%d:%d:%dZ\"", &y, &mo, &d, &h, &mi, &sec) != 6) return std::nullopt;
     const std::chrono::year_month_day day{std::chrono::year{y}, std::chrono::month{static_cast<unsigned>(mo)},
                                           std::chrono::day{static_cast<unsigned>(d)}};

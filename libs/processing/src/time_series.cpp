@@ -275,6 +275,7 @@ Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) 
       std::vector<const DatasetItem*> items;
       for (const auto& it : d.items())
         if (it.path.graph == graph_index) items.push_back(&it);
+      // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by time, not by address
       std::stable_sort(items.begin(), items.end(), [](const auto* a, const auto* b) {
         return a->analysis->analysis->timestamp < b->analysis->analysis->timestamp;
       });

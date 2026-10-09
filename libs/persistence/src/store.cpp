@@ -798,6 +798,7 @@ Result<void> check_sqlite(Db& db, bool file_backed) {
   auto version = db.select_one(sql::kSqliteVersion);
   if (!version) return fail(version.error());
   int major = 0, minor = 0;
+  // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): a version that does not parse stays 0.0, refused below
   std::sscanf(to_std((*version)->value("v")).c_str(), "%d.%d", &major, &minor);
   if (major < 3 || (major == 3 && minor < 37))
     return fail(ErrorKind::Config, "SQLite >= 3.37 is required (STRICT tables); found " + to_std((*version)->value("v")));

@@ -32,6 +32,7 @@ TEST(Number, WholeTextOnlyAndFinite) {
 
 TEST(Number, IgnoresTheProcessLocale) {
   // A locale with a comma for the decimal point, when the machine has one.
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): one thread here; the process locale is the thing under test
   if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") == nullptr) std::setlocale(LC_NUMERIC, "de_DE");
   EXPECT_EQ(parse_double("2.5"), 2.5);
   EXPECT_FALSE(parse_double("2,5"));

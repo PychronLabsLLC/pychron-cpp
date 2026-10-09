@@ -61,6 +61,7 @@ std::string reply_for(NgxSimModel& m, const std::string& cmd) {
     if (m.start_acq_reply != "E00") return m.start_acq_reply;
     if (m.run && !m.run->done) return "E43";  // already acquiring (pychron's duplicate StartAcq)
     NgxSimModel::Run run;
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the simulator: what is not a number is 0
     run.seconds = std::max(1, std::atoi(args.c_str()));
     run.rcs_id = args.substr(args.find(',') + 1);
     run.start = clock.now();
@@ -79,12 +80,14 @@ std::string reply_for(NgxSimModel& m, const std::string& cmd) {
   }
   if (verb == "GETMASS") return ngx::format_float(m.mass);
   if (verb == "SetMass") {
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the simulator: what is not a number is 0
     m.mass = std::atof(args.c_str());
     return "E00";
   }
   if (verb == "SSO") {
     const auto comma = args.find(',');
     if (comma == std::string::npos) return "E05";
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the simulator: what is not a number is 0
     m.params[args.substr(0, comma)] = std::atof(args.substr(comma + 1).c_str());
     return "E00";
   }
