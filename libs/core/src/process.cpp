@@ -133,12 +133,14 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   for (auto& a : args) argv.push_back(a.data());
   argv.push_back(nullptr);
 
+  // NOLINTNEXTLINE(cppcoreguidelines-init-variables): opaque (a pointer here, a struct on Linux); its _init fills it
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, *in, 0);
   posix_spawn_file_actions_adddup2(&actions, file_out >= 0 ? file_out : out[1], 1);
   posix_spawn_file_actions_adddup2(&actions, out[1], 2);
   // Its own process group, so a timeout kills whatever it started too.
+  // NOLINTNEXTLINE(cppcoreguidelines-init-variables): opaque (a pointer here, a struct on Linux); its _init fills it
   posix_spawnattr_t attr;
   posix_spawnattr_init(&attr);
   posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);

@@ -160,7 +160,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
     g.x.title = o.get_string("x.title").empty() ? q->label() : o.get_string("x.title");
 
     struct GroupData {
-      int group;
+      int group{};
       GroupStyle style;
       GroupItems items;
       std::vector<Val> all, included;

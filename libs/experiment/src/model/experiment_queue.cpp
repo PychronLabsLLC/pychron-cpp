@@ -14,7 +14,7 @@ Unexpected<Error> bad(std::string what) { return fail(ErrorKind::Config, std::mo
 std::size_t uniform_below(std::mt19937_64& rng, std::size_t n) {
   const std::uint64_t range = n;
   const std::uint64_t limit = std::mt19937_64::max() - std::mt19937_64::max() % range;
-  std::uint64_t x;
+  std::uint64_t x = 0;
   do x = rng();
   while (x >= limit);
   return static_cast<std::size_t>(x % range);

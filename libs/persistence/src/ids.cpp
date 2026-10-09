@@ -127,7 +127,7 @@ std::optional<UtcTime> UtcTime::parse(std::string_view s) {
   // YYYY-MM-DDTHH:MM:SS
   if (s.size() < 20 || s[4] != '-' || s[7] != '-' || s[10] != 'T' || s[13] != ':' || s[16] != ':' || s.back() != 'Z')
     return std::nullopt;
-  int y, mo, d, h, mi, se;
+  int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
   if (!parse_int(s.substr(0, 4), y) || !parse_int(s.substr(5, 2), mo) || !parse_int(s.substr(8, 2), d) ||
       !parse_int(s.substr(11, 2), h) || !parse_int(s.substr(14, 2), mi) || !parse_int(s.substr(17, 2), se))
     return std::nullopt;

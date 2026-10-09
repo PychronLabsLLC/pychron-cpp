@@ -108,19 +108,19 @@ class PackagesWindow : public QMainWindow {
   LevelGridModel* grid_;
   QTableView* table_;
   QTreeWidget* tree_;
-  HolderView* holder_view_;
+  HolderView* holder_view_ = nullptr;
   QLabel* message_;
   // Level dock.
-  QComboBox *kind_, *holder_, *production_;
-  QLineEdit *z_, *level_note_;
+  QComboBox *kind_ = nullptr, *holder_ = nullptr, *production_ = nullptr;
+  QLineEdit *z_ = nullptr, *level_note_ = nullptr;
   // Chronology dock.
-  QTableWidget* doses_;
-  QLabel* hours_;
-  QWidget* chronology_page_;
+  QTableWidget* doses_ = nullptr;
+  QLabel* hours_ = nullptr;
+  QWidget* chronology_page_ = nullptr;
   // Sample picker.
-  QComboBox *pick_pi_, *pick_project_;
-  QLineEdit* pick_search_;
-  QListWidget* pick_list_;
+  QComboBox *pick_pi_ = nullptr, *pick_project_ = nullptr;
+  QLineEdit* pick_search_ = nullptr;
+  QListWidget* pick_list_ = nullptr;
 
   std::vector<persistence::IrradiationRow> packages_;
   std::optional<persistence::Uuid> package_, level_;

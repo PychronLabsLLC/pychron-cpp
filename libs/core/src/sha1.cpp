@@ -17,7 +17,7 @@ void compress(std::array<std::uint32_t, 5>& h, const std::uint8_t* p) {
   for (int i = 16; i < 80; ++i) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
   auto [a, b, c, d, e] = h;
   for (int i = 0; i < 80; ++i) {
-    std::uint32_t f, k;
+    std::uint32_t f = 0, k = 0;
     if (i < 20) {
       f = (b & c) | (~b & d);
       k = 0x5a827999;

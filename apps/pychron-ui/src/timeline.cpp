@@ -69,7 +69,7 @@ void TimelineModel::on_run_started(const experiment::executor::RunStarted& e) {
   for (auto& s : segments_)
     if (s.lane == 0 && s.run_id.empty() && !s.end) s.end = std::min(t, s.planned_end.value_or(t));
   auto free = std::find(busy_.begin(), busy_.end(), false);
-  int lane;
+  int lane = 0;
   if (free == busy_.end()) {
     busy_.push_back(true);
     lane = static_cast<int>(busy_.size());

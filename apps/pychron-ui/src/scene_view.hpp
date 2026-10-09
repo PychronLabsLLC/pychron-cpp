@@ -75,7 +75,7 @@ class SceneView : public QWidget {
     std::string tooltip;
   };
   struct HitBox {  // a spectrum step: a click anywhere inside selects it
-    double x0, x1, y0, y1;
+    double x0 = 0, x1 = 0, y0 = 0, y1 = 0;
     HitPoint point;  // the box center
   };
   struct RectInfo {

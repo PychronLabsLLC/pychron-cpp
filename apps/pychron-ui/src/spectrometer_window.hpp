@@ -113,19 +113,19 @@ class SpectrometerWindow : public QMainWindow {
 
   QFrame* banner_;
   QLabel* banner_label_;
-  QComboBox* integration_;
-  QLabel* actual_integration_;
-  QDoubleSpinBox* scan_width_;
-  QComboBox* scale_;
-  QCheckBox* autoscale_;
-  QLineEdit* ymax_;
-  QLineEdit* ymin_;
+  QComboBox* integration_ = nullptr;
+  QLabel* actual_integration_ = nullptr;
+  QDoubleSpinBox* scan_width_ = nullptr;
+  QComboBox* scale_ = nullptr;
+  QCheckBox* autoscale_ = nullptr;
+  QLineEdit* ymax_ = nullptr;
+  QLineEdit* ymin_ = nullptr;
   std::vector<QCheckBox*> shown_;  // model order
-  QComboBox* target_detector_;
-  QComboBox* target_isotope_;
-  QPushButton* apply_;
-  QLabel* position_;
-  QLabel* mass_;
+  QComboBox* target_detector_ = nullptr;
+  QComboBox* target_isotope_ = nullptr;
+  QPushButton* apply_ = nullptr;
+  QLabel* position_ = nullptr;
+  QLabel* mass_ = nullptr;
 
   QTimer refresh_;
   bool dirty_ = true;          // the model changed since the last refresh

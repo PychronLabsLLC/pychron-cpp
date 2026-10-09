@@ -136,7 +136,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
     g.x.max = 100.0;
 
     struct GroupData {
-      int group;
+      int group{};
       GroupStyle style;
       GroupItems items;
       std::vector<Step> steps;   // step order

@@ -349,7 +349,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
       clock_.notify_all(cv_);
     }
   };
-  std::size_t at;
+  std::size_t at = 0;
   {
     std::lock_guard lock(mutex_);
     at = last_started_row_;
@@ -611,7 +611,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
 
     write_state(queue, row + 1, out);  // consumed from here on
     QueueSpec header;
-    bool overlapped;
+    bool overlapped = false;
     {
       std::lock_guard lock(queue_mutex_);
       header = queue.spec();

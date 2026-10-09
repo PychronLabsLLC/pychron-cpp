@@ -419,7 +419,7 @@ class BatchWriter::Impl final : public IImportState {
   // ------------------------------------------------------------ conflicts
 
   struct KnownConflict {
-    P::ConflictKind kind;
+    P::ConflictKind kind{};
     std::string resolution;
   };
 

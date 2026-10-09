@@ -104,36 +104,36 @@ class RunFactoryPanel : public QWidget {
   experiment::FactoryForm overrides_carrier_;  // keeps overrides from defaults or a row
   std::vector<std::string> conditionals_;      // the ticked conditionals files, in the order ticked
 
-  QComboBox* type_;
-  QLineEdit* identifier_;
-  QLineEdit* aliquot_;
-  QLineEdit* step_;
-  QLineEdit* device_;
-  QLineEdit* position_;
-  QCheckBox* per_hole_;
-  QSpinBox* identifier_step_;
-  QDoubleSpinBox* value_;
-  QComboBox* units_;
-  QDoubleSpinBox* duration_;
-  QDoubleSpinBox* cleanup_;
-  QComboBox* script_;
-  QLineEdit* step_heat_;
-  QComboBox* plan_;
-  QComboBox* post_equilibration_;
-  QComboBox* post_measurement_;
-  QLineEdit* comment_;
-  QToolButton* conditionals_button_;
-  QLabel* preview_;
-  QPushButton* add_;
-  QCheckBox* after_selection_;
-  QSpinBox* inc_identifier_;
-  QSpinBox* inc_position_;
-  QComboBox* freq_type_;
-  QSpinBox* freq_every_;
-  QCheckBox* freq_before_;
-  QCheckBox* freq_after_;
-  QComboBox* block_;
-  QSpinBox* block_times_;
+  QComboBox* type_ = nullptr;
+  QLineEdit* identifier_ = nullptr;
+  QLineEdit* aliquot_ = nullptr;
+  QLineEdit* step_ = nullptr;
+  QLineEdit* device_ = nullptr;
+  QLineEdit* position_ = nullptr;
+  QCheckBox* per_hole_ = nullptr;
+  QSpinBox* identifier_step_ = nullptr;
+  QDoubleSpinBox* value_ = nullptr;
+  QComboBox* units_ = nullptr;
+  QDoubleSpinBox* duration_ = nullptr;
+  QDoubleSpinBox* cleanup_ = nullptr;
+  QComboBox* script_ = nullptr;
+  QLineEdit* step_heat_ = nullptr;
+  QComboBox* plan_ = nullptr;
+  QComboBox* post_equilibration_ = nullptr;
+  QComboBox* post_measurement_ = nullptr;
+  QLineEdit* comment_ = nullptr;
+  QToolButton* conditionals_button_ = nullptr;
+  QLabel* preview_ = nullptr;
+  QPushButton* add_ = nullptr;
+  QCheckBox* after_selection_ = nullptr;
+  QSpinBox* inc_identifier_ = nullptr;
+  QSpinBox* inc_position_ = nullptr;
+  QComboBox* freq_type_ = nullptr;
+  QSpinBox* freq_every_ = nullptr;
+  QCheckBox* freq_before_ = nullptr;
+  QCheckBox* freq_after_ = nullptr;
+  QComboBox* block_ = nullptr;
+  QSpinBox* block_times_ = nullptr;
   std::vector<QWidget*> groups_;  // disabled while locked
   QWidget* block_box_ = nullptr;  // stays disabled when the lab has no blocks
 };

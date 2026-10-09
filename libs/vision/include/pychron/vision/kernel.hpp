@@ -24,14 +24,14 @@ std::uint16_t otsu(const FrameView&, double mask_radius_px);
 std::uint16_t median_in_mask(const FrameView&, double mask_radius_px);
 
 struct Component {
-  int label;
-  double area;
+  int label{};
+  double area{};
   Vec2 centroid;
   Rect bbox;
-  double perimeter;
+  double perimeter{};
   // Within 1.5 px of the mask circle or of the frame border (a blob cut off by
   // either is truncated, so its shape cannot be trusted).
-  bool touches_mask_edge;
+  bool touches_mask_edge{};
   std::vector<Vec2> boundary;
 };
 
@@ -42,8 +42,8 @@ std::vector<Component> components(const std::vector<std::uint8_t>& mask, int w, 
 
 struct CircleFit {
   Vec2 center;
-  double radius;
-  double rms;  // RMS of |p - center| - radius
+  double radius = 0;
+  double rms = 0;  // RMS of |p - center| - radius
 };
 // Algebraic (Kasa) fit. Degenerate input (< 3 points, collinear) yields
 // infinite radius and rms rather than a crash.

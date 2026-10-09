@@ -131,7 +131,7 @@ class MenuHub : public QObject {
 
   struct Group {
     QPointer<QWidget> owner;
-    Menu menu;
+    Menu menu{};
     QList<QPointer<QAction>> actions;
   };
   struct Bar {
