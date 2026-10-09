@@ -197,7 +197,7 @@ Result<FluxFit> fit_surface(std::span<const Monitor> monitors, std::span<const P
       ++used;
     }
   }
-  const double dof = static_cast<double>(n - q);
+  const auto dof = static_cast<double>(n - q);
   const double s2 = ssr / dof;
 
   FluxFit out;

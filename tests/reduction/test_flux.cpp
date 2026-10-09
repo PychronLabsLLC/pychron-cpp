@@ -391,7 +391,7 @@ TEST(FluxModels, ZeroErrorInAWeightedModelNamesTheMonitor) {  // X5
   const std::vector<pr::Monitor> m{{"6", {0, 0}, 1.0, 0.1}, {"7", {10, 0}, 2.0, 0.0}};
   auto f = pr::fit_flux(m, std::vector<pr::Point>{{1, 0}}, options(pr::ModelKind::WeightedMean));
   ASSERT_FALSE(f);
-  EXPECT_NE(f.error().what.find("7"), std::string::npos) << f.error().what;
+  EXPECT_NE(f.error().what.find('7'), std::string::npos) << f.error().what;
   // Matching has no use for the weights.
   EXPECT_TRUE(pr::fit_flux(m, std::vector<pr::Point>{{1, 0}}, options(pr::ModelKind::Matching)));
 }
@@ -498,7 +498,7 @@ std::vector<pr::Monitor> grid(F f) {
   std::vector<pr::Monitor> out;
   for (int i = 0; i < 5; ++i)
     for (int k = 0; k < 5; ++k)
-      out.push_back({std::to_string(i) + "," + std::to_string(k), {double(i), double(k)}, f(double(i), double(k)), 0.1});
+      out.push_back({std::to_string(i) + "," + std::to_string(k), {static_cast<double>(i), static_cast<double>(k)}, f(static_cast<double>(i), static_cast<double>(k)), 0.1});
   return out;
 }
 
@@ -691,9 +691,9 @@ TEST(FluxLeastSquares, MswdOutsideLimitsIsNoted) {
   EXPECT_TRUE(good->notes.empty()) << good->mswd;
 
   // The reference offsets, 20 times larger.
-  for (std::size_t i = 0; i < m.size(); ++i) {
-    const double base = 1e-3 * (1 + 0.002 * m[i].at.x - 0.001 * m[i].at.y);
-    m[i].j = base + 20.0 * (m[i].j - base);
+  for (auto& i : m) {
+    const double base = 1e-3 * (1 + 0.002 * i.at.x - 0.001 * i.at.y);
+    i.j = base + 20.0 * (i.j - base);
   }
   auto bad = pr::fit_flux(m, at, ls_options(pr::ModelKind::Plane, true));
   ASSERT_TRUE(bad);

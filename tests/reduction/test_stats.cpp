@@ -227,7 +227,7 @@ TEST(Stats, YorkRejectsBadInput) {
 
 TEST(Stats, YorkExactLine) {
   std::vector<pr::XyPoint> pts;
-  for (int i = 0; i < 5; ++i) pts.push_back({double(i), 0.1, 2.0 + 3.0 * i, 0.1, 0.3});
+  for (int i = 0; i < 5; ++i) pts.push_back({static_cast<double>(i), 0.1, 2.0 + 3.0 * i, 0.1, 0.3});
   auto f = pr::york_fit(pts);
   ASSERT_TRUE(f);
   EXPECT_NEAR(f->slope, 3.0, 1e-9);

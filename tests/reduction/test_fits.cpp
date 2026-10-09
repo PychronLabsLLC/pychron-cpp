@@ -53,7 +53,7 @@ std::vector<Expectation> load_expectations() {
   EXPECT_TRUE(in.is_open());
   std::string line;
   while (std::getline(in, line)) {
-    if (line.empty() || line[0] == '#' || line.rfind("series,", 0) == 0) continue;
+    if (line.empty() || line[0] == '#' || line.starts_with("series,")) continue;
     auto c = split(line, ',');
     Expectation e;
     e.series = c.at(0);

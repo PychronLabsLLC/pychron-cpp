@@ -23,7 +23,6 @@ namespace pychron::reduction {
 namespace {
 
 using detail::least_squares;
-using detail::LeastSquares;
 using detail::Matrix;
 
 // A solved model on a subset of points.
@@ -217,7 +216,7 @@ void subset(const Series& s, const std::set<std::size_t>& excluded, std::vector<
   x.clear();
   y.clear();
   for (std::size_t i = 0; i < s.x.size(); ++i) {
-    if (excluded.count(i)) continue;
+    if (excluded.contains(i)) continue;
     x.push_back(s.x[i]);
     y.push_back(s.y[i]);
   }

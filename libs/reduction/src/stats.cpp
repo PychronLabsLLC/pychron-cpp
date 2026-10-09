@@ -6,6 +6,7 @@
 #include <limits>
 #include <numbers>
 #include <string>
+#include <utility>
 
 namespace pychron::reduction {
 
@@ -141,7 +142,7 @@ double mswd(std::span<const double> values, std::span<const double> errors, doub
     ssw += r * r;
     ++n;
   }
-  if (static_cast<long>(n) <= k) return 0.0;
+  if (std::cmp_less_equal(n, k)) return 0.0;
   return ssw / static_cast<double>(static_cast<long>(n) - k);
 }
 
@@ -258,12 +259,12 @@ double student_t_quantile(double p, double dof) {
 std::pair<double, double> mswd_limits(std::size_t n, int k) {
   const long dof = static_cast<long>(n) - k;
   if (dof <= 0) return {0.0, 0.0};
-  const double d = static_cast<double>(dof);
+  const auto d = static_cast<double>(dof);
   return {chi2_quantile(0.025, d) / d, chi2_quantile(0.975, d) / d};
 }
 
 bool mswd_acceptable(double mswd_value, std::size_t n, int k) {
-  if (static_cast<long>(n) <= k) return false;
+  if (std::cmp_less_equal(n, k)) return false;
   const auto [low, high] = mswd_limits(n, k);
   return low <= mswd_value && mswd_value <= high;
 }
@@ -362,7 +363,7 @@ std::optional<StepRange> find_plateau(std::span<const double> ages, std::span<co
       }
       included.push_back(i);
       signal += gas[i];
-      if (static_cast<int>(included.size()) < c.nsteps) continue;
+      if (std::cmp_less(included.size(), c.nsteps)) continue;
       if (c.method == PlateauMethod::Mahon) {
         std::vector<double> a, e;
         for (std::size_t j : included) {

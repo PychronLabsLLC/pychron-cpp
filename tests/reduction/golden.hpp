@@ -62,7 +62,7 @@ struct Json {
     return type == Type::Array ? array.size() : type == Type::Object ? object.size() : 0;
   }
   bool contains(std::string_view key) const {
-    return type == Type::Object && object.find(key) != object.end();
+    return type == Type::Object && object.contains(key);
   }
   // Missing keys / indices and wrong types yield a shared null value.
   const Json& operator[](std::string_view key) const {
