@@ -210,7 +210,9 @@ buttons.
 - `docs/dev_setup.md`: "Queue > Open" → "File > Open".
 - `menu_hub.hpp` header comment: File's fixed items and proxy rule; example
   "Save queue / Save script" reworded.
-- No user guide names these menus today (checked by grep); none added.
+- User guide: `docs/user/01-getting-started.md` (section 6 File, the
+  shortcut tables), `04-experiments.md` (3.1 Files, 7.6), `09-scripting.md`
+  (section 6).
 
 ## 9. Out of scope
 

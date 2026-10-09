@@ -268,22 +268,34 @@ front. A menu with nothing to offer yet shows a greyed hint,
 
 | Item | What it does |
 |---|---|
+| **New…**, **Open…**, **Save**, **Save As…** | Act on what the window in front edits, and say so: **Save Queue** in the Experiment window, **Save Script** in the script editor, **Save Conditionals** in the conditionals editor. Greyed in a window that edits no file. See the table below. |
 | **Installations…** | Opens the Installations dialog (section 10). Shown only when the window was started from an install or can switch installs. Choosing another install closes this window (asking about unsaved queue edits) and starts Pychron again on it. |
 | **Preferences…** | Opens the Preferences dialog (section 9). On macOS it appears in the application menu. |
 | **Quit** | Closes the window. In the main window this asks about unsaved queue edits. |
 
-### Queue, Rows, Executor, Scripts
+What the four file commands do, by the window in front:
 
-These four menus belong to the **Experiment window** and work only while it is
-in front. They are covered in [04 Experiments](04-experiments.md); the items
-are listed here so you know what to expect.
+| Window | New… (Ctrl+N) | Open… (Ctrl+O) | Save (Ctrl+S) | Save As… |
+|---|---|---|---|---|
+| **Experiment** | An empty queue with no file. Not while a queue is running. | A queue file. Not while a queue is running. | The queue, to its file (asks for one the first time). | The queue, to a file you choose. |
+| **Script editor** | Asks for the kind and the name, and starts the script. | One of the lab's scripts, chosen from a list. | The script in the current tab. | (greyed) |
+| **Conditionals editor** | Asks for a name and starts the file. | One of the lab's files, chosen from a list. | The open file. | (greyed) |
 
-| Menu | Items |
+New and Open ask about unsaved changes first, where they would replace them.
+
+### Experiment
+
+Holds four submenus, **Queue**, **Rows**, **Executor** and **Scripts**. They
+belong to the **Experiment window** and work only while it is in front. They
+are covered in [04 Experiments](04-experiments.md); the items are listed here
+so you know what to expect.
+
+| Submenu | Items |
 |---|---|
-| **Queue** | Open..., Save, Save As..., Revalidate |
+| **Queue** | Revalidate |
 | **Rows** | Move Up, Move Down, Duplicate, Delete, Toggle Skip, End After, Edit Extraction Script, Edit Post-Measurement Script, Set Conditionals... |
 | **Executor** | Start, Stop, Cancel..., Abort..., Truncate, Send Test Notification (see [notifications](../notifications.md)) |
-| **Scripts** | Script Editor..., Conditionals Editor... (from the Experiment window). In the script editor it holds New..., Save, Close Tab, Check Now, Go to Gosub; in the conditionals editor, Save. |
+| **Scripts** | Script Editor..., Conditionals Editor... (from the Experiment window). In the script editor it holds Close Tab, Check Now, Go to Gosub. |
 
 Stop ends the queue after the current run; Cancel and Abort ask for
 confirmation and end the current run (Abort immediately).
@@ -367,12 +379,21 @@ work in every window."
 | Command palette | Ctrl+Shift+P |
 | Minimize the window in front | Ctrl+M |
 
+### Experiment window and editors
+
+File > New, Open and Save, in the Experiment window, the script editor and
+the conditionals editor (each acts on what that window edits).
+
+| Command | Shortcut |
+|---|---|
+| New… | Ctrl+N |
+| Open… | Ctrl+O |
+| Save | Ctrl+S |
+
 ### Experiment window
 
 | Command | Shortcut |
 |---|---|
-| Open queue… | Ctrl+O |
-| Save queue | Ctrl+S |
 | Move rows up | Ctrl+Up |
 | Move rows down | Ctrl+Down |
 | Duplicate rows | Ctrl+D |
@@ -387,17 +408,9 @@ work in every window."
 
 | Command | Shortcut |
 |---|---|
-| New script… | Ctrl+N |
-| Save script | Ctrl+S |
 | Close tab | Ctrl+W |
 | Check now | F7 |
 | Go to the gosub under the cursor | F2 |
-
-### Conditionals editor
-
-| Command | Shortcut |
-|---|---|
-| Save conditionals | Ctrl+S |
 
 ### Data browser
 
@@ -551,10 +564,10 @@ simulated time run 50 times faster than the clock on the wall.
 **Minutes 6 to 11: run the example queue.**
 
 6. Press **Ctrl+Shift+E** (or View > Experiment). The three rows of
-   `experiment.toml` are loaded. Use **Queue > Revalidate** to re-check them
+   `experiment.toml` are loaded. Use **Experiment > Queue > Revalidate** to re-check them
    against the lab's plans and scripts.
-7. Try **Rows > Toggle Skip** (Ctrl+K) on the first row, then toggle it back.
-8. Start the queue: **Executor > Start** (F5). Watch the rows change state, the
+7. Try **Experiment > Rows > Toggle Skip** (Ctrl+K) on the first row, then toggle it back.
+8. Start the queue: **Experiment > Executor > Start** (F5). Watch the rows change state, the
    timeline, and the isotope evolutions as each run measures. At 50 times speed
    the queue finishes in a few minutes of wall time.
 9. Back in the main window the valves open and close as the scripts run, and the

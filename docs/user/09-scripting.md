@@ -395,16 +395,19 @@ def main():
 
 ## 6. The script editor
 
-Open it with **Scripts > Script Editor...** (Ctrl+Shift+K) in the Experiment
-window, or select a row and choose **Rows > Edit Extraction Script** or
+Open it with **Experiment > Scripts > Script Editor...** (Ctrl+Shift+K) in the
+Experiment window, or select a row and choose **Experiment > Rows > Edit
+Extraction Script** or
 **Edit Post-Measurement Script** (also in the right-click menu), which opens
 the script that row names.
 
-* **Left:** the lab's scripts by kind. Double-click to open. Every open script
+* **Left:** the lab's scripts by kind. Double-click to open, or choose one
+  with **File > Open Script…** (Ctrl+O). Every open script
   is a tab with highlighting and completion of the commands that kind may call.
-* **New...** (Ctrl+N) asks for the **Kind** and the **Name** (`co2_degas` or
-  `co2:degas`) and makes `<lab>/scripts/<kind>/<name>.py` with a starting
-  `main()`. **Save** is Ctrl+S, **Close Tab** Ctrl+W. Closing a tab or the
+* **File > New Script…** (Ctrl+N) asks for the **Kind** and the **Name**
+  (`co2_degas` or `co2:degas`) and makes `<lab>/scripts/<kind>/<name>.py` with
+  a starting `main()`. **File > Save Script** is Ctrl+S; **Close Tab**
+  (Ctrl+W) is under **Experiment > Scripts**. Closing a tab or the
   window with unsaved edits asks first.
 * **Bottom:** the checker's messages (a line number, `error` or `warning`, and
   the message; click one to jump to the line), and an **Estimate**, such as

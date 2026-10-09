@@ -190,9 +190,9 @@ prints the queue, the estimated time (`ETA`) and every problem.
 
 ## 3. The Experiment window
 
-Open it from **View > Experiment** (Ctrl+Shift+E). Its menus appear in the
-menu bar while the window is active: **Queue**, **Rows**, **Scripts**,
-**Executor**.
+Open it from **View > Experiment** (Ctrl+Shift+E). Its menus are the submenus of
+**Experiment** in the menu bar, live while the window is active: **Queue**,
+**Rows**, **Executor**, **Scripts**. The queue's file commands are in **File**.
 
 | Area | What it is |
 |---|---|
@@ -219,13 +219,14 @@ Comment.
 
 ### 3.1 Files
 
-**Queue > Open...** (Ctrl+O) loads a queue; **Save** (Ctrl+S) and **Save
-As...** write it; **Revalidate** checks it again. You cannot open another
-queue while one is running. Closing the window asks about unsaved changes and,
+**File > Open Queue…** (Ctrl+O) loads a queue; **Save Queue** (Ctrl+S) and
+**Save Queue As…** write it; **New Queue…** (Ctrl+N) starts an empty one with
+no file. **Experiment > Queue > Revalidate** checks the queue again. You
+cannot open or start another queue while one is running. Closing the window asks about unsaved changes and,
 if a queue is running, whether to stop it after the current run. If you
 simply hide the window the queue keeps running.
 
-### 3.2 Row operations (the Rows menu, and the right-click menu)
+### 3.2 Row operations (Experiment > Rows, and the right-click menu)
 
 | Command | Shortcut |
 |---|---|
@@ -590,11 +591,13 @@ Events list ("queue: ...") and in the run's summary.
 
 ### 7.6 The Conditionals Editor
 
-**Scripts > Conditionals Editor...** (or the **Edit...** button beside the
+**Experiment > Scripts > Conditionals Editor...** (or the **Edit...** button beside the
 queue conditionals box) edits the files in `<lab>/conditionals` without
 touching TOML by hand.
 
-* **Left:** the lab's files, `system` first. **+** creates a file (a plain
+* **Left:** the lab's files, `system` first. Click one to open it, or use
+  **File > Open Conditionals…** (Ctrl+O). **+** (also **File > New
+  Conditionals…**, Ctrl+N) creates a file (a plain
   name: no folders, no leading dot, no `.toml`), **-** deletes the selected
   file (asking first, and telling you if the open queue uses it).
 * **Right:** the open file's conditionals grouped by kind. **Add**,
@@ -611,7 +614,7 @@ touching TOML by hand.
 Errors (a check that does not parse, a rule of its kind, a duplicate name)
 block saving. About 0.6 seconds after you stop typing the editor also checks
 isotope, detector and gauge names against the instrument; those are warnings
-only. **Save** (Ctrl+S) writes the canonical TOML, so a hand-written file
+only. **File > Save Conditionals** (Ctrl+S) writes the canonical TOML, so a hand-written file
 loses its comments; the editor asks first. A saved file takes effect from
 the next run (or the next queue start, if it is the queue's conditionals).
 A file that does not parse is shown with the reason and cannot be edited
@@ -623,7 +626,7 @@ there; fix it in a text editor.
 
 Check that the queue has no errors (the Start button stays disabled until it
 is runnable), optionally select the row to start from, and press **Start**
-(F5, or **Executor > Start**). Start begins at the **selected row**, or row 0
+(F5, or **Experiment > Executor > Start**). Start begins at the **selected row**, or row 0
 if none is selected. The window starts the queue on the instrument; to try
 without hardware use a simulation (section 9).
 
@@ -672,7 +675,7 @@ unfinished run may also end Failed, Cancelled or Aborted.
 
 ### 8.3 Stop, Cancel, Abort, Truncate
 
-The buttons in the Executor pane (also the **Executor** menu):
+The buttons in the Executor pane (also **Experiment > Executor**):
 
 | Button | Effect |
 |---|---|
@@ -749,7 +752,7 @@ and when the queue ends: email, a Slack-style webhook, or a local program.
 Set it up in `<lab>/notifications.toml`; see [notifications](../notifications.md).
 The Executor pane's **Notify** line lists the configured channels ("off" when
 there is no file), and sent messages and failures appear in the Events list.
-**Executor > Send Test Notification** (or `elctl exp notify`) sends a test on
+**Experiment > Executor > Send Test Notification** (or `elctl exp notify`) sends a test on
 every channel.
 
 ## 9. Simulation and simulated speed

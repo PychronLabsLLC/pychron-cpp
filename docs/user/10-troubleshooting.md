@@ -47,7 +47,7 @@ differ slightly.
   `thermo_qtegra` driver on a `sim` transport. This stops a dry run being
   mistaken for real hardware. Use the `sim-*` spectrometer configs.
 - **Entry menu missing:** it appears only when there is a database.
-- **Queue, Rows, Executor, Scripts menus say "Open View > Experiment to use this menu":** open the Experiment window first.
+- **The Experiment menu's Queue, Rows, Executor, Scripts say "Open View > Experiment to use this menu":** open the Experiment window first.
 
 ## Extraction line
 
