@@ -141,15 +141,21 @@ int go_online(const ConnectFlags& flags, bool need_login, Io io, const Earthbank
     return unsigned_because("--base-url is not the server of profile '" + online.profile->name + "', and its password is not sent elsewhere");
   if (online.profile->username.empty()) return unsigned_because("profile '" + online.profile->name + "' has no user name");
 
+  // The store first, then the variable. A store that cannot be opened (a
+  // locked keyring) is an error only when the variable gives nothing either.
   std::optional<std::string> password;
+  std::optional<Error> store_error;
   auto kept = parts.secrets->get(eb::secret_account(*online.profile));
-  if (!kept) {
-    if (need_login) return fatal(io, kept.error());
-    io.err << "warning: " << kept.error().what << '\n';
-  } else {
+  if (kept) {
     password = std::move(*kept);
+  } else {
+    store_error = kept.error();
   }
   if (!password) password = password_from_environment();
+  if (!password && store_error) {
+    if (need_login) return fatal(io, *store_error);
+    io.err << "warning: " << store_error->what << '\n';
+  }
   if (!password)
     return unsigned_because("no password is kept for profile '" + online.profile->name + "' and $" + kPasswordVariable +
                             " is not set");

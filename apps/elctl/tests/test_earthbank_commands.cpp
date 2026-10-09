@@ -850,6 +850,44 @@ TEST_F(ElctlEarthbankAccount, AccountPrintsTheName) {
   EXPECT_TRUE(contains(missing.err, "no profile 'other'")) << missing.err;
 }
 
+// A keyring that cannot be opened (locked, no session) does not stop a script
+// that gives the password in the variable.
+TEST_F(ElctlEarthbankAccount, AStoreThatFailsDoesNotBlockTheVariable) {
+  class Broken final : public pychron::earthbank::ISecretStore {
+   public:
+    std::string backend() const override { return "broken"; }
+    bool persistent() const override { return true; }
+    pychron::Result<std::optional<std::string>> get(std::string_view) override {
+      return pychron::fail(pychron::ErrorKind::Io, "broken: the keyring is locked");
+    }
+    pychron::Result<void> set(std::string_view, std::string_view) override { return {}; }
+    pychron::Result<void> erase(std::string_view) override { return {}; }
+  } broken;
+  ASSERT_EQ(log_in().code, elctl::kOk);
+  const auto run = [&](std::vector<std::string> args) {
+    std::istringstream in;
+    std::ostringstream out, err;
+    args.insert(args.end(), {"--profiles", profiles_.string()});
+    Outcome o;
+    o.code = elctl::earthbank_command(args, elctl::Io{in, out, err}, elctl::EarthbankDeps{&spy_, &broken});
+    o.out = out.str();
+    o.err = err.str();
+    return o;
+  };
+  set_variable(bank_.password());
+  EXPECT_EQ(run({"account"}).code, elctl::kOk);
+  EXPECT_EQ(run({"packages"}).code, elctl::kOk);
+  // With no variable the store's own words are the error.
+  set_variable(std::nullopt);
+  const Outcome none = run({"account"});
+  EXPECT_EQ(none.code, elctl::kUsage);
+  EXPECT_TRUE(contains(none.err, "the keyring is locked")) << none.err;
+  // A pre-flight goes on, unsigned, and says what the store said.
+  const Outcome pre = run({"preflight", "--db", db_});
+  EXPECT_TRUE(contains(pre.err, "the keyring is locked")) << pre.err;
+  EXPECT_TRUE(contains(pre.out, "not signed in")) << pre.out;
+}
+
 TEST_F(ElctlEarthbankAccount, PackagesListsAndCreates) {
   ASSERT_EQ(log_in().code, elctl::kOk);
   const Outcome list = with_profiles({"packages"});
