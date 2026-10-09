@@ -156,10 +156,10 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   edit_controls_ = {add_button, remove_button, duplicate_button, up_button, down_button,
                     disable_add, disable_remove, form_,          disable_};
 
-  // In the unified Scripts menu (MenuHub), enabled while this window is active.
-  auto* save_action = new QAction(tr("&Save Conditionals"), this);
-  save_action->setShortcut(key(Shortcut::SaveConditionals));
-  MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, {save_action}, MenuHub::Scope::Window);
+  // What the File menu (MenuHub) does while this window is in front; the
+  // keys are the menu's.
+  auto* save_action = new QAction(tr("&Save"), this);
+  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_action, tr("Conditionals"));
   connect(save_action, &QAction::triggered, this, [this] {
     QString error;
     if (!save(&error) && !error.isEmpty()) QMessageBox::warning(this, tr("Save"), error);

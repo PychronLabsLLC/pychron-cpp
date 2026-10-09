@@ -24,6 +24,7 @@
 #include "pychron/experiment/lab/scripts.hpp"
 #include "script_highlighter.hpp"
 
+class QAction;
 class QLabel;
 class QListWidget;
 class QTabWidget;
@@ -100,6 +101,8 @@ class ScriptEditorWindow : public QMainWindow {
   QTabWidget* tabs_;
   QListWidget* problems_;
   QLabel* status_;
+  QAction* new_ = nullptr;   // what File > New and Save do here
+  QAction* save_ = nullptr;
   QTimer check_timer_;
   std::function<Unsaved(const QString&)> ask_unsaved_;
 };

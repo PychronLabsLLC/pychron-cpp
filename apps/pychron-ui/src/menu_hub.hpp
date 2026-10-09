@@ -19,10 +19,17 @@
 //
 // Windows keep owning their actions and contribute them here. App actions
 // (Preferences, View > Spectrometer, About) work from every window.
-// Window actions (Save queue, Delete rows, Start) are enabled only while
-// their window is active, so the same shortcut can mean Save queue in the
-// experiment window and Save script in the script editor; the action's own
+// Window actions (Delete rows, Start, Close Tab) are enabled only while
+// their window is active, so the same shortcut can mean one thing in the
+// experiment window and another in the script editor; the action's own
 // enabled state still applies on top.
+//
+// File begins with the hub's own New, Open, Save and Save As, once, whatever
+// windows there are. Each stands for the action the window in front gave for
+// it (set_file_action): Save saves the queue in the experiment window and the
+// script in the script editor, says which ("Save Queue"), and is greyed in
+// a window that gave none. The keys are the hub's (Save As has none); a
+// window's own action has none.
 //
 // Per-window bars are installed when a window is first shown: every
 // QMainWindow, and any other top-level widget with a layout. Dialogs, popups
@@ -72,6 +79,8 @@ class MenuHub : public QObject {
     Shared,     // one parentless bar for every window (macOS)
   };
   static constexpr std::size_t kMenus = 10;
+  enum class FileRole { New, Open, Save, SaveAs };
+  static constexpr std::size_t kFileRoles = 4;
 
   // The application's hub (created on first use; needs a QApplication).
   static MenuHub& instance();
@@ -87,6 +96,14 @@ class MenuHub : public QObject {
   // in contribution order, for as long as `owner` lives. `owner` is the
   // window the actions belong to (its top-level window decides Window scope).
   void contribute(QWidget* owner, Menu menu, const QList<QAction*>& actions, Scope scope);
+
+  // `action` is what File > `role` does while `owner`'s window is in front,
+  // for as long as both live; `noun` names what it acts on ("Queue"). The
+  // action is put in no menu and must have no shortcut. Given again for the
+  // same owner and role, it replaces the one before.
+  void set_file_action(QWidget* owner, FileRole role, QAction* action, const QString& noun);
+  // The hub's own File item for `role` (the same in every bar).
+  QAction* file_action(FileRole role) const { return file_[static_cast<std::size_t>(role)]; }
 
   // Gives `window` the unified bar now, if it is a window that takes one and
   // has none yet (normally done when it is first shown). Returns the bar it
@@ -165,6 +182,12 @@ class MenuHub : public QObject {
     QPointer<QWidget> owner;
     QPointer<QActionGroup> group;
   };
+  struct FileTarget {
+    QPointer<QWidget> owner;
+    FileRole role{};
+    QPointer<QAction> action;
+    QString noun;
+  };
 
   static bool takes_bar(const QWidget* window);
   Bar make_bar(QMenuBar* bar);
@@ -172,6 +195,8 @@ class MenuHub : public QObject {
   void rebuild(Bar& bar);
   void schedule_rebuild();
   void update_gates();
+  const FileTarget* file_target(FileRole role) const;  // of the window in front, or nullptr
+  void update_file_actions();
   void add_window(QWidget* window);
   void refresh_windows();
   QList<QAction*> window_menu() const;  // nullptr: a separator
@@ -187,6 +212,8 @@ class MenuHub : public QObject {
   std::vector<Group> groups_;
   std::vector<Bar> bars_;
   std::vector<Gate> gates_;
+  std::vector<FileTarget> file_targets_;
+  std::array<QAction*, kFileRoles> file_{};
   struct Entry {
     QPointer<QWidget> window;
     QPointer<QAction> action;

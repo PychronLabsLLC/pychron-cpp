@@ -37,8 +37,10 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
       {S::CommandPalette, C::Everywhere, QStringLiteral("Command palette"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_P)},
       {S::MinimizeWindow, C::Everywhere, QStringLiteral("Minimize the window in front"), keys(Qt::CTRL | Qt::Key_M)},
 
-      {S::OpenQueue, C::ExperimentWindow, QStringLiteral("Open queue…"), QKeySequence(QKeySequence::Open)},
-      {S::SaveQueue, C::ExperimentWindow, QStringLiteral("Save queue"), QKeySequence(QKeySequence::Save)},
+      {S::FileNew, C::FileMenu, QStringLiteral("New…"), QKeySequence(QKeySequence::New)},
+      {S::FileOpen, C::FileMenu, QStringLiteral("Open…"), QKeySequence(QKeySequence::Open)},
+      {S::FileSave, C::FileMenu, QStringLiteral("Save"), QKeySequence(QKeySequence::Save)},
+
       {S::MoveRowsUp, C::ExperimentWindow, QStringLiteral("Move rows up"), keys(Qt::CTRL | Qt::Key_Up)},
       {S::MoveRowsDown, C::ExperimentWindow, QStringLiteral("Move rows down"), keys(Qt::CTRL | Qt::Key_Down)},
       {S::DuplicateRows, C::ExperimentWindow, QStringLiteral("Duplicate rows"), keys(Qt::CTRL | Qt::Key_D)},
@@ -49,13 +51,9 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
       {S::StartQueue, C::ExperimentWindow, QStringLiteral("Start the queue"), keys(Qt::Key_F5)},
       {S::ScriptEditor, C::ExperimentWindow, QStringLiteral("Script editor"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_K)},
 
-      {S::NewScript, C::ScriptEditor, QStringLiteral("New script…"), QKeySequence(QKeySequence::New)},
-      {S::SaveScript, C::ScriptEditor, QStringLiteral("Save script"), QKeySequence(QKeySequence::Save)},
       {S::CloseScriptTab, C::ScriptEditor, QStringLiteral("Close tab"), QKeySequence(QKeySequence::Close)},
       {S::CheckScript, C::ScriptEditor, QStringLiteral("Check now"), keys(Qt::Key_F7)},
       {S::GoToGosub, C::ScriptEditor, QStringLiteral("Go to the gosub under the cursor"), keys(Qt::Key_F2)},
-      {S::SaveConditionals, C::ConditionalsEditor, QStringLiteral("Save conditionals"),
-       QKeySequence(QKeySequence::Save)},
 
       {S::RecallNext, C::DataBrowser, QStringLiteral("Recall the next analysis"), keys(Qt::CTRL | Qt::Key_N)},
       {S::RecallPrevious, C::DataBrowser, QStringLiteral("Recall the previous analysis"), keys(Qt::CTRL | Qt::Key_B)},
@@ -69,16 +67,23 @@ QKeySequence key(Shortcut id) {
   return it == c.end() ? QKeySequence() : it->key;
 }
 
+bool overlap(ShortcutContext a, ShortcutContext b) {
+  using C = ShortcutContext;
+  if (a == b || a == C::Everywhere || b == C::Everywhere) return true;
+  const auto answers_file = [](C c) { return c == C::ExperimentWindow || c == C::ScriptEditor; };
+  return (a == C::FileMenu && answers_file(b)) || (b == C::FileMenu && answers_file(a));
+}
+
 QString context_name(ShortcutContext context) {
   switch (context) {
     case ShortcutContext::Everywhere:
       return QStringLiteral("Everywhere");
+    case ShortcutContext::FileMenu:
+      return QStringLiteral("Experiment window and editors");
     case ShortcutContext::ExperimentWindow:
       return QStringLiteral("Experiment window");
     case ShortcutContext::ScriptEditor:
       return QStringLiteral("Script editor");
-    case ShortcutContext::ConditionalsEditor:
-      return QStringLiteral("Conditionals editor");
     case ShortcutContext::DataBrowser:
       break;
   }
@@ -107,8 +112,8 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent)
   heading.setBold(true);
   const QFont keys_font = style::mono_font();
   const int line = fontMetrics().height();
-  for (const ShortcutContext context : {ShortcutContext::Everywhere, ShortcutContext::ExperimentWindow,
-                                        ShortcutContext::ScriptEditor, ShortcutContext::ConditionalsEditor,
+  for (const ShortcutContext context : {ShortcutContext::Everywhere, ShortcutContext::FileMenu,
+                                        ShortcutContext::ExperimentWindow, ShortcutContext::ScriptEditor,
                                         ShortcutContext::DataBrowser}) {
     auto* group = new QTreeWidgetItem(tree_, {context_name(context)});
     group->setFirstColumnSpanned(true);

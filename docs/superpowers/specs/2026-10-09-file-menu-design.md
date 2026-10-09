@@ -71,8 +71,9 @@ QAction* file_action(FileRole role) const;
   the window then in front, and `target->trigger()` is called; nothing
   happens without one. (Palette or a menu left open can outlive the window
   the item was enabled for; same rule as Reset Layout.)
-- Shortcuts on hub items: `Shortcut::FileNew`, `FileOpen`, `FileSave`,
-  `FileSaveAs` = `QKeySequence::New`, `Open`, `Save`, `SaveAs`.
+- Shortcuts on hub items: `Shortcut::FileNew`, `FileOpen`, `FileSave` =
+  `QKeySequence::New`, `Open`, `Save`. Save As has no key, as before:
+  `QKeySequence::SaveAs` is Ctrl+Shift+S, which is View > Spectrometer.
 - A registered window action carries no shortcut: hub item has it, two
   would be ambiguous.
 - Hub item with no target is disabled, and a disabled action's shortcut is
@@ -157,8 +158,7 @@ buttons.
 
 - Removed: `OpenQueue`, `SaveQueue`, `NewScript`, `SaveScript`,
   `SaveConditionals`.
-- Added: `FileNew` "New…", `FileOpen` "Open…", `FileSave` "Save",
-  `FileSaveAs` "Save As…", in new `ShortcutContext::FileMenu` ("Experiment
+- Added: `FileNew` "New…", `FileOpen` "Open…", `FileSave` "Save", in new `ShortcutContext::FileMenu` ("Experiment
   window and editors"). Not `Everywhere`: the four are live only where a
   window registered them, and `RecallNext` (data browser) shares Ctrl+N.
   For the clash test `FileMenu` overlaps `ExperimentWindow`, `ScriptEditor`,

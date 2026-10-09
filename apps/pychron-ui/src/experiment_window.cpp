@@ -210,19 +210,24 @@ void ExperimentWindow::build_actions() {
   toolbar_ = addToolBar(tr("Queue"));
   QToolBar* bar = toolbar_;
   bar->setObjectName(QStringLiteral("ExperimentToolBar"));
-  open_ = add(file, tr("&Open..."), [this] { open_dialog(); }, key(Shortcut::OpenQueue));
-  save_ = add(
-      file, tr("&Save"),
-      [this] {
-        if (!path_) {
-          save_as_dialog();
-          return;
-        }
-        QString error;
-        if (!save(&error)) QMessageBox::warning(this, tr("Save"), error);
-      },
-      key(Shortcut::SaveQueue));
-  save_as_ = add(file, tr("Save &As..."), [this] { save_as_dialog(); });
+  // New, Open, Save and Save As are the File menu's (MenuHub), which has
+  // their keys: these are what it does while this window is in front.
+  auto file_action = [this](MenuHub::FileRole role, const QString& text, std::function<void()> f) {
+    auto* a = new QAction(text, this);
+    connect(a, &QAction::triggered, this, [f = std::move(f)] { f(); });
+    MenuHub::instance().set_file_action(this, role, a, tr("Queue"));
+    return a;
+  };
+  open_ = file_action(MenuHub::FileRole::Open, tr("&Open..."), [this] { open_dialog(); });
+  save_ = file_action(MenuHub::FileRole::Save, tr("&Save"), [this] {
+    if (!path_) {
+      save_as_dialog();
+      return;
+    }
+    QString error;
+    if (!save(&error)) QMessageBox::warning(this, tr("Save"), error);
+  });
+  save_as_ = file_action(MenuHub::FileRole::SaveAs, tr("Save &As..."), [this] { save_as_dialog(); });
   revalidate_ = add(file, tr("&Revalidate"), [this] { model_.revalidate(); });
   bar->addAction(open_);
   bar->addAction(save_);

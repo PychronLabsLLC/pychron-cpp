@@ -67,23 +67,36 @@ class TestShortcuts : public QObject {
       QVERIFY2(ids.insert(e.id).second, qPrintable(e.command));
       QVERIFY(!e.command.isEmpty());
     }
-    QCOMPARE(pychron::ui::key(Shortcut::SaveQueue), QKeySequence(QKeySequence::Save));
+    QCOMPARE(pychron::ui::key(Shortcut::FileSave), QKeySequence(QKeySequence::Save));
     QCOMPARE(pychron::ui::key(Shortcut::StartQueue), QKeySequence(Qt::Key_F5));
   }
 
-  // Window keys may repeat between windows (Save is Save queue in one and
-  // Save script in another), but never within one, nor against Everywhere.
+  // Window keys may repeat between windows (Recall Next in the data browser
+  // has the key of File > New, which that window does not answer), but never
+  // within one, nor against Everywhere, nor a File key in a window that
+  // answers the File commands.
   void no_two_live_keys_clash() {
     const auto& c = shortcut_catalog();
     for (std::size_t i = 0; i < c.size(); ++i) {
       for (std::size_t j = i + 1; j < c.size(); ++j) {
         if (c[i].key.isEmpty() || c[i].key != c[j].key) continue;
-        const bool overlap = c[i].context == c[j].context || c[i].context == ShortcutContext::Everywhere ||
-                             c[j].context == ShortcutContext::Everywhere;
-        QVERIFY2(!overlap, qPrintable(QStringLiteral("%1 and %2 share %3")
+        QVERIFY2(!pychron::ui::overlap(c[i].context, c[j].context), qPrintable(QStringLiteral("%1 and %2 share %3")
                                           .arg(c[i].command, c[j].command, c[i].key.toString())));
       }
     }
+  }
+
+  void the_file_keys_are_live_where_a_window_answers_them() {
+    using C = ShortcutContext;
+    using pychron::ui::overlap;
+    for (const C c : {C::Everywhere, C::FileMenu, C::ExperimentWindow, C::ScriptEditor}) {
+      QVERIFY(overlap(C::FileMenu, c));
+      QVERIFY(overlap(c, C::FileMenu));
+    }
+    QVERIFY(!overlap(C::FileMenu, C::DataBrowser));
+    QVERIFY(!overlap(C::DataBrowser, C::FileMenu));
+    QVERIFY(!overlap(C::ExperimentWindow, C::ScriptEditor));
+    QVERIFY(overlap(C::DataBrowser, C::Everywhere));
   }
 
   // Keys are spelled out in shortcuts.cpp and nowhere else.
@@ -139,10 +152,13 @@ class TestShortcuts : public QObject {
     QCOMPARE(dialog.tree()->topLevelItem(0)->text(0), QStringLiteral("Everywhere"));
 
     dialog.filter()->setText(QStringLiteral("queue"));
-    QVERIFY(shown(dialog).contains(QStringLiteral("Save queue")));
     QVERIFY(shown(dialog).contains(QStringLiteral("Start the queue")));
-    QVERIFY(!shown(dialog).contains(QStringLiteral("Save script")));
+    QVERIFY(!shown(dialog).contains(QStringLiteral("Save")));
     QVERIFY(dialog.tree()->topLevelItem(0)->isHidden());  // nothing Everywhere matches
+    dialog.filter()->setText(QStringLiteral("save"));
+    QCOMPARE(shown(dialog), QStringList{QStringLiteral("Save")});
+    QCOMPARE(dialog.tree()->topLevelItem(1)->text(0), QStringLiteral("Experiment window and editors"));
+    QVERIFY(!dialog.tree()->topLevelItem(1)->isHidden());
 
     dialog.filter()->setText(QKeySequence(Qt::Key_F5).toString(QKeySequence::NativeText));  // by key
     QCOMPARE(shown(dialog), QStringList{QStringLiteral("Start the queue")});
