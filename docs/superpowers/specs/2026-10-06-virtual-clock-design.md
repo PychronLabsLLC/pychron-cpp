@@ -394,6 +394,10 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
 - the log hub (record stamps, the flusher, the crash flush); the vision live
   feed; `process.cpp` (an outside program's timeout); `asio_stream.hpp` (a
   real socket or serial port);
+- the EarthBank client's waits (`libs/earthbank_qt`: a request's timeout, on a
+  Qt timer; `libs/earthbank` `secret_store_linux.cpp`: the timer thread that
+  cancels a secret-service call after 3 s for the probe and 120 s for a
+  password call): a real network and a real desktop service;
 - the notifier (`lab/notifier.cpp`, and the `Date:` of a mail in
   `lab/notifications.cpp`): it runs programs outside, on its own thread, and
   is not a participant;
