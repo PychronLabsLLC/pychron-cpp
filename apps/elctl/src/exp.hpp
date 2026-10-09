@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -36,5 +37,18 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
 
 // Incremented by main()'s SIGINT handler; `exp run` escalates on each.
 std::atomic<int>& interrupt_count();
+
+// What an interrupt asks of the running queue, weakest first.
+struct QueueRequests {
+  std::function<void()> stop, cancel, abort;
+};
+
+// Answers the interrupts numbered from `handled` up to `count`, and leaves
+// `handled` at `count`. Each is said; only the strongest is asked of the
+// queue. Two that arrive together are one request to cancel: a stop asked
+// for first is honoured at once by a queue between runs, which has then
+// ended as stopped before the cancel reaches it.
+void answer_interrupts(int& handled, int count, const std::function<void(const std::string&)>& say,
+                       const QueueRequests& queue);
 
 }  // namespace elctl

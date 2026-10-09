@@ -41,6 +41,19 @@ std::atomic<int>& interrupt_count() {
   return n;
 }
 
+void answer_interrupts(int& handled, int count, const std::function<void(const std::string&)>& say,
+                       const QueueRequests& queue) {
+  if (handled >= count) return;
+  for (; handled < count; ++handled) {
+    say(handled == 0   ? "interrupt: stopping after the current run (again to cancel it)"
+        : handled == 1 ? "interrupt: cancelling (again to abort)"
+                       : "interrupt: aborting");
+  }
+  if (count == 1) queue.stop();
+  else if (count == 2) queue.cancel();
+  else queue.abort();
+}
+
 namespace {
 
 constexpr const char* kExpUsage =
@@ -335,19 +348,8 @@ class Exp {
           ended_cv.wait_for(lock, std::chrono::milliseconds(50), [&] { return ended; });
         }
         const int n = interrupt_count();
-        for (; handled < n; ++handled) {
-          if (handled == 0) {
-            say("interrupt: stopping after the current run (again to cancel it)");
-            session.stop();
-          // cppcheck-suppress oppositeInnerCondition ; `handled` is another number each time round the loop
-          } else if (handled == 1) {
-            say("interrupt: cancelling (again to abort)");
-            session.cancel();
-          } else {
-            say("interrupt: aborting");
-            session.abort();
-          }
-        }
+        answer_interrupts(handled, n, [&](const std::string& line) { say(line); },
+                          {[&] { session.stop(); }, [&] { session.cancel(); }, [&] { session.abort(); }});
       }
     }
     const executor::QueueResult result = *session.wait();

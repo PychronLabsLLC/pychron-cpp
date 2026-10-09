@@ -206,6 +206,37 @@ TEST_F(ElctlExpTest, AnInterruptStopsAPacedQueueInRealTime) {
   EXPECT_LT(took, std::chrono::seconds(30));
 }
 
+// Interrupts that arrive together are answered with the strongest alone. A
+// stop asked for ahead of the cancel is honoured at once by a queue waiting
+// between runs: the queue has ended as stopped, and the cancel finds nothing.
+TEST(ElctlExpInterrupts, TheStrongestOfThoseThatArriveTogetherIsTheOneAsked) {
+  std::vector<std::string> asked, said;
+  const elctl::QueueRequests queue{[&] { asked.emplace_back("stop"); }, [&] { asked.emplace_back("cancel"); },
+                                   [&] { asked.emplace_back("abort"); }};
+  const auto say = [&](const std::string& line) { said.push_back(line); };
+
+  int handled = 0;
+  elctl::answer_interrupts(handled, 2, say, queue);
+  EXPECT_EQ(handled, 2);
+  EXPECT_EQ(asked, (std::vector<std::string>{"cancel"}));
+  // Each is still said: the operator sees every interrupt was heard.
+  ASSERT_EQ(said.size(), 2u);
+  EXPECT_TRUE(contains(said[0], "interrupt: stopping after the current run")) << said[0];
+  EXPECT_TRUE(contains(said[1], "interrupt: cancelling")) << said[1];
+
+  elctl::answer_interrupts(handled, 2, say, queue);  // nothing new
+  EXPECT_EQ(asked.size(), 1u);
+  elctl::answer_interrupts(handled, 5, say, queue);
+  EXPECT_EQ(handled, 5);
+  EXPECT_EQ(asked, (std::vector<std::string>{"cancel", "abort"}));
+
+  // One at a time, each is asked in its turn.
+  asked.clear();
+  handled = 0;
+  for (int count = 1; count <= 3; ++count) elctl::answer_interrupts(handled, count, say, queue);
+  EXPECT_EQ(asked, (std::vector<std::string>{"stop", "cancel", "abort"}));
+}
+
 // A run that gives up after the simulated beam is in place leaves nothing
 // behind that refers to its clock: the next run in the same process is whole.
 TEST_F(ElctlExpTest, ARunThatFailsEarlyLeavesTheNextOneClean) {
