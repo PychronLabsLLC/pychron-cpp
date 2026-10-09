@@ -46,6 +46,7 @@
 #include "spectrometer_fixture.hpp"
 #include "spectrometer_window.hpp"
 #include "theme.hpp"
+#include "settings_guard.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -108,6 +109,7 @@ class TestPreferences : public QObject {
 
  private:
   QTemporaryDir dir_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   int file_ = 0;
   QString path_;
   fs::path config_dir_, main_file_, local_file_;
@@ -703,6 +705,8 @@ class TestPreferences : public QObject {
     QVERIFY(!transport.enabled(LogLevel::Trace));
   }
 
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestPreferences)

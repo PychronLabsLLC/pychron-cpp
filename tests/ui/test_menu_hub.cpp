@@ -30,6 +30,7 @@
 #include "main_window.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
+#include "settings_guard.hpp"
 #include "ui_fixture.hpp"
 
 using pychron::ui::MenuHub;
@@ -128,6 +129,7 @@ class TestMenuHub : public QObject {
   Q_OBJECT
 
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
 
  private slots:
   void init() { QCoreApplication::processEvents(); }  // the last test's windows leave the menus
@@ -753,6 +755,8 @@ class TestMenuHub : public QObject {
     figure.show();
     QCOMPARE(shown(figure), shown(window));
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestMenuHub)

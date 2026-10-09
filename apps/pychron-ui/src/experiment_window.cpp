@@ -291,7 +291,9 @@ void ExperimentWindow::select_row(int row) { select_rows({static_cast<std::size_
 
 ScriptEditorWindow* ExperimentWindow::open_script_editor() {
   if (script_editor_ == nullptr) {
-    script_editor_ = new ScriptEditorWindow(bridge_.lab(), nullptr, this);
+    // Its own settings object on the same store as this window's.
+    script_editor_ = new ScriptEditorWindow(
+        bridge_.lab(), std::make_unique<QSettings>(settings_->fileName(), settings_->format()), this);
     script_editor_->setWindowFlag(Qt::Window);
     // A new or saved script may fix (or break) rows that name it.
     connect(script_editor_, &ScriptEditorWindow::scriptsChanged, this, [this] { model_.revalidate(); });

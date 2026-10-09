@@ -26,6 +26,7 @@
 #include "conditional_table_model.hpp"
 #include "conditionals_editor_window.hpp"
 #include "experiment_fixture.hpp"
+#include "settings_guard.hpp"
 
 using pychron::experiment::ActionSpec;
 using pychron::experiment::Conditional;
@@ -104,6 +105,7 @@ class TestConditionalsEditor : public QObject {
 
   // The window tests: a fresh scratch lab per test; the lab outlives the window.
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   fs::path dir_;
   std::unique_ptr<lab::Lab> lab_;
   int settings_n_ = 0;
@@ -741,6 +743,8 @@ class TestConditionalsEditor : public QObject {
     QVERIFY(w->save());  // creates the directory
     QVERIFY(fs::exists(file("system")));
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestConditionalsEditor)

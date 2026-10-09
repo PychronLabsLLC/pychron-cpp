@@ -31,6 +31,7 @@
 #include "menu_hub.hpp"
 #include "preferences_dialog.hpp"
 #include "script_editor_window.hpp"
+#include "settings_guard.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/model/queue_toml.hpp"
 #include "pychron/sim/gas.hpp"
@@ -46,6 +47,7 @@ class TestExperimentWindow : public QObject {
   Q_OBJECT
 
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
 
   std::unique_ptr<QSettings> settings() const {
     return std::make_unique<QSettings>(tmp_.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
@@ -741,6 +743,9 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(editor->findChildren<pychron::ui::PreferencesDialog*>().size(), 1);
     main.set_experiment(nullptr, false);
   }
+
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestExperimentWindow)

@@ -15,6 +15,7 @@
 #include "pychron/scripting/script_host.hpp"
 #include "script_editor_window.hpp"
 #include "script_highlighter.hpp"
+#include "settings_guard.hpp"
 
 using pychron::scripting::ScriptKind;
 using pychron::ui::CodeEditor;
@@ -38,6 +39,7 @@ class TestScriptEditor : public QObject {
   Q_OBJECT
 
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   fs::path dir_;
   std::unique_ptr<lab::Lab> lab_;
   bool python_ = false;
@@ -59,6 +61,8 @@ class TestScriptEditor : public QObject {
   void cleanupTestCase() {
     lab_.reset();
     fs::remove_all(dir_);
+    // Every window here was given its settings: none fell back to the application's.
+    QCOMPARE(app_settings_.keys(), QStringList());
   }
 
   void highlighterKnowsTheVocabulary() {

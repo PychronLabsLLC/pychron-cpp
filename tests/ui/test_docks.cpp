@@ -19,6 +19,7 @@
 #include "main_window.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "spectrometer_fixture.hpp"
+#include "settings_guard.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -34,6 +35,7 @@ class TestDocks : public QObject {
   Q_OBJECT
 
  private:
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   // Log, Alarms, then the cryostat's and the heaters' when the line has them.
   static QList<QDockWidget*> main_docks(const ui::MainWindow& window) {
     QList<QDockWidget*> docks{window.log_dock(), window.alarm_dock()};
@@ -621,6 +623,8 @@ class TestDocks : public QObject {
       QVERIFY(!sim->scan->running());
     }
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestDocks)

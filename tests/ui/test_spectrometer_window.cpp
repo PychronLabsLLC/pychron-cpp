@@ -19,6 +19,7 @@
 
 #include "spectrometer_bridge.hpp"
 #include "spectrometer_fixture.hpp"
+#include "settings_guard.hpp"
 #include "spectrometer_window.hpp"
 
 using namespace pychron;
@@ -84,6 +85,7 @@ class TestSpectrometerWindow : public QObject {
   }
 
   QTemporaryDir dir_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   QString path_;
   int file_ = 0;
   std::unique_ptr<ui::test::SimSpectrometer> sim_;
@@ -600,6 +602,8 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(!sim_->scan->running());
     QCOMPARE(moves_, 1);
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestSpectrometerWindow)
