@@ -32,6 +32,7 @@
 #include "holder_view.hpp"
 #include "level_sheet_pdf.hpp"
 #include "package_dialogs.hpp"
+#include "package_tree_delegate.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -40,8 +41,8 @@ namespace ps = persistence;
 
 namespace {
 
-constexpr int kUuidRole = Qt::UserRole;
-constexpr int kIsLevelRole = Qt::UserRole + 1;
+constexpr int kUuidRole = package_tree::UuidRole;
+constexpr int kIsLevelRole = package_tree::IsLevelRole;
 
 QString local_text(const ps::UtcTime& t) {
   const QDateTime dt = QDateTime::fromString(QString::fromStdString(t.iso()), Qt::ISODateWithMs);
@@ -95,8 +96,16 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
 
   auto* split = new QSplitter(Qt::Horizontal, this);
   tree_ = new QTreeWidget(split);
-  tree_->setHeaderLabels({tr("Package"), tr("Positions")});
-  tree_->setMinimumWidth(180);
+  // A sidebar list: the delegate draws the rows, their chevrons and indentation.
+  tree_->setObjectName(QStringLiteral("PackageTree"));
+  tree_->setHeaderHidden(true);
+  tree_->setIndentation(0);
+  tree_->setRootIsDecorated(false);
+  tree_->setUniformRowHeights(true);
+  tree_->setExpandsOnDoubleClick(false);
+  tree_->setItemDelegate(new PackageTreeDelegate(tree_));
+  tree_->viewport()->setAttribute(Qt::WA_Hover);
+  tree_->setMinimumWidth(200);
   auto* center = new QWidget(split);
   auto* layout = new QVBoxLayout(center);
   table_ = new GridTable(center);
@@ -114,8 +123,8 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
   setCentralWidget(split);
 
   connect(tree_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
-    if (item->data(0, kIsLevelRole).toBool())
-      if (auto id = ps::Uuid::parse(item->data(0, kUuidRole).toString().toStdString())) open_level(*id);
+    if (!item->data(0, kIsLevelRole).toBool()) return item->setExpanded(!item->isExpanded());
+    if (auto id = ps::Uuid::parse(item->data(0, kUuidRole).toString().toStdString())) open_level(*id);
   });
   connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
     if (syncing_) return;
@@ -448,22 +457,37 @@ void PackagesWindow::reload() {
           return show_message(QString::fromStdString(to_string(r.error())), true);
         }
         packages_ = std::move(r->first);
+        // The packages that were open stay open.
+        std::set<QString> expanded;
+        for (int i = 0; i < tree_->topLevelItemCount(); ++i)
+          if (const auto* item = tree_->topLevelItem(i); item->isExpanded())
+            expanded.insert(item->data(0, kUuidRole).toString());
         tree_->clear();
         QTreeWidgetItem* current = nullptr;
         for (const auto& p : packages_) {
           auto* item = new QTreeWidgetItem(tree_);
-          item->setText(0, p.kind == "package" ? QStringLiteral("%1 (package)").arg(QString::fromStdString(p.name))
-                                               : QString::fromStdString(p.name));
-          item->setText(1, QString::number(p.n_positions));
+          const bool irradiation = p.kind == "irradiation";
+          const bool no_chronology = irradiation && !p.has_chronology;
+          item->setText(0, QString::fromStdString(p.name));
           item->setData(0, kUuidRole, QString::fromStdString(p.uuid.str()));
           item->setData(0, kIsLevelRole, false);
+          if (p.n_positions > 0)
+            item->setData(0, package_tree::DetailRole, QStringLiteral("%1/%2").arg(p.n_analyzed).arg(p.n_positions));
+          if (!irradiation) item->setData(0, package_tree::TagRole, QString::fromStdString(p.kind));
+          item->setData(0, package_tree::WarningRole, no_chronology);
+          QString tip = tr("%1 of %2 positions analyzed").arg(p.n_analyzed).arg(p.n_positions);
+          if (no_chronology) tip += QLatin1Char('\n') + tr("No chronology");
+          item->setToolTip(0, tip);
           for (const auto& l : r->second[p.uuid]) {
             auto* child = new QTreeWidgetItem(item);
             child->setText(0, QString::fromStdString(l.name));
             child->setData(0, kUuidRole, QString::fromStdString(l.uuid.str()));
             child->setData(0, kIsLevelRole, true);
+            if (l.holder_name) child->setData(0, package_tree::DetailRole, QString::fromStdString(*l.holder_name));
+            if (l.note) child->setToolTip(0, QString::fromStdString(*l.note));
             if (level_ && l.uuid == *level_) current = child;
           }
+          if (expanded.contains(item->data(0, kUuidRole).toString())) item->setExpanded(true);
         }
         if (current) {
           tree_->setCurrentItem(current);

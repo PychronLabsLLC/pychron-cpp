@@ -34,6 +34,7 @@ class EntryWindowsTest : public QObject {
 #include "level_grid_model.hpp"
 #include "menu_hub.hpp"
 #include "package_dialogs.hpp"
+#include "package_tree_delegate.hpp"
 #include "packages_window.hpp"
 #include "sample_import_dialog.hpp"
 #include "sample_table_model.hpp"
@@ -248,6 +249,62 @@ class EntryWindowsTest : public QObject {
     const auto after = store_->level_sheet(seeded_.level_a)->value();
     for (std::size_t i = 0; i < planned.size(); ++i)
       QCOMPARE(after.positions[i].identifier, std::optional<std::string>(std::to_string(planned[i].number)));
+  }
+
+  void packages_tree_rows_and_expansion() {
+    namespace pt = pychron::ui::package_tree;
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.resize(900, 500);
+    w.show();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    auto* tree = w.tree();
+    QCOMPARE(tree->topLevelItemCount(), 1);
+    auto* package = tree->topLevelItem(0);
+    // The name is the name alone: the kind is a tag, the count a detail.
+    QCOMPARE(package->text(0), QStringLiteral("P-1"));
+    QCOMPARE(package->data(0, pt::TagRole).toString(), QStringLiteral("package"));
+    QVERIFY(!package->data(0, pt::WarningRole).toBool());  // only an irradiation wants a chronology
+    QVERIFY(package->data(0, pt::DetailRole).toString().isEmpty());  // no positions yet
+    QCOMPARE(package->childCount(), 2);
+    QCOMPARE(package->child(0)->text(0), QStringLiteral("A"));
+    QCOMPARE(package->child(0)->data(0, pt::DetailRole).toString(), QStringLiteral("4-hole"));
+    QVERIFY(tree->visualItemRect(package).height() >= 28);
+
+    // A click on a package opens and closes it.
+    QVERIFY(!package->isExpanded());
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, {}, tree->visualItemRect(package).center());
+    QVERIFY(package->isExpanded());
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, {}, tree->visualItemRect(package).center());
+    QVERIFY(!package->isExpanded());
+
+    // An open package stays open over a reload, with no level open.
+    package->setExpanded(true);
+    w.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCOMPARE(tree->topLevelItemCount(), 1);
+    QVERIFY(tree->topLevelItem(0)->isExpanded());
+
+    // Positions show as analyzed/positions, and an irradiation without a chronology is marked.
+    auto sheet = store_->level_sheet(seeded_.level_a)->value();
+    en::LevelSheetEdit e(sheet, std::nullopt);
+    e.add_row(1);
+    e.assign_sample({1}, (*store_->samples({"bt-1", std::nullopt, std::nullopt, std::nullopt, 10})).front());
+    QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, e.to_batch())));
+    w.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCOMPARE(tree->topLevelItem(0)->data(0, pt::DetailRole).toString(), QStringLiteral("0/1"));
+
+    ps::CatalogEditBatch kind;
+    kind.edits = {ps::CatalogUpdate{ps::CatalogTable::Irradiation, seeded_.package, {{"kind", std::string("package")}},
+                                    {{"kind", std::string("irradiation")}}}};
+    QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, kind)));
+    w.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    package = tree->topLevelItem(0);
+    QVERIFY(package->data(0, pt::WarningRole).toBool());
+    QVERIFY(package->data(0, pt::TagRole).toString().isEmpty());
+    QVERIFY(package->toolTip(0).contains(QStringLiteral("No chronology")));
   }
 
   void identifiers_replan_when_the_counter_moved() {

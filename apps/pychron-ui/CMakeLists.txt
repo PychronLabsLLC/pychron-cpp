@@ -162,6 +162,7 @@ if(TARGET pychron_processing_store)
     src/level_grid_model.cpp
     src/level_sheet_pdf.cpp
     src/package_dialogs.cpp
+    src/package_tree_delegate.cpp
     src/packages_window.cpp
     src/sample_import_dialog.cpp
     src/sample_table_model.cpp
@@ -179,6 +180,7 @@ if(TARGET pychron_processing_store)
     src/level_grid_model.hpp
     src/level_sheet_pdf.hpp
     src/package_dialogs.hpp
+    src/package_tree_delegate.hpp
     src/packages_window.hpp
     src/sample_import_dialog.hpp
     src/sample_table_model.hpp

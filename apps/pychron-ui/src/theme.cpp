@@ -303,6 +303,9 @@ QFrame#CommandPalette QTreeView { border: none; padding: 2px 0; }
 QFrame#CommandPalette QTreeView::item { padding: 0 10px; border: none; background: transparent; }
 QFrame#CommandPalette QTreeView::item:hover { background: @accent_wash; }
 QFrame#CommandPalette QTreeView::item:selected { background: @accent_soft; color: @accent_strong; }
+
+QTreeView#PackageTree { background: @window; border: none; padding: 4px 0; outline: 0;
+  selection-background-color: transparent; show-decoration-selected: 0; }
 )");
   const std::pair<const char*, QColor> colors[] = {
       {"accent_strong", t.accent_strong}, {"accent_soft", t.accent_soft}, {"accent_wash", t.accent_wash},
