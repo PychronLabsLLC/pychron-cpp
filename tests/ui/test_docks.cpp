@@ -470,6 +470,7 @@ class TestDocks : public QObject {
     const ui::MainWindow window(*line);
     QStringList want;
     for (const QDockWidget* dock : main_docks(window)) want.append(dock->windowTitle());
+    want.sort(Qt::CaseInsensitive);  // by title
     QStringList got;
     for (const QAction* action : window.dock_layouts()->panel_actions()) got.append(action->text());
     QCOMPARE(got, want);

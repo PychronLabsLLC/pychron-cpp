@@ -99,11 +99,10 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   column->addWidget(view_, 1);
   setCentralWidget(center);
 
-  auto* controls = new QDockWidget(tr("Controls"), this);
-  controls->setObjectName(QStringLiteral("SpectrometerControlsDock"));
-  controls->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);  // not closable
-  controls->setWidget(build_controls());
-  addDockWidget(Qt::LeftDockWidgetArea, controls);
+  controls_dock_ = new QDockWidget(tr("Controls"), this);
+  controls_dock_->setObjectName(QStringLiteral("SpectrometerControlsDock"));
+  controls_dock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);  // not closable
+  controls_dock_->setWidget(build_controls());
 
   auto* table = new QTableView;
   table->setModel(intensities_);
@@ -112,10 +111,13 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   table->verticalHeader()->hide();
   table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
   table->horizontalHeader()->setStretchLastSection(true);
-  auto* intensities = new QDockWidget(tr("Intensities"), this);
-  intensities->setObjectName(QStringLiteral("SpectrometerIntensitiesDock"));
-  intensities->setWidget(table);
-  addDockWidget(Qt::RightDockWidgetArea, intensities);
+  intensities_dock_ = new QDockWidget(tr("Intensities"), this);
+  intensities_dock_->setObjectName(QStringLiteral("SpectrometerIntensitiesDock"));
+  intensities_dock_->setWidget(table);
+  default_layout();
+  layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(),
+                             QStringLiteral("spectrometer_window/%1").arg(bridge_.name()),
+                             DockLayouts::Keys{QStringLiteral("dock_state"), QStringLiteral("geometry")});
 
   confirm_move_ = [this](double delta_amu) {
     const QString question =
@@ -293,15 +295,19 @@ void SpectrometerWindow::fill_isotopes() {
   target_isotope_->setCurrentIndex(index >= 0 ? index : 0);
 }
 
+// The panels as installed. Run again by Reset Layout, so it undoes whatever
+// was done to them.
+void SpectrometerWindow::default_layout() {
+  for (QDockWidget* dock : {controls_dock_, intensities_dock_}) dock->setFloating(false);
+  addDockWidget(Qt::LeftDockWidgetArea, controls_dock_);
+  addDockWidget(Qt::RightDockWidgetArea, intensities_dock_);
+  for (QDockWidget* dock : {controls_dock_, intensities_dock_}) dock->show();
+}
+
 void SpectrometerWindow::load_settings() {
+  layouts_->restore_last();  // before the group is opened: it reads by full key
   QSettings& s = *settings_;
   s.beginGroup(QStringLiteral("spectrometer_window/%1").arg(bridge_.name()));
-  if (s.contains(QStringLiteral("geometry"))) {
-    restoreGeometry(s.value(QStringLiteral("geometry")).toByteArray());
-  }
-  if (s.contains(QStringLiteral("dock_state"))) {
-    restoreState(s.value(QStringLiteral("dock_state")).toByteArray());
-  }
   if (auto width = read_number(s, QStringLiteral("scan_width_s")); width && *width >= 1.0) {
     set_scan_width_minutes(*width / 60.0);
   }
@@ -347,10 +353,9 @@ void SpectrometerWindow::save_confirm_move_amu(QSettings& settings, const QStrin
 }
 
 void SpectrometerWindow::save_settings() {
+  layouts_->save_last();  // before the group is opened: it writes by full key
   QSettings& s = *settings_;
   s.beginGroup(QStringLiteral("spectrometer_window/%1").arg(bridge_.name()));
-  s.setValue(QStringLiteral("geometry"), saveGeometry());
-  s.setValue(QStringLiteral("dock_state"), saveState());
   s.setValue(QStringLiteral("scan_width_s"), model_.scan_width());
   s.setValue(QStringLiteral("scale"), model_.scale() == YScale::Log ? QStringLiteral("log") : QStringLiteral("linear"));
   s.setValue(QStringLiteral("autoscale"), model_.autoscale());

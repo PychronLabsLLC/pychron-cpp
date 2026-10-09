@@ -58,10 +58,17 @@ void DockLayouts::save_last() {
 }
 
 QList<QAction*> DockLayouts::panel_actions() const {
-  QList<QAction*> out;
+  // By title: the order Qt keeps a window's docks in changes whenever one is
+  // brought to the front of its tabs.
+  QList<QDockWidget*> closable;
   for (QDockWidget* dock : docks_of(window_)) {
-    if (dock->features().testFlag(QDockWidget::DockWidgetClosable)) out.append(dock->toggleViewAction());
+    if (dock->features().testFlag(QDockWidget::DockWidgetClosable)) closable.append(dock);
   }
+  std::ranges::sort(closable, [](const QDockWidget* a, const QDockWidget* b) {
+    return a->windowTitle().compare(b->windowTitle(), Qt::CaseInsensitive) < 0;
+  });
+  QList<QAction*> out;
+  for (QDockWidget* dock : closable) out.append(dock->toggleViewAction());
   return out;
 }
 

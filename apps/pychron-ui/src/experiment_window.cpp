@@ -109,26 +109,19 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   };
   setCentralWidget(center);
 
-  auto* executor_dock = new QDockWidget(tr("Executor"), this);
-  executor_dock->setObjectName(QStringLiteral("ExperimentExecutorDock"));
-  executor_dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-  executor_dock->setWidget(pane_);
-  addDockWidget(Qt::BottomDockWidgetArea, executor_dock);
-  auto* evolutions_dock = new QDockWidget(tr("Evolutions"), this);
-  evolutions_dock->setObjectName(QStringLiteral("ExperimentEvolutionsDock"));
-  evolutions_dock->setWidget(evolutions_);
-  addDockWidget(Qt::RightDockWidgetArea, evolutions_dock);
-  auto* factory_dock = new QDockWidget(tr("Run Factory"), this);
-  factory_dock->setObjectName(QStringLiteral("ExperimentFactoryDock"));
-  factory_dock->setWidget(factory_);
-  addDockWidget(Qt::LeftDockWidgetArea, factory_dock);
-  auto* measurement_dock = new QDockWidget(tr("Measurement"), this);
-  measurement_dock->setObjectName(QStringLiteral("ExperimentMeasurementDock"));
-  measurement_dock->setWidget(measurement_);
-  tabifyDockWidget(factory_dock, measurement_dock);
-  factory_dock->raise();
-  resizeDocks({evolutions_dock, factory_dock}, {500, 380}, Qt::Horizontal);  // saved state, if any, wins below
-  resizeDocks({executor_dock}, {300}, Qt::Vertical);
+  executor_dock_ = new QDockWidget(tr("Executor"), this);
+  executor_dock_->setObjectName(QStringLiteral("ExperimentExecutorDock"));
+  executor_dock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+  executor_dock_->setWidget(pane_);
+  evolutions_dock_ = new QDockWidget(tr("Evolutions"), this);
+  evolutions_dock_->setObjectName(QStringLiteral("ExperimentEvolutionsDock"));
+  evolutions_dock_->setWidget(evolutions_);
+  factory_dock_ = new QDockWidget(tr("Run Factory"), this);
+  factory_dock_->setObjectName(QStringLiteral("ExperimentFactoryDock"));
+  factory_dock_->setWidget(factory_);
+  measurement_dock_ = new QDockWidget(tr("Measurement"), this);
+  measurement_dock_->setObjectName(QStringLiteral("ExperimentMeasurementDock"));
+  measurement_dock_->setWidget(measurement_);
 
   ask_unsaved_ = [this] {
     const auto b = QMessageBox::question(this, tr("Unsaved changes"), tr("The queue has unsaved changes. Save them?"),
@@ -175,13 +168,29 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
     update_state();
   });
 
-  settings_->beginGroup(QStringLiteral("experiment_window"));
-  if (auto g = settings_->value(QStringLiteral("geometry")).toByteArray(); !g.isEmpty()) restoreGeometry(g);
-  if (auto s = settings_->value(QStringLiteral("state")).toByteArray(); !s.isEmpty()) restoreState(s);
-  settings_->endGroup();
+  default_layout();  // the saved one, if any, wins below
+  layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(), QStringLiteral("experiment_window"));
+  layouts_->restore_last();
 
   update_title();
   update_state();
+}
+
+// The panels and the toolbar as installed. Run again by Reset Layout, so it
+// undoes whatever was done to them.
+void ExperimentWindow::default_layout() {
+  for (QDockWidget* dock : {executor_dock_, evolutions_dock_, factory_dock_, measurement_dock_}) dock->setFloating(false);
+  addDockWidget(Qt::BottomDockWidgetArea, executor_dock_);
+  addDockWidget(Qt::RightDockWidgetArea, evolutions_dock_);
+  addDockWidget(Qt::LeftDockWidgetArea, factory_dock_);
+  addDockWidget(Qt::LeftDockWidgetArea, measurement_dock_);
+  tabifyDockWidget(factory_dock_, measurement_dock_);
+  for (QDockWidget* dock : {executor_dock_, evolutions_dock_, factory_dock_, measurement_dock_}) dock->show();
+  factory_dock_->raise();
+  resizeDocks({evolutions_dock_, factory_dock_}, {500, 380}, Qt::Horizontal);
+  resizeDocks({executor_dock_}, {300}, Qt::Vertical);
+  addToolBar(Qt::TopToolBarArea, toolbar_);
+  toolbar_->show();
 }
 
 void ExperimentWindow::build_actions() {
@@ -198,7 +207,8 @@ void ExperimentWindow::build_actions() {
   };
 
   const Menu file = Menu::Queue;
-  auto* bar = addToolBar(tr("Queue"));
+  toolbar_ = addToolBar(tr("Queue"));
+  QToolBar* bar = toolbar_;
   bar->setObjectName(QStringLiteral("ExperimentToolBar"));
   open_ = add(file, tr("&Open..."), [this] { open_dialog(); }, key(Shortcut::OpenQueue));
   save_ = add(
@@ -562,10 +572,7 @@ void ExperimentWindow::closeEvent(QCloseEvent* event) {
     return;
   }
   if (bridge_.running() && ask_stop_()) bridge_.stop();
-  settings_->beginGroup(QStringLiteral("experiment_window"));
-  settings_->setValue(QStringLiteral("geometry"), saveGeometry());
-  settings_->setValue(QStringLiteral("state"), saveState());
-  settings_->endGroup();
+  layouts_->save_last();
   QMainWindow::closeEvent(event);
 }
 

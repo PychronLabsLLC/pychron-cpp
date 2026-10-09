@@ -67,7 +67,7 @@ class DockLayouts : public QObject {
   [[nodiscard]] bool contains(const QString& name) const;   // ignoring case
   static DockLayouts* of(const QWidget* window); // its helper, or nullptr
   [[nodiscard]] bool can_save() const;           // has settings
-  [[nodiscard]] QList<QAction*> panel_actions() const;      // closable docks, in creation order
+  [[nodiscard]] QList<QAction*> panel_actions() const;      // closable docks, by title
   static Result<QString> valid_name(const QString& raw);    // trimmed name or why not
 };
 ```
@@ -76,7 +76,9 @@ class DockLayouts : public QObject {
   never touches it in its destructor, because a child `QObject` is destroyed
   after the window's members are.
 - `panel_actions()`: `toggleViewAction()` of each direct-child `QDockWidget`
-  with `DockWidgetClosable`. Text = dock's window title.
+  with `DockWidgetClosable`. Text = dock's window title. Sorted by title,
+  case-insensitive: Qt's child order changes whenever a dock is raised in
+  its tab group, so creation order cannot be read back.
 
 ### 4.2 Factory layout: a function, not captured bytes
 
@@ -130,7 +132,7 @@ Zoom
 ---
 Bring All to Front
 ---
-Panels            ▸  ☑ Log  ☑ Alarms  ☐ Cryostat  ☑ Heaters
+Panels            ▸  ☑ Alarms  ☐ Cryo  ☑ Heaters  ☑ Log
 Arrangements      ▸  bakeout
                      running
                      ---

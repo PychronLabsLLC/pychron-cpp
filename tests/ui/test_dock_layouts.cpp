@@ -212,6 +212,19 @@ class TestDockLayouts : public QObject {
     QVERIFY(win.a->isVisible());
   }
 
+  void panelActionsAreInTitleOrderWhicheverTabIsInFront() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.c->setFeatures(win.a->features());  // closable too
+    win.show();
+    const QStringList want{QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C")};
+    QCOMPARE(texts(win.layouts->panel_actions()), want);
+    win.a->raise();
+    win.b->raise();
+    QCOMPARE(texts(win.layouts->panel_actions()), want);
+  }
+
   void ofFindsTheHelperOrNull() {
     QTemporaryDir dir;
     const auto settings = ini(dir);

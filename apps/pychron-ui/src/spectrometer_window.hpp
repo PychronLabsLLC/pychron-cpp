@@ -18,6 +18,8 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <QString>
+
+#include "dock_layouts.hpp"
 #include <QTimer>
 
 #include "intensities_model.hpp"
@@ -27,6 +29,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QDockWidget;
 class QDoubleSpinBox;
 class QFrame;
 class QLabel;
@@ -48,6 +51,8 @@ class SpectrometerWindow : public QMainWindow {
                      QWidget* parent = nullptr);
 
   StripChartModel& chart_model() { return model_; }
+  // Where the panels are: the factory layout, the last one, the named ones.
+  DockLayouts* dock_layouts() const noexcept { return layouts_; }
   StripChartView* chart_view() const { return view_; }
   IntensitiesModel* intensities() const { return intensities_; }
 
@@ -97,6 +102,7 @@ class SpectrometerWindow : public QMainWindow {
   double integration_s() const;
   void select_integration(double seconds);
   void fill_isotopes();
+  void default_layout();
   void edit_manual_y();
   void sync_y_fields();
   void update_banner();
@@ -107,6 +113,9 @@ class SpectrometerWindow : public QMainWindow {
 
   SpectrometerBridge& bridge_;
   std::unique_ptr<QSettings> settings_;
+  DockLayouts* layouts_ = nullptr;
+  QDockWidget* controls_dock_ = nullptr;
+  QDockWidget* intensities_dock_ = nullptr;
   StripChartModel model_;
   StripChartView* view_;
   IntensitiesModel* intensities_;

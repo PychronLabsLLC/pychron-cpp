@@ -19,6 +19,8 @@
 #include <QMenuBar>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QDockWidget>
+#include <QToolBar>
 #include <QtTest/QtTest>
 
 #include "conditionals_editor_window.hpp"
@@ -61,6 +63,81 @@ class TestExperimentWindow : public QObject {
   }
 
  private slots:
+  // ---- the panel layout -------------------------------------------------------
+
+  void resetPutsTheDocksAndTheToolbarBack() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* executor = window.findChild<QDockWidget*>(QStringLiteral("ExperimentExecutorDock"));
+    auto* evolutions = window.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"));
+    auto* factory = window.findChild<QDockWidget*>(QStringLiteral("ExperimentFactoryDock"));
+    auto* measurement = window.findChild<QDockWidget*>(QStringLiteral("ExperimentMeasurementDock"));
+    auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("ExperimentToolBar"));
+    QVERIFY(executor != nullptr && evolutions != nullptr && factory != nullptr && measurement != nullptr);
+    QVERIFY(toolbar != nullptr);
+    evolutions->close();
+    measurement->setFloating(true);
+    toolbar->hide();
+    window.addToolBar(Qt::BottomToolBarArea, toolbar);
+    window.addDockWidget(Qt::TopDockWidgetArea, executor);
+
+    QVERIFY(window.dock_layouts() != nullptr);
+    window.dock_layouts()->reset();
+    for (const QDockWidget* dock : {executor, evolutions, factory, measurement}) {
+      QVERIFY2(!dock->isHidden(), qPrintable(dock->objectName()));
+      QVERIFY2(!dock->isFloating(), qPrintable(dock->objectName()));
+    }
+    QCOMPARE(window.dockWidgetArea(executor), Qt::BottomDockWidgetArea);
+    QCOMPARE(window.dockWidgetArea(evolutions), Qt::RightDockWidgetArea);
+    QCOMPARE(window.dockWidgetArea(factory), Qt::LeftDockWidgetArea);
+    QVERIFY(window.tabifiedDockWidgets(factory).contains(measurement));
+    QVERIFY(factory->isVisible());  // in front of Measurement
+    QVERIFY(toolbar->isVisible());
+    QCOMPARE(window.toolBarArea(toolbar), Qt::TopToolBarArea);
+  }
+
+  void panelsLeaveOutTheExecutor() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    const ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.dock_layouts() != nullptr);
+    QStringList panels;
+    for (const QAction* action : window.dock_layouts()->panel_actions()) panels.append(action->text());
+    QCOMPARE(panels, QStringList({QStringLiteral("Evolutions"), QStringLiteral("Measurement"), QStringLiteral("Run Factory")}));
+  }
+
+  void theLayoutIsStillKeptUnderItsOldKeys() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->close();
+      QVERIFY(window.close());
+    }
+    {
+      const QSettings saved(file, QSettings::IniFormat);
+      QVERIFY(saved.contains(QStringLiteral("experiment_window/state")));
+      QVERIFY(saved.contains(QStringLiteral("experiment_window/geometry")));
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(!again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+    QVERIFY(again.dock_layouts() != nullptr);
+    QVERIFY(again.dock_layouts()->save_as(QStringLiteral("quiet")));
+    again.dock_layouts()->reset();
+    QVERIFY(again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+    QVERIFY(again.dock_layouts()->apply(QStringLiteral("quiet")));
+    QVERIFY(!again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+  }
+
   void runsTheExampleQueue() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

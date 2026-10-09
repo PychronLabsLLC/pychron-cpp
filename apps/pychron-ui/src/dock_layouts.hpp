@@ -54,8 +54,7 @@ class DockLayouts : public QObject {
   void restore_last();
   void save_last();
   [[nodiscard]] bool can_save() const { return settings_ != nullptr; }
-  // The show/hide action of each dock that can be closed, in the order the
-  // docks were made.
+  // The show/hide action of each dock that can be closed, by title.
   [[nodiscard]] QList<QAction*> panel_actions() const;
   QMainWindow* window() const { return window_; }
 
