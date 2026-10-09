@@ -97,18 +97,18 @@ struct Args {
     if (it == values.end()) return std::nullopt;
     return it->second;
   }
-  bool has(const std::string& k) const { return switches.count(k) > 0; }
+  bool has(const std::string& k) const { return switches.contains(k); }
 };
 
 Args parse(const std::vector<std::string>& args, const std::set<std::string>& switch_names) {
   Args a;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& s = args[i];
-    if (s.rfind("--", 0) != 0) {
+    if (!s.starts_with("--")) {
       a.positional.push_back(s);
       continue;
     }
-    if (switch_names.count(s)) {
+    if (switch_names.contains(s)) {
       a.switches.insert(s);
       continue;
     }

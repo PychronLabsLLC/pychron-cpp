@@ -140,7 +140,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
       a.decay_error = true;
       continue;
     }
-    if (flag.rfind("--", 0) != 0) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
+    if (!flag.starts_with("--")) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
     if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
     const std::string& value = args[++i];
     if (flag == "--db") {

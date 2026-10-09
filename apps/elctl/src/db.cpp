@@ -32,7 +32,7 @@ int fatal(Io io, const std::string& message) {
 // A mistyped SQLite path is an error, not a new empty store.
 std::string not_a_store(const std::string& url) {
   constexpr std::string_view kSqlite = "sqlite:";
-  if (url.rfind(kSqlite, 0) != 0 || url == "sqlite::memory:") return {};
+  if (!url.starts_with(kSqlite) || url == "sqlite::memory:") return {};
   std::error_code code;
   const fs::path file(url.substr(kSqlite.size()));
   if (!fs::is_regular_file(file, code)) return "no database at " + file.string();

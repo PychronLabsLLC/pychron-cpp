@@ -170,7 +170,7 @@ Result<Flags> parse_flags(const std::vector<std::string>& args, const FlagSpec& 
     } else if (among(spec.with_value, arg)) {
       if (i + 1 >= args.size()) return fail(ErrorKind::Config, arg + " needs a value");
       flags.values.insert_or_assign(arg, args[++i]);
-    } else if (arg.starts_with("-")) {
+    } else if (arg.starts_with('-')) {
       return fail(ErrorKind::Config, "unknown option '" + arg + "'");
     } else {
       return fail(ErrorKind::Config, "unexpected argument '" + arg + "'");

@@ -432,7 +432,7 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
       a.resume = true;
     } else if (x == "--dry-run") {
       a.dry_run = true;
-    } else if (!x.starts_with("-") && a.queue_file.empty()) {
+    } else if (!x.starts_with('-') && a.queue_file.empty()) {
       a.queue_file = x;
     } else {
       return usage("unexpected '" + x + "'");

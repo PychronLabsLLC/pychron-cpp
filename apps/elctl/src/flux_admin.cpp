@@ -50,7 +50,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
   Args a;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
-    if (flag.rfind("--", 0) != 0) {
+    if (!flag.starts_with("--")) {
       a.positional.push_back(flag);
       continue;
     }

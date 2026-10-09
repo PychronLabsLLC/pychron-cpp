@@ -43,8 +43,8 @@ class ElctlExpTest : public ElctlTest {
 
   Outcome exp(std::vector<std::string> args, bool sim = false) const {
     std::vector<std::string> all{"-c", lab("extraction_line.toml")};
-    if (sim) all.push_back("--sim");
-    all.push_back("exp");
+    if (sim) all.emplace_back("--sim");
+    all.emplace_back("exp");
     all.insert(all.end(), args.begin(), args.end());
     return run_raw(all);
   }

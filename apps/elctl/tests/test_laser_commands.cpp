@@ -35,8 +35,8 @@ class LaserCmd : public ElctlTest {
 
   Outcome laser(std::vector<std::string> args, bool sim = false) const {
     std::vector<std::string> all{"-c", lab("extraction_line.toml").string()};
-    if (sim) all.push_back("--sim");
-    all.push_back("laser");
+    if (sim) all.emplace_back("--sim");
+    all.emplace_back("laser");
     all.insert(all.end(), args.begin(), args.end());
     return run_raw(all);
   }

@@ -49,7 +49,7 @@ std::string shown(const Question& q, const Value& v) {
     std::string out;
     for (const auto& r : *rows) {
       std::string row;
-      for (const auto& c : q.columns) row += (row.empty() ? "" : " ") + (r.count(c) && !r.at(c).empty() ? r.at(c) : "-");
+      for (const auto& c : q.columns) row += (row.empty() ? "" : " ") + (r.contains(c) && !r.at(c).empty() ? r.at(c) : "-");
       out += "\n      " + row;
     }
     return out;
@@ -70,7 +70,7 @@ Result<void> ask(const ResolvedProfile& profile, Answers& given, const Answers& 
   for (const Question* qp : ordered) {
     const Question& q = *qp;
     if (!is_asked(q, so_far)) continue;
-    if (given.count(q.id)) continue;
+    if (given.contains(q.id)) continue;
     if (q.group != group) {
       group = q.group;
       io.out << "\n" << group << "\n";
@@ -222,7 +222,7 @@ int init_command(const std::vector<std::string>& args, Io io) {
       else if (a == "--answers") answers_file = *v;
       else if (a == "--install") install = *v;
       else sets.push_back(*v);
-    } else if (!a.starts_with("-") && !profile_name) {
+    } else if (!a.starts_with('-') && !profile_name) {
       profile_name = a;
     } else {
       return usage("unexpected '" + a + "'");
@@ -388,7 +388,7 @@ int import_line_command(const std::vector<std::string>& args, Io io) {
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] == "--out" && i + 1 < args.size()) out = args[++i];
     else if (args[i] == "--force") force = true;
-    else if (!args[i].starts_with("-") && !folder) folder = args[i];
+    else if (!args[i].starts_with('-') && !folder) folder = args[i];
     else {
       io.err << "elctl import-line: unexpected '" << args[i]
              << "'\nusage: elctl import-line <setupfiles folder> [--out DIR] [--force]\n";

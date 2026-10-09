@@ -97,11 +97,11 @@ std::string plural(int n, const char* noun) { return std::to_string(n) + " " + n
 std::vector<std::string> reasons(const ingest::VerifyReport& r) {
   std::vector<std::string> out;
   if (!r.source.registered) {
-    out.push_back("this source was never imported");
+    out.emplace_back("this source was never imported");
   } else if (r.source.status != "finished") {
-    out.push_back("the import has not finished; run it");
+    out.emplace_back("the import has not finished; run it");
   } else if (!r.source.finished_and_current()) {
-    out.push_back("the source has changed since the last import; run the import, then verify");
+    out.emplace_back("the source has changed since the last import; run the import, then verify");
   }
   if (!r.unaccounted.empty()) out.push_back(std::to_string(r.unaccounted.size()) + " unaccounted");
   if (r.would_write != 0 || r.replay_would_write != 0)

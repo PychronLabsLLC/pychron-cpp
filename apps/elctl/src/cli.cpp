@@ -330,7 +330,7 @@ class Session {
     for (std::size_t i = 0; i < args.size(); ++i) {
       if (args[i] == "--spectrometer" && i + 1 < args.size()) {
         spectrometer = args[++i];
-      } else if (!file && !args[i].starts_with("-")) {
+      } else if (!file && !args[i].starts_with('-')) {
         file = args[i];
       } else {
         return usage("conditionals-check <file> [--spectrometer <spectrometer.toml>]");

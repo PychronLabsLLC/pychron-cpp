@@ -140,7 +140,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
   std::vector<std::string> positional;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
-    if (flag.rfind("--", 0) != 0) {
+    if (!flag.starts_with("--")) {
       positional.push_back(flag);
       continue;
     }
@@ -404,7 +404,7 @@ Result<std::string> flux_flag_value(const std::vector<std::string>& args, std::s
   const std::string& flag = args[i];
   if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
   const std::string& value = args[++i];
-  if (value.rfind("--", 0) == 0) return fail(ErrorKind::Config, flag + " needs a value; got the flag '" + value + "'");
+  if (value.starts_with("--")) return fail(ErrorKind::Config, flag + " needs a value; got the flag '" + value + "'");
   return value;
 }
 
