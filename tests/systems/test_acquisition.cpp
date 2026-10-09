@@ -356,7 +356,7 @@ TEST(IntensityStream, IsBoundedAndDropsOldest) {
   auto e = AcquisitionEngine::create({&a}, {faraday("H1", "H1")}, f.sched, f.bus, f.clock, o);
   ASSERT_TRUE(e.has_value());
   ASSERT_TRUE((*e)->start(1s).has_value());
-  for (std::uint64_t k = 1; k <= 3; ++k) a.push(integrated(kT0 + std::chrono::seconds(k), k, {{"H1", double(k)}}));
+  for (std::uint64_t k = 1; k <= 3; ++k) a.push(integrated(kT0 + std::chrono::seconds(k), k, {{"H1", static_cast<double>(k)}}));
   (*e)->poll(0);
   auto s = (*e)->stream();
   EXPECT_EQ(s->size(), 2U);

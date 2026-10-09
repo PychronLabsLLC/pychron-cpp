@@ -219,8 +219,8 @@ Result<std::unique_ptr<Spectrometer>> Spectrometer::create(cfg::SpectrometerConf
 
 Result<void> Spectrometer::build() {
   std::vector<std::string> problems;
-  if (roles_.positioner == nullptr) problems.push_back("no positioner bound");
-  if (roles_.acquirers.empty()) problems.push_back("no acquirer bound");
+  if (roles_.positioner == nullptr) problems.emplace_back("no positioner bound");
+  if (roles_.acquirers.empty()) problems.emplace_back("no acquirer bound");
   axis_ = to_axis(config_.magnet.native_axis);
   if (roles_.positioner != nullptr && roles_.positioner->native_axis() != axis_) {
     problems.push_back("positioner native axis is " + std::string(to_string(roles_.positioner->native_axis())) +
@@ -229,7 +229,7 @@ Result<void> Spectrometer::build() {
   active_table_ = config_.magnet.field_table;
   if (!tables_.contains(active_table_)) problems.push_back("field table '" + active_table_ + "' is not loaded");
   if (config_.magnet.corrections.hv && axis_ == IMassPositioner::Axis::Mass) {
-    problems.push_back("native_axis = \"mass\" cannot enable the HV correction");
+    problems.emplace_back("native_axis = \"mass\" cannot enable the HV correction");
   }
 
   std::vector<DetectorConfig> dets;

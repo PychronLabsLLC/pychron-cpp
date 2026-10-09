@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ranges>
 #include <sstream>
 #include <utility>
 
@@ -36,7 +37,7 @@ struct Poly {
   double operator()(double mass) const {
     double x = (mass - center) / scale;
     double y = 0.0;
-    for (auto it = c.rbegin(); it != c.rend(); ++it) y = y * x + *it;
+    for (double it : std::views::reverse(c)) y = y * x + it;
     return y;
   }
 };
@@ -178,7 +179,7 @@ std::vector<std::string> FieldTable::detectors() const {
 
 bool FieldTable::has_detector(std::string_view det) const {
   return std::any_of(points_.begin(), points_.end(),
-                     [&](const ControlPoint& p) { return p.values.find(std::string(det)) != p.values.end(); });
+                     [&](const ControlPoint& p) { return p.values.contains(std::string(det)); });
 }
 
 FitKind FieldTable::fit(std::string_view det) const {

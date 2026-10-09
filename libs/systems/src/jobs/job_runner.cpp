@@ -1,5 +1,6 @@
 #include "pychron/systems/jobs/job_runner.hpp"
 
+#include <ranges>
 #include <string>
 
 namespace pychron::jobs {
@@ -181,8 +182,8 @@ std::optional<JobId> JobRunner::current() const {
 std::optional<Job> JobRunner::job(JobId id) const {
   std::lock_guard lock(mutex_);
   if (current_ && current_->job.id == id) return current_->job;
-  for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
-    if (it->id == id) return *it;
+  for (const auto& it : std::views::reverse(history_)) {
+    if (it.id == id) return it;
   }
   return std::nullopt;
 }

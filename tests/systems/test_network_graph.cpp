@@ -50,7 +50,7 @@ TEST(NetworkGraph, OpenValveJoinsVolumes) {
   auto g = line();
   const auto regions = g.connected_volumes({{"A", ValveState::Open}, {"B", ValveState::Closed}, {"C", ValveState::Closed}});
   ASSERT_EQ(regions.size(), 3u);
-  const auto* r = g.region_of("bone", regions);
+  const auto* r = pychron::systems::NetworkGraph::region_of("bone", regions);
   ASSERT_NE(r, nullptr);
   EXPECT_EQ(r->volumes, (Names{"bone", "prep"}));
   EXPECT_EQ(r->valves, (Names{"A"}));

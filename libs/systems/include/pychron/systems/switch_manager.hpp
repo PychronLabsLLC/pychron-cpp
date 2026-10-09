@@ -59,7 +59,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>

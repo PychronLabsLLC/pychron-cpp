@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <ranges>
 
 namespace pychron::spectrometer {
 
@@ -122,10 +123,10 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
 
   // 4. cleanup in reverse order, always.
   if (blank_attempted) keep_first(first, deps.beam_blank->blank(false));
-  for (auto it = attempted.rbegin(); it != attempted.rend(); ++it) {
-    auto r = deps.control->protect(*it, false);
+  for (auto& it : std::views::reverse(attempted)) {
+    auto r = deps.control->protect(it, false);
     keep_first(first, r);
-    if (r && deps.on_protect) deps.on_protect(*it, false);
+    if (r && deps.on_protect) deps.on_protect(it, false);
   }
 
   out.elapsed = deps.clock.now() - start;

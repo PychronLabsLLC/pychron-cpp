@@ -92,7 +92,7 @@ class FakeActuator final : public IValveActuator {
   }
   std::size_t commands() {
     std::size_t n = 0;
-    for (const auto& c : calls()) n += c.rfind("read", 0) != 0;
+    for (const auto& c : calls()) n += !c.starts_with("read");
     return n;
   }
   std::vector<TimePoint> read_times() {
@@ -534,7 +534,7 @@ TEST(SwitchManager, NegativeInterlockBlocksOpeningEitherSide) {
   auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
-  EXPECT_NE(r.error().what.find("B"), std::string::npos);
+  EXPECT_NE(r.error().what.find('B'), std::string::npos);
   EXPECT_EQ(f.act.commands(), before);
   ASSERT_EQ(f.rec.failed.size(), 1u);
   EXPECT_EQ(f.rec.failed[0].valve, "A");
@@ -572,7 +572,7 @@ TEST(SwitchManager, PositiveInterlockRequiresPrerequisitesOpen) {
   auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
-  EXPECT_NE(r.error().what.find("C"), std::string::npos);
+  EXPECT_NE(r.error().what.find('C'), std::string::npos);
   ASSERT_TRUE(f.mgr->actuate("C", SwitchOp::Open, "op"));
   EXPECT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
 }

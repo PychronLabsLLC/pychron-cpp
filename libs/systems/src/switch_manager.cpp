@@ -130,7 +130,7 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
     e->spec = std::move(spec);
     const auto& s = e->spec;
     if (s.name.empty()) {
-      problems.push_back("switch with empty name");
+      problems.emplace_back("switch with empty name");
       continue;
     }
     if (by_name.contains(s.name)) {

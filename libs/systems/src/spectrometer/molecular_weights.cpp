@@ -34,7 +34,7 @@ Result<double> MolecularWeights::mass(std::string_view isotope) const {
   return it->second;
 }
 
-bool MolecularWeights::contains(std::string_view isotope) const { return masses_.find(isotope) != masses_.end(); }
+bool MolecularWeights::contains(std::string_view isotope) const { return masses_.contains(isotope); }
 
 void MolecularWeights::set(std::string isotope, double mass) { masses_[std::move(isotope)] = mass; }
 

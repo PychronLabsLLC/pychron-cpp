@@ -147,7 +147,7 @@ TEST(ExtractionLine, CanvasNamingUnknownValveIsConfigError) {
   auto line = ExtractionLine::create(system_config(), canvas_model(bad.c_str()), manual(clock));
   ASSERT_FALSE(line);
   EXPECT_EQ(line.error().kind, ErrorKind::Config);
-  EXPECT_NE(line.error().what.find("Z"), std::string::npos);
+  EXPECT_NE(line.error().what.find('Z'), std::string::npos);
 }
 
 TEST(ExtractionLine, SystemValveMissingFromCanvasIsWarning) {
