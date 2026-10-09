@@ -169,7 +169,7 @@ class SeedStore : public StoreTest {
     auto fields = store_->catalog_row(CatalogTable::Sample, sample.uuid);
     EXPECT_TRUE(fields && *fields);
     CatalogEditBatch batch;
-    batch.edits.push_back(CatalogDelete{CatalogTable::Sample, sample.uuid, **fields});
+    batch.edits.emplace_back(CatalogDelete{CatalogTable::Sample, sample.uuid, **fields});
     auto outcome = store_->apply_catalog_edits(actor().client, batch);
     EXPECT_TRUE(outcome) << (outcome ? "" : outcome.error().what);
     return outcome && std::holds_alternative<std::vector<Refusal>>(*outcome);

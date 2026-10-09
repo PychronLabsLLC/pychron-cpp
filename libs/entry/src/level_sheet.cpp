@@ -93,7 +93,7 @@ void LevelSheetEdit::clear(const std::vector<int>& positions, const std::set<She
   for (int p : positions) {
     SheetRow* r = find(p);
     if (!r) continue;
-    if (fields.count(SheetField::Sample)) {
+    if (fields.contains(SheetField::Sample)) {
       r->sample.reset();
       r->sample_name.clear();
       r->project.clear();
@@ -101,9 +101,9 @@ void LevelSheetEdit::clear(const std::vector<int>& positions, const std::set<She
       r->material.clear();
       r->grainsize.clear();
     }
-    if (fields.count(SheetField::Weight)) r->weight.reset();
-    if (fields.count(SheetField::Packet)) r->packet.reset();
-    if (fields.count(SheetField::Note)) r->note.reset();
+    if (fields.contains(SheetField::Weight)) r->weight.reset();
+    if (fields.contains(SheetField::Packet)) r->packet.reset();
+    if (fields.contains(SheetField::Note)) r->note.reset();
   }
 }
 
@@ -225,7 +225,7 @@ ps::CatalogEditBatch LevelSheetEdit::to_batch() const {
     level.expected["holder_ref_uuid"] = opt_id(sheet_.level.holder);
     level.values["holder_ref_uuid"] = opt_id(holder_);
   }
-  if (!level.values.empty()) batch.edits.push_back(std::move(level));
+  if (!level.values.empty()) batch.edits.emplace_back(std::move(level));
 
   // Moves first, to holes nobody holds, so a swap of stored rows never clashes.
   std::vector<ps::CatalogEdit> moves, others;
@@ -237,7 +237,7 @@ ps::CatalogEditBatch LevelSheetEdit::to_batch() const {
       if (r.weight) values["weight"] = *r.weight;
       if (r.packet) values["packet"] = *r.packet;
       if (r.note) values["note"] = *r.note;
-      others.push_back(ps::CatalogInsert{ps::CatalogTable::IrradiationPosition, ps::Uuid::v7(), std::move(values)});
+      others.emplace_back(ps::CatalogInsert{ps::CatalogTable::IrradiationPosition, ps::Uuid::v7(), std::move(values)});
       continue;
     }
     const ps::PositionRow& s = *r.stored;
@@ -262,7 +262,7 @@ ps::CatalogEditBatch LevelSheetEdit::to_batch() const {
       u.expected["note"] = opt_text(s.note);
       u.values["note"] = opt_text(r.note);
     }
-    (r.position != s.position ? moves : others).push_back(std::move(u));
+    (r.position != s.position ? moves : others).emplace_back(std::move(u));
   }
   for (auto& e : moves) batch.edits.push_back(std::move(e));
   for (auto& e : others) batch.edits.push_back(std::move(e));
@@ -270,7 +270,7 @@ ps::CatalogEditBatch LevelSheetEdit::to_batch() const {
   const std::string key = sheet_.irradiation_name + "/" + sheet_.level.name;
   const bool z_changed = z_ != (sheet_.z ? sheet_.z->z : std::nullopt);
   if (z_changed && !sheet_.geometry)
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, geometry_object_,
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::RefObject, geometry_object_,
                                             {{"ref_type", std::string("level_geometry")}, {"key", key},
                                              {"irradiation_uuid", sheet_.level.irradiation},
                                              {"level_uuid", sheet_.level.uuid}}});
@@ -278,7 +278,7 @@ ps::CatalogEditBatch LevelSheetEdit::to_batch() const {
       production_ && production_ != (sheet_.production_value ? std::optional<ps::Uuid>{sheet_.production_value->production}
                                                              : std::nullopt);
   if (production_changed && !sheet_.production)
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, production_object_,
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::RefObject, production_object_,
                                             {{"ref_type", std::string("level_production")}, {"key", key},
                                              {"irradiation_uuid", sheet_.level.irradiation},
                                              {"level_uuid", sheet_.level.uuid}}});

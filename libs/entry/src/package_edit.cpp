@@ -40,18 +40,18 @@ const std::vector<std::string>& production_keys() {
 
 std::vector<std::string> validate(const NewPackage& p, const std::vector<std::string>& existing) {
   std::vector<std::string> out;
-  if (!valid_package_name(p.name)) out.push_back("the name is empty or has spaces");
+  if (!valid_package_name(p.name)) out.emplace_back("the name is empty or has spaces");
   if (std::find(existing.begin(), existing.end(), p.name) != existing.end())
     out.push_back("a package named " + p.name + " exists");
-  if (p.kind != "irradiation" && p.kind != "package") out.push_back("the kind is irradiation or package");
+  if (p.kind != "irradiation" && p.kind != "package") out.emplace_back("the kind is irradiation or package");
   std::set<std::string> names;
   for (const auto& l : p.levels) {
-    if (trim(l.name).empty()) out.push_back("a level has no name");
+    if (trim(l.name).empty()) out.emplace_back("a level has no name");
     else if (!names.insert(l.name).second) out.push_back("level " + l.name + " is listed twice");
   }
   if (p.kind == "irradiation") {
-    if (!p.reactor || p.reactor->empty()) out.push_back("an irradiation needs a reactor");
-    if (p.doses.empty()) out.push_back("an irradiation needs at least one dose");
+    if (!p.reactor || p.reactor->empty()) out.emplace_back("an irradiation needs a reactor");
+    if (p.doses.empty()) out.emplace_back("an irradiation needs at least one dose");
     for (std::size_t i = 0; i < p.doses.size(); ++i) {
       const auto& d = p.doses[i];
       const std::string at = "dose " + std::to_string(i + 1);
@@ -82,14 +82,14 @@ Result<CreatedPackage> create_package(ps::IStore& store, const ps::Actor& actor,
   out.package = ps::Uuid::v7();
   ps::CatalogEditBatch batch;
   batch.message = "new package " + p.name;
-  batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::Irradiation, out.package, {{"name", p.name}, {"kind", p.kind}}});
+  batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::Irradiation, out.package, {{"name", p.name}, {"kind", p.kind}}});
   for (const auto& l : p.levels) {
     const ps::Uuid id = ps::Uuid::v7();
     out.levels.push_back(id);
     ps::CatalogFields values{{"irradiation_uuid", out.package}, {"name", l.name}};
     if (l.holder) values["holder_ref_uuid"] = *l.holder;
     if (l.note) values["note"] = *l.note;
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::Level, id, std::move(values)});
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::Level, id, std::move(values)});
   }
 
   auto uow = store.begin(actor);
@@ -99,7 +99,7 @@ Result<CreatedPackage> create_package(ps::IStore& store, const ps::Actor& actor,
     const ps::Uuid id = ps::Uuid::v7();
     ps::CatalogFields values{{"ref_type", std::string(type)}, {"key", key}, {"irradiation_uuid", out.package}};
     if (level) values["level_uuid"] = *level;
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id, std::move(values)});
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id, std::move(values)});
     return id;
   };
   const auto stage = [&](ps::Uuid subject, ps::RefPayload value) -> Result<void> {
@@ -172,14 +172,14 @@ Result<ps::Uuid> add_level(ps::IStore& store, const ps::Actor& actor, const ps::
   ps::CatalogFields values{{"irradiation_uuid", package.uuid}, {"name", level.name}};
   if (level.holder) values["holder_ref_uuid"] = *level.holder;
   if (level.note) values["note"] = *level.note;
-  batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::Level, id, std::move(values)});
+  batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::Level, id, std::move(values)});
   auto uow = store.begin(actor);
   if (!uow) return fail(uow.error());
   bool staged = false;
   const std::string key = package.name + "/" + level.name;
   const auto stage = [&](const char* type, ps::RefPayload value) -> Result<void> {
     const ps::Uuid object = ps::Uuid::v7();
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, object,
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::RefObject, object,
                                             {{"ref_type", std::string(type)}, {"key", key},
                                              {"irradiation_uuid", package.uuid}, {"level_uuid", id}}});
     auto r = (*uow)->add_revision(object, ps::Kind::RefValue, ps::RevisionPayload{std::move(value)}, std::nullopt);
@@ -203,7 +203,7 @@ Result<ps::Uuid> save_production(ps::IStore& store, const ps::Actor& actor, cons
   batch.message = "production " + package.name + "/" + name;
   const ps::Uuid id = object.value_or(ps::Uuid::v7());
   if (!object)
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id,
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id,
                                             {{"ref_type", std::string("production")},
                                              {"key", package.name + "/" + name},
                                              {"irradiation_uuid", package.uuid}}});
@@ -221,7 +221,7 @@ Result<void> save_chronology(ps::IStore& store, const ps::Actor& actor, const ps
   batch.message = "chronology " + package.name;
   const ps::Uuid id = loaded.ref_object.value_or(ps::Uuid::v7());
   if (!loaded.ref_object)
-    batch.edits.push_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id,
+    batch.edits.emplace_back(ps::CatalogInsert{ps::CatalogTable::RefObject, id,
                                             {{"ref_type", std::string("chronology")}, {"key", package.name},
                                              {"irradiation_uuid", package.uuid}}});
   ps::ChronologyValue value;
@@ -287,7 +287,7 @@ Result<std::vector<NamedProduction>> package_productions(ps::IStore& store, ps::
   std::vector<NamedProduction> out;
   const std::string prefix = package_name + "/";
   for (const auto& r : *rows) {
-    NamedProduction p{r.uuid, r.key.rfind(prefix, 0) == 0 ? r.key.substr(prefix.size()) : r.key, r.head, {}};
+    NamedProduction p{r.uuid, r.key.starts_with(prefix) ? r.key.substr(prefix.size()) : r.key, r.head, {}};
     auto value = head_value(store, r.head);
     if (!value) return fail(value.error());
     if (*value)

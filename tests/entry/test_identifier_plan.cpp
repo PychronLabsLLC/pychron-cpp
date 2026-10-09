@@ -95,7 +95,7 @@ TEST(IdentifierPlan, PropertySequentialAndIdempotent) {
       std::shuffle(ps.begin(), ps.end(), rng);
       sheets.push_back(level(std::string(1, static_cast<char>('A' + (nlevels - 1 - l))), ps));
     }
-    const std::int64_t last = static_cast<std::int64_t>(rng() % 1000);
+    const auto last = static_cast<std::int64_t>(rng() % 1000);
     const bool overwrite = rng() % 2 == 0;
     const auto p = plan_identifiers(sheets, last, overwrite);
     for (std::size_t i = 0; i < p.assignments.size(); ++i)

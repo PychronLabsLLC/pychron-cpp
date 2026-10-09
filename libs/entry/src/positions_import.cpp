@@ -23,7 +23,7 @@ PositionImportResult apply_position_import(const CsvTable& table, const CatalogS
     column.emplace(h, i);
   }
   for (const char* required : {"level", "position", "sample"})
-    if (!column.count(required)) out.errors.push_back(std::string("no '") + required + "' column");
+    if (!column.contains(required)) out.errors.push_back(std::string("no '") + required + "' column");
   if (!out.errors.empty()) return out;
 
   struct Planned {
@@ -42,7 +42,7 @@ PositionImportResult apply_position_import(const CsvTable& table, const CatalogS
     };
     const std::string at = "line " + std::to_string(table.lines[r]) + ": ";
     Planned p{get("level"), 0, nullptr, std::nullopt, std::nullopt, std::nullopt};
-    if (!levels.count(p.level)) {
+    if (!levels.contains(p.level)) {
       out.errors.push_back(at + "no level '" + p.level + "' in this package");
       continue;
     }

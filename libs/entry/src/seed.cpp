@@ -183,7 +183,7 @@ Result<SeedReport> apply_seed(ps::IStore& store, const Seed& seed, const ps::Act
 
   std::map<std::string, std::optional<ps::Uuid>> materials;  // nullopt: would be made (dry run)
   for (const auto& s : seed.samples) {
-    if (materials.count(s.material)) continue;
+    if (materials.contains(s.material)) continue;
     auto found = store.find_catalog_row(ps::CatalogTable::Material, {s.material, std::string()});
     if (!found) return fail(found.error());
     if (*found) {
