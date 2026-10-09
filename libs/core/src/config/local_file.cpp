@@ -85,7 +85,7 @@ std::string_view header_name(std::string_view line) {
 
 bool names(std::string_view header, std::string_view table) {
   return header == table ||
-         (header.size() > table.size() && header.substr(0, table.size()) == table && header[table.size()] == '.');
+         (header.size() > table.size() && header.starts_with(table) && header[table.size()] == '.');
 }
 
 // The lines of `text`, each with its line ending.
@@ -158,7 +158,7 @@ std::string logging_override_toml(const LoggingConfig& wanted, const LoggingConf
 
   const auto levels = by_pattern(wanted);
   if (levels != by_pattern(main)) {
-    if (!out.empty()) out += "\n";
+    if (!out.empty()) out += '\n';
     out += "[logging.levels]\n";
     for (const auto& [pattern, level] : levels) out += toml_string(pattern) + " = \"" + level_name(level) + "\"\n";
   }

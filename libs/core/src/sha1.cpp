@@ -12,8 +12,8 @@ constexpr std::uint32_t rotl(std::uint32_t x, int n) { return (x << n) | (x >> (
 void compress(std::array<std::uint32_t, 5>& h, const std::uint8_t* p) {
   std::uint32_t w[80];
   for (int i = 0; i < 16; ++i)
-    w[i] = (std::uint32_t(p[4 * i]) << 24) | (std::uint32_t(p[4 * i + 1]) << 16) | (std::uint32_t(p[4 * i + 2]) << 8) |
-           std::uint32_t(p[4 * i + 3]);
+    w[i] = (static_cast<std::uint32_t>(p[4 * i]) << 24) | (static_cast<std::uint32_t>(p[4 * i + 1]) << 16) | (static_cast<std::uint32_t>(p[4 * i + 2]) << 8) |
+           static_cast<std::uint32_t>(p[4 * i + 3]);
   for (int i = 16; i < 80; ++i) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
   auto [a, b, c, d, e] = h;
   for (int i = 0; i < 80; ++i) {

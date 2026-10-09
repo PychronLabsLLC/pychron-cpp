@@ -94,7 +94,7 @@ TEST(LocalOverrideText, ClearingTheSharedLevelsIsAnEmptyTable) {
 
 TEST(LocalOverrideText, PathsAndPatternsAreQuotedSafely) {
   LoggingConfig wanted;
-  wanted.dir = "C:\\Users\\lab \"A\"\\logs";
+  wanted.dir = R"(C:\Users\lab "A"\logs)";
   wanted.levels = {{"odd\"name", LogLevel::Error}};
   const std::string text = logging_override_toml(wanted, LoggingConfig{});
   const auto r = load_report_from_string("[system]\nname = \"x\"\n", "main.toml", text, "main.local.toml");

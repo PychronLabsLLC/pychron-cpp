@@ -253,7 +253,7 @@ bool ip_address_spelled(std::string_view s) {
 }
 
 std::string expand_home(const std::string& s) {
-  if (s != "~" && s.rfind("~/", 0) != 0) return s;
+  if (s != "~" && !s.starts_with("~/")) return s;
 #ifdef _WIN32
   const auto home = env_var("USERPROFILE");
 #else
@@ -461,7 +461,7 @@ class ConfigBuilder {
         m.bind = std::move(bind);
       } else {
         p_.error(p_.loc(*n), "metrics.bind",
-                 "\"" + bind + "\" is not an IP address (use an interface's address, e.g. \"0.0.0.0\" or \"127.0.0.1\")");
+                 "\"" + bind + R"(" is not an IP address (use an interface's address, e.g. "0.0.0.0" or "127.0.0.1"))");
       }
     }
   }
