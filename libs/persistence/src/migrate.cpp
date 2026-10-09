@@ -63,8 +63,8 @@ std::vector<std::string> split_sql(std::string_view sql) {
     if (c == '\'' && !in_dollar) in_quote = !in_quote;
     if (c == ';' && !in_quote && !in_dollar) {
       const std::string upper = upper_trimmed(buf);
-      const bool trigger_body = upper.rfind("CREATE TRIGGER", 0) == 0 && has_word(upper, "BEGIN");
-      if (trigger_body && !(upper.size() >= 3 && upper.compare(upper.size() - 3, 3, "END") == 0)) {
+      const bool trigger_body = upper.starts_with("CREATE TRIGGER") && has_word(upper, "BEGIN");
+      if (trigger_body && !(upper.size() >= 3 && upper.ends_with("END"))) {
         buf.push_back(c);
         continue;
       }

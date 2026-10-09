@@ -110,13 +110,13 @@ std::string base64_encode(std::span<const std::uint8_t> bytes) {
   out.reserve((bytes.size() + 2) / 3 * 4);
   std::size_t i = 0;
   for (; i + 3 <= bytes.size(); i += 3) {
-    const std::uint32_t n = std::uint32_t(bytes[i]) << 16 | std::uint32_t(bytes[i + 1]) << 8 | bytes[i + 2];
+    const std::uint32_t n = static_cast<std::uint32_t>(bytes[i]) << 16 | static_cast<std::uint32_t>(bytes[i + 1]) << 8 | bytes[i + 2];
     for (int s = 18; s >= 0; s -= 6) out.push_back(kB64[(n >> s) & 63]);
   }
   const std::size_t rem = bytes.size() - i;
   if (rem > 0) {
-    std::uint32_t n = std::uint32_t(bytes[i]) << 16;
-    if (rem == 2) n |= std::uint32_t(bytes[i + 1]) << 8;
+    std::uint32_t n = static_cast<std::uint32_t>(bytes[i]) << 16;
+    if (rem == 2) n |= static_cast<std::uint32_t>(bytes[i + 1]) << 8;
     out.push_back(kB64[(n >> 18) & 63]);
     out.push_back(kB64[(n >> 12) & 63]);
     out.push_back(rem == 2 ? kB64[(n >> 6) & 63] : '=');
@@ -142,8 +142,8 @@ Result<Bytes> base64_decode(std::string_view text) {
       // NOLINTNEXTLINE(bugprone-assignment-in-if-condition): decoded and tested in one step, on purpose
       if (pad > 0 || (v[k] = b64_value(c)) < 0) return fail(ErrorKind::Protocol, "base64: invalid character");
     }
-    const std::uint32_t n = std::uint32_t(v[0]) << 18 | std::uint32_t(v[1]) << 12 | std::uint32_t(v[2]) << 6 |
-                            std::uint32_t(v[3]);
+    const std::uint32_t n = static_cast<std::uint32_t>(v[0]) << 18 | static_cast<std::uint32_t>(v[1]) << 12 | static_cast<std::uint32_t>(v[2]) << 6 |
+                            static_cast<std::uint32_t>(v[3]);
     out.push_back(static_cast<std::uint8_t>(n >> 16));
     if (pad < 2) out.push_back(static_cast<std::uint8_t>(n >> 8));
     if (pad < 1) out.push_back(static_cast<std::uint8_t>(n));

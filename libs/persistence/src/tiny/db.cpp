@@ -77,7 +77,7 @@ auto guarded(Dialect dialect, Fn&& fn) -> Result<decltype(fn())> {
 Result<QVariantHash> parse_config(const StoreConfig& config, Dialect& dialect) {
   const std::string& url = config.url;
   QVariantHash c;
-  if (url.rfind("sqlite:", 0) == 0) {
+  if (url.starts_with("sqlite:")) {
     dialect = Dialect::Sqlite;
     const std::string path = url.substr(std::strlen("sqlite:"));
     if (path.empty()) return fail(ErrorKind::Config, "store url: empty sqlite path");
@@ -95,7 +95,7 @@ Result<QVariantHash> parse_config(const StoreConfig& config, Dialect& dialect) {
     c["return_qdatetime"] = false;
     return c;
   }
-  if (url.rfind("postgresql://", 0) == 0 || url.rfind("postgres://", 0) == 0) {
+  if (url.starts_with("postgresql://") || url.starts_with("postgres://")) {
     dialect = Dialect::PostgreSql;
     const QUrl u(qs(url));
     if (!u.isValid() || u.host().isEmpty()) return fail(ErrorKind::Config, "store url: invalid postgresql url");

@@ -35,7 +35,7 @@ ErrorKind classify_sqlite(const std::string& code) {
 }  // namespace
 
 bool is_constraint_violation(Dialect dialect, const std::string& native_code) {
-  if (dialect == Dialect::PostgreSql) return native_code.size() == 5 && native_code.compare(0, 2, "23") == 0;
+  if (dialect == Dialect::PostgreSql) return native_code.size() == 5 && native_code.starts_with("23");
   char* end = nullptr;
   const long value = std::strtol(native_code.c_str(), &end, 10);
   return !native_code.empty() && *end == '\0' && (value & 0xff) == 19;  // SQLITE_CONSTRAINT

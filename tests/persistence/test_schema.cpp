@@ -267,9 +267,9 @@ TEST(SchemaParity, PostgresAndSqliteHaveTheSameTablesColumnsAndKeys) {
   const auto b = introspect(*lite_db);
   EXPECT_GT(a.size(), 500u);
   for (const auto& x : a)
-    if (!b.count(x)) ADD_FAILURE() << "only in PostgreSQL: " << x;
+    if (!b.contains(x)) ADD_FAILURE() << "only in PostgreSQL: " << x;
   for (const auto& x : b)
-    if (!a.count(x)) ADD_FAILURE() << "only in SQLite: " << x;
+    if (!a.contains(x)) ADD_FAILURE() << "only in SQLite: " << x;
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, SchemaTest, ::testing::ValuesIn(engines()),

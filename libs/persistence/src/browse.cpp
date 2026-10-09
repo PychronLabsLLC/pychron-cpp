@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <utility>
 
 #include "sql/browse.hpp"
 #include "store_impl.hpp"
@@ -167,7 +168,7 @@ Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& req) {
                             paged.sql() + sql::kBrowseOrder,
                         b);
   if (!rows) return fail(rows.error());
-  const bool more = static_cast<int>(rows->size()) > req.limit;
+  const bool more = std::cmp_greater(rows->size(), req.limit);
   if (more) rows->pop_back();
   for (const auto& r : *rows) out.rows.push_back(row_from(r));
   if (more && !out.rows.empty())

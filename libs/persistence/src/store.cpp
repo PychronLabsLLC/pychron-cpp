@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 
 #include "catalog_impl.hpp"
 #include "migrate.hpp"
@@ -645,7 +646,7 @@ class TinyStore final : public IStore {
     if (!rows) return fail(rows.error());
     ChangePage page;
     page.cursor = cursor;
-    page.more = static_cast<int>(rows->size()) > limit;
+    page.more = std::cmp_greater(rows->size(), limit);
     if (page.more) rows->pop_back();
     for (const auto& r : *rows) {
       ChangeEntry e;

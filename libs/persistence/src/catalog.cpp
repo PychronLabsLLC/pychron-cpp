@@ -489,7 +489,7 @@ class EditRun {
     if (e.uuid.is_nil()) return fail(ErrorKind::Protocol, "insert into " + std::string(table_name(e.table)) + " has no uuid");
     if (auto r = check_fields(rules, e.values); !r) return r;
     for (const auto& c : rules.columns)
-      if (c.required && !e.values.count(c.name))
+      if (c.required && !e.values.contains(c.name))
         return fail(ErrorKind::Protocol,
                     "insert into " + std::string(table_name(e.table)) + " needs " + c.name);
 
@@ -555,7 +555,7 @@ class EditRun {
     if (auto r = update_rules(rules, e, before, after, changes); !r) return r;
     const std::size_t refused = refused_.size();
     bool key_changed = false;
-    for (const char* k : rules.key) key_changed = key_changed || changes.count(k);
+    for (const char* k : rules.key) key_changed = key_changed || changes.contains(k);
     if (key_changed) {
       auto clash = unique_clash(rules, e.uuid, after);
       if (!clash) return fail(clash.error());
@@ -712,11 +712,11 @@ class EditRun {
         std::string why;
         auto used = identifier_in_use(identifier, &why);
         if (!used) return fail(used.error());
-        if (*used && (changes.count("level_uuid") || changes.count("position")))
+        if (*used && (changes.contains("level_uuid") || changes.contains("position")))
           refuse(e.table, e.uuid, "analyzed_identifier",
                  "position " + describe(before.at("position")) + " holds identifier " +
                      to_std((**held).value("identifier")) + ", which has " + why + "; it cannot move");
-        if (changes.count("sample_uuid") && !batch_.allow_analyzed_sample_change) {
+        if (changes.contains("sample_uuid") && !batch_.allow_analyzed_sample_change) {
           auto n = count(QStringLiteral("SELECT count(*) FROM analysis WHERE identifier_uuid = ?"), {qv(identifier)});
           if (!n) return fail(n.error());
           if (*n > 0)
@@ -727,7 +727,7 @@ class EditRun {
         }
       }
     }
-    if ((e.table == CatalogTable::Irradiation || e.table == CatalogTable::Level) && changes.count("name")) {
+    if ((e.table == CatalogTable::Irradiation || e.table == CatalogTable::Level) && changes.contains("name")) {
       auto n = count(e.table == CatalogTable::Irradiation ? sql::kAnalysesInIrradiation : sql::kAnalysesInLevel,
                      {qv(e.uuid)});
       if (!n) return fail(n.error());
@@ -736,7 +736,7 @@ class EditRun {
                std::string(e.table == CatalogTable::Irradiation ? "package " : "level ") +
                    describe(before.at("name")) + " has " + std::to_string(*n) + " analyses; it cannot be renamed");
     }
-    if (e.table == CatalogTable::Level && changes.count("irradiation_uuid"))
+    if (e.table == CatalogTable::Level && changes.contains("irradiation_uuid"))
       refuse(e.table, e.uuid, "constraint", "a level cannot move to another package");
     return {};
   }
