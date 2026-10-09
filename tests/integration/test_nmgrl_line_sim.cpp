@@ -54,4 +54,52 @@ TEST_F(NmgrlLineSim, LoadsAndActuatesOnEveryController) {
   line.stop();
 }
 
+// The example's cryostat and bakeout heater (not in the legacy setup) answer
+// in simulation, so the Cryo and Heaters docks have something to show.
+TEST_F(NmgrlLineSim, HasACryostatAndAHeater) {
+  VirtualClock clock;
+  Clock::Participant test(clock, "test");
+  ExtractionLine::Options options;
+  options.clock = &clock;
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-nmgrl-cryo.state.toml";
+  std::filesystem::remove(options.state_file);
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  ASSERT_TRUE(line.start());
+
+  ITemperatureController* cryostat = line.cryostat();
+  ASSERT_NE(cryostat, nullptr);
+  EXPECT_EQ(cryostat->inputs(), (std::vector<std::string>{"A", "B"}));
+  ASSERT_TRUE(line.config().cryo);
+  // every named setpoint is one the controller takes
+  EXPECT_FALSE(line.config().cryo->setpoints.empty());
+  for (const auto& [name, values] : line.config().cryo->setpoints) {
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      const int output = static_cast<int>(i) + 1;
+      auto set = cryostat->set_setpoint(output, values[i]);
+      ASSERT_TRUE(set) << name << ": " << set.error().what;
+      auto read = cryostat->setpoint(output);
+      ASSERT_TRUE(read) << name;
+      EXPECT_NEAR(*read, values[i], 0.01) << name;
+    }
+  }
+  ASSERT_TRUE(cryostat->read_temperature("A"));
+
+  ASSERT_EQ(line.config().heaters.size(), 1u);
+  const std::string heater = line.config().heaters[0].name;
+  ASSERT_TRUE(line.set_heater_setpoint(heater, 120.0));
+  ASSERT_TRUE(line.set_heater_pid(heater, true));
+  ASSERT_TRUE(line.set_heater_enabled(heater, true));
+  auto sample = line.read_heater(heater);
+  ASSERT_TRUE(sample) << sample.error().what;
+  EXPECT_EQ(sample->enabled, std::optional<bool>(true));
+  EXPECT_EQ(sample->use_pid, std::optional<bool>(true));
+  ASSERT_TRUE(sample->setpoint);
+  EXPECT_DOUBLE_EQ(*sample->setpoint, 120.0);
+  EXPECT_TRUE(sample->readback);
+
+  line.stop();
+}
+
 }  // namespace
