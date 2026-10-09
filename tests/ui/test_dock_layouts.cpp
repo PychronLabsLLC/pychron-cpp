@@ -20,6 +20,7 @@
 
 #include "dock_layouts.hpp"
 
+using pychron::ErrorKind;
 using pychron::ui::DockLayouts;
 
 namespace {
@@ -219,6 +220,218 @@ class TestDockLayouts : public QObject {
     const QMainWindow bare;
     QVERIFY(DockLayouts::of(&bare) == nullptr);
     QVERIFY(DockLayouts::of(nullptr) == nullptr);
+  }
+  // ---- named arrangements -----------------------------------------------------
+
+  void validNameTable_data() {
+    QTest::addColumn<QString>("raw");
+    QTest::addColumn<bool>("ok");
+    QTest::addColumn<QString>("trimmed");
+    QTest::newRow("empty") << QString() << false << QString();
+    QTest::newRow("spaces") << QStringLiteral("   ") << false << QString();
+    QTest::newRow("65 characters") << QString(65, QLatin1Char('x')) << false << QString();
+    QTest::newRow("64 characters") << QString(64, QLatin1Char('x')) << true << QString(64, QLatin1Char('x'));
+    QTest::newRow("slash") << QStringLiteral("a/b") << false << QString();
+    QTest::newRow("backslash") << QStringLiteral("a\\b") << false << QString();
+    QTest::newRow("tab") << QStringLiteral("a\tb") << false << QString();
+    QTest::newRow("trimmed") << QStringLiteral(" ok ") << true << QStringLiteral("ok");
+  }
+
+  void validNameTable() {
+    QFETCH(QString, raw);
+    QFETCH(bool, ok);
+    QFETCH(QString, trimmed);
+    const auto name = DockLayouts::valid_name(raw);
+    QCOMPARE(name.has_value(), ok);
+    if (ok) {
+      QCOMPARE(*name, trimmed);
+    } else {
+      QCOMPARE(name.error().kind, ErrorKind::Config);
+      QCOMPARE(name.error().code, std::string("bad_name"));
+      QVERIFY(!name.error().what.empty());
+    }
+  }
+
+  void arrangementRoundTrip() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.show();
+    win.a->close();
+    win.b->setFloating(true);
+    QVERIFY(win.layouts->save_as(QStringLiteral("bakeout")));
+    win.layouts->reset();
+    win.verify_factory();
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("bakeout")});
+
+    QVERIFY(win.layouts->apply(QStringLiteral("bakeout")));
+    QVERIFY(!win.a->isVisible());
+    QVERIFY(win.b->isFloating());
+
+    win.layouts->remove(QStringLiteral("bakeout"));
+    QVERIFY(win.layouts->names().isEmpty());
+    QVERIFY(!settings->contains(QStringLiteral("win/arrangements/bakeout/state")));
+    QVERIFY(!settings->contains(QStringLiteral("win/arrangements/bakeout/geometry")));
+  }
+
+  void namesAreSortedIgnoringCase() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    for (const char* name : {"running", "Bakeout", "air"}) QVERIFY(win.layouts->save_as(QString::fromLatin1(name)));
+    QCOMPARE(win.layouts->names(),
+             QStringList({QStringLiteral("air"), QStringLiteral("Bakeout"), QStringLiteral("running")}));
+  }
+
+  void savingOverANameThatDiffersInCaseReplacesIt() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.show();
+    QVERIFY(win.layouts->save_as(QStringLiteral("running")));
+    win.a->close();
+    QVERIFY(win.layouts->save_as(QStringLiteral("Running")));
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("Running")});
+    QVERIFY(win.layouts->contains(QStringLiteral("RUNNING")));
+    win.layouts->reset();
+    QVERIFY(win.layouts->apply(QStringLiteral("running")));
+    QVERIFY(!win.a->isVisible());  // the second one's layout
+  }
+
+  void namesTheIniFormatManglesRoundTrip() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.show();
+    const QStringList hostile{QString::fromUtf8("Ünï 100% [a]=b"), QStringLiteral("..."), QStringLiteral("a.b"),
+                              QStringLiteral("General")};
+    for (const QString& name : hostile) {
+      QVERIFY2(win.layouts->save_as(name), qPrintable(name));
+      QVERIFY2(win.layouts->names().contains(name), qPrintable(name));
+    }
+    QCOMPARE(win.layouts->names().size(), hostile.size());
+    // as another run of the application reads the file
+    const auto again = ini(dir);
+    Window other(again.get());
+    other.show();
+    for (const QString& name : hostile) {
+      QVERIFY2(other.layouts->names().contains(name), qPrintable(name));
+      QVERIFY2(other.layouts->apply(name), qPrintable(name));
+    }
+  }
+
+  void garbageArrangementGivesFactoryAndAnError() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    settings->setValue(QStringLiteral("win/arrangements/bad/state"), QByteArray("zz"));
+    Window win(settings.get());
+    win.show();
+    win.a->close();
+    const QSignalSpy spy(win.layouts, &DockLayouts::applyFailed);
+    const auto applied = win.layouts->apply(QStringLiteral("bad"));
+    QVERIFY(!applied);
+    QCOMPARE(applied.error().kind, ErrorKind::Config);
+    QCOMPARE(applied.error().code, std::string("bad_layout"));
+    win.verify_factory();
+    QCOMPARE(spy.count(), 1);
+    QVERIFY2(spy[0][0].toString().startsWith(QString::fromUtf8("arrangement “bad” not applied: ")),
+             qPrintable(spy[0][0].toString()));
+  }
+
+  void unknownArrangementLeavesTheLayoutAlone() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.show();
+    win.a->close();
+    const QSignalSpy spy(win.layouts, &DockLayouts::applyFailed);
+    const auto applied = win.layouts->apply(QStringLiteral("nope"));
+    QVERIFY(!applied);
+    QCOMPARE(applied.error().code, std::string("unknown_name"));
+    QVERIFY(!win.a->isVisible());
+    QCOMPARE(spy.count(), 0);
+  }
+
+  void aMissingGeometryStillAppliesTheState() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.show();
+    win.a->close();
+    QVERIFY(win.layouts->save_as(QStringLiteral("x")));
+    settings->remove(QStringLiteral("win/arrangements/x/geometry"));
+    win.layouts->reset();
+    QVERIFY(win.layouts->apply(QStringLiteral("x")));
+    QVERIFY(!win.a->isVisible());
+  }
+
+  void aDockAddedSinceTheArrangementWasSavedStaysShown() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    {
+      Window before(settings.get());
+      before.show();
+      before.a->close();
+      QVERIFY(before.layouts->save_as(QStringLiteral("old")));
+    }
+    Window after(settings.get(), true);
+    after.show();
+    QVERIFY(after.layouts->apply(QStringLiteral("old")));
+    QVERIFY(!after.a->isVisible());
+    QVERIFY(after.d->isVisible());
+    QVERIFY(!after.d->isFloating());
+  }
+
+  void withoutSettingsSaveAsFails() {
+    Window win(nullptr);
+    const auto saved = win.layouts->save_as(QStringLiteral("x"));
+    QVERIFY(!saved);
+    QCOMPARE(saved.error().code, std::string("no_settings"));
+    QVERIFY(win.layouts->names().isEmpty());
+    QVERIFY(!win.layouts->contains(QStringLiteral("x")));
+    const auto applied = win.layouts->apply(QStringLiteral("x"));
+    QVERIFY(!applied);
+    QCOMPARE(applied.error().code, std::string("unknown_name"));
+  }
+
+  void aBadNameIsNotSaved() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    const auto saved = win.layouts->save_as(QStringLiteral("a/b"));
+    QVERIFY(!saved);
+    QCOMPARE(saved.error().code, std::string("bad_name"));
+    QVERIFY(win.layouts->names().isEmpty());
+  }
+
+  void anUnwritableSettingsFileIsReported() {
+    QTemporaryDir dir;
+    QFile blocker(dir.filePath(QStringLiteral("f")));  // a file where the settings' directory would be
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    blocker.close();
+    QSettings settings(dir.filePath(QStringLiteral("f/s.ini")), QSettings::IniFormat);
+    Window win(&settings);
+    const auto saved = win.layouts->save_as(QStringLiteral("x"));
+    QVERIFY(!saved);
+    QCOMPARE(saved.error().kind, ErrorKind::Io);
+    QCOMPARE(saved.error().code, std::string("not_saved"));
+    QVERIFY(win.layouts->names().isEmpty());
+  }
+
+  void applyingToAMaximizedWindowShowsThePanels() {
+    QTemporaryDir dir;
+    const auto settings = ini(dir);
+    Window win(settings.get());
+    win.show();
+    win.a->close();
+    QVERIFY(win.layouts->save_as(QStringLiteral("small")));
+    win.layouts->reset();
+    win.w.showMaximized();
+    QTRY_VERIFY(win.w.isMaximized());
+    QVERIFY(win.layouts->apply(QStringLiteral("small")));
+    QVERIFY(!win.a->isVisible());
+    QTRY_VERIFY(win.b->isVisible());
+    QVERIFY(QGuiApplication::primaryScreen()->availableGeometry().intersects(win.w.frameGeometry()));
   }
 };
 

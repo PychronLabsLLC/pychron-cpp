@@ -14,6 +14,9 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QStringList>
+
+#include "pychron/core/error.hpp"
 
 class QAction;
 class QMainWindow;
@@ -56,8 +59,32 @@ class DockLayouts : public QObject {
   [[nodiscard]] QList<QAction*> panel_actions() const;
   QMainWindow* window() const { return window_; }
 
+  // ---- named arrangements: a layout and the window's geometry, kept under
+  // <group>/arrangements/<name>. Names are told apart ignoring case.
+
+  // `raw` trimmed, or why it cannot name an arrangement (Config, code
+  // "bad_name"): 1 to 64 characters, no slash, backslash or control character.
+  [[nodiscard]] static Result<QString> valid_name(const QString& raw);
+  // Sorted, ignoring case.
+  [[nodiscard]] QStringList names() const;
+  [[nodiscard]] bool contains(const QString& name) const;
+  // Keeps the layout the window has now, in place of any of that name.
+  // Config "bad_name" or "no_settings"; Io "not_saved" when the settings
+  // could not be written (nothing is then kept).
+  [[nodiscard]] Result<void> save_as(const QString& name);
+  // Config "unknown_name" (the layout stays as it is) or "bad_layout" (what
+  // was saved cannot be read: the factory layout, and applyFailed).
+  [[nodiscard]] Result<void> apply(const QString& name);
+  void remove(const QString& name);
+
+ signals:
+  // "arrangement “<name>” not applied: <why>"
+  void applyFailed(const QString& message);
+
  private:
   QString key(const QString& name) const { return group_ + QLatin1Char('/') + name; }
+  // The name as it was saved, or empty.
+  QString stored_name(const QString& name) const;
 
   QMainWindow* window_;
   std::function<void()> factory_;
