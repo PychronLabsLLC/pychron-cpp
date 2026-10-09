@@ -15,6 +15,7 @@
 // A file that does not parse is shown with the reason and cannot be edited.
 
 #include <functional>
+#include <optional>
 #include <memory>
 #include <set>
 
@@ -26,6 +27,7 @@
 #include "conditional_table_model.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 
+class QAction;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
@@ -53,6 +55,13 @@ class ConditionalsEditorWindow : public QMainWindow {
   // Starts an empty file; it is written by the first save. false (with
   // `error`) for a bad or existing name.
   bool new_file(const QString& name, QString* error = nullptr);
+  // File > Open: asks which of the lab's files, then opens it as open()
+  // does. false on cancel, with no files, or when open() says so.
+  bool open_picked();
+  // Which of `names` (file_names()) to open; nullopt: cancelled. A dialog by
+  // default.
+  using PickFile = std::function<std::optional<QString>(const QStringList& names)>;
+  void set_pick_file(PickFile pick) { pick_file_ = std::move(pick); }
   bool delete_file(const QString& name, QString* error = nullptr);  // asks first
 
   QString current_name() const { return current_; }
@@ -118,6 +127,8 @@ class ConditionalsEditorWindow : public QMainWindow {
   std::function<Unsaved(const QString&)> ask_unsaved_;
   std::function<bool(const QString&)> confirm_;
   std::function<bool(const QString&)> referenced_;
+  QAction* open_ = nullptr;  // what File > Open does here; enabled while the lab has a file
+  PickFile pick_file_;
 };
 
 }  // namespace pychron::ui

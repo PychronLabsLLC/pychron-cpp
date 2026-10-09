@@ -1,5 +1,8 @@
 #include "conditionals_editor_window.hpp"
 
+#include <algorithm>
+#include <optional>
+
 #include <QAction>
 #include <QCloseEvent>
 #include <QHBoxLayout>
@@ -20,7 +23,6 @@
 #include "menu_hub.hpp"
 #include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
-#include "shortcuts.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -184,7 +186,19 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
     if (name != current_ && !open(name)) fill_files();  // put the highlight back
   });
   connect(files_, &QListWidget::itemClicked, files_, &QListWidget::itemActivated);
-  connect(new_button, &QToolButton::clicked, this, [this] {
+  auto* new_action = new QAction(tr("&New..."), this);
+  open_ = new QAction(tr("&Open..."), this);
+  MenuHub::instance().set_file_action(this, MenuHub::FileRole::New, new_action, tr("Conditionals"));
+  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Open, open_, tr("Conditionals"));
+  connect(open_, &QAction::triggered, this, [this] { open_picked(); });
+  pick_file_ = [this](const QStringList& names) -> std::optional<QString> {
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, tr("Open conditionals"), tr("File"), names,
+                                               std::max(0, static_cast<int>(names.indexOf(current_))), false, &ok);
+    return ok ? std::optional<QString>(name) : std::nullopt;
+  };
+  connect(new_button, &QToolButton::clicked, new_action, &QAction::trigger);
+  connect(new_action, &QAction::triggered, this, [this] {
     bool ok = false;
     const QString name =
         QInputDialog::getText(this, tr("New conditionals file"), tr("Name"), QLineEdit::Normal, QString(), &ok);
@@ -271,6 +285,7 @@ void ConditionalsEditorWindow::fill_files() {
     item->setData(Qt::UserRole, name);
     if (name == current_) files_->setCurrentItem(item);
   }
+  open_->setEnabled(files_->count() > 0);
 }
 
 void ConditionalsEditorWindow::fill_disable() {
@@ -363,6 +378,13 @@ bool ConditionalsEditorWindow::open(const QString& name) {
   if (!resolve_unsaved()) return false;
   load(name);
   return true;
+}
+
+bool ConditionalsEditorWindow::open_picked() {
+  const QStringList names = file_names();
+  if (names.isEmpty()) return false;
+  const std::optional<QString> picked = pick_file_(names);
+  return picked && open(*picked);
 }
 
 bool ConditionalsEditorWindow::new_file(const QString& name, QString* error) {
