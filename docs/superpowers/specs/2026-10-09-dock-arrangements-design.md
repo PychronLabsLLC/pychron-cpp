@@ -1,6 +1,6 @@
 # Dock arrangements and layout reset: design
 
-Date: 2026-10-09. Status: draft, awaiting review.
+Date: 2026-10-09. Status: approved 2026-10-09; implemented on this branch.
 
 ## 1. Problem
 
@@ -94,6 +94,14 @@ dock sizes in those bytes not reliable; function is what already defines
 the layout, so nothing to keep in sync.
 
 Reset does not change window geometry (size, position, maximized).
+
+`default_layout()` also gives docks their factory sizes (`resizeDocks`):
+Experiment its fixed numbers, Extraction Line and Spectrometer each dock's
+`sizeHint()`. Reset undoes a dragged splitter.
+
+Window's default size is set in its constructor, before `restore_last()`:
+`MainWindow::kDefaultSize` = 1200 x 850 (was `main.cpp`, after
+construction, which would overwrite restored geometry).
 
 ### 4.3 Windows
 
@@ -220,10 +228,13 @@ QSettings, per user, application's (`PychronLabs` / `pychron-ui`).
     `apply` failure is reported in the window's status bar
     (`statusBar()->showMessage`, 5 s); Extraction Line also writes
     `WARN [ui] arrangement “<name>” not applied: <why>` to its log dock.
-11. `save_as` syncs settings. If `QSettings::status()` is then not
-    `NoError`, what it wrote is removed and it returns `ErrorKind::Io`,
-    `code` `"not_saved"`: an arrangement never listed now and gone at next
-    start.
+11. `save_as` syncs settings, then asks a second `QSettings` on the same
+    store (`fileName()`, `format()`) to sync and reads that one's
+    `status()`: the window's own `QSettings` keeps the first error of the
+    session for good. Not `NoError`: what was written is removed, an
+    arrangement of the same name that it replaced is put back, and it
+    returns `ErrorKind::Io`, `code` `"not_saved"`. An arrangement is never
+    listed now and gone at next start, and a failed replace loses nothing.
 12. Layout command with no usable front window: front is a dialog or
     nothing → commands disabled, triggering does nothing; front is a popup
     (command palette) → acts on window under it (`MenuHub::active_window()`).

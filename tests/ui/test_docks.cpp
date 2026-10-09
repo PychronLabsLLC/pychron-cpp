@@ -435,6 +435,46 @@ class TestDocks : public QObject {
     QVERIFY(again.alarm_dock()->isVisible());
   }
 
+  void mainWindowResetGivesThePanelsTheirSizesBack() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(window.log_dock()->height() > 0);
+    const int log_height = window.log_dock()->height();
+    const int side_width = window.alarm_dock()->width();
+    window.resizeDocks({window.log_dock()}, {log_height + 200}, Qt::Vertical);
+    window.resizeDocks({window.alarm_dock()}, {side_width + 250}, Qt::Horizontal);
+    QTRY_VERIFY(window.log_dock()->height() > log_height + 100);
+    QTRY_VERIFY(window.alarm_dock()->width() > side_width + 100);
+
+    window.dock_layouts()->reset();
+    constexpr int kSlackPx = 6;
+    QTRY_VERIFY2(qAbs(window.log_dock()->height() - log_height) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(window.log_dock()->height()).arg(log_height)));
+    QTRY_VERIFY2(qAbs(window.alarm_dock()->width() - side_width) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(window.alarm_dock()->width()).arg(side_width)));
+  }
+
+  void mainWindowHasItsSizeAndKeepsTheOneItWasClosedWith() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    auto line = ui::test::make_example_line();
+    {
+      ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      QCOMPARE(window.size(), QSize(1200, 850));  // as installed
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.resize(760, 640);  // within the offscreen screen, which restoreGeometry keeps a window on
+      QTRY_COMPARE(window.size(), QSize(760, 640));
+      window.close();
+    }
+    ui::MainWindow again(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QTRY_COMPARE(again.size(), QSize(760, 640));
+  }
+
   void mainWindowWithoutSettingsKeepsNothing() {
     auto line = ui::test::make_example_line();
     ui::MainWindow window(*line);

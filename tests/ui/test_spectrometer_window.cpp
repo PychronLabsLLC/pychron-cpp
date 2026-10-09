@@ -437,6 +437,26 @@ class TestSpectrometerWindow : public QObject {
     QCOMPARE(window_->dockWidgetArea(intensities), Qt::RightDockWidgetArea);
   }
 
+  void resetGivesThePanelsTheirSizesBack() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    auto* controls = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerControlsDock"));
+    auto* intensities = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerIntensitiesDock"));
+    QTRY_VERIFY(intensities->width() > 0);
+    const int controls_width = controls->width();
+    const int intensities_width = intensities->width();
+    window_->resizeDocks({intensities}, {intensities_width + 200}, Qt::Horizontal);
+    QTRY_VERIFY(intensities->width() > intensities_width + 100);
+
+    window_->dock_layouts()->reset();
+    constexpr int kSlackPx = 6;
+    QTRY_VERIFY2(qAbs(intensities->width() - intensities_width) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(intensities->width()).arg(intensities_width)));
+    QTRY_VERIFY2(qAbs(controls->width() - controls_width) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(controls->width()).arg(controls_width)));
+  }
+
   void panelsLeaveOutTheControls() {
     open();
     QVERIFY(window_->dock_layouts() != nullptr);

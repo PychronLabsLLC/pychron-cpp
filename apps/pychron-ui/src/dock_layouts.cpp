@@ -111,15 +111,32 @@ Result<void> DockLayouts::save_as(const QString& name) {
   if (settings_ == nullptr) {
     return fail(Error{.kind = ErrorKind::Config, .what = "this window keeps no settings", .device = {}, .code = "no_settings"});
   }
-  remove(*valid);  // one of the same name, however it is capitalised
-  const QString at = key(kArrangements) + QLatin1Char('/') + *valid;
-  settings_->setValue(at + QStringLiteral("/geometry"), window_->saveGeometry());
-  settings_->setValue(at + QStringLiteral("/state"), window_->saveState());
+  const QString root = key(kArrangements) + QLatin1Char('/');
+  const QString state_key = QStringLiteral("/state");
+  const QString geometry_key = QStringLiteral("/geometry");
+  // One of the same name, however it is capitalised, goes; it is put back if
+  // the new one cannot be kept.
+  const QString old = stored(*valid);
+  const QByteArray old_state = old.isEmpty() ? QByteArray() : settings_->value(root + old + state_key).toByteArray();
+  const QByteArray old_geometry = old.isEmpty() ? QByteArray() : settings_->value(root + old + geometry_key).toByteArray();
+  if (!old.isEmpty()) settings_->remove(root + old);
+
+  const QString at = root + *valid;
+  settings_->setValue(at + geometry_key, window_->saveGeometry());
+  settings_->setValue(at + state_key, window_->saveState());
   // Written now, so that one that cannot be kept is refused now and not
-  // found missing at the next start.
+  // found missing at the next start. Asked of a second QSettings on the same
+  // store, which shares what is still unwritten: the window's own keeps the
+  // first error of the session for good, and would fail every save after it.
   settings_->sync();
-  if (settings_->status() != QSettings::NoError) {
+  QSettings probe(settings_->fileName(), settings_->format());
+  probe.sync();
+  if (probe.status() != QSettings::NoError) {
     settings_->remove(at);
+    if (!old.isEmpty()) {
+      settings_->setValue(root + old + geometry_key, old_geometry);
+      settings_->setValue(root + old + state_key, old_state);
+    }
     return fail(Error{.kind = ErrorKind::Io, .what = "the settings could not be written", .device = {}, .code = "not_saved"});
   }
   return {};

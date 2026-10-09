@@ -302,6 +302,9 @@ void SpectrometerWindow::default_layout() {
   addDockWidget(Qt::LeftDockWidgetArea, controls_dock_);
   addDockWidget(Qt::RightDockWidgetArea, intensities_dock_);
   for (QDockWidget* dock : {controls_dock_, intensities_dock_}) dock->show();
+  // And the widths they ask for, not the ones they were dragged to.
+  resizeDocks({controls_dock_, intensities_dock_},
+              {controls_dock_->sizeHint().width(), intensities_dock_->sizeHint().width()}, Qt::Horizontal);
 }
 
 void SpectrometerWindow::load_settings() {

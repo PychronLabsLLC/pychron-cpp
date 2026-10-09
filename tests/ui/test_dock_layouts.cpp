@@ -431,6 +431,54 @@ class TestDockLayouts : public QObject {
     QVERIFY(win.layouts->names().isEmpty());
   }
 
+  // QSettings keeps the first error it meets for good: one earlier in the
+  // session must not make every later save a failure.
+  void anEarlierSettingsErrorDoesNotFailALaterSave() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      QFile damaged(file);
+      QVERIFY(damaged.open(QIODevice::WriteOnly));
+      damaged.write("[win\nthis is not = an ini file ]]\n\x01\x02");
+    }
+    QSettings settings(file, QSettings::IniFormat);
+    (void)settings.allKeys();
+    QVERIFY(settings.status() != QSettings::NoError);  // the premise
+    Window win(&settings);
+    win.show();
+    QVERIFY(win.layouts->save_as(QStringLiteral("x")));
+    const QSettings again(file, QSettings::IniFormat);
+    QVERIFY(again.contains(QStringLiteral("win/arrangements/x/state")));
+  }
+
+  void aSaveThatFailsKeepsTheArrangementItWouldHaveReplaced() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    QSettings settings(file, QSettings::IniFormat);
+    Window win(&settings);
+    win.show();
+    win.a->close();
+    QVERIFY(win.layouts->save_as(QStringLiteral("bakeout")));  // A closed
+    win.layouts->reset();
+
+    // nothing in the directory can be written now
+    QVERIFY(QFile::setPermissions(file, QFileDevice::ReadOwner));
+    QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto saved = win.layouts->save_as(QStringLiteral("Bakeout"));  // A shown
+    QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QVERIFY(QFile::setPermissions(file, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
+    QVERIFY(!saved);
+    QCOMPARE(saved.error().code, std::string("not_saved"));
+
+    QCOMPARE(win.layouts->names(), QStringList{QStringLiteral("bakeout")});
+    settings.sync();  // whatever is in memory reaches the file now
+    const QSettings again(file, QSettings::IniFormat);
+    QVERIFY(again.contains(QStringLiteral("win/arrangements/bakeout/state")));
+    QVERIFY(!again.contains(QStringLiteral("win/arrangements/Bakeout/state")));
+    QVERIFY(win.layouts->apply(QStringLiteral("bakeout")));
+    QVERIFY(!win.a->isVisible());  // the one first saved
+  }
+
   void applyingToAMaximizedWindowShowsThePanels() {
     QTemporaryDir dir;
     const auto settings = ini(dir);

@@ -20,6 +20,7 @@
 #include <QMainWindow>
 #include <QPointer>
 #include <QSettings>
+#include <QSize>
 
 #include "alarm_dock.hpp"
 #include "brand.hpp"
@@ -51,6 +52,9 @@ class MainWindow : public QMainWindow {
  public:
   // `settings` keeps the panel layout between sessions, per line, and the
   // layouts saved under a name; with none (the default) nothing is kept.
+  // The size the window has until it is given another (and kept, with settings).
+  static constexpr QSize kDefaultSize{1200, 850};
+
   explicit MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings> settings = nullptr,
                       QWidget* parent = nullptr);
 

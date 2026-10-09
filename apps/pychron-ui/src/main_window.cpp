@@ -166,6 +166,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
       preferences_(new QAction(QStringLiteral("Preferences…"), this)),
       log_hub_(line.log_hub()) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
+  resize(kDefaultSize);  // the saved geometry, if any, wins below
   setCentralWidget(canvas_);
   if (bridge_.cryo_outputs() > 0 || !bridge_.cryo_inputs().empty()) {
     cryo_ = new CryoDock(bridge_, this);
@@ -310,6 +311,20 @@ void MainWindow::default_layout() {
   place(alarms_, Qt::RightDockWidgetArea);
   place(cryo_, Qt::RightDockWidgetArea);
   place(heaters_, Qt::RightDockWidgetArea);
+  // And the sizes they ask for, not the ones they were dragged to.
+  QList<QDockWidget*> side;
+  QList<int> widths;
+  QList<int> heights;
+  for (QDockWidget* dock : {static_cast<QDockWidget*>(alarms_), static_cast<QDockWidget*>(cryo_),
+                            static_cast<QDockWidget*>(heaters_)}) {
+    if (dock == nullptr) continue;
+    side.append(dock);
+    widths.append(dock->sizeHint().width());
+    heights.append(dock->sizeHint().height());
+  }
+  resizeDocks(side, widths, Qt::Horizontal);
+  resizeDocks(side, heights, Qt::Vertical);
+  resizeDocks({log_}, {log_->sizeHint().height()}, Qt::Vertical);
 }
 
 std::unique_ptr<QSettings> MainWindow::spectrometer_settings() const {
