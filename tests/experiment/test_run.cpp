@@ -365,15 +365,15 @@ TEST_F(RunTest, ResourceHooksWrapPhasesAndCanCancel) {
   std::vector<std::string> calls;
   RunHooks hooks;
   hooks.acquire_extraction = [&] {
-    calls.push_back("+extraction");
+    calls.emplace_back("+extraction");
     return true;
   };
-  hooks.release_extraction = [&] { calls.push_back("-extraction"); };
+  hooks.release_extraction = [&] { calls.emplace_back("-extraction"); };
   hooks.acquire_spectrometer = [&] {
-    calls.push_back("+spectrometer");
+    calls.emplace_back("+spectrometer");
     return true;
   };
-  hooks.release_spectrometer = [&] { calls.push_back("-spectrometer"); };
+  hooks.release_spectrometer = [&] { calls.emplace_back("-spectrometer"); };
   auto r = go(unknown_run("12345"), hooks);
   EXPECT_EQ(r.state, RunState::Success);
   EXPECT_EQ(calls, (std::vector<std::string>{"+extraction", "-extraction", "+spectrometer", "-spectrometer"}));

@@ -518,7 +518,7 @@ Result<Conditional> parse_item(const toml::table& t, ConditionalKind kind) {
                                                 "action", "resume", "window", "mapper",    "analysis_types",
                                                 "abbreviated_count_ratio", "truncate", "terminate"};
   for (const auto& [k, v] : t)
-    if (!known.count(k.str())) return cfg("unknown key '" + std::string(k.str()) + "'");
+    if (!known.contains(k.str())) return cfg("unknown key '" + std::string(k.str()) + "'");
   Conditional c;
   c.kind = kind;
   auto check = str_key(t, "check");

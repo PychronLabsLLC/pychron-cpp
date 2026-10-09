@@ -75,8 +75,8 @@ std::string label_of(std::string_view name) {
 // The executor's reason is a sentence, often with the sample in it
 // ("delay before 12345-01A"); the label is which kind of wait it was.
 const char* wait_reason(std::string_view reason) {
-  if (reason.rfind("scheduled start", 0) == 0) return "scheduled_start";
-  if (reason.rfind("delay", 0) == 0) return "delay";
+  if (reason.starts_with("scheduled start")) return "scheduled_start";
+  if (reason.starts_with("delay")) return "delay";
   if (reason == "extraction device") return "extraction_device";
   if (reason.find("pump") != std::string_view::npos) return "pump_time";
   return "other";

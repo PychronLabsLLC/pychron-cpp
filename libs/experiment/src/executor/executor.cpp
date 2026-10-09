@@ -489,7 +489,7 @@ Result<std::size_t> Executor::resume_row(const std::filesystem::path& state_file
   ss << in.rdbuf();
   const std::string text = ss.str();
   std::smatch m;
-  if (!std::regex_search(text, m, std::regex("\"next_row\"\\s*:\\s*([0-9]+)")))
+  if (!std::regex_search(text, m, std::regex(R"("next_row"\s*:\s*([0-9]+))")))
     return fail(ErrorKind::Config, state_file.string() + ": no next_row");
   return static_cast<std::size_t>(std::stoull(m[1].str()));
 }

@@ -52,7 +52,7 @@ class Errors {
 void check_keys(const toml::table& t, std::initializer_list<std::string_view> allowed, const std::string& where, Errors& err) {
   std::set<std::string_view> ok(allowed);
   for (const auto& [k, v] : t)
-    if (!ok.count(k.str())) err.add(where, "unknown key '" + std::string(k.str()) + "'");
+    if (!ok.contains(k.str())) err.add(where, "unknown key '" + std::string(k.str()) + "'");
 }
 
 class Reader {

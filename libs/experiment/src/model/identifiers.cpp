@@ -135,7 +135,7 @@ AnalysisType IdentifierRules::classify(std::string_view identifier) const {
 }
 
 bool IdentifierRules::is_special(std::string_view identifier) const {
-  return by_prefix_.count(lower(identifier)) != 0;
+  return by_prefix_.contains(lower(identifier));
 }
 
 Result<void> IdentifierRules::validate_identifier(std::string_view identifier) const {

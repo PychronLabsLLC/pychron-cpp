@@ -104,7 +104,7 @@ std::vector<std::pair<std::string, const toml::table*>> entries(Parser& p, const
   return out;
 }
 
-bool starts_with(std::string_view s, std::string_view prefix) { return s.substr(0, prefix.size()) == prefix; }
+bool starts_with(std::string_view s, std::string_view prefix) { return s.starts_with(prefix); }
 
 std::string run_label(const executor::RunSummary& r) {
   std::string s = r.identifier;
@@ -220,7 +220,7 @@ Delivery finish(const std::string& channel, const std::string& program, const Re
 
 std::vector<std::string> curl_argv(const NotificationConfig& c, bool fail_on_http_error) {
   std::vector<std::string> argv{c.curl, "--silent", "--show-error"};
-  if (fail_on_http_error) argv.push_back("--fail");
+  if (fail_on_http_error) argv.emplace_back("--fail");
   argv.insert(argv.end(), {"--max-time", std::to_string(c.timeout.count()), "--config", "-"});
   return argv;
 }
@@ -287,7 +287,7 @@ ServiceRequest service_request(const EmailChannel& ch, const Notification& n, co
     case EmailChannel::Provider::Brevo:
       for (const auto& t : to) items.push_back("{\"email\": " + json_string(t) + "}");
       return {"https://api.brevo.com/v3/smtp/email", "api-key: " + key,
-              "{\"sender\": {\"email\": " + json_string(ch.from) + "}, \"to\": " + json_array(items) +
+              R"({"sender": {"email": )" + json_string(ch.from) + "}, \"to\": " + json_array(items) +
                   ", \"subject\": " + subject + ", \"textContent\": " + text + "}"};
     case EmailChannel::Provider::Resend:
       for (const auto& t : to) items.push_back(json_string(t));
@@ -343,12 +343,12 @@ Delivery send_webhook(const NotificationConfig& c, const WebhookChannel& ch, con
                       const ProcessRunner& run) {
   std::string json;
   if (ch.format == WebhookChannel::Format::Slack) {
-    json = "{\"text\": \"" + json_escape("*" + n.subject + "*\n" + n.body) + "\"}";
+    json = R"({"text": ")" + json_escape("*" + n.subject + "*\n" + n.body) + "\"}";
   } else {
-    json = "{\"event\": \"" + std::string(to_string(n.event)) + "\", \"subject\": \"" + json_escape(n.subject) +
-           "\", \"text\": \"" + json_escape(n.body) + "\"";
+    json = R"({"event": ")" + std::string(to_string(n.event)) + R"(", "subject": ")" + json_escape(n.subject) +
+           R"(", "text": ")" + json_escape(n.body) + "\"";
     for (const auto& [k, v] : n.fields) json += ", \"" + json_escape(k) + "\": \"" + json_escape(v) + "\"";
-    json += "}";
+    json += '}';
   }
   auto payload = TempFile::write(json);
   if (!payload) return {ch.name, false, payload.error().what};
@@ -426,7 +426,7 @@ Result<NotificationConfig> NotificationConfig::from_toml(std::string_view text, 
       if (provider == "brevo") e.provider = EmailChannel::Provider::Brevo;
       else if (provider == "resend") e.provider = EmailChannel::Provider::Resend;
       else if (provider == "postmark") e.provider = EmailChannel::Provider::Postmark;
-      else p.add(where + ".provider", "must be \"brevo\", \"resend\" or \"postmark\" (leave it out for SMTP)");
+      else p.add(where + ".provider", R"(must be "brevo", "resend" or "postmark" (leave it out for SMTP))");
       e.api_key_env = p.str(*t, where, "api_key_env", true);
       for (const char* key : {"url", "username", "password_env", "tls"})
         if (t->get(key) != nullptr) p.add(where + "." + key, "not used with provider (a mail service takes only api_key_env)");
@@ -452,7 +452,7 @@ Result<NotificationConfig> NotificationConfig::from_toml(std::string_view text, 
       p.add(where + ".url", "must start with https:// or http://");
     const auto format = p.str(*t, where, "format", false);
     if (format == "slack") w.format = WebhookChannel::Format::Slack;
-    else if (!format.empty() && format != "json") p.add(where + ".format", "must be \"json\" or \"slack\"");
+    else if (!format.empty() && format != "json") p.add(where + ".format", R"(must be "json" or "slack")");
     w.on = p.on(*t, where, w.on);
     c.webhooks.push_back(std::move(w));
   }

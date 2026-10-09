@@ -43,7 +43,7 @@ class FakeSpectrometer : public ISpectrometerCatalog {
  public:
   bool has_detector(std::string_view name) const override {
     static const std::set<std::string, std::less<>> dets{"H2", "H1", "AX", "L1", "L2", "CDD"};
-    return dets.count(name) > 0;
+    return dets.contains(name);
   }
 };
 
