@@ -3,6 +3,7 @@
 // sections 4 and 7).
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -116,9 +117,12 @@ int history(const Args& a, Io io) {
   const std::string where = irradiation + " " + level;
   std::optional<int> only;
   if (a.positional.size() == 3) {
+    // All of it, and in range: sscanf's %d would take 2^32 + 9 for hole 9.
+    const std::string& text = a.positional[2];
     int hole = 0;
-    char rest = 0;
-    if (std::sscanf(a.positional[2].c_str(), "%d%c", &hole, &rest) != 1) return usage(io, "'" + a.positional[2] + "' is not a hole number");
+    const char* end = text.data() + text.size();
+    const auto [stop, error] = std::from_chars(text.data(), end, hole);
+    if (error != std::errc{} || stop != end) return usage(io, "'" + text + "' is not a hole number");
     only = hole;
   }
   auto store = open_flux_store(a.db);
@@ -198,6 +202,7 @@ int history(const Args& a, Io io) {
   if (groups.empty()) return failed(io, where + " has no saved flux");
   std::vector<const Group*> ordered;
   for (const auto& [uuid, group] : groups) ordered.push_back(&group);
+  // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by sequence, not by address
   std::stable_sort(ordered.begin(), ordered.end(), [](const Group* x, const Group* y) { return x->seq > y->seq; });
   std::vector<Row> rows;
   for (const Group* g : ordered) {

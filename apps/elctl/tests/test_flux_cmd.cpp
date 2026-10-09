@@ -858,6 +858,10 @@ TEST_F(FluxCmd, HistoryIsNewestFirstByChangeset) {
   // Hole 9 was saved once.
   o = run_raw({"flux", "history", "NM-300", "A", "9", "--db", db_});
   EXPECT_EQ(lines_of(o.out).size(), 2u) << o.out;
+  // 2^32 + 9 is not hole 9.
+  o = run_raw({"flux", "history", "NM-300", "A", "4294967305", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.out;
+  EXPECT_TRUE(contains(o.err, "is not a hole number")) << o.err;
   o = run_raw({"flux", "show", "NM-300", "A", "--db", db_});
   EXPECT_EQ(o.code, elctl::kOk) << o.err;
   o = run_raw({"flux", "monitors", "list", "--db", db_});

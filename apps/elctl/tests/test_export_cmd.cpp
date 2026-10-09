@@ -202,6 +202,11 @@ TEST_F(ExportCmd, HelpAndUsageErrors) {
   EXPECT_TRUE(contains(export_({"--out", "x.csv", "--frob", "1"}).err, "--frob"));
   EXPECT_TRUE(contains(export_({"--out", "x.csv", "--group-by", "colour"}).err, "--group-by"));
   EXPECT_EQ(export_({"--out", "x.csv", "--sample"}).code, elctl::kUsage);
+  // A number too large to hold is refused, not wrapped into one that fits.
+  EXPECT_TRUE(contains(export_({"--out", "x.csv", "--limit", "99999999999"}).err, "--limit"));
+  EXPECT_TRUE(contains(export_({"--out", "x.csv", "--plateau-steps", "4294967299"}).err, "--plateau-steps"));
+  EXPECT_TRUE(contains(export_({"--out", "x.csv", "--from", "2020-4294967297-01"}).err, "--from"));
+  EXPECT_TRUE(contains(export_({"--out", "x.csv", "--plateau-gas", "1e999"}).err, "--plateau-gas"));
 
   const Outcome missing = run_raw({"export", "--db", "sqlite:" + path("nowhere.db").string(), "--out", "x.csv"});
   EXPECT_EQ(missing.code, elctl::kUsage);

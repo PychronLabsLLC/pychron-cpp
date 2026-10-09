@@ -3,8 +3,8 @@
 
 #include "export.hpp"
 
+#include <charconv>
 #include <chrono>
-#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <ostream>
@@ -12,6 +12,7 @@
 #include <system_error>
 
 #include "pychron/core/error.hpp"
+#include "pychron/core/number.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/report.hpp"
 #include "pychron/processing/store_source.hpp"
@@ -101,29 +102,30 @@ int fatal(Io io, const std::string& message) {
 
 int fatal(Io io, const Error& error) { return fatal(io, error.what); }
 
+// All of `text` as a whole number, or nothing: a number that does not fit is
+// not a number here (sscanf's %d wraps one into range, or worse).
+std::optional<int> parse_int(std::string_view text) {
+  int value = 0;
+  const char* end = text.data() + text.size();
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage): from_chars is given the end
+  const auto [stop, error] = std::from_chars(text.data(), end, value);
+  if (error != std::errc{} || stop != end) return std::nullopt;
+  return value;
+}
+
 // "YYYY-MM-DD" as UTC epoch seconds of its midnight.
-std::optional<double> parse_date(const std::string& text) {
-  int y = 0, m = 0, d = 0;
-  char rest = 0;
-  if (std::sscanf(text.c_str(), "%d-%d-%d%c", &y, &m, &d, &rest) != 3) return std::nullopt;
+std::optional<double> parse_date(std::string_view text) {
+  const auto first = text.find('-', 1);  // past a year's own sign
+  const auto second = first == std::string_view::npos ? first : text.find('-', first + 1);
+  if (second == std::string_view::npos) return std::nullopt;
+  const auto y = parse_int(text.substr(0, first));
+  const auto m = parse_int(text.substr(first + 1, second - first - 1));
+  const auto d = parse_int(text.substr(second + 1));
+  if (!y || !m || !d || *m < 1 || *d < 1) return std::nullopt;
   using namespace std::chrono;
-  const year_month_day ymd{year{y}, month{static_cast<unsigned>(m)}, day{static_cast<unsigned>(d)}};
+  const year_month_day ymd{year{*y}, month{static_cast<unsigned>(*m)}, day{static_cast<unsigned>(*d)}};
   if (!ymd.ok()) return std::nullopt;
   return static_cast<double>(sys_days{ymd}.time_since_epoch().count()) * 86400.0;
-}
-
-std::optional<int> parse_int(const std::string& text) {
-  int value = 0;
-  char rest = 0;
-  if (std::sscanf(text.c_str(), "%d%c", &value, &rest) != 1) return std::nullopt;
-  return value;
-}
-
-std::optional<double> parse_double(const std::string& text) {
-  double value = 0;
-  char rest = 0;
-  if (std::sscanf(text.c_str(), "%lf%c", &value, &rest) != 1) return std::nullopt;
-  return value;
 }
 
 Result<Args> parse(const std::vector<std::string>& args) {
@@ -187,7 +189,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
       if (!n || *n < 2) return fail(ErrorKind::Config, "--plateau-steps takes a whole number of 2 or more");
       a.plateau_steps = *n;
     } else if (flag == "--plateau-gas") {
-      const auto pct = parse_double(value);
+      const auto pct = pychron::parse_double(value);
       if (!pct || !(*pct >= 0 && *pct <= 100)) return fail(ErrorKind::Config, "--plateau-gas takes a percent, 0 to 100");
       a.plateau_gas = *pct;
     } else if (flag == "--limit") {
