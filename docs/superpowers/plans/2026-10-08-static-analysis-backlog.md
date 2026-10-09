@@ -12,6 +12,7 @@ generated) and from a build without persistence and scripting (the stubs).
   clang-tidy, 128 cppcheck), 18 files not analysed by clang-tidy.
 - After Phase 0: **1,972 findings** (1,856 clang-tidy, 116 cppcheck), every
   file analysed.
+- After Phases 1 and 2: **668 findings**, all of them Phase 3 but one.
 
 To reproduce (about a quarter of an hour for the whole tree):
 
@@ -188,36 +189,37 @@ Then bucket 1b, in this order:
 **Phase 1 is done** but for the one decision left open in 1a: `Image::path`
 hiding `Located::path` (`canvas.hpp:160`, the last finding of its kind in the
 tree). Five defects were found and fixed with tests, of about 570 findings
-read. The whole tree stood at 1,528 when last measured, before tasks 6 to 8;
-about 1,400 are left, all of them Phase 2 and Phase 3.
+read.
 
 Order of components within Phase 1, by what a defect costs: `libs/core`,
 `libs/persistence`, `libs/ingest`, `libs/dvc`, `libs/reduction`,
 `libs/processing`, then devices and systems, then `apps/`, then tests.
 
-## Phase 2: mechanical (771 findings, `--fix`)
+## Phase 2: mechanical (771 findings, `--fix`): done
 
-One commit per component, `refactor(<component>): ...`, no behaviour change
-intended, component tests run after each.
+Applied in one pass over the tree (`run-clang-tidy -fix`, 26 checks), read
+before it was kept, built in both configurations and run through every test
+(4,351 under ASan/UBSan with the hardened standard library, 4,393 with the
+UI; Apple clang only), then committed one `refactor(<component>)` per
+component, 209 files.
 
-- [ ] Run `python3 tools/quality_check.py --fix <files of the component>`,
-  read the diff, build, test, commit.
-- Checks and counts: `modernize-use-emplace` 171, `readability-container-contains`
-  96, `cppcoreguidelines-prefer-member-initializer` 90,
-  `modernize-avoid-c-style-cast` 65, `modernize-use-integer-sign-comparison`
-  56, `modernize-raw-string-literal` 47, `modernize-use-starts-ends-with` 46,
-  `readability-inconsistent-declaration-parameter-name` 36,
-  `performance-faster-string-find` 33, `readability-simplify-boolean-expr` 24,
-  `modernize-use-auto` 22, `modernize-loop-convert` 16, and about 130 more
-  across smaller checks.
-- Watch for: `use-integer-sign-comparison` needs `<utility>` and changes
-  which comparisons are signed; `prefer-member-initializer` can reorder
-  initialisation relative to member declaration order; `raw-string-literal`
-  in SQL and regex strings is easy to get subtly wrong; `--fix` applied to a
-  header through two sources must not be applied twice (the script runs
-  fixes serially for that reason).
+What the fix-its were not trusted with. Each of these is off, or restricted,
+in `.clang-tidy` now, because its own fix changes what the code does:
 
-## Phase 3: manual performance and C arrays (630 findings)
+| Check | What its fix did |
+|---|---|
+| `modernize-use-std-numbers` | made the legacy finder's deliberate `3.1415` into pi, and `std::log(10.0)` into `ln10` in the uncertainty arithmetic |
+| `cppcoreguidelines-prefer-member-initializer` | moved `new QWidget(this)` into initializer lists, so widgets are made in declaration order (Qt's tab order follows it); one did not compile |
+| `readability-simplify-boolean-expr` (De Morgan only) | `!(lo <= x && x <= hi)` became `x < lo \|\| x > hi`, which lets a NaN through; five range checks |
+| `performance-avoid-endl` | removed the flush from a progress line |
+| `readability-inconsistent-declaration-parameter-name` | renamed the header's `hardware_name` to the source's `n` |
+
+Also corrected by hand: `loop-convert` spelled a `std::size_t` element as
+`unsigned long` (wrong on Windows), now `auto`.
+
+Left by this phase: four `modernize-avoid-c-style-cast` with no fix-it.
+
+## Phase 3: manual performance and C arrays (668 findings as of 2026-10-08)
 
 Lowest value per finding; do it component by component when that component
 is being worked on anyway, not as a campaign.
