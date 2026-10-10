@@ -55,6 +55,54 @@ namespace {
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
+// A persister that keeps no file of its own under <data>/records: it counts
+// what it is asked to save and lends aliquots and the rest of FilePersister,
+// on a directory of its own.
+class RecordingPersister final : public persist::IAnalysisPersister {
+ public:
+  RecordingPersister(fs::path root, std::vector<std::string> refusals, std::optional<std::string> cannot_check = {})
+      : files_(std::move(root)), refusals_(std::move(refusals)), cannot_check_(std::move(cannot_check)) {}
+  // Numbers from 7, which an empty FilePersister never hands out first.
+  Result<int> next_aliquot(const std::string& identifier) override {
+    auto n = files_.next_aliquot(identifier);
+    if (!n) return n;
+    return *n + 6;
+  }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return files_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
+  Result<void> save_analysis(const record::AnalysisRecord& r) override {
+    std::lock_guard lock(mutex_);
+    if (saved_.empty()) first_aliquot_ = r.identity.aliquot;
+    saved_.push_back(r.identity.uuid);
+    return {};
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return files_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override {
+    if (cannot_check_) return fail(ErrorKind::Io, *cannot_check_);
+    return refusals_;
+  }
+  std::size_t saved() {
+    std::lock_guard lock(mutex_);
+    return saved_.size();
+  }
+  int first_aliquot() {
+    std::lock_guard lock(mutex_);
+    return first_aliquot_;
+  }
+
+ private:
+  persist::FilePersister files_;
+  std::vector<std::string> refusals_;
+  std::optional<std::string> cannot_check_;
+  int first_aliquot_ = 0;
+  std::mutex mutex_;
+  std::vector<std::string> saved_;
+};
+
 class LabSessionTest : public pychron::testing::VirtualTimeTest {
  protected:
   // A dragonfly's twelve seconds are some four hundred pictures made and
@@ -170,6 +218,7 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
   std::unique_ptr<spectrometer::ScanService> scan_;
   Lab lab_;
   QueueSpec queue_;
+  std::unique_ptr<RecordingPersister> persister_;  // outlives session_
   std::unique_ptr<LabSession> session_;
   std::mutex mutex_;
   std::vector<QueueEnded> ended_;
@@ -208,43 +257,11 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   EXPECT_FALSE(scan_->paused());
 }
 
-// A persister that keeps no file of its own under <data>/records: it counts
-// what it is asked to save and lends aliquots and the rest of FilePersister,
-// on a directory of its own.
-class RecordingPersister final : public persist::IAnalysisPersister {
- public:
-  RecordingPersister(fs::path root, std::vector<std::string> refusals)
-      : files_(std::move(root)), refusals_(std::move(refusals)) {}
-  Result<int> next_aliquot(const std::string& identifier) override { return files_.next_aliquot(identifier); }
-  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return files_.begin_run(id, queue); }
-  Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
-  Result<void> save_analysis(const record::AnalysisRecord& r) override {
-    std::lock_guard lock(mutex_);
-    saved_.push_back(r.identity.uuid);
-    return {};
-  }
-  Result<void> save_artifact(const std::string& uuid, const std::string& name,
-                             const std::vector<std::uint8_t>& bytes) override {
-    return files_.save_artifact(uuid, name, bytes);
-  }
-  Result<void> flush() override { return {}; }
-  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return refusals_; }
-  std::size_t saved() {
-    std::lock_guard lock(mutex_);
-    return saved_.size();
-  }
-
- private:
-  persist::FilePersister files_;
-  std::vector<std::string> refusals_;
-  std::mutex mutex_;
-  std::vector<std::string> saved_;
-};
-
 TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {
-  RecordingPersister persister(dir_ / "elsewhere", {"identifier 'zz' is not in the database"});
   session_.reset();
-  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, &persister});
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere",
+                                                    std::vector<std::string>{"identifier 'zz' is not in the database"});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
   std::atomic<int> announced{0};
   auto sub = line_->bus().subscribe<QueueStarted>([&](const QueueStarted&) { ++announced; });
 
@@ -258,15 +275,27 @@ TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {
   EXPECT_EQ(announced.load(), 0);
 }
 
-TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
-  RecordingPersister persister(dir_ / "elsewhere", {});
+TEST_F(LabSessionTest, AQueueIsNotStartedWhenThePersisterCannotCheckIt) {
   session_.reset();
-  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, &persister});
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{},
+                                                    std::optional<std::string>("db down"));
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  auto refused = session_->start(queue_);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().what, "the queue cannot be saved: db down");
+  EXPECT_FALSE(session_->running());
+}
+
+TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
   ASSERT_TRUE(session_->start(queue_));
   const auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
-  EXPECT_EQ(persister.saved(), 3u);
+  EXPECT_EQ(persister_->saved(), 3u);
+  EXPECT_EQ(persister_->first_aliquot(), 7);
   EXPECT_FALSE(fs::exists(dir_ / "data" / "records" / "bu" / "bu-1.json"));
   EXPECT_TRUE(fs::is_empty(dir_ / "data" / "spool"));
   EXPECT_EQ(session_->pending_saves(), 0u);
