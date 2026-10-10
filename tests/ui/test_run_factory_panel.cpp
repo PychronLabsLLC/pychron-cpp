@@ -446,6 +446,153 @@ class TestRunFactoryPanel : public QObject {
     QVERIFY(combo("identifier_select")->isEnabled());
     QVERIFY(!combo("level")->isEnabled());
   }
+  void aLateAnswerForAnotherPackageIsDropped() {
+    FakeIdentifierSource fake;
+    load(fake);
+    panel_->choose_package(2);
+    panel_->choose_package(1);
+    QCOMPARE(fake.content_calls.size(), std::size_t{2});
+    fake.content_calls[1].second(PackageContents{{"A"}, {{"70001", "", "A", 1}}});
+    fake.content_calls[0].second(p1_contents());
+    QCOMPARE(panel_->identifier_choices(), QStringList{QStringLiteral("70001  (A 1)")});
+    QCOMPARE(panel_->level_choices(), (QStringList{QStringLiteral("(all)"), QStringLiteral("A")}));
+  }
+
+  void aCatalogChangeReloadsAndKeepsTheChoice() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_level(2);
+    panel_->choose_identifier(0);
+    QCOMPARE(edit()->text(), QStringLiteral("66010"));
+    fake.notify();
+    QCOMPARE(fake.package_calls.size(), std::size_t{2});
+    fake.package_calls[1](two_packages());
+    QCOMPARE(fake.content_calls.size(), std::size_t{2});
+    QCOMPARE(fake.content_calls[1].first, std::string("p1"));
+    PackageContents more = p1_contents();
+    more.choices.push_back({"66011", "", "B", 4});
+    fake.content_calls[1].second(more);
+    QCOMPARE(combo("package")->currentIndex(), 2);
+    QCOMPARE(combo("level")->currentText(), QStringLiteral("B"));
+    QCOMPARE(panel_->identifier_choices(),
+             (QStringList{QStringLiteral("66010  bt-1  (B 2)"), QStringLiteral("66011  (B 4)")}));
+    QCOMPARE(edit()->text(), QStringLiteral("66010"));
+  }
+
+  void aCatalogChangeDropsAChoiceThatIsGone() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_level(2);
+    // The level went away: back to all of the package.
+    fake.notify();
+    fake.package_calls.back()(two_packages());
+    fake.content_calls.back().second(PackageContents{{"A"}, {{"66001", "FC-2", "A", 1}}});
+    QCOMPARE(combo("package")->currentIndex(), 2);
+    QCOMPARE(combo("level")->currentIndex(), 0);
+    QCOMPARE(panel_->identifier_choices(), QStringList{QStringLiteral("66001  FC-2  (A 1)")});
+    // The package went away: nothing chosen, and nothing asked about it.
+    const std::size_t asked = fake.content_calls.size();
+    fake.notify();
+    fake.package_calls.back()(std::vector<PackageChoice>{{"p2", "NM-294"}});
+    QCOMPARE(combo("package")->currentIndex(), 0);
+    QVERIFY(!combo("level")->isEnabled());
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QCOMPARE(fake.content_calls.size(), asked);
+  }
+
+  void aChangeWhileContentsArePendingWins() {
+    FakeIdentifierSource fake;
+    load(fake);
+    panel_->choose_package(2);
+    fake.notify();
+    fake.package_calls.back()(two_packages());
+    QCOMPARE(fake.content_calls.size(), std::size_t{2});
+    fake.content_calls[1].second(PackageContents{{"A"}, {{"70001", "", "A", 1}}});
+    fake.content_calls[0].second(p1_contents());
+    QCOMPARE(panel_->identifier_choices(), QStringList{QStringLiteral("70001  (A 1)")});
+  }
+
+  void aFirstPackagesFailureKeepsTheRowsHidden() {
+    FakeIdentifierSource fake;
+    panel_->set_identifier_source(&fake);
+    fake.package_calls.at(0)(pychron::fail(pychron::ErrorKind::Io, "store gone"));
+    QVERIFY(!panel_->selects_visible());
+  }
+
+  void aLaterPackagesFailureKeepsTheList() {
+    FakeIdentifierSource fake;
+    load(fake);
+    const QStringList before = panel_->package_choices();
+    fake.notify();
+    fake.package_calls.back()(pychron::fail(pychron::ErrorKind::Io, "store gone"));
+    QCOMPARE(panel_->package_choices(), before);
+    QVERIFY(panel_->selects_visible());
+    QVERIFY(panel_->package_tooltip().contains(QStringLiteral("store gone")));
+    fake.notify();
+    fake.package_calls.back()(two_packages());
+    QVERIFY(panel_->package_tooltip().isEmpty());
+  }
+
+  void aContentsFailureEmptiesTheListAndSaysWhy() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_package(2);
+    fake.content_calls.back().second(pychron::fail(pychron::ErrorKind::Io, "no such level"));
+    QCOMPARE(panel_->level_choices(), QStringList{QStringLiteral("(all)")});
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QVERIFY(panel_->identifier_tooltip().contains(QStringLiteral("no such level")));
+    choose_p1(fake);
+    QVERIFY(panel_->identifier_tooltip().isEmpty());
+    QCOMPARE(panel_->identifier_choices(), all_three());
+  }
+
+  void anAnswerWhileLockedFillsButStaysDisabled() {
+    FakeIdentifierSource fake;
+    load(fake);
+    panel_->choose_package(2);
+    panel_->set_locked(true);
+    fake.content_calls.back().second(p1_contents());
+    QCOMPARE(panel_->identifier_choices(), all_three());
+    for (const char* name : {"package", "level", "identifier_select"}) QVERIFY(!combo(name)->isEnabled());
+    panel_->set_locked(false);
+    for (const char* name : {"package", "level", "identifier_select"}) QVERIFY(combo(name)->isEnabled());
+  }
+
+  void aSourceThatGoesAwayHidesTheSelects() {
+    auto* fake = new FakeIdentifierSource;
+    load(*fake);
+    choose_p1(*fake);
+    panel_->choose_identifier(0);
+    delete fake;
+    QVERIFY(!panel_->selects_visible());
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QCOMPARE(edit()->text(), QStringLiteral("66001"));
+    panel_->set_form(panel_->form());
+    QCOMPARE(panel_->form().identifier, std::string("66001"));
+  }
+
+  void aSourceCanBeReplacedOrCleared() {
+    FakeIdentifierSource a;
+    FakeIdentifierSource b;
+    load(a);
+    choose_p1(a);
+    panel_->choose_package(1);  // left unanswered
+    panel_->set_identifier_source(nullptr);
+    QVERIFY(!panel_->selects_visible());
+    QCOMPARE(panel_->package_choices(), QStringList{QStringLiteral("(none)")});
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    panel_->set_identifier_source(&b);
+    QCOMPARE(b.package_calls.size(), std::size_t{1});
+    a.notify();
+    QCOMPARE(a.package_calls.size(), std::size_t{1});
+    QCOMPARE(b.package_calls.size(), std::size_t{1});
+    a.content_calls.back().second(p1_contents());
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QVERIFY(!panel_->selects_visible());
+  }
 };
 
 QTEST_MAIN(TestRunFactoryPanel)

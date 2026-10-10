@@ -559,7 +559,23 @@ void RunFactoryPanel::set_locked(bool locked) {
 }
 
 void RunFactoryPanel::set_identifier_source(IdentifierSource* source) {
+  if (source_) disconnect(source_, nullptr, this, nullptr);
   source_ = source;
+  // Whatever the old source still owes is no longer wanted.
+  ++packages_serial_;
+  packages_.clear();
+  {
+    const QSignalBlocker block(package_);
+    package_->clear();
+    package_->addItem(tr("(none)"));
+  }
+  package_->setToolTip(QString());
+  clear_contents();
+  level_->setEnabled(false);
+  show_selects(false);
+  if (!source_) return;
+  connect(source_, &IdentifierSource::changed, this, [this] { load_packages(); });
+  connect(source_, &QObject::destroyed, this, [this] { set_identifier_source(nullptr); });
   load_packages();
 }
 
@@ -568,33 +584,81 @@ void RunFactoryPanel::show_selects(bool on) {
   run_form_->setRowVisible(level_, on);
 }
 
+// The first load shows the selects; a later one (the catalog changed) keeps
+// the chosen package and level when they are still there.
 void RunFactoryPanel::load_packages() {
   if (!source_) return;
-  source_->packages(this, [this](Result<std::vector<PackageChoice>> answer) {
-    if (!answer) return;
+  const std::uint64_t serial = ++packages_serial_;
+  source_->packages(this, [this, serial](Result<std::vector<PackageChoice>> answer) {
+    if (serial != packages_serial_) return;
+    if (!answer) {
+      // Before the first list there is nothing to hang the reason on: the rows stay hidden.
+      package_->setToolTip(QString::fromStdString(to_string(answer.error())));
+      return;
+    }
+    package_->setToolTip(QString());
+    const QString chosen = package_->currentIndex() > 0 ? package_->currentData().toString() : QString();
     packages_ = std::move(*answer);
-    const QSignalBlocker block(package_);
-    package_->clear();
-    package_->addItem(tr("(none)"));
-    for (const auto& p : packages_) package_->addItem(q(p.name), q(p.id));
+    int index = 0;
+    {
+      const QSignalBlocker block(package_);
+      package_->clear();
+      package_->addItem(tr("(none)"));
+      for (const auto& p : packages_) {
+        package_->addItem(q(p.name), q(p.id));
+        if (!chosen.isEmpty() && q(p.id) == chosen) index = package_->count() - 1;
+      }
+      package_->setCurrentIndex(index);
+    }
     show_selects(true);
+    if (chosen.isEmpty()) return;
+    if (index == 0) {
+      load_contents();  // the package is gone
+      return;
+    }
+    request_contents(level_->currentIndex() > 0 ? std::optional(level_->currentText().toStdString()) : std::nullopt);
   });
+}
+
+void RunFactoryPanel::clear_contents() {
+  ++contents_serial_;
+  contents_ = {};
+  fill_levels();
+  fill_identifiers();
+  identifier_select_->setToolTip(QString());
 }
 
 // The chosen package's levels and identifiers; nothing for "(none)".
 void RunFactoryPanel::load_contents() {
-  contents_ = {};
-  fill_levels();
-  fill_identifiers();
+  clear_contents();
   const bool chosen = package_->currentIndex() > 0;
   level_->setEnabled(chosen);
-  if (!chosen || !source_) return;
-  source_->contents(this, package_->currentData().toString().toStdString(), [this](Result<PackageContents> answer) {
-    if (!answer) return;
-    contents_ = std::move(*answer);
-    fill_levels();
-    fill_identifiers();
-  });
+  if (chosen) request_contents(std::nullopt);
+}
+
+void RunFactoryPanel::request_contents(std::optional<std::string> keep_level) {
+  if (!source_) return;
+  const std::uint64_t serial = ++contents_serial_;
+  source_->contents(this, package_->currentData().toString().toStdString(),
+                    [this, serial, keep = std::move(keep_level)](Result<PackageContents> answer) {
+                      if (serial != contents_serial_) return;
+                      if (!answer) {
+                        clear_contents();
+                        identifier_select_->setToolTip(QString::fromStdString(to_string(answer.error())));
+                        return;
+                      }
+                      identifier_select_->setToolTip(QString());
+                      contents_ = std::move(*answer);
+                      fill_levels();
+                      if (keep) {
+                        const auto it = std::find(contents_.levels.begin(), contents_.levels.end(), *keep);
+                        if (it != contents_.levels.end()) {
+                          const QSignalBlocker block(level_);
+                          level_->setCurrentIndex(static_cast<int>(it - contents_.levels.begin()) + 1);
+                        }
+                      }
+                      fill_identifiers();
+                    });
 }
 
 void RunFactoryPanel::fill_levels() {

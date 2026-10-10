@@ -19,8 +19,10 @@
 // be picked: Package and Level selects narrow a dropdown of the identifiers
 // the source knows. A pick is the same as typing the identifier.
 
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <QPointer>
@@ -115,7 +117,11 @@ class RunFactoryPanel : public QWidget {
   void on_identifier_changed();
   void report_inserted(std::size_t at, std::size_t count);
   void load_packages();
-  void load_contents();
+  void load_contents();  // of the package just chosen
+  // Asks for the chosen package's contents; `keep_level` is selected again
+  // when the answer still lists it.
+  void request_contents(std::optional<std::string> keep_level);
+  void clear_contents();
   void show_selects(bool on);
   void fill_levels();
   void fill_identifiers();  // the dropdown, for the chosen level; the typed text stays
@@ -132,6 +138,9 @@ class RunFactoryPanel : public QWidget {
   QPointer<IdentifierSource> source_;
   std::vector<PackageChoice> packages_;
   PackageContents contents_;  // of the chosen package
+  // The latest request of each kind; an answer to an earlier one is dropped.
+  std::uint64_t packages_serial_ = 0;
+  std::uint64_t contents_serial_ = 0;
 
   QFormLayout* run_form_ = nullptr;
   QComboBox* type_ = nullptr;
