@@ -98,6 +98,7 @@ add_library(pychron_ui_lib STATIC
   src/timeline.hpp
   src/evolutions_view.hpp
   src/experiment_window.hpp
+  src/identifier_source.hpp
   src/run_factory_panel.hpp
   src/measurement_panel.hpp
   src/script_highlighter.hpp

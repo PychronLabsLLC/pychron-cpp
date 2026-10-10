@@ -5,10 +5,12 @@
 #include <fstream>
 #include <memory>
 
+#include <QComboBox>
 #include <QLineEdit>
 #include <QtTest/QtTest>
 
 #include "experiment_fixture.hpp"
+#include "identifier_source.hpp"
 #include "queue_table_model.hpp"
 #include "run_factory_panel.hpp"
 
@@ -16,7 +18,38 @@ using pychron::experiment::AnalysisType;
 using pychron::experiment::FactoryForm;
 using pychron::ui::QueueTableModel;
 using pychron::ui::RunFactoryPanel;
+using pychron::ui::PackageChoice;
+using pychron::ui::PackageContents;
 namespace lab = pychron::experiment::lab;
+
+namespace {
+
+// Records what the panel asks and answers nothing until the test does, so the
+// order of the answers is the test's choice.
+struct FakeIdentifierSource : pychron::ui::IdentifierSource {
+  using PackagesDone = std::function<void(pychron::Result<std::vector<PackageChoice>>)>;
+  using ContentsDone = std::function<void(pychron::Result<PackageContents>)>;
+  std::vector<PackagesDone> package_calls;
+  std::vector<std::pair<std::string, ContentsDone>> content_calls;
+  void packages(QObject*, PackagesDone done) override { package_calls.push_back(std::move(done)); }
+  void contents(QObject*, const std::string& package, ContentsDone done) override {
+    content_calls.emplace_back(package, std::move(done));
+  }
+  void notify() { Q_EMIT changed(); }
+};
+
+std::vector<PackageChoice> two_packages() { return {{"p2", "NM-294"}, {"p1", "NM-293"}}; }
+
+// Level C holds no identifier.
+PackageContents p1_contents() {
+  return {{"A", "B", "C"}, {{"66001", "FC-2", "A", 1}, {"66002", "", "A", 3}, {"66010", "bt-1", "B", 2}}};
+}
+
+QStringList all_three() {
+  return {QStringLiteral("66001  FC-2  (A 1)"), QStringLiteral("66002  (A 3)"), QStringLiteral("66010  bt-1  (B 2)")};
+}
+
+}  // namespace
 
 class TestRunFactoryPanel : public QObject {
   Q_OBJECT
@@ -36,6 +69,18 @@ class TestRunFactoryPanel : public QObject {
     f.identifier = id;
     f.position = position;
     return f;
+  }
+  QComboBox* combo(const char* name) const { return panel_->findChild<QComboBox*>(QString::fromLatin1(name)); }
+  QLineEdit* edit() const { return panel_->findChild<QLineEdit*>(QStringLiteral("identifier")); }
+  // The source set and its packages answered.
+  void load(FakeIdentifierSource& fake) {
+    panel_->set_identifier_source(&fake);
+    fake.package_calls.at(0)(two_packages());
+  }
+  // NM-293 chosen and its contents answered.
+  void choose_p1(FakeIdentifierSource& fake) {
+    panel_->choose_package(2);
+    fake.content_calls.back().second(p1_contents());
   }
 
  private slots:
@@ -264,6 +309,142 @@ class TestRunFactoryPanel : public QObject {
     QCOMPARE(inserted_.back(), std::vector<std::size_t>{2});
     QCOMPARE(identifier(2), QStringLiteral("20001"));
     QCOMPARE(model_->version(), 1u);
+  }
+  // ---- the identifier select (identifier-select design)
+
+  void noSourceLeavesThePanelAsItWas() {
+    QVERIFY(!panel_->selects_visible());
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QVERIFY(edit() != nullptr);
+  }
+
+  void packagesAreListedAfterNone() {
+    FakeIdentifierSource fake;
+    panel_->set_identifier_source(&fake);
+    QCOMPARE(fake.package_calls.size(), std::size_t{1});
+    QVERIFY(!panel_->selects_visible());
+    fake.package_calls[0](two_packages());
+    QVERIFY(panel_->selects_visible());
+    QCOMPARE(panel_->package_choices(),
+             (QStringList{QStringLiteral("(none)"), QStringLiteral("NM-294"), QStringLiteral("NM-293")}));
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QVERIFY(!combo("level")->isEnabled());
+    QVERIFY(fake.content_calls.empty());
+  }
+
+  void aPackageListsEveryLevelsIdentifiers() {
+    FakeIdentifierSource fake;
+    load(fake);
+    panel_->choose_package(2);
+    QCOMPARE(fake.content_calls.size(), std::size_t{1});
+    QCOMPARE(fake.content_calls[0].first, std::string("p1"));
+    fake.content_calls[0].second(p1_contents());
+    QCOMPARE(panel_->level_choices(), (QStringList{QStringLiteral("(all)"), QStringLiteral("A"), QStringLiteral("B"),
+                                                   QStringLiteral("C")}));
+    QCOMPARE(panel_->identifier_choices(), all_three());
+    QVERIFY(combo("level")->isEnabled());
+  }
+
+  void aLevelNarrowsWithoutAskingAgain() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_level(1);
+    QCOMPARE(panel_->identifier_choices(),
+             (QStringList{QStringLiteral("66001  FC-2  (A 1)"), QStringLiteral("66002  (A 3)")}));
+    panel_->choose_level(3);
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    panel_->choose_level(0);
+    QCOMPARE(panel_->identifier_choices(), all_three());
+    QCOMPARE(fake.content_calls.size(), std::size_t{1});
+  }
+
+  void pickingAnItemIsTypingItsIdentifier() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    QVERIFY(panel_->preview_text().contains(QStringLiteral("identifier")));
+    panel_->choose_identifier(2);
+    QCOMPARE(panel_->form().identifier, std::string("66010"));
+    QCOMPARE(edit()->text(), QStringLiteral("66010"));
+    QVERIFY(!panel_->preview_text().contains(QStringLiteral("identifier")));
+  }
+
+  void aTypedSpecialStillSwitchesType() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_level(1);
+    panel_->set_form(with_identifier("20001", "1"));
+    QVERIFY(panel_->field_enabled("value"));
+    edit()->setText(QString());
+    QTest::keyClicks(edit(), QStringLiteral("a"));
+    QCOMPARE(panel_->form().identifier, std::string("a"));
+    QVERIFY(!panel_->field_enabled("value"));  // air: its type's rules, as when there is no select
+    QCOMPARE(combo("package")->currentIndex(), 2);
+    QCOMPARE(combo("level")->currentIndex(), 1);
+  }
+
+  void setFormLeavesTheSelects() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_level(1);
+    const QStringList packages = panel_->package_choices();
+    const QStringList identifiers = panel_->identifier_choices();
+    panel_->set_form(with_identifier("20001", "1"));
+    QCOMPARE(edit()->text(), QStringLiteral("20001"));
+    QCOMPARE(panel_->package_choices(), packages);
+    QCOMPARE(panel_->identifier_choices(), identifiers);
+    QCOMPARE(combo("package")->currentIndex(), 2);
+    QCOMPARE(combo("level")->currentIndex(), 1);
+  }
+
+  void choosingAnotherPackageResetsLevel() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_level(2);
+    panel_->choose_package(1);
+    QCOMPARE(fake.content_calls.back().first, std::string("p2"));
+    QCOMPARE(combo("level")->currentIndex(), 0);
+    QCOMPARE(panel_->level_choices(), QStringList{QStringLiteral("(all)")});
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    panel_->choose_package(0);
+    QVERIFY(!combo("level")->isEnabled());
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QCOMPARE(fake.content_calls.size(), std::size_t{2});
+  }
+
+  void packagesOfOneNameAreToldApartById() {
+    FakeIdentifierSource fake;
+    panel_->set_identifier_source(&fake);
+    fake.package_calls.at(0)(std::vector<PackageChoice>{{"x", "Dup"}, {"y", "Dup"}});
+    panel_->choose_package(2);
+    QCOMPARE(fake.content_calls.back().first, std::string("y"));
+  }
+
+  void anEmptyPackageIsNotAnError() {
+    FakeIdentifierSource fake;
+    load(fake);
+    panel_->choose_package(2);
+    fake.content_calls.back().second(PackageContents{});
+    QCOMPARE(panel_->level_choices(), QStringList{QStringLiteral("(all)")});
+    QVERIFY(panel_->identifier_choices().isEmpty());
+    QVERIFY(panel_->identifier_tooltip().isEmpty());
+  }
+
+  void lockedDisablesTheSelects() {
+    FakeIdentifierSource fake;
+    load(fake);
+    panel_->set_locked(true);
+    QVERIFY(!combo("package")->isEnabled());
+    QVERIFY(!combo("level")->isEnabled());
+    QVERIFY(!combo("identifier_select")->isEnabled());
+    panel_->set_locked(false);
+    QVERIFY(combo("package")->isEnabled());
+    QVERIFY(combo("identifier_select")->isEnabled());
+    QVERIFY(!combo("level")->isEnabled());
   }
 };
 

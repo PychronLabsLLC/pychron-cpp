@@ -104,15 +104,30 @@ QWidget* RunFactoryPanel::build_run() {
   auto* form = new QFormLayout(box);
   type_ = new QComboBox;
   for (auto t : kTypes) type_->addItem(q(experiment::to_string(t)), static_cast<int>(t));
-  identifier_ = new QLineEdit;
+  package_ = new QComboBox;
+  package_->setObjectName(QStringLiteral("package"));
+  package_->addItem(tr("(none)"));
+  level_ = new QComboBox;
+  level_->setObjectName(QStringLiteral("level"));
+  level_->addItem(tr("(all)"));
+  level_->setEnabled(false);
+  identifier_select_ = new QComboBox;
+  identifier_select_->setObjectName(QStringLiteral("identifier_select"));
+  identifier_select_->setEditable(true);
+  identifier_select_->setInsertPolicy(QComboBox::NoInsert);
+  identifier_select_->setCompleter(nullptr);
+  identifier_ = identifier_select_->lineEdit();
   identifier_->setObjectName(QStringLiteral("identifier"));
   identifier_->setPlaceholderText(tr("e.g. 66001, or a special such as bu"));
   aliquot_ = new QLineEdit;
   aliquot_->setPlaceholderText(tr("auto"));
   aliquot_->setValidator(new QIntValidator(1, 1'000'000, aliquot_));
   step_ = new QLineEdit;
+  run_form_ = form;
   form->addRow(tr("Type"), type_);
-  form->addRow(tr("Identifier"), identifier_);
+  form->addRow(tr("Package"), package_);
+  form->addRow(tr("Level"), level_);
+  form->addRow(tr("Identifier"), identifier_select_);
   form->addRow(tr("Aliquot"), aliquot_);
   form->addRow(tr("Step"), step_);
 
@@ -127,6 +142,10 @@ QWidget* RunFactoryPanel::build_run() {
     on_identifier_changed();
   });
   connect(identifier_, &QLineEdit::textEdited, this, [this] { on_identifier_changed(); });
+  connect(package_, &QComboBox::activated, this, [this](int) { load_contents(); });
+  connect(level_, &QComboBox::activated, this, [this](int) { fill_identifiers(); });
+  connect(identifier_select_, &QComboBox::activated, this, [this](int index) { choose_identifier(index); });
+  show_selects(false);
   for (auto* e : {aliquot_, step_}) connect(e, &QLineEdit::textEdited, this, [this] { refresh(); });
   return box;
 }
@@ -538,6 +557,103 @@ void RunFactoryPanel::set_locked(bool locked) {
   for (QWidget* g : groups_) g->setEnabled(!locked && !(g == block_box_ && lab_.blocks.empty()));
   refresh();
 }
+
+void RunFactoryPanel::set_identifier_source(IdentifierSource* source) {
+  source_ = source;
+  load_packages();
+}
+
+void RunFactoryPanel::show_selects(bool on) {
+  run_form_->setRowVisible(package_, on);
+  run_form_->setRowVisible(level_, on);
+}
+
+void RunFactoryPanel::load_packages() {
+  if (!source_) return;
+  source_->packages(this, [this](Result<std::vector<PackageChoice>> answer) {
+    if (!answer) return;
+    packages_ = std::move(*answer);
+    const QSignalBlocker block(package_);
+    package_->clear();
+    package_->addItem(tr("(none)"));
+    for (const auto& p : packages_) package_->addItem(q(p.name), q(p.id));
+    show_selects(true);
+  });
+}
+
+// The chosen package's levels and identifiers; nothing for "(none)".
+void RunFactoryPanel::load_contents() {
+  contents_ = {};
+  fill_levels();
+  fill_identifiers();
+  const bool chosen = package_->currentIndex() > 0;
+  level_->setEnabled(chosen);
+  if (!chosen || !source_) return;
+  source_->contents(this, package_->currentData().toString().toStdString(), [this](Result<PackageContents> answer) {
+    if (!answer) return;
+    contents_ = std::move(*answer);
+    fill_levels();
+    fill_identifiers();
+  });
+}
+
+void RunFactoryPanel::fill_levels() {
+  const QSignalBlocker block(level_);
+  level_->clear();
+  level_->addItem(tr("(all)"));
+  for (const auto& name : contents_.levels) level_->addItem(q(name));
+}
+
+void RunFactoryPanel::fill_identifiers() {
+  const QString typed = identifier_->text();
+  const bool all = level_->currentIndex() <= 0;
+  const std::string level = level_->currentText().toStdString();
+  const QSignalBlocker block(identifier_select_);
+  identifier_select_->clear();
+  for (const auto& c : contents_.choices) {
+    if (!all && c.level != level) continue;
+    const QString where = QStringLiteral("(%1 %2)").arg(q(c.level)).arg(c.position);
+    QStringList parts{q(c.identifier)};
+    if (!c.sample.empty()) parts.append(q(c.sample));
+    parts.append(where);
+    identifier_select_->addItem(parts.join(QStringLiteral("  ")), q(c.identifier));
+  }
+  identifier_select_->setCurrentIndex(-1);
+  identifier_->setText(typed);
+}
+
+void RunFactoryPanel::choose_package(int index) {
+  package_->setCurrentIndex(index);
+  load_contents();
+}
+
+void RunFactoryPanel::choose_level(int index) {
+  level_->setCurrentIndex(index);
+  fill_identifiers();
+}
+
+void RunFactoryPanel::choose_identifier(int index) {
+  if (index < 0 || index >= identifier_select_->count()) return;
+  identifier_select_->setCurrentIndex(index);
+  // The item says more than the identifier; the field holds the identifier.
+  identifier_->setText(identifier_select_->itemData(index).toString());
+  on_identifier_changed();
+}
+
+namespace {
+QStringList item_texts(const QComboBox* c) {
+  QStringList out;
+  for (int i = 0; i < c->count(); ++i) out.append(c->itemText(i));
+  return out;
+}
+}  // namespace
+
+QStringList RunFactoryPanel::package_choices() const { return item_texts(package_); }
+QStringList RunFactoryPanel::level_choices() const { return item_texts(level_); }
+QStringList RunFactoryPanel::identifier_choices() const { return item_texts(identifier_select_); }
+bool RunFactoryPanel::selects_visible() const { return run_form_->isRowVisible(package_); }
+QString RunFactoryPanel::identifier_tooltip() const { return identifier_select_->toolTip(); }
+QString RunFactoryPanel::package_tooltip() const { return package_->toolTip(); }
 
 QString RunFactoryPanel::preview_text() const { return preview_->text(); }
 bool RunFactoryPanel::add_enabled() const { return add_->isEnabled(); }

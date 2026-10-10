@@ -14,13 +14,19 @@
 // unknowns (and/or before and after); Block inserts one of the lab's blocks.
 // Everything goes through QueueTableModel, so it is revalidated and refused
 // while a queue runs.
+//
+// With an IdentifierSource (identifier-select design) the identifier can also
+// be picked: Package and Level selects narrow a dropdown of the identifiers
+// the source knows. A pick is the same as typing the identifier.
 
 #include <functional>
 #include <optional>
 #include <vector>
 
+#include <QPointer>
 #include <QWidget>
 
+#include "identifier_source.hpp"
 #include "pychron/experiment/factory/form.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "queue_table_model.hpp"
@@ -28,6 +34,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -67,8 +74,21 @@ class RunFactoryPanel : public QWidget {
   // The lab's conditionals files changed (the editor made or deleted one).
   void refresh_conditionals();
   void set_conditional_checked(const QString& name, bool on);
+  // Null: no selects (the default). The panel does not own it; a source
+  // destroyed first hides the selects.
+  void set_identifier_source(IdentifierSource* source);
+  // What the operator's pick in a select does.
+  void choose_package(int index);     // 0 is "(none)"
+  void choose_level(int index);       // 0 is "(all)"
+  void choose_identifier(int index);  // a row of the dropdown
 
   // For tests.
+  QStringList package_choices() const;
+  QStringList level_choices() const;
+  QStringList identifier_choices() const;  // item texts
+  bool selects_visible() const;            // the Package and Level rows
+  QString identifier_tooltip() const;
+  QString package_tooltip() const;
   QString preview_text() const;
   bool add_enabled() const;
   bool field_enabled(const char* name) const;  // "value", "position", "script", "plan", ...
@@ -94,6 +114,11 @@ class RunFactoryPanel : public QWidget {
   void refresh();  // field enabling and preview, after any edit
   void on_identifier_changed();
   void report_inserted(std::size_t at, std::size_t count);
+  void load_packages();
+  void load_contents();
+  void show_selects(bool on);
+  void fill_levels();
+  void fill_identifiers();  // the dropdown, for the chosen level; the typed text stays
 
   const experiment::lab::Lab& lab_;
   QueueTableModel& model_;
@@ -104,8 +129,16 @@ class RunFactoryPanel : public QWidget {
   experiment::FactoryForm overrides_carrier_;  // keeps overrides from defaults or a row
   std::vector<std::string> conditionals_;      // the ticked conditionals files, in the order ticked
 
+  QPointer<IdentifierSource> source_;
+  std::vector<PackageChoice> packages_;
+  PackageContents contents_;  // of the chosen package
+
+  QFormLayout* run_form_ = nullptr;
   QComboBox* type_ = nullptr;
-  QLineEdit* identifier_ = nullptr;
+  QComboBox* package_ = nullptr;
+  QComboBox* level_ = nullptr;
+  QComboBox* identifier_select_ = nullptr;
+  QLineEdit* identifier_ = nullptr;  // identifier_select_'s line edit
   QLineEdit* aliquot_ = nullptr;
   QLineEdit* step_ = nullptr;
   QLineEdit* device_ = nullptr;
