@@ -1,7 +1,7 @@
 # Identifier select in run factory
 
 Date: 2026-10-09
-Status: Design approved in chat; spec awaiting review
+Status: Approved 2026-10-09; plan `../plans/2026-10-09-identifier-select.md`
 Owner: Jake Ross
 Depends on: `2026-10-02-experiment-window-design.md` (section 5.6, run factory
 panel), `2026-10-04-sample-irradiation-entry-design.md` (sections 5.1 entry
@@ -59,8 +59,7 @@ Run group rows, in order: Type, Package, Level, Identifier, Aliquot, Step.
   queue, not in `QSettings`.
 
 No source (section 4), or source's package list fails on first load: Package
-and Level rows hidden, Identifier combo shows no dropdown arrow content
-(empty list). Panel then equals today's.
+and Level rows hidden, Identifier dropdown empty. Panel then equals today's.
 
 ## 3. Interface
 
@@ -140,9 +139,12 @@ class StoreIdentifierSource : public IdentifierSource {
 
 - Bridge opened on first `packages()` call, not at construction: an operator
   who never opens experiment window opens no second store connection.
-- `EntryActions::ensure_bridge()` gains parameter `bool quiet = false`. Quiet
-  open shows no message box on failure; source reports the error through
-  `done`. A later non-quiet call (Entry menu) tries again and shows the box.
+- `EntryActions` gains `Result<void> open_bridge()`: opens bridge on first
+  use, shows nothing, returns the error. `ensure_bridge()` keeps its
+  signature: calls `open_bridge()` and shows the message box on failure.
+  Source uses `open_bridge()` and reports the error through `done`, queued,
+  never before the call returns. A later Entry menu use tries again and
+  shows the box.
 - `packages()`: `EntryBridge::run` of `IStore::irradiations()`, mapped to
   `PackageChoice{to_string(uuid), name}`.
 - `contents(package)`: one worker job: `IStore::levels(uuid)`, then
@@ -219,8 +221,8 @@ held until test releases them, so order of answers is test's choice):
 `tests/ui/test_entry_windows.cpp` (store builds only, SQLite fixture):
 `StoreIdentifierSource` lists fixture's packages; `contents()` gives levels
 by name and identifiers by level then position, skips position without
-identifier; bad package id is an error; quiet `ensure_bridge` on unopenable
-url shows no dialog and source reports error.
+identifier; bad package id is an error; `open_bridge` on unopenable url shows
+no dialog and source reports error.
 
 No thread added (worker is `EntryBridge`'s): no TSan run required by this
 change.
