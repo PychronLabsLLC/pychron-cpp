@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <set>
 #include <string>
@@ -296,7 +297,7 @@ TEST_P(StorePersisterTest, ADraftRecordStaysInTheSpool) {
 
 INSTANTIATE_TEST_SUITE_P(Engines, StorePersisterTest, ::testing::ValuesIn(pt::engines()));
 
-// ---------------------------------------------------------------- two connections
+// ---------------------------------------------------------------- Acquisition
 
 namespace {
 
@@ -313,71 +314,151 @@ struct Joined {
   }
 };
 
-class StorePersisterConcurrency : public ::testing::TestWithParam<std::string> {};
-
-}  // namespace
-
-// A window that reads the store while a run is being saved must not hold the
-// acquisition program's writes up (spec 8.5). Each handle is used by one thread.
-TEST_P(StorePersisterConcurrency, AReaderDoesNotLockOutTheWriter) {
-  pt::TestDatabase tdb(GetParam(), true);
-  {
-    auto seed = pt::open_or_die(tdb.url());
+// A database with the lab seeded, on the engine under test, file backed so
+// that several handles see it.
+class AcquisitionTest : public ::testing::TestWithParam<std::string> {
+ protected:
+  void SetUp() override {
+    tdb_ = std::make_unique<pt::TestDatabase>(GetParam(), true);
+    auto seed = pt::open_or_die(tdb_->url());
     ASSERT_TRUE(seed);
     const auto lab = pt::seed_lab(*seed);
     ASSERT_TRUE(seed->add_extract_device(lab.acquisition_client, "co2"));
+    data_ = scratch_dir();
   }
-  const fs::path data = scratch_dir();
+  void TearDown() override {
+    std::error_code ignored;
+    fs::remove_all(data_, ignored);
+  }
 
-  // A store handle belongs to the thread that opened it: each thread opens its own.
+  std::unique_ptr<store::Acquisition> open(const char* sub = "a") {
+    auto a = store::open_acquisition(tdb_->url(), data_ / sub, "test");
+    EXPECT_TRUE(a.has_value()) << (a ? "" : a.error().what);
+    return a ? std::move(*a) : nullptr;
+  }
+  std::size_t analyses_of(const std::string& identifier) {
+    auto reader = pt::open_or_die(tdb_->url());
+    if (!reader) return 0;
+    auto found = reader->find_analyses({.identifier = identifier});
+    EXPECT_TRUE(found.has_value());
+    return found ? found->size() : 0;
+  }
+
+  std::unique_ptr<pt::TestDatabase> tdb_;
+  fs::path data_;
+};
+
+}  // namespace
+
+TEST_P(AcquisitionTest, ServesCallsFromOtherThreads) {
+  auto acquisition = open();
+  ASSERT_TRUE(acquisition);
+  auto& persister = acquisition->persister();
+  std::string error;
+  int first = 0;
+  std::vector<std::string> lines{"unset"};
+  {
+    Joined caller(std::thread([&] {
+      auto checked = persister.check_queue(queue("jan", "co2", {run("66573")}));
+      if (!checked) return void(error = checked.error().what);
+      lines = *checked;
+      auto n = persister.next_aliquot("66573");
+      if (!n) return void(error = n.error().what);
+      first = *n;
+      if (auto saved = persister.save_analysis(numbered("66573", first)); !saved) error = saved.error().what;
+    }));
+  }
+  EXPECT_EQ(error, "");
+  EXPECT_TRUE(lines.empty());
+  EXPECT_EQ(first, 1);
+  EXPECT_EQ(persister.next_aliquot("66573").value(), 2);
+  EXPECT_EQ(analyses_of("66573"), 1U);
+}
+
+TEST_P(AcquisitionTest, ServesTwoCallersAtOnce) {
+  auto acquisition = open();
+  ASSERT_TRUE(acquisition);
+  auto& persister = acquisition->persister();
+  std::atomic<int> failures{0};
+  const auto writer = [&](int from) {
+    for (int i = from; i < from + 20; ++i)
+      if (!persister.save_analysis(numbered("66573", i))) ++failures;
+  };
+  {
+    Joined a(std::thread(writer, 1));
+    Joined b(std::thread(writer, 21));
+  }
+  EXPECT_EQ(failures.load(), 0);
+  EXPECT_EQ(analyses_of("66573"), 40U);
+}
+
+// A writer saves through the acquisition while another handle, on this
+// thread, reads: the reader does not hold the writer up (spec 8.5).
+TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
+  auto acquisition = open();
+  ASSERT_TRUE(acquisition);
+  auto reader = pt::open_or_die(tdb_->url());
+  ASSERT_TRUE(reader);
   constexpr int kRuns = 50;
   std::atomic<bool> done{false};
   std::string write_error, read_error;
-  std::atomic<int> reads{0};
+  int reads = 0;
   {
     Joined writer(std::thread([&] {
-      auto acquisition = store::open_acquisition(tdb.url(), data, "test");
-      if (!acquisition) {
-        write_error = acquisition.error().what;
-      } else {
-        for (int i = 1; i <= kRuns; ++i)
-          if (auto r = acquisition->persister->save_analysis(numbered("66573", i)); !r) {
-            write_error = r.error().what;
-            break;
-          }
-      }
-      done = true;
-    }));
-    Joined watcher(std::thread([&] {
-      auto reader = ps::open_store({tdb.url(), false});
-      if (!reader) {
-        read_error = reader.error().what;
-        return;
-      }
-      while (!done) {
-        if (auto b = (*reader)->browse({}); !b) {
-          read_error = b.error().what;
+      for (int i = 1; i <= kRuns; ++i)
+        if (auto r = acquisition->persister().save_analysis(numbered("66573", i)); !r) {
+          write_error = r.error().what;
           break;
         }
-        ++reads;
-      }
+      done = true;
     }));
+    while (!done) {
+      if (auto b = reader->browse({}); !b) {
+        read_error = b.error().what;
+        break;
+      }
+      ++reads;
+    }
   }
   EXPECT_EQ(write_error, "");
   EXPECT_EQ(read_error, "");
-  EXPECT_GT(reads.load(), 0);
-  auto check = pt::open_or_die(tdb.url());
-  ASSERT_TRUE(check);
-  auto found = check->find_analyses({.identifier = "66573"});
+  EXPECT_GT(reads, 0);
+  auto found = reader->find_analyses({.identifier = "66573"});
   ASSERT_TRUE(found.has_value());
   EXPECT_EQ(found->size(), static_cast<std::size_t>(kRuns));
-  std::error_code ignored;
-  fs::remove_all(data, ignored);
 }
 
-INSTANTIATE_TEST_SUITE_P(Engines, StorePersisterConcurrency, ::testing::ValuesIn(pt::engines()));
+TEST_P(AcquisitionTest, DestroyingItWhileCallsAreWaitingDoesNotHang) {
+  auto acquisition = open();
+  ASSERT_TRUE(acquisition);
+  auto& persister = acquisition->persister();
+  std::atomic<int> saved{0};
+  std::atomic<int> closed{0};
+  std::string unexpected;
+  {
+    Joined caller(std::thread([&] {
+      for (int i = 1; i <= 50; ++i) {
+        auto r = persister.save_analysis(numbered("66573", i));
+        if (r) {
+          ++saved;
+        } else if (r.error().kind == ErrorKind::Io && r.error().what == "the database connection is closed") {
+          ++closed;
+        } else {
+          unexpected = r.error().what;
+        }
+      }
+    }));
+    while (saved.load() == 0 && closed.load() == 0) std::this_thread::yield();
+    acquisition.reset();
+  }
+  EXPECT_EQ(unexpected, "");
+  EXPECT_EQ(saved.load() + closed.load(), 50);
+  EXPECT_GE(saved.load(), 1);
+  // What was saved is in the store.
+  EXPECT_EQ(analyses_of("66573"), static_cast<std::size_t>(saved.load()));
+}
 
-// ---------------------------------------------------------------- open_acquisition
+INSTANTIATE_TEST_SUITE_P(Engines, AcquisitionTest, ::testing::ValuesIn(pt::engines()));
 
 TEST(OpenAcquisition, RefusesASchemaThatIsBehind) {
   pt::TestDatabase tdb("sqlite", true);
@@ -390,30 +471,32 @@ TEST(OpenAcquisition, RefusesASchemaThatIsBehind) {
   fs::remove_all(data, ignored);
 }
 
-TEST(OpenAcquisition, IsOneClientPerHost) {
-  pt::TestDatabase tdb("sqlite", true);
-  {
-    auto seed = pt::open_or_die(tdb.url());
-    ASSERT_TRUE(seed);
-    const auto lab = pt::seed_lab(*seed);
-    ASSERT_TRUE(seed->add_extract_device(lab.acquisition_client, "co2"));
-  }
+TEST(OpenAcquisition, AFailureLeavesNoThread) {
   const fs::path data = scratch_dir();
-  auto first = store::open_acquisition(tdb.url(), data / "a", "test");
-  auto second = store::open_acquisition(tdb.url(), data / "b", "test");
-  ASSERT_TRUE(first.has_value());
-  ASSERT_TRUE(second.has_value());
-  ASSERT_TRUE(first->persister->save_analysis(numbered("66573", 1)));
-  ASSERT_TRUE(second->persister->save_analysis(numbered("66573", 2)));
+  const auto begin = std::chrono::steady_clock::now();
+  auto acquisition = store::open_acquisition("sqlite:/nonexistent-dir-for-pychron/none.db", data, "test");
+  EXPECT_FALSE(acquisition.has_value());
+  EXPECT_LT(std::chrono::steady_clock::now() - begin, std::chrono::seconds(10));
+  std::error_code ignored;
+  fs::remove_all(data, ignored);
+}
 
-  auto page = first->store->changes_since(0, 10000);
+TEST_P(AcquisitionTest, IsOneClientPerHost) {
+  auto first = open("a");
+  auto second = open("b");
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(first->persister().save_analysis(numbered("66573", 1)));
+  ASSERT_TRUE(second->persister().save_analysis(numbered("66573", 2)));
+
+  auto reader = pt::open_or_die(tdb_->url());
+  ASSERT_TRUE(reader);
+  auto page = reader->changes_since(0, 10000);
   ASSERT_TRUE(page.has_value());
   std::set<std::string> clients;
   for (const auto& e : page->entries)
     if (e.kind == "ingest") clients.insert(e.client.str());
   EXPECT_EQ(clients.size(), 1U);
-  std::error_code ignored;
-  fs::remove_all(data, ignored);
 }
 
 TEST(WithoutPassword, HidesOnlyThePassword) {

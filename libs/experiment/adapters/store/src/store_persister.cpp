@@ -2,9 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <optional>
 #include <set>
+#include <thread>
 #include <utility>
-#include <variant>
 
 #include "pychron/core/env.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
@@ -160,21 +165,181 @@ std::string without_password(const std::string& url) {
   return url;
 }
 
-Result<Acquisition> open_acquisition(const std::string& url, std::filesystem::path data,
-                                     const std::string& software_version) {
-  auto opened = ps::open_store(ps::StoreConfig{url, false});
-  if (!opened) {
-    Error error = opened.error();
-    if (error.kind == ErrorKind::Config && error.what.find("schema is out of date") != std::string::npos)
-      error.what += "\nRun: elctl db migrate --db " + without_password(url);
-    return fail(std::move(error));
+// ---------------------------------------------------------------- Acquisition
+
+// Everything the worker and its callers share. Kept for the life of the
+// process (see keep()), so that a call made after the Acquisition is gone
+// finds a mutex and a closed flag, not freed memory. What it holds that costs
+// anything (the store, the persister) is released on the worker at shutdown.
+struct AcquisitionCore;
+
+namespace {
+
+class Marshalled final : public persist::IAnalysisPersister {
+ public:
+  explicit Marshalled(AcquisitionCore& core) : core_(core) {}
+
+  Result<int> next_aliquot(const std::string& identifier) override;
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override;
+  Result<void> save_extraction(const record::AnalysisRecord& record) override;
+  Result<void> save_analysis(const record::AnalysisRecord& record) override;
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override;
+  Result<void> flush() override;
+  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override;
+
+ private:
+  AcquisitionCore& core_;
+};
+
+}  // namespace
+
+struct AcquisitionCore {
+  struct Job {
+    std::function<void()> run;
+    bool done = false;
+  };
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::deque<Job*> queue;
+  bool closed = false;
+  bool opened = false;
+  std::optional<Error> open_error;
+  std::thread worker;
+
+  // Touched by the worker only.
+  std::unique_ptr<ps::IStore> store;
+  std::unique_ptr<StorePersister> persister;
+
+  Marshalled proxy{*this};
+
+  // Runs `f` on the worker; the caller waits for it.
+  template <class R, class F>
+  R call(F&& f) {
+    R result = fail(ErrorKind::Io, "the database connection is closed");
+    Job job{[&] { result = f(*persister); }, false};
+    std::unique_lock<std::mutex> lock(mutex);
+    if (closed) return result;
+    // cppcheck-suppress danglingLifetime ; the worker takes the job off the queue before it marks it done, and this call waits for that
+    queue.push_back(&job);
+    cv.notify_all();
+    cv.wait(lock, [&] { return job.done; });
+    return result;
   }
-  Acquisition out;
-  out.store = std::move(*opened);
-  auto client = out.store->register_client({env_var("HOSTNAME").value_or("localhost"), "acquisition", std::nullopt, software_version});
-  if (!client) return fail(client.error());
-  out.persister = std::make_unique<StorePersister>(*out.store, *client, std::move(data));
-  return out;
+
+  void work(const std::string& url, std::filesystem::path data, const std::string& software_version) {
+    {
+      auto opened_store = ps::open_store(ps::StoreConfig{url, false});
+      Result<void> ready;
+      if (!opened_store) {
+        Error error = opened_store.error();
+        if (error.kind == ErrorKind::Config && error.what.find("schema is out of date") != std::string::npos)
+          error.what += "\nRun: elctl db migrate --db " + without_password(url);
+        ready = fail(std::move(error));
+      } else {
+        store = std::move(*opened_store);
+        auto client = store->register_client(
+            {env_var("HOSTNAME").value_or("localhost"), "acquisition", std::nullopt, software_version});
+        if (client)
+          persister = std::make_unique<StorePersister>(*store, *client, std::move(data));
+        else
+          ready = fail(client.error());
+      }
+      const std::lock_guard<std::mutex> lock(mutex);
+      opened = true;
+      if (!ready) {
+        open_error = ready.error();
+        closed = true;
+      }
+      cv.notify_all();
+      if (!ready) {
+        // Nothing was queued: callers see `closed` before they queue.
+        persister.reset();
+        store.reset();
+        return;
+      }
+    }
+    std::unique_lock<std::mutex> lock(mutex);
+    while (true) {
+      cv.wait(lock, [&] { return closed || !queue.empty(); });
+      if (queue.empty()) break;  // closed, and everything queued has been served
+      Job* job = queue.front();
+      queue.pop_front();
+      lock.unlock();
+      job->run();
+      lock.lock();
+      job->done = true;
+      cv.notify_all();
+    }
+    lock.unlock();
+    persister.reset();
+    store.reset();
+  }
+};
+
+namespace {
+
+// One per Acquisition ever opened; a program opens one.
+AcquisitionCore& keep(std::unique_ptr<AcquisitionCore> core) {
+  static std::mutex mutex;
+  static std::vector<std::unique_ptr<AcquisitionCore>> cores;
+  const std::lock_guard<std::mutex> lock(mutex);
+  cores.push_back(std::move(core));
+  return *cores.back();
+}
+
+Result<int> Marshalled::next_aliquot(const std::string& identifier) {
+  return core_.call<Result<int>>([&](StorePersister& p) { return p.next_aliquot(identifier); });
+}
+Result<void> Marshalled::begin_run(const RunIdentity& id, const QueueSpec& queue) {
+  return core_.call<Result<void>>([&](StorePersister& p) { return p.begin_run(id, queue); });
+}
+Result<void> Marshalled::save_extraction(const record::AnalysisRecord& record) {
+  return core_.call<Result<void>>([&](StorePersister& p) { return p.save_extraction(record); });
+}
+Result<void> Marshalled::save_analysis(const record::AnalysisRecord& record) {
+  return core_.call<Result<void>>([&](StorePersister& p) { return p.save_analysis(record); });
+}
+Result<void> Marshalled::save_artifact(const std::string& uuid, const std::string& name,
+                                       const std::vector<std::uint8_t>& bytes) {
+  return core_.call<Result<void>>([&](StorePersister& p) { return p.save_artifact(uuid, name, bytes); });
+}
+Result<void> Marshalled::flush() {
+  return core_.call<Result<void>>([&](StorePersister& p) { return p.flush(); });
+}
+Result<std::vector<std::string>> Marshalled::check_queue(const QueueSpec& queue) {
+  return core_.call<Result<std::vector<std::string>>>([&](StorePersister& p) { return p.check_queue(queue); });
+}
+
+}  // namespace
+
+Acquisition::~Acquisition() {
+  {
+    const std::lock_guard<std::mutex> lock(core_.mutex);
+    core_.closed = true;
+    core_.cv.notify_all();
+  }
+  if (core_.worker.joinable()) core_.worker.join();
+}
+
+persist::IAnalysisPersister& Acquisition::persister() noexcept { return core_.proxy; }
+
+Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, std::filesystem::path data,
+                                                      const std::string& software_version) {
+  AcquisitionCore& core = keep(std::make_unique<AcquisitionCore>());
+  core.worker = std::thread([&core, url, data = std::move(data), software_version]() mutable {
+    core.work(url, std::move(data), software_version);
+  });
+  {
+    std::unique_lock<std::mutex> lock(core.mutex);
+    core.cv.wait(lock, [&] { return core.opened; });
+  }
+  if (core.open_error) {
+    core.worker.join();
+    return fail(*core.open_error);
+  }
+  return std::unique_ptr<Acquisition>(new Acquisition(core));
 }
 
 }  // namespace pychron::experiment::store

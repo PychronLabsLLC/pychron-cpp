@@ -58,17 +58,49 @@ class StorePersister final : public persist::IAnalysisPersister {
   std::map<std::string, int> issued_;  // identifier -> highest aliquot handed out
 };
 
-// The store of an acquisition program and its persister. Opens with
-// migrate = false and registers the acquisition client.
-struct Acquisition {
-  std::unique_ptr<persistence::IStore> store;
-  std::unique_ptr<StorePersister> persister;  // refers to *store
+struct AcquisitionCore;
+
+// A store opened for an acquisition program, and its persister. Every call on
+// persister() runs on one thread owned by this object, the one that opened
+// the store (a store handle works only on its own thread); the caller waits
+// for it. Calls may come from any thread, one at a time or several; they are
+// served one at a time, in the order they arrived.
+//
+// The worker is a plain thread on a std::condition_variable, deliberately not
+// a Clock::Participant and holding no clock: to the simulated clock a caller
+// blocked on the worker looks busy, so simulated time stands still for the
+// length of the call, exactly as for a file write, and the worker itself never
+// waits for simulated time.
+//
+// Destroying it finishes the call in progress and those already queued, closes
+// the store on the worker and joins. A call that comes during or after that
+// returns an Io error ("the database connection is closed") instead of
+// blocking: what persister() returns stays valid to call for the life of the
+// process, though nothing is behind it any more.
+class Acquisition {
+ public:
+  ~Acquisition();
+  Acquisition(const Acquisition&) = delete;
+  Acquisition& operator=(const Acquisition&) = delete;
+  Acquisition(Acquisition&&) = delete;
+  Acquisition& operator=(Acquisition&&) = delete;
+
+  persist::IAnalysisPersister& persister() noexcept;
+
+ private:
+  friend Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string&, std::filesystem::path,
+                                                               const std::string&);
+  explicit Acquisition(AcquisitionCore& core) : core_(core) {}
+
+  AcquisitionCore& core_;
 };
 
-// A schema that is behind is refused with the command that brings it up to
-// date, naming the database (without its password).
-Result<Acquisition> open_acquisition(const std::string& url, std::filesystem::path data,
-                                     const std::string& software_version);
+// Opens `url` with migrate = false on the worker and registers the acquisition
+// client. A failure to open or register is returned here, and no thread is
+// left running. A schema that is behind is refused with the command that
+// brings it up to date, naming the database (without its password).
+Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, std::filesystem::path data,
+                                                      const std::string& software_version);
 
 // `url` as it may be shown: the password of a postgresql://user:password@host
 // url removed. Any other url is unchanged.
