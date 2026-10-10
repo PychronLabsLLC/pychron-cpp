@@ -39,6 +39,7 @@ class EntryWindowsTest : public QObject {
 #include "sample_import_dialog.hpp"
 #include "sample_table_model.hpp"
 #include "samples_window.hpp"
+#include "store_identifier_source.hpp"
 
 using namespace pychron;
 namespace ps = pychron::persistence;
@@ -564,6 +565,93 @@ class EntryWindowsTest : public QObject {
     QVERIFY(actions->packages()->isVisible());
     QVERIFY(actions->bridge() != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(!actions->samples()->busy() && !actions->packages()->busy(), kWaitMs);
+  }
+  // ---- the run factory's identifier source (identifier-select design, section 4)
+
+ private:
+  // Level A: 1 and 3 hold an identifier, 2 a sample only. Level B: 2 holds one.
+  void seed_identifiers() {
+    const auto at = [this](ps::Uuid level, int position, ps::Uuid sample, const char* identifier) {
+      const auto p = store_->add_irradiation_position(seeded_.client, {level, position, sample});
+      QVERIFY2(p.has_value(), p ? "" : to_string(p.error()).c_str());
+      if (identifier == nullptr) return;
+      ps::IdentifierSpec spec;
+      spec.identifier = identifier;
+      spec.position = *p;
+      const auto i = store_->add_identifier(seeded_.client, spec);
+      QVERIFY2(i.has_value(), i ? "" : to_string(i.error()).c_str());
+    };
+    at(seeded_.level_b, 2, seeded_.bt1, "70010");
+    at(seeded_.level_a, 3, seeded_.fc2, "70003");
+    at(seeded_.level_a, 2, seeded_.bt1, nullptr);
+    at(seeded_.level_a, 1, seeded_.fc2, "70001");
+  }
+
+ private Q_SLOTS:
+  void identifier_source_lists_packages() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    QVERIFY(actions->bridge() == nullptr);  // opened by the first question, not before
+    std::optional<pychron::Result<std::vector<pychron::ui::PackageChoice>>> got;
+    source.packages(&main, [&](auto r) { got.emplace(std::move(r)); });
+    QVERIFY(!got.has_value());  // never answered before the call returns
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY2(got->has_value(), *got ? "" : to_string(got->error()).c_str());
+    QCOMPARE(**got, (std::vector<pychron::ui::PackageChoice>{{seeded_.package.str(), "P-1"}}));
+  }
+
+  void identifier_source_lists_a_packages_levels_and_identifiers() {
+    seed_identifiers();
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    std::optional<pychron::Result<pychron::ui::PackageContents>> got;
+    source.contents(&main, seeded_.package.str(), [&](auto r) { got.emplace(std::move(r)); });
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY2(got->has_value(), *got ? "" : to_string(got->error()).c_str());
+    const pychron::ui::PackageContents want{
+        {"A", "B"}, {{"70001", "FC-2", "A", 1}, {"70003", "FC-2", "A", 3}, {"70010", "bt-1", "B", 2}}};
+    QVERIFY(**got == want);
+  }
+
+  void identifier_source_refuses_a_bad_package_id() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    std::optional<pychron::Result<pychron::ui::PackageContents>> got;
+    source.contents(&main, "not-a-uuid", [&](auto r) { got.emplace(std::move(r)); });
+    QVERIFY(!got.has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY(!got->has_value());
+  }
+
+  void identifier_source_passes_on_changes() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    QSignalSpy changed(&source, &pychron::ui::IdentifierSource::changed);
+    bool answered = false;
+    source.packages(&main, [&](const auto&) { answered = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(answered, kWaitMs);
+    answered = false;
+    source.packages(&main, [&](const auto&) { answered = true; });  // a second question connects nothing twice
+    QTRY_VERIFY_WITH_TIMEOUT(answered, kWaitMs);
+    actions->bridge()->notify_changed();
+    QCOMPARE(changed.count(), 1);
+  }
+
+  void identifier_source_reports_a_store_it_cannot_open() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, "sqlite:/nonexistent-dir/none/x.db");
+    pychron::ui::StoreIdentifierSource source(*actions);
+    std::optional<pychron::Result<std::vector<pychron::ui::PackageChoice>>> got;
+    source.packages(&main, [&](auto r) { got.emplace(std::move(r)); });
+    QVERIFY(QApplication::activeModalWidget() == nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY(!got->has_value());
+    QVERIFY(QApplication::activeModalWidget() == nullptr);
+    QVERIFY(actions->bridge() == nullptr);
   }
 };
 

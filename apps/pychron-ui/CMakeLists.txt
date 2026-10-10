@@ -170,7 +170,9 @@ if(TARGET pychron_processing_store)
     src/sample_import_dialog.cpp
     src/sample_table_model.cpp
     src/samples_window.cpp
+    src/store_identifier_source.cpp
     src/entry_actions.hpp
+    src/store_identifier_source.hpp
     src/entry_bridge.hpp
     src/entry_headers.hpp
     src/fit_actions.hpp

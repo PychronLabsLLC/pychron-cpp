@@ -11,6 +11,8 @@
 #include <QObject>
 #include <QPointer>
 
+#include "pychron/core/error.hpp"
+
 class QAction;
 class QWidget;
 
@@ -37,6 +39,9 @@ class EntryActions : public QObject {
   // Opens the bridge on first use; a message box, and false, when the store
   // cannot be opened.
   bool ensure_bridge();
+  // The same without the message box: the error when the store cannot be
+  // opened. A later call tries again.
+  Result<void> open_bridge();
 
  Q_SIGNALS:
   // The Packages window's "Fit flux…", on the level it has open.
