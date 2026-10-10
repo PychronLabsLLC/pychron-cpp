@@ -508,6 +508,7 @@ void MainWindow::set_installations_handler(std::function<void()> handler) {
 
 void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory settings) {
   preferences_settings_ = std::move(settings);
+  data_->set_settings(preferences_settings_);
 }
 
 void MainWindow::set_line_config_file(std::filesystem::path main_file) { line_config_file_ = std::move(main_file); }
@@ -572,7 +573,7 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
 
 void MainWindow::apply_preferences(const Preferences& preferences) {
   apply_application_preferences(preferences);
-  data_->set_page_size(preferences.browser_page_size);
+  data_->apply_preferences(preferences);
 }
 
 QWidget* MainWindow::open_recall(const QString& uuid) { return data_->open_recall(uuid); }

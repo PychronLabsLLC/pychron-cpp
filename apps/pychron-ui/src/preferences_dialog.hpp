@@ -11,20 +11,25 @@
 // so, stays open and applies nothing.
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 
 #include <QDialog>
 #include <QPointer>
 #include <QSettings>
+#include <QWidget>
 
 #include "line_settings.hpp"
 #include "preferences.hpp"
+#include "row_colors.hpp"
 
+class QCheckBox;
 class QDialogButtonBox;
 class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
+class QPushButton;
 class QSpinBox;
 class QStackedWidget;
 
@@ -32,6 +37,29 @@ namespace pychron::ui {
 
 class LoggingPage;
 class MetricsPage;
+
+// One colour of the Data page: a button showing it that opens the colour
+// dialog, and a box for "no colour".
+class ColorField : public QWidget {
+  Q_OBJECT
+
+ public:
+  explicit ColorField(QWidget* parent = nullptr);
+  // Invalid: no colour.
+  QColor color() const;
+  void set_color(const QColor& color);
+  QPushButton* button() const noexcept { return button_; }
+  QCheckBox* none() const noexcept { return none_; }
+  // The colour dialog; tests replace it. Invalid: cancelled.
+  std::function<QColor(const QColor& current)> ask;
+
+ private:
+  void show_color();
+
+  QColor color_;  // the last one chosen, kept while "no colour" is ticked
+  QPushButton* button_;
+  QCheckBox* none_;
+};
 
 // The grey explanatory line under a page's fields.
 QLabel* preferences_note(const QString& text);
@@ -79,6 +107,10 @@ class PreferencesDialog : public QDialog {
   QSpinBox* font_size() const noexcept { return font_; }
   QSpinBox* code_font_size() const noexcept { return code_font_; }
   QSpinBox* page_size() const noexcept { return page_size_; }
+  QDoubleSpinBox* gap_hours() const noexcept { return gap_hours_; }
+  // The colour of an analysis type class (row_colors.hpp); null for no class.
+  ColorField* type_color(const std::string& type_class) const;
+  QPushButton* reset_colors() const noexcept { return reset_colors_; }
   QDoubleSpinBox* confirm_move() const noexcept { return confirm_move_; }  // null without a spectrometer
   LoggingPage* logging_page() const noexcept { return logging_; }          // null without a line
   MetricsPage* metrics_page() const noexcept { return metrics_; }          // null without a line
@@ -100,6 +132,9 @@ class PreferencesDialog : public QDialog {
   QSpinBox* font_;
   QSpinBox* code_font_;
   QSpinBox* page_size_;
+  QDoubleSpinBox* gap_hours_;
+  std::map<std::string, ColorField*> type_colors_;
+  QPushButton* reset_colors_;
   QDoubleSpinBox* confirm_move_ = nullptr;
   LoggingPage* logging_ = nullptr;
   MetricsPage* metrics_ = nullptr;

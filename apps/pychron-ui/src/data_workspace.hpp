@@ -42,8 +42,12 @@ class DataWorkspace : public QObject {
   DataBrowserWindow* browser(QWidget* embed_in = nullptr);
   DataBrowserWindow* existing_browser() const noexcept { return browser_; }
   ProcessingBridge* processing_bridge() const noexcept { return processing_.get(); }
-  // The browser's page size, for the browser open now and any made later.
-  void set_page_size(int rows);
+  // The browser's page size, time-break threshold and type colours, for the
+  // browser open now and any made later.
+  void apply_preferences(const Preferences& preferences);
+  // Where the browser's "Colour by" choice is kept (empty: the application's
+  // QSettings), under data_browser/color_by.
+  void set_settings(std::function<std::unique_ptr<QSettings>()> settings) { settings_ = std::move(settings); }
 
   // Null without data (or for an unknown figure kind).
   QWidget* open_recall(const QString& uuid);
@@ -63,7 +67,8 @@ class DataWorkspace : public QObject {
   processing::PresetStore* presets_ = nullptr;
   std::unique_ptr<ProcessingBridge> processing_;
   DataBrowserWindow* browser_ = nullptr;
-  int page_size_ = Preferences::kDefaultPageSize;
+  Preferences preferences_;
+  std::function<std::unique_ptr<QSettings>()> settings_;
   QList<QPointer<QWidget>> children_;  // recall and figure windows
   int export_channel_ = 0;             // the bridge channel exports run on
 };

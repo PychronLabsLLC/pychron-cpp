@@ -8,6 +8,9 @@
 // queue) stays with its window. The spectrometer's large-move threshold is
 // edited here too but kept with its spectrometer (SpectrometerWindow).
 
+#include <map>
+#include <string>
+
 class QSettings;
 
 namespace pychron::ui {
@@ -22,6 +25,15 @@ struct Preferences {
   int font_pt = 0;       // interface text; 0: the platform's size
   int code_font_pt = 0;  // script editors; 0: the interface size
   int browser_page_size = kDefaultPageSize;  // analyses per data browser page
+  // The data browser draws a separator where a spectrometer ran nothing for
+  // longer than this; 0: never.
+  static constexpr double kDefaultGapHours = 6.0;
+  static constexpr double kMaxGapHours = 720.0;
+  double browser_gap_hours = kDefaultGapHours;
+  // The analysis types' row colours where they differ from the theme's: class
+  // ("unknown", "blank", "air", "cocktail", "detector_ic", "other") to
+  // "#rrggbb", or to empty text for no colour (row_colors.hpp).
+  std::map<std::string, std::string> browser_type_colors;
 
   bool operator==(const Preferences&) const = default;
 };

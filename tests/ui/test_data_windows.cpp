@@ -33,6 +33,7 @@
 #include <qcustomplot.h>
 
 #include "data_browser_window.hpp"
+#include "theme.hpp"
 #include "data_workspace.hpp"
 #include "figure_window.hpp"
 #include "main_window.hpp"
@@ -75,6 +76,11 @@ std::shared_ptr<pp::Analysis> analysis(int i) {
   a->timestamp = 1'700'000'000.0 + 3600.0 * i;
   a->mass_spectrometer = i % 2 ? "jan" : "obama";
   a->sample = blank ? "" : "air";
+  // Airs sit in two irradiations: NM-300 has level C only, NM-293 has A and B.
+  if (!blank) {
+    a->irradiation = i % 3 == 0 ? "NM-300" : "NM-293";
+    a->level = i % 3 == 0 ? "C" : i % 3 == 1 ? "A" : "B";
+  }
   const double ratio = 295.0 + (i % 6);
   auto iso = [&](const char* name, const char* det, double v, double e) {
     pp::IsotopeData d;
@@ -111,6 +117,24 @@ pp::RawData raw_for(const pp::Analysis& a) {
     raw.series.push_back(s);
   }
   return raw;
+}
+
+// Two sessions of one spectrometer, ten analyses an hour apart each, with ten
+// hours of nothing between them. Newest first: uuid-19 .. uuid-10, the gap,
+// uuid-9 .. uuid-0.
+std::unique_ptr<pp::MemorySource> make_sessions() {
+  auto src = std::make_unique<pp::MemorySource>();
+  for (int i = 0; i < 20; ++i) {
+    auto a = analysis(i);
+    a->mass_spectrometer = "jan";
+    a->timestamp = 1'700'000'000.0 + 3600.0 * (i < 10 ? i : i + 9);
+    src->add(a, raw_for(*a));
+  }
+  return src;
+}
+
+QDateTime utc_hour(int i) {
+  return QDateTime::fromSecsSinceEpoch(1'700'000'000 + 3600LL * i, QTimeZone::utc());
 }
 
 std::unique_ptr<pp::MemorySource> make_source(int n) {
@@ -494,7 +518,7 @@ class TestDataWindows : public QObject {
     auto src = make_source(260);
     DataBrowserWindow w(*src);
     QCOMPARE(w.model()->rowCount(), 200);  // first page
-    QCOMPARE(w.model()->row(0).uuid, std::string("uuid-259"));  // newest first
+    QCOMPARE(w.model()->analysis_at(0)->uuid, std::string("uuid-259"));  // newest first
     QVERIFY(w.load_more_button()->isEnabled());
     QVERIFY(w.status()->text().contains(QStringLiteral("200 of 260")));
     QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
@@ -519,6 +543,284 @@ class TestDataWindows : public QObject {
     w.search()->clear();
     w.date_preset()->setCurrentIndex(1);  // last 24 hours of the newest
     QCOMPARE(w.model()->rowCount(), 25);
+  }
+
+  void browser_date_range() {
+    auto src = make_source(260);
+    DataBrowserWindow w(*src);
+    QVERIFY(w.date_range()->isHidden());
+    w.date_preset()->setCurrentIndex(w.date_preset()->count() - 1);  // Range…
+    QVERIFY(!w.date_range()->isHidden());
+    // Starts as the range of the rows shown: the first page, uuid-60 to uuid-259.
+    QVERIFY(w.from_enabled()->isChecked() && w.to_enabled()->isChecked());
+    // The fields hold whole minutes; the analyses are 20 s past one.
+    QCOMPARE(w.from_edit()->dateTime(), utc_hour(60).addSecs(-20));
+    QCOMPARE(w.to_edit()->dateTime(), utc_hour(259).addSecs(-20));
+    QCOMPARE(w.from_edit()->timeZone(), QTimeZone::utc());
+    auto q = w.query();
+    QVERIFY(!q.last_hours);
+    QCOMPARE(*q.from, 1'700'000'000.0 + 3600.0 * 60 - 20);
+    QCOMPARE(*q.to, 1'700'000'000.0 + 3600.0 * 259 - 20 + 59);
+    QCOMPARE(w.model()->analysis_count(), 200);
+    QVERIFY(w.status()->text().contains(QStringLiteral("200 of 200")));
+
+    w.from_edit()->setDateTime(utc_hour(250));
+    emit w.from_edit()->editingFinished();
+    QCOMPARE(w.model()->analysis_count(), 10);
+    // To takes in the whole of its minute.
+    w.to_edit()->setDateTime(utc_hour(255));
+    emit w.to_edit()->editingFinished();
+    QCOMPARE(*w.query().to, 1'700'000'000.0 + 3600.0 * 255 + 59);
+    QCOMPARE(w.model()->analysis_count(), 6);
+    QCOMPARE(w.model()->rows().front().uuid, std::string("uuid-255"));
+
+    // An end that is not ticked is open.
+    w.from_enabled()->setChecked(false);
+    QVERIFY(!w.query().from);
+    QVERIFY(w.status()->text().contains(QStringLiteral("200 of 256")));
+    w.to_enabled()->setChecked(false);
+    QVERIFY(!w.query().to);
+    QVERIFY(w.status()->text().contains(QStringLiteral("200 of 260")));
+
+    // From after To: nothing is asked and what is shown stays.
+    w.to_enabled()->setChecked(true);
+    QCOMPARE(w.model()->analysis_count(), 200);
+    w.from_edit()->setDateTime(utc_hour(258));
+    w.from_enabled()->setChecked(true);
+    QCOMPARE(w.status()->text(), QStringLiteral("From is after To"));
+    QCOMPARE(w.model()->analysis_count(), 200);
+    QCOMPARE(w.model()->rows().front().uuid, std::string("uuid-255"));
+
+    // A preset again: counted back, no range.
+    w.date_preset()->setCurrentIndex(1);
+    QVERIFY(w.date_range()->isHidden());
+    q = w.query();
+    QVERIFY(q.last_hours && !q.from && !q.to);
+    QCOMPARE(w.model()->analysis_count(), 25);
+  }
+
+  void browser_filters_by_irradiation_and_level() {
+    auto src = make_source(60);
+    DataBrowserWindow w(*src);
+    QVERIFY(!w.table()->isColumnHidden(ui::AnalysisTableModel::Irradiation));
+    auto* irradiations = w.facet_list(pp::Facet::Irradiation);
+    auto* levels = w.facet_list(pp::Facet::Level);
+    QVERIFY(irradiations && levels);
+    QCOMPARE(irradiations->count(), 2);
+    QCOMPARE(levels->count(), 3);
+    find_item(irradiations, QStringLiteral("NM-293"))->setCheckState(Qt::Checked);
+    QCOMPARE(w.query().irradiations, std::vector<std::string>{"NM-293"});
+    QVERIFY(w.model()->analysis_count() > 0);
+    for (const auto& r : w.model()->rows()) QCOMPARE(r.irradiation, std::string("NM-293"));
+    // Level offers what the ticked irradiation has; Irradiation still offers both.
+    QCOMPARE(w.facet_list(pp::Facet::Level)->count(), 2);
+    QVERIFY(!find_item(w.facet_list(pp::Facet::Level), QStringLiteral("C")));
+    QCOMPARE(w.facet_list(pp::Facet::Irradiation)->count(), 2);
+    find_item(w.facet_list(pp::Facet::Level), QStringLiteral("B"))->setCheckState(Qt::Checked);
+    QCOMPARE(w.query().levels, std::vector<std::string>{"B"});
+    for (const auto& r : w.model()->rows()) QCOMPARE(r.level, std::string("B"));
+  }
+
+  void facet_box_filters_its_values() {
+    ui::FacetBox box(QStringLiteral("Things"));
+    QSignalSpy changed(&box, &ui::FacetBox::changed);
+    box.set_values({QStringLiteral("alpha"), QStringLiteral("Beta"), QStringLiteral("gamma")});
+    QCOMPARE(changed.count(), 0);
+    QVERIFY(!box.clear_button()->isEnabled());
+    box.filter()->setText(QStringLiteral("ET"));  // any case, anywhere in the value
+    QVERIFY(find_item(box.list(), QStringLiteral("alpha"))->isHidden());
+    QVERIFY(!find_item(box.list(), QStringLiteral("Beta"))->isHidden());
+    QVERIFY(find_item(box.list(), QStringLiteral("gamma"))->isHidden());
+
+    // A ticked value is never hidden.
+    find_item(box.list(), QStringLiteral("alpha"))->setCheckState(Qt::Checked);
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(!find_item(box.list(), QStringLiteral("alpha"))->isHidden());
+    QCOMPARE(box.title(), QStringLiteral("Things (1)"));
+    QVERIFY(box.clear_button()->isEnabled());
+
+    // New values: the tick and the filter stay; a ticked value no longer offered goes last.
+    box.set_values({QStringLiteral("Beta"), QStringLiteral("delta")});
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(box.checked(), QStringList{QStringLiteral("alpha")});
+    QCOMPARE(box.list()->item(box.list()->count() - 1)->text(), QStringLiteral("alpha"));
+    QVERIFY(find_item(box.list(), QStringLiteral("delta"))->isHidden());
+    QCOMPARE(box.filter()->text(), QStringLiteral("ET"));
+
+    box.clear_button()->click();
+    QCOMPARE(changed.count(), 2);
+    QVERIFY(box.checked().isEmpty());
+    QVERIFY(find_item(box.list(), QStringLiteral("alpha"))->isHidden());
+    QCOMPARE(box.title(), QStringLiteral("Things"));
+    box.clear_checked();  // nothing ticked: nothing to say
+    QCOMPARE(changed.count(), 2);
+  }
+
+  void browser_list_filter_survives_a_reload() {
+    auto src = make_source(60);
+    DataBrowserWindow w(*src);
+    auto* box = w.facet_box(pp::Facet::Irradiation);
+    QVERIFY(box);
+    box->filter()->setText(QStringLiteral("300"));
+    QVERIFY(find_item(box->list(), QStringLiteral("NM-293"))->isHidden());
+    const int shown = w.model()->analysis_count();
+    w.search()->setText(QStringLiteral("air"));  // the lists are fetched again
+    QCOMPARE(box->filter()->text(), QStringLiteral("300"));
+    QVERIFY(find_item(box->list(), QStringLiteral("NM-293"))->isHidden());
+    QVERIFY(!find_item(box->list(), QStringLiteral("NM-300"))->isHidden());
+    // Narrowing a list asks the source nothing: only a tick filters the table.
+    w.search()->clear();
+    QCOMPARE(w.model()->analysis_count(), shown);
+  }
+
+  void browser_colours_rows_by_the_choice() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    const auto tint = [&w](int r) {
+      const QVariant v = w.model()->data(w.model()->index(r, 0), Qt::BackgroundRole);
+      return v.isValid() ? v.value<QBrush>().color() : QColor();
+    };
+    QCOMPARE(w.color_by(), ui::ColorBy::AnalysisType);
+    QCOMPARE(w.color_by_box()->count(), 5);
+    QCOMPARE(tint(0), ui::theme().row_blank);  // uuid-9, a blank on jan
+    QCOMPARE(tint(1), ui::theme().row_air);    // uuid-8, an air on obama
+
+    QSignalSpy changed(&w, &DataBrowserWindow::color_by_changed);
+    w.color_by_box()->setCurrentIndex(w.color_by_box()->findData(ui::to_text(ui::ColorBy::Spectrometer)));
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(w.color_by(), ui::ColorBy::Spectrometer);
+    QCOMPARE(tint(0), ui::theme().row_category[0]);
+    QCOMPARE(tint(1), ui::theme().row_category[1]);
+
+    w.set_color_by(ui::ColorBy::None);  // the combo follows
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(w.color_by_box()->currentData().toString(), ui::to_text(ui::ColorBy::None));
+    QVERIFY(!tint(0).isValid());
+    w.set_color_by(ui::ColorBy::None);
+    QCOMPARE(changed.count(), 2);
+
+    // The colours of the types are the preference's.
+    w.set_color_by(ui::ColorBy::AnalysisType);
+    ui::TypeColors mine = ui::default_type_colors(ui::theme());
+    mine.air = QColor(1, 2, 3);
+    w.set_type_colors(mine);
+    QCOMPARE(tint(1), QColor(1, 2, 3));
+  }
+
+  void workspace_keeps_the_colour_choice_and_applies_the_preferences() {
+    QTemporaryDir dir;
+    const QString ini = dir.path() + QStringLiteral("/ui.ini");
+    const auto settings = [ini] { return std::make_unique<QSettings>(ini, QSettings::IniFormat); };
+    auto src = make_sessions();
+    pp::PresetStore presets(dir.path().toStdString());
+    QWidget owner;
+    {
+      DataWorkspace ws(&owner, {});
+      ws.set_settings(settings);
+      ws.set_source(src.get(), &presets);
+      auto* browser = ws.browser();
+      QVERIFY(browser);
+      QCOMPARE(browser->color_by(), ui::ColorBy::AnalysisType);
+      // The default preference: a break after six hours.
+      QCOMPARE(browser->model()->break_rows(), QList<int>{10});
+      ui::Preferences p;
+      p.browser_gap_hours = 0.0;
+      p.browser_type_colors = {{"air", "#010203"}};
+      ws.apply_preferences(p);
+      QVERIFY(browser->model()->break_rows().isEmpty());
+      QCOMPARE(browser->model()->data(browser->model()->index(1, 0), Qt::BackgroundRole).value<QBrush>().color(),
+               QColor(1, 2, 3));  // uuid-18, an air
+      browser->set_color_by(ui::ColorBy::IrradiationLevel);
+    }
+    QCOMPARE(settings()->value(QStringLiteral("data_browser/color_by")).toString(),
+             QStringLiteral("irradiation_level"));
+    DataWorkspace again(&owner, {});
+    again.set_settings(settings);
+    again.set_source(src.get(), &presets);
+    QCOMPARE(again.browser()->color_by(), ui::ColorBy::IrradiationLevel);
+  }
+
+  void browser_marks_time_breaks() {
+    auto src = make_sessions();
+    DataBrowserWindow w(*src);
+    auto* m = w.model();
+    QCOMPARE(m->rowCount(), 20);  // no threshold until one is set
+    w.set_gap_hours(6.0);
+    QCOMPARE(m->rowCount(), 21);
+    QCOMPARE(m->analysis_count(), 20);
+    QCOMPARE(m->break_rows(), QList<int>{10});
+    QVERIFY(m->is_break(10) && !m->analysis_at(10));
+    QCOMPARE(m->analysis_at(9)->uuid, std::string("uuid-10"));
+    QCOMPARE(m->analysis_at(11)->uuid, std::string("uuid-9"));  // the last run before the gap
+    QCOMPARE(m->display_row_of(9), 9);
+    QCOMPARE(m->display_row_of(10), 11);
+    // One spectrometer shown: it is not named.
+    QCOMPARE(m->data(m->index(10, 0)).toString(), QStringLiteral("no analyses for 10 h"));
+    QVERIFY(m->data(m->index(10, 0), Qt::ToolTipRole).toString().startsWith(QStringLiteral("10 run(s) above")));
+    QCOMPARE(m->flags(m->index(10, 0)), Qt::ItemFlags(Qt::NoItemFlags));
+    QVERIFY(m->flags(m->index(9, 0)).testFlag(Qt::ItemIsSelectable));
+    QCOMPARE(w.table()->columnSpan(10, 0), static_cast<int>(ui::AnalysisTableModel::ColumnCount));
+    QCOMPARE(w.table()->columnSpan(9, 0), 1);
+    QVERIFY(w.status()->text().contains(QStringLiteral("20 of 20")));
+
+    // Everything selected is twenty analyses, and the separator is none of them.
+    w.table()->selectAll();
+    QCOMPARE(w.selected_uuids().size(), 20);
+    QVERIFY(!w.selected_uuids().contains(QString()));
+    QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
+    w.table()->clearSelection();
+    w.plot_action(QStringLiteral("ideogram"))->trigger();  // nothing selected: all shown
+    QCOMPARE(figure.takeFirst().at(1).toStringList().size(), 20);
+
+    // Stepping passes over it.
+    QSignalSpy recall(&w, &DataBrowserWindow::recall_requested);
+    w.select_rows({9});
+    QCOMPARE(w.table()->currentIndex().row(), 9);
+    w.recall_step(1);
+    QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-9"));
+    QCOMPARE(w.table()->currentIndex().row(), 11);
+    w.recall_step(-1);
+    QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-10"));
+    QCOMPARE(w.table()->currentIndex().row(), 9);
+
+    w.set_gap_hours(0.0);
+    QCOMPARE(m->rowCount(), 20);
+    QCOMPARE(w.table()->columnSpan(10, 0), 1);
+  }
+
+  void a_time_break_at_a_page_boundary_comes_with_the_next_page() {
+    auto src = make_sessions();
+    DataBrowserWindow w(*src);
+    auto* m = w.model();
+    w.set_gap_hours(6.0);
+    w.set_page_size(10);  // exactly the newer session
+    QCOMPARE(m->rowCount(), 10);
+    QVERIFY(m->break_rows().isEmpty());
+    QStringList before;
+    for (int r = 0; r < m->rowCount(); ++r) before << m->data(m->index(r, 0)).toString();
+    QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
+    QCOMPARE(m->rowCount(), 21);
+    QCOMPARE(m->break_rows(), QList<int>{10});
+    QCOMPARE(w.table()->columnSpan(10, 0), static_cast<int>(ui::AnalysisTableModel::ColumnCount));
+    for (int r = 0; r < before.size(); ++r) QCOMPARE(m->data(m->index(r, 0)).toString(), before[r]);
+    QVERIFY(w.status()->text().contains(QStringLiteral("20 of 20")));
+  }
+
+  void separators_name_the_spectrometer_when_there_are_several() {
+    ui::AnalysisTableModel m;
+    const auto run = [](const char* spectrometer, double hours) {
+      pp::AnalysisSummary s;
+      s.uuid = std::string(spectrometer) + std::to_string(hours);
+      s.mass_spectrometer = spectrometer;
+      s.timestamp = 1'700'000'000.0 + 3600.0 * hours;
+      return s;
+    };
+    m.set_gap_threshold(3 * 3600.0);
+    m.set_rows({run("obama", 30), run("jan", 29.5), run("obama", 29), run("jan", 9.25)});
+    QCOMPARE(m.break_rows(), QList<int>{3});
+    QCOMPARE(m.data(m.index(3, 0)).toString(), QStringLiteral("jan: no analyses for 20 h 15 min"));
+    QVERIFY(!m.data(m.index(3, 1)).isValid());
+    QVERIFY(m.data(m.index(3, 0), Qt::UserRole).toString().isEmpty());
   }
 
   void browser_recall_and_time_series_signals() {

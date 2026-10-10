@@ -72,6 +72,8 @@ Theme light() {
   t.row_air = rgb(0xe5f6ec);
   t.row_cocktail = rgb(0xfff2dc);
   t.row_detector_ic = rgb(0xf0e9fc);
+  t.row_category = {rgb(0xe7effd), rgb(0xe5f6ec), rgb(0xfff2dc), rgb(0xf0e9fc),
+                    rgb(0xddf3f4), rgb(0xfce9f3), rgb(0xf3f0d3), rgb(0xe9ecef)};
 
   t.diff_changed = rgb(0xffeca0);
   t.diff_added = rgb(0xcef0ce);

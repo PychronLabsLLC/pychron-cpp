@@ -83,6 +83,9 @@ struct Theme {
   QColor row_air;
   QColor row_cocktail;
   QColor row_detector_ic;
+  // ... and by anything else they are told apart by (spectrometer, level, tag):
+  // the n-th distinct value takes the n-th, round again past the last.
+  std::array<QColor, 8> row_category;
 
   // Revision diff rows.
   QColor diff_changed;

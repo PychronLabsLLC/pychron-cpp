@@ -47,6 +47,8 @@ add_library(pychron_ui_lib STATIC
   src/options_editor.cpp
   src/processing_bridge.cpp
   src/analysis_table_model.cpp
+  src/facet_box.cpp
+  src/row_colors.cpp
   src/data_browser_window.cpp
   src/data_icons.cpp
   src/recall_window.cpp
@@ -112,6 +114,8 @@ add_library(pychron_ui_lib STATIC
   src/options_editor.hpp
   src/processing_bridge.hpp
   src/analysis_table_model.hpp
+  src/facet_box.hpp
+  src/row_colors.hpp
   src/data_browser_window.hpp
   src/data_icons.hpp
   src/recall_window.hpp

@@ -1,7 +1,10 @@
 #include "preferences_dialog.hpp"
 
+#include <array>
 #include <utility>
 
+#include <QCheckBox>
+#include <QColorDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -36,6 +39,42 @@ void set_font_value(QSpinBox* spin, int pt) { spin->setValue(pt < Preferences::k
 
 }  // namespace
 
+ColorField::ColorField(QWidget* parent)
+    : QWidget(parent), button_(new QPushButton), none_(new QCheckBox(tr("No colour"))) {
+  button_->setFixedWidth(64);
+  auto* layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->addWidget(button_);
+  layout->addWidget(none_);
+  layout->addStretch();
+  ask = [this](const QColor& current) { return QColorDialog::getColor(current, this, tr("Row colour")); };
+  connect(button_, &QPushButton::clicked, this, [this] {
+    const QColor chosen = ask ? ask(color_) : QColor();
+    if (chosen.isValid()) set_color(chosen);
+  });
+  connect(none_, &QCheckBox::toggled, this, [this] { show_color(); });
+  show_color();
+}
+
+QColor ColorField::color() const { return none_->isChecked() ? QColor() : color_; }
+
+void ColorField::set_color(const QColor& color) {
+  if (color.isValid()) color_ = color;
+  none_->setChecked(!color.isValid());
+  show_color();
+}
+
+void ColorField::show_color() {
+  const bool shown = !none_->isChecked() && color_.isValid();
+  button_->setEnabled(!none_->isChecked());
+  button_->setText(shown ? color_.name() : QString());
+  // The button is its colour; its own sheet, since the application's draws the frame.
+  button_->setStyleSheet(shown ? QStringLiteral("background: %1; color: %2;")
+                                     .arg(color_.name(), color_.lightness() < 128 ? QStringLiteral("white")
+                                                                                  : QStringLiteral("black"))
+                               : QString());
+}
+
 QLabel* preferences_note(const QString& text) {
   auto* label = new QLabel(text);
   label->setWordWrap(true);
@@ -51,6 +90,8 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
       font_(font_field()),
       code_font_(font_field()),
       page_size_(new QSpinBox),
+      gap_hours_(new QDoubleSpinBox),
+      reset_colors_(new QPushButton(tr("Reset colours"))),
       problem_(new QLabel),
       buttons_(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply |
                                     QDialogButtonBox::RestoreDefaults)) {
@@ -73,7 +114,36 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
   auto* data_form = new QFormLayout(data_page);
   data_form->addRow(tr("Browser page size:"), page_size_);
   data_form->addRow(preferences_note(tr("How many analyses the data browser loads at a time; Load more fetches the next page.")));
+  gap_hours_->setRange(0.0, Preferences::kMaxGapHours);
+  gap_hours_->setDecimals(1);
+  gap_hours_->setSingleStep(0.5);
+  gap_hours_->setSpecialValueText(tr("Off"));
+  gap_hours_->setSuffix(tr(" h"));
+  data_form->addRow(tr("Time break after:"), gap_hours_);
+  data_form->addRow(preferences_note(tr("The data browser draws a line where a spectrometer ran nothing for longer "
+                                        "than this, among the analyses shown.")));
+  static const std::array<std::pair<const char*, const char*>, 6> kTypeLabels = {{
+      {"unknown", QT_TR_NOOP("Unknown:")},
+      {"blank", QT_TR_NOOP("Blank:")},
+      {"air", QT_TR_NOOP("Air:")},
+      {"cocktail", QT_TR_NOOP("Cocktail:")},
+      {"detector_ic", QT_TR_NOOP("Detector IC:")},
+      {"other", QT_TR_NOOP("Other:")},
+  }};
+  for (const auto& [type_class, label] : kTypeLabels) {
+    auto* field = new ColorField;
+    type_colors_[type_class] = field;
+    data_form->addRow(tr(label), field);
+  }
+  data_form->addRow(QString(), reset_colors_);
+  data_form->addRow(preferences_note(tr("Row colours of the data browser under Colour by: Analysis type. A tag other "
+                                        "than ok is always the error colour.")));
+  connect(reset_colors_, &QPushButton::clicked, this, [this] {
+    const TypeColors defaults = default_type_colors(theme());
+    for (const auto& [type_class, field] : type_colors_) field->set_color(*defaults.find(type_class));
+  });
   add_page(tr("Data"), data_page);
+  resize(560, 520);
 
   if (current.confirm_move_amu) {
     confirm_move_ = new QDoubleSpinBox;
@@ -152,6 +222,11 @@ void PreferencesDialog::complain(const QString& what, QWidget* page) {
   if (page != nullptr) pages_->setCurrentRow(stack_->indexOf(page));
 }
 
+ColorField* PreferencesDialog::type_color(const std::string& type_class) const {
+  const auto it = type_colors_.find(type_class);
+  return it == type_colors_.end() ? nullptr : it->second;
+}
+
 PreferencesDialog* PreferencesDialog::show_for(QWidget* window, QPointer<PreferencesDialog>& open,
                                               const SettingsFactory& settings, std::optional<double> confirm_move_amu,
                                               Apply apply, std::optional<LineSettings> line, LineSave line_save) {
@@ -190,6 +265,10 @@ PreferencesDialog::Values PreferencesDialog::values() const {
   v.preferences.font_pt = font_value(font_);
   v.preferences.code_font_pt = font_value(code_font_);
   v.preferences.browser_page_size = page_size_->value();
+  v.preferences.browser_gap_hours = gap_hours_->value();
+  TypeColors colors;
+  for (const auto& [type_class, field] : type_colors_) *colors.find(type_class) = field->color();
+  v.preferences.browser_type_colors = type_color_overrides(colors, theme());
   if (confirm_move_ != nullptr) v.confirm_move_amu = confirm_move_->value();
   if (line_ && logging_ != nullptr && metrics_ != nullptr) {
     v.line = line_;
@@ -203,6 +282,9 @@ void PreferencesDialog::set_values(const Values& values) {
   set_font_value(font_, values.preferences.font_pt);
   set_font_value(code_font_, values.preferences.code_font_pt);
   page_size_->setValue(values.preferences.browser_page_size);
+  gap_hours_->setValue(values.preferences.browser_gap_hours);
+  const TypeColors colors = ui::type_colors(values.preferences.browser_type_colors, theme());
+  for (const auto& [type_class, field] : type_colors_) field->set_color(*colors.find(type_class));
   if (confirm_move_ != nullptr && values.confirm_move_amu) confirm_move_->setValue(*values.confirm_move_amu);
   if (values.line && logging_ != nullptr && metrics_ != nullptr) {
     line_ = values.line;

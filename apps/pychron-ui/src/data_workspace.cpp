@@ -3,11 +3,15 @@
 #include <filesystem>
 #include <utility>
 
+#include <QSettings>
+
 #include "figure_window.hpp"
 #include "isotope_evolution_window.hpp"
 #include "pychron/processing/report.hpp"
 #include "recall_window.hpp"
 #include "reference_fit_window.hpp"
+#include "row_colors.hpp"
+#include "theme.hpp"
 
 namespace pychron::ui {
 
@@ -78,16 +82,32 @@ void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::
   if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source);
 }
 
-void DataWorkspace::set_page_size(int rows) {
-  page_size_ = rows;
-  if (browser_ != nullptr) browser_->set_page_size(rows);
+namespace {
+
+const QString kColorBy = QStringLiteral("data_browser/color_by");
+
+void apply_to(DataBrowserWindow& browser, const Preferences& preferences) {
+  browser.set_page_size(preferences.browser_page_size);
+  browser.set_gap_hours(preferences.browser_gap_hours);
+  browser.set_type_colors(type_colors(preferences.browser_type_colors, theme()));
+}
+
+}  // namespace
+
+void DataWorkspace::apply_preferences(const Preferences& preferences) {
+  preferences_ = preferences;
+  if (browser_ != nullptr) apply_to(*browser_, preferences_);
 }
 
 DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
   if (source_ == nullptr || processing_ == nullptr) return nullptr;
   if (browser_ == nullptr) {
     browser_ = new DataBrowserWindow(*source_, owner_);
-    browser_->set_page_size(page_size_);
+    apply_to(*browser_, preferences_);
+    const auto settings = [this] { return settings_ ? settings_() : std::make_unique<QSettings>(); };
+    browser_->set_color_by(color_by_from_text(settings()->value(kColorBy).toString()));
+    connect(browser_, &DataBrowserWindow::color_by_changed, this,
+            [settings](ColorBy by) { settings()->setValue(kColorBy, to_text(by)); });
     if (embed_in != nullptr) browser_->setParent(embed_in, Qt::Widget);
     connect(browser_, &DataBrowserWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
     connect(browser_, &DataBrowserWindow::figure_requested, this,

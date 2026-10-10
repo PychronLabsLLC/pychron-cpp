@@ -153,6 +153,12 @@ class TestPreferences : public QObject {
     p.font_pt = 14;
     p.code_font_pt = 11;
     p.browser_page_size = 500;
+    p.browser_gap_hours = 12.5;
+    p.browser_type_colors = {{"unknown", "#abcdef"}, {"air", ""}};
+    ui::save_preferences(*settings(), p);
+    QCOMPARE(ui::load_preferences(*settings()), p);
+    // A colour given back to the theme is no longer kept.
+    p.browser_type_colors.erase("air");
     ui::save_preferences(*settings(), p);
     QCOMPARE(ui::load_preferences(*settings()), p);
   }
@@ -163,6 +169,9 @@ class TestPreferences : public QObject {
       s->setValue(QStringLiteral("preferences/font_pt"), QStringLiteral("huge"));
       s->setValue(QStringLiteral("preferences/code_font_pt"), 200);
       s->setValue(QStringLiteral("preferences/browser_page_size"), -5);
+      s->setValue(QStringLiteral("preferences/browser_gap_hours"), 100000);
+      s->setValue(QStringLiteral("preferences/browser_type_colors/air"), QStringLiteral("greenish"));
+      s->setValue(QStringLiteral("preferences/browser_type_colors/nonsense"), QStringLiteral("#000000"));
     }
     QCOMPARE(ui::load_preferences(*settings()), Preferences{});
   }
@@ -177,6 +186,27 @@ class TestPreferences : public QObject {
     QCOMPARE(d.font_size()->value(), 13);
     QCOMPARE(d.code_font_size()->text(), QStringLiteral("Default"));
     QCOMPARE(d.page_size()->value(), 300);
+    QCOMPARE(d.gap_hours()->value(), Preferences::kDefaultGapHours);
+    QCOMPARE(d.type_color("air")->color(), ui::theme().row_air);
+    QVERIFY(!d.type_color("unknown")->color().isValid());
+    QVERIFY(d.type_color("unknown")->none()->isChecked());
+    QVERIFY(!d.type_color("nonsense"));
+    QCOMPARE(d.values().preferences, p);
+
+    // The data browser's time break and row colours.
+    d.gap_hours()->setValue(0.0);
+    QCOMPARE(d.gap_hours()->text(), QStringLiteral("Off"));
+    d.type_color("air")->ask = [](const QColor&) { return QColor(0x10, 0x20, 0x30); };
+    d.type_color("air")->button()->click();
+    d.type_color("blank")->none()->setChecked(true);
+    d.type_color("cocktail")->ask = [](const QColor&) { return QColor(); };  // cancelled
+    d.type_color("cocktail")->button()->click();
+    QCOMPARE(d.values().preferences.browser_gap_hours, 0.0);
+    QCOMPARE(d.values().preferences.browser_type_colors,
+             (std::map<std::string, std::string>{{"air", "#102030"}, {"blank", ""}}));
+    d.reset_colors()->click();
+    QVERIFY(d.values().preferences.browser_type_colors.empty());
+    d.gap_hours()->setValue(Preferences::kDefaultGapHours);
     QCOMPARE(d.values().preferences, p);
     QVERIFY(!d.values().confirm_move_amu);
 
