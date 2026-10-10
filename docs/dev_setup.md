@@ -125,7 +125,8 @@ directory, as `elctl exp run` does: open a queue (File > Open > Open Queue, or
 `--queue <file>`), edit it (rows revalidate as you type; red rows have
 errors, see their tooltips), then Start (F5) from the selected row. The lab
 is `--lab <dir>` (default: the extraction line config's directory) and
-records go to `--data <dir>` (default: `<lab>/data`). The Run Factory dock
+records go to `--data <dir>` (default: `<lab>/data`), or to the database when
+there is one (`--db`, or an instrument install's own). The Run Factory dock
 adds runs: fill in an identifier and position (a range such as `1-4` gives one
 run per hole), check the preview, then Add (Ctrl+Return); new runs start from
 the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. The
@@ -133,8 +134,8 @@ Measurement tab beside it edits the selected row's plan and its exposed
 parameters (overridden values are bold with a ● badge; Advanced allows any
 value of the plan). Experiment > Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
 scripts with highlighting, completion, the static check and estimate as you
-type, and Ctrl+click on a gosub to open it. With `--sim`,
-`--sim-speed <x>` runs the whole app on simulated time x times faster than
+type, and Ctrl+click on a gosub to open it. With `--sim` (or an install set
+up for simulation), `--sim-speed <x>` runs the whole app on simulated time x times faster than
 real time:
 
 ```bash
@@ -142,9 +143,14 @@ build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/exa
 ```
 
 View > Data browses the records under `<data>/records`. With
-`--db <url>` it browses a DVC store instead (`sqlite:/path/to/file.db` or
+`--db <url>`, or on an instrument install that has a database, it browses
+that DVC store instead (`sqlite:/path/to/file.db` or
 `postgresql://user:pw@host/db`; the schema must already be current, since
-the UI never migrates it: `elctl db migrate --db <url>` does). Rescan picks up new analyses and revisions from
+the UI never migrates it: `elctl db migrate --db <url>` does). The same
+database is where a queue's runs are saved, so `--db` no longer only browses:
+a queue started under it is checked against that database's catalog and its
+runs are written there. The data window shows each run when it ends; Rescan
+picks up new analyses and revisions from
 the store's change log. With a database, recall windows show each
 analysis' revision history (History tab) and can save fit edits made in the
 Evolutions tab (signal and baseline fits) as new revisions, or restore an
@@ -371,7 +377,8 @@ cd configs/examples
 ```
 
 `--sim-speed` runs simulated time faster than real time (`--sim-speed max`:
-as fast as the machine goes, without waiting at all). Records, the spool
+as fast as the machine goes, without waiting at all). The example lab has no
+database, so each finished run is a record file: records, the spool
 and `executor_state.json` go to `./data` (ignored by git); `--resume` continues
 after the last started run. Ctrl-C stops after the current run, a second
 Ctrl-C cancels it, a third aborts.
@@ -802,7 +809,7 @@ PYCHRON_TEST_CAMERA=0 ctest --test-dir build/dev -R RealCamera
 elctl init --list
 elctl init argus --root ~/Pychron/argus     # asks; Enter accepts [defaults]
 elctl doctor                                # checks the default install
-elctl --install argus exp run experiment.toml --sim-speed 50
+elctl --install argus exp run experiment.toml --sim-speed 50   # runs go to the install's database
 elctl init --reconfigure --set simulation=no --set qtegra_host=10.0.0.5
 elctl doctor --probe                        # connects: the drivers' connect step
 elctl init helix --root ~/Pychron/helix --set line_source=import \
@@ -819,6 +826,19 @@ pychron-cpp driver yet are simulated (`sim_valves`), and the report lists
 what was not carried over (legacy extraction-line survey,
 `docs/superpowers/specs/2026-10-03-legacy-extraction-line-survey.md`).
 
+An instrument install has a database (`data/pychron.db` unless the lab's
+server was named), seeded from the install's `seed.toml` with the reference
+samples and their identifiers, the mass spectrometer and a reactor. Its
+shipped `experiment.toml` is three air shots between two blanks (`ba`, `a`,
+`a`, `a`, `ba`; about 19 minutes of simulated time), and names only what the
+seed made. `exp run` and `pychron-ui` write each finished run to that
+database, and refuse a queue that names an identifier, mass spectrometer or
+extract device it lacks; with no database (the example lab of section 5) runs
+are record files as before. `--db <url>` names another database. An install
+on the example line also gets the example lab's `sim.toml`. The end-to-end
+test of this path is `pychron_install_e2e_tests`
+(`tests/integration/test_install_e2e.cpp`).
+
 Instrument installs start in simulation; `CALIBRATE.md` in the install lists
 what is still a placeholder. `--yes` takes every default, `--answers file.toml`
 and `--set id=value` answer without prompts. A re-run never overwrites a file;
@@ -830,7 +850,10 @@ installed, it opens the wizard: pick data reduction or an instrument, a
 folder, and answer one page per question group; Install writes the files,
 creates a local database, records the install and shows the doctor's checks.
 After that `pychron-ui` opens the default install (`--install NAME` another;
-File > Installations switches, sets the default or forgets one). A
+File > Installations switches, sets the default or forgets one). An
+instrument install's data window reads its database and shows each run when
+it ends; `--sim-speed N` needs no `--sim` beside it when the install is set
+up for simulation. A
 data-reduction install opens the data browser alone. `pychron-ui --setup`
 runs the wizard again; `--examples` (or `--sim` with nothing installed) opens
 the example line in `configs/examples` as before.

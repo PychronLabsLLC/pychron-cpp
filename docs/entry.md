@@ -31,7 +31,8 @@ sample for each kind of reference run: `blank_unknown`, `blank_air`,
 `blank_cocktail`, `blank_extractionline`, `background`, `air`, `cocktail`
 and `detector_ic`, each with its special identifier (`bu`, `ba`, `bc`, `be`,
 `bg`, `a`, `c`, `ic`). It also starts with the reactor `Triga` and its
-production ratios. Setup puts them there from the install's `seed.toml`
+production ratios, and with the install's mass spectrometer (`argus`, `helix`
+or `ngx`). Setup puts them there from the install's `seed.toml`
 (`installation_runbook.md`, part 2.3), and `elctl entry seed` does the same
 by hand.
 
@@ -39,6 +40,12 @@ by hand.
 - The seed never changes a row that exists. A special identifier that was
   already in the store (from a legacy import) keeps the sample it has, or
   none.
+- `seed.toml` has two lists: `mass_spectrometers` (shipped with the
+  install's own) and `extract_devices` (shipped empty). A queue's runs are saved to the database only under a
+  mass spectrometer and an extract device the database has, and a queue that
+  names one it lacks is not started. To add one, put its name in the list
+  and run `elctl entry seed <root>/seed.toml --db <url>`; it prints, for
+  example, `seeded 1 extract device`. A name may not be empty or repeated.
 
 ## Samples
 

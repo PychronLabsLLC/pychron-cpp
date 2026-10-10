@@ -417,14 +417,14 @@ elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
 | Flag | Meaning |
 |---|---|
 | `--lab DIR` | The lab: where plans, scripts, conditionals, patterns, trays and `notifications.toml` are found. Default: see [How elctl finds its files](#how-elctl-finds-its-files). |
-| `--data DIR` | Where records are written (`DIR/records`), with the spool and the executor's saved state. Default `<lab>/data`. A database that cannot be opened, or an install's database whose password cannot be read, stops `exp run` before it starts. |
+| `--data DIR` | The data folder: the spool (`DIR/spool`), the partial record kept after each extraction and the artifacts (`DIR/records`), and the executor's saved state. Without a database the finished records are written here too (`DIR/records`). Default: the install's data folder, else `<lab>/data`. |
 | `--spectrometer FILE` | The spectrometer config. Default: the install's, or `<lab>/spectrometer.toml` if present. Without one the queue runs without a spectrometer. |
 | `--canvas FILE` | The canvas file. Default: `canvas.toml` next to the line config if it exists. |
 | `--from ROW` | Start at this row number (0 is the first row, as printed by validate). |
 | `--resume` | Continue where a stopped or crashed queue left off, using the saved state in the data folder. Exclusive with `--from`. |
 | `--dry-run` | Validate and print the queue (as `exp validate`) and stop. With a database (below), also says what it would refuse of the queue. |
-| `--sim-speed X` | Run simulated time `X` times faster than real time. Needs `--sim`, and `X` must be positive; `max` does not wait at all. What a simulated queue measures is in [The simulated lab](../simulator.md). |
-| `--db URL` | Write the runs to this database (`sqlite:<file>` or `postgresql://...`), which must already have its schema (`elctl db migrate`). Default: the install's own database. |
+| `--sim-speed X` | Run simulated time `X` times faster than real time. Needs `--sim` or an install set up for simulation, and `X` must be positive; `max` does not wait at all. What a simulated queue measures is in [The simulated lab](../simulator.md). |
+| `--db URL` | Write the runs to this database (`sqlite:<file>` or `postgresql://...`), which must already have its schema (`elctl db migrate`). Default: the install's own database, when `--install` names an instrument install that has one. |
 
 It first prints the same report as `exp validate`; if the queue has errors, it
 prints `error: the queue has errors; nothing was run` and exits 1. While running
@@ -432,21 +432,62 @@ it prints progress: `run N <identifier>: started`, state changes, notes,
 `conditional <name> tripped: ...`, waits (`waiting 0:00:05: <reason>`),
 notifications, and `run N <id>-<aliquot><step>: <state>`.
 
-Where the runs go: with `--db`, or under `--install` (an instrument's own
-database), each finished run is written to the database, and the queue does
-not start if the database lacks an identifier, mass spectrometer or extract
-device it names (`error: identifier 'zz9' is not in the database`); a record
-the database cannot take at once waits in `<DIR>/spool`. With neither, records
-are files under `<DIR>/records`, as above.
+Where the runs go. With `--db`, or under `--install` when the install has a
+database, each finished run is written to the database and no record file is
+written for it. With neither, each finished run is a file under
+`<DIR>/records`. [04 Experiments](04-experiments.md#85-what-is-written-run-records)
+says what the database gets.
+
+With a database, two things stop `exp run` before anything runs, with exit 1:
+
+- The database cannot be opened. A schema that is behind says how to bring it
+  up to date:
+
+  ```
+  error: database schema is out of date (migration 1 init not applied); bring it up to date with: elctl db migrate --db <url>
+  Run: elctl db migrate --db sqlite:/home/you/Pychron/argus/data/pychron.db
+  ```
+
+  An install's database whose password cannot be read is the same kind of
+  failure (`error: the installation's database: ...`); it does not fall back
+  to files. `--db` overrides the install's database.
+- The database cannot take the queue: it lacks the queue's mass spectrometer,
+  or an identifier or extract device the queue names, or already holds a run
+  that a row fixes by aliquot and step. Each problem is a line, and
+  `--dry-run` prints them too:
+
+  ```
+  error: the queue cannot be saved:
+  error: identifier '66001' is not in the database
+  ```
+
+  Add what is missing with [`elctl entry`](#sample-and-package-entry) and run the queue again.
+
+A run the database cannot take while the queue runs (the database is locked or
+away) does not stop the queue: its record waits in `<DIR>/spool` and is sent
+again when the next queue starts.
+
+A build without persistence refuses `--db` (`built without the DVC store`); without `--db` it
+writes files.
 
 **Ctrl-C** is staged: the first stops the queue after the current run, a second
 cancels the run in progress, a third aborts. At the end it prints
-`queue <end>`, `N/M run(s) succeeded; records in <DIR>/records` (`in <database>`, without its
-password, when the runs went to one), and warns of any records still in the
-spool.
+`queue <end>` and where the runs went, with a warning when any are still in
+the spool:
+
+```
+queue completed
+5/5 run(s) succeeded; in sqlite:/home/you/Pychron/argus/data/pychron.db
+```
+
+A database is shown without its password. Without one the line ends
+`records in <DIR>/records`. The warning is
+`warning: N record(s) waiting in <DIR>/spool` with a database and
+`warning: N record(s) still in the spool` without.
 
 Exit 0 when the queue completed or was stopped; 1 if it was cancelled, aborted or
-failed, the line could not start, or the queue file would not load; 2 for a
+failed, the line could not start, the queue file would not load, or the
+database could not be opened or refused the queue; 2 for a
 usage error (including `--sim-speed` without `--sim`, and `--from` together with
 `--resume`).
 
@@ -457,6 +498,13 @@ elctl -c extraction_line.toml --sim exp run experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 elctl -c extraction_line.toml --sim exp run experiment.toml --resume \
     --spectrometer spectrometer.sim-integrated.toml
+```
+
+On an instrument install, a queue named without a folder is looked for in the
+install's folder:
+
+```bash
+elctl --install argus --sim exp run experiment.toml --sim-speed max
 ```
 
 ### exp notify

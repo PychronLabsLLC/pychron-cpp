@@ -38,9 +38,11 @@ directory**, a folder of plain files that every program in the package reads:
 ```
 
 `pychron-ui` takes the lab directory from `--lab <dir>`; without it, it uses
-the install folder, or the folder of the extraction line config. Records go to
-`--data <dir>`, by default `<lab>/data` (an install may name its own data
-folder). `configs/examples` in the package is a complete example lab with a
+the install folder, or the folder of the extraction line config. The data
+folder is `--data <dir>`, by default `<lab>/data` (an install may name its own
+data folder). Finished runs go to the install's database when it has one, and
+to record files under the data folder when there is none (section 8.5).
+`configs/examples` in the package is a complete example lab with a
 simulated instrument.
 
 A queue, then, says "run identifier `66001` with the extraction script
@@ -727,7 +729,25 @@ time).
 
 ### 8.5 What is written: run records
 
-Each saved run is one analysis record, a JSON file:
+Where a finished run goes depends on whether the program has a database.
+
+**With a database.** An instrument install has one (the setup makes it, by
+default a SQLite file at `<install>/data/pychron.db`), and both `pychron-ui`
+and `elctl exp run` use it; `--db <url>` names another. Each finished run is
+written to the database as one analysis before the run is reported as ended,
+and the data window of `pychron-ui` shows it when the run ends
+([Data analysis](06-data-analysis.md)).
+No record file is written for it. These stay files under the data folder:
+
+```
+<data>/spool/<uuid>.json                                           a run not yet in the database
+<data>/records/<identifier>/<identifier>-<aliquot><step>.extraction.json
+<data>/records/artifacts/<uuid>/<name>
+```
+
+**Without a database.** The example lab (`--examples`, or a line config given
+on the command line), an install made before installs had a database, and a
+build without persistence write each finished run as one JSON file instead:
 
 ```
 <data>/records/<identifier>/<identifier>-<aliquot><step>.json
@@ -735,21 +755,64 @@ Each saved run is one analysis record, a JSON file:
 <data>/records/artifacts/<uuid>/<name>
 ```
 
-For example `66001-1.json`. The `.extraction.json` file is written as soon as
-extraction ends, so the extraction is kept even if the measurement later
-fails. The record holds the identity, sample information, instrument, the
-extraction settings and what actually happened (actual duration, positions,
-pattern), the scripts that ran with a hash of their text, the effective
-measurement plan, spectrometer state, the raw signals, intercepts and
-baselines, every conditional that was in force and every trip, and the notes
-from the run. Ages and other derived values are not stored; they are
-calculated when you analyse the data ([Data analysis](06-data-analysis.md)).
-The data browser reads these files directly.
+For example `66001-1.json`. The data browser reads these files directly.
 
-Records are written to a local **spool** (`<data>/spool/`) first, then handed
-to the data store. If the second step fails, the run still counts, the table
-says "saved to the spool only", and the Executor pane shows "N record(s) in
-the spool". Spooled records are sent again at the next queue start.
+Either way, the `.extraction.json` file is written as soon as extraction ends,
+so the extraction is kept even if the measurement later fails. The record
+holds the identity, sample information, instrument, the extraction settings
+and what actually happened (actual duration, positions, pattern), the scripts
+that ran with a hash of their text, the effective measurement plan,
+spectrometer state, the raw signals, intercepts and baselines, every
+conditional that was in force and every trip, and the notes from the run. Ages
+and other derived values are not stored; they are calculated when you analyse
+the data ([Data analysis](06-data-analysis.md)).
+
+**What the database gets.** The run's identity (identifier, aliquot, step,
+type, time, analyst, mass spectrometer, extract device), the extraction
+settings, the positions heated, every raw signal and baseline series, the
+intercepts and baselines as fitted during the run, the detectors' gains and
+deflections and the source settings, the conditionals in force and those
+that tripped, the software version, the queue's name, and the measurement plan
+as it was run. A fit that failed is stored as unknown rather than as a number.
+
+It does not get, in this version: the sample, project, material and
+irradiation text typed in the queue (in the database a run belongs to its
+identifier, and the identifier's own entry says which sample that is), the
+text of the extraction and post-measurement scripts, the peak-center results,
+the run's events and notes, the tray and the load, and the readings logged
+during extraction. Nothing assigns blanks or detector intercalibration factors
+to a run automatically.
+
+**Before a queue starts**, it is checked against the database. The queue's
+mass spectrometer and every identifier and extract device it names must
+already be there, and a row whose aliquot and step are fixed must not be a run
+the database already has. Otherwise the queue is not started and each problem
+is listed, for example:
+
+```
+error: the queue cannot be saved:
+error: identifier '66001' is not in the database
+```
+
+The program never adds an identifier, a sample or an instrument on its own:
+add what is missing with **Entry** or `elctl entry` ([entry](../entry.md)),
+then start the queue again. The same happens when the database cannot be
+reached at all (`the database cannot be reached: ...`).
+
+**The spool and pending runs.** Every finished run is first written to a
+local **spool** (`<data>/spool/`), and then handed on: to the database, or to
+its record file. If the second step fails (the database is locked or away,
+the disk is full), the run still counts and the queue goes on: the table says
+"saved to the spool only", and the Executor pane shows "N run(s) waiting to be
+saved to the database" (without a database, "N record(s) in the spool");
+`elctl exp run` ends with `warning: N record(s) waiting in <data>/spool`. A
+pending run is safe on this computer but is not yet in the database, so the
+data window does not show it. Pending runs are sent again when the next queue
+starts, and a run is never stored twice. One the database refuses for good (its
+identifier was removed, say) stays in the spool and is tried at each queue
+start until the missing entry is added.
+
+Only one program at a time should run queues into a database.
 
 The executor also keeps `<data>/executor_state.json` up to date. It records
 the next row to run, so a queue can be resumed after a crash (a run that has
@@ -781,8 +844,8 @@ pychron-ui --sim --lab configs/examples --queue configs/examples/experiment.toml
 
 `--sim` forces every transport in the extraction line to the built-in
 simulators. The window title then says "(Simulation)". Real time is slow: an
-example run takes minutes, mostly waiting. **`--sim-speed <x>`** (only with
-`--sim`) runs the whole program on simulated time `x` times faster than real
+example run takes minutes, mostly waiting. **`--sim-speed <x>`** (with
+`--sim`, or on an install set up for simulation) runs the whole program on simulated time `x` times faster than real
 time:
 
 ```bash
@@ -829,6 +892,8 @@ before relying on them.
   executor reads it (section 2.2).
 * **Spool recovery** happens when the next queue starts; there is no separate
   command to resend spooled records.
+* **Runs in a database on PostgreSQL.** Writing a queue's runs to an
+  install's database (section 8.5) has been tested on SQLite only.
 * **Peak center and measurement plan details** are outside this chapter; see
   the [Spectrometer](03-spectrometer.md) and
   [Configuration reference](07-configuration-reference.md) chapters.

@@ -284,8 +284,11 @@ Choose the extraction line with the `line_source` question:
 The last question is where the database is: a file on this computer
 (`data/pychron.db`, the default) or the lab's PostgreSQL server
 (`--set data_source=server` and the `db_*` answers, as in part 2.2). It holds
-the catalog: samples, projects, packages. Records of runs are still files
-under `<root>/data`.
+the catalog (samples, projects, packages) and every run the instrument
+finishes: `pychron-ui` and `elctl exp run` write each one to it, and the data
+window reads it. A run the database cannot take at once waits in
+`<root>/data/spool` and is sent when the next queue starts
+([04 Experiments](user/04-experiments.md#85-what-is-written-run-records)).
 
 Setup then seeds it from `<root>/seed.toml`:
 
@@ -294,12 +297,23 @@ Setup then seeds it from `<root>/seed.toml`:
 | Project | `references` |
 | Samples (and their special identifiers) | `blank_unknown` (`bu`), `blank_air` (`ba`), `blank_cocktail` (`bc`), `blank_extractionline` (`be`), `background` (`bg`), `air` (`a`), `cocktail` (`c`), `detector_ic` (`ic`) |
 | Materials | `blank`, `air`, `cocktail` |
+| Mass spectrometer | the profile's: `argus`, `helix` or `ngx`, the name the shipped queue gives as `mass_spectrometer` |
+| Extract devices | none (`extract_devices = []`) |
 | Reactor | `Triga`, with nine production ratios, for `elctl entry package add --reactor Triga` |
 
 `defaults.toml` names the same samples, so a new blank, air or cocktail run
 is recorded with its sample and the `references` project.
 
-- The seed only adds. A project, sample, identifier or reactor that is
+A queue is started only if the database has its mass spectrometer and every
+identifier and extract device it names; nothing adds them while it runs. So
+before the first queue that uses a laser or furnace, name the device in
+`seed.toml` (`extract_devices = ["co2"]`, the name the queue gives as
+`extract_device`) and run the seed again (last item below); do the same for a
+mass spectrometer under another name. Identifiers of samples come from Entry
+([entry.md](entry.md)).
+
+- The seed only adds. A project, sample, identifier, mass spectrometer,
+  extract device or reactor that is
   already there is kept exactly as it is, so running setup again, or on a
   server other instruments share, changes nothing of theirs.
 - A project named `references` that the lab already has is used, whoever its
@@ -333,8 +347,17 @@ elctl doctor --install argus
 elctl --install argus exp run experiment.toml --sim-speed 50
 ```
 
-Expect every `doctor` line `[OK]` and the queue to finish. Records go to
-`<root>/data`.
+Expect every `doctor` line `[OK]` and the queue (three air shots between two
+blanks) to finish with a line that names the database:
+
+```
+queue completed
+5/5 run(s) succeeded; in sqlite:/home/you/Pychron/argus/data/pychron.db
+```
+
+The five runs are in the database, and `pychron-ui --install argus` shows
+them under View > Data. Run only one program at a time against an install's
+database.
 
 Notifications are optional: copy `notifications.toml.example` to
 `notifications.toml`, fill in a channel, and send a test with
@@ -373,7 +396,14 @@ CDD unprotected.
    `--strict` fails on warnings, so it fails while a placeholder or a
    fully simulated line remains. `--probe` opens each TCP transport and runs
    the drivers' connect step.
-4. For a Thermo instrument, follow "Running against a Thermo instrument" in
+4. The runs made in simulation are in the install's database, as airs and
+   blanks under the same identifiers the instrument will use (`a-01`,
+   `ba-01`, ...), and the next real air continues their numbering. To start
+   the instrument on an empty local database, delete `<root>/data/pychron.db`
+   (and its `-wal` and `-shm` files) and run
+   `elctl init --reconfigure --install argus`, which makes and seeds a new
+   one. On a shared server, use a separate database for simulation instead.
+5. For a Thermo instrument, follow "Running against a Thermo instrument" in
    [dev_setup.md](dev_setup.md) and the bring-up checklist in section 8 of
    [the Qtegra driver spec](superpowers/specs/2026-10-01-qtegra-driver-design.md).
    Turn on the wire trace for first contact.
@@ -582,7 +612,8 @@ repository or database, so falling back is a matter of continuing to use it.
 | `doctor` fails a PostgreSQL database | Server, user or password wrong, the QPSQL plugin is missing (`libqt6sql6-psql`), or the schema was never created (part 2.2) |
 | `seed skipped: the database could not be opened` | An instrument install's database was not reachable or its schema is not current. Fix that (part 2.2), then run the command printed under it |
 | `seed skipped: ...seed.toml: ...` | The install's `seed.toml` was edited into something that does not parse. Fix the line named, then run the printed command |
-| `doctor` warns about an instrument's `database` | The catalog database does not open. Runs are not affected; `elctl init --reconfigure` makes a missing local one |
+| `doctor` warns about an instrument's `database` | The database does not open. The line can still be worked, but no queue starts until it does: `elctl exp run` stops with the reason, and Pychron shows it in the data window. `elctl init --reconfigure` makes a missing local one; a schema that is behind needs `elctl db migrate --db <url>` |
+| `error: the queue cannot be saved:` and `... is not in the database` | The queue names an identifier, mass spectrometer or extract device the install's database lacks. Add it (Entry, or `seed.toml` and `elctl entry seed`; part 2.3) and start the queue again |
 | `doctor` warns `every transport is simulated` | Simulation is off but the line is still the starter. Describe the real controllers in `extraction_line.toml` |
 | `import add` refuses a time zone or flag | The source is already registered with another `--tz` or `--catalog-from-repos`; these cannot change |
 | `import run` or `verify`: `history was rewritten` | The legacy repository's history changed (for example a force-push) after it was imported. `run` and `verify` refuse it; see [legacy_import.md](legacy_import.md) section 3 |

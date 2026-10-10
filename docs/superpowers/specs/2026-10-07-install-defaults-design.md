@@ -26,7 +26,10 @@ Today:
 1. The defaults are seeded into the store.
 2. An instrument install gets a store, and new blank, air and cocktail runs
    are also stamped with their sample and project by the run defaults (the
-   experiment does not read the store).
+   experiment does not read the store). Changed 2026-10-10
+   (`2026-10-10-e2e-sim-experiment-design.md`): experiment reads store only to number aliquots and to
+   check a queue against catalog, through `IAnalysisPersister`; sample and
+   project still come from run defaults.
 3. The default reactor is `Triga`, with the nine ratios of
    `tests/dvc/fixtures/meta/NM-293/productions/Triga_PR.json`.
 
@@ -214,3 +217,18 @@ is tested).
 - "The schema is not current" is the store's own refusal to open without
   migrating, reported under "the database could not be opened".
 - doctor warns, never fails, when an instrument's database does not open.
+
+Added 2026-10-10 (`2026-10-10-e2e-sim-experiment-design.md`, sections 7.1, 7.4, 7.6):
+
+- `seed.toml` keys `mass_spectrometers` (template renders
+  `["{{ family }}"]`) and `extract_devices` (shipped `[]`): lists of names,
+  ensured with `add_mass_spectrometer` / `add_extract_device`; empty or
+  repeated name refused; `SeedReport` and `describe()` count both.
+- Analyses are written to store from experiment (section 7's second item no
+  longer holds for an install with a database).
+- Shipped queue is `ba, a, a, a, ba`; `ShipsASeedThatTheDefaultsAndTheExampleQueueAgreeWith`
+  also holds queue's mass spectrometer, extract devices, identifiers,
+  samples, scripts and plans to seed and install.
+- `qtegra` and `ngx` ship own placeholder field tables;
+  `EveryInstalledPlanPutsItsIsotopesOnItsDetectors` holds plans and table
+  together.

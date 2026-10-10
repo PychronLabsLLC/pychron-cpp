@@ -28,6 +28,63 @@ Where to go next:
 | Fix something that is not working | [10 Troubleshooting](10-troubleshooting.md) |
 | Look up a word | [11 Glossary](11-glossary.md) |
 
+## Quick start: a fresh install on the simulator
+
+Three commands take a computer with Pychron and nothing else to measured runs
+in a database. No instrument is needed and nothing is typed in by hand.
+
+1. Make an instrument install. It is set up for simulation, with its own
+   database:
+
+   ```bash
+   elctl init argus --yes
+   ```
+
+   This writes the install to `~/Pychron/argus`: an example extraction line, a
+   simulated spectrometer, plans, scripts, a first queue (`experiment.toml`),
+   and a SQLite database (`data/pychron.db`) that already holds what the queue
+   names. The output ends with a list of checks, each `[OK]`, among them
+   `[OK] database: sqlite:<install>/data/pychron.db (schema version N)`.
+
+2. Open it, with simulated time running 20 times faster than a clock:
+
+   ```bash
+   pychron-ui --install argus --sim-speed 20
+   ```
+
+   Open the Experiment window (**View > Experiment**), load the install's
+   `experiment.toml` (**File > Open > Open Queue…**) and start it
+   (**Experiment > Executor > Start**). The queue is three air shots between
+   two blanks, about 19 minutes of simulated time, so about a minute here.
+   Open the data window (**View > Data**): each run appears in it when the run
+   ends. Double-click one to recall it. An air reads about 94 500 fA of Ar40
+   and a blank about 11 fA.
+
+3. Or run the same queue with no window, as fast as the computer can:
+
+   ```bash
+   elctl --install argus --sim exp run experiment.toml --sim-speed max
+   ```
+
+   It prints each run as it goes and ends with
+
+   ```
+   queue completed
+   5/5 run(s) succeeded; in sqlite:/home/you/Pychron/argus/data/pychron.db
+   ```
+
+   The runs are in the install's database, and `pychron-ui --install argus`
+   shows them in its data window.
+
+The queue can be run again and again: the runs are numbered on from the last
+one in the database (`a-01` to `a-03`, then `a-04` ...). Run only one program
+at a time against an install.
+
+This queue holds airs and blanks only. They have no age: an age needs an
+irradiated sample, and the simulator does not have samples yet. Dated unknowns
+in the shipped queue come in a later version. Section 11 is a longer tour, on
+the example lab, which has no database and writes record files instead.
+
 ## 1. What Pychron is
 
 Pychron is data acquisition and control software for noble-gas (Ar/Ar)
@@ -76,10 +133,12 @@ browse, recall and plot in the data browser.
 one is the **records folder** (`<data>/records`), plain files written as a queue
 runs. The fuller one is the **store** (called the *DVC store*), a database
 (PostgreSQL on a server, or SQLite on one computer) holding analyses, samples,
-irradiation packages and their history. The store is used by data-reduction
-installs, by Entry, by `elctl export` and `elctl import`, and by the UI when
-you pass `--db`. The store only exists if your Pychron was built with
-persistence; the release packages are.
+irradiation packages and their history. An instrument install has a store of
+its own: the queues it runs are saved to it and its data window reads it. The
+store is also used by data-reduction installs, by Entry, by `elctl export` and
+`elctl import`, and by the UI when you pass `--db`. The example lab, and an
+install with no database, use the records folder. The store only exists if
+your Pychron was built with persistence; the release packages are.
 
 **Simulation mode.** Every hardware connection ("transport") can be replaced by
 a simulated one, so the same program runs with no instrument: a simulated line
@@ -134,7 +193,14 @@ appear as a message box and on stderr.
 
 - An **instrument install** opens the **main window** (the extraction line)
   with the install's line, canvas and spectrometer configs. If the install was
-  set up for simulation it behaves as if `--sim` were given.
+  set up for simulation it behaves as if `--sim` were given. Its database is
+  the one the data window, the Entry and Fit menus and the saving of runs all
+  use. If the database cannot be opened (the file is gone, the server is away,
+  its password cannot be read, its schema is behind) the program still starts
+  and the line can be worked: the data window shows the reason in a banner and
+  falls back to the records folder, the Log dock has an error line, and a
+  queue cannot be started (it is refused with the same reason). Restart the
+  program once the database is back.
 - A **data-reduction install** opens only the **data browser** on its
   database, with a smaller menu bar (File, Entry if there is a database,
   Window, Help). There are no extraction-line, spectrometer, experiment or
@@ -149,7 +215,8 @@ appear as a message box and on stderr.
 | An install's files | the install's folder (shown in File > Installations) |
 | Preferences, window sizes and positions | the per-user settings store (Qt `QSettings`, organization "PychronLabs", application "pychron-ui") |
 | Figure presets | the user's application config folder under `presets`, plus lab presets in `<lab>/figures` |
-| Records of finished runs | `<data folder>/records` |
+| Finished runs | the install's database (by default `<install>/data/pychron.db`); with no database, `<data folder>/records` |
+| Runs waiting to be saved | `<data folder>/spool` |
 | Log file | the `dir` set in `[logging]` in `extraction_line.toml` (`pychron.log`); no file is written if `dir` is not set |
 
 ## 4. Command-line flags of pychron-ui
@@ -174,12 +241,12 @@ with the package).
 | `--setup` | Run the setup wizard even if installs exist. |
 | `--examples` | Open the example lab shipped with Pychron (for development and learning). |
 | `--sim` | Force every extraction-line transport to be simulated. Also loads the example `spectrometer.sim-integrated.toml` if no spectrometer is given. A spectrometer config that is not fully simulated is refused. |
-| `--sim-speed X` | With `--sim` only: run the whole application on simulated time `X` times faster than real time (`X` must be a positive number). |
+| `--sim-speed X` | With `--sim`, or on an install set up for simulation: run the whole application on simulated time `X` times faster than real time (`X` must be a positive number). |
 | `--spectrometer FILE` | The spectrometer config to load for View > Spectrometer. |
 | `--lab DIR` | The lab directory the Experiment window runs queues against (plans, scripts, conditionals, patterns, trays). Default: the install's folder, or the folder holding the line config. |
-| `--data DIR` | Where records are written and browsed (`DIR/records`). Default: the install's data folder, or `<lab>/data`. |
+| `--data DIR` | The data folder: the spool, and with no database the records that are written and browsed (`DIR/records`). Default: the install's data folder, or `<lab>/data`. |
 | `--queue FILE` | A queue to open in the Experiment window when it is opened. |
-| `--db URL` | Browse this store in the data browser instead of the records folder, and enable the Entry menu. `postgresql://user:password@host/db` or `sqlite:/path/to/file.db`. The schema must already be current; it is never changed from here. Needs a build with persistence. |
+| `--db URL` | The database for the whole program, instead of the install's: the data browser reads it, the Entry and Fit menus work on it, and **the runs of a queue are saved to it**. That holds without an install too: `pychron-ui --sim --db <url>` saves the runs of the example lab's queues to that database (it used to only browse it), so the database must already hold the identifiers the queue names. `postgresql://user:password@host/db` or `sqlite:/path/to/file.db`. The schema must already be current; it is never changed from here. Needs a build with persistence. |
 | `--laser` | Open only the laser window of one extraction device, for a laser PC. Takes no `--queue` or `--spectrometer`. |
 | `--device NAME` | With `--laser`: which extraction device (a laser driver in the line config). Needed only when the line has more than one; with exactly one it is used automatically. |
 | `--version` | Print `pychron-ui <version>` and exit. Needs no display. |
@@ -189,7 +256,8 @@ with the package).
 Rules enforced when the flags are read (a violation prints
 `pychron-ui: <message>` and exits with status 2):
 
-- `--sim-speed` needs `--sim`, and a positive number.
+- `--sim-speed` needs a positive number, and either `--sim` or an install set
+  up for simulation (`pychron-ui: --sim-speed needs --sim` otherwise).
 - `--device` needs `--laser`.
 - `--laser` cannot be combined with `--queue` or `--spectrometer`.
 - Positional config files, `--install`, `--setup` and `--examples` exclude each
@@ -199,7 +267,9 @@ Rules enforced when the flags are read (a violation prints
 - An unknown `--option` is an error.
 
 Exit status: 0 on a normal exit, 1 on a fatal load error (a message box is also
-shown), 2 on a command-line error or a `--db` that could not be opened.
+shown), 2 on a command-line error or a `--db` that could not be opened. (An
+install's own database that cannot be opened is not fatal; see "What kind of
+window you get".)
 
 ## 5. A tour of the main window
 

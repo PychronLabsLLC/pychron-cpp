@@ -479,3 +479,112 @@ Not stored by this plan (spec 5.2's closing rule): sample/project/material/irrad
 ## Landing
 
 Per AGENTS.md: rebase on `origin/develop`, `python3 tools/quality_check.py`, the full `ctest` on the rebased branch (and with `PYCHRON_TEST_PG_URL` set, since queries were added), merge into `develop`, push. No commit here needs a `BREAKING CHANGE:` footer: no migration is added.
+
+---
+
+## As built
+
+Written by Task 10, after Tasks 1 to 9 landed on the branch. Where this
+section and the tasks above disagree, this section is what the code does; the
+spec has been corrected to match.
+
+### Departures from the plan
+
+**The store path**
+
+- A store handle works only on the thread that opened it, and the queue's
+  thread is not that thread. Task 4's `open_acquisition` therefore returns
+  `Result<std::unique_ptr<store::Acquisition>>`, not a struct holding a store
+  and a persister. `Acquisition::persister()` is the `IAnalysisPersister&` a
+  session is given. The object owns one worker thread, which opens the store
+  and runs every persister call while the caller waits. The worker is not a
+  clock participant, so simulated time stands still for the length of a call.
+  `open_acquisition` is called from the program's main thread, because the Qt
+  application object the store needs is made there
+  (`persistence::ensure_host_application()`, new). No call may be in progress
+  or made once the `Acquisition` is being destroyed, so it is declared before
+  the session. `StorePersister(IStore&, client, data)` remains as the direct,
+  one-thread class. This is the one thread the plan added; the spec had said
+  the design adds none.
+- The conversion refuses more than Task 3 listed: series whose `t`, `v` and
+  sigma differ in length, two series with the same kind and key (one isotope
+  on two detectors, or two baseline series on one detector, since the store's
+  keys hold one), and an intercept whose isotope has no series. Step letters
+  fold case (`a` is `A`), where Task 3 had lower case refused. The queue's
+  name is carried in `queue_names_json`.
+- `next_aliquot` fails when the spool cannot be listed, and does not count a
+  spooled record that cannot be read.
+- `check_queue` names a taken run id once, and answers with the single line
+  `the database cannot be reached: ...` when any read fails, not only the
+  first.
+- Blobs ingested before an analysis that the catalog then refuses stay in the
+  store as unreferenced content-addressed rows. Nothing removes them; the
+  re-send finds them there.
+- `without_password(url)` is public in `store_persister.hpp`; both programs
+  use it to show a database.
+
+**What an install ships**
+
+- The placeholder field tables that the profiles copied from
+  `configs/examples/tables/` disagreed with the installed one-hop
+  `multicollect` plan, so a fresh simulated install never measured Ar36. This
+  was not in the spec or the plan. `profiles/qtegra` and `profiles/ngx` now
+  ship their own placeholder tables, built so that every isotope of the
+  multicollection sits on its detector (collectors one mass unit apart on the
+  reference detector's own position-against-mass curve). The example tables
+  are unchanged. `EveryInstalledPlanPutsItsIsotopesOnItsDetectors` in
+  `tests/setup/test_profiles.cpp` holds each installed plan and the table
+  together within 0.01 (the simulated peak is flat within 0.02 of its
+  centre).
+- The shipped queue runs `multicollect` with no overrides, at the plan's own
+  cycles: 19 minutes 15 seconds of simulated time.
+- Profile versions are now `qtegra` 2, `ngx` 2, `extraction-line-starter` 4
+  and `instrument-common` 3.
+- `extract_devices` ships empty; `co2` comes with plan 3.
+
+**The programs**
+
+- `elctl exp run`: an install's database whose password cannot be read is
+  fatal (`error: the installation's database: ...`) rather than a fall back
+  to record files; `--db` overrides it.
+- `pychron-ui`: one database for the whole program, so
+  `pychron-ui --sim --db <url>` with no install now also saves runs to that
+  database, where before `--db` only browsed. When an instrument install's
+  database cannot be opened the session is given a persister that refuses
+  every queue with the reason (`NoDatabasePersister`), the data window shows
+  a banner naming the records folder it shows instead, and the log has an
+  error line.
+- The data window refreshes when a run ends and when a queue starts, but only
+  if the store changed; hidden, it refreshes when next shown; it keeps the
+  rows loaded, the selection, the scroll position and the column widths.
+
+### Measured
+
+On a fresh argus install with the shipped queue (`pychron_install_e2e_tests`
+prints these): air Ar40 about 94 500 fA; Ar36 about 309 cps on the CDD; raw
+Ar40/Ar36 about 305.8 with 0.54 % scatter across the three airs (air's 298.56
+over the simulated counter's yield of 0.9847 is 303.2; the test allows 3 %);
+blanks about 11 fA; a save takes about 4 ms a run on SQLite.
+
+### Not done
+
+- PostgreSQL has not been run for anything in this plan. On this machine's
+  Qt 6.11 the PostgreSQL store fails in tests that predate this work; a
+  separate fix is pending. The Landing step's run with `PYCHRON_TEST_PG_URL`
+  is therefore still owed, including the ingest time on PostgreSQL.
+- The UI path of Task 9, Step 4 has not been driven by a person at the
+  screen. The options were checked to parse and the program to start on
+  `--install argus --sim-speed 20` without a display; what the windows show
+  was not.
+- Unknowns, ages, simulated samples, the step rule and the example
+  irradiation are plans 2 and 3.
+
+### Open, for the owner
+
+- Every machine registers as the acquisition client `localhost`, because
+  `HOSTNAME` is rarely exported to a program's environment. Two instruments
+  writing to one server would be one client.
+- A peak center after a blank centres on a peak of about 11 fA and updates
+  the live field table.
+- Whether the `ngx` placeholder table, or the profile's detector layout,
+  matches a real NGX is unconfirmed.

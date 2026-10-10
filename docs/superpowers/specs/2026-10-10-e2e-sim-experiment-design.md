@@ -1,6 +1,13 @@
 # End-to-end simulated experiment: from a fresh install to dated runs in the data window
 
-Status: approved 2026-10-10. Nothing implemented.
+Status: approved 2026-10-10. Plan 1 of section 13 (store path) implemented
+2026-10-10 (`../plans/2026-10-10-e2e-store-path.md`, "As built"); plans 2
+and 3 not started. Sections 5, 7.1, 7.3, 7.4, 7.6, 8, 10.3, 10.4, 10.6 and
+14 state plan 1 as built. Not done in plan 1: nothing run on PostgreSQL
+(this machine's Qt 6.11 fails PostgreSQL store in tests older than this
+work; separate fix pending); UI path not driven by a person at the screen;
+unknowns, ages, simulated samples, step rule, example irradiation (plans 2
+and 3).
 
 ## 1. Goal
 
@@ -146,13 +153,16 @@ out like store adapter of `libs/processing`. Links `pychron::experiment` and
 `libs/experiment` itself gains no dependency: keeps seeing only
 `persist::IAnalysisPersister`. No Qt in new library's public headers.
 
-Two parts, kept apart so first is testable without database and reusable by
-uploader later:
+Two headers, conversion kept apart so it is testable without database and
+reusable by uploader later:
 
 - `record_ingest.hpp`: pure conversion from `AnalysisRecord` to what store
   ingests.
 - `store_persister.hpp`: `StorePersister`, an `IAnalysisPersister` owning
-  nothing but reference to an `IStore` and conversion's inputs.
+  nothing but reference to an `IStore` and conversion's inputs;
+  `Acquisition`, what a program opens (section 5.3); `without_password`.
+
+Public compile definition `PYCHRON_EXPERIMENT_HAS_STORE=1`.
 
 ### 5.2 Conversion: `AnalysisRecord` to ingest items
 
@@ -171,7 +181,9 @@ Rules:
   nothing reads a clock.** Analysis uuid: `record.identity.uuid`. Changeset
   uuid, six root revision uuids (`signals`, `intercepts`, `baselines`,
   `blanks`, `icfactors`, `tags`) and each item's idempotency key: each
-  derived from record uuid and fixed label naming what id is for.
+  `persistence::Uuid::v5(<record uuid>, label)`. Labels: `changeset`,
+  `signals`, `intercepts`, `baselines`, `blanks`, `icfactors`, `tags`,
+  `item` (analysis item), `blob:<sha hex>` (blob item).
   `AnalysisIngest::created` and `timestamp`: record's timestamp (run took it
   from `clock.wall_now()`, so simulated run stamped in simulated time).
   Same record converted twice gives same bytes.
@@ -181,15 +193,24 @@ Rules:
   analysis.
 - `IngestItem::payload_sha256` of analysis item and
   `AnalysisIngest::record_sha256`: record's own `provenance.sha`;
-  `record_schema_version`: `provenance.schema_version`.
+  `record_schema_version`: `provenance.schema_version`. Blob item's
+  `payload_sha256`: blob's own sha.
+- **Refused**, each a `Config` error, record stays in spool: record not
+  finalized (`provenance.sha` not 64 hex characters); uuid or timestamp
+  that does not parse; step that is not letters; series whose `t`, `v` or
+  sigma differ in length; two series with same kind and key (one isotope on
+  two detectors, or two baseline series on one detector: store's keys hold
+  one); intercept whose isotope has no series.
+- **Not finite.** Intercept or baseline value or error that is NaN or
+  infinite: stored as unknown (`nullopt`). Run still saved.
 - **Identity.** `identifier`, `aliquot`, `analysis_type`, `run_index` from
-  `record.identity`. `increment`: inverse of `make_runid`'s step letters:
-  empty step is `-1`, `A` is `0`. Step not such letters: error (run not
+  `record.identity`. `increment`: `increment_of(step)`, inverse of
+  `make_runid`'s step letters: empty step is `-1`, `A` is `0`, `Z` is `25`,
+  `AA` is `26`; case folded (`a` is `A`). Step not letters: error (run not
   saved to store, stays in spool).
-- **Instrument.** `mass_spectrometer`, `laboratory`, `analyst` from
-  `record.instrument`. `extract_device` is `nullopt` when record's is
-  empty. Empty analyst written as queue's `username`; record always has one
-  today.
+- **Instrument.** `mass_spectrometer`, `laboratory` (unset when empty),
+  `analyst` from `record.instrument`. `extract_device` is `nullopt` when
+  record's is empty or `(none)`.
 - **Sample.** Record's sample, project, material, irradiation, level and
   position text *not* written. In store analysis belongs to its identifier;
   identifier's catalog rows say what sample that is and where irradiated.
@@ -200,50 +221,58 @@ Rules:
   units, duration, cleanup, pattern, cryo temperature from spec; beam
   diameter from actuals. Fields record does not carry (`pre_cleanup`,
   `post_cleanup`, `weight`, ramp fields, `light_value`) stay unset. `tray`
-  is queue's tray when record carries it; plan finds whether it does.
+  unset: record carries none.
 - **Positions.** Each hole in `record.extraction.spec.positions` becomes
   `MeasuredPositionRow` with that position. No load: record carries none,
   and load is not made up from tray name.
-- **Time zero.** `record.data.time_zero`: seconds from run's start;
-  `AnalysisIngest::time_zero`: timestamp plus that offset. To confirm in
-  plan: which instant `Identity::timestamp` is. If it is not the origin of
-  `time_zero`, the field is left unset rather than guessed.
+- **Time zero.** `AnalysisIngest::time_zero` unset. `Identity::timestamp`
+  is wall time taken when run is prepared, not origin of
+  `record.data.time_zero`; field left unset rather than guessed.
 - **Raw series.** Each `DataSeries` becomes one blob: codec `f32le-tvs/1`
   when it has a sigma, else `f32le-tv/1`; address
   `blob_sha256(codec, bytes)`. Two series with same bytes: one blob item.
   Each series gets `SignalRefRow`: `series_kind` is series' `kind`,
   `series_key` is isotope (detector for baseline), `detector`, `blob_sha`,
-  `n_points`.
+  `n_points`. Blobs listed in first-use order.
 - **Isotopes and detectors.** One `IsotopeRow` per distinct (isotope,
-  detector) among signal series; one `DetectorRow` per detector, with
-  deflection and gain from `record.spectrometer`.
+  detector) among series of kind `signal`, sorted by isotope; one
+  `DetectorRow` per detector among all series, sorted, with deflection and
+  gain from `record.spectrometer` when present.
 - **Intercepts and baselines.** `Results::intercepts` (by isotope) and
   `Results::baselines` (by detector) become root `InterceptRow`s and
   `BaselineRow`s: value, error, `n`, fit and error type, outlier filter.
-  Text form of `FitSpec` is the one `StoreSource::save_fits` already
-  writes, so what acquisition stored and what later refit stores read back
-  same way. Conversion shared, not written second time.
+  Text form is what `StoreSource` reads: `fit` is `to_string(FitKind)`,
+  `error_type` is `SD` or `SEM`, `filter_outliers_json` is
+  `{"filter_outliers":0|1,"iterations":N,"std_devs":X}`. Intercept's
+  detector: its isotope's signal series' detector.
 - **Blanks, IC factors, tag.** No blank rows. IC factor row for each
-  detector record names one for. Tag `ok`.
-- **Scripts.** `ScriptBodies` wants texts; record carries name, sha and
-  `text_ref`. Plan finds whether text can be had from record alone. If it
-  cannot, scripts are not written by this work, and that is listed in the
-  user guide as not yet stored. (Effective measurement plan *is* in record,
-  as `effective_plan_toml`, stored as measurement script text.)
+  detector record names one for, error `0`. Tag `ok`.
+- **Scripts.** Only `ScriptBodies::measurement` written, from
+  `record.measurement.plan.effective_plan_toml` when non-empty. Record
+  carries name and sha of other scripts, never text (`ScriptRef::text_ref`
+  never set): extraction, post-equilibration and post-measurement script
+  texts not stored.
 - **Spectrometer snapshot.** `SpectrometerSnapshot` from
-  `record.spectrometer`: gains, deflections, source parameters as JSON
-  objects with sorted keys, so snapshot's content address is stable.
+  `record.spectrometer`: gains, deflections, and settings (source
+  parameters plus `integration_time`) as JSON objects with sorted keys, so
+  snapshot's content address is stable; `spectrometer_json` is `{}`.
 - **Meta.** `AnalysisMetaRow`: installed and tripped conditionals, whiff
-  result, pid parameters, grain polygons, pipette counts, software version
-  and git sha, each as JSON, each only when record has it.
+  result, grain polygons, pipette counts, software version and git sha,
+  queue name, each as JSON, each only when record has it; no meta row when
+  record has none of them.
 - **Peak centers.** Record keeps peak center as event with text detail, not
   numbers. Not written by this work.
-- **Queue.** `QueueRow` with `record.identity.queue_uuid` and queue's name,
-  when record has queue uuid.
+- **Queue.** No `QueueRow`. `record.identity.queue_uuid` holds queue's
+  *name*, not a uuid; written as `AnalysisMetaRow::queue_names_json`,
+  one-element JSON array, when non-empty.
 
-Whatever record carries and this list does not place is named in spec's
-last section once plan has gone through fields one by one; rule: nothing
-dropped without being written down there.
+Carried by record, not stored (nothing dropped without being written down
+here): sample/project/material/irradiation text, `time_zero`, tray, load,
+queue row, extraction/post-equilibration/post-measurement script texts,
+peak centers, events and notes, `pid_params`, extraction `series`,
+`snapshot_refs`, `cryo_measured`, `manometer_pressure`, `data.counts`,
+`spectrometer.state_hash` and `field_table_version`, hook reference, plan
+overrides.
 
 ### 5.3 `StorePersister`
 
@@ -258,14 +287,53 @@ class StorePersister final : public persist::IAnalysisPersister {
 - `save_analysis(record)`: convert; ingest each blob; ingest analysis.
   Blobs go first, so the analysis is stored with `signals_state = complete`
   and never shows as "signals uploading". Blob already there: not an error.
-  `duplicate` acknowledgement of analysis: success.
+  `duplicate` acknowledgement of analysis: success. Record with no series:
+  analysis with no blobs, `signals_state = complete`.
+- Blobs ingested before an analysis the catalog then refuses stay in store
+  as unreferenced content-addressed rows; re-send finds them there.
 - `next_aliquot(...)`: section 5.4.
 - `begin_run`, `save_extraction`, `save_artifact`: as today, files under
   `<data>` (section 5.6).
 - `flush()`: nothing to do; returns success.
+- `check_queue(...)`: section 5.7.
 
-Persister holds no connection of its own: caller opens store and keeps it
-alive longer than session (AGENTS.md, "Lifetime rules").
+`StorePersister` is the direct, one-thread class: holds no connection of its
+own; `store` outlives it.
+
+**A store handle works only on the thread that opened it.** Queue's thread
+is not the one that opens the program's store, so a program does not use
+`StorePersister` directly:
+
+```cpp
+class Acquisition {
+ public:
+  persist::IAnalysisPersister& persister() noexcept;
+  ...
+};
+Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, std::filesystem::path data,
+                                                      const std::string& software_version);
+std::string without_password(const std::string& url);
+```
+
+- `open_acquisition` opens `url` with `migrate = false` and registers the
+  client (section 8.4) on a worker thread the `Acquisition` owns. Failure
+  to open or register: returned, no thread left running. Schema behind:
+  error text gains `Run: elctl db migrate --db <url without password>`.
+- `Acquisition::persister()` is the `IAnalysisPersister&` a session is
+  given. Every call on it runs on the worker, one at a time, in order of
+  arrival; caller waits. Calls may come from any thread.
+- Worker is a plain thread on a `std::condition_variable`, not a clock
+  participant: to simulated clock a caller blocked on it looks busy, so
+  simulated time stands still for length of call, as for a file write.
+- `open_acquisition` is called from program's main thread: Qt application
+  object the store needs is made there, on calling thread, by
+  `persistence::ensure_host_application()`, not on worker.
+- Destroying it serves calls already queued, closes store on worker, joins.
+  No call may be in progress or made once it is being destroyed, so an
+  `Acquisition` is declared before the session that saves through it.
+- `without_password(url)`: `url` as it may be shown; password of a
+  `postgresql://user:password@host` (or `postgres://`) url removed, any
+  other url unchanged.
 
 ### 5.4 Aliquots and steps
 
@@ -295,7 +363,15 @@ so queue means same thing with and without database.
 today relies on steps splitting into aliquots can afterwards say so only by
 fixing aliquots; none known to exist.
 
-**The interface.** `IAnalysisPersister::next_aliquot(identifier)` becomes
+**The interface.** Plan 1: `IAnalysisPersister::next_aliquot(identifier)`
+unchanged; `last_run`, `LastRun` and step rule come with plan 3.
+`StorePersister::next_aliquot` is one more than highest of (a) store
+(`IStore::last_analysis`), (b) records waiting in spool, (c) what this
+persister issued. Store cannot be read: (a) is value last read for that
+identifier by this persister; none read yet: the error is returned and run
+does not start. Spool cannot be listed: error. Spooled record that cannot
+be read is not counted (it can never be sent). Plan 3:
+`next_aliquot(identifier)` becomes
 
 ```cpp
 struct LastRun { int aliquot = 0; std::string step; };  // step empty: none
@@ -323,11 +399,10 @@ virtual Result<std::optional<LastAnalysis>> last_analysis(const std::string& ide
 
 Lookup by identifier (through identifier's uuid), not a search. Runs once
 per run, so held to "Schema and queries": plan reads its query plan on
-store of real size; a `SchemaIndexes` test requires index by name and no
-`SCAN`. No migration expected: `analysis` already found by (identifier,
-aliquot, increment). If the plan shows that an index is missing, that is a
-migration, and work stops for the owner to decide (AGENTS.md, "Before
-adding a migration").
+`SchemaIndexes.TheLastAnalysisOfAnIdentifierIsASeek` requires index by name
+and no `SCAN`. No migration: `analysis` has
+`UNIQUE (identifier_uuid, aliquot, increment)`. Unknown identifier:
+`nullopt`, like one with no run.
 
 ### 5.5 Failures
 
@@ -340,9 +415,12 @@ Two kinds of failure, told apart only in what operator is told:
 
 - **The catalog refuses it** (`is_unknown_catalog_reference`): identifier,
   mass spectrometer or extract device not in store. Sending it again will
-  fail again until someone adds the row. Run's message names missing row
-  and command that adds it. Preflight (section 5.7) exists so this does not
-  happen in a queue that started.
+  fail again until someone adds the row. Run's message: store's text
+  (names the row), then `: not in the database. Add it (elctl entry ...)
+  and start a queue to send the run again`. Store's words stay first, and
+  error's kind and code stay store's, so `is_unknown_catalog_reference`
+  still tells it. Preflight (section 5.7) exists so this does not happen in
+  a queue that started.
 - **Anything else** (database locked, server away, disk full, run id
   already taken): message is store's.
 
@@ -353,8 +431,8 @@ count shows it, removing record from spool by hand is a person's decision.
 Hand-off stays inline (session builds `SavePipeline` without a `post`). So
 a run's analysis is in the store before `RunFinished` is published, which
 is what lets the data window refresh on that event (section 8.2). Cost:
-ingest's time is inside run; plan measures it on SQLite and PostgreSQL,
-number goes in commit message.
+ingest's time is inside run: about 4 ms a run on SQLite (shipped queue,
+fresh argus install). Not measured on PostgreSQL.
 
 ### 5.6 What stays on disk
 
@@ -388,18 +466,30 @@ copies that can disagree.
 virtual Result<std::vector<std::string>> check_queue(const QueueSpec& queue) = 0;
 ```
 
-`StorePersister` answers with every identifier of queue catalog does not
-have, queue's mass spectrometer if not there, each extract device named
-that is not there, each row whose aliquot and step are fixed to run id
-store already has. Store that cannot be reached is itself an answer ("the
-database cannot be reached: ...").
+`StorePersister` answers, in this order:
 
-The session calls it when a queue is started, before `QueueStarted` and
-before the executor touches the line. Non-empty answer refuses start: UI
-shows lines where it shows queue that failed validation, `elctl exp run`
-prints them and exits non-zero, `--dry-run` prints them too. Queue edited
-while it runs is not checked again: row added later with identifier catalog
-lacks is caught by section 5.5.
+1. `the queue names no mass spectrometer`, or
+   `mass spectrometer '<name>' is not in the database`;
+2. `extract device '<name>' is not in the database`, for queue's device and
+   then each run's, each name once;
+3. `identifier '<identifier>' is not in the database`, each once, written
+   exactly as in queue (`BU`, `bu ` are not `bu`);
+4. `<runid> is already in the database`, once for each row whose aliquot
+   is fixed and whose (identifier, aliquot, step) the store has.
+
+Skipped rows: identifier and run id not checked (a row's extract device
+is). A store read that fails ends the check with one
+line and nothing else: `the database cannot be reached: <store's text>`.
+
+Session calls it in `LabSession::start`, after queue's own check, before
+`QueueStarted` and before executor touches line. Non-empty answer refuses
+start with `Config` error `the queue cannot be saved:` followed by the
+lines, one per line (`the queue cannot be saved: <error>` when
+`check_queue` itself fails). UI shows it where it shows a start that
+failed; `elctl exp run` prints each as `error:` line and exits 1,
+`--dry-run` prints them too. Queue edited while it runs is not checked
+again: row added later with identifier catalog lacks is caught by section
+5.5.
 
 Why refuse, not warn: on instrument, queue that runs all night and saves
 nothing to database is worse outcome; check costs few lookups by key.
@@ -556,13 +646,14 @@ with `add_mass_spectrometer` and `add_extract_device`:
 
 ```toml
 mass_spectrometers = ["{{ family }}"]
-extract_devices = ["co2"]
+extract_devices = []
 ```
 
 Instrument template renders mass spectrometer from profile's `family`
 (`argus`, `helix`, `ngx`), same value shipped queue's `mass_spectrometer`
-is rendered from. `co2` is example line's laser; it is listed only when the
-install takes the example line. Seed still only adds: mass spectrometer or
+is rendered from. `extract_devices` ships empty in plan 1 (shipped queue
+names no device); `co2`, example line's laser, comes with plan 3, listed
+only when install takes example line. Seed still only adds: mass spectrometer or
 device already there kept as is. `SeedReport` and `describe()` count the
 two new kinds. `parse_seed` refuses empty or repeated name.
 
@@ -642,9 +733,10 @@ j_err = 0.0000035
 ### 7.3 `sim.toml`, the tray and the laser
 
 `extraction-line-starter`, when the line it installs is the example line,
-also copies `@examples/sim.toml`, `tray_maps/example-9.txt`,
-`stage_calibrations/co2.example-9.toml` and whatever else plan finds
-example laser needs to run a queue (patterns, `cameras.toml`). Imported or
+also copies `@examples/sim.toml` (plan 1: this file only) and, with plan 3,
+`tray_maps/example-9.txt`, `stage_calibrations/co2.example-9.toml` and
+whatever else plan finds example laser needs to run a queue (patterns,
+`cameras.toml`). Imported or
 legacy line gets none of it, as today: example's numbers describe example's
 volumes and stage.
 
@@ -656,6 +748,11 @@ keeps them same.
 
 ### 7.4 The queue
 
+Plan 1 ships rows 1 to 5 only: `ba, a, a, a, ba`, scripts `sim_blank` and
+`sim_air`, plan `multicollect` with no overrides, post-measurement
+`sim_pump`, no extract device, no tray, queue name `first-queue`,
+`mass_spectrometer = "{{ family }}"`; 19 min 15 s of simulated time on a
+fresh argus install. Plan 3:
 `profiles/instrument-common/experiment.toml`, for install on example line,
 becomes:
 
@@ -707,6 +804,34 @@ instrument profile with default answers:
 - simulator's production ratios and decay constant are seed's reactor's and
   reduction's preset.
 
+### 7.6 Field tables (found in plan 1)
+
+Not foreseen above. Placeholder field tables profiles copied from
+`configs/examples/tables/` disagreed with installed one-hop `multicollect`
+plan: fresh simulated install never measured Ar36. `profiles/qtegra` and
+`profiles/ngx` now ship own placeholder tables (`tables/argon`,
+`tables/argon_hv`; `tables/ngx_argon`), built so every isotope of the
+multicollection sits on its detector: collectors one mass unit apart on
+reference detector's own position-against-mass curve. Example tables
+unchanged.
+
+`tests/setup/test_profiles.cpp`
+(`EveryInstalledPlanPutsItsIsotopesOnItsDetectors`): for every instrument
+profile, every installed plan, every hop, each active detector's isotope is
+within 0.01 of where the magnet is for hop's target. 0.01 because simulated
+peak is flat within 0.02 of centre and each run's peak center moves table
+by a few thousandths.
+
+Profile versions: `qtegra` 2, `ngx` 2, `extraction-line-starter` 4,
+`instrument-common` 3.
+
+Measured, fresh argus install, shipped queue: air Ar40 about 94 500 fA;
+Ar36 about 309 cps on CDD; raw Ar40/Ar36 about 305.8, 0.54 % scatter (air's
+298.56 over simulated counter's yield 0.9847 is 303.2); blanks about 11 fA.
+
+Unconfirmed: that ngx placeholder table, or profile's detector layout,
+matches a real NGX.
+
 ## 8. Wiring
 
 ### 8.1 The session takes its persister
@@ -726,61 +851,83 @@ Must outlive session.
 - **Which database.** One rule for whole program: the database is `--db`
   when given, else the chosen install's `database` (with password from
   install's credentials, as `database_url()` already does). That one url is
-  what data window, entry actions and fit actions use; today last two look
-  only at `--db`.
+  what data window, Entry and Fit menus, run factory's identifiers and
+  saving of runs use (`choose_database`, `database_choice.hpp`).
 - **An instrument install with a database** therefore reads its store in
   data window and writes its runs to it. Without database (example lab,
   install from before installs had one) nothing changes.
-- **Two handles.** Data window's `StoreSource` used on UI thread;
-  persister's store on queue's thread. Two `IStore` handles on same url,
-  each used by one thread. Both open with `migrate = false`.
-- **A database that cannot be opened** does not stop instrument install
-  from starting: line and spectrometer must be operable without it. Data
-  window says why it is empty; starting a queue refused by preflight with
-  same reason. (Data-reduction install still refuses to start, as today:
-  nothing without its store.) Schema that is behind is such a failure; its
-  message names `elctl db migrate --db <url>`.
-- **Refresh.** `ExperimentBridge` already relays `RunFinished` to UI
-  thread. Data window's `refresh()` connected to it, and to start of queue
-  (when `recover()` may have just sent older records). No timer. Refresh
-  keeps user's filters, selection, scroll position; new run filters admit
-  appears at top, since list is newest first. `StoreSource::refresh` reads
-  only change cursor, so refresh finding nothing new costs one statement.
-  Open figure window not redrawn by new run: shows what it was opened on.
-- **Pending saves.** Executor pane already has pending count
-  (`pending_saves()`); text beside it now says "to the database".
+- **`--db` with no install** (`pychron-ui --sim --db <url>`) also *saves*
+  runs to that database; before, `--db` only browsed.
+- **Two handles.** Data window's `StoreSource` used on UI thread; runs saved
+  through an `Acquisition` (section 5.3), whose worker owns second handle.
+  Both open with `migrate = false`. `Acquisition` declared before session.
+- **A database that cannot be opened** (or whose password cannot be read)
+  does not stop instrument install from starting: line and spectrometer
+  must be operable without it. Data window shows banner with the reason and
+  the records folder it shows instead; log has `ERROR [ui]` line; session
+  is given a persister whose `check_queue` answers
+  `the database cannot be reached: <reason>`, so no queue starts. (Data
+  window's handle opens but acquisition's does not: log line and refusal,
+  no banner.) Schema that is behind is such a failure; its message names
+  `elctl db migrate --db <url>`. Data-reduction install still refuses to
+  start, as before: nothing without its store. `--db` given explicitly
+  that does not open for browsing: fatal, exit 2, as before.
+- **Refresh.** `ExperimentBridge` relays `RunFinished` and queue start to
+  UI thread; data window refreshes on both (queue start: `recover()` may
+  have just sent older records). No timer. Refresh only if store changed
+  (`StoreSource::refresh` reads only change cursor: one statement when
+  nothing new). Hidden data window refreshes when next shown. Refresh keeps
+  rows loaded, filters, selection, scroll position and column widths; new
+  run filters admit appears at top, since list is newest first. Open figure
+  window not redrawn by new run: shows what it was opened on.
+- **Pending saves.** Executor pane's pending text, with a database:
+  "N run(s) waiting to be saved to the database"; without:
+  "N record(s) in the spool".
+- **`--sim-speed`** no longer needs `--sim` when install is simulated:
+  check moved from command-line parsing to after install is chosen.
 
 ### 8.3 `elctl exp run`
 
-- `--db <url>` added. Without it, `--install NAME` supplies install's
-  database, as it already supplies line, spectrometer and data folder. With
-  neither, records written as today.
-- Store opened with `migrate = false`. Failure to open is fatal here,
-  before anything runs: no line to keep alive for an operator.
-- Last line says where runs went: "N/M run(s) succeeded; in
-  \<database\>", and when any are pending, "K waiting in \<data\>/spool".
-- `exp.cpp` split into `exp.cpp` and store part with stub, like `import`
-  and `export`, so build without persistence refuses `--db` with usual
-  "built without the DVC store".
+- `--db <url>` added. Without it, `--install NAME` supplies an instrument
+  install's database, as it already supplies line, spectrometer and data
+  folder. With neither, records written as files, as before.
+- Store opened through `open_acquisition`, on main thread, before anything
+  is printed or started. Failure to open is fatal here, exit 1: no line to
+  keep alive for an operator. Outdated schema's message names
+  `elctl db migrate --db <url>`.
+- Install's database whose password cannot be read: fatal,
+  `error: the installation's database: <reason>`; no fall back to files.
+  `--db` overrides it.
+- Queue the database cannot take: `error: the queue cannot be saved:` and
+  one `error:` line each (section 5.7), exit 1, nothing run; `--dry-run`
+  prints them too.
+- Last line says where runs went:
+  `N/M run(s) succeeded; in <database>` (`without_password`), without a
+  database `N/M run(s) succeeded; records in <data>/records`. When any are
+  pending: `warning: K record(s) waiting in <data>/spool` (without a
+  database: `... still in the spool`).
+- `exp.cpp` split: store part `exp_store.cpp` with stub
+  `exp_store_stub.cpp`, like `import` and `export`; build without
+  persistence refuses `--db` with usual "built without the DVC store", and
+  an install there writes files.
 
 ### 8.4 The client
 
-Store stamps every analysis with acquisition client that sent it. Program
-registers one (`register_client`, role `acquisition`, this host, install's
-mass spectrometer) and keeps its uuid for install, so every session of one
-install is one client. To settle in plan: where seed's actor comes from
-today; reuse that rather than add second way.
+Store stamps every analysis with acquisition client that sent it.
+`open_acquisition` registers
+`{<HOSTNAME env, else "localhost">, "acquisition", nullopt, <software version>}`.
+`register_client` is ensure-by-(hostname, role), so every session on one
+host is one client; no file kept in install. Open: `HOSTNAME` is rarely
+exported, so in practice every machine registers as `localhost`.
 
 ### 8.5 SQLite, two connections
 
 UI reads while queue's thread writes, on two connections to one SQLite
 file. Store already sets `journal_mode = WAL`, under which reader does not
-block writer. Plan must show with a test, not assume: a read that overlaps
-an ingest does not fail with "database is locked" in either direction, and
-what busy timeout connections have. If they have none, one is set where the
-store opens SQLite, and the test is what proves it. Same test runs on
-PostgreSQL when `PYCHRON_TEST_PG_URL` is set, expected to pass without
-change.
+block writer; busy timeout is 10 s (`libs/persistence/src/tiny/db.cpp`).
+Test: `AcquisitionTest.AReaderDoesNotLockOutTheWriter`
+(`tests/experiment/test_store_persister.cpp`). Same test is instantiated on
+PostgreSQL when `PYCHRON_TEST_PG_URL` is set; not run there yet.
 
 ## 9. The quick start
 
@@ -806,9 +953,11 @@ Without UI:
 elctl --install argus --sim exp run ~/Pychron/argus/experiment.toml --sim-speed max
 ```
 
-To settle in plan: whether `pychron-ui --sim-speed` needs `--sim` beside it
-when the install's `simulation` is already true. If it does today, it is
-changed so that it does not: install has already said it is simulated.
+`pychron-ui --sim-speed` needs no `--sim` beside it when install's
+`simulation` is true (section 8.2). After plan 1 quick start holds for
+shipped queue of airs and blanks: five runs in data window, no spectrum, no
+ideogram, no age. Queue named relative to install's folder is found there:
+`elctl --install argus --sim exp run experiment.toml --sim-speed max`.
 
 `docs/user/04-experiments.md` ("What is written"; aliquots and steps),
 `docs/dev_setup.md` (sections 5 and 6), `docs/installation_runbook.md` (2.3
@@ -830,6 +979,16 @@ pointing into it:
    `VirtualClock`, and a `LabSession` with a `StorePersister` on install's
    database;
 3. run install's own `experiment.toml` to end.
+
+Plan 1 as built (`pychron_install_e2e_tests`, suite `InstallE2E`,
+`AFreshInstallsQueueLandsInItsDatabase` and `RunningItAgainNumbersOn`),
+on shipped queue of five: run ids newest first `ba-02`, `a-03`, `a-02`,
+`a-01`, `ba-01`, each `signals_state = complete`; each loads and equals
+record that was saved; airs' raw Ar40/Ar36 within 3 % of 303.2 (air's
+298.56 over simulated counter's yield 0.9847: no IC factor applied); airs'
+Ar40 over 1000 times blanks'; spool empty; 19 min 15 s on the clock, real
+time under its bound; second session on same database numbers on (`ba-03`,
+`a-04` to `a-06`, `ba-04`). Rest below is plan 3.
 
 Then, through a `StoreSource` opened on same database as data window opens
 it:
@@ -898,7 +1057,8 @@ in for them.
 
 ### 10.3 The conversion
 
-`tests/experiment_store/test_record_ingest.cpp`, no database:
+`tests/experiment/test_record_ingest.cpp` (executable
+`pychron_experiment_store_tests`, built only with the adapter), no database:
 
 - same record converted twice is identical, ids and bytes;
 - two records differing only in uuid share no id;
@@ -906,30 +1066,37 @@ in for them.
 - series with sigma and one without take the two codecs; two identical
   series are one blob;
 - each field of section 5.2, a row each, so field added to record later has
-  obvious place to be added.
+  obvious place to be added;
+- each refusal of section 5.2; non-finite intercept stored as unknown;
+  record with no series converts.
 
 ### 10.4 The persister and the aliquot rule
 
-`tests/experiment_store/test_store_persister.cpp`, on SQLite (and
-PostgreSQL when set):
+`tests/experiment/test_store_persister.cpp` (same executable), on SQLite
+(and PostgreSQL when set):
 
 - record saved twice is one analysis, and second save succeeds;
 - identifier, mass spectrometer or extract device catalog lacks: the save
   fails as a catalog refusal, nothing is written, and after the row is
   added the same record saves;
-- `last_run` across sessions (new persister on same store), with record
-  waiting in spool, and with the store made unreadable after one successful
-  read;
+- `next_aliquot` (plan 3: `last_run`) across sessions (new persister on
+  same store), with record waiting in spool, with the store made unreadable
+  after one successful read, with spool that cannot be listed;
 - `check_queue` names exactly what is missing, and a fixed run id that is
   taken;
 - with `SavePipeline` and an `IStore` wrapper that fails on demand: the run
   is `save_error`, the queue continues, the spool holds the record, and
   `recover()` empties it once the store answers again;
 - a crash between the store's commit and the spool's removal (wrapper
-  reports failure after a real commit): `recover()` leaves one analysis.
+  reports failure after a real commit): `recover()` leaves one analysis;
+- draft record stays in spool, next queue still starts;
+- `Acquisition`: calls from other threads and from two at once served on
+  worker; reader does not lock out writer; Qt application belongs to
+  caller's thread; schema behind and failure to open returned; one client
+  per host. `without_password`.
 
-In `tests/experiment/test_persist.cpp`, for `AliquotAllocator` over a fake
-and over `FilePersister`: each line of rule of section 5.4 (`A` starts an
+Plan 3, in `tests/experiment/test_persist.cpp`, for `AliquotAllocator` over
+a fake and over `FilePersister`: each line of rule of section 5.4 (`A` starts an
 aliquot; `B` after `A` continues; `B` after `C` starts one; a step after a
 run with no step starts one; a fixed aliquot is used as given; no step
 takes the next), and a step-heat stopped after `C` and resumed with a new
@@ -950,7 +1117,9 @@ identifier a lab generates after the seed. Section 7.5.
 In `apps/elctl/tests/test_exp_commands.cpp`: `elctl init argus --yes` into
 temporary root, then
 `elctl --install argus --sim exp run ... --sim-speed max`: last line names
-database, store has nineteen analyses. Queue with identifier store lacks
+database, store has queue's analyses (five in plan 1, nineteen after plan
+3). `--db` overrides install; database that cannot be opened, schema that
+is behind, install whose password cannot be read: fatal, nothing run. Queue with identifier store lacks
 exits non-zero before any run, naming it. Build without persistence refuses
 `--db`.
 
@@ -967,9 +1136,9 @@ exits non-zero before any run, naming it. Build without persistence refuses
 
 - Two-connection test of section 8.5.
 - Anything that adds a thread or shares state with one is run under
-  `-DPYCHRON_SANITIZE=thread` before it lands. This design adds no thread:
-  persister called on queue's thread, as file persister is; tray moved
-  under `SimSystem`'s mutex like network.
+  `-DPYCHRON_SANITIZE=thread` before it lands. Plan 1 added one thread:
+  `Acquisition`'s worker (section 5.3). Tray moved under `SimSystem`'s
+  mutex like network.
 - Query-plan test of section 5.4.
 - Ingest's time per run, measured, in commit message (section 5.5).
 
@@ -1007,6 +1176,16 @@ exits non-zero before any run, naming it. Build without persistence refuses
     test reduces what it made.
 14. Seed only adds, and example irradiation is added whole or not at all.
 15. Shipped queue can be run any number of times on one database.
+16. A store handle is used only on the thread that opened it. A program
+    saves runs through an `Acquisition`, which owns that thread, and
+    declares it before the session, so that no call is in progress or made
+    once it is being destroyed.
+17. An install's plans and its field table are held together by a test:
+    every isotope a plan's hop measures sits on its detector, within 0.01,
+    where the magnet is for that hop (section 7.6).
+18. `--db`, or an install's database, that is named and cannot be used never
+    falls back to record files: `elctl exp run` stops, `pychron-ui` starts
+    no queue.
 
 ## 12. Earlier specs this touches
 
@@ -1052,15 +1231,20 @@ One spec, three plans, each landing on `develop` on its own with its tests:
 Collected from above; each is answered by reading or running, not by a
 decision, unless it turns out otherwise:
 
-1. Which helper derives uuid from uuid and label (importer derives ids from
-   text already), and exact recipe, written into section 5.2.
-2. Which instant `Identity::timestamp` is, for `time_zero`; whether record
-   carries tray.
-3. Whether script texts can be had from record.
-4. Client's identity (section 8.4).
-5. SQLite's busy timeout (section 8.5).
-6. Whether `last_analysis` needs an index that is not there (section 5.4):
-   if so, stop and ask.
+1. Settled: ids are `persistence::Uuid::v5(<record uuid>, label)`, labels
+   in section 5.2.
+2. Settled: `Identity::timestamp` is wall time when run is prepared, not
+   origin of `Data::time_zero`; `AnalysisIngest::time_zero` unset. Record
+   carries no tray. `Identity::queue_uuid` holds queue's name: no
+   `QueueRow`, name in `queue_names_json`.
+3. Settled: no script text in record (`ScriptRef::text_ref` never set);
+   only effective measurement plan stored as a script.
+4. Settled: client is `{<HOSTNAME env or "localhost">, "acquisition",
+   nullopt, <program version>}`, ensured by (hostname, role); no file in
+   install (section 8.4).
+5. Settled: SQLite busy timeout already 10 s, with WAL (section 8.5).
+6. Settled: `analysis` has `UNIQUE (identifier_uuid, aliquot, increment)`;
+   `last_analysis` needs no index, no migration.
 7. How tray reads simulated Chromium's position and power, which volume
    chamber is, what becomes of `SimExtractionDevice` (section 6.2).
 8. `sim.toml` key names, materials' numbers, step powers and every
@@ -1074,6 +1258,16 @@ decision, unless it turns out otherwise:
     rows that do not, and queue's simulated duration (section 7.4).
 13. What example laser needs installed beside tray map and calibration
     (section 7.3), and what install on imported line can run (section 7.4).
-14. `--sim-speed` on install that is already simulated (section 9).
-15. Field-by-field list of what record carries and store does not get
-    (section 5.2).
+14. Settled: `--sim-speed` refused without `--sim` only after install is
+    chosen, and not when install is simulated (section 8.2).
+15. Settled: list at end of section 5.2.
+16. Settled: fit text store reads is `parse_fit_kind(lower(fit))`, error
+    type `sd` else SEM, outliers from JSON keys `filter_outliers`,
+    `iterations`, `std_devs`; conversion writes those (section 5.2).
+17. Settled: tests of adapter live in `tests/experiment/` as second
+    executable `pychron_experiment_store_tests`, not in
+    `tests/experiment_store/`.
+18. Open (owner): every machine registers as client `localhost` (section
+    8.4). Peak center after a blank centres on a peak of about 11 fA and
+    updates live field table. ngx placeholder table and detector layout
+    unconfirmed against a real NGX (section 7.6).

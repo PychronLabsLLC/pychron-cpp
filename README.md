@@ -66,6 +66,39 @@ across, follow [docs/installation_runbook.md](docs/installation_runbook.md).
 
 ## Try it in simulation
 
+From nothing to measured runs in a database, in three commands (`elctl` and
+`pychron-ui` are under `build/dev/apps/elctl/` and `build/dev-ui/apps/pychron-ui/`
+in a source build):
+
+```bash
+elctl init argus --yes
+```
+
+makes an instrument install in `~/Pychron/argus`, set up for simulation, with
+a SQLite database of its own that already holds what its first queue names.
+
+```bash
+pychron-ui --install argus --sim-speed 20
+```
+
+opens it. In the experiment window (View > Experiment) open the install's
+`experiment.toml` and start it: three air shots between two blanks, about 19
+minutes of simulated time. In the data window (View > Data) each run appears
+when it ends.
+
+```bash
+elctl --install argus --sim exp run experiment.toml --sim-speed max
+```
+
+runs the same queue without a window and ends with
+`5/5 run(s) succeeded; in sqlite:<home>/Pychron/argus/data/pychron.db`.
+
+The queue is airs and blanks only, so nothing in it has an age; dated unknowns
+on the simulator come later.
+
+The rest of this section uses the example lab in `configs/examples`, which
+needs no install, has no database and writes each run as a record file.
+
 Open the extraction-line window and the spectrometer strip chart
 (View > Spectrometer):
 

@@ -518,6 +518,18 @@ UI shows pending records and `elctl exp flush` retries. Unspooled records
 are re-sent on startup. `AnalysisRecord` is the unit both the DB schema
 and the mirrored JSON layout are derived from.
 
+Note 2026-10-10 (`2026-10-10-e2e-sim-experiment-design.md`, sections 5 and 8, plan 1 built): database
+persister is `experiment::store::StorePersister`, in adapter library
+`libs/experiment/adapters/store` (`pychron::experiment_store`), not in
+`libs/experiment`, which still sees only `IAnalysisPersister`. Programs
+reach it through `store::Acquisition` (store handle bound to one thread).
+Hand-off inline, not on Scheduler. `IAnalysisPersister` gained
+`check_queue(const QueueSpec&)`: what would stop queue's runs from being
+saved; non-empty answer refuses start. With a database, finished record is
+not also written as file. `next_aliquot` unchanged; `last_run` and aliquot
+rule for steps come with that spec's plan 3. No `elctl exp flush`: spool
+re-sent at next queue start.
+
 Dropped: `PersistenceSpec`, HDF5/Excel persisters, multiple git commits per
 run inside the run thread, plot updates from the collector.
 
