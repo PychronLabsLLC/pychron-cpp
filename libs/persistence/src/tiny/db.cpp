@@ -11,6 +11,7 @@
 #include <QSqlRecord>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QUuid>
 
 #include <atomic>
 #include <cstring>
@@ -239,11 +240,23 @@ void Db::rollback() noexcept {
 
 // ---------------------------------------------------------------- conversions
 
-std::string to_std(const QVariant& v) { return v.toString().toStdString(); }
+namespace {
+
+// A column's value as text. QPSQL hands a uuid column over as its text on
+// Qt 6.4 and as a QUuid on a later Qt (6.11), and a QUuid's own toString() is
+// braced, which Uuid::parse refuses: a uuid is its canonical text on either.
+std::string text_of(const QVariant& v) {
+  if (v.typeId() == QMetaType::QUuid) return v.toUuid().toString(QUuid::WithoutBraces).toStdString();
+  return v.toString().toStdString();
+}
+
+}  // namespace
+
+std::string to_std(const QVariant& v) { return text_of(v); }
 
 std::optional<std::string> opt_str(const QVariant& v) {
   if (v.isNull()) return std::nullopt;
-  return v.toString().toStdString();
+  return text_of(v);
 }
 
 std::optional<double> opt_double(const QVariant& v) {
@@ -261,11 +274,11 @@ std::optional<bool> opt_bool(const QVariant& v) {
   return v.toBool();
 }
 
-Uuid to_uuid(const QVariant& v) { return Uuid::parse(v.toString().toStdString()).value_or(Uuid{}); }
+Uuid to_uuid(const QVariant& v) { return Uuid::parse(text_of(v)).value_or(Uuid{}); }
 
 std::optional<Uuid> opt_uuid(const QVariant& v) {
   if (v.isNull()) return std::nullopt;
-  return Uuid::parse(v.toString().toStdString());
+  return Uuid::parse(text_of(v));
 }
 
 UtcTime to_time(const QVariant& v) { return UtcTime::parse(v.toString().toStdString()).value_or(UtcTime{}); }
