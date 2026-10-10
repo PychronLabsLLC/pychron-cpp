@@ -41,7 +41,6 @@
 // spectrometer's large-move threshold; they are kept in the user's settings.
 
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -78,6 +77,7 @@
 #include "laser_bridge.hpp"
 #include "laser_window.hpp"
 #include "main_window.hpp"
+#include "no_database_persister.hpp"
 #include "pattern_maker_window.hpp"
 #include "preferences.hpp"
 #include "pychron/setup/doctor.hpp"
@@ -280,43 +280,6 @@ int run_laser(pychron::systems::ExtractionLine& line, const pychron::ui::Command
   return rc;
 }
 
-#ifdef PYCHRON_UI_HAS_STORE
-// The session's persister when its database could not be opened: every queue
-// is refused at its start with the reason, and nothing is saved through it (a
-// record that did reach it stays in the spool).
-class NoDatabase final : public pychron::experiment::persist::IAnalysisPersister {
- public:
-  explicit NoDatabase(const std::string& why) : why_("the database cannot be reached: " + why) {}
-
-  const std::string& why() const noexcept { return why_; }
-
-  pychron::Result<int> next_aliquot(const std::string&) override { return refused(); }
-  pychron::Result<void> begin_run(const pychron::experiment::RunIdentity&,
-                                  const pychron::experiment::QueueSpec&) override {
-    return refused();
-  }
-  pychron::Result<void> save_extraction(const pychron::experiment::record::AnalysisRecord&) override {
-    return refused();
-  }
-  pychron::Result<void> save_analysis(const pychron::experiment::record::AnalysisRecord&) override {
-    return refused();
-  }
-  pychron::Result<void> save_artifact(const std::string&, const std::string&,
-                                      const std::vector<std::uint8_t>&) override {
-    return refused();
-  }
-  pychron::Result<void> flush() override { return {}; }
-  pychron::Result<std::vector<std::string>> check_queue(const pychron::experiment::QueueSpec&) override {
-    return std::vector<std::string>{why_};
-  }
-
- private:
-  pychron::Unexpected<pychron::Error> refused() const { return pychron::fail(pychron::ErrorKind::Io, why_); }
-
-  std::string why_;
-};
-#endif
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -486,7 +449,7 @@ int main(int argc, char** argv) {
   // they are declared before it and go after it: the teardown below resets
   // the session by hand (joining a running queue), these on return.
   std::unique_ptr<pychron::experiment::store::Acquisition> acquisition;
-  std::unique_ptr<NoDatabase> no_database;
+  std::unique_ptr<pychron::ui::NoDatabasePersister> no_database;
 #endif
   std::unique_ptr<pychron::experiment::lab::LabSession> session;
   std::unique_ptr<pychron::ui::ExperimentBridge> experiment_bridge;
@@ -526,10 +489,10 @@ int main(int argc, char** argv) {
     if (opened) {
       acquisition = std::move(*opened);
     } else {
-      no_database = std::make_unique<NoDatabase>(opened.error().what);
+      no_database = std::make_unique<pychron::ui::NoDatabasePersister>(opened.error().what);
     }
   } else if (database_error) {
-    no_database = std::make_unique<NoDatabase>(*database_error);
+    no_database = std::make_unique<pychron::ui::NoDatabasePersister>(*database_error);
   }
 #else
   if (cli->db) {
@@ -584,10 +547,11 @@ int main(int argc, char** argv) {
                                   [&window](const QString& uuid) { window.open_recall(uuid); });
     }
     if (database_error) {
-      // The data window shows the records folder and says what is missing.
+      // The data window shows the records folder, and says so and what is missing.
       const QString why =
           QStringLiteral("The database could not be opened: ") + QString::fromStdString(*database_error);
-      window.set_data_unavailable(why);
+      window.set_data_unavailable(why + QStringLiteral("\nShowing the records folder %1.")
+                                            .arg(QString::fromStdString((data_dir / "records").string())));
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] ") + why);
     } else if (no_database) {
       // It can be read, and not written to: said here, and again to whoever starts a queue.

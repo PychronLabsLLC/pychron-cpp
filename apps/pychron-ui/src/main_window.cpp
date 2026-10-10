@@ -514,7 +514,7 @@ void MainWindow::set_data(processing::IAnalysisSource* source, processing::Prese
 void MainWindow::set_data_unavailable(const QString& reason) { data_->set_unavailable(reason); }
 
 void MainWindow::refresh_data() {
-  if (DataBrowserWindow* browser = data_->existing_browser()) browser->refresh();
+  if (DataBrowserWindow* browser = data_->existing_browser()) browser->refresh_if_changed();
 }
 
 void MainWindow::set_installations_handler(std::function<void()> handler) {

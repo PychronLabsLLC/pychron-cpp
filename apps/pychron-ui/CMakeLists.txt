@@ -24,6 +24,7 @@ add_library(pychron_ui_lib STATIC
   src/alarm_dock.cpp
   src/health_bar.cpp
   src/main_window.cpp
+  src/no_database_persister.cpp
   src/strip_chart_model.cpp
   src/intensities_model.cpp
   src/spectrometer_bridge.cpp
@@ -91,6 +92,7 @@ add_library(pychron_ui_lib STATIC
   src/alarm_dock.hpp
   src/health_bar.hpp
   src/main_window.hpp
+  src/no_database_persister.hpp
   src/strip_chart_model.hpp
   src/intensities_model.hpp
   src/spectrometer_bridge.hpp

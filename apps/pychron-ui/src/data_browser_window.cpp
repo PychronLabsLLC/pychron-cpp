@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <string>
+#include <unordered_set>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -357,28 +360,88 @@ void DataBrowserWindow::set_page_size(int rows) {
   reload();
 }
 
-void DataBrowserWindow::refresh() {
-  const QStringList selected = selected_uuids();
+DataBrowserWindow::Place DataBrowserWindow::place() const {
   const auto* current = model_->analysis_at(table_->currentIndex().row());
-  const std::string current_uuid = current != nullptr ? current->uuid : std::string{};
-  const int place = table_->verticalScrollBar()->value();
+  return {selected_uuids(), current != nullptr ? current->uuid : std::string{}, table_->verticalScrollBar()->value(),
+          model_->analysis_count()};
+}
 
-  if (auto ok = source_.refresh(); !ok) status_->setText(tr("Rescan failed: %1").arg(qs(ok.error().what)));
-  reload();
-
-  // The reload reset the table: what was selected is found again by uuid.
-  const QSet<QString> wanted(selected.begin(), selected.end());
+bool DataBrowserWindow::select_again(const Place& was) {
+  // A load resets the table: what was selected is found again by uuid.
+  const QSet<QString> wanted(was.selected.begin(), was.selected.end());
   QList<int> rows;
   int current_row = -1;
   const auto& listed = model_->rows();
   for (std::size_t i = 0; i < listed.size(); ++i) {
     if (wanted.contains(qs(listed[i].uuid))) rows << static_cast<int>(i);
-    if (!current_uuid.empty() && listed[i].uuid == current_uuid) current_row = model_->display_row_of(i);
+    if (!was.current.empty() && listed[i].uuid == was.current) current_row = model_->display_row_of(i);
   }
   select_rows(rows);
   if (current_row >= 0)
     table_->selectionModel()->setCurrentIndex(model_->index(current_row, 0), QItemSelectionModel::NoUpdate);
-  if (rows.size() == selected.size()) table_->verticalScrollBar()->setValue(place);
+  return rows.size() == was.selected.size();
+}
+
+void DataBrowserWindow::refresh() {
+  const Place was = place();
+  if (auto ok = source_.refresh(); !ok) status_->setText(tr("Rescan failed: %1").arg(qs(ok.error().what)));
+  reload();
+  if (select_again(was)) table_->verticalScrollBar()->setValue(was.scroll);
+}
+
+void DataBrowserWindow::refresh_if_changed() {
+  if (!isVisible()) {
+    stale_ = true;  // showEvent
+    return;
+  }
+  refresh_changed();
+}
+
+void DataBrowserWindow::showEvent(QShowEvent* event) {
+  QWidget::showEvent(event);
+  if (stale_) refresh_changed();
+}
+
+void DataBrowserWindow::refresh_changed() {
+  stale_ = false;
+  if (!source_.refresh() || source_.generation() == loaded_generation_ || range_is_backwards()) return;
+  const Place was = place();
+  update_facets();
+  // Everything that was loaded, in one query: "Load more" goes on from its end.
+  auto q = query();
+  q.limit = std::max(page_size_, was.analyses);
+  auto page = source_.browse(q);
+  if (!page) {
+    status_->setText(tr("Error: %1").arg(qs(page.error().what)));
+    return;  // what was shown stays
+  }
+  // What is new at the top pushed as many rows off the end, and one of them
+  // may be the row being read: they are fetched after it, so the table only grows.
+  std::unordered_set<std::string> had;
+  for (const auto& row : model_->rows()) had.insert(row.uuid);
+  const auto fresh = std::count_if(page->rows.begin(), page->rows.end(),
+                                   [&had](const pp::AnalysisSummary& row) { return !had.contains(row.uuid); });
+  if (fresh > 0 && !had.empty() && page->next) {
+    q.after = page->next;
+    q.limit = static_cast<int>(fresh);
+    if (auto pushed = source_.browse(q)) {
+      std::move(pushed->rows.begin(), pushed->rows.end(), std::back_inserter(page->rows));
+      page->next = pushed->next;
+    }
+  }
+  loaded_generation_ = source_.generation();
+  next_ = page->next;
+  total_ = page->total;
+  model_->set_rows(std::move(page->rows));
+  more_->setEnabled(next_.has_value());
+  show_count();
+  // The column widths are the user's by now: not resized, as reload() does.
+  select_again(was);
+  // With nothing selected there is no row to stay with: the place is kept
+  // unless rows went away from under it.
+  if (!was.selected.isEmpty() || model_->analysis_count() >= was.analyses) {
+    table_->verticalScrollBar()->setValue(was.scroll);
+  }
 }
 
 void DataBrowserWindow::set_unavailable(const QString& reason) {
@@ -410,6 +473,7 @@ void DataBrowserWindow::reload() {
     more_->setEnabled(false);
     return;
   }
+  loaded_generation_ = source_.generation();
   next_ = page->next;
   total_ = page->total;
   model_->set_rows(std::move(page->rows));

@@ -20,6 +20,7 @@
 //                            click asks for a file name and the workspace writes the
 //                            Schaen et al. (2021) data report there (.csv or .json)
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -57,6 +58,13 @@ class DataBrowserWindow : public QWidget {
   // stays where it was scrolled to: a refresh can come while someone reads
   // (a run ended).
   void refresh();
+  // What a run ending asks for (nobody pressed anything). The source is asked
+  // to look again, and the table is loaded again only when the source then
+  // has something it did not have at the last load: as many rows as were
+  // loaded (not the first page only), the selection and the place kept, the
+  // column widths left alone. While the window is not visible nothing is
+  // asked at all: it is done once, when the window is next shown.
+  void refresh_if_changed();
   // Why the source has less than was expected of it (a database that could
   // not be opened), on a banner over the table; empty: no banner.
   void set_unavailable(const QString& reason);
@@ -106,6 +114,9 @@ class DataBrowserWindow : public QWidget {
   void select_rows(const QList<int>& rows);
   void recall_step(int delta);  // Ctrl+N (+1) / Ctrl+B (-1)
 
+ protected:
+  void showEvent(QShowEvent* event) override;
+
  signals:
   void recall_requested(const QString& uuid);
   void figure_requested(const QString& kind, const QStringList& uuids);
@@ -113,6 +124,17 @@ class DataBrowserWindow : public QWidget {
   void color_by_changed(pychron::ui::ColorBy by);
 
  private:
+  // What the user has in front of them, to be found again after a load.
+  struct Place {
+    QStringList selected;      // uuids
+    std::string current;       // uuid; empty: none
+    int scroll = 0;            // the vertical scroll bar's value
+    int analyses = 0;
+  };
+  Place place() const;
+  // Selects what of `was` is still listed; true when all of it is.
+  bool select_again(const Place& was);
+  void refresh_changed();  // refresh_if_changed() for a window that is visible
   void reload();     // first page for the current query
   void load_more();  // next page
   void update_facets();
@@ -150,6 +172,8 @@ class DataBrowserWindow : public QWidget {
   TypeColors type_colors_;
   std::optional<processing::BrowseCursor> next_;
   std::optional<std::size_t> total_;
+  std::uint64_t loaded_generation_ = 0;  // the source's generation at the last load
+  bool stale_ = false;                   // a refresh was asked for while the window was not visible
 };
 
 }  // namespace pychron::ui

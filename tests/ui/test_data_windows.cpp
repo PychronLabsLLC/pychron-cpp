@@ -64,6 +64,7 @@
 
 using namespace pychron;
 namespace pp = pychron::processing;
+using pychron::ui::AnalysisTableModel;
 using pychron::ui::DataBrowserWindow;
 using pychron::ui::DataWorkspace;
 using pychron::ui::FigureWindow;
@@ -162,9 +163,14 @@ std::unique_ptr<pp::MemorySource> make_source(int n) {
 // A source that counts how often it was asked to look again.
 struct CountingSource : pp::MemorySource {
   int refreshes = 0;
+  int browses = 0;
   Result<void> refresh() override {
     ++refreshes;
     return {};
+  }
+  Result<pp::BrowsePage> browse(const pp::BrowseQuery& query) override {
+    ++browses;
+    return pp::MemorySource::browse(query);
   }
 };
 
@@ -736,6 +742,115 @@ class TestDataWindows : public QObject {
     w.refresh();
     QCOMPARE(w.model()->analysis_count(), 0);
     QVERIFY(w.selected_uuids().isEmpty());
+  }
+
+  // What a run ending asks of the browser: nothing while nobody looks, and a
+  // load only when the source has something new.
+  void browser_follows_a_run_only_when_there_is_something_new() {
+    CountingSource src;
+    for (int i = 0; i < 5; ++i) src.add(analysis(i), raw_for(*analysis(i)));
+    DataBrowserWindow w(src);
+    QCOMPARE(w.model()->analysis_count(), 5);
+    int refreshes = src.refreshes;
+    int browses = src.browses;
+
+    // Not shown: the source is not even asked.
+    src.add(analysis(5), raw_for(*analysis(5)));
+    w.refresh_if_changed();
+    w.refresh_if_changed();
+    QCOMPARE(src.refreshes, refreshes);
+    QCOMPARE(src.browses, browses);
+    QCOMPARE(w.model()->analysis_count(), 5);
+
+    // Shown: once, and the new analysis is there.
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QCOMPARE(src.refreshes, ++refreshes);
+    QCOMPARE(src.browses, ++browses);
+    QCOMPARE(w.model()->analysis_count(), 6);
+
+    // Visible and nothing new: asked, not loaded.
+    w.refresh_if_changed();
+    QCOMPARE(src.refreshes, ++refreshes);
+    QCOMPARE(src.browses, browses);
+
+    // Visible and something new: one load.
+    src.add(analysis(6), raw_for(*analysis(6)));
+    w.refresh_if_changed();
+    QCOMPARE(src.refreshes, ++refreshes);
+    QCOMPARE(src.browses, ++browses);
+    QCOMPARE(w.model()->analysis_count(), 7);
+
+    // Hidden with nothing new, then shown: asked once, not loaded.
+    w.hide();
+    w.refresh_if_changed();
+    QCOMPARE(src.refreshes, refreshes);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QCOMPARE(src.refreshes, ++refreshes);
+    QCOMPARE(src.browses, browses);
+    // ... and a show nobody asked a refresh for asks nothing.
+    w.hide();
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QCOMPARE(src.refreshes, refreshes);
+  }
+
+  // A run ending leaves what the user loaded: every page, the row selected on
+  // a later one, the place, the column widths.
+  void browser_keeps_what_was_loaded_when_a_run_lands() {
+    auto src = make_source(8);
+    DataBrowserWindow w(*src);
+    w.set_page_size(3);
+    w.resize(900, 160);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QCOMPARE(w.model()->analysis_count(), 3);
+    QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
+    QCOMPARE(w.model()->analysis_count(), 6);
+    QVERIFY(w.load_more_button()->isEnabled());  // two are left
+    w.select_rows({5});  // the last of page two
+    const QStringList selected = w.selected_uuids();
+    QCOMPARE(selected, QStringList{QStringLiteral("uuid-2")});
+    w.table()->setColumnWidth(AnalysisTableModel::RunId, 333);
+    QScrollBar* bar = w.table()->verticalScrollBar();
+    QTRY_VERIFY(bar->maximum() > 0);
+    bar->setValue(bar->maximum());
+    const int place = bar->value();
+
+    auto newer = analysis(8);
+    src->add(newer, raw_for(*newer));
+    w.refresh_if_changed();
+    QCOMPARE(w.model()->analysis_count(), 7);  // what was loaded, and the new one
+    QCOMPARE(w.model()->rows().front().uuid, std::string("uuid-8"));
+    QCOMPARE(w.selected_uuids(), selected);
+    QCOMPARE(w.model()->analysis_at(w.table()->currentIndex().row())->uuid, std::string("uuid-2"));
+    QCOMPARE(bar->value(), place);
+    QCOMPARE(w.table()->columnWidth(AnalysisTableModel::RunId), 333);
+    QVERIFY(w.status()->text().contains(QStringLiteral("7 of 9")));
+
+    // "Load more" goes on from where the table ends: the two left, once each.
+    QVERIFY(w.load_more_button()->isEnabled());
+    QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
+    QCOMPARE(w.model()->analysis_count(), 9);
+    QVERIFY(!w.load_more_button()->isEnabled());
+    std::set<std::string> distinct;
+    for (const auto& row : w.model()->rows()) distinct.insert(row.uuid);
+    QCOMPARE(distinct.size(), std::size_t{9});
+
+    // With nothing selected the place is kept while the table does not shrink...
+    w.table()->clearSelection();
+    bar->setValue(bar->maximum() / 2);
+    const int middle = bar->value();
+    QVERIFY(middle > 0);
+    auto newest = analysis(9);
+    src->add(newest, raw_for(*newest));
+    w.refresh_if_changed();
+    QCOMPARE(w.model()->analysis_count(), 10);
+    QCOMPARE(bar->value(), middle);
+    // ... and Rescan sizes the columns again, as the first load did.
+    w.refresh();
+    QVERIFY(w.table()->columnWidth(AnalysisTableModel::RunId) != 333);
   }
 
   void browser_says_why_it_is_empty() {

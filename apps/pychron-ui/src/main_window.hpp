@@ -124,8 +124,9 @@ class MainWindow : public QMainWindow {
   // Why the data window has less than was expected (a database that could
   // not be opened): DataBrowserWindow::set_unavailable, whenever it is made.
   void set_data_unavailable(const QString& reason);
-  // Has the data window (when there is one) look at its source again. Called
-  // when the experiment bridge says a queue started or a run finished.
+  // DataBrowserWindow::refresh_if_changed, when there is a data window (one
+  // is not made for this). Called when the experiment bridge says a queue
+  // started or a run finished.
   void refresh_data();
   QAction* data_action() const noexcept { return data_action_; }
   DataBrowserWindow* data_window() const noexcept { return data_->existing_browser(); }
