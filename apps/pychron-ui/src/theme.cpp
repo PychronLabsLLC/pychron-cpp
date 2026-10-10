@@ -13,6 +13,8 @@
 #include <QPolygonF>
 #include <QStyle>
 #include <QTemporaryDir>
+#include <QToolButton>
+#include <QTreeView>
 #include <QVariant>
 #include <QWidget>
 
@@ -161,6 +163,20 @@ QString arrow_dir(const Theme& t) {
   // What a ticked box and a partly ticked one show, in the page's white on the accent.
   stroke(QStringLiteral("check.png"), QPolygonF({QPointF(4.5, 10.5), QPointF(8.5, 14.5), QPointF(15.5, 6)}), t.base);
   stroke(QStringLiteral("dash.png"), QPolygonF({QPointF(5, 10), QPointF(15, 10)}), t.base);
+  // A tree's branch is as wide as its indentation and shows an image at up to
+  // its own size, so these carry their margin: a chevron of 8 in a square of 20.
+  const auto branch = [&](const QString& name, const QPolygonF& line) {
+    QImage image(40, 40, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter p(&image);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(t.muted_text, 3.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPolyline(line);
+    p.end();
+    image.save(dir.filePath(name));
+  };
+  branch(QStringLiteral("branch-closed.png"), QPolygonF({QPointF(16, 12), QPointF(24, 20), QPointF(16, 28)}));
+  branch(QStringLiteral("branch-open.png"), QPolygonF({QPointF(12, 16), QPointF(20, 24), QPointF(28, 16)}));
   draw(QStringLiteral("down.png"), false, t.muted_text);
   draw(QStringLiteral("up.png"), true, t.muted_text);
   draw(QStringLiteral("down-off.png"), false, t.strong_border);
@@ -207,6 +223,10 @@ QToolButton { background: transparent; border: 1px solid transparent; border-rad
 QToolButton:hover { background: @accent_wash; border-color: @border; }
 QToolButton:pressed, QToolButton:checked { background: @accent_soft; border-color: @accent; color: @accent_strong; }
 QToolButton:disabled { color: @faint_text; }
+QToolButton[outlined="true"] { background: @base; border-color: @strong_border; min-width: 14px; }
+QToolButton[outlined="true"]:hover { background: @accent_wash; border-color: @accent; }
+QToolButton[outlined="true"]:pressed { background: @accent_soft; border-color: @accent_strong; }
+QToolButton[outlined="true"]:disabled { background: @alt_base; border-color: @border; }
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
   background: @base; color: @text; border: 1px solid @border; border-radius: 6px;
@@ -303,6 +323,16 @@ QFrame#CommandPalette QTreeView { border: none; padding: 2px 0; }
 QFrame#CommandPalette QTreeView::item { padding: 0 10px; border: none; background: transparent; }
 QFrame#CommandPalette QTreeView::item:hover { background: @accent_wash; }
 QFrame#CommandPalette QTreeView::item:selected { background: @accent_soft; color: @accent_strong; }
+
+QTreeView[sidebar="true"] { background: @window; border: none; padding: 4px; outline: 0;
+  show-decoration-selected: 1; }
+QTreeView[sidebar="true"]::item { padding: 4px 6px 4px 2px; border: none; }
+QTreeView[sidebar="true"]::item:hover, QTreeView[sidebar="true"]::branch:hover { background: @accent_wash; }
+QTreeView[sidebar="true"]::item:selected, QTreeView[sidebar="true"]::branch:selected {
+  background: @accent_soft; color: @accent_strong; }
+QTreeView[sidebar="true"]::item:selected { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+QTreeView[sidebar="true"]::branch:has-children:closed { image: url(@arrows/branch-closed.png); }
+QTreeView[sidebar="true"]::branch:has-children:open { image: url(@arrows/branch-open.png); }
 
 QTreeView#PackageTree { background: @window; border: none; padding: 4px 0; outline: 0;
   selection-background-color: transparent; show-decoration-selected: 0; }
@@ -438,6 +468,17 @@ void set_tone(QWidget* widget, Tone tone) { set_property(widget, "tone", QLatin1
 void set_invalid(QWidget* widget, bool invalid) { set_property(widget, "invalid", invalid); }
 
 void make_banner(QWidget* widget) { set_property(widget, "banner", true); }
+
+void make_outlined(QToolButton* button) { set_property(button, "outlined", true); }
+
+void make_sidebar(QTreeView* tree) {
+  set_property(tree, "sidebar", true);
+  tree->setHeaderHidden(true);
+  tree->setIndentation(18);
+  tree->setAnimated(true);
+  tree->setExpandsOnDoubleClick(true);
+  tree->setMouseTracking(true);  // the hover of a row
+}
 
 QColor level_color(Level level) {
   const Theme& t = theme();

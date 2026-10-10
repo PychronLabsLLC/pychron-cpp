@@ -68,6 +68,7 @@ QToolButton* tool(const QString& text, const QString& tip) {
   auto* b = new QToolButton;
   b->setText(text);
   b->setToolTip(tip);
+  style::make_outlined(b);
   return b;
 }
 
@@ -100,7 +101,7 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
 
   // Files.
   auto* new_button = tool(QStringLiteral("+"), tr("New conditionals file"));
-  auto* delete_button = tool(QStringLiteral("-"), tr("Delete the selected file"));
+  auto* delete_button = tool(QStringLiteral("\u2212"), tr("Delete the selected file"));
   auto* file_buttons = new QHBoxLayout;
   file_buttons->addWidget(new_button);
   file_buttons->addWidget(delete_button);
@@ -127,7 +128,7 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   row_buttons->addStretch(1);
 
   auto* disable_add = tool(QStringLiteral("+"), tr("Disable a conditional of an earlier level by name"));
-  auto* disable_remove = tool(QStringLiteral("-"), tr("Remove the selected name"));
+  auto* disable_remove = tool(QStringLiteral("\u2212"), tr("Remove the selected name"));
   auto* disable_buttons = new QVBoxLayout;
   disable_buttons->addWidget(disable_add);
   disable_buttons->addWidget(disable_remove);

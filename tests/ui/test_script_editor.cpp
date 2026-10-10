@@ -114,6 +114,7 @@ class TestScriptEditor : public QObject {
     if (python_) {
       QVERIFY2(w.estimate_text().startsWith(QStringLiteral("Estimate ")), qPrintable(w.estimate_text()));
       QVERIFY(w.diagnostic_lines().isEmpty());
+      QCOMPARE(w.problems_title(), QStringLiteral("Problems"));
     } else {
       QVERIFY(w.estimate_text().startsWith(QStringLiteral("Not checked")));
     }
@@ -130,6 +131,8 @@ class TestScriptEditor : public QObject {
       QVERIFY(w.diagnostic_lines().front().contains(QStringLiteral("frobnicate")));
       // sim_extract.py is 21 lines: the one typed is the next.
       QVERIFY(w.diagnostic_lines().front().startsWith(QStringLiteral("22: error")));
+      // The panel's title says what it lists, and how many.
+      QVERIFY2(w.problems_title().startsWith(QStringLiteral("Problems: 1 error")), qPrintable(w.problems_title()));
     // Listed in line order.
     w.current_editor()->moveCursor(QTextCursor::Start);
     w.current_editor()->insertPlainText(QStringLiteral("zap = nope\n"));

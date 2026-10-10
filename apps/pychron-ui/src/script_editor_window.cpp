@@ -14,6 +14,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDockWidget>
+#include <QIcon>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QKeySequence>
@@ -21,7 +22,8 @@
 #include <QListWidget>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QSplitter>
+#include <QPainter>
+#include <QPixmap>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -66,6 +68,19 @@ QString skeleton(ScriptKind kind) {
   }
 }
 
+// The mark of a problem in the list, in its severity's colour.
+QIcon severity_dot(const QColor& color) {
+  QPixmap pixmap(32, 32);
+  pixmap.fill(Qt::transparent);
+  QPainter p(&pixmap);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.setPen(Qt::NoPen);
+  p.setBrush(color);
+  p.drawEllipse(QRectF(9, 9, 14, 14));
+  p.end();
+  return QIcon(pixmap);
+}
+
 }  // namespace
 
 ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::unique_ptr<QSettings> settings,
@@ -77,12 +92,14 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
       tree_(new QTreeWidget),
       tabs_(new QTabWidget),
       problems_(new QListWidget),
+      problems_dock_(new QDockWidget(this)),
       status_(new QLabel) {
   setObjectName(QStringLiteral("ScriptEditorWindow"));
   setWindowTitle(tr("Script Editor"));
   resize(1100, 750);
 
-  tree_->setHeaderHidden(true);
+  tree_->setObjectName(QStringLiteral("ScriptTree"));
+  style::make_sidebar(tree_);
   auto* tree_dock = new QDockWidget(tr("Scripts"), this);
   tree_dock->setObjectName(QStringLiteral("ScriptEditorTreeDock"));
   tree_dock->setWidget(tree_);
@@ -91,18 +108,22 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
   tabs_->setTabsClosable(true);
   tabs_->setDocumentMode(true);
   status_->setWordWrap(true);
+  // What the check found, under a title that says so and counts them.
+  problems_->setObjectName(QStringLiteral("ScriptProblems"));
+  status_->setContentsMargins(8, 4, 8, 2);
   auto* bottom = new QWidget;
   auto* bcol = new QVBoxLayout(bottom);
   bcol->setContentsMargins(0, 0, 0, 0);
+  bcol->setSpacing(0);
   bcol->addWidget(status_);
-  bcol->addWidget(problems_);
-  auto* split = new QSplitter(Qt::Vertical);
-  split->addWidget(tabs_);
-  split->addWidget(bottom);
-  split->setStretchFactor(0, 4);
-  split->setStretchFactor(1, 1);
-  split->setSizes({600, 160});  // an empty tab widget would otherwise get almost nothing
-  setCentralWidget(split);
+  bcol->addWidget(problems_, 1);
+  problems_dock_->setObjectName(QStringLiteral("ScriptEditorProblemsDock"));
+  problems_dock_->setFeatures(QDockWidget::NoDockWidgetFeatures);
+  problems_dock_->setWidget(bottom);
+  addDockWidget(Qt::BottomDockWidgetArea, problems_dock_);
+  setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+  resizeDocks({problems_dock_}, {170}, Qt::Vertical);
+  setCentralWidget(tabs_);
 
   // Two groups in the unified Scripts menu (MenuHub), enabled while this
   // window is active. Save is the File menu's, which has its key; File > New
@@ -153,6 +174,11 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (!path.isValid()) return;
     for (const auto& f : experiment::lab::lab_scripts(lab_))
       if (q(f.path.string()) == path.toString()) open(f);
+  });
+  // A kind's row opens and closes at a click anywhere on it, not only on its chevron.
+  tree_->setExpandsOnDoubleClick(false);
+  connect(tree_, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item) {
+    if (item->parent() == nullptr) item->setExpanded(!item->isExpanded());
   });
   connect(problems_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
     if (Document* d = current()) d->editor->go_to_line(item->data(Qt::UserRole).toInt());
@@ -214,6 +240,14 @@ void ScriptEditorWindow::fill_tree() {
     groups[q(scripting::to_string(k))] = g;
   }
   auto* lib = new QTreeWidgetItem(tree_, {QStringLiteral("lib")});
+  QFont group_font = tree_->font();
+  group_font.setWeight(QFont::DemiBold);
+  for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+    QTreeWidgetItem* g = tree_->topLevelItem(i);
+    g->setFont(0, group_font);
+    g->setForeground(0, theme().muted_text);
+    g->setFlags(Qt::ItemIsEnabled);  // a kind opens and closes; only a script is selected
+  }
   for (const auto& f : experiment::lab::lab_scripts(lab_)) {
     const bool in_lib = f.name.starts_with("lib:");
     QTreeWidgetItem* parent = in_lib ? lib : groups[q(scripting::to_string(f.kind))];
@@ -394,6 +428,7 @@ void ScriptEditorWindow::check_now() {
 
 void ScriptEditorWindow::show_check() {
   problems_->clear();
+  problems_dock_->setWindowTitle(tr("Problems"));
   Document* d = current();
   save_->setEnabled(d != nullptr);
   if (d == nullptr) {
@@ -415,6 +450,15 @@ void ScriptEditorWindow::show_check() {
     auto* item = new QListWidgetItem(text, problems_);
     item->setData(Qt::UserRole, diag.line);
     item->setForeground(error ? theme().error_text : theme().warning_text);
+    item->setIcon(severity_dot(error ? theme().error : theme().warning));
+  }
+  if (!listed.empty()) {
+    const auto errors = static_cast<int>(d->check.report.errors().size());
+    const auto warnings = static_cast<int>(d->check.report.warnings().size());
+    QStringList counts;
+    if (errors > 0) counts.append(errors == 1 ? tr("1 error") : tr("%1 errors").arg(errors));
+    if (warnings > 0) counts.append(warnings == 1 ? tr("1 warning") : tr("%1 warnings").arg(warnings));
+    problems_dock_->setWindowTitle(tr("Problems: %1").arg(counts.join(QStringLiteral(", "))));
   }
   QString text;
   bool bad = false;
@@ -441,6 +485,8 @@ QStringList ScriptEditorWindow::diagnostic_lines() const {
 }
 
 QString ScriptEditorWindow::estimate_text() const { return status_->text(); }
+
+QString ScriptEditorWindow::problems_title() const { return problems_dock_->windowTitle(); }
 
 void ScriptEditorWindow::update_tab_title(Document& doc) {
   for (std::size_t i = 0; i < docs_.size(); ++i)

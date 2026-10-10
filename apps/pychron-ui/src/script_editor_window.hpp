@@ -26,6 +26,7 @@
 #include "script_highlighter.hpp"
 
 class QAction;
+class QDockWidget;
 class QLabel;
 class QListWidget;
 class QTabWidget;
@@ -74,6 +75,7 @@ class ScriptEditorWindow : public QMainWindow {
   void check_now();  // the current tab, at once
   QStringList diagnostic_lines() const;  // "3: error: ..." as listed
   QString estimate_text() const;
+  QString problems_title() const;  // the bottom panel's: "Problems", with the counts when it lists any
   QStringList script_names() const;  // the tree, "kind/name"
 
   void set_ask_unsaved(std::function<Unsaved(const QString& name)> ask) { ask_unsaved_ = std::move(ask); }
@@ -111,6 +113,7 @@ class ScriptEditorWindow : public QMainWindow {
   QTreeWidget* tree_;
   QTabWidget* tabs_;
   QListWidget* problems_;
+  QDockWidget* problems_dock_;
   QLabel* status_;
   QAction* save_ = nullptr;  // what File > Save does here; enabled while a tab is open
   PickScript pick_script_;
