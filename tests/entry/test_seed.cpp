@@ -71,6 +71,26 @@ TEST(Seed, AFileWithNoSamplesAndNoReactorsIsASeedOfTheProjectAlone) {
 
 TEST(Seed, RefusesWhatIsNotToml) { expect_refused("project = \n", "syntax"); }
 
+TEST(Seed, ParsesTheInstrumentNames) {
+  auto s = parse_seed(std::string(kSmall) + "");
+  ASSERT_TRUE(s) << s.error().what;
+  EXPECT_TRUE(s->mass_spectrometers.empty());
+  EXPECT_TRUE(s->extract_devices.empty());
+  auto t = parse_seed("project = \"references\"\nmass_spectrometers = [\"argus\", \"map\"]\nextract_devices = [\"co2\", \"diode\"]\n");
+  ASSERT_TRUE(t) << t.error().what;
+  EXPECT_EQ(t->mass_spectrometers, (std::vector<std::string>{"argus", "map"}));
+  EXPECT_EQ(t->extract_devices, (std::vector<std::string>{"co2", "diode"}));
+}
+
+TEST(Seed, RefusesAnEmptyOrRepeatedInstrumentName) {
+  for (const char* key : {"mass_spectrometers", "extract_devices"}) {
+    const std::string head = "project = \"references\"\n" + std::string(key) + " = ";
+    expect_refused(head + "[\"\"]\n", std::string("'") + key + "'");
+    expect_refused(head + "[\"a\", \"a\"]\n", std::string("'") + key + "'");
+    expect_refused(head + "\"a\"\n", std::string("'") + key + "'");
+  }
+}
+
 TEST(Seed, RefusesUnknownKeys) {
   expect_refused("project = \"references\"\nprojects = 1\n", "'projects'");
   expect_refused(sample("identifier = \"a\"\nanalysis_type = \"air\"\nsample = \"air\"\nmaterial = \"air\"\nnote = \"x\"\n"),
@@ -216,9 +236,11 @@ TEST_P(SeedStore, AnEmptyStoreGetsEverything) {
   EXPECT_EQ(report->materials, 3);
   EXPECT_EQ(report->samples, 8);
   EXPECT_EQ(report->identifiers, 8);
+  EXPECT_EQ(report->mass_spectrometers, 1);
+  EXPECT_EQ(report->extract_devices, 0);
   EXPECT_EQ(report->reactors, 1);
   EXPECT_TRUE(report->kept.empty());
-  EXPECT_EQ(describe(*report), "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor");
+  EXPECT_EQ(describe(*report), "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 mass spectrometer, 1 reactor");
 
   const auto p = project("references");
   ASSERT_TRUE(p);
@@ -249,8 +271,8 @@ TEST_P(SeedStore, ASecondRunWritesNothing) {
   auto again = apply_seed(*store_, shipped(), actor());
   ASSERT_TRUE(again) << again.error().what;
   EXPECT_FALSE(again->changed());
-  EXPECT_EQ(again->kept.size(), 21u);  // 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor
-  EXPECT_EQ(describe(*again), "seed: nothing to add (21 already there)");
+  EXPECT_EQ(again->kept.size(), 22u);  // 1 project, 3 materials, 8 samples, 8 identifiers, 1 mass spectrometer, 1 reactor
+  EXPECT_EQ(describe(*again), "seed: nothing to add (22 already there)");
   EXPECT_EQ(reactors_revisions(), revisions);
   EXPECT_EQ(samples_of("references").size(), 8u);
   EXPECT_EQ(store_->materials().value().size(), 3u);
@@ -259,7 +281,7 @@ TEST_P(SeedStore, ASecondRunWritesNothing) {
 TEST_P(SeedStore, ADryRunReportsAndWritesNothing) {
   auto report = apply_seed(*store_, shipped(), actor(), true);
   ASSERT_TRUE(report) << report.error().what;
-  EXPECT_EQ(describe(*report), "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor");
+  EXPECT_EQ(describe(*report), "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 mass spectrometer, 1 reactor");
   EXPECT_FALSE(project("references"));
   EXPECT_TRUE(store_->materials().value().empty());
   EXPECT_FALSE(store_->find_identifier("bu").value().has_value());
@@ -269,6 +291,75 @@ TEST_P(SeedStore, ADryRunReportsAndWritesNothing) {
   auto again = apply_seed(*store_, shipped(), actor(), true);
   ASSERT_TRUE(again);
   EXPECT_FALSE(again->changed());
+}
+
+namespace {
+Seed with_instruments() {
+  Seed seed;
+  seed.project = "references";
+  seed.mass_spectrometers = {"argus"};
+  seed.extract_devices = {"co2"};
+  return seed;
+}
+}  // namespace
+
+TEST_P(SeedStore, SeedsTheInstrumentsOnce) {
+  auto first = apply_seed(*store_, with_instruments(), actor());
+  ASSERT_TRUE(first) << first.error().what;
+  EXPECT_EQ(first->mass_spectrometers, 1);
+  EXPECT_EQ(first->extract_devices, 1);
+  EXPECT_TRUE(first->changed());
+  auto second = apply_seed(*store_, with_instruments(), actor());
+  ASSERT_TRUE(second) << second.error().what;
+  EXPECT_EQ(second->mass_spectrometers, 0);
+  EXPECT_EQ(second->extract_devices, 0);
+  EXPECT_FALSE(second->changed());
+  EXPECT_TRUE(has(second->kept, "mass spectrometer argus"));
+  EXPECT_TRUE(has(second->kept, "extract device co2"));
+  auto ms = store_->find_catalog_row(CatalogTable::MassSpectrometer, {std::string("argus")});
+  ASSERT_TRUE(ms);
+  EXPECT_TRUE(ms->has_value());
+  auto ed = store_->find_catalog_row(CatalogTable::ExtractDevice, {std::string("co2")});
+  ASSERT_TRUE(ed);
+  EXPECT_TRUE(ed->has_value());
+}
+
+TEST_P(SeedStore, KeepsAMassSpectrometerThatIsThere) {
+  // (The fixture's own "jan" has code "j", and a code is unique. The store
+  // reads back neither kind nor code, so the row's uuid is what is compared.)
+  auto added = store_->add_mass_spectrometer(actor().client, MassSpectrometerSpec{"argus", "argus", "k"});
+  ASSERT_TRUE(added) << added.error().what;
+  auto report = apply_seed(*store_, with_instruments(), actor());
+  ASSERT_TRUE(report) << report.error().what;
+  EXPECT_EQ(report->mass_spectrometers, 0);
+  EXPECT_TRUE(has(report->kept, "mass spectrometer argus"));
+  auto row = store_->find_catalog_row(CatalogTable::MassSpectrometer, {std::string("argus")});
+  ASSERT_TRUE(row && *row);
+  EXPECT_EQ(**row, *added);
+}
+
+TEST_P(SeedStore, DryRunWritesNoInstrument) {
+  auto report = apply_seed(*store_, with_instruments(), actor(), true);
+  ASSERT_TRUE(report) << report.error().what;
+  EXPECT_EQ(report->mass_spectrometers, 1);
+  EXPECT_EQ(report->extract_devices, 1);
+  auto ms = store_->find_catalog_row(CatalogTable::MassSpectrometer, {std::string("argus")});
+  ASSERT_TRUE(ms);
+  EXPECT_FALSE(ms->has_value());
+  auto ed = store_->find_catalog_row(CatalogTable::ExtractDevice, {std::string("co2")});
+  ASSERT_TRUE(ed);
+  EXPECT_FALSE(ed->has_value());
+}
+
+TEST(Seed, DescribeCountsTheInstruments) {
+  SeedReport r;
+  r.mass_spectrometers = 1;
+  r.extract_devices = 1;
+  EXPECT_EQ(describe(r), "seeded 1 mass spectrometer, 1 extract device");
+  r.extract_devices = 2;
+  r.identifiers = 1;
+  r.reactors = 1;
+  EXPECT_EQ(describe(r), "seeded 1 identifier, 1 mass spectrometer, 2 extract devices, 1 reactor");
 }
 
 // Review focus 1: a lab's own references project, with its principal

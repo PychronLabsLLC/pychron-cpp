@@ -5,6 +5,11 @@
 
 project = "references"
 
+# The instruments runs are recorded under. A queue's mass_spectrometer and
+# extract_device must be named here (or added to the database some other way).
+mass_spectrometers = ["{{ family }}"]
+extract_devices = []
+
 [[samples]]
 identifier = "bu"            # the special identifier, as in identifiers.toml
 analysis_type = "blank_unknown"

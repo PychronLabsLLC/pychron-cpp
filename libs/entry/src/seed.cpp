@@ -47,7 +47,8 @@ Result<Seed> parse_seed(std::string_view text, std::string_view name) {
   if (!parsed) return bad("syntax error: " + std::string(parsed.error().description()));
   const toml::table& root = parsed.table();
   for (const auto& [k, v] : root) {
-    if (k.str() != "project" && k.str() != "samples" && k.str() != "reactors") return bad("unknown key " + in_quotes(k.str()));
+    if (k.str() != "project" && k.str() != "samples" && k.str() != "reactors" &&
+        k.str() != "mass_spectrometers" && k.str() != "extract_devices") return bad("unknown key " + in_quotes(k.str()));
   }
 
   Seed seed;
@@ -56,6 +57,22 @@ Result<Seed> parse_seed(std::string_view text, std::string_view name) {
   if (!valid_project_name(*project))
     return bad("project " + in_quotes(*project) + ": a letter, then letters, digits, '-' or '_'");
   seed.project = *project;
+
+  const std::array<std::pair<std::string_view, std::vector<std::string>*>, 2> instruments{
+      {{"mass_spectrometers", &seed.mass_spectrometers}, {"extract_devices", &seed.extract_devices}}};
+  for (const auto& [key, out] : instruments) {
+    const auto* node = root.get(key);
+    if (!node) continue;
+    const auto* names = node->as_array();
+    if (!names) return bad("'" + std::string(key) + "' must be a list of names");
+    std::set<std::string> seen;
+    for (const auto& n : *names) {
+      const auto v = n.value<std::string>();
+      if (!v || v->empty()) return bad("'" + std::string(key) + "' must be a list of non-empty strings");
+      if (!seen.insert(*v).second) return bad("'" + std::string(key) + "': " + in_quotes(*v) + " is given twice");
+      out->push_back(*v);
+    }
+  }
 
   if (const auto* node = root.get("samples")) {
     const auto* rows = node->as_array();
@@ -241,6 +258,29 @@ Result<SeedReport> apply_seed(ps::IStore& store, const Seed& seed, const ps::Act
     }
   }
 
+  for (const auto& name : seed.mass_spectrometers) {
+    auto found = store.find_catalog_row(ps::CatalogTable::MassSpectrometer, {name});
+    if (!found) return fail(found.error());
+    if (*found) {
+      report.kept.push_back("mass spectrometer " + name);
+      continue;
+    }
+    ++report.mass_spectrometers;
+    if (dry_run) continue;
+    if (auto made = store.add_mass_spectrometer(client, ps::MassSpectrometerSpec{name}); !made) return fail(made.error());
+  }
+  for (const auto& name : seed.extract_devices) {
+    auto found = store.find_catalog_row(ps::CatalogTable::ExtractDevice, {name});
+    if (!found) return fail(found.error());
+    if (*found) {
+      report.kept.push_back("extract device " + name);
+      continue;
+    }
+    ++report.extract_devices;
+    if (dry_run) continue;
+    if (auto made = store.add_extract_device(client, name); !made) return fail(made.error());
+  }
+
   if (seed.reactors.empty()) return report;
   auto stored = stored_reactors(store);
   if (!stored) return fail(stored.error());
@@ -296,6 +336,8 @@ std::string describe(const SeedReport& r) {
   part(r.materials, "material");
   part(r.samples, "sample");
   part(r.identifiers, "identifier");
+  part(r.mass_spectrometers, "mass spectrometer");
+  part(r.extract_devices, "extract device");
   part(r.reactors, "reactor");
   return out;
 }

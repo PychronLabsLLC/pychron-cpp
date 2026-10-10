@@ -113,7 +113,7 @@ TEST_F(ElctlSetupTest, AnInstrumentInstallMakesAndSeedsItsDatabase) {
   auto o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(fs::exists(root / "data" / "pychron.db"));
-  EXPECT_TRUE(contains(o.out, "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 reactor")) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 mass spectrometer, 1 reactor")) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out;
   const std::string db = "sqlite:" + (root / "data" / "pychron.db").generic_string();
   auto listed = run_raw({"entry", "samples", "list", "--db", db, "--project", "references"});
@@ -124,7 +124,7 @@ TEST_F(ElctlSetupTest, AnInstrumentInstallMakesAndSeedsItsDatabase) {
 
   o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
   ASSERT_EQ(o.code, 0) << o.out << o.err;
-  EXPECT_TRUE(contains(o.out, "seed: nothing to add (21 already there)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "seed: nothing to add (22 already there)")) << o.out;
 }
 
 // Review focus 4: a seed file the lab edited into something unreadable.
