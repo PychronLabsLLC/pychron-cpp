@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <random>
 #include <filesystem>
 #include <fstream>
@@ -48,6 +49,11 @@ ProfileLibrary library() {
   auto lib = ProfileLibrary::load(kProfiles, kExamples);
   EXPECT_TRUE(lib) << (lib ? "" : lib.error().what);
   return std::move(*lib);
+}
+
+std::string read_file(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
 // Installs `name` into a scratch root; returns the site entry.
@@ -119,8 +125,10 @@ TEST_P(InstrumentProfile, InstallsLoadsAndPassesDoctor) {
   EXPECT_EQ(site.kind, "instrument");
   EXPECT_EQ(site.simulation, simulation);
   for (const char* f : {"extraction_line.toml", "canvas.toml", "spectrometer.toml", "plans/multicollect.toml",
-                        "plans/detector_ic.toml", "plans/multicollect_hop_ar39.toml", "peak_center.toml", "experiment.toml", "CALIBRATE.md", "scripts/extraction/sim_extract.py"})
+                        "plans/detector_ic.toml", "plans/multicollect_hop_ar39.toml", "peak_center.toml", "experiment.toml", "CALIBRATE.md", "scripts/extraction/sim_extract.py", "sim.toml"})
     EXPECT_TRUE(fs::exists(root / f)) << name << ": " << f;
+  // The example line comes with the example lab's numbers, as they are.
+  EXPECT_EQ(read_file(root / "sim.toml"), read_file(kExamples / "sim.toml")) << name;
   expect_no_failures(site);
   expect_queue_checks(site);
   fs::remove_all(root);
@@ -201,15 +209,43 @@ TEST_P(InstrumentProfile, ShipsASeedThatTheDefaultsAndTheExampleQueueAgreeWith) 
   ASSERT_TRUE(ids) << ids.error().what;
   auto queue = experiment::load_queue_file((root / "experiment.toml").string(), *ids);
   ASSERT_TRUE(queue) << queue.error().what;
-  bool blank = false;
-  for (const auto& r : queue->runs) {
-    if (r.id.identifier != "bu") continue;
-    blank = true;
-    EXPECT_EQ(r.sample.sample, "blank_unknown");
-    EXPECT_EQ(r.sample.material, "blank");
-    EXPECT_EQ(r.sample.project, "references");
+  // The queue is three air shots between two blanks, and every part of it is something the install has.
+  std::map<std::string, std::pair<std::string, std::string>> seeded;  // identifier -> sample, material
+  for (const auto& row : *samples) {
+    const auto* t = row.as_table();
+    ASSERT_NE(t, nullptr);
+    seeded[(*t)["identifier"].value_or(std::string{})] = {(*t)["sample"].value_or(std::string{}),
+                                                          (*t)["material"].value_or(std::string{})};
   }
-  EXPECT_TRUE(blank);
+  const auto string_list = [&](const char* key) {
+    std::vector<std::string> out;
+    if (const auto* a = seed.table()[key].as_array())
+      for (const auto& v : *a) out.push_back(v.value_or(std::string{}));
+    return out;
+  };
+  const auto in = [](const std::vector<std::string>& list, const std::string& wanted) {
+    return std::find(list.begin(), list.end(), wanted) != list.end();
+  };
+  const auto spectrometers = string_list("mass_spectrometers");
+  const auto devices = string_list("extract_devices");
+  EXPECT_TRUE(in(spectrometers, queue->mass_spectrometer)) << name << ": " << queue->mass_spectrometer;
+  EXPECT_TRUE(queue->extract_device.empty() || in(devices, queue->extract_device)) << name;
+  std::vector<std::string> identifiers;
+  for (const auto& r : queue->runs) {
+    const std::string& id = r.id.identifier;
+    identifiers.push_back(id);
+    const auto row = seeded.find(id);
+    ASSERT_NE(row, seeded.end()) << name << ": " << id << " is not a seed identifier";
+    EXPECT_EQ(r.sample.sample, row->second.first) << id;
+    EXPECT_EQ(r.sample.material, row->second.second) << id;
+    EXPECT_EQ(r.sample.project, "references") << id;
+    EXPECT_TRUE(r.extraction.device.empty() || in(devices, r.extraction.device)) << id;
+    EXPECT_TRUE(fs::exists(root / "scripts" / "extraction" / (r.extraction.script + ".py"))) << id << ": " << r.extraction.script;
+    EXPECT_TRUE(fs::exists(root / "plans" / (r.measurement.plan + ".toml"))) << id << ": " << r.measurement.plan;
+    ASSERT_TRUE(r.post_measurement) << id;
+    EXPECT_TRUE(fs::exists(root / "scripts" / "post_measurement" / (*r.post_measurement + ".py"))) << id << ": " << *r.post_measurement;
+  }
+  EXPECT_EQ(identifiers, (std::vector<std::string>{"ba", "a", "a", "a", "ba"})) << name;
   fs::remove_all(root);
 }
 
@@ -430,6 +466,25 @@ TEST(Profiles, NgxWithALoginKeepsThePasswordInAnOwnerOnlyFile) {
   }
   expect_no_failures(site);
   fs::remove_all(root);
+}
+
+// The example lab's numbers belong to the example line: a line the lab brings is not told them.
+TEST(Profiles, AnImportedLineComesWithoutTheExampleLabsSimToml) {
+  const auto lib = library();
+  const fs::path root = scratch("imported-line");
+  const fs::path mine = fs::temp_directory_path() / (root.filename().string() + "-mine");
+  fs::create_directories(mine);
+  fs::copy_file(kExamples / "extraction_line.toml", mine / "line.toml", fs::copy_options::overwrite_existing);
+  fs::copy_file(kExamples / "canvas.toml", mine / "drawing.toml", fs::copy_options::overwrite_existing);
+  install(lib, "argus",
+          {{"line_source", Value{std::string("import")}},
+           {"line_file", Value{(mine / "line.toml").generic_string()}},
+           {"canvas_file", Value{(mine / "drawing.toml").generic_string()}}},
+          root);
+  EXPECT_TRUE(fs::exists(root / "extraction_line.toml"));
+  EXPECT_FALSE(fs::exists(root / "sim.toml"));
+  fs::remove_all(root);
+  fs::remove_all(mine);
 }
 
 // doctor tells an install made before the seed, the identifiers and the

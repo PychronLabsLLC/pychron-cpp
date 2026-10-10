@@ -53,7 +53,7 @@ TEST_F(ElctlSetupTest, AnInstrumentInstallsChecksAndRunsByName) {
   // --install supplies the line, the lab and simulation; the queue is found in the install.
   o = run_raw({"--install", "lab", "exp", "validate", "experiment.toml"});
   EXPECT_EQ(o.code, 0) << o.out << o.err;
-  EXPECT_TRUE(contains(o.out, "queue first-queue: 3 run(s)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "queue first-queue: 5 run(s)")) << o.out;
 }
 
 TEST_F(ElctlSetupTest, QuestionsAreAskedWithDefaultsInBrackets) {
