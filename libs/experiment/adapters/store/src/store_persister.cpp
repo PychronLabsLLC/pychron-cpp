@@ -59,10 +59,12 @@ Result<int> StorePersister::next_aliquot(const std::string& identifier) {
   }
   // A record waiting to be sent has its aliquot already; the file read stays outside the lock.
   const persist::Spool spool(data_ / "spool");
-  if (auto waiting = spool.pending()) {
-    for (const auto& uuid : *waiting)
-      if (auto rec = spool.get(uuid); rec && rec->identity.identifier == identifier)
-        highest = std::max(highest, rec->identity.aliquot);
+  auto waiting = spool.pending();  // a missing folder is an empty spool, not an error
+  if (!waiting) return fail(waiting.error());
+  for (const auto& uuid : *waiting) {
+    // A record that cannot be read can never be sent, so its number is not in use.
+    if (auto rec = spool.get(uuid); rec && rec->identity.identifier == identifier)
+      highest = std::max(highest, rec->identity.aliquot);
   }
   const std::lock_guard<std::mutex> lock(mutex_);
   int& issued = issued_[identifier];
@@ -136,16 +138,19 @@ Result<std::vector<std::string>> StorePersister::check_queue(const QueueSpec& qu
     if (!*found) lines.push_back("identifier '" + identifier + "' is not in the database");
   }
 
+  std::set<std::string> taken_seen;
   for (const auto& run : queue.runs) {
     if (run.skip || !run.id.aliquot) continue;
     const auto increment = increment_of(run.id.step);
     if (!increment) continue;  // a step the store cannot hold; the run fails when it is saved
+    const std::string runid = ps::make_runid(run.id.identifier, *run.id.aliquot, *increment);
+    if (!taken_seen.insert(runid).second) continue;
     auto found = store_.find_analysis(run.id.identifier, *run.id.aliquot, *increment);
     if (!found) {
       unreachable = found.error();
       return finish();
     }
-    if (*found) lines.push_back(ps::make_runid(run.id.identifier, *run.id.aliquot, *increment) + " is already in the database");
+    if (*found) lines.push_back(runid + " is already in the database");
   }
   return lines;
 }
@@ -167,34 +172,7 @@ std::string without_password(const std::string& url) {
 
 // ---------------------------------------------------------------- Acquisition
 
-// Everything the worker and its callers share. Kept for the life of the
-// process (see keep()), so that a call made after the Acquisition is gone
-// finds a mutex and a closed flag, not freed memory. What it holds that costs
-// anything (the store, the persister) is released on the worker at shutdown.
-struct AcquisitionCore;
-
-namespace {
-
-class Marshalled final : public persist::IAnalysisPersister {
- public:
-  explicit Marshalled(AcquisitionCore& core) : core_(core) {}
-
-  Result<int> next_aliquot(const std::string& identifier) override;
-  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override;
-  Result<void> save_extraction(const record::AnalysisRecord& record) override;
-  Result<void> save_analysis(const record::AnalysisRecord& record) override;
-  Result<void> save_artifact(const std::string& uuid, const std::string& name,
-                             const std::vector<std::uint8_t>& bytes) override;
-  Result<void> flush() override;
-  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override;
-
- private:
-  AcquisitionCore& core_;
-};
-
-}  // namespace
-
-struct AcquisitionCore {
+struct AcquisitionImpl {
   struct Job {
     std::function<void()> run;
     bool done = false;
@@ -212,15 +190,13 @@ struct AcquisitionCore {
   std::unique_ptr<ps::IStore> store;
   std::unique_ptr<StorePersister> persister;
 
-  Marshalled proxy{*this};
-
-  // Runs `f` on the worker; the caller waits for it.
+  // Runs `f` on the worker; the caller waits for it. Not to be called from the
+  // worker itself (it would wait on itself); nothing does.
   template <class R, class F>
   R call(F&& f) {
     R result = fail(ErrorKind::Io, "the database connection is closed");
     Job job{[&] { result = f(*persister); }, false};
     std::unique_lock<std::mutex> lock(mutex);
-    if (closed) return result;
     // cppcheck-suppress danglingLifetime ; the worker takes the job off the queue before it marks it done, and this call waits for that
     queue.push_back(&job);
     cv.notify_all();
@@ -228,37 +204,35 @@ struct AcquisitionCore {
     return result;
   }
 
+  // Opens the store and the persister; the error, if any.
+  std::optional<Error> open(const std::string& url, std::filesystem::path data, const std::string& software_version) {
+    auto opened_store = ps::open_store(ps::StoreConfig{url, false});
+    if (!opened_store) {
+      Error error = opened_store.error();
+      if (error.kind == ErrorKind::Config && error.what.find("schema is out of date") != std::string::npos)
+        error.what += "\nRun: elctl db migrate --db " + without_password(url);
+      return error;
+    }
+    store = std::move(*opened_store);
+    auto client = store->register_client(
+        {env_var("HOSTNAME").value_or("localhost"), "acquisition", std::nullopt, software_version});
+    if (!client) return client.error();
+    persister = std::make_unique<StorePersister>(*store, *client, std::move(data));
+    return std::nullopt;
+  }
+
   void work(const std::string& url, std::filesystem::path data, const std::string& software_version) {
+    auto error = open(url, std::move(data), software_version);
     {
-      auto opened_store = ps::open_store(ps::StoreConfig{url, false});
-      Result<void> ready;
-      if (!opened_store) {
-        Error error = opened_store.error();
-        if (error.kind == ErrorKind::Config && error.what.find("schema is out of date") != std::string::npos)
-          error.what += "\nRun: elctl db migrate --db " + without_password(url);
-        ready = fail(std::move(error));
-      } else {
-        store = std::move(*opened_store);
-        auto client = store->register_client(
-            {env_var("HOSTNAME").value_or("localhost"), "acquisition", std::nullopt, software_version});
-        if (client)
-          persister = std::make_unique<StorePersister>(*store, *client, std::move(data));
-        else
-          ready = fail(client.error());
-      }
       const std::lock_guard<std::mutex> lock(mutex);
       opened = true;
-      if (!ready) {
-        open_error = ready.error();
-        closed = true;
-      }
-      cv.notify_all();
-      if (!ready) {
-        // Nothing was queued: callers see `closed` before they queue.
-        persister.reset();
-        store.reset();
-        return;
-      }
+      open_error = error;
+    }
+    cv.notify_all();
+    if (error) {
+      persister.reset();
+      store.reset();
+      return;
     }
     std::unique_lock<std::mutex> lock(mutex);
     while (true) {
@@ -267,7 +241,7 @@ struct AcquisitionCore {
       Job* job = queue.front();
       queue.pop_front();
       lock.unlock();
-      job->run();
+      job->run();  // never throws: errors are values here, as in StoreSource
       lock.lock();
       job->done = true;
       cv.notify_all();
@@ -280,54 +254,59 @@ struct AcquisitionCore {
 
 namespace {
 
-// One per Acquisition ever opened; a program opens one.
-AcquisitionCore& keep(std::unique_ptr<AcquisitionCore> core) {
-  static std::mutex mutex;
-  static std::vector<std::unique_ptr<AcquisitionCore>> cores;
-  const std::lock_guard<std::mutex> lock(mutex);
-  cores.push_back(std::move(core));
-  return *cores.back();
-}
+class Marshalled final : public persist::IAnalysisPersister {
+ public:
+  explicit Marshalled(AcquisitionImpl& impl) : impl_(impl) {}
 
-Result<int> Marshalled::next_aliquot(const std::string& identifier) {
-  return core_.call<Result<int>>([&](StorePersister& p) { return p.next_aliquot(identifier); });
-}
-Result<void> Marshalled::begin_run(const RunIdentity& id, const QueueSpec& queue) {
-  return core_.call<Result<void>>([&](StorePersister& p) { return p.begin_run(id, queue); });
-}
-Result<void> Marshalled::save_extraction(const record::AnalysisRecord& record) {
-  return core_.call<Result<void>>([&](StorePersister& p) { return p.save_extraction(record); });
-}
-Result<void> Marshalled::save_analysis(const record::AnalysisRecord& record) {
-  return core_.call<Result<void>>([&](StorePersister& p) { return p.save_analysis(record); });
-}
-Result<void> Marshalled::save_artifact(const std::string& uuid, const std::string& name,
-                                       const std::vector<std::uint8_t>& bytes) {
-  return core_.call<Result<void>>([&](StorePersister& p) { return p.save_artifact(uuid, name, bytes); });
-}
-Result<void> Marshalled::flush() {
-  return core_.call<Result<void>>([&](StorePersister& p) { return p.flush(); });
-}
-Result<std::vector<std::string>> Marshalled::check_queue(const QueueSpec& queue) {
-  return core_.call<Result<std::vector<std::string>>>([&](StorePersister& p) { return p.check_queue(queue); });
-}
+  Result<int> next_aliquot(const std::string& identifier) override {
+    return impl_.call<Result<int>>([&](StorePersister& p) { return p.next_aliquot(identifier); });
+  }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override {
+    return impl_.call<Result<void>>([&](StorePersister& p) { return p.begin_run(id, queue); });
+  }
+  Result<void> save_extraction(const record::AnalysisRecord& record) override {
+    return impl_.call<Result<void>>([&](StorePersister& p) { return p.save_extraction(record); });
+  }
+  Result<void> save_analysis(const record::AnalysisRecord& record) override {
+    return impl_.call<Result<void>>([&](StorePersister& p) { return p.save_analysis(record); });
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return impl_.call<Result<void>>([&](StorePersister& p) { return p.save_artifact(uuid, name, bytes); });
+  }
+  Result<void> flush() override {
+    return impl_.call<Result<void>>([&](StorePersister& p) { return p.flush(); });
+  }
+  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override {
+    return impl_.call<Result<std::vector<std::string>>>([&](StorePersister& p) { return p.check_queue(queue); });
+  }
+
+ private:
+  AcquisitionImpl& impl_;
+};
 
 }  // namespace
 
-Acquisition::~Acquisition() {
-  {
-    const std::lock_guard<std::mutex> lock(core_.mutex);
-    core_.closed = true;
-    core_.cv.notify_all();
-  }
-  if (core_.worker.joinable()) core_.worker.join();
+Acquisition::Acquisition(std::unique_ptr<AcquisitionImpl> impl) : impl_(std::move(impl)) {
+  proxy_ = std::make_unique<Marshalled>(*impl_);
 }
 
-persist::IAnalysisPersister& Acquisition::persister() noexcept { return core_.proxy; }
+Acquisition::~Acquisition() {
+  {
+    const std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->closed = true;
+  }
+  impl_->cv.notify_all();
+  if (impl_->worker.joinable()) impl_->worker.join();
+}
+
+persist::IAnalysisPersister& Acquisition::persister() noexcept { return *proxy_; }
 
 Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, std::filesystem::path data,
                                                       const std::string& software_version) {
-  AcquisitionCore& core = keep(std::make_unique<AcquisitionCore>());
+  ps::ensure_host_application();
+  auto impl = std::make_unique<AcquisitionImpl>();
+  AcquisitionImpl& core = *impl;
   core.worker = std::thread([&core, url, data = std::move(data), software_version]() mutable {
     core.work(url, std::move(data), software_version);
   });
@@ -339,7 +318,7 @@ Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, st
     core.worker.join();
     return fail(*core.open_error);
   }
-  return std::unique_ptr<Acquisition>(new Acquisition(core));
+  return std::unique_ptr<Acquisition>(new Acquisition(std::move(impl)));
 }
 
 }  // namespace pychron::experiment::store

@@ -22,6 +22,10 @@ class FailingStore final : public ingest::testing::ForwardingStore {
   void fail_after_commit(int times) { fail_after_commit_ = times; }
   // While set, the catalog and analysis lookups a persister makes fail.
   void fail_reads(bool on) { fail_reads_ = on; }
+  // The first `n` lookups succeed and every one after them fails.
+  void fail_reads_after(int n) { reads_left_ = n; }
+  // How many lookups were asked, failed or not.
+  int reads() const { return reads_; }
 
   Result<persistence::IngestAck> ingest(const persistence::IngestItem& item) override {
     if (fail_ingest_ > 0) {
@@ -37,30 +41,40 @@ class FailingStore final : public ingest::testing::ForwardingStore {
   }
 
   Result<std::optional<persistence::Uuid>> find_identifier(const std::string& identifier) override {
-    if (fail_reads_) return read_error();
+    if (read_fails()) return read_error();
     return ForwardingStore::find_identifier(identifier);
   }
   Result<std::optional<persistence::Uuid>> find_analysis(const std::string& identifier, int aliquot,
                                                          int increment) override {
-    if (fail_reads_) return read_error();
+    if (read_fails()) return read_error();
     return ForwardingStore::find_analysis(identifier, aliquot, increment);
   }
   Result<std::optional<persistence::LastAnalysis>> last_analysis(const std::string& identifier) override {
-    if (fail_reads_) return read_error();
+    if (read_fails()) return read_error();
     return ForwardingStore::last_analysis(identifier);
   }
   Result<std::optional<persistence::Uuid>> find_catalog_row(
       persistence::CatalogTable table, const std::vector<persistence::CatalogKeyPart>& key) override {
-    if (fail_reads_) return read_error();
+    if (read_fails()) return read_error();
     return ForwardingStore::find_catalog_row(table, key);
   }
 
  private:
+  bool read_fails() {
+    ++reads_;
+    if (fail_reads_) return true;
+    if (reads_left_ < 0) return false;
+    if (reads_left_ == 0) return true;
+    --reads_left_;
+    return false;
+  }
   static Unexpected<Error> read_error() { return fail(ErrorKind::Io, "connection lost (test)"); }
 
   int fail_ingest_ = 0;
   int fail_after_commit_ = 0;
   bool fail_reads_ = false;
+  int reads_left_ = -1;
+  int reads_ = 0;
 };
 
 }  // namespace pychron::experiment::testing

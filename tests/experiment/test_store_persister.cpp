@@ -2,7 +2,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <QCoreApplication>
+#include <QThread>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <thread>
@@ -246,6 +249,50 @@ TEST_P(StorePersisterTest, CheckQueueNamesATakenRunId) {
   EXPECT_EQ((*lines)[0], "66573-01 is already in the database");
 }
 
+TEST_P(StorePersisterTest, CheckQueueNamesATakenRunIdOnce) {
+  ASSERT_TRUE(persister_->save_analysis(numbered("66573", 1)));
+  const auto before = failing_->reads();
+  auto lines = persister_->check_queue(queue("jan", "co2", {run("66573", 1), run("66573", 1)}));
+  ASSERT_TRUE(lines.has_value());
+  ASSERT_EQ(lines->size(), 1U) << ::testing::PrintToString(*lines);
+  EXPECT_EQ((*lines)[0], "66573-01 is already in the database");
+  // mass spectrometer, extract device, identifier (once), run id (once)
+  EXPECT_EQ(failing_->reads() - before, 4);
+}
+
+TEST_P(StorePersisterTest, CheckQueueSaysOnlyThatTheDatabaseIsGoneWhenALaterReadFails) {
+  // Reads: jan (found), BU (missing: a line is collected), 66573 (fails).
+  failing_->fail_reads_after(2);
+  auto lines = persister_->check_queue(queue("jan", "", {run("BU"), run("66573")}));
+  ASSERT_TRUE(lines.has_value());
+  ASSERT_EQ(lines->size(), 1U) << ::testing::PrintToString(*lines);
+  EXPECT_EQ((*lines)[0].rfind("the database cannot be reached:", 0), 0U) << (*lines)[0];
+}
+
+TEST_P(StorePersisterTest, AliquotsRefuseASpoolThatCannotBeListed) {
+#ifdef _WIN32
+  GTEST_SKIP() << "directory permissions are not portable to Windows";
+#else
+  const fs::path spool_dir = data_ / "spool";
+  fs::create_directories(spool_dir);
+  fs::permissions(spool_dir, fs::perms::none);
+  const bool listed = persist::Spool(spool_dir).pending().has_value();
+  if (listed) {
+    fs::permissions(spool_dir, fs::perms::owner_all);
+    GTEST_SKIP() << "this user can list an unreadable directory (root?)";
+  }
+  auto aliquot = persister_->next_aliquot("66573");
+  fs::permissions(spool_dir, fs::perms::owner_all);
+  EXPECT_FALSE(aliquot.has_value());
+#endif
+}
+
+TEST_P(StorePersisterTest, AliquotsSkipASpooledRecordThatCannotBeRead) {
+  fs::create_directories(data_ / "spool");
+  std::ofstream(data_ / "spool" / "junk.json") << "{ not a record";
+  EXPECT_EQ(persister_->next_aliquot("66573").value(), 1);
+}
+
 TEST_P(StorePersisterTest, CheckQueueSaysWhenTheDatabaseCannotBeReached) {
   failing_->fail_reads(true);
   auto lines = persister_->check_queue(queue("nope", "laser9", {run("BU")}));
@@ -375,7 +422,14 @@ TEST_P(AcquisitionTest, ServesCallsFromOtherThreads) {
   EXPECT_EQ(analyses_of("66573"), 1U);
 }
 
+namespace {
+using Clock = std::chrono::steady_clock;
+// A real-time upper bound: it only tells "done" from "stuck".
+constexpr auto kBound = std::chrono::seconds(30);
+}  // namespace
+
 TEST_P(AcquisitionTest, ServesTwoCallersAtOnce) {
+  const auto begin = Clock::now();
   auto acquisition = open();
   ASSERT_TRUE(acquisition);
   auto& persister = acquisition->persister();
@@ -390,6 +444,7 @@ TEST_P(AcquisitionTest, ServesTwoCallersAtOnce) {
   }
   EXPECT_EQ(failures.load(), 0);
   EXPECT_EQ(analyses_of("66573"), 40U);
+  EXPECT_LT(Clock::now() - begin, kBound);
 }
 
 // A writer saves through the acquisition while another handle, on this
@@ -403,6 +458,7 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
   std::atomic<bool> done{false};
   std::string write_error, read_error;
   int reads = 0;
+  const auto deadline = Clock::now() + kBound;
   {
     Joined writer(std::thread([&] {
       for (int i = 1; i <= kRuns; ++i)
@@ -413,6 +469,10 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
       done = true;
     }));
     while (!done) {
+      if (Clock::now() > deadline) {
+        read_error = "the writer was still not done after 30 s";
+        break;
+      }
       if (auto b = reader->browse({}); !b) {
         read_error = b.error().what;
         break;
@@ -428,34 +488,33 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
   EXPECT_EQ(found->size(), static_cast<std::size_t>(kRuns));
 }
 
-TEST_P(AcquisitionTest, DestroyingItWhileCallsAreWaitingDoesNotHang) {
+TEST_P(AcquisitionTest, ServesManyCallersThenCloses) {
+  const auto begin = Clock::now();
   auto acquisition = open();
   ASSERT_TRUE(acquisition);
-  auto& persister = acquisition->persister();
-  std::atomic<int> saved{0};
-  std::atomic<int> closed{0};
-  std::string unexpected;
+  std::atomic<int> failures{0};
   {
-    Joined caller(std::thread([&] {
-      for (int i = 1; i <= 50; ++i) {
-        auto r = persister.save_analysis(numbered("66573", i));
-        if (r) {
-          ++saved;
-        } else if (r.error().kind == ErrorKind::Io && r.error().what == "the database connection is closed") {
-          ++closed;
-        } else {
-          unexpected = r.error().what;
-        }
-      }
-    }));
-    while (saved.load() == 0 && closed.load() == 0) std::this_thread::yield();
-    acquisition.reset();
+    std::vector<std::unique_ptr<Joined>> callers;
+    callers.reserve(3);
+    for (int c = 0; c < 3; ++c)
+      callers.push_back(std::make_unique<Joined>(std::thread([&, c] {
+        for (int i = 1; i <= 20; ++i)
+          if (!acquisition->persister().save_analysis(numbered("66573", c * 20 + i))) ++failures;
+      })));
   }
-  EXPECT_EQ(unexpected, "");
-  EXPECT_EQ(saved.load() + closed.load(), 50);
-  EXPECT_GE(saved.load(), 1);
-  // What was saved is in the store.
-  EXPECT_EQ(analyses_of("66573"), static_cast<std::size_t>(saved.load()));
+  acquisition.reset();
+  EXPECT_EQ(failures.load(), 0);
+  EXPECT_EQ(analyses_of("66573"), 60U);
+  EXPECT_LT(Clock::now() - begin, kBound);
+}
+
+// The Qt application a store needs is made by the caller of open_acquisition,
+// not by the worker that opens the store.
+TEST_P(AcquisitionTest, TheQtApplicationBelongsToTheCallersThread) {
+  auto acquisition = open();
+  ASSERT_TRUE(acquisition);
+  ASSERT_NE(QCoreApplication::instance(), nullptr);
+  EXPECT_EQ(QCoreApplication::instance()->thread(), QThread::currentThread());
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, AcquisitionTest, ::testing::ValuesIn(pt::engines()));
@@ -471,7 +530,7 @@ TEST(OpenAcquisition, RefusesASchemaThatIsBehind) {
   fs::remove_all(data, ignored);
 }
 
-TEST(OpenAcquisition, AFailureLeavesNoThread) {
+TEST(OpenAcquisition, AFailureToOpenIsReturned) {
   const fs::path data = scratch_dir();
   const auto begin = std::chrono::steady_clock::now();
   auto acquisition = store::open_acquisition("sqlite:/nonexistent-dir-for-pychron/none.db", data, "test");

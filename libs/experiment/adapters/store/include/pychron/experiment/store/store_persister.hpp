@@ -58,7 +58,7 @@ class StorePersister final : public persist::IAnalysisPersister {
   std::map<std::string, int> issued_;  // identifier -> highest aliquot handed out
 };
 
-struct AcquisitionCore;
+struct AcquisitionImpl;
 
 // A store opened for an acquisition program, and its persister. Every call on
 // persister() runs on one thread owned by this object, the one that opened
@@ -72,11 +72,8 @@ struct AcquisitionCore;
 // length of the call, exactly as for a file write, and the worker itself never
 // waits for simulated time.
 //
-// Destroying it finishes the call in progress and those already queued, closes
-// the store on the worker and joins. A call that comes during or after that
-// returns an Io error ("the database connection is closed") instead of
-// blocking: what persister() returns stays valid to call for the life of the
-// process, though nothing is behind it any more.
+// Destroying it finishes the calls already queued, closes the store on the
+// worker and joins. No call may be in progress or made once destruction begins.
 class Acquisition {
  public:
   ~Acquisition();
@@ -90,15 +87,18 @@ class Acquisition {
  private:
   friend Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string&, std::filesystem::path,
                                                                const std::string&);
-  explicit Acquisition(AcquisitionCore& core) : core_(core) {}
+  explicit Acquisition(std::unique_ptr<AcquisitionImpl> impl);
 
-  AcquisitionCore& core_;
+  std::unique_ptr<AcquisitionImpl> impl_;
+  std::unique_ptr<persist::IAnalysisPersister> proxy_;  // marshals to impl_'s worker
 };
 
 // Opens `url` with migrate = false on the worker and registers the acquisition
 // client. A failure to open or register is returned here, and no thread is
 // left running. A schema that is behind is refused with the command that
-// brings it up to date, naming the database (without its password).
+// brings it up to date, naming the database (without its password). Call from
+// the program's main thread: the Qt application object the store needs is made
+// on the calling thread, not on the worker.
 Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, std::filesystem::path data,
                                                       const std::string& software_version);
 

@@ -291,3 +291,9 @@ Sha256Digest to_digest(const QVariant& v) {
 }
 
 }  // namespace pychron::persistence::detail
+
+namespace pychron::persistence {
+
+void ensure_host_application() { detail::ensure_qt_application(); }
+
+}  // namespace pychron::persistence

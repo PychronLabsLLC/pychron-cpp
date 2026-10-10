@@ -719,6 +719,12 @@ class IStore {
 
 Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config);
 
+// QtSql needs an application object. A host that is not a Qt application gets
+// a private one, made on the calling thread and never destroyed; a host with
+// its own is left alone. open_store does this itself; call it first, from the
+// program's main thread, when the first store will be opened on another thread.
+void ensure_host_application();
+
 // True for the error IStore::ingest returns when an analysis names an
 // identifier, mass spectrometer or extract device that is not in the catalog.
 // Nothing was written; the item can be ingested once the row exists.
