@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 
+#include "exp_store.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/process.hpp"
 #include "pychron/core/virtual_clock.hpp"
@@ -59,7 +60,8 @@ namespace {
 constexpr const char* kExpUsage =
     "usage: elctl [-c <extraction_line.toml>] [--sim] exp <validate|run> <experiment.toml>\n"
     "         [--lab <dir>] [--data <dir>] [--spectrometer <file>] [--canvas <file>]\n"
-    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max]\n"
+    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max] [--db <url>]\n"
+    "       --db: write the runs to this database (an install's own is the default); without one, to files under --data\n"
     "       --sim-speed (with --sim): simulated time, <x> times faster than real time; max does not wait at all\n"
     "       elctl exp notify [--lab <dir>]   send a test notification (<lab>/notifications.toml)\n";
 
@@ -74,6 +76,7 @@ std::string clock_text(experiment::Duration d) {
 struct ExpArgs {
   std::string verb;
   fs::path queue_file, lab, data, spectrometer, canvas;
+  std::string db;  // --db, else the install's; empty: records are files
   std::optional<std::size_t> from;
   bool resume = false, dry_run = false;
   double sim_speed = 0;  // 0: real time; infinity: --sim-speed max
@@ -92,8 +95,19 @@ class Exp {
       return kFailed;
     }
     queue_ = std::move(*q);
+    // Opened here, on the main thread, before anything is printed or started.
+    // Declared (as a member) before the session, which is destroyed first.
+    if (a_.verb == "run" && !a_.db.empty()) {
+      auto opened = open_exp_store(a_.db, a_.data);
+      if (!opened) {
+        io_.err << "error: " << opened.error().what << '\n';
+        return kFailed;
+      }
+      store_ = std::move(*opened);
+    }
     const bool ok = report();
-    if (a_.verb == "validate" || a_.dry_run) return ok ? kOk : kFailed;
+    if (a_.verb == "validate") return ok ? kOk : kFailed;
+    if (a_.dry_run) return ok && store_accepts() ? kOk : kFailed;
     if (!ok) {
       io_.err << "error: the queue has errors; nothing was run\n";
       return kFailed;
@@ -122,6 +136,27 @@ class Exp {
     }
     if (check.ok()) io_.out << "ok: " << a_.queue_file.string() << '\n';
     return check.ok();
+  }
+
+  // What the database would refuse of the queue, as error lines. True when it
+  // would take it (or there is no database).
+  bool store_accepts() {
+    if (!store_) return true;
+    const auto problems = store_->persister().check_queue(queue_);
+    if (!problems) {
+      complain_lines("the queue cannot be saved: " + problems.error().what);
+      return false;
+    }
+    if (problems->empty()) return true;
+    complain("error: the queue cannot be saved:");
+    for (const auto& line : *problems) complain("error: " + line);
+    return false;
+  }
+
+  // An error whose text has several lines, each as its own error line.
+  void complain_lines(const std::string& text) {
+    std::istringstream lines(text);
+    for (std::string line; std::getline(lines, line);) complain("error: " + line);
   }
 
   // Sends a test message on every configured channel and reports each.
@@ -267,7 +302,7 @@ class Exp {
       from = *row;
     }
     lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}},
-                            lab::SessionOptions{a_.data, options, {}});
+                            lab::SessionOptions{a_.data, options, {}, store_ ? &store_->persister() : nullptr});
     // What the lab asks that this session cannot do (a camera it may not
     // center holes with): a queue that uses that device will not start.
     for (const auto& p : session.problems()) say("warning: " + p);
@@ -333,7 +368,7 @@ class Exp {
 
     interrupt_count() = 0;
     if (auto r = session.start(queue_, from); !r) {
-      complain("error: " + r.error().what);
+      complain_lines(r.error().what);
       return kFailed;
     }
     // The end of the queue and the operator's interrupt are the outside
@@ -365,9 +400,12 @@ class Exp {
     say("queue " + std::string(executor::to_string(result.end)) + (result.reason.empty() ? "" : ": " + result.reason));
     int ok_runs = 0;
     for (const auto& r : result.runs) ok_runs += r.state == run::RunState::Success ? 1 : 0;
-    say(std::to_string(ok_runs) + "/" + std::to_string(result.runs.size()) + " run(s) succeeded; records in " +
-        (a_.data / "records").string());
-    if (session.pending_saves() > 0) say("warning: " + std::to_string(session.pending_saves()) + " record(s) still in the spool");
+    say(std::to_string(ok_runs) + "/" + std::to_string(result.runs.size()) + " run(s) succeeded; " +
+        (store_ ? "in " + show_database(a_.db) : "records in " + (a_.data / "records").string()));
+    if (session.pending_saves() > 0) {
+      say("warning: " + std::to_string(session.pending_saves()) + " record(s) " +
+          (store_ ? "waiting in " + (a_.data / "spool").string() : std::string("still in the spool")));
+    }
     const bool good = result.end == executor::QueueEnd::Completed || result.end == executor::QueueEnd::Stopped;
     return good ? kOk : kFailed;
   }
@@ -378,6 +416,9 @@ class Exp {
   lab::Lab lab_;
   QueueSpec queue_;
   std::mutex out_mutex_;
+  // After everything the session's threads may call it from is gone: members
+  // outlive execute()'s locals, the session among them.
+  std::unique_ptr<ExpStore> store_;
 };
 
 }  // namespace
@@ -399,11 +440,12 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
       if (i + 1 >= args.size()) return std::nullopt;
       return args[++i];
     };
-    if (x == "--lab" || x == "--data" || x == "--spectrometer" || x == "--canvas" || x == "--from" ||
+    if (x == "--lab" || x == "--db" || x == "--data" || x == "--spectrometer" || x == "--canvas" || x == "--from" ||
         x == "--sim-speed") {
       auto v = value();
       if (!v) return usage(x + " needs a value");
       if (x == "--lab") a.lab = *v;
+      else if (x == "--db") a.db = *v;
       else if (x == "--data") a.data = *v;
       else if (x == "--spectrometer") a.spectrometer = *v;
       else if (x == "--canvas") a.canvas = *v;
@@ -442,6 +484,7 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
   if (a.data.empty() && !globals.data.empty()) a.data = globals.data;
   if (a.spectrometer.empty() && !globals.spectrometer.empty()) a.spectrometer = globals.spectrometer;
   if (a.canvas.empty() && !globals.canvas.empty()) a.canvas = globals.canvas;
+  if (a.db.empty()) a.db = globals.database;
   if (a.verb == "notify") {
     if (!a.queue_file.empty()) return usage("notify takes no experiment.toml");
     if (a.lab.empty()) a.lab = ".";

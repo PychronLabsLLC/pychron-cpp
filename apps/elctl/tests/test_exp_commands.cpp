@@ -17,6 +17,16 @@
 #include "exp.hpp"
 #include "pychron/scripting/script_host.hpp"
 
+#ifdef PYCHRON_ELCTL_HAS_STORE
+#include <algorithm>
+
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QString>
+
+#include "pychron/persistence/store.hpp"
+#endif
+
 namespace elctl::testing {
 namespace {
 
@@ -463,6 +473,139 @@ TEST_F(ElctlExpTest, UsageErrors) {
   auto missing = exp({"validate", lab("nope.toml")});
   EXPECT_EQ(missing.code, 1);
 }
+
+
+#ifndef PYCHRON_ELCTL_HAS_STORE
+
+TEST_F(ElctlExpTest, WithoutPersistenceADatabaseIsRefused) {
+  auto o = exp({"run", lab("experiment.toml"), "--db", "sqlite:" + path("x.db").string()}, true);
+  EXPECT_NE(o.code, 0);
+  EXPECT_TRUE(contains(o.err, "built without the DVC store")) << o.err;
+}
+
+#else
+
+// An instrument install's queue runs against its database; runs go to the
+// store through the persister and no record file is written beside them.
+class ElctlExpStoreTest : public ElctlTest {
+ protected:
+  void SetUp() override {
+    ElctlTest::SetUp();
+    root_ = path("lab");
+    const auto o = run_raw({"init", "argus", "--root", root_.string(), "--name", "lab", "--yes"});
+    ASSERT_EQ(o.code, 0) << o.out << o.err;
+  }
+
+  Outcome run_queue(const fs::path& queue, std::vector<std::string> more = {}) const {
+    std::vector<std::string> args{"--install", "lab", "--sim", "exp", "run", queue.string(), "--sim-speed", "max"};
+    args.insert(args.end(), more.begin(), more.end());
+    return run_raw(args);
+  }
+
+  std::string install_db() const { return "sqlite:" + (root_ / "data" / "pychron.db").string(); }
+
+  // The queue file with `from` (first occurrence) replaced by `to`.
+  fs::path queue_with(const std::string& from, const std::string& to) const {
+    std::ifstream in(root_ / "experiment.toml");
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto at = text.find(from);
+    EXPECT_NE(at, std::string::npos);
+    text.replace(at, from.size(), to);
+    const auto out = path("changed.toml");
+    std::ofstream(out) << text;
+    return out;
+  }
+
+  std::vector<std::string> runids(const std::string& url) const {
+    auto store = pychron::persistence::open_store(pychron::persistence::StoreConfig{url, false});
+    EXPECT_TRUE(store);
+    std::vector<std::string> ids;
+    if (!store) return ids;
+    auto found = (*store)->find_analyses({});
+    EXPECT_TRUE(found);
+    if (found)
+      for (const auto& a : *found) ids.push_back(a.runid);
+    std::sort(ids.begin(), ids.end());
+    return ids;
+  }
+
+  fs::path root_;
+};
+
+TEST_F(ElctlExpStoreTest, AnInstallsQueueGoesToItsDatabase) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto began = std::chrono::steady_clock::now();
+  const auto o = run_queue(root_ / "experiment.toml");
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::seconds(60));
+  EXPECT_TRUE(contains(o.out, "5/5 run(s) succeeded; in " + install_db() + "\n")) << o.out;
+  EXPECT_FALSE(contains(o.out, "records in")) << o.out;
+  EXPECT_EQ(runids(install_db()), (std::vector<std::string>{"a-01", "a-02", "a-03", "ba-01", "ba-02"}));
+  EXPECT_FALSE(fs::exists(root_ / "data" / "records" / "ba" / "ba-1.json"));
+  EXPECT_TRUE(!fs::exists(root_ / "data" / "spool") || fs::is_empty(root_ / "data" / "spool"));
+}
+
+TEST_F(ElctlExpStoreTest, DbOverridesTheInstall) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const std::string other = "sqlite:" + path("other.db").string();
+  ASSERT_TRUE(pychron::persistence::open_store(pychron::persistence::StoreConfig{other, true}));
+  const auto seeded = run_raw({"entry", "seed", (root_ / "seed.toml").string(), "--db", other});
+  ASSERT_EQ(seeded.code, 0) << seeded.out << seeded.err;
+  const auto o = run_queue(root_ / "experiment.toml", {"--db", other});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "; in " + other + "\n")) << o.out;
+  EXPECT_EQ(runids(other).size(), 5U);
+  EXPECT_TRUE(runids(install_db()).empty());
+}
+
+TEST_F(ElctlExpStoreTest, AQueueTheDatabaseCannotTakeIsNotRun) {
+  const auto queue = queue_with("identifier = \"ba\"", "identifier = \"zz9\"");
+  const auto o = run_queue(queue);
+  EXPECT_NE(o.code, 0) << o.out;
+  EXPECT_TRUE(contains(o.err, "error: identifier 'zz9' is not in the database")) << o.err;
+  EXPECT_FALSE(contains(o.out, "run 0")) << o.out;
+  EXPECT_TRUE(runids(install_db()).empty());
+}
+
+TEST_F(ElctlExpStoreTest, DryRunSaysWhatTheDatabaseLacks) {
+  const auto queue = queue_with("identifier = \"ba\"", "identifier = \"zz9\"");
+  const auto o = run_queue(queue, {"--dry-run"});
+  EXPECT_NE(o.code, 0) << o.out;
+  EXPECT_TRUE(contains(o.err, "error: identifier 'zz9' is not in the database")) << o.err;
+  EXPECT_TRUE(runids(install_db()).empty());
+  // A queue the database can take is just checked.
+  const auto fine = run_queue(root_ / "experiment.toml", {"--dry-run"});
+  EXPECT_EQ(fine.code, 0) << fine.out << fine.err;
+}
+
+TEST_F(ElctlExpStoreTest, ADatabaseThatCannotBeOpenedIsFatal) {
+  const auto o = run_queue(root_ / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db"});
+  EXPECT_NE(o.code, 0);
+  EXPECT_FALSE(contains(o.out, "queue ")) << o.out;
+  EXPECT_FALSE(o.err.empty());
+}
+
+TEST_F(ElctlExpStoreTest, ASchemaThatIsBehindSaysWhatToRun) {
+  {
+    auto store = pychron::persistence::open_store(pychron::persistence::StoreConfig{install_db(), false});
+    ASSERT_TRUE(store);
+  }
+  {
+    QSqlDatabase d = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("exp-store-test"));
+    d.setDatabaseName(QString::fromStdString((root_ / "data" / "pychron.db").string()));
+    ASSERT_TRUE(d.open());
+    QSqlQuery q(d);
+    ASSERT_TRUE(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version = (SELECT max(version) FROM schema_version)")));
+    d.close();
+  }
+  QSqlDatabase::removeDatabase(QStringLiteral("exp-store-test"));
+  const auto o = run_queue(root_ / "experiment.toml");
+  EXPECT_NE(o.code, 0);
+  EXPECT_TRUE(contains(o.err, "elctl db migrate --db")) << o.err;
+  EXPECT_FALSE(contains(o.out, "queue ")) << o.out;
+}
+
+#endif
 
 }  // namespace
 }  // namespace elctl::testing

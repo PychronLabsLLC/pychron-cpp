@@ -12,6 +12,7 @@
 //   --spectrometer <file>   spectrometer.toml (default: <lab>/spectrometer.toml if present)
 //   --canvas <file>         canvas.toml (default: next to the -c config, if present)
 //   --sim-speed <x>         with --sim: run simulated time x times faster than real time
+//   --db <url>              write the runs to this database (default: the install's; none: records are files)
 //
 // Interrupts while running: the first stops after the current run, the
 // second cancels it, the third aborts.
@@ -31,6 +32,8 @@ struct ExpGlobals {
   bool sim = false;
   // From --install: used where the corresponding exp option is not given.
   std::filesystem::path lab, spectrometer, canvas, data;
+  // The install's database url, password included (empty: none, or built without the store).
+  std::string database;
 };
 
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);

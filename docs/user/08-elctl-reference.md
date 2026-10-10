@@ -411,7 +411,7 @@ Run a queue.
 
 ```bash
 elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
-              [--canvas FILE] [--from ROW | --resume] [--dry-run] [--sim-speed X]
+              [--canvas FILE] [--from ROW | --resume] [--dry-run] [--sim-speed X] [--db URL]
 ```
 
 | Flag | Meaning |
@@ -422,8 +422,9 @@ elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
 | `--canvas FILE` | The canvas file. Default: `canvas.toml` next to the line config if it exists. |
 | `--from ROW` | Start at this row number (0 is the first row, as printed by validate). |
 | `--resume` | Continue where a stopped or crashed queue left off, using the saved state in the data folder. Exclusive with `--from`. |
-| `--dry-run` | Validate and print the queue (as `exp validate`) and stop. |
+| `--dry-run` | Validate and print the queue (as `exp validate`) and stop. With a database (below), also says what it would refuse of the queue. |
 | `--sim-speed X` | Run simulated time `X` times faster than real time. Needs `--sim`, and `X` must be positive; `max` does not wait at all. What a simulated queue measures is in [The simulated lab](../simulator.md). |
+| `--db URL` | Write the runs to this database (`sqlite:<file>` or `postgresql://...`), which must already have its schema (`elctl db migrate`). Default: the install's own database. |
 
 It first prints the same report as `exp validate`; if the queue has errors, it
 prints `error: the queue has errors; nothing was run` and exits 1. While running
@@ -431,10 +432,18 @@ it prints progress: `run N <identifier>: started`, state changes, notes,
 `conditional <name> tripped: ...`, waits (`waiting 0:00:05: <reason>`),
 notifications, and `run N <id>-<aliquot><step>: <state>`.
 
+Where the runs go: with `--db`, or under `--install` (an instrument's own
+database), each finished run is written to the database, and the queue does
+not start if the database lacks an identifier, mass spectrometer or extract
+device it names (`error: identifier 'zz9' is not in the database`); a record
+the database cannot take at once waits in `<DIR>/spool`. With neither, records
+are files under `<DIR>/records`, as above.
+
 **Ctrl-C** is staged: the first stops the queue after the current run, a second
 cancels the run in progress, a third aborts. At the end it prints
-`queue <end>`, `N/M run(s) succeeded; records in <DIR>/records`, and warns of any
-records still in the spool.
+`queue <end>`, `N/M run(s) succeeded; records in <DIR>/records` (`in <database>`, without its
+password, when the runs went to one), and warns of any records still in the
+spool.
 
 Exit 0 when the queue completed or was stopped; 1 if it was cancelled, aborted or
 failed, the line could not start, or the queue file would not load; 2 for a

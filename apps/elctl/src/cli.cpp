@@ -25,6 +25,7 @@
 #include "flux.hpp"
 #include "laser.hpp"
 #include "import.hpp"
+#include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
 #include "setup.hpp"
 #include "line.hpp"
@@ -66,7 +67,7 @@ constexpr const char* kUsageText =
     "  exp validate <experiment.toml> [--lab <dir>] [--spectrometer <file>]\n"
     "                              check a queue against the lab's plans, scripts and conditionals\n"
     "  exp run <experiment.toml> [--lab <dir>] [--data <dir>] [--spectrometer <file>]\n"
-    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max]\n"
+    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max] [--db <url>]\n"
     "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
     "  exp notify [--lab <dir>]    send a test message on each channel in <lab>/notifications.toml\n"
     "  laser trays                 tray maps and their stage calibrations\n"
@@ -772,6 +773,17 @@ int run(const std::vector<std::string>& args, Io io) {
       globals.exp.spectrometer = install->path(install->spectrometer);
       globals.exp.canvas = install->path(install->canvas);
       globals.exp.data = install->path(install->data.empty() ? "data" : install->data);
+#ifdef PYCHRON_ELCTL_HAS_STORE
+      // An instrument's runs go to its database; a server's password is read
+      // from the install here, and only a failure of that is said.
+      if (install->kind == "instrument" && !install->database.empty()) {
+        if (auto url = pychron::setup::database_url(*install)) {
+          globals.exp.database = *url;
+        } else {
+          io.err << "warning: the install's database is not used: " << url.error().what << "\n";
+        }
+      }
+#endif
     } else if (globals.install) {
       io.err << "error: " << install.error().what << "\n";
       return kFailed;

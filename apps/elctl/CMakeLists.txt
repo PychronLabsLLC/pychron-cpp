@@ -16,13 +16,17 @@ set(PYCHRON_ELCTL_ENTRY_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/entry_stub.cpp")
 set(PYCHRON_ELCTL_EXPORT_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/export_stub.cpp")
 set(PYCHRON_ELCTL_FLUX_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/flux_stub.cpp")
 set(PYCHRON_ELCTL_DB_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/db_stub.cpp")
+# `exp run`'s database (src/exp_store.cpp) is split the same way.
+set(PYCHRON_ELCTL_EXP_STORE_STUB "${CMAKE_CURRENT_SOURCE_DIR}/src/exp_store_stub.cpp")
 if(TARGET pychron_persistence)
   list(REMOVE_ITEM PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
-    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}")
+    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}"
+    "${PYCHRON_ELCTL_EXP_STORE_STUB}")
 else()
-  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|flux|db)[^/]*\\.cpp$")
+  list(FILTER PYCHRON_ELCTL_SOURCES EXCLUDE REGEX "/src/(import|entry|export|flux|db|exp_store)[^/]*\\.cpp$")
   list(APPEND PYCHRON_ELCTL_SOURCES "${PYCHRON_ELCTL_IMPORT_STUB}" "${PYCHRON_ELCTL_ENTRY_STUB}"
-    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}")
+    "${PYCHRON_ELCTL_EXPORT_STUB}" "${PYCHRON_ELCTL_FLUX_STUB}" "${PYCHRON_ELCTL_DB_STUB}"
+    "${PYCHRON_ELCTL_EXP_STORE_STUB}")
 endif()
 
 add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})
@@ -35,7 +39,7 @@ if(TARGET pychron_persistence)
   # processing_store: the reduction `import verify` compares legacy ages with,
   # and the source `export` reads.
   target_link_libraries(pychron_elctl_lib PUBLIC pychron_persistence pychron::dvc pychron::ingest pychron::entry
-    pychron::processing_store pychron::processing
+    pychron::processing_store pychron::processing pychron::experiment_store
     PRIVATE nlohmann_json::nlohmann_json)
   target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_STORE=1 PYCHRON_ELCTL_IMPORT
     PRIVATE PYCHRON_ELCTL_VERSION="${PROJECT_VERSION}")
