@@ -523,9 +523,11 @@ class ElctlExpStoreTest : public ElctlTest {
     if (!store) return ids;
     auto found = (*store)->find_analyses({});
     EXPECT_TRUE(found);
-    if (found)
+    if (found) {
+      // In the order the queue ran them: by timestamp (not relying on the order find_analyses returns).
+      std::sort(found->begin(), found->end(), [](const auto& l, const auto& r) { return l.timestamp < r.timestamp; });
       for (const auto& a : *found) ids.push_back(a.runid);
-    std::sort(ids.begin(), ids.end());
+    }
     return ids;
   }
 
@@ -540,7 +542,7 @@ TEST_F(ElctlExpStoreTest, AnInstallsQueueGoesToItsDatabase) {
   EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::seconds(60));
   EXPECT_TRUE(contains(o.out, "5/5 run(s) succeeded; in " + install_db() + "\n")) << o.out;
   EXPECT_FALSE(contains(o.out, "records in")) << o.out;
-  EXPECT_EQ(runids(install_db()), (std::vector<std::string>{"a-01", "a-02", "a-03", "ba-01", "ba-02"}));
+  EXPECT_EQ(runids(install_db()), (std::vector<std::string>{"ba-01", "a-01", "a-02", "a-03", "ba-02"}));
   EXPECT_FALSE(fs::exists(root_ / "data" / "records" / "ba" / "ba-1.json"));
   EXPECT_TRUE(!fs::exists(root_ / "data" / "spool") || fs::is_empty(root_ / "data" / "spool"));
 }
@@ -580,9 +582,55 @@ TEST_F(ElctlExpStoreTest, DryRunSaysWhatTheDatabaseLacks) {
 
 TEST_F(ElctlExpStoreTest, ADatabaseThatCannotBeOpenedIsFatal) {
   const auto o = run_queue(root_ / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db"});
+  EXPECT_TRUE(contains(o.err, "x.db") || contains(o.err, "unable to open database")) << o.err;
   EXPECT_NE(o.code, 0);
   EXPECT_FALSE(contains(o.out, "queue ")) << o.out;
-  EXPECT_FALSE(o.err.empty());
+  EXPECT_TRUE(contains(o.err, "error: ")) << o.err;
+  EXPECT_FALSE(fs::exists(root_ / "data" / "records")) << o.out;
+}
+
+// The install names a server database whose credentials file cannot be read:
+// the site entry is edited by hand to say so.
+class ElctlExpUnreadableDatabaseTest : public ElctlExpStoreTest {
+ protected:
+  void SetUp() override {
+    ElctlExpStoreTest::SetUp();
+    std::ifstream in(path("site.toml"));
+    std::string site((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto at = site.find("database = '");
+    ASSERT_NE(at, std::string::npos) << site;
+    const auto end = site.find('\n', at);
+    site.replace(at, end - at, "database = 'postgresql://jross@db.lab/pychron'");
+    std::ofstream(path("site.toml")) << site;
+    fs::create_directories(root_ / ".pychron");
+    std::ofstream(root_ / ".pychron" / "credentials.toml") << "[database\npassword = \"s3cret\n";
+  }
+};
+
+TEST_F(ElctlExpUnreadableDatabaseTest, AnInstallWhosePasswordCannotBeReadIsNotRun) {
+  for (const char* extra : {"", "--dry-run"}) {
+    const auto o = run_queue(root_ / "experiment.toml", extra[0] != '\0' ? std::vector<std::string>{extra} : std::vector<std::string>{});
+    EXPECT_NE(o.code, 0) << o.out;
+    EXPECT_TRUE(contains(o.err, "error: the installation's database:")) << o.err;
+    EXPECT_FALSE(contains(o.err, "s3cret")) << o.err;
+    EXPECT_FALSE(contains(o.out, "queue ")) << o.out;
+  }
+  EXPECT_FALSE(fs::exists(root_ / "data" / "records"));
+  // Only exp run minds.
+  const auto v = run_raw({"--install", "lab", "--sim", "exp", "validate", (root_ / "experiment.toml").string()});
+  EXPECT_EQ(v.code, 0) << v.out << v.err;
+  EXPECT_FALSE(contains(v.err, "installation's database")) << v.err;
+}
+
+TEST_F(ElctlExpUnreadableDatabaseTest, DbOverridesAnUnreadableInstallDatabase) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const std::string other = "sqlite:" + path("other.db").string();
+  ASSERT_TRUE(pychron::persistence::open_store(pychron::persistence::StoreConfig{other, true}));
+  const auto seeded = run_raw({"entry", "seed", (root_ / "seed.toml").string(), "--db", other});
+  ASSERT_EQ(seeded.code, 0) << seeded.out << seeded.err;
+  const auto o = run_queue(root_ / "experiment.toml", {"--db", other});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_EQ(runids(other).size(), 5U);
 }
 
 TEST_F(ElctlExpStoreTest, ASchemaThatIsBehindSaysWhatToRun) {

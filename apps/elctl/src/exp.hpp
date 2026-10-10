@@ -34,6 +34,8 @@ struct ExpGlobals {
   std::filesystem::path lab, spectrometer, canvas, data;
   // The install's database url, password included (empty: none, or built without the store).
   std::string database;
+  // Why the install's database url could not be made (database is then empty); `exp run` refuses to start.
+  std::string database_error;
 };
 
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);

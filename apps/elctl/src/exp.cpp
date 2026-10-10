@@ -95,6 +95,10 @@ class Exp {
       return kFailed;
     }
     queue_ = std::move(*q);
+    if (a_.verb == "run" && a_.db.empty() && !g_.database_error.empty()) {
+      io_.err << "error: the installation's database: " << g_.database_error << '\n';
+      return kFailed;
+    }
     // Opened here, on the main thread, before anything is printed or started.
     // Declared (as a member) before the session, which is destroyed first.
     if (a_.verb == "run" && !a_.db.empty()) {

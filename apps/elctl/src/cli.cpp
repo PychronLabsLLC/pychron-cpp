@@ -775,12 +775,13 @@ int run(const std::vector<std::string>& args, Io io) {
       globals.exp.data = install->path(install->data.empty() ? "data" : install->data);
 #ifdef PYCHRON_ELCTL_HAS_STORE
       // An instrument's runs go to its database; a server's password is read
-      // from the install here, and only a failure of that is said.
+      // from the install here. A failure to read it is kept for `exp run`,
+      // which refuses to start (rather than write files) without --db.
       if (install->kind == "instrument" && !install->database.empty()) {
         if (auto url = pychron::setup::database_url(*install)) {
           globals.exp.database = *url;
         } else {
-          io.err << "warning: the install's database is not used: " << url.error().what << "\n";
+          globals.exp.database_error = url.error().what;
         }
       }
 #endif

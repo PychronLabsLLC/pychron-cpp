@@ -417,7 +417,7 @@ elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
 | Flag | Meaning |
 |---|---|
 | `--lab DIR` | The lab: where plans, scripts, conditionals, patterns, trays and `notifications.toml` are found. Default: see [How elctl finds its files](#how-elctl-finds-its-files). |
-| `--data DIR` | Where records are written (`DIR/records`), with the spool and the executor's saved state. Default `<lab>/data`. |
+| `--data DIR` | Where records are written (`DIR/records`), with the spool and the executor's saved state. Default `<lab>/data`. A database that cannot be opened, or an install's database whose password cannot be read, stops `exp run` before it starts. |
 | `--spectrometer FILE` | The spectrometer config. Default: the install's, or `<lab>/spectrometer.toml` if present. Without one the queue runs without a spectrometer. |
 | `--canvas FILE` | The canvas file. Default: `canvas.toml` next to the line config if it exists. |
 | `--from ROW` | Start at this row number (0 is the first row, as printed by validate). |
