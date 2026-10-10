@@ -2,7 +2,7 @@ name = "ngx"
 title = "Isotopx NGX"
 kind = "instrument"
 summary = "NGX over its controller's ASCII protocol: nine Faradays and an ion counter"
-version = 1
+version = 2
 includes = ["instrument-common"]
 
 [values]
@@ -87,7 +87,7 @@ when = "ngx_user != \"\""
 secret = true
 
 [[files]]
-copy = "@examples/tables/ngx_argon/"
+copy = "tables/ngx_argon/"
 to = "tables/ngx_argon"
 
 [[files]]

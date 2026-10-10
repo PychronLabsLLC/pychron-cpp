@@ -20,10 +20,12 @@
 
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
+#include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
 
 using namespace pychron;
 using namespace pychron::setup;
@@ -76,6 +78,22 @@ void expect_queue_checks(const SiteInstall& site) {
   const auto check = experiment::lab::check_lab_queue(lab, *queue);
   for (const auto& d : check.all())
     EXPECT_NE(d.severity, experiment::Severity::Error) << site.profile << ": " << experiment::lab::describe(d);
+}
+
+// Every '@' alias of a plan answers: a valve name, or a time.
+class AnyAlias final : public experiment::plan::IAliasResolver {
+ public:
+  std::optional<experiment::ParamValue> resolve_alias(std::string_view key) const override {
+    if (key.starts_with("valves.")) return experiment::ParamValue{std::string("V1")};
+    return experiment::ParamValue{std::int64_t{20}};
+  }
+};
+
+double isotope_mass(const std::string& isotope) {
+  static const std::map<std::string, double> masses{{"Ar36", 35.967545105}, {"Ar37", 36.9667759},
+                                                    {"Ar38", 37.9627322},   {"Ar39", 38.964313},
+                                                    {"Ar40", 39.9623831237}};
+  return masses.at(isotope);
 }
 
 }  // namespace
@@ -192,6 +210,66 @@ TEST_P(InstrumentProfile, ShipsASeedThatTheDefaultsAndTheExampleQueueAgreeWith) 
     EXPECT_EQ(r.sample.project, "references");
   }
   EXPECT_TRUE(blank);
+  fs::remove_all(root);
+}
+
+// A hop puts one isotope on its reference detector and the rest of its isotopes on theirs by one
+// magnet position; so the install's table must give those pairs the same position (to within
+// half the peak-center scan window, the most the scan would move it).
+TEST_P(InstrumentProfile, EveryInstalledPlanPutsItsIsotopesOnItsDetectors) {
+  const auto& [name, simulation] = GetParam();
+  const fs::path root = scratch(name);
+  install(library(), name, {{"simulation", Value{simulation}}}, root);
+
+  auto spec = toml::parse_file((root / "spectrometer.toml").string());
+  ASSERT_TRUE(spec) << spec.error().description();
+  const std::string table_name = spec.table()["magnet"]["field_table"].value_or(std::string{});
+  ASSERT_FALSE(table_name.empty());
+  auto file = spectrometer::cfg::resolve_current_table(root, table_name);
+  ASSERT_TRUE(file) << file.error().what;
+  std::ifstream table_in(*file);
+  const std::string table_text((std::istreambuf_iterator<char>(table_in)), std::istreambuf_iterator<char>());
+  auto table = spectrometer::parse_field_table(table_text);
+  ASSERT_TRUE(table) << table.error().what;
+
+  auto peak = toml::parse_file((root / "peak_center.toml").string());
+  ASSERT_TRUE(peak) << peak.error().description();
+  const double window = peak.table()["default"]["window"].value_or(0.0);
+  ASSERT_GT(window, 0.0);
+  const double tolerance = window / 2;
+
+  const AnyAlias aliases;
+  const experiment::plan::PlanResolvers resolvers{&aliases, nullptr};
+  std::size_t plans = 0;
+  for (const auto& entry : fs::directory_iterator(root / "plans")) {
+    if (entry.path().extension() != ".toml") continue;
+    ++plans;
+    const std::string label = name + ": " + entry.path().filename().string();
+    std::ifstream in(entry.path());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto tmpl = experiment::plan::parse_plan_template(text, label);
+    ASSERT_TRUE(tmpl) << label << ": " << tmpl.error().what;
+    auto loaded = experiment::plan::load_plan(*tmpl, {}, resolvers);
+    ASSERT_TRUE(loaded) << label << ": " << loaded.error().what;
+    const auto& plan = loaded->plan;
+    int h = 0;
+    for (const auto& hop : plan.main.hops) {
+      const std::string where = label + " hop " + std::to_string(h++);
+      const auto target = experiment::plan::hop_target(plan, hop);
+      ASSERT_TRUE(target) << where;
+      ASSERT_FALSE(target->isotope.empty()) << where;
+      auto reference = table->value_for(isotope_mass(target->isotope), target->detector);
+      ASSERT_TRUE(reference) << where << ": " << reference.error().what;
+      for (const auto& active : experiment::plan::active_detectors(plan, hop)) {
+        auto at = table->value_for(isotope_mass(active.isotope), active.detector);
+        ASSERT_TRUE(at) << where << ": " << at.error().what;
+        EXPECT_NEAR(*at, *reference, tolerance)
+            << where << ": " << active.isotope << " on " << active.detector << " is at " << *at << ", but "
+            << target->isotope << " on " << target->detector << ", where the magnet is, is at " << *reference;
+      }
+    }
+  }
+  EXPECT_EQ(plans, 3u) << name;
   fs::remove_all(root);
 }
 

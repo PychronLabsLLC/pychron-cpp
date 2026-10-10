@@ -1,0 +1,37 @@
+# SIMULATION PLACEHOLDER: a DAC field table
+# Replace with the instrument's calibration before any magnet move.
+# Laid out for this profile's detectors: for one isotope the value rises
+# from H2 to CDD, so a hop with Ar40 on H1 puts Ar39 on AX, Ar38 on L1,
+# Ar37 on L2 and Ar36 on CDD at the same magnet value.
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831237
+H2 = 4.879
+H1 = 5.001
+AX = 5.128
+L1 = 5.252
+L2 = 5.374
+CDD = 5.497
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+H2 = 4.753
+H1 = 4.874
+AX = 4.998
+L1 = 5.120
+L2 = 5.243
+CDD = 5.365
+
+[[points]]
+isotope = "Ar36"
+mass = 35.967545105
+H2 = 4.388
+H1 = 4.505
+AX = 4.627
+L1 = 4.746
+L2 = 4.864
+CDD = 4.981
