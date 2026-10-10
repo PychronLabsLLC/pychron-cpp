@@ -99,11 +99,17 @@ void DataWorkspace::apply_preferences(const Preferences& preferences) {
   if (browser_ != nullptr) apply_to(*browser_, preferences_);
 }
 
+void DataWorkspace::set_unavailable(const QString& reason) {
+  unavailable_ = reason;
+  if (browser_ != nullptr) browser_->set_unavailable(reason);
+}
+
 DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
   if (source_ == nullptr || processing_ == nullptr) return nullptr;
   if (browser_ == nullptr) {
     browser_ = new DataBrowserWindow(*source_, owner_);
     apply_to(*browser_, preferences_);
+    browser_->set_unavailable(unavailable_);
     const auto settings = [this] { return settings_ ? settings_() : std::make_unique<QSettings>(); };
     browser_->set_color_by(color_by_from_text(settings()->value(kColorBy).toString()));
     connect(browser_, &DataBrowserWindow::color_by_changed, this,

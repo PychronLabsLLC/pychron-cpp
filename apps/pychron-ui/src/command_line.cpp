@@ -73,7 +73,6 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       cli.files.emplace_back(arg.toStdString());
     }
   }
-  if (cli.sim_speed > 0 && !cli.sim) return fail(ErrorKind::Config, "--sim-speed needs --sim");
   if (cli.device && !cli.laser) return fail(ErrorKind::Config, "--device needs --laser");
   if (cli.laser && (cli.queue || cli.spectrometer_file)) {
     return fail(ErrorKind::Config, std::string("--laser opens only the laser window: it takes no ") +

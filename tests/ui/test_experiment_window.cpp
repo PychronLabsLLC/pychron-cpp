@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -53,6 +54,26 @@ struct OnePackageSource : pychron::ui::IdentifierSource {
   void contents(QObject*, const std::string&,
                 std::function<void(pychron::Result<pychron::ui::PackageContents>)> done) override {
     done(pychron::ui::PackageContents{});
+  }
+};
+
+// A database that will not take the queue: check_queue says why, in two lines.
+struct RefusingPersister : pychron::experiment::persist::IAnalysisPersister {
+  pychron::Result<int> next_aliquot(const std::string&) override { return 1; }
+  pychron::Result<void> begin_run(const pychron::experiment::RunIdentity&,
+                                  const pychron::experiment::QueueSpec&) override {
+    return {};
+  }
+  pychron::Result<void> save_extraction(const pychron::experiment::record::AnalysisRecord&) override { return {}; }
+  pychron::Result<void> save_analysis(const pychron::experiment::record::AnalysisRecord&) override { return {}; }
+  pychron::Result<void> save_artifact(const std::string&, const std::string&,
+                                      const std::vector<std::uint8_t>&) override {
+    return {};
+  }
+  pychron::Result<void> flush() override { return {}; }
+  pychron::Result<std::vector<std::string>> check_queue(const pychron::experiment::QueueSpec&) override {
+    return std::vector<std::string>{"the database cannot be reached: no such file",
+                                    "Run: elctl db migrate --db sqlite:/lab/data/pychron.db"};
   }
 };
 
@@ -301,6 +322,32 @@ class TestExperimentWindow : public QObject {
     ExperimentWindow window(bridge, true, settings());
     QVERIFY(contains(window.executor()->events(), problem));
     QVERIFY(window.executor()->error_text().contains(problem));
+  }
+
+  // A queue the database will not take does not start, and every line of the
+  // reason is on show.
+  void aQueueThatCannotBeSavedSaysWhyInFull() {
+    RefusingPersister persister;
+    pychron::ui::test::SimLab sim({}, {}, {}, &persister);
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    window.start();
+    QVERIFY(!bridge.running());
+    QCOMPARE(window.executor()->error_text(),
+             QStringLiteral("the queue cannot be saved:\nthe database cannot be reached: no such file\n"
+                            "Run: elctl db migrate --db sqlite:/lab/data/pychron.db"));
+  }
+
+  // What is still to be saved is named for where it goes.
+  void pendingSavesAreNamedForWhereTheyGo() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QCOMPARE(window.executor()->pending_text(2), QStringLiteral("2 record(s) in the spool"));
+    bridge.set_saves_to_database(true);
+    QCOMPARE(window.executor()->pending_text(2), QStringLiteral("2 run(s) waiting to be saved to the database"));
   }
 
   void withoutNotificationsATestSaysSo() {

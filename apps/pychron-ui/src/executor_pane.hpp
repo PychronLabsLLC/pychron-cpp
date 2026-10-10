@@ -16,6 +16,7 @@
 // row): the pane emits startRequested. The other controls go straight to the
 // bridge. Cancel and Abort ask first (default No).
 
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <string>
@@ -69,6 +70,9 @@ class ExecutorPane : public QWidget {
   QString wait_text() const;
   QString error_text() const;
   QString spool_text() const;
+  // The line for `pending` runs not yet saved: in the spool, or, when the
+  // session saves to a database, waiting for it.
+  QString pending_text(std::size_t pending) const;
   QString notify_text() const;
   int counts_value() const;
   int counts_maximum() const;

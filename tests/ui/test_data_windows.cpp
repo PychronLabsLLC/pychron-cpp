@@ -18,6 +18,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QToolBar>
@@ -33,6 +34,8 @@
 #include <qcustomplot.h>
 
 #include "data_browser_window.hpp"
+#include "experiment_bridge.hpp"
+#include "experiment_fixture.hpp"
 #include "theme.hpp"
 #include "data_workspace.hpp"
 #include "figure_window.hpp"
@@ -48,6 +51,16 @@
 #include "reference_fit_window.hpp"
 #include "scene_view.hpp"
 #include "ui_fixture.hpp"
+
+#ifdef PYCHRON_UI_HAS_STORE
+// Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
+#pragma push_macro("signals")
+#undef signals
+#include "flux_seed.hpp"
+#include "pychron/persistence/store.hpp"
+#include "pychron/processing/store_source.hpp"
+#pragma pop_macro("signals")
+#endif
 
 using namespace pychron;
 namespace pp = pychron::processing;
@@ -145,6 +158,15 @@ std::unique_ptr<pp::MemorySource> make_source(int n) {
   }
   return src;
 }
+
+// A source that counts how often it was asked to look again.
+struct CountingSource : pp::MemorySource {
+  int refreshes = 0;
+  Result<void> refresh() override {
+    ++refreshes;
+    return {};
+  }
+};
 
 // Eight concordant heating steps (Ar40 = 10 Ar39 + 298.56 Ar36) with a J.
 std::unique_ptr<pp::MemorySource> make_steps() {
@@ -672,6 +694,115 @@ class TestDataWindows : public QObject {
     w.search()->clear();
     QCOMPARE(w.model()->analysis_count(), shown);
   }
+
+  // A refresh nobody asked for by hand (a run ended) leaves the user where
+  // they were: the same analysis current and selected, the table not moved.
+  void browser_refresh_keeps_the_selection_and_the_place() {
+    auto src = make_source(60);
+    DataBrowserWindow w(*src);
+    w.resize(900, 300);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QScrollBar* bar = w.table()->verticalScrollBar();
+    QTRY_VERIFY(bar->maximum() > 0);
+    w.select_rows({40, 41});
+    bar->setValue(bar->maximum() / 2);
+    const int place = bar->value();
+    QVERIFY(place > 0);
+    const QStringList selected = w.selected_uuids();
+    QCOMPARE(selected.size(), 2);
+    const std::string current = w.model()->analysis_at(w.table()->currentIndex().row())->uuid;
+
+    // A newer analysis lands above them.
+    auto newer = analysis(60);
+    src->add(newer, raw_for(*newer));
+    w.refresh();
+    QCOMPARE(w.model()->analysis_count(), 61);
+    QCOMPARE(w.selected_uuids(), selected);
+    QCOMPARE(w.model()->analysis_at(w.table()->currentIndex().row())->uuid, current);
+    QCOMPARE(bar->value(), place);
+
+    // With nothing selected the table stays where it was too.
+    w.table()->clearSelection();
+    w.refresh();
+    QVERIFY(w.selected_uuids().isEmpty());
+    QCOMPARE(bar->value(), place);
+
+    // A selection that is no longer listed is dropped.
+    w.select_rows({0});
+    w.search()->blockSignals(true);
+    w.search()->setText(QStringLiteral("no such run"));
+    w.search()->blockSignals(false);
+    w.refresh();
+    QCOMPARE(w.model()->analysis_count(), 0);
+    QVERIFY(w.selected_uuids().isEmpty());
+  }
+
+  void browser_says_why_it_is_empty() {
+    auto src = make_source(0);
+    DataBrowserWindow w(*src);
+    QVERIFY(w.unavailable()->isHidden());
+    w.set_unavailable(QStringLiteral("The database could not be opened: x\nRun: elctl db migrate"));
+    QVERIFY(!w.unavailable()->isHidden());
+    QCOMPARE(w.unavailable()->text(), QStringLiteral("The database could not be opened: x\nRun: elctl db migrate"));
+    QVERIFY(w.unavailable()->wordWrap());
+    w.refresh();  // a rescan does not take it away
+    QVERIFY(!w.unavailable()->isHidden());
+    w.set_unavailable({});
+    QVERIFY(w.unavailable()->isHidden());
+  }
+
+#ifdef PYCHRON_UI_HAS_STORE
+  // What a queue saves reaches the browser at the next refresh: the store is
+  // written through another handle, as the acquisition's is.
+  void browser_refresh_shows_a_run_that_just_landed() {
+    namespace ps = pychron::persistence;
+    QTemporaryDir dir;
+    const std::string url = "sqlite:" + dir.filePath(QStringLiteral("store.db")).toStdString();
+    auto store = ps::open_store(ps::StoreConfig{url, true});
+    QVERIFY2(store.has_value(), store ? "" : to_string(store.error()).c_str());
+    pp::testing::SeededLevel lab;
+    auto client = (*store)->register_client({"acq-1", "acquisition", std::nullopt, "test"});
+    QVERIFY(client.has_value());
+    lab.acquisition_client = *client;
+    QVERIFY((*store)->add_mass_spectrometer(*client, {"jan", "argus", "j", std::nullopt}).has_value());
+    QVERIFY((*store)->add_extract_device(*client, "co2").has_value());
+    ps::IdentifierSpec identifier;
+    identifier.identifier = "66574";
+    QVERIFY((*store)->add_identifier(*client, identifier).has_value());
+
+    auto opened = pp::StoreSource::open(ps::StoreConfig{url, false});
+    QVERIFY2(opened.has_value(), opened ? "" : to_string(opened.error()).c_str());
+    {
+      DataBrowserWindow w(**opened);
+      QCOMPARE(w.model()->analysis_count(), 0);
+
+      auto first = pp::testing::seed_ingest_monitor(**store, lab, "66574", 1, 10.0, "2026-10-02T12:00:00Z");
+      QVERIFY2(first.has_value(), first ? "" : to_string(first.error()).c_str());
+      QCOMPARE(w.model()->analysis_count(), 0);  // not until it looks again
+      w.refresh();
+      QCOMPARE(w.model()->analysis_count(), 1);
+      QCOMPARE(w.model()->rows().front().uuid, first->str());
+
+      // A row selected and a list ticked: both are as they were after the next run.
+      w.select_rows({0});
+      auto* types = w.facet_list(pp::Facet::AnalysisType);
+      QVERIFY(find_item(types, QStringLiteral("unknown")));
+      find_item(types, QStringLiteral("unknown"))->setCheckState(Qt::Checked);
+      w.select_rows({0});  // ticking reloaded the table
+      QCOMPARE(w.selected_uuids(), QStringList{QString::fromStdString(first->str())});
+      auto second = pp::testing::seed_ingest_monitor(**store, lab, "66574", 2, 10.0, "2026-10-02T13:00:00Z");
+      QVERIFY2(second.has_value(), second ? "" : to_string(second.error()).c_str());
+      w.refresh();
+      QCOMPARE(w.model()->analysis_count(), 2);
+      QCOMPARE(w.model()->rows().front().uuid, second->str());  // newest first
+      QCOMPARE(w.selected_uuids(), QStringList{QString::fromStdString(first->str())});
+      QCOMPARE(w.model()->analysis_at(w.table()->currentIndex().row())->uuid, first->str());
+      QCOMPARE(w.query().analysis_types, std::vector<std::string>{"unknown"});
+      QCOMPARE(find_item(w.facet_list(pp::Facet::AnalysisType), QStringLiteral("unknown"))->checkState(), Qt::Checked);
+    }
+  }
+#endif
 
   void browser_colours_rows_by_the_choice() {
     auto src = make_source(10);
@@ -1889,6 +2020,60 @@ class TestDataWindows : public QObject {
       QVERIFY(!window.open_figure(QStringLiteral("no_such_figure"), {QStringLiteral("uuid-0")}));
       // Destroyed with a figure window open: data windows go before the bridge.
     }
+  }
+
+  // The data window follows a queue: it looks again when one starts and as
+  // each run ends, and not before it exists.
+  void main_window_refreshes_data_when_a_run_finishes() {
+    ui::test::SimLab sim;
+    QTemporaryDir dir;
+    CountingSource src;
+    pp::PresetStore presets(dir.path().toStdString());
+    {
+      ui::ExperimentBridge bridge(*sim.session, sim.line->bus());
+      ui::MainWindow window(*sim.line);
+      window.set_data(&src, &presets);
+      window.set_experiment(&bridge, true);
+      emit bridge.runFinished({});
+      QCoreApplication::processEvents();
+      QCOMPARE(src.refreshes, 0);  // no data window yet: nothing to refresh
+      window.refresh_data();
+      QCOMPARE(src.refreshes, 0);
+
+      window.data_action()->trigger();
+      QVERIFY(window.data_window());
+      const int opened = src.refreshes;
+      QVERIFY(opened > 0);
+      emit bridge.runFinished({});
+      QTRY_COMPARE(src.refreshes, opened + 1);
+      emit bridge.queueStarted({});
+      QTRY_COMPARE(src.refreshes, opened + 2);
+
+      // Another session's bridge: the one let go is no longer listened to.
+      ui::ExperimentBridge other(*sim.session, sim.line->bus());
+      window.set_experiment(&other, true);
+      emit bridge.runFinished({});
+      QCoreApplication::processEvents();
+      QCOMPARE(src.refreshes, opened + 2);
+      emit other.runFinished({});
+      QTRY_COMPARE(src.refreshes, opened + 3);
+      window.set_experiment(nullptr, false);
+    }
+  }
+
+  // Why there is no database is known before the data window is first opened.
+  void main_window_tells_the_data_window_why_it_is_empty() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    auto src = make_source(0);
+    pp::PresetStore presets(dir.path().toStdString());
+    ui::MainWindow window(*line);
+    window.set_data(src.get(), &presets);
+    window.set_data_unavailable(QStringLiteral("The database could not be opened: gone"));
+    window.data_action()->trigger();
+    QVERIFY(window.data_window());
+    QVERIFY(!window.data_window()->unavailable()->isHidden());
+    QCOMPARE(window.data_window()->unavailable()->text(), QStringLiteral("The database could not be opened: gone"));
   }
 };
 

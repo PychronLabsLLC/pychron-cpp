@@ -99,9 +99,16 @@ class TestCommandLine : public QObject {
     auto paced = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("50")});
     QVERIFY(paced.has_value());
     QCOMPARE(paced->sim_speed, 50.0);
-    auto no_sim = parse_command_line({QStringLiteral("--sim-speed"), QStringLiteral("10")});
-    QVERIFY(!no_sim.has_value());
-    QCOMPARE(QString::fromStdString(no_sim.error().what), QStringLiteral("--sim-speed needs --sim"));
+  }
+
+  // An install set up for simulation needs no --sim: main() refuses the
+  // option once it knows whether anything is simulated.
+  void simSpeedAloneParses() {
+    auto cli = parse_command_line({QStringLiteral("--install"), QStringLiteral("argus"), QStringLiteral("--sim-speed"),
+                                   QStringLiteral("20")});
+    QVERIFY(cli.has_value());
+    QVERIFY(!cli->sim);
+    QCOMPARE(cli->sim_speed, 20.0);
   }
 
   void laserOpensOnlyTheLaserWindow() {

@@ -41,9 +41,10 @@ struct CommandLine {
 // A Config error is a usage error: an unknown option, an option without a
 // value (which includes one followed by another option, "--spectrometer
 // --sim"), a --sim-speed that is not a positive number (elctl's "max",
-// unlimited speed, is refused by name), --sim-speed without --sim, more than
-// one of config files, --install, --setup, --examples,
-// --device without --laser, or --laser with --queue or --spectrometer.
+// unlimited speed, is refused by name), more than one of config files,
+// --install, --setup, --examples, --device without --laser, or --laser with
+// --queue or --spectrometer. --sim-speed without --sim is not refused here: an
+// install can be one set up for simulation, which main() knows and this does not.
 Result<CommandLine> parse_command_line(const QStringList& args);
 
 }  // namespace pychron::ui

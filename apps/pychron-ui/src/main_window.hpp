@@ -6,6 +6,7 @@
 // ExtractionLine must outlive the window. Where the docks are is kept per
 // line (dock_layouts.hpp).
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -120,6 +121,12 @@ class MainWindow : public QMainWindow {
   // with figure presets from `presets` (null disables it and closes every data
   // window). Both must outlive the main window or be cleared first.
   void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets);
+  // Why the data window has less than was expected (a database that could
+  // not be opened): DataBrowserWindow::set_unavailable, whenever it is made.
+  void set_data_unavailable(const QString& reason);
+  // Has the data window (when there is one) look at its source again. Called
+  // when the experiment bridge says a queue started or a run finished.
+  void refresh_data();
   QAction* data_action() const noexcept { return data_action_; }
   DataBrowserWindow* data_window() const noexcept { return data_->existing_browser(); }
   ProcessingBridge* processing_bridge() const noexcept { return data_->processing_bridge(); }
@@ -184,6 +191,7 @@ class MainWindow : public QMainWindow {
   SpectrometerWindow* spectrometer_window_ = nullptr;
   QAction* experiment_action_;
   ExperimentBridge* experiment_ = nullptr;
+  std::array<QMetaObject::Connection, 2> experiment_refreshes_;  // the bridge's signals to refresh_data()
   bool experiment_simulation_ = false;
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;

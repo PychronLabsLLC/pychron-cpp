@@ -11,6 +11,7 @@ set(CMAKE_AUTOMOC ON)
 # the same widgets under Qt Test.
 add_library(pychron_ui_lib STATIC
   src/command_line.cpp
+  src/database_choice.cpp
   src/core_bridge.cpp
   src/cryo_dock.cpp
   src/heater_dock.cpp
@@ -77,6 +78,7 @@ add_library(pychron_ui_lib STATIC
   src/laser_window.cpp
   src/pattern_maker_window.cpp
   src/command_line.hpp
+  src/database_choice.hpp
   src/core_bridge.hpp
   src/cryo_dock.hpp
   src/heater_dock.hpp
@@ -195,6 +197,8 @@ if(TARGET pychron_processing_store)
     src/sample_table_model.hpp
     src/samples_window.hpp)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::entry)
+  # A queue's runs are saved to the same store.
+  target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment_store)
 endif()
 
 add_executable(pychron-ui src/main.cpp)

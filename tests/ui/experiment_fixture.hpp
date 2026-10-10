@@ -67,10 +67,12 @@ struct SimLab {
   std::unique_ptr<experiment::lab::LabSession> session;
 
   // `notifications` replace the lab's; `notify` runs their programs;
-  // `simulated` is SessionHardware::simulated (empty: asked of the line).
+  // `simulated` is SessionHardware::simulated (empty: asked of the line);
+  // `persister` is where runs are saved (null: files), and must outlive this.
   explicit SimLab(std::optional<experiment::lab::NotificationConfig> notifications = std::nullopt,
                   experiment::lab::ProcessRunner notify = {},
-                  std::function<bool(std::string_view)> simulated = {}) {
+                  std::function<bool(std::string_view)> simulated = {},
+                  experiment::persist::IAnalysisPersister* persister = nullptr) {
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;
@@ -90,7 +92,7 @@ struct SimLab {
     if (notifications) lab.notifications = std::move(*notifications);
     session = std::make_unique<experiment::lab::LabSession>(
         lab, experiment::lab::SessionHardware{*line, spec.get(), scan.get(), std::move(simulated)},
-        experiment::lab::SessionOptions{dir / "data", {}, std::move(notify)});
+        experiment::lab::SessionOptions{dir / "data", {}, std::move(notify), persister});
   }
   SimLab(const SimLab&) = delete;
   SimLab& operator=(const SimLab&) = delete;

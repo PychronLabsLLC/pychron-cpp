@@ -227,7 +227,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     wait_->clear();
     state_->setText(q(exec::to_string(exec::ExecutorState::Idle)));
     const auto pending = bridge_.session().pending_saves();
-    spool_->setText(tr("%n record(s) in the spool", nullptr, static_cast<int>(pending)));
+    spool_->setText(pending_text(pending));
     spool_->setVisible(pending > 0);
     set_running(false);
   });
@@ -327,6 +327,12 @@ QString ExecutorPane::progress_text() const { return progress_label_->text(); }
 QString ExecutorPane::run_text() const { return run_label_->text(); }
 QString ExecutorPane::wait_text() const { return wait_->text(); }
 QString ExecutorPane::error_text() const { return banner_->isHidden() ? QString() : banner_label_->text(); }
+QString ExecutorPane::pending_text(std::size_t pending) const {
+  return bridge_.saves_to_database()
+             ? tr("%n run(s) waiting to be saved to the database", nullptr, static_cast<int>(pending))
+             : tr("%n record(s) in the spool", nullptr, static_cast<int>(pending));
+}
+
 QString ExecutorPane::spool_text() const { return spool_->isHidden() ? QString() : spool_->text(); }
 QString ExecutorPane::notify_text() const { return notify_->text(); }
 int ExecutorPane::counts_value() const { return counts_->value(); }

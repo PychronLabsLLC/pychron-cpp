@@ -42,6 +42,7 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<exec::QueueEdited>(&ExperimentBridge::queueEdited);
   relay<exec::QueueFrontier>(&ExperimentBridge::queueFrontier);
   relay<experiment::lab::NotificationSent>(&ExperimentBridge::notificationSent);
+  relay<experiment::lab::QueueStarted>(&ExperimentBridge::queueStarted);
   relay<experiment::lab::QueueEnded>(&ExperimentBridge::queueEnded);
   relay<experiment::run::RunStateChanged>(&ExperimentBridge::runStateChanged);
   relay<experiment::run::RunNote>(&ExperimentBridge::runNote);

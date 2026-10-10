@@ -18,6 +18,8 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QSet>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -157,6 +159,13 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   auto* right = new QWidget;
   auto* rl = new QVBoxLayout(right);
   rl->setContentsMargins(0, 0, 0, 0);
+  unavailable_ = new QLabel;
+  unavailable_->setWordWrap(true);
+  unavailable_->setTextFormat(Qt::PlainText);
+  unavailable_->setTextInteractionFlags(Qt::TextSelectableByMouse);  // it may hold a command to copy
+  style::make_banner(unavailable_);
+  unavailable_->hide();
+  rl->addWidget(unavailable_);
   rl->addWidget(table_);
   auto* bar = new QHBoxLayout;
   status_ = new QLabel;
@@ -349,8 +358,32 @@ void DataBrowserWindow::set_page_size(int rows) {
 }
 
 void DataBrowserWindow::refresh() {
+  const QStringList selected = selected_uuids();
+  const auto* current = model_->analysis_at(table_->currentIndex().row());
+  const std::string current_uuid = current != nullptr ? current->uuid : std::string{};
+  const int place = table_->verticalScrollBar()->value();
+
   if (auto ok = source_.refresh(); !ok) status_->setText(tr("Rescan failed: %1").arg(qs(ok.error().what)));
   reload();
+
+  // The reload reset the table: what was selected is found again by uuid.
+  const QSet<QString> wanted(selected.begin(), selected.end());
+  QList<int> rows;
+  int current_row = -1;
+  const auto& listed = model_->rows();
+  for (std::size_t i = 0; i < listed.size(); ++i) {
+    if (wanted.contains(qs(listed[i].uuid))) rows << static_cast<int>(i);
+    if (!current_uuid.empty() && listed[i].uuid == current_uuid) current_row = model_->display_row_of(i);
+  }
+  select_rows(rows);
+  if (current_row >= 0)
+    table_->selectionModel()->setCurrentIndex(model_->index(current_row, 0), QItemSelectionModel::NoUpdate);
+  if (rows.size() == selected.size()) table_->verticalScrollBar()->setValue(place);
+}
+
+void DataBrowserWindow::set_unavailable(const QString& reason) {
+  unavailable_->setText(reason);
+  unavailable_->setVisible(!reason.isEmpty());
 }
 
 void DataBrowserWindow::update_facets() {

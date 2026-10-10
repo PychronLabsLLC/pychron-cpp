@@ -41,6 +41,8 @@ class DataWorkspace : public QObject {
   // (a data-reduction main window) instead of its own window.
   DataBrowserWindow* browser(QWidget* embed_in = nullptr);
   DataBrowserWindow* existing_browser() const noexcept { return browser_; }
+  // DataBrowserWindow::set_unavailable, for the browser open now and any made later.
+  void set_unavailable(const QString& reason);
   ProcessingBridge* processing_bridge() const noexcept { return processing_.get(); }
   // The browser's page size, time-break threshold and type colours, for the
   // browser open now and any made later.
@@ -68,6 +70,7 @@ class DataWorkspace : public QObject {
   std::unique_ptr<ProcessingBridge> processing_;
   DataBrowserWindow* browser_ = nullptr;
   Preferences preferences_;
+  QString unavailable_;
   std::function<std::unique_ptr<QSettings>()> settings_;
   QList<QPointer<QWidget>> children_;  // recall and figure windows
   int export_channel_ = 0;             // the bridge channel exports run on

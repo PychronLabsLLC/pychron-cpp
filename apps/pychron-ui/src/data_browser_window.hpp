@@ -52,8 +52,14 @@ class DataBrowserWindow : public QWidget {
   // `source` must outlive the window.
   explicit DataBrowserWindow(processing::IAnalysisSource& source, QWidget* parent = nullptr);
 
-  // Rescans the source and reloads the first page.
+  // Rescans the source and reloads the first page. The analyses selected and
+  // the current one stay so when they are still listed, and the table then
+  // stays where it was scrolled to: a refresh can come while someone reads
+  // (a run ended).
   void refresh();
+  // Why the source has less than was expected of it (a database that could
+  // not be opened), on a banner over the table; empty: no banner.
+  void set_unavailable(const QString& reason);
   // Analyses per page (File > Preferences…), at least 1; a change reloads the
   // first page.
   void set_page_size(int rows);
@@ -90,6 +96,7 @@ class DataBrowserWindow : public QWidget {
   QAction* recall_action() const noexcept { return recall_; }
   QAction* export_action() const noexcept { return export_; }
   QLabel* status() const noexcept { return status_; }
+  QLabel* unavailable() const noexcept { return unavailable_; }
   // A line for the status label (the workspace reports an export here).
   void show_message(const QString& text);
   // The file name Export asks for; tests replace the dialog. Empty: cancelled.
@@ -138,6 +145,7 @@ class DataBrowserWindow : public QWidget {
   QAction* recall_;
   QAction* export_;
   QLabel* status_;
+  QLabel* unavailable_;
   int page_size_ = Preferences::kDefaultPageSize;
   TypeColors type_colors_;
   std::optional<processing::BrowseCursor> next_;

@@ -336,7 +336,17 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
     delete experiment_window_;  // it holds the old bridge
     experiment_window_ = nullptr;
   }
+  for (const auto& connection : experiment_refreshes_) disconnect(connection);  // the old bridge may be gone
   experiment_ = bridge;
+  if (bridge != nullptr) {
+    // What a run saved is in the data window when the run ends; a queue's
+    // start picks up whatever was entered since. The bridge delivers on this
+    // thread; queued, so the experiment window hears of the run first.
+    experiment_refreshes_[0] =
+        connect(bridge, &ExperimentBridge::runFinished, this, &MainWindow::refresh_data, Qt::QueuedConnection);
+    experiment_refreshes_[1] =
+        connect(bridge, &ExperimentBridge::queueStarted, this, &MainWindow::refresh_data, Qt::QueuedConnection);
+  }
   experiment_simulation_ = simulation;
   experiment_queue_ = std::move(queue);
   experiment_settings_ = std::move(settings);
@@ -499,6 +509,12 @@ MainWindow::~MainWindow() {
 void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets) {
   data_->set_source(source, presets);
   data_action_->setEnabled(data_->enabled());
+}
+
+void MainWindow::set_data_unavailable(const QString& reason) { data_->set_unavailable(reason); }
+
+void MainWindow::refresh_data() {
+  if (DataBrowserWindow* browser = data_->existing_browser()) browser->refresh();
 }
 
 void MainWindow::set_installations_handler(std::function<void()> handler) {
