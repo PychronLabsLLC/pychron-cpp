@@ -1,6 +1,9 @@
 # One test_<component>.cpp per experiment component. Globbed so parallel units only add files.
 file(GLOB PYCHRON_EXPERIMENT_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 
+# The record-ingest suite needs the store adapter and builds only with it.
+list(FILTER PYCHRON_EXPERIMENT_TESTS EXCLUDE REGEX "test_record_ingest\\.cpp$")
+
 if(NOT TARGET pychron_metrics)
   list(FILTER PYCHRON_EXPERIMENT_TESTS EXCLUDE REGEX "test_(experiment_metrics|metrics_service)\\.cpp$")
 endif()
@@ -22,4 +25,13 @@ if(PYCHRON_EXPERIMENT_TESTS)
   endif()
   pychron_set_warnings(pychron_experiment_tests)
   gtest_discover_tests(pychron_experiment_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+endif()
+
+if(TARGET pychron_experiment_store)
+  add_executable(pychron_experiment_store_tests test_record_ingest.cpp)
+  target_include_directories(pychron_experiment_store_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(pychron_experiment_store_tests PRIVATE pychron::experiment_store nlohmann_json::nlohmann_json
+    GTest::gtest_main)
+  pychron_set_warnings(pychron_experiment_store_tests)
+  gtest_discover_tests(pychron_experiment_store_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 endif()

@@ -25,3 +25,20 @@ if(TARGET pychron_metrics)
 endif()
 
 pychron_set_warnings(pychron_experiment)
+
+# Turns a finished record into what the DVC store ingests. Its own library so
+# that pychron::experiment never depends on persistence; it exists only when
+# persistence is built.
+if(TARGET pychron_persistence)
+  file(GLOB PYCHRON_EXPERIMENT_STORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/adapters/store/src/*.cpp")
+  add_library(pychron_experiment_store STATIC ${PYCHRON_EXPERIMENT_STORE_SOURCES})
+  add_library(pychron::experiment_store ALIAS pychron_experiment_store)
+  target_include_directories(pychron_experiment_store PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/store/include>
+    $<INSTALL_INTERFACE:include>
+  )
+  target_link_libraries(pychron_experiment_store PUBLIC pychron::experiment pychron::persistence
+    PRIVATE nlohmann_json::nlohmann_json)
+  target_compile_definitions(pychron_experiment_store PUBLIC PYCHRON_EXPERIMENT_HAS_STORE=1)
+  pychron_set_warnings(pychron_experiment_store)
+endif()
