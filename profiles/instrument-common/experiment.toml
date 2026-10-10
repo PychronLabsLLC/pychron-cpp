@@ -15,34 +15,34 @@ after_blank = 10
 [[runs]]
 identifier = "ba"
 extraction = { script = "sim_blank", duration = 30 }
-measurement = { plan = "multicollect", overrides = { "main.cycles" = 10 } }
+measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
 sample = { sample = "blank_air", material = "blank", project = "references" }
 
 [[runs]]
 identifier = "a"
 extraction = { script = "sim_air", duration = 30 }
-measurement = { plan = "multicollect", overrides = { "main.cycles" = 10 } }
+measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
 sample = { sample = "air", material = "air", project = "references" }
 
 [[runs]]
 identifier = "a"
 extraction = { script = "sim_air", duration = 30 }
-measurement = { plan = "multicollect", overrides = { "main.cycles" = 10 } }
+measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
 sample = { sample = "air", material = "air", project = "references" }
 
 [[runs]]
 identifier = "a"
 extraction = { script = "sim_air", duration = 30 }
-measurement = { plan = "multicollect", overrides = { "main.cycles" = 10 } }
+measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
 sample = { sample = "air", material = "air", project = "references" }
 
 [[runs]]
 identifier = "ba"
 extraction = { script = "sim_blank", duration = 30 }
-measurement = { plan = "multicollect", overrides = { "main.cycles" = 10 } }
+measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
 sample = { sample = "blank_air", material = "blank", project = "references" }
