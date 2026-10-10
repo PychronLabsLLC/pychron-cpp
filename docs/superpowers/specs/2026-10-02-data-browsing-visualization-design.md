@@ -717,6 +717,10 @@ same pattern as `SpectrometerBridge` (spectrometer window spec).
 
 ### 11.2 Data browser (Window > Data)
 
+Extended by `2026-10-09-data-browser-search-display-design.md`: date range,
+Irradiation and Level lists, a text filter on every list, row colour by
+choice, time-break separator rows.
+
 - Left: search box (run id/identifier/sample prefix), filter lists for
   analysis type, mass spectrometer, project, sample, irradiation/level, load
   (each fed by `facet`), date range with presets (today, last 24 h, week,

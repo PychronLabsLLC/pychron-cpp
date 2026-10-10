@@ -85,16 +85,60 @@ The left column filters; the table shows the newest analyses first.
 | Control | What it does |
 |---|---|
 | Search box | Analyses whose run id, identifier or sample **starts with** the text (not case sensitive). |
-| Date drop-down | Any date, last 24 hours, last week, last month, last year. "Last" is counted back from the **newest analysis in the source**, not from today. |
+| Date drop-down | Any date, last 24 hours, last week, last month, last year, or **Range…**. "Last" is counted back from the **newest analysis in the source**, not from today. |
+| **From** / **To** (with Range…) | A low and a high date and time, in UTC like the Date column. Each end counts only while its box is ticked, so you can give one end and leave the other open. To includes the whole of the minute it names. They start as the range of the rows shown. If From is after To the status line says so and nothing changes. |
 | **Hide invalid** | On by default. Hides analyses tagged `invalid`. |
-| Analysis type, Spectrometer, Sample, Identifier | Tick values to keep only those. Within one list, ticks are alternatives (or); between lists they all apply (and). Each list shows only values that exist given the other filters, but a value you ticked stays visible even if nothing matches. |
+| **Colour by** | What the rows are tinted by (see below). |
+| Analysis type, Spectrometer, Sample, Identifier, Irradiation, Level | Tick values to keep only those. Within one list, ticks are alternatives (or); between lists they all apply (and). Each list shows only values that exist given the other filters, but a value you ticked stays visible even if nothing matches. |
+| **Filter** box and **×** on each list | Typing in the box hides the values that do not contain the text (not case sensitive). It only narrows the list: nothing is filtered until you tick a value, and a ticked value is never hidden. **×** unticks everything in that list. The list's title counts the ticks. |
 | **Rescan** | Asks the source for new analyses (the database change log, or the folder). |
 
+Tick an irradiation and the Level list shows only its levels. A level is
+matched by its name: with no irradiation ticked, ticking level `A` keeps
+level A of every irradiation.
+
 The table has columns Run ID, Type, Sample, Identifier, Spec., Date (UTC),
-Extract, Tag, and (hidden by default) Project, Irradiation, UUID. Right-click
-a column header to show or hide columns. Rows are tinted: blanks, air,
-cocktails and detector-IC runs have their own colours, and any analysis with
-a tag other than `ok` has the error colour.
+Extract, Tag, Irradiation, and (hidden by default) Project, UUID. Right-click
+a column header to show or hide columns.
+
+### Row colours
+
+**Colour by** chooses what the tint of a row tells you. The choice is
+remembered.
+
+| Colour by | Rows |
+|---|---|
+| Analysis type | Blanks, air, cocktails and detector-IC runs have their own colours. **Preferences > Data** sets a colour (or none) for unknowns, blanks, air, cocktails, detector-IC runs and everything else; **Reset colours** goes back to the built-in ones. |
+| Tag | `invalid` has the error colour; every other tag that is not `ok` has a colour of its own. |
+| Spectrometer | One colour for each spectrometer shown. |
+| Irradiation level | One colour for each irradiation and level shown; analyses with no irradiation have none. |
+| None | No tint. |
+
+Whatever the choice (except Tag), an analysis with a tag other than `ok` has
+the error colour. Under Spectrometer, Irradiation level and Tag the colours
+only tell neighbours apart: there are eight, they are given out in
+alphabetical order of the values shown, and a value can change colour when
+you filter or load more.
+
+### Time breaks
+
+Where a spectrometer ran nothing for longer than the **Time break after**
+preference (6 hours by default; **Off** removes them), the table has a grey
+line reading `no analyses for 14 h 20 min`, with the spectrometer's name in
+front when more than one is shown. It sits between the first run after the
+gap (above it) and the last run before it (below). Point at it for how many
+runs are in the session above and when it began and ended. The line is not
+an analysis: it cannot be selected, and figures, exports and Ctrl+N / Ctrl+B
+pass over it.
+
+A break is a gap between **the analyses shown**. With every analysis of a
+spectrometer shown, the lines are where it stopped and started. With a
+filter that hides some of its runs (one sample ticked, say), the hidden runs
+count as time with nothing, and you will see breaks where the instrument was
+in fact running.
+
+
+### Pages
 
 The browser loads one page at a time (200 analyses by default;
 **Preferences** sets 20 to 5000). The status line reads

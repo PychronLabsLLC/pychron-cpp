@@ -1,6 +1,7 @@
 # Data browser: date range, irradiation, list filtering, row colour, time breaks: design
 
-Date: 2026-10-09. Status: draft, awaiting review.
+Date: 2026-10-09. Status: approved 2026-10-09; implemented, except the
+measurement of section 5 (needs a copy of a lab's store).
 
 Extends section 11.2 of `2026-10-02-data-browsing-visualization-design.md`.
 First of two specs. Second (age cache and age filter, `derived_value`
@@ -154,13 +155,19 @@ shown rows may have changed. `data(BackgroundRole)` calls `row_color`.
 UI:
 
 - Filter column, under "Hide invalid": `Colour by` combo, five entries in
-  enum order. Choice kept in QSettings `data_browser/color_by` (enum name as
-  text; unknown text = AnalysisType).
+  enum order. Choice kept in QSettings `data_browser/color_by`
+  (`analysis_type`, `tag`, `spectrometer`, `irradiation_level`, `none`;
+  other text = AnalysisType). Browser itself touches no settings: it has
+  `set_color_by` and signal `color_by_changed`; `DataWorkspace` reads the
+  key when it makes the browser and writes it on the signal, through the
+  settings factory its main window gives it (`DataWorkspace::set_settings`).
 - Preferences, Data group: six colour buttons (Unknown, Blank, Air,
   Cocktail, Detector IC, Other), each opens `QColorDialog`, each with "no
   colour" state; `Reset colours` restores `default_type_colors(theme())`.
 - `Preferences` gains `std::map<std::string, std::string> browser_type_colors`
-  (class name to `#rrggbb`, or empty text for no colour). Keys
+  (class name to `#rrggbb`, or empty text for no colour), holding only the
+  classes that differ from the theme's, so a class given back to the theme
+  follows it. Keys
   `preferences/browser_type_colors/<class>`. Saved values untrusted: a class
   not among the six is ignored, a value that is not `#rrggbb` or empty falls
   back to default for that class. Absent key = default.
@@ -182,6 +189,7 @@ Pure helper, `libs/processing` `time_breaks.hpp` / `src/time_breaks.cpp`:
     };
     // `rows` newest first (ties in timestamp: any order). threshold_seconds <= 0: none.
     std::vector<TimeBreak> time_breaks(std::span<const AnalysisSummary> rows, double threshold_seconds);
+    std::string gap_text(double seconds);   // "45 min", "14 h 20 min", "3 d 4 h"
 
 Rules:
 
@@ -221,7 +229,8 @@ Model (`AnalysisTableModel`):
   - `rows()` unchanged (analyses only).
   - `row(int)` removed. New `const AnalysisSummary* analysis_at(int display_row) const`
     (null for separator), `bool is_break(int display_row) const`,
-    `int analysis_count() const`, `int display_row_of(std::size_t analysis_index) const`.
+    `int analysis_count() const`, `int display_row_of(std::size_t analysis_index) const`,
+    `QList<int> break_rows() const`.
 
 Browser:
 
@@ -238,8 +247,10 @@ Browser:
 Preferences: Data group, `Time break after:` `QDoubleSpinBox`, hours, range
 0 to 720, step 0.5, default 6, special value text `Off` at 0.
 `Preferences::browser_gap_hours`, key `preferences/browser_gap_hours`,
-out-of-range saved value = default. Applied through same path as page
-size (`DataWorkspace` to `DataBrowserWindow::set_gap_hours`).
+out-of-range saved value = default. `DataWorkspace::apply_preferences(const Preferences&)` replaces
+`set_page_size` and hands page size, gap hours and type colours to the
+browser. A browser made without a workspace (tests) has no threshold until
+`set_gap_hours` is called.
 
 ## 4. Files
 

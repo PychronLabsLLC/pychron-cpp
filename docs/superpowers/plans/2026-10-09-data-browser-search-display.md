@@ -79,6 +79,13 @@ the schema or a SQL statement.
   status becomes "implemented".
 - Commit: `docs: the data browser's new filters, colours and time breaks`.
 
+## As built
+
+Tasks 2 to 6 change the same few files (the table model, the browser, the
+preferences), so they were written together and landed as one commit,
+`feat(ui): ...`, after Task 1's. Tests and static analysis were run on the
+whole.
+
 ## Owed after the tasks
 
 The measurement of spec section 5 (time of `reload()` with four and with six
