@@ -185,11 +185,11 @@ plus references, a handful each). Package of 20 levels: order of 100
 statements, once per choice, on worker thread.
 
 `kIrradiations` counts per row in subqueries (AGENTS.md, "Queries": not
-measured on large store). It is not rewritten here. During implementation
-time `irradiations()` and `contents()` of largest package on a real-size
-store copy; numbers go in commit message. If package list takes over 1 s,
-stop and raise it: fix (counts behind a flag, as `SampleQuery::counts`) is
-its own change.
+measured on large store). It is not rewritten here. Measured 2026-10-09 with
+`sqlite3` on a migrated copy of a lab's imported store (102 packages, 963
+levels, 18998 positions): package list 8 ms; position rows of largest package
+(NM-335, 22 levels, 868 positions) 0.15 s. Same position read on that store
+before migration 0005 (no index on `ref_object.position_uuid`): 1.4 s.
 
 ## 7. Tests
 

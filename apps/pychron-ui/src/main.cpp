@@ -95,6 +95,7 @@
 #pragma pop_macro("signals")
 #include "entry_actions.hpp"
 #include "fit_actions.hpp"
+#include "store_identifier_source.hpp"
 #endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
@@ -496,6 +497,8 @@ int main(int argc, char** argv) {
     // The Entry and Fit menus, parented to the window, Entry made first (fit_actions.hpp).
     if (cli->db) {
       auto* entry = new pychron::ui::EntryActions(&window, *cli->db);
+      // The run factory picks identifiers from the same store, through Entry's bridge.
+      window.set_identifier_source(new pychron::ui::StoreIdentifierSource(*entry));
       new pychron::ui::FitActions(&window, *cli->db, *entry, presets,
                                   [&window](const QString& uuid) { window.open_recall(uuid); });
     }

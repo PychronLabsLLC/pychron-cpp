@@ -351,6 +351,7 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
     experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
                                               experiment_settings_ ? experiment_settings_() : nullptr, this);
     experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+    experiment_window_->factory()->set_identifier_source(identifier_source_);
     if (experiment_queue_) {
       QString error;
       if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
@@ -359,6 +360,11 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
     }
   }
   return experiment_window_;
+}
+
+void MainWindow::set_identifier_source(IdentifierSource* source) {
+  identifier_source_ = source;
+  if (experiment_window_ != nullptr) experiment_window_->factory()->set_identifier_source(source);
 }
 
 ExperimentWindow* MainWindow::show_experiment_window() {

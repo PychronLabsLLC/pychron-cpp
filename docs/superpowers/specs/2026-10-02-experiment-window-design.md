@@ -347,7 +347,9 @@ A left dock "Run Factory" over `experiment::FactoryForm`
 (`pychron/experiment/factory/form.hpp`, Qt-free and unit-tested):
 
 - Run: type (unknown or a special; picking a special fills its identifier),
-  identifier, aliquot (blank: assigned at run start), step.
+  identifier, aliquot (blank: assigned at run start), step. With a store
+  (`--db`) the identifier can also be picked from a dropdown narrowed by
+  Package and Level selects: `2026-10-09-identifier-select-design.md`.
 - Extraction: device, position (`4`, `1-6`, `1,3,5`; "one run per hole" with
   an optional identifier step per run), value and units, duration, cleanup,
   script (the lab's extraction scripts), step heat (`5, 10, 15` or

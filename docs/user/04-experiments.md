@@ -327,6 +327,19 @@ identifier. Enter the Identifier, and optionally Aliquot (leave blank for
 automatic) and Step. When the type changes, the form starts from the lab's
 defaults for that type (below).
 
+*Picking the identifier.* When `pychron-ui` was started with `--db`, the Run
+group also has **Package** and **Level**, and the Identifier field has a
+dropdown. Choose a package (an irradiation) and the dropdown lists the
+identifiers of all its levels, each with its sample and where it sits:
+`66001  FC-2  (A 3)` is identifier 66001, sample FC-2, level A, position 3.
+Choose a level as well to see only that level's. Picking a line puts the
+identifier in the field, exactly as if you had typed it. You can still type:
+a special such as `bu`, or an identifier the store does not have yet. Nothing
+is listed until a package is chosen, and the choice of package and level is
+not kept between sessions or in the queue file. If the store cannot be read,
+the reason is in the tooltip of the field. Without `--db` the two selects are
+not shown.
+
 **Extraction.** Device, Position (`4`, `1-6`, `1,3,5`), **One run per hole**
 (on by default: a position of several holes becomes one run per hole, with an
 optional "id step" to advance the identifier for each), Value and its units,

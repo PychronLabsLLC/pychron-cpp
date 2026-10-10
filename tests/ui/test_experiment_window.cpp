@@ -44,6 +44,18 @@ using pychron::ui::ExperimentWindow;
 using pychron::ui::QueueTableModel;
 namespace fs = std::filesystem;
 
+
+// An identifier source that answers at once, with one package.
+struct OnePackageSource : pychron::ui::IdentifierSource {
+  void packages(QObject*, std::function<void(pychron::Result<std::vector<pychron::ui::PackageChoice>>)> done) override {
+    done(std::vector<pychron::ui::PackageChoice>{{"p1", "NM-293"}});
+  }
+  void contents(QObject*, const std::string&,
+                std::function<void(pychron::Result<pychron::ui::PackageContents>)> done) override {
+    done(pychron::ui::PackageContents{});
+  }
+};
+
 class TestExperimentWindow : public QObject {
   Q_OBJECT
 
@@ -504,6 +516,34 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(window.model().queue().runs.size(), rows);
     QVERIFY(window.path().has_value());
     QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+  }
+
+  // The identifier source reaches the run factory whichever of the two comes first.
+  void theMainWindowHandsTheSourceToTheFactory() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    OnePackageSource source;
+    main.set_identifier_source(&source);
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    main.experiment_action()->trigger();
+    QVERIFY(main.experiment_window() != nullptr);
+    QCOMPARE(main.experiment_window()->factory()->package_choices().size(), 2);
+    main.set_experiment(nullptr, false);
+  }
+
+  void aSourceSetLaterReachesAnOpenWindow() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    main.experiment_action()->trigger();
+    QVERIFY(main.experiment_window() != nullptr);
+    QCOMPARE(main.experiment_window()->factory()->package_choices().size(), 1);
+    OnePackageSource source;
+    main.set_identifier_source(&source);
+    QCOMPARE(main.experiment_window()->factory()->package_choices().size(), 2);
+    main.set_experiment(nullptr, false);
   }
 
   // File > New and File > Open are the main window's, from any window: each

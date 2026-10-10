@@ -33,6 +33,7 @@
 #include "heater_dock.hpp"
 #include "experiment_window.hpp"
 #include "health_bar.hpp"
+#include "identifier_source.hpp"
 #include "laser_bridge.hpp"
 #include "laser_window.hpp"
 #include "pattern_maker_window.hpp"
@@ -94,6 +95,9 @@ class MainWindow : public QMainWindow {
                       std::function<std::unique_ptr<QSettings>()> settings = {});
   QAction* experiment_action() const noexcept { return experiment_action_; }
   ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
+  // Where the experiment window's run factory picks identifiers from (null:
+  // typed only). Not owned; given to the window when there is one.
+  void set_identifier_source(IdentifierSource* source);
   // File > New and File > Open, in menu order (New Queue, New Script…, New
   // Conditionals…, Open Queue…, Open Script…, Open Conditionals…).
   const QList<QAction*>& file_entries() const noexcept { return file_entries_; }
@@ -184,6 +188,7 @@ class MainWindow : public QMainWindow {
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
+  QPointer<IdentifierSource> identifier_source_;
   QList<QAction*> file_entries_;  // File > New and File > Open: live while there is a session
   QAction* data_action_;
   QAction* laser_action_;
