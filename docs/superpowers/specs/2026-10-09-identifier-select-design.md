@@ -175,7 +175,15 @@ Rule: source and panel write nothing to store.
   error text in Package combo tooltip. Failed `contents()`: dropdown and
   Level empty, error text in Identifier combo tooltip. Tooltip cleared by
   next success. Nothing modal.
-- GUI thread never waits on store.
+- First `packages()` failure (rows hidden): error text in Identifier combo
+  tooltip; panel asks `packages()` again each time it is shown until one
+  succeeds.
+- Mouse wheel over Identifier combo is ignored (left to the scrolling form):
+  it must not step the identifier.
+- GUI thread never waits on a store read. Exception: opening the bridge
+  (`EntryBridge::open`: connect, register client and user) blocks the first
+  `packages()` call, as it does the first Entry menu use. Those two rows are
+  the only thing this feature causes to be written.
 
 ## 6. Cost
 

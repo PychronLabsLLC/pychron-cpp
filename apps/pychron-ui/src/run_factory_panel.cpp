@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -116,6 +117,8 @@ QWidget* RunFactoryPanel::build_run() {
   identifier_select_->setEditable(true);
   identifier_select_->setInsertPolicy(QComboBox::NoInsert);
   identifier_select_->setCompleter(nullptr);
+  // The form scrolls: a wheel passing over must not walk the identifier.
+  identifier_select_->installEventFilter(this);
   identifier_ = identifier_select_->lineEdit();
   identifier_->setObjectName(QStringLiteral("identifier"));
   identifier_->setPlaceholderText(tr("e.g. 66001, or a special such as bu"));
@@ -570,6 +573,7 @@ void RunFactoryPanel::set_identifier_source(IdentifierSource* source) {
     package_->addItem(tr("(none)"));
   }
   package_->setToolTip(QString());
+  packages_failed_ = false;
   clear_contents();
   level_->setEnabled(false);
   show_selects(false);
@@ -577,6 +581,19 @@ void RunFactoryPanel::set_identifier_source(IdentifierSource* source) {
   connect(source_, &IdentifierSource::changed, this, [this] { load_packages(); });
   connect(source_, &QObject::destroyed, this, [this] { set_identifier_source(nullptr); });
   load_packages();
+}
+
+bool RunFactoryPanel::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == identifier_select_ && event->type() == QEvent::Wheel) {
+    event->ignore();  // on to the scroll area
+    return true;
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void RunFactoryPanel::showEvent(QShowEvent* event) {
+  QWidget::showEvent(event);
+  if (packages_failed_) load_packages();
 }
 
 void RunFactoryPanel::show_selects(bool on) {
@@ -592,11 +609,19 @@ void RunFactoryPanel::load_packages() {
   source_->packages(this, [this, serial](Result<std::vector<PackageChoice>> answer) {
     if (serial != packages_serial_) return;
     if (!answer) {
-      // Before the first list there is nothing to hang the reason on: the rows stay hidden.
-      package_->setToolTip(QString::fromStdString(to_string(answer.error())));
+      const QString why = QString::fromStdString(to_string(answer.error()));
+      package_->setToolTip(why);
+      // Before the first list the Package row is hidden: the reason goes on
+      // the field that is there, and the next showing of the panel asks again.
+      if (!selects_visible()) {
+        packages_failed_ = true;
+        identifier_select_->setToolTip(tr("No identifiers to pick from: %1").arg(why));
+      }
       return;
     }
     package_->setToolTip(QString());
+    if (packages_failed_) identifier_select_->setToolTip(QString());
+    packages_failed_ = false;
     const QString chosen = package_->currentIndex() > 0 ? package_->currentData().toString() : QString();
     packages_ = std::move(*answer);
     int index = 0;

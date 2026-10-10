@@ -7,6 +7,7 @@
 
 #include <QComboBox>
 #include <QLineEdit>
+#include <QWheelEvent>
 #include <QtTest/QtTest>
 
 #include "experiment_fixture.hpp"
@@ -592,6 +593,75 @@ class TestRunFactoryPanel : public QObject {
     a.content_calls.back().second(p1_contents());
     QVERIFY(panel_->identifier_choices().isEmpty());
     QVERIFY(!panel_->selects_visible());
+  }
+  // ---- through the widgets themselves, as the operator's hand goes
+
+  void theSelectsAreWiredToTheirWidgets() {
+    FakeIdentifierSource fake;
+    load(fake);
+    combo("package")->setCurrentIndex(2);
+    Q_EMIT combo("package")->activated(2);
+    QCOMPARE(fake.content_calls.size(), std::size_t{1});
+    fake.content_calls[0].second(p1_contents());
+    combo("level")->setCurrentIndex(2);
+    Q_EMIT combo("level")->activated(2);
+    QCOMPARE(panel_->identifier_choices(), QStringList{QStringLiteral("66010  bt-1  (B 2)")});
+    combo("identifier_select")->setCurrentIndex(0);
+    Q_EMIT combo("identifier_select")->activated(0);
+    QCOMPARE(edit()->text(), QStringLiteral("66010"));
+    QCOMPARE(panel_->form().identifier, std::string("66010"));
+  }
+
+  void typedTextSurvivesEnterWithAFilledDropdown() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    edit()->setText(QString());
+    QTest::keyClicks(edit(), QStringLiteral("66002"));
+    QTest::keyClick(edit(), Qt::Key_Return);
+    QCOMPARE(edit()->text(), QStringLiteral("66002"));
+    QTest::keyClicks(edit(), QStringLiteral("9"));
+    QTest::keyClick(edit(), Qt::Key_Return);
+    QCOMPARE(panel_->form().identifier, std::string("660029"));
+  }
+
+  // The form scrolls under the pointer: the wheel must not walk the identifier.
+  void theWheelOverTheIdentifierChangesNothing() {
+    FakeIdentifierSource fake;
+    load(fake);
+    choose_p1(fake);
+    panel_->choose_identifier(1);
+    QCOMPARE(edit()->text(), QStringLiteral("66002"));
+    for (QWidget* target : {static_cast<QWidget*>(combo("identifier_select")), static_cast<QWidget*>(edit())}) {
+      for (int delta : {-120, 120}) {
+        QWheelEvent wheel(QPointF(5, 5), target->mapToGlobal(QPointF(5, 5)), QPoint(), QPoint(0, delta), Qt::NoButton,
+                          Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(target, &wheel);
+        QVERIFY(!wheel.isAccepted());  // left for the scroll area
+        QCOMPARE(edit()->text(), QStringLiteral("66002"));
+      }
+    }
+  }
+
+  // Why there are no selects is said where it can be read, and showing the
+  // panel again asks again.
+  void aFirstFailureSaysWhyAndIsTriedAgainWhenShown() {
+    FakeIdentifierSource fake;
+    panel_->set_identifier_source(&fake);
+    panel_->show();
+    QCOMPARE(fake.package_calls.size(), std::size_t{1});  // one is out: showing asks nothing more
+    fake.package_calls[0](pychron::fail(pychron::ErrorKind::Io, "store gone"));
+    QVERIFY(!panel_->selects_visible());
+    QVERIFY(panel_->identifier_tooltip().contains(QStringLiteral("store gone")));
+    panel_->hide();
+    panel_->show();
+    QCOMPARE(fake.package_calls.size(), std::size_t{2});
+    fake.package_calls[1](two_packages());
+    QVERIFY(panel_->selects_visible());
+    QVERIFY(panel_->identifier_tooltip().isEmpty());
+    panel_->hide();
+    panel_->show();
+    QCOMPARE(fake.package_calls.size(), std::size_t{2});  // loaded: nothing to try again
   }
 };
 

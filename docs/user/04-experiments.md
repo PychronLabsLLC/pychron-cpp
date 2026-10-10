@@ -337,8 +337,9 @@ identifier in the field, exactly as if you had typed it. You can still type:
 a special such as `bu`, or an identifier the store does not have yet. Nothing
 is listed until a package is chosen, and the choice of package and level is
 not kept between sessions or in the queue file. If the store cannot be read,
-the reason is in the tooltip of the field. Without `--db` the two selects are
-not shown.
+the reason is in the tooltip of the Identifier field; when it could not be
+read at all the two selects are not shown, and opening the Experiment window
+again tries again. Without `--db` they are never shown.
 
 **Extraction.** Device, Position (`4`, `1-6`, `1,3,5`), **One run per hole**
 (on by default: a position of several holes becomes one run per hole, with an

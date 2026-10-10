@@ -100,6 +100,10 @@ class RunFactoryPanel : public QWidget {
   QStringList conditional_choices() const;
   QString conditionals_text() const;  // the button: the ticked files or "(none)"
 
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
+  void showEvent(QShowEvent* event) override;
+
  signals:
   // Rows the panel just inserted (sorted), for the window to select.
   void inserted(const std::vector<std::size_t>& rows);
@@ -141,6 +145,7 @@ class RunFactoryPanel : public QWidget {
   // The latest request of each kind; an answer to an earlier one is dropped.
   std::uint64_t packages_serial_ = 0;
   std::uint64_t contents_serial_ = 0;
+  bool packages_failed_ = false;  // the first list never came: asked again when the panel is shown
 
   QFormLayout* run_form_ = nullptr;
   QComboBox* type_ = nullptr;
