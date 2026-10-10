@@ -263,16 +263,16 @@ TEST_P(InstrumentProfile, EveryInstalledPlanPutsItsIsotopesOnItsDetectors) {
   ASSERT_FALSE(table_name.empty());
   auto file = spectrometer::cfg::resolve_current_table(root, table_name);
   ASSERT_TRUE(file) << file.error().what;
-  std::ifstream table_in(*file);
-  const std::string table_text((std::istreambuf_iterator<char>(table_in)), std::istreambuf_iterator<char>());
-  auto table = spectrometer::parse_field_table(table_text);
+  auto table = spectrometer::parse_field_table(read_file(*file));
   ASSERT_TRUE(table) << table.error().what;
 
   auto peak = toml::parse_file((root / "peak_center.toml").string());
   ASSERT_TRUE(peak) << peak.error().description();
-  const double window = peak.table()["default"]["window"].value_or(0.0);
-  ASSERT_GT(window, 0.0);
-  const double tolerance = window / 2;
+  ASSERT_GT(peak.table()["default"]["window"].value_or(0.0), 0.0);
+  // The simulated peak is flat within 0.02 of its centre and gone by 0.03, and every run ends with a
+  // peak center that moves the table by a few thousandths. A pair 0.01 apart would still be in the
+  // flat top after such a move; one 0.02 apart has no room left, and a pair at 0.03 reads nothing.
+  constexpr double tolerance = 0.01;
 
   const AnyAlias aliases;
   const experiment::plan::PlanResolvers resolvers{&aliases, nullptr};
@@ -281,14 +281,14 @@ TEST_P(InstrumentProfile, EveryInstalledPlanPutsItsIsotopesOnItsDetectors) {
     if (entry.path().extension() != ".toml") continue;
     ++plans;
     const std::string label = name + ": " + entry.path().filename().string();
-    std::ifstream in(entry.path());
-    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    auto tmpl = experiment::plan::parse_plan_template(text, label);
+    auto tmpl = experiment::plan::parse_plan_template(read_file(entry.path()), label);
     ASSERT_TRUE(tmpl) << label << ": " << tmpl.error().what;
     auto loaded = experiment::plan::load_plan(*tmpl, {}, resolvers);
     ASSERT_TRUE(loaded) << label << ": " << loaded.error().what;
     const auto& plan = loaded->plan;
+    ASSERT_FALSE(plan.main.hops.empty()) << label;
     int h = 0;
+    std::size_t compared = 0;
     for (const auto& hop : plan.main.hops) {
       const std::string where = label + " hop " + std::to_string(h++);
       const auto target = experiment::plan::hop_target(plan, hop);
@@ -299,11 +299,14 @@ TEST_P(InstrumentProfile, EveryInstalledPlanPutsItsIsotopesOnItsDetectors) {
       for (const auto& active : experiment::plan::active_detectors(plan, hop)) {
         auto at = table->value_for(isotope_mass(active.isotope), active.detector);
         ASSERT_TRUE(at) << where << ": " << at.error().what;
+        ++compared;
         EXPECT_NEAR(*at, *reference, tolerance)
             << where << ": " << active.isotope << " on " << active.detector << " is at " << *at << ", but "
             << target->isotope << " on " << target->detector << ", where the magnet is, is at " << *reference;
       }
     }
+    // A plan that is only one detector per hop (detector_ic) has nothing to compare; the others do.
+    if (plan.info.name != "detector_ic") EXPECT_GT(compared, 1u) << label;
   }
   EXPECT_EQ(plans, 3u) << name;
   fs::remove_all(root);

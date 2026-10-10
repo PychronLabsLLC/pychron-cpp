@@ -1,8 +1,10 @@
 # SIMULATION PLACEHOLDER: an NGX mass table (axis "mass") shaped like
 # pychron's ngx_mftable.csv. Replace with the instrument's calibration
 # before any magnet move.
-# Laid out for this profile's detectors: H4, H3, AX, L1 and L2 sit 0, 1, 2, 3
-# and 4 mass units from H4 (H2 and H1 between H3 and AX), so Ar40 on H4 puts
+# Laid out for this profile's detectors: each collector sits where H4 would
+# be if its mass were shifted by that collector's spacing from H4 (H3, AX,
+# L1 and L2 the Ar40 - Ar39, Ar38, Ar37 and Ar36 mass differences, H2 and H1
+# between H3 and AX, L3 to L5 one mass unit apart). Ar40 on H4 then has
 # Ar39 on H3, Ar38 on AX, Ar37 on L1 and Ar36 on L2 at the same magnet value.
 fit = "quadratic"
 axis = "mass"
@@ -11,12 +13,12 @@ axis = "mass"
 isotope = "Ar40"
 mass = 39.9623831237
 H4 = 35.962383
-H3 = 36.962383
-H2 = 37.295716
-H1 = 37.629050
-AX = 37.962383
-L1 = 38.962383
-L2 = 39.962383
+H3 = 36.960453
+H2 = 37.294314
+H1 = 37.628174
+AX = 37.962034
+L1 = 38.957990
+L2 = 39.957221
 L3 = 40.962383
 L4 = 41.962383
 L5 = 42.962383
@@ -25,12 +27,12 @@ L5 = 42.962383
 isotope = "Ar39"
 mass = 38.964313
 H4 = 34.964313
-H3 = 35.964313
-H2 = 36.297646
-H1 = 36.630980
-AX = 36.964313
-L1 = 37.964313
-L2 = 38.964313
+H3 = 35.962383
+H2 = 36.296243
+H1 = 36.630104
+AX = 36.963964
+L1 = 37.959920
+L2 = 38.959151
 L3 = 39.964313
 L4 = 40.964313
 L5 = 41.964313
@@ -39,12 +41,12 @@ L5 = 41.964313
 isotope = "Ar38"
 mass = 37.9627322
 H4 = 33.962732
-H3 = 34.962732
-H2 = 35.296066
-H1 = 35.629399
-AX = 35.962732
-L1 = 36.962732
-L2 = 37.962732
+H3 = 34.960802
+H2 = 35.294663
+H1 = 35.628523
+AX = 35.962383
+L1 = 36.958339
+L2 = 37.957570
 L3 = 38.962732
 L4 = 39.962732
 L5 = 40.962732
@@ -53,12 +55,12 @@ L5 = 40.962732
 isotope = "Ar37"
 mass = 36.9667759
 H4 = 32.966776
-H3 = 33.966776
-H2 = 34.300109
-H1 = 34.633443
-AX = 34.966776
-L1 = 35.966776
-L2 = 36.966776
+H3 = 33.964846
+H2 = 34.298706
+H1 = 34.632567
+AX = 34.966427
+L1 = 35.962383
+L2 = 36.961614
 L3 = 37.966776
 L4 = 38.966776
 L5 = 39.966776
@@ -67,12 +69,12 @@ L5 = 39.966776
 isotope = "Ar36"
 mass = 35.967545105
 H4 = 31.967545
-H3 = 32.967545
-H2 = 33.300878
-H1 = 33.634212
-AX = 33.967545
-L1 = 34.967545
-L2 = 35.967545
+H3 = 32.965615
+H2 = 33.299475
+H1 = 33.633336
+AX = 33.967196
+L1 = 34.963152
+L2 = 35.962383
 L3 = 36.967545
 L4 = 37.967545
 L5 = 38.967545
