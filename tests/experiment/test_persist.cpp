@@ -41,6 +41,7 @@ class FlakyPersister final : public IAnalysisPersister {
     return {};
   }
   Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
   bool down = false;
   std::vector<std::string> saved;
 };
@@ -84,6 +85,19 @@ TEST_F(PersistTest, FilePersisterWritesRecordsAndCountsAliquots) {
   ASSERT_TRUE(fresh.save_artifact("u1", "snap.png", {1, 2, 3}));
   EXPECT_EQ(fs::file_size(dir_ / "records" / "artifacts" / "u1" / "snap.png"), 3u);
   EXPECT_FALSE(fresh.save_artifact("u1", "../x", {}));
+}
+
+TEST_F(PersistTest, FilePersisterChecksNothing) {
+  FilePersister files(dir_ / "records");
+  QueueSpec queue;
+  queue.runs.emplace_back();
+  queue.runs.back().id.identifier = "zz";
+  auto problems = files.check_queue(queue);
+  ASSERT_TRUE(problems) << problems.error().what;
+  EXPECT_TRUE(problems->empty());
+  auto none = files.check_queue(QueueSpec{});
+  ASSERT_TRUE(none);
+  EXPECT_TRUE(none->empty());
 }
 
 TEST_F(PersistTest, SpoolRoundTripsAndListsOldestFirst) {

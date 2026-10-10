@@ -65,6 +65,7 @@ struct SessionOptions {
   std::filesystem::path data;            // records/, spool/, executor_state.json
   executor::ExecutorOptions executor;    // state_file defaults to <data>/executor_state.json
   ProcessRunner notify;                  // runs the notification programs; empty: run_process
+  persist::IAnalysisPersister* persister = nullptr;  // not owned; nullptr: files under <data>/records
 };
 
 // Published on the line's bus when a session starts a queue, before the

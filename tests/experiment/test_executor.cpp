@@ -680,6 +680,7 @@ class StampingPersister final : public persist::IAnalysisPersister {
     return to_.save_artifact(uuid, name, bytes);
   }
   Result<void> flush() override { return to_.flush(); }
+  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override { return to_.check_queue(queue); }
   std::vector<std::string> stamps() {
     std::lock_guard lock(mutex_);
     return stamps_;

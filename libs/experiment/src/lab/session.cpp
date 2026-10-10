@@ -28,7 +28,8 @@ struct LabSession::QueueLease {
 
 // Declaration order is construction order; members refer only to earlier ones.
 struct LabSession::Services {
-  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, Lasers& lasers)
+  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, Lasers& lasers,
+           persist::IAnalysisPersister* given)
       : host(scripting::make_script_host()),
         script_valves(hw.line.switches(), "script"),
         script_pressure(hw.line),
@@ -37,8 +38,8 @@ struct LabSession::Services {
         instrument(hw.spectrometer, &hw.line),
         files(data / "records"),
         spool(data / "spool"),
-        save(spool, files),
-        aliquots(files) {
+        save(spool, given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)),
+        aliquots(given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)) {
     if (hw.spectrometer != nullptr) {
       port.emplace(*hw.spectrometer);
       jobs::PeakCenterOptions pc;
@@ -68,7 +69,7 @@ struct LabSession::Services {
     s.plans = lab.plans.get();
     s.conditionals = lab.conditionals.get();
     s.aliquots = &aliquots;
-    s.persister = &files;
+    s.persister = given != nullptr ? given : &files;
     s.save = &save;
     ctx.pre_run_metrics = &instrument;
     ctx.blank = default_blank_factory(lab.ids);
@@ -94,7 +95,7 @@ LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions 
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
   if (hardware_.lasers == nullptr) own_lasers_ = std::make_unique<Lasers>(lab_, hardware_.line, hardware_.simulated);
   lasers_ = hardware_.lasers != nullptr ? hardware_.lasers : own_lasers_.get();
-  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_);
+  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_, options_.persister);
   notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
 }
 
@@ -122,6 +123,19 @@ bool LabSession::has_spectrometer() const noexcept { return hardware_.spectromet
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
   if (auto ok = check(queue); !ok) return ok;
+  {
+    persist::IAnalysisPersister& persister =
+        options_.persister != nullptr ? *options_.persister : static_cast<persist::IAnalysisPersister&>(services_->files);
+    const auto problems = persister.check_queue(queue);
+    if (!problems) {
+      return fail(ErrorKind::Config, "the queue cannot be saved: " + problems.error().what, "experiment");
+    }
+    if (!problems->empty()) {
+      std::string what = "the queue cannot be saved:";
+      for (const auto& line : *problems) what += "\n" + line;
+      return fail(ErrorKind::Config, what, "experiment");
+    }
+  }
   // A device whose camera cannot be used as the lab asks is not run without
   // it: the queue waits for the lab to be put right.
   for (const auto& r : queue.runs) {

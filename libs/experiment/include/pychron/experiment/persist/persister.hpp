@@ -39,6 +39,9 @@ class IAnalysisPersister {
   virtual Result<void> save_artifact(const std::string& uuid, const std::string& name,
                                      const std::vector<std::uint8_t>& bytes) = 0;
   virtual Result<void> flush() = 0;
+  // What would stop this queue's runs from being saved, one line each; empty
+  // when nothing would.
+  virtual Result<std::vector<std::string>> check_queue(const QueueSpec& queue) = 0;
 };
 
 // Records directory:
@@ -58,6 +61,7 @@ class FilePersister final : public IAnalysisPersister {
   Result<void> save_artifact(const std::string& uuid, const std::string& name,
                              const std::vector<std::uint8_t>& bytes) override;
   Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
 
   std::filesystem::path analysis_path(const record::AnalysisRecord& record) const;
 

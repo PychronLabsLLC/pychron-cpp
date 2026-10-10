@@ -208,6 +208,70 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   EXPECT_FALSE(scan_->paused());
 }
 
+// A persister that keeps no file of its own under <data>/records: it counts
+// what it is asked to save and lends aliquots and the rest of FilePersister,
+// on a directory of its own.
+class RecordingPersister final : public persist::IAnalysisPersister {
+ public:
+  RecordingPersister(fs::path root, std::vector<std::string> refusals)
+      : files_(std::move(root)), refusals_(std::move(refusals)) {}
+  Result<int> next_aliquot(const std::string& identifier) override { return files_.next_aliquot(identifier); }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return files_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
+  Result<void> save_analysis(const record::AnalysisRecord& r) override {
+    std::lock_guard lock(mutex_);
+    saved_.push_back(r.identity.uuid);
+    return {};
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return files_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return refusals_; }
+  std::size_t saved() {
+    std::lock_guard lock(mutex_);
+    return saved_.size();
+  }
+
+ private:
+  persist::FilePersister files_;
+  std::vector<std::string> refusals_;
+  std::mutex mutex_;
+  std::vector<std::string> saved_;
+};
+
+TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {
+  RecordingPersister persister(dir_ / "elsewhere", {"identifier 'zz' is not in the database"});
+  session_.reset();
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, &persister});
+  std::atomic<int> announced{0};
+  auto sub = line_->bus().subscribe<QueueStarted>([&](const QueueStarted&) { ++announced; });
+
+  auto refused = session_->start(queue_);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_NE(refused.error().what.find("the queue cannot be saved:"), std::string::npos) << refused.error().what;
+  EXPECT_NE(refused.error().what.find("identifier 'zz' is not in the database"), std::string::npos);
+  EXPECT_FALSE(session_->running());
+  clock_.sleep_for(1s);
+  EXPECT_EQ(announced.load(), 0);
+}
+
+TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
+  RecordingPersister persister(dir_ / "elsewhere", {});
+  session_.reset();
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, &persister});
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  EXPECT_EQ(persister.saved(), 3u);
+  EXPECT_FALSE(fs::exists(dir_ / "data" / "records" / "bu" / "bu-1.json"));
+  EXPECT_TRUE(fs::is_empty(dir_ / "data" / "spool"));
+  EXPECT_EQ(session_->pending_saves(), 0u);
+}
+
 // A subscriber learns the size of the queue before any of its runs starts
 // (the metrics' queue progress depends on it).
 TEST_F(LabSessionTest, TheQueuesStartIsAnnouncedBeforeItsFirstRun) {
