@@ -83,13 +83,13 @@ Result<void> fill_identity(const record::AnalysisRecord& rec, const ps::Uuid& an
 void fill_extraction(const record::Extraction& ex, ps::AnalysisIngest& a) {
   const auto& spec = ex.spec;
   auto& out = a.extraction;
-  out.extract_value = spec.value;
+  out.extract_value = finite(spec.value);
   if (!spec.units.empty()) out.extract_units = spec.units;
-  out.extract_duration = spec.duration;
-  out.cleanup_duration = spec.cleanup;
+  out.extract_duration = finite(spec.duration);
+  out.cleanup_duration = finite(spec.cleanup);
   if (!spec.pattern.empty()) out.pattern = spec.pattern;
-  out.cryo_temperature = spec.cryo_temperature;
-  if (ex.actuals.beam_diameter > 0) out.beam_diameter = ex.actuals.beam_diameter;
+  if (spec.cryo_temperature) out.cryo_temperature = finite(*spec.cryo_temperature);
+  if (ex.actuals.beam_diameter > 0) out.beam_diameter = finite(ex.actuals.beam_diameter);
   for (const int p : spec.positions) {
     ps::MeasuredPositionRow row;
     row.position = p;
@@ -104,11 +104,17 @@ Result<void> fill_series(const record::AnalysisRecord& rec, const ps::Uuid& anal
   std::set<Sha256Digest> seen;
   std::set<std::pair<std::string, std::string>> isotopes;
   std::set<std::string> detectors;
+  std::map<std::pair<std::string, std::string>, std::string> keys;  // (kind, key) -> detector
 
   for (const auto& s : rec.data.series) {
     const auto& tr = s.trace;
     if (tr.t.size() != tr.v.size() || (!tr.sigma.empty() && tr.sigma.size() != tr.t.size()))
       return fail(ErrorKind::Config, "series " + s.iso + "/" + s.det + "/" + s.kind + " has mismatched lengths");
+
+    const std::string key = s.kind == "baseline" ? s.det : s.iso;
+    if (const auto [it, fresh] = keys.emplace(std::make_pair(s.kind, key), s.det); !fresh)
+      return fail(ErrorKind::Config, "two " + s.kind + " series for " + key + " (detectors " + it->second + ", " + s.det +
+                                         "): the store keeps one");
 
     ps::BlobIngest blob;
     blob.n_points = static_cast<int>(tr.t.size());
@@ -137,7 +143,7 @@ Result<void> fill_series(const record::AnalysisRecord& rec, const ps::Uuid& anal
 
     ps::SignalRefRow ref;
     ref.series_kind = s.kind;
-    ref.series_key = s.kind == "baseline" ? s.det : s.iso;
+    ref.series_key = key;
     ref.detector = s.det;
     ref.blob_sha = sha;
     ref.n_points = static_cast<int>(tr.t.size());
@@ -152,8 +158,8 @@ Result<void> fill_series(const record::AnalysisRecord& rec, const ps::Uuid& anal
     ps::DetectorRow row;
     row.detector = det;
     if (const auto d = rec.spectrometer.deflections.find(det); d != rec.spectrometer.deflections.end())
-      row.deflection = d->second;
-    if (const auto g = rec.spectrometer.gains.find(det); g != rec.spectrometer.gains.end()) row.gain_used = g->second;
+      row.deflection = finite(d->second);
+    if (const auto g = rec.spectrometer.gains.find(det); g != rec.spectrometer.gains.end()) row.gain_used = finite(g->second);
     a.detectors.push_back(std::move(row));
   }
   return {};
@@ -172,16 +178,22 @@ std::string outliers_json(const reduction::OutlierSpec& o) {
 const char* error_type_of(const reduction::FitSpec& fit) { return fit.error == reduction::ErrorType::Sd ? "SD" : "SEM"; }
 
 Result<void> fill_fits(const record::Results& res, const record::Data& data, ps::AnalysisIngest& a) {
-  std::map<std::string, std::string> detector_of;  // isotope -> the detector of its signal series
-  for (const auto& s : data.series)
+  // isotope -> its signal series' detector, else the lowest detector of any series of it
+  std::map<std::string, std::string> detector_of;
+  std::map<std::string, std::string> any_of;
+  for (const auto& s : data.series) {
     if (s.kind == "signal") detector_of.emplace(s.iso, s.det);
+    if (auto [it, fresh] = any_of.emplace(s.iso, s.det); !fresh && s.det < it->second) it->second = s.det;
+  }
 
   for (const auto& [iso, r] : res.intercepts) {
-    const auto det = detector_of.find(iso);
-    if (det == detector_of.end()) return fail(ErrorKind::Config, "intercept " + iso + " has no signal series");
+    const auto signal = detector_of.find(iso);
+    const auto any = any_of.find(iso);
+    if (signal == detector_of.end() && any == any_of.end())
+      return fail(ErrorKind::Config, "intercept " + iso + " has no series");
     ps::InterceptRow row;
     row.isotope = iso;
-    row.detector = det->second;
+    row.detector = signal != detector_of.end() ? signal->second : any->second;
     row.value = finite(r.intercept.value);
     row.error = finite(r.intercept.error);
     row.n = static_cast<int>(r.intercept.n_used);
@@ -287,6 +299,8 @@ void fill_meta(const record::AnalysisRecord& rec, ps::AnalysisIngest& a) {
   if (!in.software_version.empty() || !in.software_git_sha.empty())
     set(meta.software_json, json{{"software_version", in.software_version}, {"software_git_sha", in.software_git_sha}}.dump());
 
+  if (!rec.identity.queue_uuid.empty()) set(meta.queue_names_json, json::array({rec.identity.queue_uuid}).dump());
+
   if (any) a.meta = std::move(meta);
 }
 
@@ -297,8 +311,9 @@ std::optional<int> increment_of(std::string_view step) {
   if (step.size() > 6) return std::nullopt;  // far past any real step; keeps the sum in int
   int n = 0;
   for (const char c : step) {
-    if (c < 'A' || c > 'Z') return std::nullopt;
-    n = n * 26 + (c - 'A' + 1);
+    const char u = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+    if (u < 'A' || u > 'Z') return std::nullopt;
+    n = n * 26 + (u - 'A' + 1);
   }
   return n - 1;
 }

@@ -20,11 +20,15 @@ struct RunIngest {
   persistence::IngestItem analysis;
 };
 
-// Fails (ErrorKind::Config) on a record that was not finalized, whose uuid or
-// timestamp does not parse, or whose step is not a letter sequence.
+// Fails (ErrorKind::Config) when: the record was not finalized (its sha is not
+// 64 hex characters); its uuid or timestamp does not parse; its step is not
+// letters; a series has t, v or sigma of different lengths; two series share
+// a (kind, key) (the store keeps one signal ref per kind and isotope, and per
+// baseline detector); or an intercept names an isotope with no series.
 Result<RunIngest> to_ingest(const record::AnalysisRecord& record, persistence::Uuid client);
 
-// "" -> -1, "A" -> 0, "Z" -> 25, "AA" -> 26; anything else nullopt.
+// "" -> -1, "A" -> 0, "Z" -> 25, "AA" -> 26; case is folded ("aB" is 27);
+// anything else nullopt.
 std::optional<int> increment_of(std::string_view step);
 
 }  // namespace pychron::experiment::store

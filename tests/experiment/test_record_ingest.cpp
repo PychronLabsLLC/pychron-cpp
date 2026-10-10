@@ -115,7 +115,9 @@ TEST(RecordIngest, StepsBecomeIncrements) {
   EXPECT_EQ(store::increment_of("A"), 0);
   EXPECT_EQ(store::increment_of("Z"), 25);
   EXPECT_EQ(store::increment_of("AA"), 26);
-  EXPECT_FALSE(store::increment_of("a"));
+  EXPECT_EQ(store::increment_of("a"), 0);
+  EXPECT_EQ(store::increment_of("aa"), 26);
+  EXPECT_EQ(store::increment_of("aB"), 27);
   EXPECT_FALSE(store::increment_of("A1"));
   EXPECT_FALSE(store::increment_of("-"));
 
@@ -289,6 +291,9 @@ TEST(RecordIngest, EmptyOptionalsAreUnset) {
   in.software_version.clear();
   in.software_git_sha.clear();
   b.set_instrument(in);
+  auto id = b.draft().identity;
+  id.queue_uuid.clear();
+  b.set_identity(id);
   auto ex = b.draft().extraction;
   ex.spec.units = "w";
   ex.spec.pattern.clear();
@@ -399,11 +404,14 @@ TEST(RecordIngest, ANonFiniteInterceptIsUnknown) {
   b.set_baseline("H1", br);
   const auto out = convert(finalized(b));
   const auto& a = body_of(out);
+  bool found = false;
   for (const auto& r : a.roots.intercepts_rows)
     if (r.isotope == "Ar40") {
+      found = true;
       EXPECT_FALSE(r.value);
       EXPECT_FALSE(r.error);
     }
+  EXPECT_TRUE(found);
   EXPECT_FALSE(a.roots.baselines_rows.at(0).value);
 }
 
@@ -470,4 +478,84 @@ TEST(RecordIngest, TheSampleTextIsNotCarried) {
   EXPECT_EQ(ax.queue.has_value(), ay.queue.has_value());
   EXPECT_EQ(ax.load_name, ay.load_name);
   EXPECT_EQ(ax.analyst, ay.analyst);
+}
+
+TEST(RecordIngest, TheQueueNameIsCarried) {
+  auto rec = sample_record();  // queue_uuid holds the queue's name
+  rec.identity.queue_uuid = "first-queue";
+  const auto out = convert(rec);
+  ASSERT_TRUE(body_of(out).meta);
+  EXPECT_EQ(json::parse(*body_of(out).meta->queue_names_json), (json{"first-queue"}));
+  rec.identity.queue_uuid.clear();
+  const auto none = convert(rec);
+  EXPECT_FALSE(body_of(none).meta && body_of(none).meta->queue_names_json);
+}
+
+TEST(RecordIngest, OneIsotopeOnTwoDetectorsIsRefused) {
+  auto rec = sample_record();
+  rec.data.series.push_back({"Ar40", "H2", "signal", rec.data.series[0].trace});
+  const auto e = error_of(rec);
+  EXPECT_NE(e.find("Ar40"), std::string::npos);
+  EXPECT_NE(e.find("H1"), std::string::npos);
+  EXPECT_NE(e.find("H2"), std::string::npos);
+}
+
+TEST(RecordIngest, TwoBaselinesOnOneDetectorIsRefused) {
+  auto rec = sample_record();
+  rec.data.series.push_back({"Ar39", "H1", "baseline", rec.data.series[2].trace});
+  const auto e = error_of(rec);
+  EXPECT_NE(e.find("baseline"), std::string::npos);
+  EXPECT_NE(e.find("H1"), std::string::npos);
+  EXPECT_NE(e.find("detectors H1, H1"), std::string::npos);  // a baseline is keyed by its detector
+}
+
+TEST(RecordIngest, AnInterceptTakesItsDetectorFromAnySeriesOfItsIsotope) {
+  auto rec = sample_record();
+  // Ar37 has only baselines-free, non-signal series on two detectors.
+  rec.data.series.push_back({"Ar37", "L1", "sniff", rec.data.series[0].trace});
+  rec.data.series.push_back({"Ar37", "H2", "whiff", rec.data.series[0].trace});
+  rec.results.intercepts["Ar37"] = rec.results.intercepts["Ar40"];
+  const auto out = convert(rec);
+  bool found = false;
+  for (const auto& r : body_of(out).roots.intercepts_rows) {
+    if (r.isotope == "Ar37") {
+      found = true;
+      EXPECT_EQ(r.detector, "H2");  // the lowest name
+    }
+    if (r.isotope == "Ar40") EXPECT_EQ(r.detector, "H1");  // its signal series
+  }
+  EXPECT_TRUE(found);
+}
+
+TEST(RecordIngest, AnInterceptWithNoSeriesIsRefused) {
+  auto rec = sample_record();
+  rec.results.intercepts["Ar38"] = rec.results.intercepts["Ar40"];
+  EXPECT_NE(error_of(rec).find("Ar38"), std::string::npos);
+}
+
+TEST(RecordIngest, NonFiniteNumbersAreUnset) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  auto rec = sample_record();
+  rec.spectrometer.gains["CDD"] = nan;
+  rec.spectrometer.deflections["CDD"] = nan;
+  rec.extraction.spec.value = nan;
+  rec.extraction.spec.cryo_temperature = nan;
+  rec.extraction.actuals.beam_diameter = std::numeric_limits<double>::infinity();
+  rec.results.icfactors["CDD"] = nan;
+  const auto out = convert(rec);
+  const auto& a = body_of(out);
+  EXPECT_EQ(a.detectors[0].detector, "CDD");
+  EXPECT_FALSE(a.detectors[0].gain_used);
+  EXPECT_FALSE(a.detectors[0].deflection);
+  EXPECT_FALSE(a.extraction.extract_value);
+  EXPECT_FALSE(a.extraction.cryo_temperature);
+  EXPECT_FALSE(a.extraction.beam_diameter);
+  ASSERT_EQ(a.roots.icfactors_rows.size(), 1u);
+  EXPECT_FALSE(a.roots.icfactors_rows[0].value);
+}
+
+TEST(RecordIngest, ASeriesOfMismatchedLengthsIsRefused) {
+  auto rec = sample_record();  // a hand-made record can hold what the builder refuses
+  rec.data.series[0].trace.v.pop_back();
+  EXPECT_NE(error_of(rec).find("mismatched"), std::string::npos);
 }
