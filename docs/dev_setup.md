@@ -830,7 +830,8 @@ An instrument install has a database (`data/pychron.db` unless the lab's
 server was named), seeded from the install's `seed.toml` with the reference
 samples and their identifiers, the mass spectrometer and a reactor. Its
 shipped `experiment.toml` is three air shots between two blanks (`ba`, `a`,
-`a`, `a`, `ba`; about 19 minutes of simulated time), and names only what the
+`a`, `a`, `ba`; about 19 minutes of simulated time, though `exp run`'s `ETA`
+line, an estimate, reads `0:08:50`), and names only what the
 seed made. `exp run` and `pychron-ui` write each finished run to that
 database, and refuse a queue that names an identifier, mass spectrometer or
 extract device it lacks; with no database (the example lab of section 5) runs

@@ -568,9 +568,9 @@ blanks about 11 fA; a save takes about 4 ms a run on SQLite.
 
 ### Not done
 
-- PostgreSQL has not been run for anything in this plan. On this machine's
-  Qt 6.11 the PostgreSQL store fails in tests that predate this work; a
-  separate fix is pending. The Landing step's run with `PYCHRON_TEST_PG_URL`
+- PostgreSQL has not been run for this plan. (Observed on 2026-10-10, on
+  one development machine with Qt 6.11: the PostgreSQL store failed in tests
+  that predate this work.) The Landing step's run with `PYCHRON_TEST_PG_URL`
   is therefore still owed, including the ingest time on PostgreSQL.
 - The UI path of Task 9, Step 4 has not been driven by a person at the
   screen. The options were checked to parse and the program to start on

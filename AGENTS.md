@@ -194,8 +194,8 @@ component under `tests/`, run with `ctest`.
   built only with persistence, like `libs/ingest`; `libs/experiment` itself
   never links `libs/persistence` and sees only `IAnalysisPersister`. Tests:
   `tests/experiment/` (`pychron_experiment_store_tests`). Spec:
-  `docs/superpowers/specs/2026-10-10-e2e-sim-experiment-design.md`, sections
-  5 and 8. Rules easy to break:
+  `docs/superpowers/specs/2026-10-10-e2e-sim-experiment-design.md`. Rules
+  easy to break:
   - `to_ingest` (`record_ingest.hpp`) is pure: no clock, no random id, no
     store read. Every id is `Uuid::v5(<record uuid>, label)`, labels
     `changeset`, `signals`, `intercepts`, `baselines`, `blanks`,
@@ -207,38 +207,30 @@ component under `tests/`, run with `ctest`.
     kind and key, intercept whose isotope has no series. A non-finite
     number is stored as unknown, not refused. Field added to
     `AnalysisRecord` gets a row in `tests/experiment/test_record_ingest.cpp`
-    or a place in spec's not-stored list (end of section 5.2).
+    or a place in spec's not-stored list.
   - Persister never makes a catalog row (identifier, sample, project, mass
-    spectrometer, extract device). `IAnalysisPersister::check_queue` says
-    what would stop a queue's runs from being saved; `LabSession::start`
-    refuses a queue with a non-empty answer.
-  - A record is spooled before the store is tried and leaves the spool only
-    after the store has acknowledged it; a failed save never stops the
-    queue. The store is written before `RunFinished` is published (data
-    window refreshes on it).
+    spectrometer, extract device); `check_queue` refuses, at its start, a
+    queue the catalog cannot take.
+  - A record leaves the spool only after the store has acknowledged it, and
+    the store is written before `RunFinished` is published.
   - A store handle works only on the thread that opened it. Programs use
     `store::Acquisition` (`open_acquisition`, called from main thread),
-    which owns that thread; its worker is not a clock participant, so
-    simulated time stands still during a call. It is declared before the
-    session that saves through it: no call may be in progress or made once
-    it is being destroyed. `StorePersister` alone is for one thread (tests).
+    which owns that thread. It is declared before the session that saves
+    through it: no call may be in progress or made once it is being
+    destroyed.
   - One acquisition program at a time per database, as for the importer.
   - A database that is named (`--db`, or an install's) and cannot be used
-    never falls back to record files: `elctl exp run` stops, `pychron-ui`
-    starts (instrument install) and starts no queue.
+    never falls back to record files.
 - What an instrument install ships is held together by
   `tests/setup/test_profiles.cpp`: `seed.toml`, `defaults.toml`, shipped
-  `experiment.toml` (`ba, a, a, a, ba`; every identifier, mass spectrometer,
-  extract device, script and plan it names is the seed's or the install's),
-  example lab's `sim.toml` (example line only), and the placeholder field
+  `experiment.toml` (`ba, a, a, a, ba`), example lab's `sim.toml` (example line only), and the placeholder field
   tables of `profiles/qtegra` and `profiles/ngx`
   (`EveryInstalledPlanPutsItsIsotopesOnItsDetectors`: every isotope of a
   plan's hop on its detector within 0.01; simulated peak is flat within
   0.02). Retuning or editing any of them means editing that test.
 - `tests/integration/test_install_e2e.cpp` (`pychron_install_e2e_tests`,
-  with persistence only) installs argus, runs its shipped queue on a
-  `VirtualClock` into its database and reads it back as the data window
-  does. It pins run ids (`ba-01`, `a-01` to `a-03`, `ba-02`; second session
+  with persistence only) runs a fresh argus install's shipped queue into its
+  database. It pins run ids (`ba-01`, `a-01` to `a-03`, `ba-02`; second session
   numbers on) and airs' raw Ar40/Ar36 within 3 % of 303.2: air's 298.56
   over simulated counter's yield 0.9847, since no IC factor is applied.
   Change to simulator's air, counter, shipped plan or field tables shows

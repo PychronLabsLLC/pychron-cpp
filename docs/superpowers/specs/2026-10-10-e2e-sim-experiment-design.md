@@ -3,9 +3,8 @@
 Status: approved 2026-10-10. Plan 1 of section 13 (store path) implemented
 2026-10-10 (`../plans/2026-10-10-e2e-store-path.md`, "As built"); plans 2
 and 3 not started. Sections 5, 7.1, 7.3, 7.4, 7.6, 8, 10.3, 10.4, 10.6 and
-14 state plan 1 as built. Not done in plan 1: nothing run on PostgreSQL
-(this machine's Qt 6.11 fails PostgreSQL store in tests older than this
-work; separate fix pending); UI path not driven by a person at the screen;
+14 state plan 1 as built. Not done in plan 1: PostgreSQL not run for this
+plan; UI path not driven by a person at the screen;
 unknowns, ages, simulated samples, step rule, example irradiation (plans 2
 and 3).
 
@@ -337,9 +336,11 @@ std::string without_password(const std::string& url);
 
 ### 5.4 Aliquots and steps
 
-Two changes: where numbers are read from, what a step does.
+Two changes: where numbers are read from (plan 1, built: "The store read"
+and `StorePersister::next_aliquot` below), what a step does (plan 3, not
+yet built).
 
-**The rule for a step.** Today row with step and no fixed aliquot gets new
+**The rule for a step (plan 3, not yet built).** Today row with step and no fixed aliquot gets new
 aliquot like any other row, so step-heat written without aliquots comes out
 as `-01A`, `-02B`, `-03C`. Queue fixing aliquot on every row works once:
 run again, its run ids already exist. Shipped queue must be runnable any
@@ -359,7 +360,8 @@ after `C` and resumed in another session continues the same aliquot at `D`.
 
 Change to experiment, not only store path: applies to `FilePersister` too,
 so queue means same thing with and without database.
-`docs/user/04-experiments.md` (aliquot and step rule) rewritten. Queue that
+`docs/user/04-experiments.md` (aliquot and step rule) to be rewritten with
+plan 3; today it states the old rule, which is what the code does. Queue that
 today relies on steps splitting into aliquots can afterwards say so only by
 fixing aliquots; none known to exist.
 
@@ -370,7 +372,7 @@ unchanged; `last_run`, `LastRun` and step rule come with plan 3.
 persister issued. Store cannot be read: (a) is value last read for that
 identifier by this persister; none read yet: the error is returned and run
 does not start. Spool cannot be listed: error. Spooled record that cannot
-be read is not counted (it can never be sent). Plan 3:
+be read is not counted (it can never be sent). Plan 3, not yet built:
 `next_aliquot(identifier)` becomes
 
 ```cpp
@@ -380,15 +382,15 @@ struct LastRun { int aliquot = 0; std::string step; };  // step empty: none
 virtual Result<std::optional<LastRun>> last_run(const std::string& identifier) = 0;
 ```
 
-and rule above lives once, in `AliquotAllocator`, over that answer. For
-`StorePersister` answer is latest of (a) store, (b) records waiting in
+and rule above lives once, in `AliquotAllocator`, over that answer (plan
+3). For `StorePersister` answer is latest of (a) store, (b) records waiting in
 spool, (c) what was handed out this session. (b) matters: a run whose save
 failed is not in the store yet, and its number must not be given to the
 next run. If the store cannot be read, (a) is the value last read for that
 identifier this session; with nothing read yet it is an error and the run
 does not start.
 
-**The store read.** `IStore` gains one read:
+**The store read (plan 1, built).** `IStore` gains one read:
 
 ```cpp
 struct LastAnalysis { int aliquot = 0; int increment = -1; };
@@ -959,11 +961,15 @@ shipped queue of airs and blanks: five runs in data window, no spectrum, no
 ideogram, no age. Queue named relative to install's folder is found there:
 `elctl --install argus --sim exp run experiment.toml --sim-speed max`.
 
-`docs/user/04-experiments.md` ("What is written"; aliquots and steps),
-`docs/dev_setup.md` (sections 5 and 6), `docs/installation_runbook.md` (2.3
-and 2.4), `docs/entry.md` (the seed), `docs/flux.md` (level whose J was
-seeded) and `docs/simulator.md` (samples; stock queues) brought in line.
-`AGENTS.md` gets rules of section 11, compressed.
+Plan 1 brought in line: `docs/user/01-getting-started.md`, `README.md`,
+`docs/user/04-experiments.md` ("What is written"),
+`docs/user/08-elctl-reference.md` (`exp run`), `docs/dev_setup.md`
+(sections 3, 5 and 6), `docs/installation_runbook.md` (2.3 and 2.4),
+`docs/entry.md` (the seed); `AGENTS.md` got plan 1's rules of section 11,
+compressed. Plan 2 will: `docs/simulator.md` (samples; stock queues). Plan
+3 will: `docs/user/04-experiments.md` (aliquots and steps), `docs/flux.md`
+(level whose J was seeded), quick start with spectrum and ideogram, rest of
+section 11's rules in `AGENTS.md`.
 
 ## 10. Tests
 
@@ -1193,8 +1199,9 @@ Changed in same branch, so they do not disagree with this one:
 
 - `2026-09-29-experiment-system-design.md`, section 8: database persister
   it names is `StorePersister`, in adapter library, not in
-  `libs/experiment`; `IAnalysisPersister` gains `check_queue` and
-  `last_run`; aliquot rule for steps.
+  `libs/experiment`; `IAnalysisPersister` gains `check_queue` (plan 1,
+  noted there); `last_run` and aliquot rule for steps are plan 3, note to
+  be added with it.
 - `2026-10-01-dvc-schema-design.md`, section 8.1, and
   `2026-09-29-persistence-adr.md`, ADR-0002 option B: outbox and uploader
   still the design for instrument that must keep running while server is

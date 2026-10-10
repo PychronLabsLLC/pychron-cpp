@@ -780,8 +780,10 @@ irradiation text typed in the queue (in the database a run belongs to its
 identifier, and the identifier's own entry says which sample that is), the
 text of the extraction and post-measurement scripts, the peak-center results,
 the run's events and notes, the tray and the load, and the readings logged
-during extraction. Nothing assigns blanks or detector intercalibration factors
-to a run automatically.
+during extraction. No blank is assigned to a run and no detector
+intercalibration factor is computed at acquisition: a run is stored with the
+intercepts and baselines fitted during the run, and blanks and IC factors are
+fitted and saved afterwards ([Data analysis](06-data-analysis.md)).
 
 **Before a queue starts**, it is checked against the database. The queue's
 mass spectrometer and every identifier and extract device it names must

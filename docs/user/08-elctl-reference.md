@@ -430,7 +430,11 @@ It first prints the same report as `exp validate`; if the queue has errors, it
 prints `error: the queue has errors; nothing was run` and exits 1. While running
 it prints progress: `run N <identifier>: started`, state changes, notes,
 `conditional <name> tripped: ...`, waits (`waiting 0:00:05: <reason>`),
-notifications, and `run N <id>-<aliquot><step>: <state>`.
+notifications, and `run N <id>-<aliquot><step>: <state>`. The aliquot is
+printed as it is (`run 1 a-1: success`); the database and the data window
+show the same run with two digits (`a-01`). The `ETA` of the first line is an
+estimate: for an install's shipped queue it reads `0:08:50`, and the queue
+takes about 19 minutes of simulated time.
 
 Where the runs go. With `--db`, or under `--install` when the install has a
 database, each finished run is written to the database and no record file is

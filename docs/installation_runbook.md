@@ -398,7 +398,8 @@ CDD unprotected.
    the drivers' connect step.
 4. The runs made in simulation are in the install's database, as airs and
    blanks under the same identifiers the instrument will use (`a-01`,
-   `ba-01`, ...), and the next real air continues their numbering. To start
+   `ba-01`, ... as the data window shows them), and the next real air
+   continues their numbering. To start
    the instrument on an empty local database, delete `<root>/data/pychron.db`
    (and its `-wal` and `-shm` files) and run
    `elctl init --reconfigure --install argus`, which makes and seeds a new

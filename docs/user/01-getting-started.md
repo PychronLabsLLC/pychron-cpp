@@ -56,6 +56,8 @@ in a database. No instrument is needed and nothing is typed in by hand.
    `experiment.toml` (**File > Open > Open Queue…**) and start it
    (**Experiment > Executor > Start**). The queue is three air shots between
    two blanks, about 19 minutes of simulated time, so about a minute here.
+   (The `ETA` that `elctl exp run` prints is an estimate and reads lower for
+   this queue: `0:08:50`.)
    Open the data window (**View > Data**): each run appears in it when the run
    ends. Double-click one to recall it. An air reads about 94 500 fA of Ar40
    and a blank about 11 fA.
@@ -74,7 +76,9 @@ in a database. No instrument is needed and nothing is typed in by hand.
    ```
 
    The runs are in the install's database, and `pychron-ui --install argus`
-   shows them in its data window.
+   shows them in its data window. `elctl` prints a run's aliquot as it is
+   (`run 1 a-1: success`); the database and the data window show it with two
+   digits (`a-01`).
 
 The queue can be run again and again: the runs are numbered on from the last
 one in the database (`a-01` to `a-03`, then `a-04` ...). Run only one program

@@ -66,9 +66,8 @@ across, follow [docs/installation_runbook.md](docs/installation_runbook.md).
 
 ## Try it in simulation
 
-From nothing to measured runs in a database, in three commands (`elctl` and
-`pychron-ui` are under `build/dev/apps/elctl/` and `build/dev-ui/apps/pychron-ui/`
-in a source build):
+From nothing to measured runs in a database, in three commands (where a
+development build puts the two programs: [docs/dev_setup.md](docs/dev_setup.md)):
 
 ```bash
 elctl init argus --yes
