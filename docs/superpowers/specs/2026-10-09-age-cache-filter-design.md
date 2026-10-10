@@ -1,6 +1,7 @@
 # Cached ages and the browser's age filter: design
 
-Date: 2026-10-09. Status: draft, awaiting review. Not implemented.
+Date: 2026-10-09. Status: approved 2026-10-09 (acquisition deferred, section
+4.6). Not implemented.
 
 Second of two specs. First:
 `2026-10-09-data-browser-search-display-design.md` (browser's date range,

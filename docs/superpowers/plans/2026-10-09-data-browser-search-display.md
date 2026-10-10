@@ -86,9 +86,7 @@ preferences), so they were written together and landed as one commit,
 `feat(ui): ...`, after Task 1's. Tests and static analysis were run on the
 whole.
 
-## Owed after the tasks
+## Measurement
 
-The measurement of spec section 5 (time of `reload()` with four and with six
-facet statements, and the plans of the Irradiation and Level facet
-statements) needs a copy of a lab's store. It is run when one is at hand and
-its numbers are reported before the branch lands.
+Done on a copy of a lab's store before the branch landed; numbers in spec
+section 5.1.

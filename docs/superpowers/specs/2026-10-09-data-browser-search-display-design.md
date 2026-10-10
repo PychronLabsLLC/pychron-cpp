@@ -1,7 +1,7 @@
 # Data browser: date range, irradiation, list filtering, row colour, time breaks: design
 
-Date: 2026-10-09. Status: approved 2026-10-09; implemented, except the
-measurement of section 5 (needs a copy of a lab's store).
+Date: 2026-10-09. Status: approved 2026-10-09; implemented. Measurement of
+section 5: section 5.1.
 
 Extends section 11.2 of `2026-10-02-data-browsing-visualization-design.md`.
 First of two specs. Second (age cache and age filter, `derived_value`
@@ -301,6 +301,32 @@ browser. A browser made without a workspace (tests) has no threshold until
   of the Irradiation and Level facet statements. A `SCAN` of `analysis`
   there is reported to developer before anything is added to schema: an
   index is a migration and is not part of this spec.
+
+### 5.1 Measured
+
+Copy of a lab's store, SQLite, 8716 analyses, 15 irradiations and 15 level
+names among them; `sqlite3`, `.timer on`, default filter (hide invalid):
+
+| Statement | Time |
+|---|---|
+| facet Analysis type | 23 ms |
+| facet Spectrometer | 20 ms |
+| facet Sample | 20 ms |
+| facet Identifier | 20 ms |
+| facet Irradiation (new) | 19 ms |
+| facet Level (new) | 20 ms |
+| count | 19 ms |
+
+- Facet statements per reload: 83 ms before (four), 122 ms after (six).
+- Plan of every facet statement, old and new alike: `SCAN a`, each joined
+  table by its primary key, `USE TEMP B-TREE FOR DISTINCT`. A facet with no
+  selective filter is a distinct over every analysis; no index on
+  `irradiation` or `level` changes that. Nothing added to schema.
+- Cost is linear in analyses: a store ten times this size pays about 0.2 s
+  a facet, 1.2 s a reload for six, on every key typed in the search box.
+  That is the facets' design (one statement per list per reload), not these
+  two lists; fix belongs with "queries off GUI thread, debounce" in
+  section 6.
 
 ## 6. Out of scope
 
