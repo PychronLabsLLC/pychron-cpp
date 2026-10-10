@@ -80,6 +80,7 @@ class ForwardingStore : public persistence::IStore {
   Result<Uuid> add_interpreted_age(Uuid client, const persistence::InterpretedAgeSpec& spec) override { return inner_.add_interpreted_age(client, spec); }
   Result<std::optional<Uuid>> find_identifier(const std::string& identifier) override { return inner_.find_identifier(identifier); }
   Result<std::optional<Uuid>> find_analysis(const std::string& identifier, int aliquot, int increment) override { return inner_.find_analysis(identifier, aliquot, increment); }
+  Result<std::optional<persistence::LastAnalysis>> last_analysis(const std::string& identifier) override { return inner_.last_analysis(identifier); }
   Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level, int position) override { return inner_.identifier_at(irradiation, level, position); }
   Result<std::optional<Uuid>> find_catalog_row(persistence::CatalogTable table, const std::vector<persistence::CatalogKeyPart>& key) override { return inner_.find_catalog_row(table, key); }
   Result<Uuid> add_repository(Uuid client, const std::string& name) override { return inner_.add_repository(client, name); }

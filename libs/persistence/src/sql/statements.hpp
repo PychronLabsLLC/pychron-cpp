@@ -107,6 +107,10 @@ inline const QString kIdentifierByText = QStringLiteral("SELECT uuid FROM identi
 inline const QString kAnalysisByIdentity = QStringLiteral(
     "SELECT a.uuid FROM analysis a JOIN identifier i ON i.uuid = a.identifier_uuid "
     "WHERE i.identifier = ? AND a.aliquot = ? AND a.increment = ?");
+inline const QString kLastAnalysis = QStringLiteral(
+    "SELECT a.aliquot, a.increment FROM analysis a "
+    "WHERE a.identifier_uuid = (SELECT uuid FROM identifier WHERE identifier = ?) "
+    "ORDER BY a.aliquot DESC, a.increment DESC LIMIT 1");
 inline const QString kIdentifierAtPosition = QStringLiteral(
     "SELECT i.identifier FROM identifier i JOIN irradiation_position p ON p.uuid = i.position_uuid "
     "JOIN level l ON l.uuid = p.level_uuid JOIN irradiation r ON r.uuid = l.irradiation_uuid "

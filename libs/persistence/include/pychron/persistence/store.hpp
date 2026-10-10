@@ -371,6 +371,12 @@ struct BlobIngest {
   std::optional<int> n_points;
 };
 
+// Where an identifier's numbering stands (increment -1: no step).
+struct LastAnalysis {
+  int aliquot = 0;
+  int increment = -1;
+};
+
 struct IngestItem {
   Uuid item;                    // idempotency key
   Sha256Digest payload_sha256;  // of the canonical outbox payload
@@ -610,6 +616,9 @@ class IStore {
   virtual Result<std::optional<Uuid>> find_identifier(const std::string& identifier) = 0;
   // The analysis that has this run identity now (increment -1: no step).
   virtual Result<std::optional<Uuid>> find_analysis(const std::string& identifier, int aliquot, int increment) = 0;
+  // The highest aliquot among the analyses of `identifier`, and the highest
+  // increment within it; nullopt when it has none or the identifier is unknown.
+  virtual Result<std::optional<LastAnalysis>> last_analysis(const std::string& identifier) = 0;
   // The identifier that sits at an irradiation position; nullopt when the
   // position does not exist or holds none.
   virtual Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,

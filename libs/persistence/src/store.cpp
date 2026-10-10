@@ -380,6 +380,14 @@ class TinyStore final : public IStore {
     return std::optional<Uuid>{to_uuid((*row)->value("uuid"))};
   }
 
+  Result<std::optional<LastAnalysis>> last_analysis(const std::string& identifier) override {
+    auto row = db_->select_one(sql::kLastAnalysis, {qv(identifier)});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<LastAnalysis>{};
+    return std::optional<LastAnalysis>{
+        LastAnalysis{(*row)->value("aliquot").toInt(), (*row)->value("increment").toInt()}};
+  }
+
   Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
                                                    int position) override {
     auto row = db_->select_one(sql::kIdentifierAtPosition, {qv(irradiation), qv(level), position});

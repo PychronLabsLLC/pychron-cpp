@@ -185,6 +185,24 @@ TEST(SchemaIndexes, AnAnalysissReferencesAreFoundByScope) {
   EXPECT_EQ(all.find("(ref_type=?)"), std::string::npos) << "found by type alone:\n" << all;
 }
 
+// The next aliquot of an identifier is read from the end of its unique index
+// on (identifier_uuid, aliquot, increment): one seek, however many analyses.
+TEST(SchemaIndexes, TheLastAnalysisOfAnIdentifierIsASeek) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const std::vector<std::string> plan =
+      column(*db, QStringLiteral("EXPLAIN QUERY PLAN ") + pd::sql::kLastAnalysis, "detail", {QStringLiteral("66573")});
+  ASSERT_FALSE(plan.empty());
+  std::string all;
+  for (const auto& step : plan) all += step + "\n";
+  EXPECT_NE(all.find("sqlite_autoindex_analysis"), std::string::npos) << all;
+  EXPECT_NE(all.find("identifier_uuid=?"), std::string::npos) << all;
+  EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
+  EXPECT_EQ(all.find("TEMP B-TREE"), std::string::npos) << all;
+}
+
 TEST_P(SchemaTest, ChecksumMismatchIsFatal) {
   TestDatabase tdb(GetParam(), true);
   ASSERT_TRUE(open_or_die(tdb.url()));

@@ -749,6 +749,35 @@ TEST_P(ImportStoreTest, SchemaStatusListsSecondMigration) {
   EXPECT_EQ((*status)[1].description, "import_detail");
 }
 
+TEST_P(ImportStoreTest, LastAnalysisIsNulloptForAnIdentifierWithNone) {
+  // SetUp ingested 66573-01 only; 66574 is known and has no analysis.
+  auto none = store_->last_analysis("66574");
+  ASSERT_TRUE(none) << to_string(none.error());
+  EXPECT_FALSE(none->has_value());
+  auto unknown = store_->last_analysis("nope");
+  ASSERT_TRUE(unknown) << to_string(unknown.error());
+  EXPECT_FALSE(unknown->has_value());
+}
+
+TEST_P(ImportStoreTest, LastAnalysisIsTheHighestAliquotAndItsHighestIncrement) {
+  for (const auto [aliquot, increment] : {std::pair{1, -1}, {2, 0}, {2, 1}, {3, 0}}) {
+    auto item = analysis_item(lab_, aliquot, series(1), series(0), "66574");
+    std::get<AnalysisIngest>(item.body).increment = increment;
+    auto ack = store_->ingest(item);
+    ASSERT_TRUE(ack) << to_string(ack.error());
+  }
+  auto last = store_->last_analysis("66574");
+  ASSERT_TRUE(last) << to_string(last.error());
+  ASSERT_TRUE(last->has_value());
+  EXPECT_EQ((*last)->aliquot, 3);
+  EXPECT_EQ((*last)->increment, 0);
+  // Another identifier's numbering is its own.
+  auto other = store_->last_analysis("66573");
+  ASSERT_TRUE(other && other->has_value());
+  EXPECT_EQ((*other)->aliquot, 1);
+  EXPECT_EQ((*other)->increment, -1);
+}
+
 TEST_P(ImportStoreTest, EmptyReads) {
   auto conflicts = store_->import_conflicts({});
   ASSERT_TRUE(conflicts) << to_string(conflicts.error());
