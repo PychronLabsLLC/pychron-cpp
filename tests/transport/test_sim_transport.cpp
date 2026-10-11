@@ -129,6 +129,19 @@ TEST(SimTransportFaults, DropNextCountsReplies) {
   EXPECT_TRUE(t->exchange(to_bytes("c"), kCrLf));
 }
 
+// A simulated lab writes for as long as it runs: the record of what was
+// written keeps the newest frames and lets the oldest go.
+TEST(SimTransportHooked, TheRecordOfWritesIsBounded) {
+  auto t = SimTransport::hooked([](const Bytes&) { return to_bytes("ok\r\n"); }, opts());
+  ASSERT_TRUE(t->open());
+  const std::size_t n = SimTransport::kWrittenLimit + 3;
+  for (std::size_t i = 0; i < n; ++i) ASSERT_TRUE(t->exchange(to_bytes(std::to_string(i)), kCrLf));
+  const auto written = t->written();
+  ASSERT_EQ(written.size(), SimTransport::kWrittenLimit);
+  EXPECT_EQ(to_string(written.front()), "3");
+  EXPECT_EQ(to_string(written.back()), std::to_string(n - 1));
+}
+
 TEST(SimTransportFaults, DelayNextAppliesOnce) {
   auto t = SimTransport::hooked([](const Bytes&) { return to_bytes("ok\r\n"); }, opts());
   ASSERT_TRUE(t->open());

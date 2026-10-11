@@ -84,7 +84,7 @@ struct SimTransport::State {
   std::condition_variable cv;  // a read waiting for the unsolicited source; through the clock
   std::deque<SimStep> steps;
   std::deque<Chunk> rx;
-  std::vector<Bytes> written;
+  std::deque<Bytes> written;  // the newest kWrittenLimit
   std::vector<std::string> unexpected;
   std::size_t drop = 0;
   Duration extra_delay{};
@@ -171,7 +171,7 @@ void SimTransport::expect(SimStep step) {
 
 std::vector<Bytes> SimTransport::written() const {
   std::lock_guard lock(state_->mutex);
-  return state_->written;
+  return {state_->written.begin(), state_->written.end()};
 }
 
 Result<void> SimTransport::verify() const {
@@ -220,6 +220,7 @@ Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
 
   std::lock_guard lock(s.mutex);
   s.written.push_back(tx);
+  if (s.written.size() > kWrittenLimit) s.written.pop_front();
   if (s.mode == State::Mode::Scripted) {
     if (s.steps.empty() || s.steps.front().expect != tx) {
       std::string what = "unexpected tx '" + escape(tx) + "'";

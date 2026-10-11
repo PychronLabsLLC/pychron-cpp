@@ -60,7 +60,10 @@ class SimTransport final : public QueuedTransport {
   // Append steps to a scripted/replay transport.
   void expect(SimStep step);
 
-  // Every tx written, in order (including unexpected ones).
+  // The tx written, in order (including unexpected ones): the newest
+  // kWrittenLimit of them. A simulated lab polls its gauges for as long as it
+  // runs, and a record without an end was most of what a long session held.
+  static constexpr std::size_t kWrittenLimit = 10000;
   std::vector<Bytes> written() const;
   // Ok if every step was consumed and no unexpected tx occurred; otherwise
   // a Protocol error describing the first problem(s).
