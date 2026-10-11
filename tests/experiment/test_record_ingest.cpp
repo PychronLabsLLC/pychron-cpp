@@ -1,10 +1,17 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <set>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include "pychron/experiment/record/serialize.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
 #include "pychron/persistence/blob.hpp"
 #include "store_records.hpp"
@@ -40,7 +47,95 @@ record::AnalysisRecord finalized(const record::RecordBuilder& b) {
   return r.value();
 }
 
+// Everything of a conversion that the store keeps, as text: one line a row.
+std::string describe(const store::RunIngest& r) {
+  const auto opt = [](const auto& v) -> std::string {
+    if (!v) return "-";
+    std::ostringstream s;
+    s << std::setprecision(17) << *v;
+    return s.str();
+  };
+  std::ostringstream o;
+  o << std::setprecision(17);
+  o << "item " << r.analysis.item.str() << " " << to_hex(r.analysis.payload_sha256) << "\n";
+  for (const auto& b : r.blobs)
+    o << "blob " << b.item.str() << " " << blob_of(b).codec << " " << to_hex(b.payload_sha256) << " n="
+      << opt(blob_of(b).n_points) << "\n";
+  const auto& a = body_of(r);
+  o << "analysis " << a.analysis.str() << " changeset " << a.changeset.str() << "\n";
+  o << "identity " << a.identifier << " " << a.aliquot << " " << a.increment << " " << a.analysis_type << " ms="
+    << a.mass_spectrometer << " device=" << opt(a.extract_device) << " analyst=" << a.analyst << " lab="
+    << opt(a.laboratory) << " run_index=" << opt(a.run_index) << " schema=" << a.record_schema_version
+    << " time_zero=" << (a.time_zero ? "set" : "-") << "\n";
+  const auto& x = a.extraction;
+  o << "extraction " << opt(x.extract_value) << " " << opt(x.extract_units) << " " << opt(x.extract_duration) << " "
+    << opt(x.cleanup_duration) << " " << opt(x.pattern) << " " << opt(x.cryo_temperature) << " "
+    << opt(x.beam_diameter) << "\n";
+  for (const auto& p : a.measured_positions) o << "position " << opt(p.position) << "\n";
+  for (const auto& i : a.isotopes) o << "isotope " << i.isotope << " " << i.detector << "\n";
+  for (const auto& d : a.detectors)
+    o << "detector " << d.detector << " " << opt(d.deflection) << " " << opt(d.gain_used) << "\n";
+  o << "roots " << a.roots.signals.str() << " " << a.roots.intercepts.str() << " " << a.roots.baselines.str() << " "
+    << a.roots.blanks.str() << " " << a.roots.icfactors.str() << " " << a.roots.tags.str() << "\n";
+  for (const auto& s : a.roots.signal_refs)
+    o << "ref " << s.series_kind << " " << s.series_key << " " << s.detector << " " << to_hex(s.blob_sha) << " n="
+      << opt(s.n_points) << "\n";
+  for (const auto& i : a.roots.intercepts_rows)
+    o << "intercept " << i.isotope << " " << i.detector << " " << opt(i.value) << " " << opt(i.error) << " n="
+      << opt(i.n) << " " << opt(i.fit) << " " << opt(i.error_type) << " " << opt(i.filter_outliers_json) << "\n";
+  for (const auto& b : a.roots.baselines_rows)
+    o << "baseline " << b.detector << " " << opt(b.value) << " " << opt(b.error) << " " << opt(b.fit) << " "
+      << opt(b.error_type) << " " << opt(b.filter_outliers_json) << "\n";
+  for (const auto& i : a.roots.icfactors_rows) o << "icfactor " << i.detector << " " << opt(i.value) << " " << opt(i.error) << "\n";
+  if (a.meta)
+    o << "meta " << opt(a.meta->conditionals_json) << " " << opt(a.meta->tripped_conditional_json) << " "
+      << opt(a.meta->whiff_result_json) << " " << opt(a.meta->grain_polygons_json) << " "
+      << opt(a.meta->pipette_counts_json) << " " << opt(a.meta->software_json) << " " << opt(a.meta->queue_names_json)
+      << "\n";
+  if (a.spectrometer_snapshot)
+    o << "snapshot " << a.spectrometer_snapshot->gains_json << " " << a.spectrometer_snapshot->deflections_json << " "
+      << a.spectrometer_snapshot->settings_json << " " << a.spectrometer_snapshot->spectrometer_json << "\n";
+  o << "plan " << opt(a.scripts.measurement) << "\n";
+  return o.str();
+}
+
 }  // namespace
+
+// An ordinary run (each isotope on one detector, one baseline series a
+// detector) converts to exactly what it did before the store learned to keep
+// the other shapes: this text was taken from the conversion as it was then.
+// A change here is a change to what every stored run looks like, and to its
+// ids; it is a file format.
+TEST(RecordIngest, AnOrdinaryRunConvertsAsItAlwaysDid) {
+  const std::string was = R"pin(item 7724152d-7830-57a0-8b39-dc22695b5e26 fff84d742c321c0324526321f241d02f2ceac57a957d20c6926621a3a72c57a0
+blob 96435447-fd66-5c39-bdda-acf533f0b1ff f32le-tv/1 f27b17b7ce8edb655e40206ee3c527155b406ea5986cb1af4fa3d4e39a65187b n=3
+blob d56e3412-facb-5d0d-8a62-66e4981f519d f32le-tvs/1 583500082c68138223fc9fc9cd58ebda519cd452e8a734f493a88a9dc0cfd5e5 n=3
+blob 4f1c4852-af6f-5513-9553-bf5088fec67b f32le-tv/1 ac2d19e5fea167311042c147a022b1c3f5543d41241ea1602ce552d32a91de79 n=2
+analysis 0190a5e0-7c3b-4d5e-8f10-2a4b6c8d0e12 changeset 2faec66f-e44d-506c-87b4-7942b00e4d3f
+identity 66573 1 -1 unknown ms=jan device=co2 analyst=jdoe lab=lab run_index=3 schema=2 time_zero=-
+extraction 10 watts 30 60 circle 77 -
+position 4
+position 7
+isotope Ar36 CDD
+isotope Ar40 H1
+detector CDD 150 2
+detector H1 - 1
+roots f9201f8b-31be-515e-84ad-b94d5a848fd3 9041f264-e6a3-5cc3-ba95-308981ebae33 1284f765-45ab-59cf-91e9-46b95750d6e4 2b60b298-d9a7-572d-b33e-5b3b756c6b08 f87508df-be6f-506b-88a7-b818f496890b 639e7a80-40c3-5c67-a9c2-fa1abeb957d1
+ref signal Ar40 H1 f27b17b7ce8edb655e40206ee3c527155b406ea5986cb1af4fa3d4e39a65187b n=3
+ref signal Ar36 CDD 583500082c68138223fc9fc9cd58ebda519cd452e8a734f493a88a9dc0cfd5e5 n=3
+ref baseline H1 H1 ac2d19e5fea167311042c147a022b1c3f5543d41241ea1602ce552d32a91de79 n=2
+intercept Ar36 CDD 0.089999999999999997 0.01 n=3 linear SEM {"filter_outliers":0,"iterations":1,"std_devs":2.0}
+intercept Ar40 H1 1.1000000000000001 0.01 n=3 linear SEM {"filter_outliers":0,"iterations":1,"std_devs":2.0}
+baseline H1 0.044999999999999998 0.0050000000000000001 linear SEM {"filter_outliers":0,"iterations":1,"std_devs":2.0}
+icfactor CDD 1.02 0
+meta - - - - - {"software_git_sha":"abc123","software_version":"0.1.0"} ["q-1"]
+snapshot {"CDD":2.0,"H1":1.0} {"CDD":150.0} {"integration_time":1.0,"ys":1.5} {}
+plan [plan]
+x = 1
+
+)pin";
+  EXPECT_EQ(describe(convert(sample_record())), was);
+}
 
 TEST(RecordIngest, TheSameRecordConvertsToTheSameItems) {
   const auto rec = sample_record();
@@ -491,27 +586,126 @@ TEST(RecordIngest, TheQueueNameIsCarried) {
   EXPECT_FALSE(body_of(none).meta && body_of(none).meta->queue_names_json);
 }
 
-TEST(RecordIngest, OneIsotopeOnTwoDetectorsIsRefused) {
-  auto rec = sample_record();
-  rec.data.series.push_back({"Ar40", "H2", "signal", rec.data.series[0].trace});
-  const auto e = error_of(rec);
-  EXPECT_NE(e.find("Ar40"), std::string::npos);
-  EXPECT_NE(e.find("H1"), std::string::npos);
-  EXPECT_NE(e.find("H2"), std::string::npos);
+// A detector intercalibration as the acquisition records it: Ar40 hopped onto
+// three Faradays, its intercepts under "Ar40:<detector>", the sniff of the
+// first hop, a baseline block on each detector.
+record::AnalysisRecord detector_ic_record() {
+  using namespace record;
+  auto b = sample_builder("ic");
+  auto r = b.draft();
+  r.identity.analysis_type = "detector_ic";
+  r.data.series.clear();
+  r.results.intercepts.clear();
+  r.results.baselines.clear();
+  InterceptResult ir;
+  ir.intercept.error = 0.01;
+  ir.intercept.n_used = 3;
+  ir.fit.kind = reduction::FitKind::Linear;
+  BaselineResult br;
+  br.error = 0.005;
+  float v = 100.f;
+  for (const char* det : {"AX", "H1", "L1"}) {  // the collector's order: by isotope, then detector
+    r.data.series.push_back({"Ar40", det, "signal", {{0.f, 1.f, 2.f}, {v, v - 1, v - 2}, {}}});
+    ir.intercept.value = v;
+    r.results.intercepts[std::string("Ar40:") + det] = ir;
+    v += 1.f;
+  }
+  r.data.series.push_back({"Ar40", "H1", "sniff", {{0.f, 1.f}, {99.f, 98.f}, {}}});
+  float base = 0.01f;
+  for (const char* det : {"AX", "H1", "L1"}) {
+    r.data.series.push_back({"", det, "baseline", {{9.f, 10.f}, {base, base}, {}}});
+    br.value = base;
+    r.results.baselines[det] = br;
+    base += 0.01f;
+  }
+  r.results.icfactors = {{"AX", 1.01}, {"L1", 0.99}};
+  r.provenance.sha = record::compute_sha(r);
+  return r;
 }
 
-TEST(RecordIngest, TwoBaselinesOnOneDetectorIsRefused) {
+TEST(RecordIngest, AnIsotopeOnSeveralDetectorsIsStoredUnderEachDetector) {
+  const auto rec = detector_ic_record();
+  const auto out = convert(rec);
+  const auto& a = body_of(out);
+
+  // One isotope row a detector, named as the store's readers name it.
+  ASSERT_EQ(a.isotopes.size(), 3u);
+  EXPECT_EQ(a.isotopes[0].isotope, "AX:Ar40");
+  EXPECT_EQ(a.isotopes[0].detector, "AX");
+  EXPECT_EQ(a.isotopes[1].isotope, "H1:Ar40");
+  EXPECT_EQ(a.isotopes[1].detector, "H1");
+  EXPECT_EQ(a.isotopes[2].isotope, "L1:Ar40");
+  EXPECT_EQ(a.isotopes[2].detector, "L1");
+
+  // The raw series, in the record's order: the keys are the isotopes' (the
+  // sniff's too, so that an isotope's sniff is found by the isotope's key).
+  std::vector<std::string> refs;
+  for (const auto& r : a.roots.signal_refs) refs.push_back(r.series_kind + " " + r.series_key + " " + r.detector);
+  EXPECT_EQ(refs, (std::vector<std::string>{"signal AX:Ar40 AX", "signal H1:Ar40 H1", "signal L1:Ar40 L1",
+                                            "sniff H1:Ar40 H1", "baseline AX AX", "baseline H1 H1", "baseline L1 L1"}));
+  // No two refs share the store's key (kind, key).
+  std::set<std::pair<std::string, std::string>> keys;
+  for (const auto& r : a.roots.signal_refs) EXPECT_TRUE(keys.emplace(r.series_kind, r.series_key).second) << r.series_key;
+
+  ASSERT_EQ(a.roots.intercepts_rows.size(), 3u);
+  EXPECT_EQ(a.roots.intercepts_rows[0].isotope, "AX:Ar40");
+  EXPECT_EQ(a.roots.intercepts_rows[0].detector, "AX");
+  EXPECT_EQ(a.roots.intercepts_rows[0].value, 100.0);
+  EXPECT_EQ(a.roots.intercepts_rows[1].isotope, "H1:Ar40");
+  EXPECT_EQ(a.roots.intercepts_rows[1].detector, "H1");
+  EXPECT_EQ(a.roots.intercepts_rows[1].value, 101.0);
+  EXPECT_EQ(a.roots.intercepts_rows[2].isotope, "L1:Ar40");
+  EXPECT_EQ(a.roots.intercepts_rows[2].detector, "L1");
+  ASSERT_EQ(a.roots.baselines_rows.size(), 3u);
+  EXPECT_EQ(a.roots.baselines_rows[1].detector, "H1");
+  ASSERT_EQ(a.detectors.size(), 3u);
+  ASSERT_EQ(a.roots.icfactors_rows.size(), 2u);
+  EXPECT_EQ(a.roots.icfactors_rows[0].detector, "AX");
+}
+
+// A baseline block and a baseline hop on one detector: one stored series,
+// the block's points and then the hop's, as the collector fitted them.
+TEST(RecordIngest, ADetectorsBaselineSeriesAreStoredAsOne) {
+  auto rec = sample_record();  // has a baseline hop on H1 ("Ar40", H1, baseline): t 0, 1
+  // The collector's order: the block (no isotope) comes before the hop.
+  rec.data.series.insert(rec.data.series.begin(), {"", "H1", "baseline", {{90.f, 91.f, 92.f}, {0.06f, 0.07f, 0.08f}, {}}});
+  const auto out = convert(rec);
+  const auto& a = body_of(out);
+  ASSERT_EQ(a.roots.signal_refs.size(), 3u);  // two signals and the one baseline
+  const auto& ref = a.roots.signal_refs[0];
+  EXPECT_EQ(ref.series_kind, "baseline");
+  EXPECT_EQ(ref.series_key, "H1");
+  EXPECT_EQ(ref.detector, "H1");
+  EXPECT_EQ(ref.n_points, 5);
+  ASSERT_EQ(out.blobs.size(), 3u);
+  const auto& blob = blob_of(out.blobs[0]);
+  EXPECT_EQ(out.blobs[0].payload_sha256, ref.blob_sha);
+  EXPECT_EQ(blob.codec, ps::kCodecTv);
+  const auto points = ps::decode_tv(blob.bytes);
+  ASSERT_TRUE(points.has_value());
+  ASSERT_EQ(points->size(), 5u);
+  const std::vector<float> t{90.f, 91.f, 92.f, 0.f, 1.f}, v{0.06f, 0.07f, 0.08f, 0.05f, 0.04f};
+  for (std::size_t i = 0; i < 5; ++i) {
+    EXPECT_EQ((*points)[i].t, t[i]) << i;
+    EXPECT_EQ((*points)[i].v, v[i]) << i;
+  }
+  ASSERT_EQ(a.roots.baselines_rows.size(), 1u);  // the record's one fitted baseline of H1
+  EXPECT_EQ(a.roots.baselines_rows[0].detector, "H1");
+}
+
+// What no measurement produces and the store's keys cannot hold is still
+// refused: two series of one kind for one isotope on one detector.
+TEST(RecordIngest, TwoSeriesOfOneKindIsotopeAndDetectorAreRefused) {
   auto rec = sample_record();
-  rec.data.series.push_back({"Ar39", "H1", "baseline", rec.data.series[2].trace});
+  rec.data.series.push_back(rec.data.series[0]);  // Ar40 on H1, signal, again
   const auto e = error_of(rec);
-  EXPECT_NE(e.find("baseline"), std::string::npos);
-  EXPECT_NE(e.find("H1"), std::string::npos);
-  EXPECT_NE(e.find("detectors H1, H1"), std::string::npos);  // a baseline is keyed by its detector
+  EXPECT_NE(e.find("two signal series"), std::string::npos) << e;
+  EXPECT_NE(e.find("Ar40"), std::string::npos) << e;
 }
 
 TEST(RecordIngest, AnInterceptTakesItsDetectorFromAnySeriesOfItsIsotope) {
   auto rec = sample_record();
-  // Ar37 has only baselines-free, non-signal series on two detectors.
+  // Ar37 has no signal series: a sniff on L1 and a whiff on H2.
   rec.data.series.push_back({"Ar37", "L1", "sniff", rec.data.series[0].trace});
   rec.data.series.push_back({"Ar37", "H2", "whiff", rec.data.series[0].trace});
   rec.results.intercepts["Ar37"] = rec.results.intercepts["Ar40"];

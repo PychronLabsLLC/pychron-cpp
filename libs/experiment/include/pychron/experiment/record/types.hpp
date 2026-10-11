@@ -142,7 +142,9 @@ struct BaselineResult {
 };
 
 struct Results {
-  std::map<std::string, InterceptResult> intercepts;  // by isotope
+  // By isotope; by "<isotope>:<detector>" for an isotope whose signal was
+  // measured on several detectors (record/names.hpp).
+  std::map<std::string, InterceptResult> intercepts;
   std::map<std::string, BaselineResult> baselines;    // by detector
   std::string blanks_ref;
   std::map<std::string, double> icfactors;  // by detector; 1.0 when absent

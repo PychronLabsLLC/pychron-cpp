@@ -9,6 +9,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "pychron/experiment/record/names.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 
 namespace pychron::processing {
@@ -115,16 +116,15 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
   a.deflections = r.spectrometer.deflections;
   a.source = r.spectrometer.source_params;
 
-  // Detector of each isotope from its signal series.
-  std::map<std::string, std::string> detector_of;
-  for (const auto& s : r.data.series)
-    if (s.kind == "signal" && !s.iso.empty() && !detector_of.contains(s.iso)) detector_of[s.iso] = s.det;
-
-  for (const auto& [iso, ir] : r.results.intercepts) {
+  // The record's intercepts under an analysis' names (record/names.hpp): an
+  // isotope measured on several detectors is one isotope a detector, keyed
+  // "<detector>:<isotope>", as the store keeps it.
+  for (const auto& [name, ir] : r.results.intercepts) {
+    const auto named = rec::intercept_name(r.data, name);
     IsotopeData d;
-    d.key = iso;
-    d.isotope = iso.substr(iso.find(':') == std::string::npos ? 0 : iso.find(':') + 1);
-    d.detector = detector_of.contains(iso) ? detector_of[iso] : "";
+    d.key = named ? named->key : name;
+    d.isotope = named ? named->isotope : name;
+    d.detector = named ? named->detector : std::string();
     d.intercept = v(ir.intercept.value, ir.intercept.error);
     d.fit = ir.fit;
     d.n = static_cast<int>(ir.intercept.n_used);
@@ -145,21 +145,20 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
 
 RawData raw_from_record(const rec::AnalysisRecord& r) {
   RawData raw;
-  for (const auto& s : r.data.series) {
+  // Under an analysis' names; a detector's baseline series are one.
+  for (const auto& s : rec::named_series(r.data)) {
     RawSeries out;
     if (s.kind == "baseline") {
       out.kind = SeriesKind::Baseline;
-      out.key = s.det;
     } else if (s.kind == "sniff") {
       out.kind = SeriesKind::Sniff;
-      out.key = s.iso;
     } else if (s.kind == "signal") {
       out.kind = SeriesKind::Signal;
-      out.key = s.iso;
     } else {
       continue;
     }
-    out.detector = s.det;
+    out.key = s.key;
+    out.detector = s.detector;
     out.t.assign(s.trace.t.begin(), s.trace.t.end());
     out.v.assign(s.trace.v.begin(), s.trace.v.end());
     raw.series.push_back(std::move(out));

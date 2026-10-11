@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pychron/core/sha256.hpp"
+#include "pychron/experiment/record/names.hpp"
 #include "pychron/persistence/blob.hpp"
 #include "pychron/reduction/fits.hpp"
 
@@ -101,20 +102,28 @@ void fill_extraction(const record::Extraction& ex, ps::AnalysisIngest& a) {
 
 Result<void> fill_series(const record::AnalysisRecord& rec, const ps::Uuid& analysis, const ps::Uuid& client,
                          std::vector<ps::IngestItem>& blobs, ps::AnalysisIngest& a) {
+  // Checked on the record's own series: a detector's baseline series are
+  // joined below, and a length that does not match must not be hidden in one.
+  for (const auto& s : rec.data.series) {
+    const auto& tr = s.trace;
+    if (tr.t.size() != tr.v.size() || (!tr.sigma.empty() && tr.sigma.size() != tr.t.size()))
+      return fail(ErrorKind::Config, "series " + s.iso + "/" + s.det + "/" + s.kind + " has mismatched lengths");
+  }
+
   std::set<Sha256Digest> seen;
   std::set<std::pair<std::string, std::string>> isotopes;
   std::set<std::string> detectors;
   std::map<std::pair<std::string, std::string>, std::string> keys;  // (kind, key) -> detector
 
-  for (const auto& s : rec.data.series) {
+  // Under an analysis' names (record/names.hpp): an isotope measured on
+  // several detectors is "<detector>:<isotope>", and a detector's baseline
+  // series are one. What is left sharing a key no measurement makes: two
+  // series of one kind for one isotope on one detector.
+  for (const auto& s : record::named_series(rec.data)) {
     const auto& tr = s.trace;
-    if (tr.t.size() != tr.v.size() || (!tr.sigma.empty() && tr.sigma.size() != tr.t.size()))
-      return fail(ErrorKind::Config, "series " + s.iso + "/" + s.det + "/" + s.kind + " has mismatched lengths");
-
-    const std::string key = s.kind == "baseline" ? s.det : s.iso;
-    if (const auto [it, fresh] = keys.emplace(std::make_pair(s.kind, key), s.det); !fresh)
-      return fail(ErrorKind::Config, "two " + s.kind + " series for " + key + " (detectors " + it->second + ", " + s.det +
-                                         "): the store keeps one");
+    if (const auto [it, fresh] = keys.emplace(std::make_pair(s.kind, s.key), s.detector); !fresh)
+      return fail(ErrorKind::Config, "two " + s.kind + " series for " + s.key + " (detectors " + it->second + ", " +
+                                         s.detector + "): the store keeps one");
 
     ps::BlobIngest blob;
     blob.n_points = static_cast<int>(tr.t.size());
@@ -143,14 +152,14 @@ Result<void> fill_series(const record::AnalysisRecord& rec, const ps::Uuid& anal
 
     ps::SignalRefRow ref;
     ref.series_kind = s.kind;
-    ref.series_key = key;
-    ref.detector = s.det;
+    ref.series_key = s.key;
+    ref.detector = s.detector;
     ref.blob_sha = sha;
     ref.n_points = static_cast<int>(tr.t.size());
     a.roots.signal_refs.push_back(std::move(ref));
 
-    if (s.kind == "signal") isotopes.emplace(s.iso, s.det);
-    detectors.insert(s.det);
+    if (s.kind == "signal") isotopes.emplace(s.key, s.detector);
+    detectors.insert(s.detector);
   }
 
   for (const auto& [iso, det] : isotopes) a.isotopes.push_back({iso, det, {}, {}, {}, {}});
@@ -178,22 +187,14 @@ std::string outliers_json(const reduction::OutlierSpec& o) {
 const char* error_type_of(const reduction::FitSpec& fit) { return fit.error == reduction::ErrorType::Sd ? "SD" : "SEM"; }
 
 Result<void> fill_fits(const record::Results& res, const record::Data& data, ps::AnalysisIngest& a) {
-  // isotope -> its signal series' detector, else the lowest detector of any series of it
-  std::map<std::string, std::string> detector_of;
-  std::map<std::string, std::string> any_of;
-  for (const auto& s : data.series) {
-    if (s.kind == "signal") detector_of.emplace(s.iso, s.det);
-    if (auto [it, fresh] = any_of.emplace(s.iso, s.det); !fresh && s.det < it->second) it->second = s.det;
-  }
-
-  for (const auto& [iso, r] : res.intercepts) {
-    const auto signal = detector_of.find(iso);
-    const auto any = any_of.find(iso);
-    if (signal == detector_of.end() && any == any_of.end())
-      return fail(ErrorKind::Config, "intercept " + iso + " has no series");
+  // The record keeps an intercept under the acquisition's name; the row is
+  // under the analysis' (record/names.hpp), on that isotope's detector.
+  for (const auto& [name, r] : res.intercepts) {
+    const auto named = record::intercept_name(data, name);
+    if (!named) return fail(ErrorKind::Config, "intercept " + name + " has no series");
     ps::InterceptRow row;
-    row.isotope = iso;
-    row.detector = signal != detector_of.end() ? signal->second : any->second;
+    row.isotope = named->key;
+    row.detector = named->detector;
     row.value = finite(r.intercept.value);
     row.error = finite(r.intercept.error);
     row.n = static_cast<int>(r.intercept.n_used);

@@ -20,11 +20,17 @@ struct RunIngest {
   persistence::IngestItem analysis;
 };
 
+// Series, isotopes and intercepts go in under an analysis' names
+// (record/names.hpp): an isotope measured on several detectors is one isotope
+// a detector, "<detector>:<isotope>", and the baseline series of one detector
+// are one stored series. An isotope on one detector keeps its plain name.
+//
 // Fails (ErrorKind::Config) when: the record was not finalized (its sha is not
 // 64 hex characters); its uuid or timestamp does not parse; its step is not
-// letters; a series has t, v or sigma of different lengths; two series share
-// a (kind, key) (the store keeps one signal ref per kind and isotope, and per
-// baseline detector); or an intercept names an isotope with no series.
+// letters; a series has t, v or sigma of different lengths; two series of one
+// kind are of one isotope on one detector (no measurement makes that; the
+// store keeps one signal ref per kind and key); or an intercept names an
+// isotope with no series.
 Result<RunIngest> to_ingest(const record::AnalysisRecord& record, persistence::Uuid client);
 
 // "" -> -1, "A" -> 0, "Z" -> 25, "AA" -> 26; case is folded ("aB" is 27);

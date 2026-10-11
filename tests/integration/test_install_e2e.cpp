@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -33,6 +34,7 @@
 #include "pychron/entry/seed.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
+#include "pychron/experiment/record/names.hpp"
 #include "pychron/experiment/store/store_persister.hpp"
 #include "pychron/persistence/blob.hpp"
 #include "pychron/persistence/store.hpp"
@@ -250,7 +252,9 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
 
   // Runs the shipped queue in a session of its own, saving through a store
   // opened for it: what one `elctl exp run` of the install does.
-  Ran run_queue() {
+  Ran run_queue() { return run_queue(queue_); }
+
+  Ran run_queue(const QueueSpec& queue) {
     Ran out;
     const fs::path data = site_.path(site_.data);
     // Before the session and everything else that can call its persister.
@@ -263,7 +267,7 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
     lab::LabSession session(lab_, lab::SessionHardware{*line_, spec_.get(), nullptr, {}},
                             lab::SessionOptions{data, {}, {}, &keeping});
     for (const auto& p : session.problems()) ADD_FAILURE() << p;
-    if (auto started = session.start(queue_); !started) {
+    if (auto started = session.start(queue); !started) {
       ADD_FAILURE() << started.error().what;
       return out;
     }
@@ -322,9 +326,18 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
 };
 
 // The loaded analysis against what the records path makes of the record that
-// was saved. Left out, because the store does not take them from the record:
-// sample, project and material (the catalog's), time zero, events and notes,
-// peak centers, script texts.
+// was saved: identity, and each isotope's key, name, detector, intercept,
+// count, baseline and the two fits.
+//
+// Not compared, because the store does not take them from the record: sample,
+// project and material (the catalog's), time zero, events and notes, peak
+// centers, script texts.
+//
+// Not compared, although both paths carry them: the extraction fields (value,
+// units, duration, cleanup, positions, pattern, beam diameter, cryo
+// temperature: the records path prefers the actuals, the store has the
+// request), the gains and deflections, the source parameters, the analyst and
+// the extract device. A loss or a mix-up of one of those passes this helper.
 void expect_same_analysis(const processing::Analysis& got, const processing::Analysis& want) {
   EXPECT_EQ(got.uuid, want.uuid);
   EXPECT_EQ(got.identifier, want.identifier);
@@ -376,7 +389,9 @@ void expect_same_raw(const processing::RawData& got, const processing::RawData& 
 
 // The raw model of the data window has no sigma, so the stored blobs are read
 // directly: a series the record gives a sigma has it, point for point, in the
-// store. Returns how many series had one.
+// store. Returns how many series had one. A queue none of whose series has a
+// sigma returns 0 and has shown nothing about them: the caller says how many
+// there were, and a test that depends on them must require the count.
 int expect_same_sigmas(ps::IStore& store, const record::AnalysisRecord& rec) {
   int with_sigma = 0;
   const auto id = ps::Uuid::parse(rec.identity.uuid);
@@ -391,15 +406,17 @@ int expect_same_sigmas(ps::IStore& store, const record::AnalysisRecord& rec) {
   const auto* refs = std::get_if<ps::SignalRefs>(&payload->second);
   EXPECT_NE(refs, nullptr);
   if (refs == nullptr) return 0;
-  EXPECT_EQ(refs->size(), rec.data.series.size());
-  for (const auto& s : rec.data.series) {
-    const std::string key = s.kind == "baseline" ? s.det : s.iso;
-    SCOPED_TRACE(s.kind + " " + key);
+  // As an analysis names them: a detector's baseline series are one stored series.
+  const auto named = record::named_series(rec.data);
+  EXPECT_EQ(refs->size(), named.size());
+  for (const auto& s : named) {
+    SCOPED_TRACE(s.kind + " " + s.key);
     const ps::SignalRefRow* ref = nullptr;
     for (const auto& r : *refs)
-      if (r.series_kind == s.kind && r.series_key == key) ref = &r;
+      if (r.series_kind == s.kind && r.series_key == s.key) ref = &r;
     EXPECT_NE(ref, nullptr);
     if (ref == nullptr) continue;
+    EXPECT_EQ(ref->detector, s.detector);
     auto blob = store.load_blob(ref->blob_sha);
     EXPECT_TRUE(blob && blob->has_value());
     if (!blob || !*blob) continue;
@@ -509,8 +526,8 @@ TEST_P(InstallE2E, AFreshInstallsQueueLandsInItsDatabase) {
   for (const auto& blank : blanks)
     std::printf("%s: Ar40 %.2f\n", blank->runid.c_str(), blank->find_by_isotope("Ar40")->intercept.value);
 
-  // Twenty minutes of the lab's time, install and database included: an upper
-  // bound that only tells "took no real time" from a stall.
+  // 19 min 15 s of the lab's time, with the install and the database made
+  // first: a bound in real time that only tells "took no real time" from a stall.
   EXPECT_LT(std::chrono::steady_clock::now() - began_, 30s);
 }
 
@@ -525,6 +542,120 @@ TEST_P(InstallE2E, RunningItAgainNumbersOn) {
   ASSERT_NO_FATAL_FAILURE(expect_five_good_runs(second));
   EXPECT_EQ(runids(browse()), (std::vector<std::string>{"ba-04", "a-06", "a-05", "a-04", "ba-03", "ba-02", "a-03",
                                                          "a-02", "a-01", "ba-01"}));
+  EXPECT_LT(std::chrono::steady_clock::now() - began_, 30s);
+}
+
+// Every plan the install ships is run once, and so is one the test writes
+// with a baseline block and a baseline hop on one detector (no shipped plan
+// has that shape): each record is taken by the store, and reads from it as
+// the record itself reads. The detector intercalibration hops Ar40 onto every
+// Faraday, so its isotopes are one a detector.
+TEST_P(InstallE2E, EveryShippedPlanIsStoredAndReadsAsItsRecord) {
+  std::vector<std::string> shipped;
+  for (const auto& entry : fs::directory_iterator(site_.root / "plans"))
+    if (entry.path().extension() == ".toml") shipped.push_back(entry.path().stem().string());
+  std::sort(shipped.begin(), shipped.end());
+  // Whatever is shipped is run; these three are, today.
+  for (const char* plan : {"detector_ic", "multicollect", "multicollect_hop_ar39"})
+    ASSERT_EQ(std::count(shipped.begin(), shipped.end(), plan), 1) << plan;
+
+  // The hop plan again, with a third hop that is a baseline on the CDD.
+  std::string hop_plan = read_file(site_.root / "plans" / "multicollect_hop_ar39.toml");
+  const auto name_at = hop_plan.find("name = \"multicollect_hop_ar39\"");
+  ASSERT_NE(name_at, std::string::npos);
+  hop_plan.replace(name_at, std::string("name = \"multicollect_hop_ar39\"").size(), "name = \"hop_baseline\"");
+  const auto fits_at = hop_plan.find("[fits]");
+  ASSERT_NE(fits_at, std::string::npos);
+  hop_plan.insert(fits_at, "[[main.hops]]\ncounts = 5\nsettle_s = 3\nbaseline = true\nmass = 34.2\n"
+                           "positions = { Ar36 = \"CDD\" }\nposition = { detector = \"CDD\" }\n\n");
+  std::ofstream(site_.root / "plans" / "hop_baseline.toml") << hop_plan;
+
+  std::string text = "[queue]\nname = \"every-plan\"\nmass_spectrometer = \"argus\"\nusername = \"pychron\"\n";
+  auto plans = shipped;
+  plans.emplace_back("hop_baseline");
+  for (const auto& plan : plans) {
+    // The intercalibration under its own identifier; the others are airs.
+    text += std::string("\n[[runs]]\nidentifier = \"") + (plan == "detector_ic" ? "ic" : "a") +
+            "\"\nextraction = { script = \"sim_air\", duration = 30 }\nmeasurement = { plan = \"" + plan +
+            "\" }\npost_measurement = \"sim_pump\"\n";
+  }
+  std::ofstream(site_.root / "every_plan.toml") << text;
+  lab_ = lab::load_lab({site_.root, site_.path(site_.line), site_.path(site_.spectrometer)});
+  ASSERT_TRUE(lab_.problems.empty()) << lab_.problems.front();
+  auto queue = load_queue_file((site_.root / "every_plan.toml").string(), lab_.ids);
+  ASSERT_TRUE(queue) << queue.error().what;
+
+  const Ran ran = run_queue(*queue);
+  ASSERT_TRUE(ran.result.has_value());
+  EXPECT_EQ(ran.result->end, executor::QueueEnd::Completed) << ran.result->reason;
+  ASSERT_EQ(ran.result->runs.size(), plans.size());
+  for (const auto& r : ran.result->runs) {
+    EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
+    EXPECT_FALSE(r.save_error) << r.identifier;
+  }
+  EXPECT_EQ(ran.pending, 0u);
+  ASSERT_EQ(ran.saved.size(), plans.size());
+
+  auto opened = processing::StoreSource::open(ps::StoreConfig{url_, false});
+  ASSERT_TRUE(opened) << opened.error().what;
+  processing::StoreSource& source = **opened;
+  auto store = ps::open_store(ps::StoreConfig{url_, false});
+  ASSERT_TRUE(store) << store.error().what;
+
+  for (std::size_t i = 0; i < plans.size(); ++i) {
+    const auto& s = ran.saved[i];
+    const auto& rec = s.record;
+    SCOPED_TRACE(plans[i]);
+    EXPECT_TRUE(s.ok) << s.error;  // the store took it
+    auto loaded = source.load(rec.identity.uuid);
+    ASSERT_TRUE(loaded) << loaded.error().what;
+    ASSERT_NE(*loaded, nullptr);
+    const auto want = processing::analysis_from_record(rec);
+    expect_same_analysis(**loaded, want);
+    auto raw = source.load_raw(rec.identity.uuid);
+    ASSERT_TRUE(raw) << raw.error().what;
+    const auto want_raw = processing::raw_from_record(rec);
+    expect_same_raw(*raw, want_raw);
+    expect_same_sigmas(**store, rec);
+    // Every isotope's raw signal is found by the isotope's key, on both paths.
+    for (const auto& iso : (*loaded)->isotopes) {
+      const auto* series = raw->find(processing::SeriesKind::Signal, iso.key);
+      ASSERT_NE(series, nullptr) << iso.key;
+      EXPECT_EQ(series->detector, iso.detector) << iso.key;
+    }
+
+    if (plans[i] == "detector_ic") {
+      EXPECT_EQ((*loaded)->analysis_type, "detector_ic");
+      std::vector<std::string> keys, detectors;
+      for (const auto& iso : (*loaded)->isotopes) {
+        keys.push_back(iso.key);
+        detectors.push_back(iso.detector);
+        EXPECT_EQ(iso.isotope, "Ar40");
+        EXPECT_GT(iso.intercept.value, 1000.0) << iso.key;  // an air's Ar40, on each of them
+        std::printf("detector_ic %s: %.1f\n", iso.key.c_str(), iso.intercept.value);
+      }
+      std::sort(keys.begin(), keys.end());
+      EXPECT_EQ(keys, (std::vector<std::string>{"AX:Ar40", "H1:Ar40", "L1:Ar40", "L2:Ar40"}));
+      // The record itself keeps the acquisition's names.
+      EXPECT_TRUE(rec.results.intercepts.contains("Ar40:H1"));
+    }
+    if (plans[i] == "hop_baseline") {
+      std::size_t in_record = 0, points = 0;
+      for (const auto& series : rec.data.series)
+        if (series.kind == "baseline" && series.det == "CDD") {
+          ++in_record;
+          points += series.trace.t.size();
+        }
+      EXPECT_EQ(in_record, 2u);  // the block and the hop
+      std::size_t stored = 0;
+      for (const auto& series : raw->series)
+        if (series.kind == processing::SeriesKind::Baseline && series.key == "CDD") {
+          ++stored;
+          EXPECT_EQ(series.t.size(), points);
+        }
+      EXPECT_EQ(stored, 1u);
+    }
+  }
   EXPECT_LT(std::chrono::steady_clock::now() - began_, 30s);
 }
 

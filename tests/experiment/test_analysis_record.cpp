@@ -121,6 +121,24 @@ TEST(RecordBuilder, ResultsRequireInterceptPerSignalIsotope) {
   EXPECT_NE(r.error().what.find("results.intercepts.Ar39"), std::string::npos);
 }
 
+// An isotope measured on several detectors (a detector intercalibration) has
+// an intercept a detector, under the name the acquisition fits it by
+// (measurement::fit_results): the record of such a run is complete with those.
+TEST(RecordBuilder, AnIsotopeOnSeveralDetectorsNeedsAnInterceptADetector) {
+  RecordBuilder b;
+  b.add_series({"Ar40", "H1", "signal", {{0.f}, {1.f}, {}}});
+  b.add_series({"Ar40", "AX", "signal", {{0.f}, {1.f}, {}}});
+  b.add_series({"Ar36", "CDD", "signal", {{0.f}, {1.f}, {}}});
+  b.set_intercept("Ar36", {});
+  b.set_intercept("Ar40:H1", {});
+  auto r = b.check(Phase::Results);
+  ASSERT_FALSE(r.has_value());
+  EXPECT_NE(r.error().what.find("results.intercepts.Ar40:AX missing"), std::string::npos) << r.error().what;
+  EXPECT_EQ(r.error().what.find("results.intercepts.Ar40 missing"), std::string::npos) << r.error().what;
+  b.set_intercept("Ar40:AX", {});
+  EXPECT_TRUE(b.check(Phase::Results).has_value());
+}
+
 TEST(RecordBuilder, DetectsTraceLengthMismatch) {
   RecordBuilder b;
   b.add_series({"Ar40", "H1", "signal", {{0.f, 1.f}, {1.f}, {}}});
