@@ -84,6 +84,12 @@ The queue can be run again and again: the runs are numbered on from the last
 one in the database (`a-01` to `a-03`, then `a-04` ...). Run only one program
 at a time against an install.
 
+These runs are simulated, and each says so in the database. They are saved
+there because the database is the install's own file on this computer; a
+simulated session pointed at any other database writes record files instead,
+unless it is given `--sim-save`
+([Experiments](04-experiments.md#9-simulation-and-simulated-speed)).
+
 This queue holds airs and blanks only. They have no age: an age needs an
 irradiated sample, and the simulator does not have samples yet. Dated unknowns
 in the shipped queue come in a later version. Section 11 is a longer tour, on
@@ -228,7 +234,7 @@ appear as a message box and on stderr.
 ```bash
 pychron-ui [--install NAME | --setup | --examples | extraction_line.toml [canvas.toml]]
            [--sim] [--sim-speed X] [--spectrometer FILE] [--lab DIR] [--data DIR]
-           [--queue FILE] [--db URL] [--laser [--device NAME]]
+           [--queue FILE] [--db URL] [--sim-save] [--laser [--device NAME]]
 pychron-ui --version
 pychron-ui --self-test
 pychron-ui --write-icons DIR
@@ -250,7 +256,8 @@ with the package).
 | `--lab DIR` | The lab directory the Experiment window runs queues against (plans, scripts, conditionals, patterns, trays). Default: the install's folder, or the folder holding the line config. |
 | `--data DIR` | The data folder: the spool, and with no database the records that are written and browsed (`DIR/records`). Default: the install's data folder, or `<lab>/data`. |
 | `--queue FILE` | A queue to open in the Experiment window when it is opened. |
-| `--db URL` | The database for the whole program, instead of the install's: the data browser reads it, the Entry and Fit menus work on it, and **the runs of a queue are saved to it**. That holds without an install too: `pychron-ui --sim --db <url>` saves the runs of the example lab's queues to that database (it used to only browse it), so the database must already hold the identifiers the queue names. `postgresql://user:password@host/db` or `sqlite:/path/to/file.db`. The schema must already be current; it is never changed from here. Needs a build with persistence. |
+| `--db URL` | The database for the whole program, instead of the install's: the data browser reads it, the Entry and Fit menus work on it, and **the runs of a queue are saved to it**, so it must already hold the identifiers the queue names. A simulated session only reads a database given this way: its runs are written as record files unless `--sim-save` is given too (`pychron-ui --sim --db <url>` browses; `pychron-ui --sim --db <url> --sim-save` also saves). `postgresql://user:password@host/db` or `sqlite:/path/to/file.db`. The schema must already be current; it is never changed from here. Needs a build with persistence. |
+| `--sim-save` | Let a simulated session save its runs to the database. Without it simulated runs are saved to a database only when it is the install's own and a file on this computer (the default of an instrument install); for any other database they are record files under the data folder, and the Log dock says so once. Refused when there is no database. See [Experiments](04-experiments.md#9-simulation-and-simulated-speed). |
 | `--laser` | Open only the laser window of one extraction device, for a laser PC. Takes no `--queue` or `--spectrometer`. |
 | `--device NAME` | With `--laser`: which extraction device (a laser driver in the line config). Needed only when the line has more than one; with exactly one it is used automatically. |
 | `--version` | Print `pychron-ui <version>` and exit. Needs no display. |
@@ -268,6 +275,8 @@ Rules enforced when the flags are read (a violation prints
   other.
 - `--lab`, `--data`, `--spectrometer` and `--queue` each need a value, and the
   value must not start with `--`. `--db` and `--install` need a non-empty value.
+- `--sim-save` needs a database: `--db`, or an install that has one
+  (`pychron-ui: --sim-save: there is no database to save to ...` otherwise).
 - An unknown `--option` is an error.
 
 Exit status: 0 on a normal exit, 1 on a fatal load error (a message box is also

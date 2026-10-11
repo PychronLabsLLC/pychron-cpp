@@ -396,18 +396,53 @@ CDD unprotected.
    `--strict` fails on warnings, so it fails while a placeholder or a
    fully simulated line remains. `--probe` opens each TCP transport and runs
    the drivers' connect step.
-4. The runs made in simulation are in the install's database, as airs and
-   blanks under the same identifiers the instrument will use (`a-01`,
-   `ba-01`, ... as the data window shows them), and the next real air
-   continues their numbering. To start
-   the instrument on an empty local database, delete `<root>/data/pychron.db`
-   (and its `-wal` and `-shm` files) and run
+4. Start the instrument on a new database. The runs made in simulation are
+   in the install's database, as airs and blanks under the same identifiers
+   the instrument will use (`a-01`, `ba-01`, ... as the data window shows
+   them). Each is marked as simulated, but the next real air would continue
+   their numbering and they would sit in the same lists as the instrument's.
+   With pychron closed, delete `<root>/data/pychron.db` (and its `-wal` and
+   `-shm` files, and anything left in `<root>/data/spool`) and run
    `elctl init --reconfigure --install argus`, which makes and seeds a new
-   one. On a shared server, use a separate database for simulation instead.
+   one. An install whose database is on a shared server never had simulated
+   runs written to it (a simulated session writes record files there unless
+   it is started with `--sim-save`), so there is nothing to remove.
 5. For a Thermo instrument, follow "Running against a Thermo instrument" in
    [dev_setup.md](dev_setup.md) and the bring-up checklist in section 8 of
    [the Qtegra driver spec](superpowers/specs/2026-10-01-qtegra-driver-design.md).
    Turn on the wire trace for first contact.
+
+#### Upgrading an existing instrument install
+
+An install made by a version that wrote record files only now reads and
+writes its database. Three things follow:
+
+- **The database must know the instrument.** A queue is refused at its start
+  with `mass spectrometer '<name>' is not in the database` until it does.
+  Either run the install's seed, which adds the mass spectrometer, the
+  reference identifiers and what else `seed.toml` names, and changes nothing
+  that is already there:
+
+  ```bash
+  elctl entry seed <root>/seed.toml --db sqlite:<root>/data/pychron.db
+  ```
+
+  or reconfigure the install, which brings its files up to the current
+  profile (an install from before the seed has no `seed.toml` until then) and
+  seeds the database:
+
+  ```bash
+  elctl init --reconfigure --install argus
+  ```
+
+- **Earlier record files are not shown.** Once the data window reads the
+  database it no longer lists `<root>/data/records`. The files stay where
+  they are, and nothing copies them into the database in this version.
+- **Numbering starts from what the database holds.** The next aliquot of an
+  identifier is one more than the database's last, not the records folder's:
+  on a new database the next air is `a-01` whatever files exist. Fix the
+  aliquot in the queue (`aliquot = 12`) for the first run of each identifier
+  if the numbering has to go on from the files.
 
 ### 2.5 Day-to-day configuration
 

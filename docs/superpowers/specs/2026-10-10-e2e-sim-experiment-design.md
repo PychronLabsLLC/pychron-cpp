@@ -196,10 +196,32 @@ Rules:
   `payload_sha256`: blob's own sha.
 - **Refused**, each a `Config` error, record stays in spool: record not
   finalized (`provenance.sha` not 64 hex characters); uuid or timestamp
-  that does not parse; step that is not letters; series whose `t`, `v` or
-  sigma differ in length; two series with same kind and key (one isotope on
-  two detectors, or two baseline series on one detector: store's keys hold
-  one); intercept whose isotope has no series.
+  that does not parse; step that is not letters (also refused before the
+  run, section 5.7); series whose `t`, `v` or sigma differ in length; two
+  series of one kind for one isotope on one detector (no measurement makes
+  that; store's key is (kind, key)); intercept whose isotope has no series.
+- **Names** (`record/names.hpp`, shared with records path so the two read
+  alike). Record keeps the acquisition's names: `fit_results` puts an
+  isotope's intercept under the isotope, or, when its signal is on more
+  than one detector, under `<isotope>:<detector>` (`Ar40:H1`); record
+  builder asks for exactly those. An analysis (processing library, imported
+  analyses, store) names such an isotope `<detector>:<isotope>`
+  (`H1:Ar40`), isotope `Ar40`, detector `H1`. Conversion and
+  `analysis_from_record` / `raw_from_record` both translate. Isotope on one
+  detector keeps its plain name: an ordinary run converts to byte-identical
+  items (`RecordIngest.AnOrdinaryRunConvertsAsItAlwaysDid` pins them).
+  Example, detector IC with Ar40 on H1, AX, L1: record series
+  `Ar40/AX/signal`, `Ar40/H1/signal`, `Ar40/L1/signal`, `Ar40/H1/sniff`;
+  record intercepts `Ar40:AX`, `Ar40:H1`, `Ar40:L1`. Stored: signal refs
+  keyed `AX:Ar40`, `H1:Ar40`, `L1:Ar40`, sniff ref `H1:Ar40`; isotope rows
+  (`AX:Ar40`, AX), (`H1:Ar40`, H1), (`L1:Ar40`, L1); intercept rows the
+  same three keys, each with its detector.
+- **Simulated.** `record.instrument.simulated` (section 8.6) written into
+  `AnalysisMetaRow::software_json` as `"simulated": true`; key absent when
+  false, so an instrument's items are unchanged.
+- **Text that is not UTF-8** (a queue name, a note): bad bytes replaced
+  with U+FFFD in every JSON the conversion writes, same way each time.
+  Never thrown.
 - **Not finite.** Intercept or baseline value or error that is NaN or
   infinite: stored as unknown (`nullopt`). Run still saved.
 - **Identity.** `identifier`, `aliquot`, `analysis_type`, `run_index` from
@@ -227,14 +249,23 @@ Rules:
 - **Time zero.** `AnalysisIngest::time_zero` unset. `Identity::timestamp`
   is wall time taken when run is prepared, not origin of
   `record.data.time_zero`; field left unset rather than guessed.
-- **Raw series.** Each `DataSeries` becomes one blob: codec `f32le-tvs/1`
-  when it has a sigma, else `f32le-tv/1`; address
+- **Raw series.** Each named series (`record::named_series`) becomes one
+  blob: codec `f32le-tvs/1` when it has a sigma, else `f32le-tv/1`; address
   `blob_sha256(codec, bytes)`. Two series with same bytes: one blob item.
-  Each series gets `SignalRefRow`: `series_kind` is series' `kind`,
-  `series_key` is isotope (detector for baseline), `detector`, `blob_sha`,
-  `n_points`. Blobs listed in first-use order.
-- **Isotopes and detectors.** One `IsotopeRow` per distinct (isotope,
-  detector) among series of kind `signal`, sorted by isotope; one
+  Each gets `SignalRefRow`: `series_kind` is series' `kind`, `series_key`
+  is isotope key (detector for baseline), `detector`, `blob_sha`,
+  `n_points`. Blobs listed in first-use order. Signal, sniff or whiff
+  series is keyed `<detector>:<isotope>` when that isotope's signal is on
+  several detectors, or when its own kind has the isotope on several.
+- **Baselines of one detector are one series** (a `[baseline]` block plus a
+  `baseline = true` hop give two in the record). Points one after the other
+  in the record's order. That is the order `fit_results` fitted them in
+  (collector's series map: block before hop), not time order, so the stored
+  baseline is the fit of the stored series. Merged series stands where the
+  first stood. When only some parts carry a sigma the others' points get
+  sigma NaN.
+- **Isotopes and detectors.** One `IsotopeRow` per distinct (isotope key,
+  detector) among series of kind `signal`, sorted by key; one
   `DetectorRow` per detector among all series, sorted, with deflection and
   gain from `record.spectrometer` when present.
 - **Intercepts and baselines.** `Results::intercepts` (by isotope) and
@@ -242,8 +273,9 @@ Rules:
   `BaselineRow`s: value, error, `n`, fit and error type, outlier filter.
   Text form is what `StoreSource` reads: `fit` is `to_string(FitKind)`,
   `error_type` is `SD` or `SEM`, `filter_outliers_json` is
-  `{"filter_outliers":0|1,"iterations":N,"std_devs":X}`. Intercept's
-  detector: its isotope's signal series' detector.
+  `{"filter_outliers":0|1,"iterations":N,"std_devs":X}`. Intercept's row
+  key and detector: `record::intercept_name` (isotope's signal series'
+  detector; `<isotope>:<detector>` in the record is that detector's).
 - **Blanks, IC factors, tag.** No blank rows. IC factor row for each
   detector record names one for, error `0`. Tag `ok`.
 - **Scripts.** Only `ScriptBodies::measurement` written, from
@@ -266,12 +298,17 @@ Rules:
   one-element JSON array, when non-empty.
 
 Carried by record, not stored (nothing dropped without being written down
-here): sample/project/material/irradiation text, `time_zero`, tray, load,
-queue row, extraction/post-equilibration/post-measurement script texts,
-peak centers, events and notes, `pid_params`, extraction `series`,
-`snapshot_refs`, `cryo_measured`, `manometer_pressure`, `data.counts`,
-`spectrometer.state_hash` and `field_table_version`, hook reference, plan
-overrides.
+here): sample/project/material/irradiation text, `sample.pi` and
+`sample.note`, `time_zero`, tray, load, queue row,
+extraction/post-equilibration/post-measurement script texts and every
+script's name and sha (`measurement.scripts`), plan template name and
+version (only `effective_plan_toml` is kept), peak centers, events and
+notes, `conditionals.errors`, extraction actuals `value`, `duration`,
+`cleanup`, `positions` and `pattern` (the request's are stored),
+`pid_params`, extraction `series`, `snapshot_refs`, `cryo_measured`,
+`manometer_pressure`, `data.counts`, `results.blanks_ref`, each
+intercept's `filtered_idx` and `residual_sd`, `spectrometer.state_hash`
+and `field_table_version`, hook reference, plan overrides.
 
 ### 5.3 `StorePersister`
 
@@ -330,9 +367,16 @@ std::string without_password(const std::string& url);
 - Destroying it serves calls already queued, closes store on worker, joins.
   No call may be in progress or made once it is being destroyed, so an
   `Acquisition` is declared before the session that saves through it.
-- `without_password(url)`: `url` as it may be shown; password of a
-  `postgresql://user:password@host` (or `postgres://`) url removed, any
-  other url unchanged.
+- `without_password(url)`: `url` as it may be shown. `sqlite:` url as it
+  is. `postgresql://` / `postgres://` url without its user's password
+  (user's part ends at last `@` before the parameters, so a password may
+  hold `/`, `@`, `:`) and without `password` / `sslpassword` parameters.
+  Anything else: `<database>` (fails closed).
+  `without_password_in(text, url)` takes url and password out of an error
+  text; applied to every error an `Acquisition` returns.
+- A call on the worker that throws (a library's exception) is that call's
+  `Io` error, `the database call failed unexpectedly: ...`. One catch, at
+  the thread boundary; the program goes on.
 
 ### 5.4 Aliquots and steps
 
@@ -408,10 +452,34 @@ and no `SCAN`. No migration: `analysis` has
 
 ### 5.5 Failures
 
-`SavePipeline` unchanged. The record is spooled first; then
-`StorePersister::save_analysis` is called; on success the spool copy is
-removed; on any failure it stays, the run ends `save_error`, and the queue
-goes on. The executor's `recover()` at the next queue start sends it again.
+The record is spooled first; then `StorePersister::save_analysis` is
+called; on success the spool copy is removed; on any failure it stays and
+the queue goes on. The executor's `recover()` at the next queue start sends
+it again.
+
+As first built `SavePipeline::save` threw the hand-off's result away: a run
+the store refused ended a plain `Success`, nothing flagged. Now:
+
+- `SavePipeline::save` returns `Result<Saved>`. It still fails only when
+  the record cannot be spooled. `Saved::pending` is the persister's error
+  when the hand-off failed (empty when taken, or when the hand-off was
+  posted and is not known yet). `last_error()` is
+  `<record uuid>: <text>` of the last refusal until that record is sent.
+- `Run::save`: record spooled but not taken: run's state stays what it was
+  (a measured run is `Success`), `save_error = true`, and a run note
+  `not saved to the data store, kept in the spool: <persister's text>`
+  (`run::kNotSavedNote`). Record that cannot be spooled or finalized: run
+  `Failed` with `save_error`, as before.
+- `save_error` is what the queue table, notifier and
+  `pychron_run_save_errors_total` already go by; none needed a second path.
+  Notification subject says `not saved` for such a run; body adds
+  `Reason:`. Queue table row shows the note.
+- `elctl exp run`: run line `... success (not saved)`; summary
+  `N/M run(s) succeeded; K of them in <database>` when some were not taken;
+  `warning: K record(s) waiting in <data>/spool: <last error, one line>`.
+  Executor pane: `K run(s) waiting to be saved to the database: <reason>`.
+- Same pipeline for record files: a run whose record file cannot be written
+  is now flagged too (was a silent success with record in spool).
 
 Two kinds of failure, told apart only in what operator is told:
 
@@ -476,7 +544,9 @@ virtual Result<std::vector<std::string>> check_queue(const QueueSpec& queue) = 0
    then each run's, each name once;
 3. `identifier '<identifier>' is not in the database`, each once, written
    exactly as in queue (`BU`, `bu ` are not `bu`);
-4. `<runid> is already in the database`, once for each row whose aliquot
+4. `<identifier>: step '<step>' is not letters: the database cannot hold
+   it`, each (identifier, step) once;
+5. `<runid> is already in the database`, once for each row whose aliquot
    is fixed and whose (identifier, aliquot, step) the store has.
 
 Skipped rows: identifier and run id not checked (a row's extract device
@@ -489,9 +559,20 @@ start with `Config` error `the queue cannot be saved:` followed by the
 lines, one per line (`the queue cannot be saved: <error>` when
 `check_queue` itself fails). UI shows it where it shows a start that
 failed; `elctl exp run` prints each as `error:` line and exits 1,
-`--dry-run` prints them too. Queue edited while it runs is not checked
-again: row added later with identifier catalog lacks is caught by section
-5.5.
+`--dry-run` prints them too.
+
+The check is of what will run. `start(queue, from_row)` asks about
+`persist::rows_from(queue, from_row)`: rows before `from_row` marked
+skipped, so a resume is not refused for run ids its earlier rows already
+stored. `elctl exp run --dry-run` applies `--from` / `--resume` the same
+way. `LabSession::edit` asks about the edit's rows with the running
+queue's own queue-level fields, rows the executor has reached
+(`Executor::frozen_rows`) marked skipped, and refuses the edit with the
+same text.
+
+Nothing else a plan can cause is refused by the conversion (section 5.2:
+several detectors and merged baselines are stored), so preflight has no
+plan check.
 
 Why refuse, not warn: on instrument, queue that runs all night and saves
 nothing to database is worse outcome; check costs few lookups by key.
@@ -858,8 +939,10 @@ Must outlive session.
 - **An instrument install with a database** therefore reads its store in
   data window and writes its runs to it. Without database (example lab,
   install from before installs had one) nothing changes.
-- **`--db` with no install** (`pychron-ui --sim --db <url>`) also *saves*
-  runs to that database; before, `--db` only browsed.
+- **`--db` with no install** (`pychron-ui --db <url>`) also *saves* runs to
+  that database; before, `--db` only browsed. A simulated session
+  (`pychron-ui --sim --db <url>`) only browses it unless `--sim-save` is
+  given (section 8.6).
 - **Two handles.** Data window's `StoreSource` used on UI thread; runs saved
   through an `Acquisition` (section 5.3), whose worker owns second handle.
   Both open with `migrate = false`. `Acquisition` declared before session.
@@ -884,7 +967,7 @@ Must outlive session.
   window not redrawn by new run: shows what it was opened on.
 - **Pending saves.** Executor pane's pending text, with a database:
   "N run(s) waiting to be saved to the database"; without:
-  "N record(s) in the spool".
+  "N record(s) in the spool"; then `: <last refusal>` (section 5.5).
 - **`--sim-speed`** no longer needs `--sim` when install is simulated:
   check moved from command-line parsing to after install is chosen.
 
@@ -892,7 +975,8 @@ Must outlive session.
 
 - `--db <url>` added. Without it, `--install NAME` supplies an instrument
   install's database, as it already supplies line, spectrometer and data
-  folder. With neither, records written as files, as before.
+  folder. With neither, records written as files, as before. `--sim-save`:
+  section 8.6.
 - Store opened through `open_acquisition`, on main thread, before anything
   is printed or started. Failure to open is fatal here, exit 1: no line to
   keep alive for an operator. Outdated schema's message names
@@ -905,22 +989,26 @@ Must outlive session.
   prints them too.
 - Last line says where runs went:
   `N/M run(s) succeeded; in <database>` (`without_password`), without a
-  database `N/M run(s) succeeded; records in <data>/records`. When any are
-  pending: `warning: K record(s) waiting in <data>/spool` (without a
-  database: `... still in the spool`).
+  database `N/M run(s) succeeded; records in <data>/records`; when some
+  were not taken, `...; K of them in <database>`. When any are pending:
+  `warning: K record(s) waiting in <data>/spool: <last error>` (without a
+  database: `... still in the spool: ...`).
 - `exp.cpp` split: store part `exp_store.cpp` with stub
   `exp_store_stub.cpp`, like `import` and `export`; build without
   persistence refuses `--db` with usual "built without the DVC store", and
-  an install there writes files.
+  an install there writes files and warns (section 8.6).
 
 ### 8.4 The client
 
 Store stamps every analysis with acquisition client that sent it.
 `open_acquisition` registers
-`{<HOSTNAME env, else "localhost">, "acquisition", nullopt, <software version>}`.
+`{pychron::host_name(), "acquisition", nullopt, <software version>}`.
 `register_client` is ensure-by-(hostname, role), so every session on one
-host is one client; no file kept in install. Open: `HOSTNAME` is rarely
-exported, so in practice every machine registers as `localhost`.
+host is one client; no file kept in install. `host_name()` (`libs/core`
+`host_name.hpp`): POSIX `gethostname`, Windows `COMPUTERNAME`, else
+`localhost`. Not `HOSTNAME`: a shell's own variable, rarely exported, so
+every machine was `localhost`. Entry, flux, setup and the data window's
+source register the same way. A store keeps its old `localhost` clients.
 
 ### 8.5 SQLite, two connections
 
@@ -930,6 +1018,50 @@ block writer; busy timeout is 10 s (`libs/persistence/src/tiny/db.cpp`).
 Test: `AcquisitionTest.AReaderDoesNotLockOutTheWriter`
 (`tests/experiment/test_store_persister.cpp`). Same test is instantiated on
 PostgreSQL when `PYCHRON_TEST_PG_URL` is set; not run there yet.
+
+### 8.6 Simulated runs: marked, and kept out of shared databases
+
+Owner decision ("stamp and guard"), after review.
+
+**Which session is simulated**, one rule
+(`spectrometer::simulated_session`, `libs/systems` `bringup.hpp`): `--sim`
+or an install set up to simulate; or a spectrometer whose own file is a
+simulator's (`is_simulated`); or, with no spectrometer, a line with a
+simulated transport. A real spectrometer with a simulated transport on the
+line beside it is not simulated.
+
+**Stamp.** `record::InstrumentMeta::simulated`, set by the session from
+`SessionHardware::simulation` (programs give it the rule's answer). Part of
+the record and its sha, so the mark travels with the record: one spooled by
+a simulated session and sent later by any session is stored as simulated.
+Serialized only when true, schema version stays 2: every existing version-2
+record parses, reads as not simulated and keeps its sha
+(`tests/data/records/v2.{json,toml}` were written before the change). A
+build from before this ignores the key. Store: section 5.2.
+`processing::Analysis` has no field for it yet.
+
+**Guard**, one rule (`store::saves_simulated_runs(url, from_db_option,
+sim_save)`): a simulated session saves to the database only if
+
+- the database is the chosen install's own, is a `sqlite:` file, and was
+  not given with `--db`; or
+- `--sim-save` is given.
+
+Otherwise the session writes record files as before this work, and the
+program says so once. Not an error, not a failure fallback (rule 18 is
+about a database that cannot be used). `elctl exp run`, on stderr:
+`note: simulated runs are written to <data>/records, not to <database
+without password>; pass --sim-save to save them there`. `pychron-ui`: same
+sentence as `INFO [ui]` line in log dock; data window goes on reading the
+database. Session that is not simulated: not asked.
+
+`--sim-save` is an option of `elctl exp run` and of `pychron-ui`. Without
+a database to save to: refused (`--sim-save: there is no database to save
+to`).
+
+A build without the store pointed at an install that names a database
+writes record files and warns once: `built without the DVC store: runs are
+written to <data>/records, not to the installation's database`.
 
 ## 9. The quick start
 
@@ -1074,7 +1206,15 @@ in for them.
 - each field of section 5.2, a row each, so field added to record later has
   obvious place to be added;
 - each refusal of section 5.2; non-finite intercept stored as unknown;
-  record with no series converts.
+  record with no series converts;
+- ordinary run pinned to the items it converted to before several detectors
+  were stored; detector IC record and block-plus-hop baselines stored under
+  section 5.2's names; simulated record stored as simulated, also after a
+  trip through the spool; text that is not UTF-8 replaced, not thrown.
+
+`tests/experiment/test_record_names.cpp`: the names themselves.
+`tests/processing/test_record_source.cpp`: records path reads the same
+names.
 
 ### 10.4 The persister and the aliquot rule
 
@@ -1158,6 +1298,8 @@ exits non-zero before any run, naming it. Build without persistence refuses
 3. A record is spooled before the store is tried, and leaves the spool only
    after the store has acknowledged it.
 4. A save that fails never stops the queue and never blocks the next run.
+   A run whose record the store did not take is flagged (`save_error`) and
+   says why; it is never a plain success.
 5. The store is written before `RunFinished` is published.
 6. Persister never creates a catalog row that says what a run *is*: not an
    identifier, a sample, a project, a mass spectrometer or an extract
@@ -1192,6 +1334,21 @@ exits non-zero before any run, naming it. Build without persistence refuses
 18. `--db`, or an install's database, that is named and cannot be used never
     falls back to record files: `elctl exp run` stops, `pychron-ui` starts
     no queue.
+19. A simulated run says so in its record, and the mark is the record's:
+    whoever sends the record stores it as simulated.
+20. A simulated session saves only to its install's own local (`sqlite:`)
+    database, unless told otherwise with `--sim-save`; elsewhere it writes
+    record files and says so.
+21. The check of a queue covers what will run: rows from the start row on,
+    and the rows of an edit the executor has not reached.
+22. Whatever plan an install ships, its run's record is one the store
+    takes, and reads from the store as the record itself reads
+    (`InstallE2E.EveryShippedPlanIsStoredAndReadsAsItsRecord`).
+23. Acquired and imported analyses name an isotope on several detectors
+    alike: `<detector>:<isotope>`. An isotope on one detector has its plain
+    name, and an ordinary run's stored items never change.
+24. A database url is never shown with a password; one not understood is
+    not shown at all.
 
 ## 12. Earlier specs this touches
 

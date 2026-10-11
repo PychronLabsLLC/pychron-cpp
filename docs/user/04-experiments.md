@@ -710,9 +710,10 @@ At the command line, the first Ctrl-C stops after the current run, the second
 cancels, the third aborts.
 
 A queue ends as one of: **Completed**, **Stopped**, **Cancelled**,
-**Aborted** or **Failed**. A failed run ends the queue, unless the failure was
-only that the record could not be saved to its final place (the record is in
-the spool).
+**Aborted** or **Failed**. A failed run ends the queue. A run that was
+measured and could not be saved to its final place has not failed: it is a
+success with a flag, its record is in the spool, and the queue goes on
+(section 8.5).
 
 ### 8.4 Overlapping runs
 
@@ -772,8 +773,17 @@ type, time, analyst, mass spectrometer, extract device), the extraction
 settings, the positions heated, every raw signal and baseline series, the
 intercepts and baselines as fitted during the run, the detectors' gains and
 deflections and the source settings, the conditionals in force and those
-that tripped, the software version, the queue's name, and the measurement plan
-as it was run. A fit that failed is stored as unknown rather than as a number.
+that tripped, the software version, whether the run was simulated, the
+queue's name, and the measurement plan as it was run. A fit that failed is
+stored as unknown rather than as a number.
+
+An isotope measured on one detector is stored under its name (`Ar40`). When a
+plan measures one isotope on several detectors, as the detector
+intercalibration plan does, each is stored under the detector and the isotope
+(`H1:Ar40`, `AX:Ar40`), which is how the data windows name them. When a plan
+takes a detector's baseline more than once (a baseline block and a baseline
+hop), the database has one baseline series for that detector, holding all of
+its points.
 
 It does not get, in this version: the sample, project, material and
 irradiation text typed in the queue (in the database a run belongs to its
@@ -787,9 +797,12 @@ fitted and saved afterwards ([Data analysis](06-data-analysis.md)).
 
 **Before a queue starts**, it is checked against the database. The queue's
 mass spectrometer and every identifier and extract device it names must
-already be there, and a row whose aliquot and step are fixed must not be a run
-the database already has. Otherwise the queue is not started and each problem
-is listed, for example:
+already be there, a step must be letters, and a row whose aliquot and step are
+fixed must not be a run the database already has. Only the rows that will run
+are checked: a queue started from row 3, or resumed, is not refused for what
+its first rows already stored. Rows added to a queue while it runs are checked
+in the same way, and an edit the database could not take is refused. Otherwise
+the queue is not started and each problem is listed, for example:
 
 ```
 error: the queue cannot be saved:
@@ -804,11 +817,29 @@ reached at all (`the database cannot be reached: ...`).
 **The spool and pending runs.** Every finished run is first written to a
 local **spool** (`<data>/spool/`), and then handed on: to the database, or to
 its record file. If the second step fails (the database is locked or away,
-the disk is full), the run still counts and the queue goes on: the table says
-"saved to the spool only", and the Executor pane shows "N run(s) waiting to be
-saved to the database" (without a database, "N record(s) in the spool");
-`elctl exp run` ends with `warning: N record(s) waiting in <data>/spool`. A
-pending run is safe on this computer but is not yet in the database, so the
+the disk is full), the run still counts as a success and the queue goes on,
+and the failure is not silent:
+
+* the run says `not saved to the data store, kept in the spool:` followed by
+  the reason, in the event log and, at the command line, under the run;
+* its row in the queue table is flagged, and its tooltip gives that line;
+* a notification goes out as for a failed run, with the subject
+  `pychron: run <id> not saved (queue <name>)`
+  ([notifications](#86-notifications));
+* the Executor pane shows "N run(s) waiting to be saved to the database"
+  (without a database, "N record(s) in the spool"), followed by the reason
+  the last one was refused.
+
+`elctl exp run` marks such a run and ends with the count and the reason:
+
+```
+run 0 ba-1: success (not saved)
+...
+5/5 run(s) succeeded; 0 of them in sqlite:/home/lab/Pychron/argus/data/pychron.db
+warning: 5 record(s) waiting in /home/lab/Pychron/argus/data/spool: <record id>: <the database's reason>
+```
+
+A pending run is safe on this computer but is not yet in the database, so the
 data window does not show it. Pending runs are sent again when the next queue
 starts, and a run is never stored twice. One the database refuses for good (its
 identifier was removed, say) stays in the spool and is tried at each queue
@@ -860,6 +891,26 @@ The same options exist at the command line, which needs no window:
 elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/experiment.toml \
       --spectrometer configs/examples/spectrometer.sim-integrated.toml --sim-speed 50
 ```
+
+**Where simulated runs are saved.** A simulated run is not a measurement, and
+its record says so (`"simulated": true`; the database keeps the mark with the
+analysis). So that simulated runs do not land among a lab's measurements, a
+simulated session writes to a database only when it is the install's own
+database and that is a file on this computer (the default of an instrument
+install, so the quick start's runs appear in the data window). Pointed at any
+other database, a server, or any database given with `--db`, it writes record
+files under the data folder instead, and says so once:
+
+```
+note: simulated runs are written to /home/lab/Pychron/argus/data/records, not to postgresql://lab@db.example.org/pychron; pass --sim-save to save them there
+```
+
+`pychron-ui` puts the same sentence in the log dock, and its data window goes
+on showing the database. To save simulated runs there all the same (a test
+database, a rehearsal), add **`--sim-save`** to `elctl exp run` or
+`pychron-ui`. A session is simulated when it is started with `--sim`, when its
+install was set up for simulation, or when its spectrometer file names only
+simulators. A real instrument is never affected.
 
 The simulation uses the same queues, scripts, plans and conditionals as the
 real instrument, but its spectrometer, valves and lasers are models, so

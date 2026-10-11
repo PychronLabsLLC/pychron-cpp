@@ -588,3 +588,75 @@ blanks about 11 fA; a save takes about 4 ms a run on SQLite.
   the live field table.
 - Whether the `ngx` placeholder table, or the profile's detector layout,
   matches a real NGX is unconfirmed.
+
+### After the whole-branch review (the fix wave)
+
+The final review of the branch found four things that blocked it and some
+smaller ones; two of the four were decisions, which the owner made. This is
+what changed. The spec has been corrected to match (sections 5.2, 5.3, 5.5,
+5.7, 8.4, the new 8.6, and rules 4 and 19 to 24).
+
+**A store failure is seen.** `SavePipeline::save` threw the hand-off's result
+away, so a run the store refused ended as a plain success. It now returns
+`Result<Saved>`, whose `pending` is the persister's error. A run whose record
+is in the spool and was not taken keeps its state (a measured run is still a
+success), is flagged `save_error`, and says
+`not saved to the data store, kept in the spool: <text>`. The queue table,
+the notifier and the save-error counter already went by `save_error`. `elctl`
+marks the run `(not saved)` and gives the last refusal beside the pending
+count; the executor pane does the same. This holds for record files too: a
+record file that cannot be written now flags its run. `Spool::pending` no
+longer reads a file that vanished while it was listed as a spool that cannot
+be listed.
+
+**The shipped plans' runs are stored.** The departure listed above ("two
+series with the same kind and key" refused) made a run on the shipped
+`detector_ic` plan, and any run with a baseline block and a baseline hop on
+one detector, impossible to store. Two more things stood in front of that
+and were found only by running the plan: the record builder asked for an
+intercept under the plain isotope name, which the acquisition never writes
+for an isotope on several detectors, so a `detector_ic` run ended failed with
+an incomplete record; and the records path read `Ar40:H1` as an isotope named
+`H1`. `libs/experiment` `record/names.hpp` now says once what an analysis
+calls a record's series and intercepts, and the records path, the record
+builder and the store conversion all use it: an isotope on several detectors
+is `<detector>:<isotope>` (`H1:Ar40`, the key the processing library and
+imported analyses already use), and one detector's baseline series are one
+series in the record's order, which is the order they were fitted in. The
+record itself keeps the acquisition's names. An ordinary run converts to the
+items it always did; a test pins them. `InstallE2E` runs every shipped plan,
+and a plan with a baseline block and hop that the test writes, and holds the
+store against the record for each.
+
+**The check matches what will run.** `LabSession::start(queue, from_row)`
+checks `persist::rows_from(queue, from_row)`; `elctl exp run --dry-run`
+applies `--from` and `--resume`; `LabSession::edit` checks the rows the
+executor has not reached. `check_queue` also refuses a step that is not
+letters, which used to be found out after the run had been measured.
+
+**Simulated runs are marked and guarded.** A record says that it is simulated
+(`instrument.simulated`, an optional key within record version 2, written only
+when true, so existing records keep their text and sha), and the store keeps
+the mark in the analysis' software meta. A simulated session saves to a
+database only when it is the install's own `sqlite:` file and was not given
+with `--db`, or with the new `--sim-save`; otherwise it writes record files
+and says so once. This reverses one line of "The programs" above:
+`pychron-ui --sim --db <url>` browses that database and no longer saves to it
+unless `--sim-save` is given.
+
+**Smaller.** A database url is shown without a password whatever the password
+holds, and one that is not understood is not shown; the acquisition's worker
+turns anything a call throws into that call's error, and the conversion
+replaces text that is not UTF-8 instead of throwing; a build without the store
+warns when an install names a database; a client registers under the
+machine's name (`pychron::host_name()`), which closes the first item of "Open,
+for the owner".
+
+**Not done in the wave** (recorded by the review for later): a stamp of the
+field table in the stored analysis; `--dry-run` registering an acquisition
+client; the `*.extraction.json` files that accumulate; a lock for one program
+a database; `elctl` printing run ids unpadded and its ETA; database calls on
+the UI thread. Nothing in the wave ran on PostgreSQL either. The `ngx` and
+`helix` profiles' plans were not run end to end: `InstallE2E` installs `argus`.
+The simulated mark is not shown in the data window (`processing::Analysis`
+has no field for it).

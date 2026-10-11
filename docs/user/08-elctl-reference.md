@@ -412,6 +412,7 @@ Run a queue.
 ```bash
 elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
               [--canvas FILE] [--from ROW | --resume] [--dry-run] [--sim-speed X] [--db URL]
+              [--sim-save]
 ```
 
 | Flag | Meaning |
@@ -422,9 +423,10 @@ elctl exp run <experiment.toml> [--lab DIR] [--data DIR] [--spectrometer FILE]
 | `--canvas FILE` | The canvas file. Default: `canvas.toml` next to the line config if it exists. |
 | `--from ROW` | Start at this row number (0 is the first row, as printed by validate). |
 | `--resume` | Continue where a stopped or crashed queue left off, using the saved state in the data folder. Exclusive with `--from`. |
-| `--dry-run` | Validate and print the queue (as `exp validate`) and stop. With a database (below), also says what it would refuse of the queue. |
+| `--dry-run` | Validate and print the queue (as `exp validate`) and stop. With a database (below), also says what it would refuse of the rows that would run (from `--from`, or after `--resume`). |
 | `--sim-speed X` | Run simulated time `X` times faster than real time. Needs `--sim` or an install set up for simulation, and `X` must be positive; `max` does not wait at all. What a simulated queue measures is in [The simulated lab](../simulator.md). |
-| `--db URL` | Write the runs to this database (`sqlite:<file>` or `postgresql://...`), which must already have its schema (`elctl db migrate`). Default: the install's own database, when `--install` names an instrument install that has one. |
+| `--db URL` | Write the runs to this database (`sqlite:<file>` or `postgresql://...`), which must already have its schema (`elctl db migrate`). Default: the install's own database, when `--install` names an instrument install that has one. A simulated session needs `--sim-save` as well. |
+| `--sim-save` | Let a simulated session write its runs to the database. Without it simulated runs go to a database only when it is the install's own and a file on this computer; otherwise they are record files (below). Refused when there is no database to save to. |
 
 It first prints the same report as `exp validate`; if the queue has errors, it
 prints `error: the queue has errors; nothing was run` and exits 1. While running
@@ -442,6 +444,23 @@ written for it. With neither, each finished run is a file under
 `<DIR>/records`. [04 Experiments](04-experiments.md#85-what-is-written-run-records)
 says what the database gets.
 
+Simulated runs are kept out of databases that may hold a lab's measurements.
+A simulated session (`--sim`, an install set up for simulation, or a
+spectrometer file that names only simulators) writes to a database only when
+it is the install's own and a `sqlite:` file on this computer, which is what
+`elctl init` makes. For any database given with `--db`, and for an install's
+database on a server, it writes record files and prints one line on standard
+error:
+
+```
+note: simulated runs are written to /home/you/Pychron/argus/data/records, not to sqlite:/home/you/other.db; pass --sim-save to save them there
+```
+
+That is not an error: the queue runs, and the exit status is the queue's.
+`--sim-save` sends the runs to the database after all. Either way each
+simulated run's record says that it is simulated, and so does the stored
+analysis.
+
 With a database, two things stop `exp run` before anything runs, with exit 1:
 
 - The database cannot be opened. A schema that is behind says how to bring it
@@ -456,9 +475,10 @@ With a database, two things stop `exp run` before anything runs, with exit 1:
   failure (`error: the installation's database: ...`); it does not fall back
   to files. `--db` overrides the install's database.
 - The database cannot take the queue: it lacks the queue's mass spectrometer,
-  or an identifier or extract device the queue names, or already holds a run
-  that a row fixes by aliquot and step. Each problem is a line, and
-  `--dry-run` prints them too:
+  or an identifier or extract device the queue names, a row's step is not
+  letters, or it already holds a run that a row fixes by aliquot and step.
+  Only rows that will run are checked (from `--from`, or after `--resume`).
+  Each problem is a line, and `--dry-run` prints them too:
 
   ```
   error: the queue cannot be saved:
@@ -469,10 +489,20 @@ With a database, two things stop `exp run` before anything runs, with exit 1:
 
 A run the database cannot take while the queue runs (the database is locked or
 away) does not stop the queue: its record waits in `<DIR>/spool` and is sent
-again when the next queue starts.
+again when the next queue starts. The run says why as it ends, and its last
+line is marked:
+
+```
+  ba: not saved to the data store, kept in the spool: <the database's reason>
+run 0 ba-1: success (not saved)
+```
 
 A build without persistence refuses `--db` (`built without the DVC store`); without `--db` it
-writes files.
+writes files. Under `--install`, when the install names a database, it says so first:
+
+```
+warning: built without the DVC store: runs are written to /home/you/Pychron/argus/data/records, not to the installation's database
+```
 
 **Ctrl-C** is staged: the first stops the queue after the current run, a second
 cancels the run in progress, a third aborts. At the end it prints
@@ -485,9 +515,16 @@ queue completed
 ```
 
 A database is shown without its password. Without one the line ends
-`records in <DIR>/records`. The warning is
-`warning: N record(s) waiting in <DIR>/spool` with a database and
-`warning: N record(s) still in the spool` without.
+`records in <DIR>/records`. When some runs were measured and not saved, the
+line counts those that were, and a warning gives how many are waiting and why
+the last was refused, on one line:
+
+```
+5/5 run(s) succeeded; 0 of them in sqlite:/home/you/Pychron/argus/data/pychron.db
+warning: 5 record(s) waiting in /home/you/Pychron/argus/data/spool: <record id>: <the database's reason>
+```
+
+Without a database the warning begins `warning: N record(s) still in the spool`.
 
 Exit 0 when the queue completed or was stopped; 1 if it was cancelled, aborted or
 failed, the line could not start, the queue file would not load, or the
