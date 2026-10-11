@@ -338,7 +338,9 @@ class LaserWindowTest : public QObject {
 
   void patterns_are_listed_with_length_and_time() {
     auto* list = the<QTableWidget>("pattern_list");
-    QCOMPARE(list->rowCount(), 2);
+    QCOMPARE(list->rowCount(), 3);
+    QCOMPARE(list->item(2, 0)->text(), QStringLiteral("square"));
+    QCOMPARE(list->item(2, 1)->text(), QStringLiteral("polygon"));
     QCOMPARE(list->item(0, 0)->text(), QStringLiteral("follow"));
     QCOMPARE(list->item(0, 1)->text(), QStringLiteral("dragonfly"));
     QCOMPARE(list->item(1, 0)->text(), QStringLiteral("hexagon"));
@@ -445,7 +447,7 @@ class MainWindowLaserTest : public QObject {
       maker->findChild<QPushButton*>(QStringLiteral("save"))->click();
       QVERIFY(std::filesystem::exists(lab.dir / "patterns" / "made.toml"));
       auto* list = window->findChild<QTableWidget*>(QStringLiteral("pattern_list"));
-      QCOMPARE(list->rowCount(), 3);
+      QCOMPARE(list->rowCount(), 4);  // follow, hexagon, made, square
       QCOMPARE(list->item(2, 0)->text(), QStringLiteral("made"));
 
       // gone with the bridges

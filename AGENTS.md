@@ -287,7 +287,9 @@ Inner loop (keep waits short):
   variable.
 - What an instrument install ships is held together by
   `tests/setup/test_profiles.cpp`: `seed.toml`, `defaults.toml`, shipped
-  `experiment.toml` (`ba, a, a, a, ba`), example lab's `sim.toml` (example line only), and the placeholder field
+  `experiment.toml` (`ba, a, a, a, ba`), example lab's `sim.toml` (example line only), laser files
+  (`tray_maps/` and `patterns/` with every line; `cameras.toml` and
+  `stage_calibrations/` with example line only: they name its `co2`), and the placeholder field
   tables of `profiles/qtegra` and `profiles/ngx`
   (`EveryInstalledPlanPutsItsIsotopesOnItsDetectors`: every isotope of a
   plan's hop on its detector within 0.01; simulated peak is flat within

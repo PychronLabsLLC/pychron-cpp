@@ -40,6 +40,21 @@ Related: [Getting started](01-getting-started.md),
 Several lasers may be on one line; each is a separate driver with its own
 calibration.
 
+An instrument install comes with these already in its folder:
+
+| Shipped | What it is |
+|---|---|
+| `tray_maps/example-9.txt`, `tray_maps/221-hole.txt` | A 3 x 3 example tray, and legacy pychron's 221-hole tray. |
+| `patterns/square.toml`, `hexagon.toml`, `follow.toml` | A square and a hexagon for the beam to trace, and a dragonfly that follows the glow. |
+| `cameras.toml` | The camera of the example line's laser (`co2`), simulated. Only with the example line. |
+| `stage_calibrations/co2.example-9.toml` | Where the example tray sits on that laser's stage. Only with the example line. |
+
+A line you bring yourself (imported or converted) gets the tray maps and
+patterns, which belong to no device, but not the camera and calibration of
+the example's `co2`: write `cameras.toml` for your laser (section 7) and
+calibrate your trays on its stage (section 6). The 221-hole tray is not
+calibrated on any stage as shipped.
+
 ## 3. Setting up a Chromium
 
 On the laser PC, in Chromium: **View > Control Panels > Show/Hide Remote

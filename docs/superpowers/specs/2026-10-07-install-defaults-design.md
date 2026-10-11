@@ -95,6 +95,24 @@ The example queue's `bu` run gets the same `sample = { ... }`.
 `data-reduction`, moved into a new fragment `store-common` that both include,
 so there is one copy. Default: a local SQLite file, `data/pychron.db`.
 
+### 3.5 Laser files (added 2026-10-11, `profiles/extraction-line-starter` version 5)
+
+Starter line has laser `co2` (Chromium, simulated transport); install used to
+copy none of what it reads. Now copied from `@examples`:
+
+- every line (`starter`, `import`, `legacy`): `tray_maps/` (`example-9.txt`,
+  `221-hole.txt`: legacy's 221-hole tray, uncalibrated), `patterns/`
+  (`square.toml` new: polygon, `nsides = 4`, `rotation = 45`, `radius = 1.0`;
+  `hexagon.toml`; `follow.toml`). No device owns these.
+- `cameras.toml` and `stage_calibrations/` (`co2.example-9.toml`) are copied
+  only if `line_source == "starter"`: both name device `co2`.
+
+Files copied as they are, not templated. `tests/setup/test_profiles.cpp`:
+each present and byte-equal to example in every starter install; imported
+line has tray maps and patterns, no `cameras.toml`, no `stage_calibrations`.
+Out of scope: a laser profile or wizard question, calibration for 221-hole,
+adding `co2` to seed's `extract_devices` (still `[]`).
+
 ## 4. Mechanics
 
 ### 4.1 Run defaults (`libs/experiment`)

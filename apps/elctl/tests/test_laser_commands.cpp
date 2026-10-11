@@ -245,9 +245,9 @@ TEST_F(LaserCmd, UnknownNamesSayWhatIsKnown) {
   EXPECT_NE(o.err.find("diode"), std::string::npos) << o.err;
   EXPECT_NE(o.err.find("co2"), std::string::npos) << o.err;
 
-  o = laser({"calibrate", "co2", "221-hole", "show"});
+  o = laser({"calibrate", "co2", "no-such-tray", "show"});
   EXPECT_EQ(o.code, 1);
-  EXPECT_NE(o.err.find("221-hole"), std::string::npos) << o.err;
+  EXPECT_NE(o.err.find("no-such-tray"), std::string::npos) << o.err;
   EXPECT_NE(o.err.find("example-9"), std::string::npos) << o.err;
 
   o = calibrate({"point", "99", "--x", "1", "--y", "1"});
@@ -262,6 +262,8 @@ TEST_F(LaserCmd, PatternsListsKindPointsLengthAndTime) {
   ASSERT_EQ(o.code, 0) << o.err;
   // radius 1: out to a vertex, six sides of 1 mm, and back; 1 mm/s
   EXPECT_NE(o.out.find("hexagon  polygon  8 points  8.000 mm  8.0 s"), std::string::npos) << o.out;
+  // radius 1, turned 45 degrees: out to a corner, four sides of 1.414 mm, and back
+  EXPECT_NE(o.out.find("square  polygon  6 points  7.657 mm  7.7 s"), std::string::npos) << o.out;
 }
 
 // A dragonfly has no path to list or to walk: it follows the glow.

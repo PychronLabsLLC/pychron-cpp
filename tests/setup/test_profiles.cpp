@@ -129,6 +129,14 @@ TEST_P(InstrumentProfile, InstallsLoadsAndPassesDoctor) {
     EXPECT_TRUE(fs::exists(root / f)) << name << ": " << f;
   // The example line comes with the example lab's numbers, as they are.
   EXPECT_EQ(read_file(root / "sim.toml"), read_file(kExamples / "sim.toml")) << name;
+  // And with what its laser (co2) needs: tray maps, the example tray's place
+  // on its stage, its camera, and patterns, a square among them.
+  for (const char* f : {"cameras.toml", "tray_maps/example-9.txt", "tray_maps/221-hole.txt",
+                        "stage_calibrations/co2.example-9.toml", "patterns/square.toml", "patterns/hexagon.toml",
+                        "patterns/follow.toml"}) {
+    ASSERT_TRUE(fs::exists(root / f)) << name << ": " << f;
+    EXPECT_EQ(read_file(root / f), read_file(kExamples / f)) << name << ": " << f;
+  }
   expect_no_failures(site);
   expect_queue_checks(site);
   fs::remove_all(root);
@@ -486,6 +494,12 @@ TEST(Profiles, AnImportedLineComesWithoutTheExampleLabsSimToml) {
           root);
   EXPECT_TRUE(fs::exists(root / "extraction_line.toml"));
   EXPECT_FALSE(fs::exists(root / "sim.toml"));
+  // Nor with the camera and stage calibration of the example line's laser;
+  // tray maps and patterns are no device's, and come with any line.
+  EXPECT_FALSE(fs::exists(root / "cameras.toml"));
+  EXPECT_FALSE(fs::exists(root / "stage_calibrations"));
+  EXPECT_TRUE(fs::exists(root / "tray_maps" / "221-hole.txt"));
+  EXPECT_TRUE(fs::exists(root / "patterns" / "square.toml"));
   fs::remove_all(root);
   fs::remove_all(mine);
 }
