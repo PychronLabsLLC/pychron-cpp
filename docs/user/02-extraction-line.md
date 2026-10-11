@@ -517,6 +517,9 @@ size = [1000, 700]               # the drawing area
 connection_width = 6             # pipe thickness
 # open_valve_color = "inherit"   # open valves wear the region colour
 
+[colors]
+# background = "#f4f6f8"        # behind the drawing; left out: the application's own
+
 [[valve]]                        # one per [[valves]] in the line file
 name = "A"                       # must match the line's name exactly
 pos = [250, 200]
@@ -611,8 +614,8 @@ elctl doctor                                 # check an installation
 - **`[[image]]` and `[legend]`** are read from the canvas file but I found no
   code that draws them in the window. Treat as not working.
 - **`[colors] valve`** and the stage `fill` / `volume` keys are read but not
-  used by the window as far as the source shows (`stage` and `pipette`
-  colours are used). The simulated line does use `volume`: it is the
+  used by the window as far as the source shows (`stage`, `pipette` and
+  `background` colours are used). The simulated line does use `volume`: it is the
   stage's size in cc.
 - **Claiming valves** (owner semantics) exists in the line software but the
   window never claims or releases; there is no button for it.

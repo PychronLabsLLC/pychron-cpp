@@ -43,6 +43,11 @@ QPointF project(QPointF p, QPointF a, QPointF b) {
 
 QColor CanvasView::isolated_color() { return theme().neutral_fill; }
 
+std::optional<QColor> CanvasView::background_color(const canvas::Canvas& c) {
+  const QColor found = color_or(c, "background", QColor());
+  return found.isValid() ? std::optional<QColor>(found) : std::nullopt;
+}
+
 QColor CanvasView::source_color(canvas::SourceKind kind, int ordinal) {
   const auto& c = theme().sources;
   switch (kind) {
@@ -89,6 +94,8 @@ void CanvasView::build(const canvas::Canvas& c) {
   sources_ = canvas::sources(c);
   const QPointF origin = to_qpoint(c.canvas.origin);
   scene_.setSceneRect(origin.x(), origin.y(), c.canvas.size.width, c.canvas.size.height);
+  // Behind the drawing and around it: the view shows the scene's background wherever it is.
+  if (const auto background = background_color(c)) scene_.setBackgroundBrush(*background);
 
   for (const auto& v : c.valves) {
     auto* item = new ValveItem(v.name, v.kind);

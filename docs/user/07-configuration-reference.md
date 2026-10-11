@@ -339,6 +339,7 @@ be positive. Top-level sections: `[canvas]`, `[colors]`, `[[valve]]`,
 | | `connection_width` | whole number >= 1 | 5 | pipe thickness |
 | | `open_valve_color` | `green`, `inherit` | `green` | `inherit`: an open valve takes the colour of the region it joins |
 | `[colors]` | any name = `"#rrggbb"` | text | | e.g. `valve`, `pipette` |
+| | `background` | `"#rrggbb"` or a colour name | the application's own | what is behind the drawing, to the edges of the view; a value that is not a colour is ignored |
 | `[[valve]]`, `[[manual_valve]]`, `[[rough_valve]]`, `[[switch]]` | `name` | text, required | | must match the line |
 | | `pos` | `[x, y]`, required | | |
 | | `display_name` | text | the name (blank on a manual valve) | the label on its face |

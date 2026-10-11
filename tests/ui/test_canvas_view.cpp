@@ -9,13 +9,16 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <QGraphicsScene>
 #include <QGraphicsSceneHoverEvent>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "canvas_view.hpp"
@@ -59,6 +62,35 @@ class TestCanvasView : public QObject {
     view_->resize(1100, 800);
     QVERIFY(line_->start().has_value());
     QTRY_VERIFY(bridge_->state().pressures.count("IG1") == 1);
+  }
+
+  // The canvas file may say what is behind the drawing; without that the
+  // view has the application's own background.
+  void theBackgroundIsTheCanvasFilesWhenItNamesOne() {
+    QCOMPARE(view_->scene()->backgroundBrush().style(), Qt::NoBrush);  // the example names none
+
+    canvas::Canvas c = *bridge_->canvas();
+    QVERIFY(!CanvasView::background_color(c).has_value());
+    c.colors["background"] = "#102030";
+    QCOMPARE(CanvasView::background_color(c), std::optional<QColor>(QColor(0x10, 0x20, 0x30)));
+    c.colors["background"] = "not a colour";
+    QVERIFY(!CanvasView::background_color(c).has_value());
+
+    // A view of a line whose canvas names one is drawn on it: the example's
+    // canvas, with the line it leaves commented out switched on.
+    std::ifstream in(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "canvas.toml");
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string off = "# background = \"#f4f6f8\"";
+    const auto at = text.find(off);
+    QVERIFY(at != std::string::npos);
+    text.replace(at, off.size(), "background = \"#102030\"");
+    QTemporaryDir dir;
+    const auto file = std::filesystem::path(dir.path().toStdString()) / "canvas.toml";
+    { std::ofstream(file) << text; }
+    auto line = ui::test::make_example_line(file);
+    CoreBridge bridge(*line);
+    const CanvasView view(bridge);
+    QCOMPARE(view.scene()->backgroundBrush(), QBrush(QColor(0x10, 0x20, 0x30)));
   }
 
   void cleanup() {
