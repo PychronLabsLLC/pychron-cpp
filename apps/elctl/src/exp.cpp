@@ -125,6 +125,10 @@ class Exp {
       io_.err << "error: the installation's database: " << g_.database_error << '\n';
       return kFailed;
     }
+    if (a_.verb == "run" && a_.db.empty() && g_.database_not_built) {
+      io_.err << "warning: built without the DVC store: runs are written to " << (a_.data / "records").string()
+              << ", not to the installation's database\n";
+    }
     if (a_.verb == "run") {
       // Whose runs are a simulator's: one rule for every program.
       const std::optional<bool> sim_spectrometer =

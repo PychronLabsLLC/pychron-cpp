@@ -483,6 +483,22 @@ TEST_F(ElctlExpTest, WithoutPersistenceADatabaseIsRefused) {
   EXPECT_TRUE(contains(o.err, "built without the DVC store")) << o.err;
 }
 
+// An install names a database this build cannot write to: its runs are record
+// files, and the operator is told so, not left to find it out later.
+TEST_F(ElctlExpTest, WithoutPersistenceAnInstallsRunsAreFilesAndItSaysSo) {
+  const auto root = path("install");
+  const auto made = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  ASSERT_EQ(made.code, 0) << made.out << made.err;
+  const auto o = run_raw({"--install", "lab", "--sim", "exp", "run", (root / "experiment.toml").string(), "--dry-run"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "warning: built without the DVC store: runs are written to " +
+                                  (root / "data" / "records").string() + ", not to the installation's database\n"))
+      << o.err;
+  // Only exp run says it.
+  const auto v = run_raw({"--install", "lab", "--sim", "exp", "validate", (root / "experiment.toml").string()});
+  EXPECT_FALSE(contains(v.err, "built without")) << v.err;
+}
+
 #else
 
 // An instrument install's queue runs against its database; runs go to the

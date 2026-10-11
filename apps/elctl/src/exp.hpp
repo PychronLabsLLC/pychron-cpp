@@ -38,6 +38,8 @@ struct ExpGlobals {
   std::string database;
   // Why the install's database url could not be made (database is then empty); `exp run` refuses to start.
   std::string database_error;
+  // The install names a database and this build has no store to write it with: `exp run` says so.
+  bool database_not_built = false;
 };
 
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);

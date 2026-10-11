@@ -519,6 +519,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: --sim-save: there is no database to save to (built without the DVC store)\n");
     return 2;
   }
+  // The install has a database and this build cannot write to one: said here
+  // and in the log, not left for the operator to find out.
+  std::string no_store_warning;
+  if (install && install->kind == "instrument" && !install->database.empty()) {
+    no_store_warning = "built without the DVC store: runs are written to " + (data_dir / "records").string() +
+                       ", not to the installation's database";
+    std::fprintf(stderr, "pychron-ui: warning: %s\n", no_store_warning.c_str());
+  }
 #endif
   pychron::processing::IAnalysisSource& data_source =
       store_source ? *store_source : static_cast<pychron::processing::IAnalysisSource&>(records);
@@ -579,6 +587,10 @@ int main(int argc, char** argv) {
     }
     if (!run_saving_note.empty()) {
       window.log_dock()->append_line(QStringLiteral("INFO [ui] ") + QString::fromStdString(run_saving_note));
+    }
+#else
+    if (!no_store_warning.empty()) {
+      window.log_dock()->append_line(QStringLiteral("WARN [ui] ") + QString::fromStdString(no_store_warning));
     }
 #endif
     window.show();

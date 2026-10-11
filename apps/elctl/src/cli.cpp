@@ -784,6 +784,9 @@ int run(const std::vector<std::string>& args, Io io) {
           globals.exp.database_error = url.error().what;
         }
       }
+#else
+      // The install has a database and this build cannot write to one: `exp run` says where its runs go.
+      globals.exp.database_not_built = install->kind == "instrument" && !install->database.empty();
 #endif
     } else if (globals.install) {
       io.err << "error: " << install.error().what << "\n";
