@@ -7,6 +7,7 @@
 #include <QPainter>
 #include <QToolTip>
 #include <ranges>
+#include <tuple>
 #include <utility>
 
 #include "queue_table_model.hpp"
@@ -191,19 +192,59 @@ QRectF TimelineView::plot_area() const {
   return QRectF(kLabelWidth, 2, std::max(10, width() - kLabelWidth - 6), kRowHeight * (1 + std::max(1, model_.run_lanes())));
 }
 
-double TimelineView::span() const { return std::max(1.0, model_.now()); }
+double TimelineView::full_end() const { return std::max(kMinSpan, model_.now()); }
 
+void TimelineView::set_mode(Mode mode) {
+  if (mode == Mode::Free && mode_ != Mode::Free) std::tie(t0_, t1_) = time_window();  // stays where it was
+  mode_ = mode;
+  update();
+}
+
+void TimelineView::set_follow_runs(int runs) {
+  follow_runs_ = std::max(1, runs);
+  update();
+}
+
+std::pair<double, double> TimelineView::time_window() const {
+  switch (mode_) {
+    case Mode::WholeQueue: return {0.0, std::max(1.0, model_.now())};
+    case Mode::Free: return {t0_, t1_};
+    case Mode::Follow: break;
+  }
+  // The queue's leading wait shows until enough runs have started.
+  const auto& starts = model_.run_starts();
+  const auto n = static_cast<std::size_t>(follow_runs_);
+  const double start = starts.size() >= n ? starts[starts.size() - n] : 0.0;
+  return {start, std::max(start + kMinSpan, model_.now())};
+}
+
+void TimelineView::set_time_window(double t0, double t1) {
+  const double end = full_end();
+  const double span = std::clamp(t1 - t0, kMinSpan, end);
+  t0_ = std::clamp(t0, 0.0, end - span);
+  t1_ = t0_ + span;
+  mode_ = Mode::Free;
+  update();
+}
+
+// Empty for a segment the window does not show; one that crosses an edge of
+// the window is cut there.
 QRectF TimelineView::segment_rect(const TimelineSegment& s) const {
+  const auto [t0, t1] = time_window();
+  const double end = model_.drawn_end(s);
+  if (s.start > t1 || end < t0) return {};
   const QRectF area = plot_area();
-  const double x0 = area.left() + area.width() * s.start / span();
-  const double x1 = area.left() + area.width() * model_.drawn_end(s) / span();
+  const double scale = area.width() / (t1 - t0);
+  const double x0 = std::max(area.left(), area.left() + (s.start - t0) * scale);
+  const double x1 = std::min(area.right(), area.left() + (end - t0) * scale);
   return QRectF(x0, area.top() + s.lane * kRowHeight + 2, std::max(2.0, x1 - x0), kRowHeight - 4);
 }
 
 const TimelineSegment* TimelineView::segment_at(QPoint p) const {
+  const auto [t0, t1] = time_window();
   const auto& segs = model_.segments();
-  for (const auto& seg : std::views::reverse(segs))
-    if (segment_rect(seg).contains(p)) return &seg;
+  for (std::size_t i : std::views::reverse(model_.visible(t0, t1)))
+    if (segment_rect(segs[i]).contains(p)) return &segs[i];
   return nullptr;
 }
 
@@ -221,7 +262,9 @@ void TimelineView::paintEvent(QPaintEvent*) {
                r == 0 ? tr("Waits") : tr("Lane %1").arg(r));
   }
   // Time axis: about five ticks.
-  const double step_raw = span() / 5;
+  const auto [t0, t1] = time_window();
+  const double span = t1 - t0;
+  const double step_raw = span / 5;
   double step = 1;
   for (double s : {1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0})
     if (s >= step_raw) {
@@ -232,15 +275,19 @@ void TimelineView::paintEvent(QPaintEvent*) {
   p.setPen(theme().grid);
   const double axis_y = area.bottom();
   // Counted, so the last tick does not depend on how the steps added up.
-  const int ticks = static_cast<int>(std::floor((span() + 1e-9) / step));
-  for (int i = 0; i <= ticks; ++i) {
-    const double t = i * step;
-    const double x = area.left() + area.width() * t / span();
+  const auto first_tick = static_cast<long long>(std::ceil((t0 - 1e-9) / step));
+  const auto last_tick = static_cast<long long>(std::floor((t1 + 1e-9) / step));
+  for (long long i = first_tick; i <= last_tick; ++i) {
+    const double t = static_cast<double>(i) * step;
+    const double x = area.left() + area.width() * (t - t0) / span;
     p.drawLine(QPointF(x, area.top()), QPointF(x, axis_y + 3));
     p.drawText(QRectF(x - 40, axis_y + 2, 80, kAxisHeight), Qt::AlignHCenter | Qt::AlignTop, clock_text(t));
   }
-  // Segments.
-  for (const auto& s : model_.segments()) {
+  // Segments: the window's only, whatever the queue's length.
+  const auto shown = model_.visible(t0, t1);
+  drawn_ = static_cast<int>(shown.size());
+  for (std::size_t i : shown) {
+    const TimelineSegment& s = model_.segments()[i];
     const QRectF r = segment_rect(s);
     QColor fill = s.state ? QueueTableModel::state_color(*s.state) : theme().neutral_fill;
     p.setPen(QPen(fill.darker(140), 1));
@@ -255,10 +302,12 @@ void TimelineView::paintEvent(QPaintEvent*) {
                  fm.elidedText(text, Qt::ElideRight, static_cast<int>(r.width() - 6)));
     }
   }
-  // Now.
-  const double xn = area.left() + area.width() * model_.now() / span();
-  p.setPen(QPen(theme().error, 1, Qt::DashLine));
-  p.drawLine(QPointF(xn, area.top()), QPointF(xn, area.bottom()));
+  // Now, when the window holds it.
+  if (model_.now() >= t0 && model_.now() <= t1) {
+    const double xn = area.left() + area.width() * (model_.now() - t0) / span;
+    p.setPen(QPen(theme().error, 1, Qt::DashLine));
+    p.drawLine(QPointF(xn, area.top()), QPointF(xn, area.bottom()));
+  }
 }
 
 bool TimelineView::event(QEvent* event) {

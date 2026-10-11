@@ -189,6 +189,7 @@ class TestTimeline : public QObject {
     feed(m);
     m.advance(at(100));
     TimelineView v(m);
+    v.set_mode(TimelineView::Mode::WholeQueue);
     v.resize(800, v.sizeHint().height());
     QCOMPARE(v.sizeHint().height(), 16 + 20 * 3 + 4);  // waits + two lanes
     const auto a = of(m, "A");
@@ -200,6 +201,85 @@ class TestTimeline : public QObject {
     QVERIFY(v.segment_at(QPoint(2, 2)) == nullptr);  // the lane labels
     v.show();
     QTest::qWait(10);  // paints without trouble
+  }
+
+  // A view starts following: the last six runs fill it, labelled, however
+  // long the queue.
+  void followShowsTheLastRuns() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    QCOMPARE(v.mode(), TimelineView::Mode::Follow);
+    QCOMPARE(v.follow_runs(), 6);
+    QCOMPARE(v.time_window().first, m.run_starts()[994]);
+    QCOMPARE(v.time_window().second, m.now());
+    const auto last = of(m, "r999");
+    QCOMPARE(*last[2]->state, RunState::Measuring);
+    QVERIFY(v.segment_rect(*last[2]).width() > 24);  // wide enough for its label
+    QVERIFY(v.segment_rect(*of(m, "r0")[2]).isEmpty());
+    QImage image(v.size(), QImage::Format_ARGB32_Premultiplied);
+    v.render(&image);
+    QVERIFY(v.drawn_count() > 0);
+    QVERIFY(v.drawn_count() < 100);
+    v.set_follow_runs(3);
+    QCOMPARE(v.time_window().first, m.run_starts()[997]);
+    v.set_mode(TimelineView::Mode::WholeQueue);
+    QCOMPARE(v.time_window(), std::make_pair(0.0, m.now()));
+    v.render(&image);
+    QCOMPARE(v.drawn_count(), 6000);
+  }
+
+  void followIncludesTheLeadingWaitEarlyOn() {
+    TimelineModel m;
+    feed_long(m, 3);
+    const TimelineView v(m);
+    QCOMPARE(v.time_window(), std::make_pair(0.0, m.now()));
+  }
+
+  void aSegmentAcrossTheWindowsEdgeIsCut() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    const double b = 995 * 1500.0;
+    v.set_time_window(b + 800, b + 3000);  // starts inside r995's measuring, b+300 .. b+1300
+    QCOMPARE(v.mode(), TimelineView::Mode::Free);
+    QCOMPARE(v.time_window(), std::make_pair(b + 800, b + 3000));
+    const auto* measuring = of(m, "r995")[2];
+    const QRectF r = v.segment_rect(*measuring);
+    QCOMPARE(r.left(), 56.0);  // the plot's left edge, after the lane labels
+    QCOMPARE(v.segment_at(QPoint(58, static_cast<int>(r.center().y()))), measuring);
+    QVERIFY(v.segment_rect(*of(m, "r994")[2]).isEmpty());
+    // time passing does not move a window the operator placed
+    m.advance(at(b + 1e6));
+    QCOMPARE(v.time_window(), std::make_pair(b + 800, b + 3000));
+  }
+
+  void aWindowStaysInsideTheQueue() {
+    TimelineModel m;
+    feed_long(m, 10);
+    TimelineView v(m);
+    v.set_time_window(-500, 200);
+    QCOMPARE(v.time_window(), std::make_pair(0.0, 700.0));
+    v.set_time_window(m.now() - 100, m.now() + 900);
+    QCOMPARE(v.time_window(), std::make_pair(m.now() - 1000, m.now()));
+    v.set_time_window(50, 51);  // never narrower than ten seconds
+    QCOMPARE(v.time_window(), std::make_pair(50.0, 60.0));
+    v.set_time_window(-1e9, 1e9);  // never wider than the queue
+    QCOMPARE(v.time_window(), std::make_pair(0.0, m.now()));
+  }
+
+  void aWaitsPlannedEndBeyondTheWindowIsCut() {
+    TimelineModel m;
+    m.on_waiting({"delay", std::chrono::duration<double>(100), at(0), {}});
+    m.advance(at(50));
+    TimelineView v(m);
+    v.resize(800, v.sizeHint().height());
+    v.set_time_window(0, 20);
+    const QRectF r = v.segment_rect(m.segments().front());
+    QCOMPARE(r.left(), 56.0);
+    QCOMPARE(r.right(), 800.0 - 6);  // the plot's right edge
   }
 };
 

@@ -10,6 +10,10 @@
 //           An overlapped run starts while the previous one still measures,
 //           so it takes the next free lane: overlap shows as two lanes.
 //
+// The view shows a window of the queue's time, not all of it: a queue of a
+// thousand runs drawn whole is a pixel a run. It follows the last few runs
+// until the operator moves the window, and can show the whole queue.
+//
 // Times are the line's clock (simulated time under --sim-speed), in seconds
 // since the first event. Open segments grow with advance(now).
 //
@@ -22,6 +26,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <QString>
@@ -90,7 +95,24 @@ class TimelineView : public QWidget {
   Q_OBJECT
 
  public:
+  // Follow: from the start of the follow_runs()-th most recent run to now.
+  // Free: where the operator put it. WholeQueue: the first event to now.
+  enum class Mode { Follow, Free, WholeQueue };
+  static constexpr int kFollowRuns = 6;
+  static constexpr double kMinSpan = 10;  // seconds; a window is never narrower
+
   explicit TimelineView(const TimelineModel& model, QWidget* parent = nullptr);
+  Mode mode() const noexcept { return mode_; }
+  void set_mode(Mode mode);
+  int follow_runs() const noexcept { return follow_runs_; }
+  void set_follow_runs(int runs);
+  // The time shown, in the model's seconds.
+  std::pair<double, double> time_window() const;
+  // Shows [t0, t1], kept inside the queue's time and no narrower than
+  // kMinSpan; the view is then Free.
+  void set_time_window(double t0, double t1);
+  // How many segments the last paint drew.
+  int drawn_count() const noexcept { return drawn_; }
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
   // The segment under a point, for tooltips and tests.
@@ -103,9 +125,13 @@ class TimelineView : public QWidget {
 
  private:
   QRectF plot_area() const;
-  double span() const;
+  double full_end() const;  // the end of the whole queue's window
 
   const TimelineModel& model_;
+  Mode mode_ = Mode::Follow;
+  int follow_runs_ = kFollowRuns;
+  double t0_ = 0, t1_ = kMinSpan;  // the Free window
+  int drawn_ = 0;
 };
 
 }  // namespace pychron::ui
