@@ -208,6 +208,10 @@ or detector by name. It cannot change what a stage is: that is the canvas's
   A file named there and not found is an error.
 - Otherwise a file called `sim.toml` beside `extraction_line.toml` is used if
   there is one.
+- An install made with the example line (the setup's starter) gets the
+  example lab's `sim.toml`, copied beside its `extraction_line.toml`, so it
+  is the file the previous point finds. An install whose line was imported
+  gets none from the setup.
 - It is read only when the line is loaded with its canvas, since its names
   are the canvas's. `pychron-ui` and `elctl exp run` load the canvas. A tool
   that loads the line alone does not read it, and a simulated line says so
@@ -460,7 +464,10 @@ elctl -c extraction_line.toml --sim exp run experiment.sim-air.toml \
     --data ~/pychron-sim-data
 ```
 
-`--data` keeps the records out of the examples folder. The run prints each
+`--data` keeps the records out of the examples folder. The example lab has
+no install and so no database: each finished run is a record file under
+`<data>/records`. (An install's runs go to its database; see
+[The stock queues](#the-stock-queues).) The run prints each
 analysis as it goes and ends with
 
 ```
@@ -604,11 +611,28 @@ Things to try, each by editing a copy of the example:
 ### The stock queues
 
 `experiment.toml` and `experiment.laser.toml` are the example's ordinary
-queues: a blank and two unknowns. The simulator has no sample gas, so their
+queues: a blank and two unknowns, written as record files like every run of
+the example lab. The simulator has no sample gas, so their
 extraction scripts (`sim_extract.py`, `laser_extract.py`) let in one pipette
 of the tank's air for every analysis that is not a blank. An unknown there
 reads about 9.5e4 fA of Ar40 with the 40/36 of air, and the blank about
 7 fA. It is not a sample.
+
+An instrument install made with the example line has a queue of its own,
+`experiment.toml` in the install: five runs, `ba`, `a`, `a`, `a`, `ba` (a
+blank, three air shots, a blank), about 19 minutes of simulated time. It runs
+the same scripts and the same air and blank physics as
+`experiment.sim-air.toml` above, with the install's own `multicollect` plan in
+place of the example's. It names only samples and a mass spectrometer that
+the install's `seed.toml` put in its database.
+
+Where such a queue's runs go is not where the example lab's go. An install has
+a database, and a finished run is written there as one analysis, marked
+simulated, with no record file. A simulated session writes to a database only
+when it is the install's own SQLite file on this computer (not one named with
+`--db`), or when `--sim-save` is passed; for any other database it writes
+record files and says so in one line. The rule, the line and the commands are
+in [the elctl reference](user/08-elctl-reference.md) (`exp run`).
 
 ### The model without a queue
 

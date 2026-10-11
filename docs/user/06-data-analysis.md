@@ -42,11 +42,48 @@ decided when the program starts; the title of the browser window says which
 
 | Source | What it is | When you get it | Can save edits? |
 |---|---|---|---|
-| **Database store** | The lab's PostgreSQL database (or a SQLite file for a single computer). It holds the catalog (samples, irradiations), every analysis, and the full revision history of each analysis's fits. | `pychron-ui --db <url>`, or an install that has a `database` set (every data-reduction install does; `elctl init` and the setup wizard write it into the site file). | Yes: fits, blanks and IC factors are saved as new revisions, and old ones can be restored. |
-| **Records folder** | A folder of per-analysis `.json` files that an acquisition run writes: `<data>/records/<identifier>/<run id>.json`. | When no database is given. `<data>` is `--data <dir>`, else the install's `data` folder, else `<lab>/data`. | No. Recall, figures and export work; every **Save** and **History** control is disabled with a tooltip saying a source that keeps revisions is needed. |
+| **Database store** | The lab's PostgreSQL database (or a SQLite file for a single computer). It holds the catalog (samples, irradiations), every analysis, and the full revision history of each analysis's fits. | `pychron-ui --db <url>`, or an install that has a `database` set (every data-reduction install does, and so does every instrument install made with a database; `elctl init` and the setup wizard write it into the site file). | Yes: fits, blanks and IC factors are saved as new revisions, and old ones can be restored. |
+| **Records folder** | A folder of per-analysis `.json` files, `<data>/records/<identifier>/<run id>.json`. | When there is no database: the example lab, an install made before installs had a database, a build without the database library. `<data>` is `--data <dir>`, else the install's `data` folder, else `<lab>/data`. Also shown, with a banner, when an instrument install's database cannot be opened (below). | No. Recall, figures and export work; every **Save** and **History** control is disabled with a tooltip saying a source that keeps revisions is needed. |
+
+The program uses one database throughout: `--db` when it is given, else the
+install's. The data browser, the **Entry** and **Fit** menus and the saving of
+an experiment's runs all use it. An instrument install writes each finished
+run to that database, so its runs are in the browser without any record file
+([04 Experiments](04-experiments.md) says what is written where). A records
+folder holds only what an acquisition run wrote there without a database.
 
 If the program was built without the database library it says so on
 standard error and browses the records folder instead.
+
+### New runs appear by themselves
+
+While a queue runs, the data browser follows it. When a run ends, and when a
+queue starts, the browser asks its source whether anything has changed, and
+only then reloads. It keeps what you were doing: the rows already loaded (a
+page you reached with **Load more** stays loaded), the selection, the scroll
+position and the column widths. A browser that is hidden at the time catches
+up the next time it is shown. **Rescan** does the same on request, for a
+change made by someone else.
+
+Runs made in a simulated session are marked as simulated in the analysis. They
+are saved to a database only when it is the install's own local SQLite file
+(not one given with `--db`) or `--sim-save` was passed; otherwise they are
+record files, which a database browser does not list. See
+[08 elctl reference](08-elctl-reference.md) (`exp run`).
+
+### When an instrument install's database is away
+
+If the install's database cannot be opened (the server is down, the password
+cannot be read, the schema is behind), `pychron-ui` still starts, so the line
+can be worked. The data browser then shows a banner, `The database could not
+be opened: <reason>` and `Showing the records folder <path>.`, and lists
+whatever record files that folder holds, which are not the install's
+analyses. The Log dock has an `ERROR [ui]` line with the reason, and a queue
+cannot be started until the database is back. A schema that is behind names
+`elctl db migrate --db <url>`. See
+[10 Troubleshooting](10-troubleshooting.md). A data-reduction install, which
+has nothing else to show, does not start at all when its database cannot be
+opened.
 
 ### A records folder needs a `references.toml`
 
@@ -91,7 +128,7 @@ The left column filters; the table shows the newest analyses first.
 | **Colour by** | What the rows are tinted by (see below). |
 | Analysis type, Spectrometer, Sample, Identifier, Irradiation, Level | Tick values to keep only those. Within one list, ticks are alternatives (or); between lists they all apply (and). Each list shows only values that exist given the other filters, but a value you ticked stays visible even if nothing matches. |
 | **Filter** box and **×** on each list | Typing in the box hides the values that do not contain the text (not case sensitive). It only narrows the list: nothing is filtered until you tick a value, and a ticked value is never hidden. **×** unticks everything in that list. The list's title counts the ticks. |
-| **Rescan** | Asks the source for new analyses (the database change log, or the folder). |
+| **Rescan** | Asks the source for new analyses (the database change log, or the folder) and reloads. A queue's runs do not need it: see [New runs appear by themselves](#new-runs-appear-by-themselves). |
 
 Tick an irradiation and the Level list shows only its levels. A level is
 matched by its name: with no irradiation ticked, ticking level `A` keeps

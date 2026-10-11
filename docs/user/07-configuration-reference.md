@@ -54,7 +54,7 @@ From those:
 | Spectrometer config | the install's `spectrometer` file, else `--spectrometer`. `--sim` with none uses the shipped `spectrometer.sim-integrated.toml` |
 | **Spectrometer data folder** | the folder that holds the spectrometer config: it must contain `tables/<name>/` (field tables) and may contain `molecular_weights.toml` |
 | **Lab folder** | `--lab <dir>`, else the install's root, else the folder of the extraction line file. Holds plans, scripts, conditionals, defaults, blocks and the rest of [Lab folder files](#lab-folder-files) |
-| Data folder | `--data <dir>`, else the install's `data`, else `<lab>/data`. The acquisition records go in `<data>/records` |
+| Data folder | `--data <dir>`, else the install's `data`, else `<lab>/data`. Without a database, the acquisition records go in `<data>/records`; with one (an instrument install has one) a finished run goes to the database, and `<data>` holds only the spool, partial `*.extraction.json` records and artifacts ([04 Experiments](04-experiments.md#85-what-is-written-run-records)) |
 | Figure presets | yours: `presets/` under the program's per-user configuration folder; the lab's: `<lab>/figures/` |
 
 ### Machine-local overrides
@@ -304,7 +304,7 @@ For a line with simulated transports.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `file` | path, relative to this file | `sim.toml` beside this file, if there is one | the numbers of the simulated lab: sizes, pressures, conductances, pump speeds, the gas in a tank, the ion source, detector baselines. Its keys are in [The simulated lab](../simulator.md#simtoml). A file named here and not found is an error |
+| `file` | path, relative to this file | `sim.toml` beside this file, if there is one. An install made with the example line has a copy of the example lab's there | the numbers of the simulated lab: sizes, pressures, conductances, pump speeds, the gas in a tank, the ion source, detector baselines. Its keys are in [The simulated lab](../simulator.md#simtoml). A file named here and not found is an error |
 
 ### What the check also enforces
 
@@ -527,7 +527,7 @@ validate`, and stops only what depends on it.
   stage_corrections/        written as runs centre holes
   camera_scales/            written by `elctl laser camera-scale`
   figures/<kind>/*.toml     shared figure presets (optional)
-  data/                     records written by runs
+  data/                     the spool and, without a database, the records written by runs
 ```
 
 ### Queue files (experiment.toml)
@@ -543,8 +543,8 @@ Example: `configs/examples/experiment.toml`, `experiment.laser.toml`. Only
 |---|---|---|
 | `schema_version` | whole number | leave out or `1` |
 | `name` | text | |
-| `mass_spectrometer` | text | the instrument |
-| `extract_device` | text | the default extraction device: a laser driver's name. With a laser in the line it must be one of its extraction devices |
+| `mass_spectrometer` | text | the instrument. When runs are saved to a database it must be one the database has (`mass_spectrometers` in the install's `seed.toml`; [entry.md](../entry.md)), or the queue is not started |
+| `extract_device` | text | the default extraction device: a laser driver's name. With a laser in the line it must be one of its extraction devices. When runs are saved to a database it must also be in the database (`extract_devices` in `seed.toml`) |
 | `tray` | text | a tray map name (see below) |
 | `load` | text | |
 | `username`, `email` | text | who ran it; the email can get a notification |
@@ -907,7 +907,12 @@ What `elctl init` and the setup wizard install. Each directory under
 renders or copies. The program ships `argus`, `helix`, `ngx`,
 `data-reduction` (usable), and `instrument-common`, `lab-common`,
 `extraction-line-starter`, `qtegra` (pieces other profiles include). You
-only write one to add an instrument.
+only write one to add an instrument. An instrument
+install gets its own `tables/` (`qtegra` and `ngx` each ship placeholder field
+tables, laid out so the installed `multicollect` plan puts each isotope on its
+detector, not the example lab's), the example line's `sim.toml` when it takes
+the example line, and the `seed.toml` and `experiment.toml` described below
+and in [Queue files](#queue-files-experimenttoml).
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -968,6 +973,24 @@ A broken file (not valid TOML) is reported by `doctor` and stops the
 program starting. A `sqlite:` URL needs no credentials. A `postgresql://`
 URL must contain a user (`postgresql://user@host/db`) for the password to
 be added.
+
+### seed.toml (instrument installs)
+
+`<install root>/seed.toml`. What setup puts in a new install's database, and
+what `elctl entry seed <root>/seed.toml --db <url>` puts there again. It only
+adds: a row that exists is never changed or removed. Besides `project`,
+`[[samples]]` and `[reactors.*]`, which [entry.md](../entry.md) describes,
+it has two optional lists of names:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `mass_spectrometers` | list of text | the instruments runs are recorded under. The profile ships the install's own (`argus`, `helix`, `ngx`) |
+| `extract_devices` | list of text | the extraction devices runs are recorded under. Shipped empty |
+
+An empty name or a name given twice in one list is refused. A queue's
+`mass_spectrometer` and `extract_device` (and a run's own extraction device)
+must be in the database, or the queue is not started. The queue that setup
+writes, `experiment.toml` in the install, names only what the seed made.
 
 ### references.toml (records folders)
 
