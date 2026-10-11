@@ -62,7 +62,7 @@ QString QueueTableModel::text(int row, int column) const {
   const RunSpec& r = queue_.runs()[static_cast<std::size_t>(row)];
   const auto st = status_.find(row);
   switch (column) {
-    case Row: return QString::number(row);
+    case Row: return QString::number(row + 1);
     case Identifier: return q(r.id.identifier);
     case Aliquot:
       if (r.id.aliquot) return QString::number(*r.id.aliquot);
@@ -110,10 +110,9 @@ QVariant QueueTableModel::data(const QModelIndex& index, int role) const {
       return lines.isEmpty() ? QVariant() : QVariant(lines.join(QLatin1Char('\n')));
     }
     case Qt::BackgroundRole: {
-      if (index.column() == Status) {
-        if (auto s = status(row)) return QBrush(state_color(*s));
-        return {};
-      }
+      // A run that has started wears its state's colour across the row.
+      if (auto s = status(row)) return QBrush(state_color(*s));
+      if (index.column() == Status) return {};
       auto it = by_row_.find(row);
       if (it == by_row_.end()) return {};
       const bool error = std::any_of(it->second.begin(), it->second.end(),

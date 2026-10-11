@@ -62,6 +62,12 @@ class TestQueueTableModel : public QObject {
     QVERIFY(!m->data(m->index(1, QueueTableModel::Plan), Qt::BackgroundRole).isValid());
   }
 
+  void rowsAreNumberedFromOne() {
+    auto m = model();
+    QCOMPARE(cell(*m, 0, QueueTableModel::Row), QStringLiteral("1"));
+    QCOMPARE(cell(*m, m->rowCount() - 1, QueueTableModel::Row), QString::number(m->rowCount()));
+  }
+
   void editingRevalidatesAndFlagsTheRow() {
     auto m = model();
     QSignalSpy edited(m.get(), &QueueTableModel::edited);
@@ -343,6 +349,11 @@ class TestQueueTableModel : public QObject {
     QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("measuring"));
     QCOMPARE(m->data(m->index(1, QueueTableModel::Status), Qt::BackgroundRole).value<QBrush>().color(),
              QueueTableModel::state_color(RunState::Measuring));
+    // the whole row wears the state's colour, not the status cell alone
+    for (int c = 0; c < QueueTableModel::Count; ++c)
+      QCOMPARE(m->data(m->index(1, c), Qt::BackgroundRole).value<QBrush>().color(),
+               QueueTableModel::state_color(RunState::Measuring));
+    QVERIFY(!m->data(m->index(0, QueueTableModel::Identifier), Qt::BackgroundRole).isValid());
     m->on_run_state(pychron::experiment::run::RunStateChanged{"other", RunState::Preparing, RunState::Failed, {}, {}});
     QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("measuring"));
 
