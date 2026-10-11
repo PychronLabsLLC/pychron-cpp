@@ -65,7 +65,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
       schema_(pp::UnitRegistry::builtin().find(kind_)->schema()),
       channel_(bridge.new_channel()) {
   const auto* unit = pp::UnitRegistry::builtin().find(kind_);
-  setWindowTitle(tr("%1 — %n analyses", nullptr, static_cast<int>(uuids.size())).arg(qs(std::string(unit->title()))));
+  setWindowTitle(qs(std::string(unit->title())));  // update_title() adds what is on it
   resize(1200, 800);
   ask_preset_name = [this] {
     bool ok = false;
@@ -195,6 +195,7 @@ void FigureWindow::on_result(const PipelineResult& r) {
   if (r.outputs.size() >= 2 && r.outputs[1]) {
     dataset_ = std::get<pp::DatasetPtr>(r.outputs[1]->at(0));
     fill_analyses();
+    update_title();
     if (!quantities_set_ && dataset_) {
       std::vector<pp::ReducedPtr> v;
       for (const auto& it : dataset_->items()) v.push_back(it.analysis);
@@ -219,6 +220,30 @@ void FigureWindow::on_result(const PipelineResult& r) {
                    (warnings.isEmpty() ? QString() : tr(" · %n warning(s)", nullptr, static_cast<int>(warnings.size()))));
   status_->setToolTip(warnings.join(QLatin1Char('\n')));
   emit figure_updated();
+}
+
+// "<plot type> — <sample> (<identifier>)", and how many more identifiers
+// there are when the figure holds several.
+void FigureWindow::update_title() {
+  const QString kind = qs(std::string(pp::UnitRegistry::builtin().find(kind_)->title()));
+  QStringList names;
+  if (dataset_) {
+    for (const auto& it : dataset_->items()) {
+      const auto& a = *it.analysis->analysis;
+      if (a.identifier.empty() && a.sample.empty()) continue;
+      const QString id = qs(a.identifier);
+      const QString name = a.sample.empty()       ? id
+                           : a.identifier.empty() ? qs(a.sample)
+                                                  : tr("%1 (%2)").arg(qs(a.sample), id);
+      if (!names.contains(name)) names << name;
+    }
+  }
+  if (names.isEmpty()) {
+    setWindowTitle(kind);
+    return;
+  }
+  const int more = static_cast<int>(names.size()) - 1;
+  setWindowTitle(tr("%1 — %2").arg(kind, names.front()) + (more > 0 ? tr(" + %n more", nullptr, more) : QString()));
 }
 
 void FigureWindow::fill_analyses() {

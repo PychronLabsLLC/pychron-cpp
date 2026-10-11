@@ -93,6 +93,7 @@ class FigureWindow : public QMainWindow {
   void schedule();
   void on_result(const PipelineResult& r);
   void fill_analyses();
+  void update_title();
   void apply_graph_key();  // the graph unit's key from the two combos
 
   ProcessingBridge& bridge_;

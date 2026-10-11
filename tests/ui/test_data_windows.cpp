@@ -1643,6 +1643,16 @@ class TestDataWindows : public QObject {
     QVERIFY2(w.view()->scene(), qPrintable(w.status_label()->text()));
     QCOMPARE(w.view()->panel_count(), 2);  // Default preset: Ar40, Ar40/Ar36
     QCOMPARE(w.analyses_table()->rowCount(), 10);
+    {
+      // the title names the figure and what is on it: kind, sample (identifier)
+      const auto& first = *w.dataset()->items().front().analysis->analysis;
+      QVERIFY2(w.windowTitle().startsWith(QStringLiteral("Time series")), qPrintable(w.windowTitle()));
+      QVERIFY2(w.windowTitle().contains(QStringLiteral("(%1)").arg(QString::fromStdString(first.identifier))),
+               qPrintable(w.windowTitle()));
+      if (!first.sample.empty())
+        QVERIFY2(w.windowTitle().contains(QString::fromStdString(first.sample)), qPrintable(w.windowTitle()));
+      QVERIFY(!w.windowTitle().contains(QStringLiteral("analyses")));
+    }
     const QStringList before = w.view()->texts(1);
     QVERIFY(!before.isEmpty());
 
