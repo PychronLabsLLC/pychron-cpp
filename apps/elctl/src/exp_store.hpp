@@ -29,6 +29,11 @@ struct ExpStore {
 // error "built without the DVC store (PYCHRON_PERSISTENCE=OFF or no Qt Sql)".
 pychron::Result<std::unique_ptr<ExpStore>> open_exp_store(const std::string& url, const std::filesystem::path& data);
 
+// Whether a simulated session saves its runs to `url`
+// (experiment::store::saves_simulated_runs). Without persistence: true, so
+// that a database named there is refused for what it is.
+bool saves_simulated_runs(const std::string& url, bool from_db_option, bool sim_save);
+
 // `url` as it may be shown: without its password.
 std::string show_database(const std::string& url);
 

@@ -98,6 +98,9 @@ toml::table to_table(const AnalysisRecord& r) {
   in.insert_or_assign("analyst", r.instrument.analyst);
   in.insert_or_assign("software_version", r.instrument.software_version);
   in.insert_or_assign("software_git_sha", r.instrument.software_git_sha);
+  // Only when true: a record that is not simulated keeps the text, and so the
+  // sha, it had before records could say so (schema version 2 either way).
+  if (r.instrument.simulated) in.insert_or_assign("simulated", true);
   root.insert_or_assign("instrument", std::move(in));
 
   toml::table ex, spec, act;
@@ -461,6 +464,7 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   in.str("analyst", r.instrument.analyst);
   in.str("software_version", r.instrument.software_version);
   in.str("software_git_sha", r.instrument.software_git_sha);
+  in.boolean("simulated", r.instrument.simulated);  // absent: not simulated
 
   const auto ex = top.sub("extraction");
   const auto spec = ex.sub("spec");

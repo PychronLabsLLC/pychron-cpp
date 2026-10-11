@@ -1,0 +1,194 @@
+[[conditionals.errors]]
+count = 4
+message = "metric 'gauge.x.pressure' unavailable"
+name = 'other'
+
+[[conditionals.installed]]
+abbreviated_count_ratio = 0.5
+action = 'truncate'
+analysis_types = [ 'unknown', 'blank' ]
+check = 'average(Ar40, window=5) > 800000'
+frequency = 2
+id = 'abc'
+kind = 'truncation'
+level = 'queue'
+location = 'conditionals/q.toml'
+mapper = 'x + 1'
+name = 'big'
+ntrips = 3
+resume = false
+start = 20
+terminate = false
+truncate = false
+window = 5
+
+[[conditionals.tripped]]
+action = 'truncate'
+check = 'average(Ar40, window=5) > 800000'
+count = 3
+id = 'abc'
+kind = 'truncation'
+name = 'big'
+reading = 26
+t = 41.5
+value = 812345.5
+
+    [conditionals.tripped.context]
+    Ar39 = 1.25
+    Ar40 = 812345.5
+
+[data]
+time_zero = 3.5
+
+    [data.counts]
+    Ar40 = 3
+
+    [[data.series]]
+    det = 'H1'
+    iso = 'Ar40'
+    kind = 'signal'
+    sigma = [ 0.0099999997764825821, 0.0099999997764825821, 0.0099999997764825821 ]
+    t = [ 0.0, 1.0, 2.0 ]
+    v = [ 1.0, 0.89999997615814209, 0.80000001192092896 ]
+
+    [[data.series]]
+    det = 'H1'
+    iso = 'Ar40'
+    kind = 'baseline'
+    t = [ 0.0, 1.0 ]
+    v = [ 0.10000000149011612, 0.10000000149011612 ]
+
+[extraction.actuals]
+beam_diameter = 0.0
+cleanup = 0.0
+duration = 30.0
+grain_polygons = [ [ [ 0.0, 0.0 ], [ 1.5, 2.5 ] ] ]
+manometer_pressure = 9.9999999999999995e-07
+pattern = ''
+pipette_counts = 0
+positions = []
+snapshot_refs = [ 'snap1.jpg' ]
+value = 9.9000000000000004
+
+    [extraction.actuals.cryo_measured]
+    A = 77.120000000000005
+    B = 80.5
+
+    [extraction.actuals.pid_params]
+    kp = 0.5
+
+    [extraction.actuals.series.response]
+    t = [ 0.0, 1.0 ]
+    v = [ 0.10000000149011612, 0.20000000298023224 ]
+
+[extraction.spec]
+cleanup = 60.0
+cryo_temperature = 77.0
+duration = 30.0
+pattern = 'circle'
+positions = [ 1, 2 ]
+units = 'watts'
+value = 10.0
+
+[identity]
+aliquot = 2
+analysis_type = 'unknown'
+identifier = '12345'
+queue_uuid = 'q-1'
+run_index = 7
+step = 'A'
+timestamp = '2026-09-30T12:00:00Z'
+uuid = 'u-1'
+
+[instrument]
+analyst = 'me'
+extract_device = 'co2'
+laboratory = 'lab'
+mass_spectrometer = 'jan'
+software_git_sha = 'abc123'
+software_version = '0.1.0'
+
+[measurement.hook]
+name = 'h'
+sha = 'deadbeef'
+
+[measurement.plan]
+effective_plan_toml = '''[plan]
+x=1
+'''
+template = 'argon'
+version = '3'
+
+    [measurement.plan.overrides]
+    count = '10'
+
+[measurement.scripts.extraction]
+name = 'ext.py'
+sha = 'sha1'
+text_ref = 'ref1'
+
+[provenance]
+persister_refs = [ 'db:1' ]
+schema_version = 2
+sha = 'c2402e2b974f61619f4123ddd4eecbcf94419fd4cb0a5a7a86233aab1f4a0102'
+
+[results]
+blanks_ref = ''
+whiff = 'run_remainder'
+
+    [results.baselines.H1]
+    error = 0.0
+    value = 0.10000000000000001
+
+        [results.baselines.H1.fit]
+        degree = 0
+        error = 'sem'
+        kind = 'linear'
+        outliers_enabled = false
+        outliers_iterations = 1
+        outliers_std_devs = 2.0
+
+    [results.icfactors]
+
+    [results.intercepts.Ar40]
+    error = 0.01
+    filtered_idx = [ 1 ]
+    n_used = 3
+    residual_sd = 0.0
+    value = 1.1000000000000001
+
+        [results.intercepts.Ar40.fit]
+        degree = 0
+        error = 'sem'
+        kind = 'parabolic'
+        outliers_enabled = false
+        outliers_iterations = 1
+        outliers_std_devs = 2.0
+
+[sample]
+irradiation = 'NM-300'
+level = 'A'
+material = 'sanidine'
+note = '''a "note"
+line2'''
+pi = 'Doe'
+position = '5'
+project = 'proj'
+sample = 'FC-2'
+
+[spectrometer]
+field_table_version = 'ft1'
+integration_time = 1.0
+state_hash = 'hash'
+
+    [spectrometer.deflections]
+
+    [spectrometer.gains]
+    H1 = 1.0
+
+    [spectrometer.source_params]
+
+[[events]]
+detail = 'measuring'
+kind = 'state'
+t = 1.0

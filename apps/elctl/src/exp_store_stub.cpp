@@ -9,6 +9,8 @@ pychron::Result<std::unique_ptr<ExpStore>> open_exp_store(const std::string&, co
   return pychron::fail(pychron::ErrorKind::Config, "built without the DVC store (PYCHRON_PERSISTENCE=OFF or no Qt Sql)");
 }
 
+bool saves_simulated_runs(const std::string&, bool, bool) { return true; }
+
 std::string show_database(const std::string& url) { return url; }
 
 }  // namespace elctl

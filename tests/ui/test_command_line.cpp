@@ -96,6 +96,13 @@ class TestCommandLine : public QObject {
     auto max = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("max")});
     QVERIFY(!max.has_value());
     QCOMPARE(QString::fromStdString(max.error().what), QStringLiteral("--sim-speed max is for tests; give a number"));
+    // --sim-save takes no value and is off unless given.
+    QVERIFY(!parse_command_line({QStringLiteral("--sim")})->sim_save);
+    auto saving = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-save"), QStringLiteral("--db"),
+                                      QStringLiteral("sqlite:/x.db")});
+    QVERIFY(saving.has_value());
+    QVERIFY(saving->sim_save);
+    QCOMPARE(QString::fromStdString(saving->db.value_or("")), QStringLiteral("sqlite:/x.db"));
     auto paced = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("50")});
     QVERIFY(paced.has_value());
     QCOMPARE(paced->sim_speed, 50.0);

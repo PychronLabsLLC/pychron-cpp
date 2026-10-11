@@ -86,6 +86,13 @@ Result<BeamFeed> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line)
 
 bool is_simulated(const cfg::SpectrometerData& data) { return !first_non_simulated(data.config).has_value(); }
 
+bool simulated_session(bool forced, std::optional<bool> spectrometer_is_simulated, const config::SystemConfig& line) {
+  if (forced) return true;
+  if (spectrometer_is_simulated) return *spectrometer_is_simulated;
+  return std::any_of(line.transports.begin(), line.transports.end(),
+                     [](const auto& t) { return t.second.kind == config::TransportKind::Sim; });
+}
+
 Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(const std::filesystem::path& config,
                                                                 SpectrometerContext ctx,
                                                                 SpectrometerBringup options) {

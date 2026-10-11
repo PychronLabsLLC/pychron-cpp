@@ -531,6 +531,23 @@ class ElctlExpStoreTest : public ElctlTest {
     return ids;
   }
 
+  // analysis_meta.software of every analysis in a SQLite store (the store has
+  // no read of it, so the file is asked directly).
+  std::vector<std::string> software_meta(const fs::path& file) const {
+    std::vector<std::string> out;
+    {
+      QSqlDatabase d = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("exp-meta-test"));
+      d.setDatabaseName(QString::fromStdString(file.string()));
+      EXPECT_TRUE(d.open());
+      QSqlQuery q(d);
+      EXPECT_TRUE(q.exec(QStringLiteral("SELECT software FROM analysis_meta")));
+      while (q.next()) out.push_back(q.value(0).toString().toStdString());
+      d.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("exp-meta-test"));
+    return out;
+  }
+
   fs::path root_;
 };
 
@@ -546,6 +563,12 @@ TEST_F(ElctlExpStoreTest, AnInstallsQueueGoesToItsDatabase) {
   EXPECT_EQ(runids(install_db()), (std::vector<std::string>{"ba-01", "a-01", "a-02", "a-03", "ba-02"}));
   EXPECT_FALSE(fs::exists(root_ / "data" / "records" / "ba" / "ba-1.json"));
   EXPECT_TRUE(!fs::exists(root_ / "data" / "spool") || fs::is_empty(root_ / "data" / "spool"));
+  // The install simulates and the database is its own file: saved there, and
+  // each analysis says what made it.
+  EXPECT_FALSE(contains(o.err, "note: simulated runs")) << o.err;
+  const auto software = software_meta(root_ / "data" / "pychron.db");
+  ASSERT_EQ(software.size(), 5U);
+  for (const auto& text : software) EXPECT_TRUE(contains(text, "\"simulated\":true")) << text;
 }
 
 // The database takes no analysis (a trigger of the test's refuses each one):
@@ -578,17 +601,52 @@ TEST_F(ElctlExpStoreTest, RunsTheDatabaseDidNotTakeAreSaidWithTheReason) {
   EXPECT_TRUE(runids(install_db()).empty());
 }
 
-TEST_F(ElctlExpStoreTest, DbOverridesTheInstall) {
+// A simulated session pointed at a database with --db does not write to it:
+// the runs are record files, as before there was a database, and it says so
+// once. With --sim-save they go there (and not to the install's).
+TEST_F(ElctlExpStoreTest, ASimulatedSessionSavesToADatabaseGivenByDbOnlyWhenAsked) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const std::string other = "sqlite:" + path("other.db").string();
   ASSERT_TRUE(pychron::persistence::open_store(pychron::persistence::StoreConfig{other, true}));
   const auto seeded = run_raw({"entry", "seed", (root_ / "seed.toml").string(), "--db", other});
   ASSERT_EQ(seeded.code, 0) << seeded.out << seeded.err;
-  const auto o = run_queue(root_ / "experiment.toml", {"--db", other});
-  ASSERT_EQ(o.code, 0) << o.out << o.err;
-  EXPECT_TRUE(contains(o.out, "; in " + other + "\n")) << o.out;
+
+  const auto kept_out = run_queue(root_ / "experiment.toml", {"--db", other});
+  ASSERT_EQ(kept_out.code, 0) << kept_out.out << kept_out.err;
+  const std::string note = "note: simulated runs are written to " + (root_ / "data" / "records").string() +
+                           ", not to " + other + "; pass --sim-save to save them there\n";
+  EXPECT_TRUE(contains(kept_out.err, note)) << kept_out.err;
+  EXPECT_EQ(kept_out.err.find("note: simulated runs"), kept_out.err.rfind("note: simulated runs"));  // once
+  EXPECT_TRUE(contains(kept_out.out, "5/5 run(s) succeeded; records in " + (root_ / "data" / "records").string()))
+      << kept_out.out;
+  EXPECT_TRUE(fs::exists(root_ / "data" / "records" / "ba" / "ba-1.json"));
+  EXPECT_TRUE(runids(other).empty());
+  EXPECT_TRUE(runids(install_db()).empty());
+  {
+    std::ifstream in(root_ / "data" / "records" / "ba" / "ba-1.json");
+    const std::string record((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_TRUE(contains(record, "\"simulated\" : true")) << record.substr(0, 600);  // the file says so too
+  }
+
+  const auto asked = run_queue(root_ / "experiment.toml", {"--db", other, "--sim-save"});
+  ASSERT_EQ(asked.code, 0) << asked.out << asked.err;
+  EXPECT_FALSE(contains(asked.err, "note: simulated runs")) << asked.err;
+  EXPECT_TRUE(contains(asked.out, "; in " + other + "\n")) << asked.out;
   EXPECT_EQ(runids(other).size(), 5U);
   EXPECT_TRUE(runids(install_db()).empty());
+  for (const auto& text : software_meta(path("other.db"))) EXPECT_TRUE(contains(text, "\"simulated\":true")) << text;
+  // A dry run says the same, and checks nothing against a database it will not write to.
+  const auto dry = run_queue(queue_with("identifier = \"ba\"", "identifier = \"zz9\""), {"--db", other, "--dry-run"});
+  EXPECT_EQ(dry.code, 0) << dry.out << dry.err;
+  EXPECT_TRUE(contains(dry.err, "note: simulated runs")) << dry.err;
+}
+
+// --sim-save asks for a database to save to.
+TEST_F(ElctlExpStoreTest, SimSaveWithoutADatabaseIsRefused) {
+  const auto o = run_raw({"-c", (root_ / "extraction_line.toml").string(), "--sim", "exp", "run",
+                          (root_ / "experiment.toml").string(), "--sim-save", "--dry-run"});
+  EXPECT_NE(o.code, 0) << o.out;
+  EXPECT_TRUE(contains(o.err, "error: --sim-save: there is no database to save to")) << o.err;
 }
 
 TEST_F(ElctlExpStoreTest, AQueueTheDatabaseCannotTakeIsNotRun) {
@@ -633,7 +691,8 @@ TEST_F(ElctlExpStoreTest, TheCheckIsOfTheRowsThatWillRun) {
 }
 
 TEST_F(ElctlExpStoreTest, ADatabaseThatCannotBeOpenedIsFatal) {
-  const auto o = run_queue(root_ / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db"});
+  // --sim-save: without it a simulated session would not open a database given with --db at all.
+  const auto o = run_queue(root_ / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db", "--sim-save"});
   EXPECT_TRUE(contains(o.err, "x.db") || contains(o.err, "unable to open database")) << o.err;
   EXPECT_NE(o.code, 0);
   EXPECT_FALSE(contains(o.out, "queue ")) << o.out;
@@ -680,7 +739,7 @@ TEST_F(ElctlExpUnreadableDatabaseTest, DbOverridesAnUnreadableInstallDatabase) {
   ASSERT_TRUE(pychron::persistence::open_store(pychron::persistence::StoreConfig{other, true}));
   const auto seeded = run_raw({"entry", "seed", (root_ / "seed.toml").string(), "--db", other});
   ASSERT_EQ(seeded.code, 0) << seeded.out << seeded.err;
-  const auto o = run_queue(root_ / "experiment.toml", {"--db", other});
+  const auto o = run_queue(root_ / "experiment.toml", {"--db", other, "--sim-save"});
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_EQ(runids(other).size(), 5U);
 }

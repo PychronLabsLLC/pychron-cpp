@@ -12,7 +12,9 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 
+#include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
@@ -56,6 +58,15 @@ struct SpectrometerBringup {
 // simulator kind, i.e. carries the "sim_" prefix all libs/sim drivers register
 // under.
 bool is_simulated(const cfg::SpectrometerData& data);
+
+// Whether a session on this hardware makes simulated runs: `forced` (--sim,
+// or an install set up to simulate), or a spectrometer whose own file is a
+// simulator's (is_simulated; nullopt: there is no spectrometer), or, with no
+// spectrometer, a line with a simulated transport. A real spectrometer
+// measures what it measures: a simulated transport on the line beside it
+// does not make its runs simulated. One rule for every program: such runs
+// are marked in their records and kept out of shared databases.
+bool simulated_session(bool forced, std::optional<bool> spectrometer_is_simulated, const config::SystemConfig& line);
 
 // BeamSettings whose table_value follows the config's active field table
 // (mass / 8 where the table has no value) and nominal_hv from the config.

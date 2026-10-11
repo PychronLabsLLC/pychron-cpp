@@ -2,7 +2,7 @@
 //
 //   pychron-ui [--install <name> | --setup | --examples | extraction_line.toml [canvas.toml]]
 //              [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>]
-//              [--queue <file>] [--sim-speed <x>] [--db <url>]
+//              [--queue <file>] [--sim-speed <x>] [--db <url>] [--sim-save]
 //
 // With no config files it opens an install from the site config: --install
 // names one, else the default (or the only) one; with several and no default
@@ -32,7 +32,9 @@
 // database, it browses that DVC store instead ("postgresql://user:pw@host/db"
 // or "sqlite:/path/to/file.db"; the schema must be current, it is never
 // migrated from here), a queue's runs are saved to it, and the data window
-// shows each run when it ends. An install's database that cannot be opened
+// shows each run when it ends. A simulated session's runs are saved to it
+// only when it is the install's own file on this computer, or with
+// --sim-save; otherwise they are record files, and the log says so once. An install's database that cannot be opened
 // does not stop the program: the data window says why, and no queue starts.
 // Figure presets live in the user's config directory, with lab presets under
 // <lab>/figures.
@@ -438,6 +440,11 @@ int main(int argc, char** argv) {
     }
   }
 
+  // Whose runs are a simulator's: marked in their records, and kept out of
+  // shared databases (one rule for every program).
+  const bool simulated_session = pychron::spectrometer::simulated_session(
+      sim, spectrometer ? std::optional<bool>(simulation) : std::nullopt, (*line)->config());
+
   std::unique_ptr<pychron::experiment::lab::Lab> lab;
   // The lab's lasers are shared by the session (queues) and the laser
   // windows (an operator): one drives at a time.
@@ -484,9 +491,18 @@ int main(int argc, char** argv) {
       database_error = opened.error().what;
     }
   }
+  if (cli->sim_save && database.empty() && !database_error) {
+    std::fprintf(stderr, "pychron-ui: --sim-save: there is no database to save to (--db, or an install that has one)\n");
+    return 2;
+  }
+  // Said in the log once the window is up: a simulated session that does not
+  // save to the database (it goes on reading it) writes record files.
+  std::string run_saving_note;
   if (!database.empty()) {
-    auto opened = pychron::experiment::store::open_acquisition(database, data_dir, PYCHRON_VERSION);
-    if (opened) {
+    const auto saving = pychron::ui::choose_run_saving(*cli, database, simulated_session, data_dir);
+    if (!saving.to_database) {
+      run_saving_note = saving.note;
+    } else if (auto opened = pychron::experiment::store::open_acquisition(database, data_dir, PYCHRON_VERSION)) {
       acquisition = std::move(*opened);
     } else {
       no_database = std::make_unique<pychron::ui::NoDatabasePersister>(opened.error().what);
@@ -497,6 +513,10 @@ int main(int argc, char** argv) {
 #else
   if (cli->db) {
     std::fprintf(stderr, "pychron-ui: --db: built without the DVC store (PYCHRON_PERSISTENCE=OFF or no Qt Sql)\n");
+    return 2;
+  }
+  if (cli->sim_save) {
+    std::fprintf(stderr, "pychron-ui: --sim-save: there is no database to save to (built without the DVC store)\n");
     return 2;
   }
 #endif
@@ -556,6 +576,9 @@ int main(int argc, char** argv) {
     } else if (no_database) {
       // It can be read, and not written to: said here, and again to whoever starts a queue.
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] ") + QString::fromStdString(no_database->why()));
+    }
+    if (!run_saving_note.empty()) {
+      window.log_dock()->append_line(QStringLiteral("INFO [ui] ") + QString::fromStdString(run_saving_note));
     }
 #endif
     window.show();
@@ -622,7 +645,9 @@ int main(int argc, char** argv) {
 #endif
       const bool saves_to_database = session_options.persister != nullptr;
       session = std::make_unique<pychron::experiment::lab::LabSession>(
-          *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}, lasers.get()},
+          *lab,
+          pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}, lasers.get(),
+                                                    simulated_session},
           std::move(session_options));
       for (const auto& note : lasers->notes()) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] laser: ") + QString::fromStdString(note));

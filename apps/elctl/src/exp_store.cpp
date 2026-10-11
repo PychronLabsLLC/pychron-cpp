@@ -32,6 +32,10 @@ pychron::Result<std::unique_ptr<ExpStore>> open_exp_store(const std::string& url
   return std::unique_ptr<ExpStore>(std::make_unique<AcquisitionStore>(std::move(*opened)));
 }
 
+bool saves_simulated_runs(const std::string& url, bool from_db_option, bool sim_save) {
+  return pychron::experiment::store::saves_simulated_runs(url, from_db_option, sim_save);
+}
+
 std::string show_database(const std::string& url) { return pychron::experiment::store::without_password(url); }
 
 }  // namespace elctl

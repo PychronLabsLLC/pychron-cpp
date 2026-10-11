@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
 #include "pychron/experiment/record/builder.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 #include "pychron/experiment/record/sha256.hpp"
@@ -236,4 +240,84 @@ TEST(RecordSerialize, CryoTemperaturesAreKeptAndOmittedWhenAbsent) {
   ASSERT_TRUE(old.has_value()) << old.error().what;
   EXPECT_FALSE(old->extraction.spec.cryo_temperature);
   EXPECT_TRUE(old->extraction.actuals.cryo_measured.empty());
+}
+
+namespace {
+
+std::string fixture(const char* name) {
+  std::ifstream in(std::string(PYCHRON_TEST_DATA_DIR) + "/records/" + name, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+}  // namespace
+
+// tests/data/records/v2.{json,toml} were written by the serializer as it was
+// before a record could say that it is simulated: what a lab's data/records
+// and spools hold. They still parse, as not simulated, their sha is still
+// theirs, and they are written back byte for byte.
+TEST(RecordSerialize, ARecordWrittenBeforeTheSimulatedMarkStillReadsWithItsSha) {
+  const char* const sha = "c2402e2b974f61619f4123ddd4eecbcf94419fd4cb0a5a7a86233aab1f4a0102";
+  const std::string json = fixture("v2.json");
+  ASSERT_FALSE(json.empty());
+  EXPECT_EQ(json.find("simulated"), std::string::npos);
+  auto from_j = from_json(json);
+  ASSERT_TRUE(from_j.has_value()) << from_j.error().what;
+  EXPECT_EQ(from_j->provenance.schema_version, 2);
+  EXPECT_EQ(from_j->provenance.sha, sha);
+  EXPECT_TRUE(verify_sha(*from_j));
+  EXPECT_EQ(compute_sha(*from_j), sha);
+  EXPECT_FALSE(from_j->instrument.simulated);
+  EXPECT_EQ(to_json(*from_j), json);
+
+  const std::string toml = fixture("v2.toml");
+  ASSERT_FALSE(toml.empty());
+  auto from_t = from_toml(toml);
+  ASSERT_TRUE(from_t.has_value()) << from_t.error().what;
+  EXPECT_EQ(from_t->provenance.sha, sha);
+  EXPECT_TRUE(verify_sha(*from_t));
+  EXPECT_FALSE(from_t->instrument.simulated);
+  EXPECT_EQ(to_toml(*from_t), toml);
+  EXPECT_EQ(*from_t, *from_j);
+  // And what the code builds today for the same run is that record.
+  EXPECT_EQ(full_builder().finalize()->provenance.sha, sha);
+}
+
+// The mark is part of the record: it is in both renderings and in the sha,
+// and it comes back. A record that is not simulated has no such key.
+TEST(RecordSerialize, ASimulatedRecordSaysSoAndKeepsSayingSo) {
+  auto b = full_builder();
+  const auto real = b.finalize().value();
+  auto meta = real.instrument;
+  meta.simulated = true;
+  b.set_instrument(meta);
+  const auto simulated = b.finalize().value();
+  EXPECT_EQ(simulated.provenance.schema_version, 2);
+  EXPECT_NE(simulated.provenance.sha, real.provenance.sha);
+  EXPECT_TRUE(verify_sha(simulated));
+
+  const auto json = to_json(simulated);
+  EXPECT_NE(json.find("\"simulated\" : true"), std::string::npos) << json.substr(0, 400);
+  EXPECT_EQ(to_json(real).find("simulated"), std::string::npos);
+  auto back = from_json(json);
+  ASSERT_TRUE(back.has_value()) << back.error().what;
+  EXPECT_TRUE(back->instrument.simulated);
+  EXPECT_EQ(*back, simulated);
+  EXPECT_EQ(to_json(*back), json);
+  auto back_toml = from_toml(to_toml(simulated));
+  ASSERT_TRUE(back_toml.has_value()) << back_toml.error().what;
+  EXPECT_TRUE(back_toml->instrument.simulated);
+  EXPECT_TRUE(verify_sha(*back_toml));
+
+  // "simulated = false" written out by hand is the same record as none.
+  auto text = to_toml(real);
+  const auto at = text.find("software_version");
+  ASSERT_NE(at, std::string::npos);
+  text.insert(at, "simulated = false\n");
+  auto explicit_false = from_toml(text);
+  ASSERT_TRUE(explicit_false.has_value()) << explicit_false.error().what;
+  EXPECT_FALSE(explicit_false->instrument.simulated);
+  EXPECT_TRUE(verify_sha(*explicit_false));
+  // Not a boolean: refused, not read as real.
+  text.replace(text.find("simulated = false"), std::string("simulated = false").size(), "simulated = \"yes\"");
+  EXPECT_FALSE(from_toml(text).has_value());
 }

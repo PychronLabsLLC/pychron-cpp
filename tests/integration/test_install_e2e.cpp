@@ -264,7 +264,8 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
       return out;
     }
     KeepingPersister keeping((*acquisition)->persister());
-    lab::LabSession session(lab_, lab::SessionHardware{*line_, spec_.get(), nullptr, {}},
+    // As the applications do: the install simulates, and its records say so.
+    lab::LabSession session(lab_, lab::SessionHardware{*line_, spec_.get(), nullptr, {}, nullptr, site_.simulation},
                             lab::SessionOptions{data, {}, {}, &keeping});
     for (const auto& p : session.problems()) ADD_FAILURE() << p;
     if (auto started = session.start(queue); !started) {
@@ -285,7 +286,10 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
       EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
     EXPECT_EQ(ran.pending, 0u);
     ASSERT_EQ(ran.saved.size(), 5u);
-    for (const auto& s : ran.saved) EXPECT_TRUE(s.ok) << s.record.identity.identifier << ": " << s.error;
+    for (const auto& s : ran.saved) {
+      EXPECT_TRUE(s.ok) << s.record.identity.identifier << ": " << s.error;
+      EXPECT_TRUE(s.record.instrument.simulated) << s.record.identity.identifier;
+    }
   }
 
   // Run ids as the data window lists them: newest first.

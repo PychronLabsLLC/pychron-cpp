@@ -164,6 +164,12 @@ Result<std::vector<std::string>> StorePersister::check_queue(const QueueSpec& qu
   return lines;
 }
 
+bool saves_simulated_runs(std::string_view url, bool from_db_option, bool sim_save) {
+  if (!url.starts_with("sqlite:") && !url.starts_with("postgresql://") && !url.starts_with("postgres://")) return false;
+  if (sim_save) return true;
+  return !from_db_option && url.starts_with("sqlite:");
+}
+
 std::string without_password(const std::string& url) {
   constexpr std::array<std::string_view, 2> kSchemes{"postgresql://", "postgres://"};
   for (const auto scheme : kSchemes) {

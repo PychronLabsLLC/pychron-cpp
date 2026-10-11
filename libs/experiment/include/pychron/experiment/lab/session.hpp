@@ -59,6 +59,9 @@ struct SessionHardware {
   // window); it must outlive the session, and `simulated` is then its own.
   // Null: the session builds its own.
   Lasers* lasers = nullptr;
+  // The hardware is a simulator's (spectrometer::simulated_session says when):
+  // every record the session makes says so (record::InstrumentMeta::simulated).
+  bool simulation = false;
 };
 
 struct SessionOptions {

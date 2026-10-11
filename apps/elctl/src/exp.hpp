@@ -13,6 +13,8 @@
 //   --canvas <file>         canvas.toml (default: next to the -c config, if present)
 //   --sim-speed <x>         with --sim: run simulated time x times faster than real time
 //   --db <url>              write the runs to this database (default: the install's; none: records are files)
+//   --sim-save              a simulated session may write to the database; without it its runs go to a
+//                           database only when that is the install's own file on this computer
 //
 // Interrupts while running: the first stops after the current run, the
 // second cancels it, the third aborts.

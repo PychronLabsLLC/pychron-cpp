@@ -589,6 +589,28 @@ TEST_P(AcquisitionTest, IsOneClientPerHost) {
   EXPECT_EQ(clients.size(), 1U);
 }
 
+// A simulated session's runs go to a database only when it is the install's
+// own file on this computer, or when the operator said so.
+TEST(SavesSimulatedRuns, OnlyToAnInstallsOwnLocalDatabaseUnlessAsked) {
+  using store::saves_simulated_runs;
+  // The install's own database (not --db), a file here.
+  EXPECT_TRUE(saves_simulated_runs("sqlite:/lab/data/pychron.db", false, false));
+  EXPECT_TRUE(saves_simulated_runs("sqlite::memory:", false, false));
+  // The install's own, on a server: shared.
+  EXPECT_FALSE(saves_simulated_runs("postgresql://jross:pw@db.lab/pychron", false, false));
+  EXPECT_FALSE(saves_simulated_runs("postgres://db.lab/pychron", false, false));
+  // Given with --db: somebody else's until said otherwise, file or not.
+  EXPECT_FALSE(saves_simulated_runs("sqlite:/lab/data/pychron.db", true, false));
+  EXPECT_FALSE(saves_simulated_runs("postgresql://db.lab/pychron", true, false));
+  // --sim-save.
+  EXPECT_TRUE(saves_simulated_runs("postgresql://db.lab/pychron", false, true));
+  EXPECT_TRUE(saves_simulated_runs("postgresql://db.lab/pychron", true, true));
+  EXPECT_TRUE(saves_simulated_runs("sqlite:/elsewhere.db", true, true));
+  // Not a url this program writes to.
+  EXPECT_FALSE(saves_simulated_runs("", false, false));
+  EXPECT_FALSE(saves_simulated_runs("mysql://db/pychron", false, false));
+}
+
 TEST(WithoutPassword, HidesOnlyThePassword) {
   EXPECT_EQ(store::without_password("postgresql://jross:s3cret@db.lab:5432/pychron?sslmode=require"),
             "postgresql://jross@db.lab:5432/pychron?sslmode=require");

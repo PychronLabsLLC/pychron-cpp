@@ -297,8 +297,12 @@ void fill_meta(const record::AnalysisRecord& rec, ps::AnalysisIngest& a) {
   if (act.pipette_counts > 0) set(meta.pipette_counts_json, json(act.pipette_counts).dump());
 
   const auto& in = rec.instrument;
-  if (!in.software_version.empty() || !in.software_git_sha.empty())
-    set(meta.software_json, json{{"software_version", in.software_version}, {"software_git_sha", in.software_git_sha}}.dump());
+  if (!in.software_version.empty() || !in.software_git_sha.empty() || in.simulated) {
+    json software{{"software_version", in.software_version}, {"software_git_sha", in.software_git_sha}};
+    // A simulator's run says so where it is stored; an instrument's has no such key.
+    if (in.simulated) software["simulated"] = true;
+    set(meta.software_json, software.dump());
+  }
 
   if (!rec.identity.queue_uuid.empty()) set(meta.queue_names_json, json::array({rec.identity.queue_uuid}).dump());
 

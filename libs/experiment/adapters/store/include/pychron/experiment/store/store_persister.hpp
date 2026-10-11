@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pychron/core/error.hpp"
@@ -101,6 +102,16 @@ class Acquisition {
 // on the calling thread, not on the worker.
 Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, std::filesystem::path data,
                                                       const std::string& software_version);
+
+// Whether a simulated session saves its runs to the database `url`: when the
+// operator said so (`sim_save`, --sim-save), or when the database is the
+// chosen install's own (`from_db_option` false: it was not given with --db)
+// and a file on this computer (`sqlite:`). Otherwise such a session writes
+// record files, as it did before there was a database to write to: a
+// simulator's runs do not belong among a lab's measurements, and a server, or
+// a database somebody pointed the program at, is taken to hold those. The
+// same rule in every program. A session that is not simulated is not asked.
+bool saves_simulated_runs(std::string_view url, bool from_db_option, bool sim_save);
 
 // `url` as it may be shown: the password of a postgresql://user:password@host
 // url removed. Any other url is unchanged.

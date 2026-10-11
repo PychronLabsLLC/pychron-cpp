@@ -61,8 +61,10 @@ namespace {
 constexpr const char* kExpUsage =
     "usage: elctl [-c <extraction_line.toml>] [--sim] exp <validate|run> <experiment.toml>\n"
     "         [--lab <dir>] [--data <dir>] [--spectrometer <file>] [--canvas <file>]\n"
-    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max] [--db <url>]\n"
+    "         [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max] [--db <url>] [--sim-save]\n"
     "       --db: write the runs to this database (an install's own is the default); without one, to files under --data\n"
+    "       --sim-save: let a simulated session write to the database. Without it simulated runs go to a database\n"
+    "                   only when it is the install's own file on this computer; otherwise to files under --data\n"
     "       --sim-speed (with --sim): simulated time, <x> times faster than real time; max does not wait at all\n"
     "       elctl exp notify [--lab <dir>]   send a test notification (<lab>/notifications.toml)\n";
 
@@ -99,6 +101,8 @@ struct ExpArgs {
   std::string verb;
   fs::path queue_file, lab, data, spectrometer, canvas;
   std::string db;  // --db, else the install's; empty: records are files
+  bool db_from_option = false;  // given with --db, not the install's own
+  bool sim_save = false;        // --sim-save: a simulated session may write to the database
   std::optional<std::size_t> from;
   bool resume = false, dry_run = false;
   double sim_speed = 0;  // 0: real time; infinity: --sim-speed max
@@ -120,6 +124,24 @@ class Exp {
     if (a_.verb == "run" && a_.db.empty() && !g_.database_error.empty()) {
       io_.err << "error: the installation's database: " << g_.database_error << '\n';
       return kFailed;
+    }
+    if (a_.verb == "run") {
+      // Whose runs are a simulator's: one rule for every program.
+      const std::optional<bool> sim_spectrometer =
+          lab_.spectrometer ? std::optional<bool>(spectrometer::is_simulated(*lab_.spectrometer)) : std::nullopt;
+      simulated_ = lab_.line ? spectrometer::simulated_session(g_.sim, sim_spectrometer, *lab_.line) : g_.sim;
+      if (a_.sim_save && a_.db.empty()) {
+        io_.err << "error: --sim-save: there is no database to save to (--db, or an install that has one)\n";
+        return kFailed;
+      }
+      // A simulator's runs do not go among a lab's measurements unless that
+      // was asked for: they are record files, as before there was a
+      // database, and this is said once. Not an error.
+      if (simulated_ && !a_.db.empty() && !saves_simulated_runs(a_.db, a_.db_from_option, a_.sim_save)) {
+        io_.err << "note: simulated runs are written to " << (a_.data / "records").string() << ", not to "
+                << show_database(a_.db) << "; pass --sim-save to save them there\n";
+        a_.db.clear();
+      }
     }
     // Opened here, on the main thread, before anything is printed or started.
     // Declared (as a member) before the session, which is destroyed first.
@@ -329,7 +351,7 @@ class Exp {
 
     executor::ExecutorOptions options;
     const std::size_t from = from_;
-    lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}},
+    lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}, nullptr, simulated_},
                             lab::SessionOptions{a_.data, options, {}, store_ ? &store_->persister() : nullptr});
     // What the lab asks that this session cannot do (a camera it may not
     // center holes with): a queue that uses that device will not start.
@@ -453,6 +475,7 @@ class Exp {
   lab::Lab lab_;
   QueueSpec queue_;
   std::size_t from_ = 0;  // the row the queue starts at
+  bool simulated_ = false;  // the session's hardware is a simulator's: its records say so
   std::mutex out_mutex_;
   // After everything the session's threads may call it from is gone: members
   // outlive execute()'s locals, the session among them.
@@ -483,7 +506,10 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
       auto v = value();
       if (!v) return usage(x + " needs a value");
       if (x == "--lab") a.lab = *v;
-      else if (x == "--db") a.db = *v;
+      else if (x == "--db") {
+        a.db = *v;
+        a.db_from_option = true;
+      }
       else if (x == "--data") a.data = *v;
       else if (x == "--spectrometer") a.spectrometer = *v;
       else if (x == "--canvas") a.canvas = *v;
@@ -508,6 +534,8 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
         if (read != v->size() || !std::isfinite(a.sim_speed)) return usage("--sim-speed needs a number");
         if (a.sim_speed <= 0) return usage("--sim-speed must be positive");
       }
+    } else if (x == "--sim-save") {
+      a.sim_save = true;
     } else if (x == "--resume") {
       a.resume = true;
     } else if (x == "--dry-run") {

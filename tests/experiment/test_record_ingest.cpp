@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <filesystem>
 #include <iomanip>
 #include <limits>
 #include <set>
@@ -11,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
 #include "pychron/persistence/blob.hpp"
@@ -431,6 +433,56 @@ TEST(RecordIngest, MetaCarriesWhatTheRecordHas) {
   EXPECT_EQ(json::parse(*a.meta->whiff_result_json), "pump");
   EXPECT_EQ(json::parse(*a.meta->grain_polygons_json), (json{{{0.0, 1.0}, {2.0, 3.0}}}));
   EXPECT_EQ(json::parse(*a.meta->pipette_counts_json), 2);
+}
+
+// A simulated run is stored as one: the mark is the record's, so it does not
+// matter which session sends it. A run that is not has no such key.
+TEST(RecordIngest, ASimulatedRecordIsStoredAsSimulated) {
+  auto b = sample_builder();
+  auto meta = b.draft().instrument;
+  meta.simulated = true;
+  b.set_instrument(meta);
+  const auto out = convert(finalized(b));
+  ASSERT_TRUE(body_of(out).meta && body_of(out).meta->software_json);
+  const auto software = json::parse(*body_of(out).meta->software_json);
+  EXPECT_EQ(software.at("simulated"), true);
+  EXPECT_EQ(software.at("software_version"), "0.1.0");
+
+  const auto real = convert(sample_record());
+  EXPECT_FALSE(json::parse(*body_of(real).meta->software_json).contains("simulated"));
+
+  // With no software named at all, the mark is still written.
+  meta.software_version.clear();
+  meta.software_git_sha.clear();
+  b.set_instrument(meta);
+  const auto bare = convert(finalized(b));
+  ASSERT_TRUE(body_of(bare).meta && body_of(bare).meta->software_json);
+  EXPECT_EQ(json::parse(*body_of(bare).meta->software_json).at("simulated"), true);
+}
+
+// The mark is the record's, not the sender's: a simulated run left in the
+// spool is read back and sent, by whatever session comes next, as simulated.
+TEST(RecordIngest, ASpooledSimulatedRecordIsStillSimulatedWhenSentLater) {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / ("pychron_spooled_sim_" + std::string(kSampleUuid));
+  fs::remove_all(dir);
+  auto b = sample_builder();
+  auto meta = b.draft().instrument;
+  meta.simulated = true;
+  b.set_instrument(meta);
+  const auto rec = finalized(b);
+  {
+    persist::Spool spool(dir);
+    ASSERT_TRUE(spool.put(rec));
+  }
+  persist::Spool later(dir);  // another session's
+  const auto back = later.get(rec.identity.uuid);
+  ASSERT_TRUE(back.has_value()) << back.error().what;
+  EXPECT_EQ(back->provenance.sha, rec.provenance.sha);
+  const auto out = convert(*back);
+  EXPECT_EQ(json::parse(*body_of(out).meta->software_json).at("simulated"), true);
+  EXPECT_EQ(to_hex(out.analysis.payload_sha256), rec.provenance.sha);
+  fs::remove_all(dir);
 }
 
 TEST(RecordIngest, AnEmptyExtractDeviceIsNone) {

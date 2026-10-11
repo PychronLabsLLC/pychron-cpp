@@ -321,6 +321,39 @@ TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
   EXPECT_EQ(session_->pending_saves(), 0u);
 }
 
+// A session told that its hardware is a simulator's marks every record it
+// makes; one that is not told leaves them as they always were.
+TEST_F(LabSessionTest, ASimulatedSessionMarksItsRecords) {
+  const auto simulated_of = [&](const fs::path& data) {
+    std::vector<bool> out;
+    for (const auto& dir : fs::directory_iterator(data / "records")) {
+      if (!dir.is_directory()) continue;
+      for (const auto& f : fs::directory_iterator(dir.path())) {
+        const std::string name = f.path().filename().string();
+        if (!name.ends_with(".json") || name.ends_with(".extraction.json")) continue;
+        std::ifstream in(f.path());
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        auto rec = record::from_json(text);
+        EXPECT_TRUE(rec.has_value());
+        if (rec) out.push_back(rec->instrument.simulated);
+      }
+    }
+    return out;
+  };
+  queue_.runs.resize(1);
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(session_->wait().has_value());
+  EXPECT_EQ(simulated_of(dir_ / "data"), std::vector<bool>{false});
+
+  session_.reset();
+  auto hw = hardware();
+  hw.simulation = true;
+  session_ = std::make_unique<LabSession>(lab_, hw, SessionOptions{dir_ / "sim-data", {}, {}});
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(session_->wait().has_value());
+  EXPECT_EQ(simulated_of(dir_ / "sim-data"), std::vector<bool>{true});
+}
+
 // The check is of what will run. Row 0 names something the database lacks:
 // from the top the queue is refused, from row 1 it starts, and the persister
 // is asked about a queue whose earlier rows are marked as not running.

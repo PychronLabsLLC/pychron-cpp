@@ -32,6 +32,8 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--db needs a database url");
       cli.db = v->toStdString();
+    } else if (arg == QStringLiteral("--sim-save")) {
+      cli.sim_save = true;
     } else if (arg == QStringLiteral("--install")) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--install needs an installation name");

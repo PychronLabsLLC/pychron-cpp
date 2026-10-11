@@ -108,6 +108,27 @@ TEST_P(SpectrometerBringupSim, RequireSimAcceptsSimConfig) {
   spec_ = std::move(*spec);
 }
 
+// Whose runs are a simulator's (and are marked so, and kept out of shared
+// databases): a session asked to simulate, one whose spectrometer is a
+// simulator, and, with no spectrometer, one whose line has a simulator.
+TEST(SimulatedSession, IsDecidedByTheSpectrometerAndWithoutOneByTheLine) {
+  config::SystemConfig real_line;
+  real_line.transports["a"].kind = config::TransportKind::Tcp;
+  config::SystemConfig mixed_line = real_line;
+  mixed_line.transports["b"].kind = config::TransportKind::Sim;
+
+  EXPECT_TRUE(simulated_session(true, false, real_line));          // --sim, or an install that simulates
+  EXPECT_TRUE(simulated_session(true, std::nullopt, real_line));
+  EXPECT_TRUE(simulated_session(false, true, real_line));          // the spectrometer's own file is a simulator's
+  EXPECT_FALSE(simulated_session(false, false, real_line));        // an instrument
+  // A real spectrometer measures what it measures, whatever is simulated on the line beside it.
+  EXPECT_FALSE(simulated_session(false, false, mixed_line));
+  // No spectrometer: the line decides.
+  EXPECT_TRUE(simulated_session(false, std::nullopt, mixed_line));
+  EXPECT_FALSE(simulated_session(false, std::nullopt, real_line));
+  EXPECT_FALSE(simulated_session(false, std::nullopt, config::SystemConfig{}));
+}
+
 INSTANTIATE_TEST_SUITE_P(SimConfigs, SpectrometerBringupSim,
                          ::testing::Values("spectrometer.sim-integrated.toml", "spectrometer.sim-legacy.toml"));
 

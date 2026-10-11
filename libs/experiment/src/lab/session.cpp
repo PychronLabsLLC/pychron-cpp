@@ -158,6 +158,7 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   auto ctx = services_->ctx;
   ctx.services.instrument.mass_spectrometer = queue.mass_spectrometer;
   ctx.services.instrument.analyst = queue.username;
+  ctx.services.instrument.simulated = hardware_.simulation;  // travels with each record
   {
     std::lock_guard lock(mutex_);
     executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
