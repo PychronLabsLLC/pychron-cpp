@@ -1,6 +1,6 @@
 # Timeline window: Waits and Lanes on a long queue
 
-Status: DRAFT 2026-10-11. Not agreed. Open questions in section 8. Task T043
+Status: agreed 2026-10-11 (owner's decisions in section 8). Task T043
 (`pychron usage notes.md`), from T006.
 
 ## 1. Problem
@@ -47,7 +47,9 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
 
 ### 3.2 Controls (on the view)
 
-- Wheel: zoom about cursor's time, factor 1.25 per notch. Enters Free.
+- Ctrl+wheel (Cmd on macOS, Qt's `ControlModifier`): zoom about cursor's
+  time, factor 1.25 per notch. Enters Free. Wheel without the modifier is
+  not taken by the view: it scrolls the pane as before.
 - Drag with left button: pan. Enters Free.
 - Double-click: back to Follow.
 - Context menu: Follow last 3 / 6 / 12 runs, Whole queue.
@@ -107,8 +109,9 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
   to run 995 or later (N = 6) and measuring segment of current run is wider
   than 24 px.
 - Visited segments in Follow after 1000 runs: under 100.
-- Wheel zoom keeps time under cursor fixed; span clamps at 10 s and at
-  `[0, now]`.
+- Ctrl+wheel zoom keeps time under cursor fixed; span clamps at 10 s and at
+  `[0, now]`. Wheel without Ctrl leaves window and mode as they were and
+  the event unaccepted.
 - Drag pans, clamps at 0 and now; marks Free; time passing does not move a
   Free window.
 - Double-click and Follow button return to Follow.
@@ -123,17 +126,12 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
 - Pruning or persisting segments; timeline of a finished or resumed queue
   after restart.
 - Wall-clock axis labels.
-- Summary strip of whole queue above the window (see 8).
+- Summary strip of whole queue above the window (decided against, 8).
 - Events list (T011, T044), queue table.
 - `elctl`.
 
-## 8. Open questions (owner)
+## 8. Decisions (owner, 2026-10-11)
 
-1. Follow window by run count (proposed, N = 6) or by time (last 2 h)? Run
-   count keeps labels readable whatever a run's length; time is steadier
-   when runs differ much in length.
-2. Wheel to zoom: acceptable inside a scrolling pane, or zoom only with a
-   modifier held (Ctrl+wheel) so the wheel still scrolls the pane?
-3. Want a thin whole-queue strip above the window (one mark per run, state
-   colour, window's position shown)? Proposed: not in this spec; add later
-   if looking back proves hard.
+1. Follow window is by run count: last 6 runs. Not by time.
+2. Zoom needs Ctrl held; plain wheel scrolls the pane.
+3. No whole-queue strip above the window.
