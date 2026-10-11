@@ -286,6 +286,41 @@ class TestExperimentWindow : public QObject {
 
   // What a run says (here: that its hole was centered) is a line of the
   // pane's events, under the run that said it.
+  // Wherever the timeline was left, a queue's start puts it back on now.
+  void theTimelineFollowsWhenAQueueStarts() {
+    using pychron::ui::TimelineView;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    auto* pane = window.executor();
+    QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
+    pane->timeline_view()->set_mode(TimelineView::Mode::WholeQueue);
+    pane->request_start();
+    QVERIFY(pane->running());
+    QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
+    QCOMPARE(pane->timeline().run_starts().size(), std::size_t{3});
+    QCOMPARE(pane->timeline_view()->time_window().first, 0.0);  // fewer runs than it follows: all of them
+  }
+
+  void theRunsFollowedAreRemembered() {
+    using pychron::ui::TimelineView;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    {
+      ExperimentWindow window(bridge, true, settings());
+      QCOMPARE(window.executor()->timeline_view()->follow_runs(), 6);  // nothing stored yet
+      window.executor()->timeline_view()->context_actions()[2]->trigger();  // Follow last 12 runs
+      QCOMPARE(window.executor()->timeline_view()->follow_runs(), 12);
+    }
+    ExperimentWindow again(bridge, true, settings());
+    QCOMPARE(again.executor()->timeline_view()->follow_runs(), 12);
+    QCOMPARE(again.executor()->timeline_view()->mode(), TimelineView::Mode::Follow);
+  }
+
   // A long queue says more than the list should hold: the oldest lines go.
   void theEventsListKeepsItsNewestLines() {
     pychron::ui::test::SimLab sim;

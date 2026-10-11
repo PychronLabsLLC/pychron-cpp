@@ -109,6 +109,12 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   };
   setCentralWidget(center);
 
+  // How many runs the timeline follows is the operator's, kept with the window.
+  const QString follow_key = QStringLiteral("experiment_window/timeline_follow_runs");
+  pane_->timeline_view()->set_follow_runs(settings_->value(follow_key, TimelineView::kFollowRuns).toInt());
+  connect(pane_->timeline_view(), &TimelineView::follow_runs_changed, this,
+          [this, follow_key](int runs) { settings_->setValue(follow_key, runs); });
+
   executor_dock_ = new QDockWidget(tr("Executor"), this);
   executor_dock_->setObjectName(QStringLiteral("ExperimentExecutorDock"));
   executor_dock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);

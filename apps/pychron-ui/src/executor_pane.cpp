@@ -258,6 +258,7 @@ void ExecutorPane::set_running(bool running) {
   running_ = running;
   if (running) {
     timeline_.clear();
+    timeline_view_->set_mode(TimelineView::Mode::Follow);  // a new queue is watched from now
     identifiers_.clear();
     timeline_clock_.start();
     done_ = 0;
