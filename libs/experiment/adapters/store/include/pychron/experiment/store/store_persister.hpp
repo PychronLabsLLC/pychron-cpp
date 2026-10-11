@@ -113,8 +113,18 @@ Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, st
 // same rule in every program. A session that is not simulated is not asked.
 bool saves_simulated_runs(std::string_view url, bool from_db_option, bool sim_save);
 
-// `url` as it may be shown: the password of a postgresql://user:password@host
-// url removed. Any other url is unchanged.
+// `url` as it may be shown. A `sqlite:` url is shown as it is. A
+// postgresql:// (or postgres://) url is shown without the password of its
+// user (whatever it holds: `/`, `@`, `:`, encoded or not) and without a
+// `password` or `sslpassword` parameter. Anything else is not understood,
+// and is shown as `<database>`: a text that might hold a secret is not
+// printed in the hope that it does not.
 std::string without_password(const std::string& url);
+
+// `text` (an error's, say) with `url` wherever it is quoted replaced by
+// without_password(url), and the url's password, as written and decoded,
+// by `***` (a password shorter than four characters is not looked for: it
+// would be found in ordinary words).
+std::string without_password_in(std::string text, const std::string& url);
 
 }  // namespace pychron::experiment::store

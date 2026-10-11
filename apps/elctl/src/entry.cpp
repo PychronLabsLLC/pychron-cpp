@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 #include "pychron/dvc/meta_files.hpp"
 #include "pychron/entry/csv.hpp"
 #include "pychron/entry/export.hpp"
@@ -186,7 +187,7 @@ Result<Context> open(Io io, const Args& a, bool writes) {
   if (!store) return pychron::fail(store.error());
   Context ctx{io, std::move(*store), {}, a.has("--dry-run")};
   if (writes && !ctx.dry_run) {
-    const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");
+    const std::string host = pychron::host_name();
     auto client = ctx.store->register_client({host, "reduction", std::nullopt, "elctl"});
     if (!client) return pychron::fail(client.error());
     const std::string user = a.get("--user").value_or(pychron::env_var("USER").value_or("pychron"));
@@ -585,7 +586,7 @@ Result<std::string> seed_database(const std::string& url, const std::filesystem:
   if (!seed) return pychron::fail(seed.error());
   ps::Actor actor;
   if (!dry_run) {
-    const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");
+    const std::string host = pychron::host_name();
     auto client = (*store)->register_client({host, "reduction", std::nullopt, "elctl"});
     if (!client) return pychron::fail(client.error());
     auto u = (*store)->ensure_user(*client, user.empty() ? pychron::env_var("USER").value_or("pychron") : user);

@@ -616,6 +616,80 @@ TEST(WithoutPassword, HidesOnlyThePassword) {
             "postgresql://jross@db.lab:5432/pychron?sslmode=require");
   EXPECT_EQ(store::without_password("postgresql://jross@db.lab/pychron"), "postgresql://jross@db.lab/pychron");
   EXPECT_EQ(store::without_password("postgresql://db.lab/pychron"), "postgresql://db.lab/pychron");
+  EXPECT_EQ(store::without_password("postgres://jross:s3cret@db.lab/pychron"), "postgres://jross@db.lab/pychron");
   EXPECT_EQ(store::without_password("sqlite:/data/a:b@c.db"), "sqlite:/data/a:b@c.db");
   EXPECT_EQ(store::without_password("sqlite::memory:"), "sqlite::memory:");
 }
+
+// A password may hold what ends a url's parts, written as it is or
+// percent-encoded: none of it is shown.
+TEST(WithoutPassword, HidesAPasswordThatHoldsUrlPunctuation) {
+  const std::string shown = "postgresql://jross@db.lab:5432/pychron";
+  for (const char* password : {"a/b", "a@b", "a:b", "a%2Fb", "a%40b", "a%3Ab", "p@ss/w:rd@x", "/", "@", ":", "a?b", "a#b"}) {
+    const std::string url = std::string("postgresql://jross:") + password + "@db.lab:5432/pychron";
+    EXPECT_EQ(store::without_password(url), shown) << password;
+  }
+  // An empty password, and an empty user.
+  EXPECT_EQ(store::without_password("postgresql://jross:@db.lab:5432/pychron"), shown);
+  EXPECT_EQ(store::without_password("postgresql://:s3cret@db.lab/pychron"), "postgresql://db.lab/pychron");
+}
+
+// libpq also takes the password as a parameter.
+TEST(WithoutPassword, RemovesAPasswordParameter) {
+  EXPECT_EQ(store::without_password("postgresql://jross@db.lab/pychron?password=s3cret"),
+            "postgresql://jross@db.lab/pychron");
+  EXPECT_EQ(store::without_password("postgresql://jross@db.lab/pychron?sslmode=require&password=s3%26cret&connect_timeout=5"),
+            "postgresql://jross@db.lab/pychron?sslmode=require&connect_timeout=5");
+  EXPECT_EQ(store::without_password("postgresql://jross:one@db.lab/pychron?password=two&sslmode=require"),
+            "postgresql://jross@db.lab/pychron?sslmode=require");
+  EXPECT_EQ(store::without_password("postgresql://db.lab/pychron?PASSWORD=s3cret&sslpassword=k3y"),
+            "postgresql://db.lab/pychron");
+  // Not a password: a parameter that only ends in the word is kept only if it is not one libpq reads as a secret.
+  EXPECT_EQ(store::without_password("postgresql://db.lab/pychron?application_name=password"),
+            "postgresql://db.lab/pychron?application_name=password");
+}
+
+// What it does not understand it does not show.
+TEST(WithoutPassword, ShowsNothingOfAUrlItCannotRead) {
+  EXPECT_EQ(store::without_password("mysql://root:s3cret@db/pychron"), "<database>");
+  EXPECT_EQ(store::without_password("host=db.lab user=jross password=s3cret"), "<database>");
+  EXPECT_EQ(store::without_password("postgresql:/jross:s3cret@db.lab"), "<database>");
+  EXPECT_EQ(store::without_password(""), "<database>");
+}
+
+// An error text that quotes the url, or the password, is shown without it.
+TEST(WithoutPassword, IsTakenOutOfATextThatQuotesTheUrl) {
+  const std::string url = "postgresql://jross:s3%20cret@db.lab:5432/pychron";
+  EXPECT_EQ(store::without_password_in("cannot connect to " + url + ": timeout", url),
+            "cannot connect to postgresql://jross@db.lab:5432/pychron: timeout");
+  EXPECT_EQ(store::without_password_in("FATAL: password \"s3 cret\" rejected (s3%20cret)", url),
+            "FATAL: password \"***\" rejected (***)");
+  EXPECT_EQ(store::without_password_in("the database is locked", url), "the database is locked");
+  EXPECT_EQ(store::without_password_in("unable to open sqlite:/a/b.db", "sqlite:/a/b.db"), "unable to open sqlite:/a/b.db");
+  // A password too short to tell from ordinary text is left where it stands; the url is still cleaned.
+  EXPECT_EQ(store::without_password_in("a b c postgresql://u:b@h/d", "postgresql://u:b@h/d"), "a b c postgresql://u@h/d");
+}
+
+// Nothing in a record stops the worker: text that is not UTF-8 (a name typed
+// on another system, a device's reply in a note) is stored with the bad
+// bytes replaced, and the call returns.
+TEST_P(AcquisitionTest, ARecordWithTextThatIsNotUtf8IsSavedAndTheWorkerLives) {
+  auto acquisition = open();
+  ASSERT_NE(acquisition, nullptr);
+  auto b = sample_builder();
+  auto identity = b.draft().identity;
+  identity.queue_uuid = "queue\xff\xfe name";
+  b.set_identity(identity);
+  auto meta = b.draft().instrument;
+  meta.software_version = "0.1\xc3";  // a sequence cut short
+  b.set_instrument(meta);
+  auto rec = b.finalize();
+  ASSERT_TRUE(rec.has_value());
+  auto saved = acquisition->persister().save_analysis(*rec);
+  EXPECT_TRUE(saved.has_value()) << (saved ? "" : saved.error().what);
+  // And the worker still serves.
+  auto next = acquisition->persister().next_aliquot("66573");
+  ASSERT_TRUE(next.has_value()) << next.error().what;
+  EXPECT_EQ(*next, 2);
+}
+

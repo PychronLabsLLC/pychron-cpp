@@ -11,6 +11,7 @@ add_library(pychron_core
   src/log_match.cpp
   src/log_hub.cpp
   src/scheduler.cpp
+  src/host_name.cpp
   src/process.cpp
   src/sha256.cpp
   src/sha1.cpp

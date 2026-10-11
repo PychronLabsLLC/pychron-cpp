@@ -19,6 +19,7 @@
 
 #include "brand.hpp"
 #include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 #include "pychron/setup/installer.hpp"
 
 namespace pychron::ui {
@@ -54,7 +55,7 @@ SetupWizard::SeedDatabase database_seeder() {
     auto seed = entry::parse_seed(text.str(), seed_file.string());
     if (!seed) return fail(std::move(seed).error());
     auto client = (*store)->register_client(
-        {env_var("HOSTNAME").value_or("localhost"), "reduction", std::nullopt, "pychron-ui"});
+        {pychron::host_name(), "reduction", std::nullopt, "pychron-ui"});
     if (!client) return fail(std::move(client).error());
     auto user = (*store)->ensure_user(*client, env_var("USER").value_or("pychron"));
     if (!user) return fail(std::move(user).error());

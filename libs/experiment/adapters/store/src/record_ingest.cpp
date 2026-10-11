@@ -21,6 +21,12 @@ using nlohmann::json;
 
 namespace {
 
+// A JSON value as text. Strings that are not UTF-8 (a name typed on another
+// system, a device's reply) have the bad bytes replaced with U+FFFD rather
+// than thrown at the caller: dump() with its default handler throws, and a
+// record must not be unsavable, or end the program, for a stray byte.
+std::string dump(const json& j) { return j.dump(-1, ' ', false, json::error_handler_t::replace); }
+
 std::optional<double> finite(double v) {
   if (!std::isfinite(v)) return std::nullopt;
   return v;
@@ -181,7 +187,7 @@ std::string outliers_json(const reduction::OutlierSpec& o) {
   j["filter_outliers"] = o.enabled ? 1 : 0;
   j["iterations"] = o.iterations;
   j["std_devs"] = o.std_devs;
-  return j.dump();
+  return dump(j);
 }
 
 const char* error_type_of(const reduction::FitSpec& fit) { return fit.error == reduction::ErrorType::Sd ? "SD" : "SEM"; }
@@ -228,11 +234,11 @@ Result<void> fill_fits(const record::Results& res, const record::Data& data, ps:
 void fill_spectrometer(const record::AnalysisRecord& rec, ps::AnalysisIngest& a) {
   const auto& sp = rec.spectrometer;
   ps::SpectrometerSnapshot snap;
-  snap.gains_json = json(sp.gains).dump();
-  snap.deflections_json = json(sp.deflections).dump();
+  snap.gains_json = dump(json(sp.gains));
+  snap.deflections_json = dump(json(sp.deflections));
   json settings = json(sp.source_params);
   settings["integration_time"] = sp.integration_time;
-  snap.settings_json = settings.dump();
+  snap.settings_json = dump(settings);
   snap.spectrometer_json = "{}";
   a.spectrometer_snapshot = std::move(snap);
   if (!rec.measurement.plan.effective_plan_toml.empty()) a.scripts.measurement = rec.measurement.plan.effective_plan_toml;
@@ -275,14 +281,14 @@ void fill_meta(const record::AnalysisRecord& rec, ps::AnalysisIngest& a) {
   if (!cond.installed.empty()) {
     json arr = json::array();
     for (const auto& c : cond.installed) arr.push_back(to_json(c));
-    set(meta.conditionals_json, arr.dump());
+    set(meta.conditionals_json, dump(arr));
   }
   if (!cond.tripped.empty()) {
     json arr = json::array();
     for (const auto& c : cond.tripped) arr.push_back(to_json(c));
-    set(meta.tripped_conditional_json, arr.dump());
+    set(meta.tripped_conditional_json, dump(arr));
   }
-  if (!rec.results.whiff.empty()) set(meta.whiff_result_json, json(rec.results.whiff).dump());
+  if (!rec.results.whiff.empty()) set(meta.whiff_result_json, dump(json(rec.results.whiff)));
 
   const auto& act = rec.extraction.actuals;
   if (!act.grain_polygons.empty()) {
@@ -292,19 +298,19 @@ void fill_meta(const record::AnalysisRecord& rec, ps::AnalysisIngest& a) {
       for (const auto& [x, y] : poly) pts.push_back(json::array({x, y}));
       polys.push_back(std::move(pts));
     }
-    set(meta.grain_polygons_json, polys.dump());
+    set(meta.grain_polygons_json, dump(polys));
   }
-  if (act.pipette_counts > 0) set(meta.pipette_counts_json, json(act.pipette_counts).dump());
+  if (act.pipette_counts > 0) set(meta.pipette_counts_json, dump(json(act.pipette_counts)));
 
   const auto& in = rec.instrument;
   if (!in.software_version.empty() || !in.software_git_sha.empty() || in.simulated) {
     json software{{"software_version", in.software_version}, {"software_git_sha", in.software_git_sha}};
     // A simulator's run says so where it is stored; an instrument's has no such key.
     if (in.simulated) software["simulated"] = true;
-    set(meta.software_json, software.dump());
+    set(meta.software_json, dump(software));
   }
 
-  if (!rec.identity.queue_uuid.empty()) set(meta.queue_names_json, json::array({rec.identity.queue_uuid}).dump());
+  if (!rec.identity.queue_uuid.empty()) set(meta.queue_names_json, dump(json::array({rec.identity.queue_uuid})));
 
   if (any) a.meta = std::move(meta);
 }

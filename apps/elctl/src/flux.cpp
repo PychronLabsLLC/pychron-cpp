@@ -19,6 +19,7 @@
 #include <system_error>
 
 #include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/user_file.hpp"
 #include "pychron/persistence/store.hpp"
@@ -441,7 +442,7 @@ Result<std::unique_ptr<ps::IStore>> open_flux_store(const std::string& db) {
 }
 
 Result<ps::Actor> flux_actor(ps::IStore& store, const std::string& user_name) {
-  const std::string host = pychron::env_var("HOSTNAME").value_or("localhost");
+  const std::string host = pychron::host_name();
   auto client = store.register_client({host, "reduction", std::nullopt, "elctl"});
   if (!client) return fail(client.error());
   const std::string user = user_name.empty() ? pychron::env_var("USER").value_or("pychron") : user_name;

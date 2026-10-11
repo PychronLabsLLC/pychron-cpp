@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <exception>
+#include <string_view>
+#include <vector>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -11,7 +15,7 @@
 #include <thread>
 #include <utility>
 
-#include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
 #include "pychron/persistence/catalog.hpp"
 
@@ -170,19 +174,121 @@ bool saves_simulated_runs(std::string_view url, bool from_db_option, bool sim_sa
   return !from_db_option && url.starts_with("sqlite:");
 }
 
-std::string without_password(const std::string& url) {
-  constexpr std::array<std::string_view, 2> kSchemes{"postgresql://", "postgres://"};
-  for (const auto scheme : kSchemes) {
-    if (!url.starts_with(scheme)) continue;
-    const std::size_t start = scheme.size();
-    const std::size_t end = std::min(url.find('/', start), url.size());
-    const std::size_t at = url.rfind('@', end);
-    if (at == std::string::npos || at < start) return url;
-    const std::size_t colon = url.find(':', start);
-    if (colon == std::string::npos || colon > at) return url;
-    return url.substr(0, colon) + url.substr(at);
+namespace {
+
+constexpr std::array<std::string_view, 2> kPostgresSchemes{"postgresql://", "postgres://"};
+
+// A postgres url as it may be shown, and what of it must not be.
+struct Shown {
+  std::string url;
+  std::vector<std::string> secrets;  // as written in the url
+};
+
+bool secret_parameter(std::string_view key) {
+  std::string lower(key);
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return lower == "password" || lower == "sslpassword";
+}
+
+// scheme://[user[:password]@]host[:port][/database][?parameter=value&...]
+//
+// The user's part ends at the last `@` before the parameters, so a password
+// may hold `@`, `/` and `:` as they are; when no `@` stands before the first
+// `?`, at the last `@` of all (a password may hold a `?` too). Where that
+// guess is wrong (an `@` in a parameter of a url with no user) more is left
+// out than need be, never less. nullopt: not a postgres url.
+std::optional<Shown> show_postgres(std::string_view url) {
+  const auto* scheme = std::find_if(kPostgresSchemes.begin(), kPostgresSchemes.end(),
+                                    [&](std::string_view s) { return url.starts_with(s); });
+  if (scheme == kPostgresSchemes.end()) return std::nullopt;
+  std::string_view rest = url.substr(scheme->size());
+  Shown out;
+  out.url = std::string(*scheme);
+
+  std::size_t at = rest.substr(0, rest.find('?')).rfind('@');
+  if (at == std::string_view::npos) at = rest.rfind('@');
+  if (at != std::string_view::npos) {
+    const std::string_view userinfo = rest.substr(0, at);
+    const std::size_t colon = userinfo.find(':');
+    const std::string_view user = userinfo.substr(0, colon);
+    if (colon != std::string_view::npos) out.secrets.emplace_back(userinfo.substr(colon + 1));
+    if (!user.empty()) {
+      out.url += user;
+      out.url += '@';
+    }
+    rest = rest.substr(at + 1);
   }
-  return url;
+
+  const std::size_t query = rest.find('?');
+  out.url += rest.substr(0, query);
+  if (query == std::string_view::npos) return out;
+  std::string kept;
+  std::string_view parameters = rest.substr(query + 1);
+  while (!parameters.empty()) {
+    const std::size_t amp = parameters.find('&');
+    const std::string_view parameter = parameters.substr(0, amp);
+    parameters = amp == std::string_view::npos ? std::string_view{} : parameters.substr(amp + 1);
+    const std::size_t equals = parameter.find('=');
+    if (secret_parameter(parameter.substr(0, equals))) {
+      if (equals != std::string_view::npos) out.secrets.emplace_back(parameter.substr(equals + 1));
+      continue;
+    }
+    if (parameter.empty()) continue;
+    kept += kept.empty() ? '?' : '&';
+    kept += parameter;
+  }
+  out.url += kept;
+  return out;
+}
+
+// %41 -> A; a `%` not followed by two hex digits stays.
+std::string percent_decoded(std::string_view text) {
+  const auto hex = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  std::string out;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '%' && i + 2 < text.size() && hex(text[i + 1]) >= 0 && hex(text[i + 2]) >= 0) {
+      out += static_cast<char>(hex(text[i + 1]) * 16 + hex(text[i + 2]));
+      i += 2;
+    } else {
+      out += text[i];
+    }
+  }
+  return out;
+}
+
+void replace_all(std::string& text, std::string_view what, std::string_view with) {
+  if (what.empty()) return;
+  for (std::size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + with.size()))
+    text.replace(at, what.size(), with);
+}
+
+}  // namespace
+
+std::string without_password(const std::string& url) {
+  if (url.starts_with("sqlite:")) return url;  // a file's path, or :memory:
+  if (auto shown = show_postgres(url)) return std::move(shown->url);
+  return "<database>";  // not understood: not shown
+}
+
+std::string without_password_in(std::string text, const std::string& url) {
+  if (url.empty() || url.starts_with("sqlite:")) return text;
+  const auto shown = show_postgres(url);
+  replace_all(text, url, shown ? std::string_view(shown->url) : std::string_view("<database>"));
+  if (!shown) return text;
+  // A shorter password would be found in ordinary words.
+  constexpr std::size_t kShortest = 4;
+  for (const auto& secret : shown->secrets) {
+    const std::string decoded = percent_decoded(secret);
+    if (secret.size() >= kShortest) replace_all(text, secret, "***");
+    if (decoded != secret && decoded.size() >= kShortest) replace_all(text, decoded, "***");
+  }
+  return text;
 }
 
 // ---------------------------------------------------------------- Acquisition
@@ -205,12 +311,34 @@ struct AcquisitionImpl {
   std::unique_ptr<ps::IStore> store;
   std::unique_ptr<StorePersister> persister;
 
+  // The url the store was opened with: taken out of every error text.
+  std::string url;
+
   // Runs `f` on the worker; the caller waits for it. Not to be called from the
   // worker itself (it would wait on itself); nothing does.
   template <class R, class F>
   R call(F&& f) {
     R result = fail(ErrorKind::Io, "the database connection is closed");
-    Job job{[&] { result = f(*persister); }, false};
+    Job job{[&] {
+              // The one catch of this library, at the boundary to a thread:
+              // errors are values everywhere here, but whatever a call may
+              // still throw (a library's exception, bad_alloc) would
+              // otherwise leave the worker and end the program in the
+              // middle of a queue. It is that call's error instead.
+              try {
+                result = f(*persister);
+              } catch (const std::exception& e) {
+                result = fail(ErrorKind::Io, std::string("the database call failed unexpectedly: ") + e.what());
+              } catch (...) {
+                result = fail(ErrorKind::Io, "the database call failed unexpectedly");
+              }
+              if (!result) {
+                Error error = result.error();
+                error.what = without_password_in(std::move(error.what), url);
+                result = fail(std::move(error));
+              }
+            },
+            false};
     std::unique_lock<std::mutex> lock(mutex);
     // cppcheck-suppress danglingLifetime ; the worker takes the job off the queue before it marks it done, and this call waits for that
     queue.push_back(&job);
@@ -220,7 +348,7 @@ struct AcquisitionImpl {
   }
 
   // Opens the store and the persister; the error, if any.
-  std::optional<Error> open(const std::string& url, std::filesystem::path data, const std::string& software_version) {
+  std::optional<Error> open(std::filesystem::path data, const std::string& software_version) {
     auto opened_store = ps::open_store(ps::StoreConfig{url, false});
     if (!opened_store) {
       Error error = opened_store.error();
@@ -230,14 +358,15 @@ struct AcquisitionImpl {
     }
     store = std::move(*opened_store);
     auto client = store->register_client(
-        {env_var("HOSTNAME").value_or("localhost"), "acquisition", std::nullopt, software_version});
+        {host_name(), "acquisition", std::nullopt, software_version});
     if (!client) return client.error();
     persister = std::make_unique<StorePersister>(*store, *client, std::move(data));
     return std::nullopt;
   }
 
-  void work(const std::string& url, std::filesystem::path data, const std::string& software_version) {
-    auto error = open(url, std::move(data), software_version);
+  void work(std::filesystem::path data, const std::string& software_version) {
+    auto error = open(std::move(data), software_version);
+    if (error) error->what = without_password_in(std::move(error->what), url);
     {
       const std::lock_guard<std::mutex> lock(mutex);
       opened = true;
@@ -256,7 +385,7 @@ struct AcquisitionImpl {
       Job* job = queue.front();
       queue.pop_front();
       lock.unlock();
-      job->run();  // never throws: errors are values here, as in StoreSource
+      job->run();  // never throws: call() catches what the call throws
       lock.lock();
       job->done = true;
       cv.notify_all();
@@ -322,8 +451,9 @@ Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, st
   ps::ensure_host_application();
   auto impl = std::make_unique<AcquisitionImpl>();
   AcquisitionImpl& core = *impl;
-  core.worker = std::thread([&core, url, data = std::move(data), software_version]() mutable {
-    core.work(url, std::move(data), software_version);
+  core.url = url;  // before the worker exists; read by it and by callers, never written again
+  core.worker = std::thread([&core, data = std::move(data), software_version]() mutable {
+    core.work(std::move(data), software_version);
   });
   {
     std::unique_lock<std::mutex> lock(core.mutex);

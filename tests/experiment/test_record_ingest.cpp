@@ -485,6 +485,29 @@ TEST(RecordIngest, ASpooledSimulatedRecordIsStillSimulatedWhenSentLater) {
   fs::remove_all(dir);
 }
 
+// Text that is not UTF-8 does not stop a conversion (the JSON writer would
+// throw): the bad bytes are replaced, the same way every time.
+TEST(RecordIngest, TextThatIsNotUtf8IsReplacedNotThrown) {
+  auto rec = sample_record();
+  rec.identity.queue_uuid = "queue\xff name";
+  rec.instrument.software_version = "0.1\xc3";
+  rec.results.whiff = "run\xfe";
+  record::InstalledConditional c;
+  c.name = "big\xff";
+  rec.conditionals.installed.push_back(c);
+  rec.spectrometer.source_params["y\xffs"] = 1.0;
+  const auto a = convert(rec);
+  const auto b = convert(rec);
+  const auto& meta = *body_of(a).meta;
+  EXPECT_EQ(*meta.queue_names_json, *body_of(b).meta->queue_names_json);
+  EXPECT_EQ(json::parse(*meta.queue_names_json), (json{"queue\xEF\xBF\xBD name"}));  // U+FFFD
+  EXPECT_EQ(json::parse(*meta.software_json).at("software_version"), "0.1\xEF\xBF\xBD");
+  EXPECT_NO_THROW((void)json::parse(*meta.whiff_result_json));
+  EXPECT_NO_THROW((void)json::parse(*meta.conditionals_json));
+  EXPECT_NO_THROW((void)json::parse(body_of(a).spectrometer_snapshot->settings_json));
+  EXPECT_EQ(body_of(a).spectrometer_snapshot->settings_json, body_of(b).spectrometer_snapshot->settings_json);
+}
+
 TEST(RecordIngest, AnEmptyExtractDeviceIsNone) {
   auto b = sample_builder();
   auto in = b.draft().instrument;

@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 #include "pychron/core/sha256.hpp"
 
 namespace pychron::processing {
@@ -602,7 +603,7 @@ Result<std::unique_ptr<StoreSource>> StoreSource::open(ps::StoreConfig config, S
   auto impl = std::make_unique<Impl>();
   impl->config = std::move(config);
   impl->user = !options.user.empty() ? options.user : env_var("USER").value_or("pychron");
-  impl->hostname = !options.hostname.empty() ? options.hostname : env_var("HOSTNAME").value_or("localhost");
+  impl->hostname = !options.hostname.empty() ? options.hostname : host_name();
   const int n = std::max(1, options.connections);
   // The first connection opens alone, so only it applies migrations.
   for (int i = 0; i < n; ++i) {

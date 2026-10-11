@@ -3,6 +3,7 @@
 #include <future>
 
 #include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 
 namespace pychron::ui {
 
@@ -45,7 +46,7 @@ void EntryBridge::loop(Options options, std::function<void(Result<ps::Actor>)> o
     opened(fail(store.error()));
     return;
   }
-  const std::string host = !options.host.empty() ? options.host : env_var("HOSTNAME").value_or("localhost");
+  const std::string host = !options.host.empty() ? options.host : host_name();
   const std::string user = !options.user.empty() ? options.user : env_var("USER").value_or("pychron");
   auto client = (*store)->register_client({host, "reduction", std::nullopt, "pychron-ui"});
   if (!client) {
