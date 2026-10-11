@@ -124,6 +124,7 @@ class LabSession {
   // or that record has since been sent.
   std::optional<std::string> last_save_error() const;
   TimePoint now() const;              // the line's clock (simulated or not)
+  WallTime wall_now() const;          // the same clock's date and time
   // Sends a test message on every configured channel (non-blocking).
   void notify_test();
   Notifier& notifier() noexcept { return *notifier_; }

@@ -1,15 +1,18 @@
 #include "evolutions_view.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <set>
 #include <utility>
 
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
 #include <QTabBar>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <qcustomplot.h>
@@ -43,7 +46,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
       title_(new QLabel),
       plot_(new QCustomPlot),
       peaks_(new QListWidget),
-      intercepts_(new QListWidget) {
+      intercepts_(new QTableWidget) {
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   for (auto k : kKinds) {
@@ -58,7 +61,16 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   layout->addWidget(title_);
   layout->addWidget(plot_, 1);
   layout->addWidget(new QLabel(tr("Intercepts")));
-  intercepts_->setMaximumHeight(90);
+  intercepts_->setColumnCount(7);
+  intercepts_->setHorizontalHeaderLabels(
+      {tr("Isotope"), tr("Detector"), tr("Fit"), tr("Intercept"), tr("± 1σ"), tr("%"), tr("Points")});
+  intercepts_->verticalHeader()->setVisible(false);
+  intercepts_->verticalHeader()->setDefaultSectionSize(intercepts_->fontMetrics().height() + 6);
+  intercepts_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  intercepts_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  intercepts_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  intercepts_->setSelectionMode(QAbstractItemView::SingleSelection);
+  intercepts_->setMaximumHeight(150);
   layout->addWidget(intercepts_);
   auto* peaks_label = new QLabel(tr("Peak centers"));
   layout->addWidget(peaks_label);
@@ -247,7 +259,7 @@ void EvolutionsView::refresh() {
   constexpr int kCurveSamples = 48;
   dirty_ = false;
   QVector<double> ex, ey;
-  intercepts_->clear();
+  int row = 0;
   for (auto& g : graphs_) {
     const Line& line = lines_.at(g.key);
     g.points->setData(line.t, line.v, true);
@@ -272,18 +284,32 @@ void EvolutionsView::refresh() {
           ey.push_back(line.v[static_cast<qsizetype>(idx)]);
         }
       const double rel = line.fit->value != 0 ? 100.0 * line.fit->error / std::abs(line.fit->value) : 0.0;
-      auto* item = new QListWidgetItem(QStringLiteral("%1  %2  %3 ± %4  (%5%)")
-                                           .arg(series_name(g.key), QString::fromLatin1(reduction::to_string(line.fit->kind).data()))
-                                           .arg(line.fit->value, 0, 'g', 7)
-                                           .arg(line.fit->error, 0, 'g', 3)
-                                           .arg(rel, 0, 'f', 3),
-                                       intercepts_);
-      item->setForeground(line.color.darker(130));
-      item->setToolTip(tr("%1 point(s) in the fit, %2 excluded").arg(line.fit->n_used).arg(line.fit->filtered_idx.size()));
+      const std::array<QString, 7> cells = {QString::fromStdString(g.key.isotope),
+                               QString::fromStdString(g.key.detector),
+                               QString::fromLatin1(reduction::to_string(line.fit->kind).data()),
+                               QString::number(line.fit->value, 'g', 7),
+                               QString::number(line.fit->error, 'g', 3),
+                               QString::number(rel, 'f', 3),
+                               QString::number(line.fit->n_used)};
+      if (intercepts_->rowCount() <= row) intercepts_->setRowCount(row + 1);
+      for (int c = 0; std::cmp_less(c, cells.size()); ++c) {
+        // The row's items are kept from one refresh to the next, so a selection stays.
+        auto* item = intercepts_->item(row, c);
+        if (!item) {
+          item = new QTableWidgetItem;
+          if (c >= 3) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+          intercepts_->setItem(row, c, item);
+        }
+        item->setText(cells[static_cast<std::size_t>(c)]);
+        item->setForeground(c < 2 ? QBrush(line.color.darker(130)) : QBrush());
+        item->setToolTip(tr("%1 point(s) in the fit, %2 excluded").arg(line.fit->n_used).arg(line.fit->filtered_idx.size()));
+      }
+      ++row;
     }
     g.curve->setData(cx, cy, true);
     g.intercept->setData(ix, iy, true);
   }
+  intercepts_->setRowCount(row);
   if (excluded_) excluded_->setData(ex, ey);
   plot_->rescaleAxes();
   // A margin so the intercept marker at time zero and the extreme points are not clipped.
@@ -309,9 +335,19 @@ std::optional<reduction::Intercept> EvolutionsView::fit_of(const SeriesKey& key)
   return it->second.fit;
 }
 
-QStringList EvolutionsView::intercept_lines() const {
+QStringList EvolutionsView::intercept_columns() const {
   QStringList out;
-  for (int i = 0; i < intercepts_->count(); ++i) out.append(intercepts_->item(i)->text());
+  for (int c = 0; c < intercepts_->columnCount(); ++c) out.append(intercepts_->horizontalHeaderItem(c)->text());
+  return out;
+}
+
+QList<QStringList> EvolutionsView::intercept_rows() const {
+  QList<QStringList> out;
+  for (int r = 0; r < intercepts_->rowCount(); ++r) {
+    QStringList cells;
+    for (int c = 0; c < intercepts_->columnCount(); ++c) cells.append(intercepts_->item(r, c)->text());
+    out.append(cells);
+  }
   return out;
 }
 

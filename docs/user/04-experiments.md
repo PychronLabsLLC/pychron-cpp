@@ -200,8 +200,8 @@ Open it from **View > Experiment** (Ctrl+Shift+E). Its menus are the submenus of
 |---|---|
 | Centre | The queue table, one row per run. Above it, the queue's conditionals file and an Edit button. |
 | Left (tabs) | **Run Factory** (section 5) and **Measurement** (the plan and parameters of the selected run). |
-| Bottom | **Executor**: the Start / Stop / Cancel / Abort / Truncate buttons, status, a timeline, events and tripped conditionals. |
-| Right | **Evolutions**: the isotope signals of the run being measured, with fits. |
+| Bottom | **Executor**: the Start / Stop / Cancel / Abort / Truncate buttons, status, a timeline, a table of events (each with the time it happened, on the line's clock) and tripped conditionals. |
+| Right | **Evolutions**: the isotope signals of the run being measured, with fits, and a table of their intercepts (isotope, detector, fit, intercept, error, percent error, points used). |
 
 The panels around the table can be closed, moved and floated (the Executor
 can be moved but not closed). **Window > Panels**, **Window > Reset Layout**

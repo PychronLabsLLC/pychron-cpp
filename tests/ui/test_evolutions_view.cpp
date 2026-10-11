@@ -45,7 +45,7 @@ class TestEvolutionsView : public QObject {
     view.on_series(batch);
     QCOMPARE(view.graph_count(), 1);
     QCOMPARE(view.fit_curve_count(), 0);  // no fit yet
-    QVERIFY(view.intercept_lines().isEmpty());
+    QVERIFY(view.intercept_rows().isEmpty());
 
     reduction::FitSpec spec{reduction::FitKind::Linear};
     spec.outliers = {true, 1, 2.0};
@@ -61,9 +61,19 @@ class TestEvolutionsView : public QObject {
     QTRY_COMPARE(view.fit_curve_count(), 1);
     QVERIFY(view.fit_of(ar40).has_value());
     QVERIFY(std::abs(view.fit_of(ar40)->value - 100.0) < 1e-6);
-    QCOMPARE(view.intercept_lines().size(), 1);
-    QVERIFY2(view.intercept_lines().front().startsWith(QStringLiteral("Ar40 H1  linear  100 ± ")),
-             qPrintable(view.intercept_lines().front()));
+    // A table, a row per series: isotope, detector, fit, intercept, error, percent, points.
+    QCOMPARE(view.intercept_columns(),
+             (QStringList{QStringLiteral("Isotope"), QStringLiteral("Detector"), QStringLiteral("Fit"),
+                          QStringLiteral("Intercept"), QStringLiteral("± 1σ"), QStringLiteral("%"),
+                          QStringLiteral("Points")}));
+    QCOMPARE(view.intercept_rows().size(), 1);
+    const QStringList row = view.intercept_rows().front();
+    QCOMPARE(row.size(), 7);
+    QCOMPARE(row.mid(0, 4), (QStringList{QStringLiteral("Ar40"), QStringLiteral("H1"), QStringLiteral("linear"),
+                                         QStringLiteral("100")}));
+    QCOMPARE(row[4], QString::number(fit->error, 'g', 3));
+    QCOMPARE(row[5], QString::number(100.0 * fit->error / fit->value, 'f', 3));
+    QCOMPARE(row[6], QStringLiteral("7"));  // eight points, one excluded
 
     // The x axis reaches back to time zero, where the intercept is.
     QVERIFY(view.plot()->xAxis->range().lower <= 10.0);
@@ -71,9 +81,10 @@ class TestEvolutionsView : public QObject {
     // Other kinds have their own fits; baselines have none here.
     view.set_kind(SeriesKind::Baseline);
     QCOMPARE(view.fit_curve_count(), 0);
-    QVERIFY(view.intercept_lines().isEmpty());
+    QVERIFY(view.intercept_rows().isEmpty());
     view.set_kind(SeriesKind::Signal);
     QCOMPARE(view.fit_curve_count(), 1);
+    QCOMPARE(view.intercept_rows().size(), 1);
 
     // One series alone, scaled to it.
     const SeriesKey ar39{"Ar39", "H2", SeriesKind::Signal};

@@ -306,6 +306,7 @@ std::size_t LabSession::pending_saves() const { return services_->save.pending()
 std::optional<std::string> LabSession::last_save_error() const { return services_->save.last_error(); }
 
 TimePoint LabSession::now() const { return hardware_.line.clock().now(); }
+WallTime LabSession::wall_now() const { return hardware_.line.clock().wall_now(); }
 
 Result<std::size_t> LabSession::resume_row(const fs::path& data) {
   return executor::Executor::resume_row(data / "executor_state.json");

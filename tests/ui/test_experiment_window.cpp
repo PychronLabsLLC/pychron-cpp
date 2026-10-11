@@ -196,6 +196,10 @@ class TestExperimentWindow : public QObject {
     // extraction script lets a pipette of the tank's air into the line for
     // each run that is not a blank (sim_extract.py).
     QVERIFY(sim.line->sim() != nullptr);
+    const auto wall_ms = [&sim] {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(sim.clock.wall_now().time_since_epoch()).count();
+    };
+    const qint64 started_ms = wall_ms();
     pane->request_start();
     QVERIFY(pane->running());
     QVERIFY(window.model().live());  // editable after the rows the executor reached
@@ -210,6 +214,20 @@ class TestExperimentWindow : public QObject {
     QVERIFY(contains(pane->events(), QStringLiteral("queue completed")));
     QVERIFY(contains(pane->events(), QStringLiteral("run 1 66001")));
     QVERIFY(contains(pane->events(), QStringLiteral("peak center Ar40 on H1")));
+    // Each event has the time it was seen at, on the line's clock: here a
+    // simulated one, so the queue's events span its simulated minutes.
+    const auto times = pane->event_times();
+    const QStringList shown = pane->event_time_texts();
+    QCOMPARE(times.size(), pane->events().size());
+    QCOMPARE(shown.size(), times.size());
+    for (qsizetype i = 0; i < times.size(); ++i) {
+      QVERIFY(times[i].isValid());
+      QCOMPARE(shown[i], times[i].toString(QStringLiteral("HH:mm:ss")));
+      if (i > 0) QVERIFY(times[i - 1] <= times[i]);
+    }
+    QVERIFY(times.first().toMSecsSinceEpoch() >= started_ms);
+    QVERIFY(times.last().toMSecsSinceEpoch() <= wall_ms());
+    QVERIFY2(times.first().msecsTo(times.last()) > 60000, qPrintable(shown.join(QLatin1Char(' '))));
     QCOMPARE(pane->state_text(), QStringLiteral("idle"));
     QVERIFY(pane->spool_text().isEmpty());
     QVERIFY(counts_max > 1);
@@ -221,7 +239,7 @@ class TestExperimentWindow : public QObject {
     QVERIFY(evo->title_text().startsWith(QStringLiteral("66001")));
     // The live fits: a curve per signal series and its intercept listed.
     QVERIFY(evo->fit_curve_count() > 0);
-    QVERIFY(!evo->intercept_lines().isEmpty());
+    QVERIFY(!evo->intercept_rows().isEmpty());
     const auto ar40 = evo->fit_of({"Ar40", "H1", pychron::experiment::collect::SeriesKind::Signal});
     QVERIFY(ar40.has_value());
     // The run measured one pipette of the tank's air, and nothing left of

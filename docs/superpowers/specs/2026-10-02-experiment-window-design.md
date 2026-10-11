@@ -281,8 +281,11 @@ A widget, docked at the bottom of the experiment window:
   Stop and Truncate do not.
 - Conditionals list: each `ConditionalTripped` as `time  run  name: check
   -> action`.
-- Event list: one line per run start/finish, queue edit, peak-center result
-  and queue end (newest last).
+- Events table, columns Time and Event: one row per run start/finish, thing
+  a run said, queue edit, notification, peak-center result and queue end
+  (newest last, newest 5000 kept). Time is when the pane saw the event, read
+  from the line's wall clock (`LabSession::wall_now()`, simulated time in a
+  simulated session), shown as `HH:mm:ss` with the date in the tooltip.
 - Pending saves: "n record(s) in spool" when non-zero after the queue ends.
 - Phase timeline (`TimelineModel` / `TimelineView`, `timeline.hpp`): one
   row for executor waits, then one lane per concurrently active run. A run
@@ -317,8 +320,10 @@ with the plan's fit, the same computation as the conditionals' intercept
 (`reduction::Intercept` carries the curve's parameters; `reduction::predict`
 evaluates it). The view draws each fit as a curve in the series' colour from
 time zero to its last point, a diamond at the intercept, grey crosses on
-points the fit excluded as outliers, and lists the intercepts under the plot
-(`Ar40 H1  linear  1000052 ± 379  (0.038%)`). A series selector shows all
+points the fit excluded as outliers, and shows the intercepts in a table
+under the plot, a row per series of the shown kind: Isotope, Detector, Fit,
+Intercept, ± 1σ, %, Points (those the fit used; the tooltip adds how many it
+excluded). A row keeps its place from one reading to the next. A series selector shows all
 series of the kind or one, with the axes scaled to it (isotopes differ by
 orders of magnitude).
 

@@ -2,17 +2,20 @@
 #include "theme.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 namespace pychron::ui {
@@ -53,7 +56,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
       abort_(new QPushButton(tr("Abort"))),
       truncate_(new QPushButton(tr("Truncate"))),
       conditionals_(new QListWidget),
-      events_(new QListWidget),
+      events_(new QTableWidget),
       timeline_view_(new TimelineView(timeline_)) {
   banner_->setObjectName(QStringLiteral("ExecutorBanner"));
   style::make_banner(banner_);
@@ -96,6 +99,18 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     notify_->setText(channels.isEmpty() ? tr("off (no notifications.toml in the lab)") : channels.join(QStringLiteral(", ")));
     notify_->setToolTip(tr("Messages on a failed run and at the end of the queue (<lab>/notifications.toml)"));
   }
+
+  events_->setColumnCount(2);
+  events_->setHorizontalHeaderLabels({tr("Time"), tr("Event")});
+  events_->verticalHeader()->setVisible(false);
+  events_->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+  events_->verticalHeader()->setDefaultSectionSize(events_->fontMetrics().height() + 6);
+  events_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  events_->horizontalHeader()->setStretchLastSection(true);
+  events_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  events_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  events_->setShowGrid(false);
+  events_->setWordWrap(false);
 
   auto* lists = new QSplitter(Qt::Horizontal);
   auto* cond_box = new QWidget;
@@ -309,14 +324,30 @@ bool ExecutorPane::start_enabled() const { return !running_ && runnable_; }
 bool ExecutorPane::stop_enabled() const { return running_; }
 
 void ExecutorPane::add_event(const QString& line) {
-  events_->addItem(line);
-  while (events_->count() > event_limit_) delete events_->takeItem(0);
+  using namespace std::chrono;
+  // The line's clock, not the computer's: a simulated session is stamped in simulated time.
+  const auto when = QDateTime::fromMSecsSinceEpoch(
+      duration_cast<milliseconds>(bridge_.session().wall_now().time_since_epoch()).count());
+  const int row = events_->rowCount();
+  events_->insertRow(row);
+  auto* time = new QTableWidgetItem(when.toString(QStringLiteral("HH:mm:ss")));
+  time->setData(Qt::UserRole, when);
+  time->setToolTip(when.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+  events_->setItem(row, 0, time);
+  auto* text = new QTableWidgetItem(line);
+  text->setToolTip(line);  // a long one is cut at the column's edge
+  events_->setItem(row, 1, text);
+  trim_events();
   events_->scrollToBottom();
+}
+
+void ExecutorPane::trim_events() {
+  while (events_->rowCount() > event_limit_) events_->removeRow(0);
 }
 
 void ExecutorPane::set_event_limit(int lines) {
   event_limit_ = std::max(1, lines);
-  while (events_->count() > event_limit_) delete events_->takeItem(0);
+  trim_events();
 }
 
 void ExecutorPane::update_buttons() {
@@ -353,7 +384,19 @@ int ExecutorPane::counts_maximum() const { return counts_->maximum(); }
 
 QStringList ExecutorPane::events() const {
   QStringList out;
-  for (int i = 0; i < events_->count(); ++i) out.append(events_->item(i)->text());
+  for (int i = 0; i < events_->rowCount(); ++i) out.append(events_->item(i, 1)->text());
+  return out;
+}
+
+QList<QDateTime> ExecutorPane::event_times() const {
+  QList<QDateTime> out;
+  for (int i = 0; i < events_->rowCount(); ++i) out.append(events_->item(i, 0)->data(Qt::UserRole).toDateTime());
+  return out;
+}
+
+QStringList ExecutorPane::event_time_texts() const {
+  QStringList out;
+  for (int i = 0; i < events_->rowCount(); ++i) out.append(events_->item(i, 0)->text());
   return out;
 }
 
