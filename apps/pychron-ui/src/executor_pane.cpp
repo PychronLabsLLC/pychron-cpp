@@ -1,6 +1,7 @@
 #include "executor_pane.hpp"
 #include "theme.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include <QFrame>
@@ -308,7 +309,13 @@ bool ExecutorPane::stop_enabled() const { return running_; }
 
 void ExecutorPane::add_event(const QString& line) {
   events_->addItem(line);
+  while (events_->count() > event_limit_) delete events_->takeItem(0);
   events_->scrollToBottom();
+}
+
+void ExecutorPane::set_event_limit(int lines) {
+  event_limit_ = std::max(1, lines);
+  while (events_->count() > event_limit_) delete events_->takeItem(0);
 }
 
 void ExecutorPane::update_buttons() {

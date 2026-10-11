@@ -286,6 +286,27 @@ class TestExperimentWindow : public QObject {
 
   // What a run says (here: that its hole was centered) is a line of the
   // pane's events, under the run that said it.
+  // A long queue says more than the list should hold: the oldest lines go.
+  void theEventsListKeepsItsNewestLines() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    auto* pane = window.executor();
+    QCOMPARE(pychron::ui::ExecutorPane::kEventLimit, 5000);
+    pane->set_event_limit(4);
+    pane->request_start();
+    QVERIFY(pane->running());
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    const QStringList events = pane->events();
+    QCOMPARE(events.size(), 4);
+    QVERIFY2(events.last().contains(QStringLiteral("queue completed")), qPrintable(events.join(QLatin1Char('\n'))));
+    QVERIFY(!events.join(QLatin1Char('\n')).contains(QStringLiteral("run 0 ")));
+    pane->set_event_limit(2);
+    QCOMPARE(pane->events().size(), 2);
+  }
+
   void aRunsLogShowsInTheExecutorPane() {
     if (!pychron::scripting::make_script_host()->available()) QSKIP("needs embedded Python to run laser_extract.py");
     pychron::ui::test::SimLab sim;

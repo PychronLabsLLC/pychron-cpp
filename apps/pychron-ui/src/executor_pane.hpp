@@ -79,6 +79,11 @@ class ExecutorPane : public QWidget {
   int counts_value() const;
   int counts_maximum() const;
   QStringList events() const;
+  // The events list keeps its newest lines only: a queue of a thousand runs
+  // says more than ten thousand things, and the list is not their record
+  // (the log is).
+  static constexpr int kEventLimit = 5000;
+  void set_event_limit(int lines);
   QStringList conditionals() const;
   const TimelineModel& timeline() const noexcept { return timeline_; }
   TimelineView* timeline_view() const noexcept { return timeline_view_; }
@@ -95,6 +100,7 @@ class ExecutorPane : public QWidget {
   Confirm confirm_;
   bool runnable_ = false, running_ = false;
   int rows_ = 0, done_ = 0;
+  int event_limit_ = kEventLimit;
   QString run_, run_state_, block_;
   std::map<std::string, QString> identifiers_;  // by run id, for the queue being run
 
