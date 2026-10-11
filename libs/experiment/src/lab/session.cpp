@@ -123,19 +123,9 @@ bool LabSession::has_spectrometer() const noexcept { return hardware_.spectromet
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
   if (auto ok = check(queue); !ok) return ok;
-  {
-    persist::IAnalysisPersister& persister =
-        options_.persister != nullptr ? *options_.persister : static_cast<persist::IAnalysisPersister&>(services_->files);
-    const auto problems = persister.check_queue(queue);
-    if (!problems) {
-      return fail(ErrorKind::Config, "the queue cannot be saved: " + problems.error().what, "experiment");
-    }
-    if (!problems->empty()) {
-      std::string what = "the queue cannot be saved:";
-      for (const auto& line : *problems) what += "\n" + line;
-      return fail(ErrorKind::Config, what, "experiment");
-    }
-  }
+  // Of what will run: the rows before `from_row` are not, and what the
+  // persister already holds of them is no reason to refuse the rest.
+  if (auto ok = check_saves(persist::rows_from(queue, from_row)); !ok) return ok;
   // A device whose camera cannot be used as the lab asks is not run without
   // it: the queue waits for the lab to be put right.
   for (const auto& r : queue.runs) {
@@ -171,6 +161,8 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   {
     std::lock_guard lock(mutex_);
     executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
+    started_ = queue;
+    started_.runs.clear();
     running_ = true;
     thread_done_ = false;
     result_.reset();
@@ -205,10 +197,32 @@ Result<void> LabSession::check(const QueueSpec& queue) const {
               "experiment");
 }
 
+Result<void> LabSession::check_saves(const QueueSpec& will_run) {
+  persist::IAnalysisPersister& persister =
+      options_.persister != nullptr ? *options_.persister : static_cast<persist::IAnalysisPersister&>(services_->files);
+  const auto problems = persister.check_queue(will_run);
+  if (!problems) return fail(ErrorKind::Config, "the queue cannot be saved: " + problems.error().what, "experiment");
+  if (problems->empty()) return {};
+  std::string what = "the queue cannot be saved:";
+  for (const auto& line : *problems) what += "\n" + line;
+  return fail(ErrorKind::Config, what, "experiment");
+}
+
 Result<std::uint64_t> LabSession::edit(std::uint64_t base, const QueueSpec& queue) {
   auto ex = active();
   if (!ex) return fail(ErrorKind::Config, "no queue is running", "experiment");
   if (auto ok = check(queue); !ok) return fail(ok.error());
+  // The rows still to run must be savable, as at the start: the running
+  // queue's own fields (an edit's are ignored) with the edit's rows, those
+  // the executor has reached left out. A row it reaches meanwhile was
+  // checked when the queue started or by an earlier edit.
+  QueueSpec will_run;
+  {
+    std::lock_guard lock(mutex_);
+    will_run = started_;
+  }
+  will_run.runs = queue.runs;
+  if (auto ok = check_saves(persist::rows_from(std::move(will_run), ex->frozen_rows())); !ok) return fail(ok.error());
   return ex->edit(base, queue.runs, "edited by the operator");
 }
 

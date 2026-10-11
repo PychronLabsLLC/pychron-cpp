@@ -25,6 +25,7 @@
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
+#include "pychron/experiment/persist/persister.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
@@ -132,6 +133,16 @@ class Exp {
     }
     const bool ok = report();
     if (a_.verb == "validate") return ok ? kOk : kFailed;
+    // The row the queue starts at: --from, or with --resume the one after the last that ran.
+    if (a_.from) from_ = *a_.from;
+    if (a_.resume) {
+      auto row = lab::LabSession::resume_row(a_.data);
+      if (!row) {
+        io_.err << "error: --resume: " << row.error().what << '\n';
+        return kFailed;
+      }
+      from_ = *row;
+    }
     if (a_.dry_run) return ok && store_accepts() ? kOk : kFailed;
     if (!ok) {
       io_.err << "error: the queue has errors; nothing was run\n";
@@ -163,11 +174,11 @@ class Exp {
     return check.ok();
   }
 
-  // What the database would refuse of the queue, as error lines. True when it
-  // would take it (or there is no database).
+  // What the database would refuse of the queue as it will run (from row
+  // from_), as error lines. True when it would take it (or there is no database).
   bool store_accepts() {
     if (!store_) return true;
-    const auto problems = store_->persister().check_queue(queue_);
+    const auto problems = store_->persister().check_queue(persist::rows_from(queue_, from_));
     if (!problems) {
       complain_lines("the queue cannot be saved: " + problems.error().what);
       return false;
@@ -317,15 +328,7 @@ class Exp {
     }
 
     executor::ExecutorOptions options;
-    std::size_t from = a_.from.value_or(0);
-    if (a_.resume) {
-      auto row = lab::LabSession::resume_row(a_.data);
-      if (!row) {
-        complain("error: --resume: " + row.error().what);
-        return kFailed;
-      }
-      from = *row;
-    }
+    const std::size_t from = from_;
     lab::LabSession session(lab_, lab::SessionHardware{**line, spec.get(), nullptr, {}},
                             lab::SessionOptions{a_.data, options, {}, store_ ? &store_->persister() : nullptr});
     // What the lab asks that this session cannot do (a camera it may not
@@ -449,6 +452,7 @@ class Exp {
   Io io_;
   lab::Lab lab_;
   QueueSpec queue_;
+  std::size_t from_ = 0;  // the row the queue starts at
   std::mutex out_mutex_;
   // After everything the session's threads may call it from is gone: members
   // outlive execute()'s locals, the session among them.

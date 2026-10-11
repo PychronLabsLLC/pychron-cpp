@@ -52,6 +52,12 @@ std::string run_name(const record::Identity& id) {
 
 }  // namespace
 
+QueueSpec rows_from(QueueSpec queue, std::size_t from_row) {
+  const std::size_t n = std::min(from_row, queue.runs.size());
+  for (std::size_t i = 0; i < n; ++i) queue.runs[i].skip = true;
+  return queue;
+}
+
 // ---- FilePersister ------------------------------------------------------------
 
 int FilePersister::highest_on_disk(const std::string& identifier) const {

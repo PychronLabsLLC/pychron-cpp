@@ -91,7 +91,9 @@ class LabSession {
   LabSession& operator=(const LabSession&) = delete;
 
   // Config error if a queue is running or `queue` does not check against the
-  // lab (the message names the first error and how many there are); also
+  // lab (the message names the first error and how many there are); if the
+  // persister would not save a row from `from_row` on ("the queue cannot be
+  // saved:" and its lines; earlier rows are not asked about); also
   // while a laser is being driven by hand, while a laser's emergency stop
   // has not been reset, and while a laser's beam is on.
   Result<void> start(QueueSpec queue, std::size_t from_row = 0);
@@ -102,7 +104,9 @@ class LabSession {
   void truncate(bool quick = false);
   // Replaces the running queue's runs with `queue.runs` (Executor::edit:
   // rows the executor has reached must be unchanged, `base` is the version
-  // the edit was made against). The whole queue must check against the lab.
+  // the edit was made against). The whole queue must check against the lab,
+  // and the rows the executor has not reached must be ones the persister
+  // would save, as at start().
   // Queue-level fields are not editable while running and are ignored.
   Result<std::uint64_t> edit(std::uint64_t base, const QueueSpec& queue);
 
@@ -139,6 +143,9 @@ class LabSession {
   void run(QueueSpec queue, std::size_t from_row);
   void join();  // the queue thread, once it is done; the owner's thread only
   Result<void> check(const QueueSpec& queue) const;  // against the lab; names the first error
+  // Asks the persister about a queue as it will run (persist::rows_from);
+  // what it would not save refuses the queue, one line each.
+  Result<void> check_saves(const QueueSpec& will_run);
 
   const Lab& lab_;
   SessionHardware hardware_;
@@ -154,6 +161,7 @@ class LabSession {
   std::shared_ptr<executor::Executor> executor_;
   std::shared_ptr<executor::Executor> active() const;  // executor_ while running
   std::optional<executor::QueueResult> result_;
+  QueueSpec started_;  // the current or last queue without its rows: what an edit cannot change; under mutex_
   bool running_ = false;
   struct QueueLease;
   std::unique_ptr<QueueLease> lease_;  // the lasers are the queue's while it runs; under mutex_

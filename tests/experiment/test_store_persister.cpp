@@ -249,6 +249,37 @@ TEST_P(StorePersisterTest, CheckQueueNamesATakenRunId) {
   EXPECT_EQ((*lines)[0], "66573-01 is already in the database");
 }
 
+// A queue is checked as it will run: rows before the one it starts at are
+// not run again, so what the database already holds of them is no objection.
+TEST_P(StorePersisterTest, AQueueStartedPastATakenRunIdIsAccepted) {
+  ASSERT_TRUE(persister_->save_analysis(numbered("66573", 1)));
+  const auto q = queue("jan", "co2", {run("66573", 1), run("66573", 2)});
+  auto from_the_top = persister_->check_queue(persist::rows_from(q, 0));
+  ASSERT_TRUE(from_the_top.has_value());
+  EXPECT_EQ(*from_the_top, std::vector<std::string>{"66573-01 is already in the database"});
+  auto from_the_second = persister_->check_queue(persist::rows_from(q, 1));
+  ASSERT_TRUE(from_the_second.has_value());
+  EXPECT_TRUE(from_the_second->empty()) << ::testing::PrintToString(*from_the_second);
+  // Past the end: nothing will run.
+  auto past = persister_->check_queue(persist::rows_from(q, 9));
+  ASSERT_TRUE(past.has_value());
+  EXPECT_TRUE(past->empty());
+}
+
+// A step the store cannot hold is known before the run: it is not measured
+// and then kept in the spool for good.
+TEST_P(StorePersisterTest, CheckQueueRefusesAStepThatIsNotLetters) {
+  auto bad = run("66573");
+  bad.id.step = "A1";
+  auto skipped = run("66573", std::nullopt, true);
+  skipped.id.step = "7";
+  auto fine = run("66573");
+  fine.id.step = "b";
+  auto lines = persister_->check_queue(queue("jan", "co2", {bad, bad, skipped, fine}));
+  ASSERT_TRUE(lines.has_value());
+  EXPECT_EQ(*lines, std::vector<std::string>{"66573: step 'A1' is not letters: the database cannot hold it"});
+}
+
 TEST_P(StorePersisterTest, CheckQueueNamesATakenRunIdOnce) {
   ASSERT_TRUE(persister_->save_analysis(numbered("66573", 1)));
   const auto before = failing_->reads();

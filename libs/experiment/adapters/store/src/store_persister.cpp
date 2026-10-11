@@ -138,11 +138,20 @@ Result<std::vector<std::string>> StorePersister::check_queue(const QueueSpec& qu
     if (!*found) lines.push_back("identifier '" + identifier + "' is not in the database");
   }
 
+  // A step the store cannot hold (record_ingest.hpp) would be measured and
+  // then refused for good: known now, said now.
+  seen.clear();
+  for (const auto& run : queue.runs) {
+    if (run.skip || increment_of(run.id.step)) continue;
+    if (!seen.insert(run.id.identifier + "\n" + run.id.step).second) continue;
+    lines.push_back(run.id.identifier + ": step '" + run.id.step + "' is not letters: the database cannot hold it");
+  }
+
   std::set<std::string> taken_seen;
   for (const auto& run : queue.runs) {
     if (run.skip || !run.id.aliquot) continue;
     const auto increment = increment_of(run.id.step);
-    if (!increment) continue;  // a step the store cannot hold; the run fails when it is saved
+    if (!increment) continue;  // a step the store cannot hold: said above
     const std::string runid = ps::make_runid(run.id.identifier, *run.id.aliquot, *increment);
     if (!taken_seen.insert(runid).second) continue;
     auto found = store_.find_analysis(run.id.identifier, *run.id.aliquot, *increment);

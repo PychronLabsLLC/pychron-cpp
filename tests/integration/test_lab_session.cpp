@@ -321,6 +321,77 @@ TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
   EXPECT_EQ(session_->pending_saves(), 0u);
 }
 
+// The check is of what will run. Row 0 names something the database lacks:
+// from the top the queue is refused, from row 1 it starts, and the persister
+// is asked about a queue whose earlier rows are marked as not running.
+TEST_F(LabSessionTest, AQueueIsCheckedFromTheRowItStartsAt) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  queue_.runs[0] = queue_.runs[1];  // an unknown, so that any identifier will do for the lab
+  queue_.runs[0].id.identifier = "zz";
+
+  auto refused = session_->start(queue_, 0);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().what, "the queue cannot be saved:\nidentifier 'zz' is not in the database");
+
+  ASSERT_TRUE(session_->start(queue_, 1));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(result->runs.size(), 2u);
+  EXPECT_EQ(result->runs[0].row, 1u);
+  EXPECT_EQ(persister_->saved(), 2u);
+
+  const auto checked = persister_->checked();
+  ASSERT_EQ(checked.size(), 2u);
+  EXPECT_FALSE(checked[0].runs[0].skip);
+  ASSERT_EQ(checked[1].runs.size(), 3u);
+  EXPECT_TRUE(checked[1].runs[0].skip);  // before the start row
+  EXPECT_FALSE(checked[1].runs[1].skip);
+  EXPECT_FALSE(checked[1].runs[2].skip);
+  EXPECT_EQ(checked[1].mass_spectrometer, queue_.mass_spectrometer);
+}
+
+// A row added while the queue runs is checked like the rows it started with:
+// one the database cannot take is refused then, not measured and kept in the
+// spool. Rows the executor has reached are not asked about again.
+TEST_F(LabSessionTest, AnEditThatCannotBeSavedIsRefused) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  std::vector<std::string> errors;
+  std::optional<Result<std::uint64_t>> accepted;
+  auto sub = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted& e) {
+    if (e.row != 0) return;
+    auto longer = queue_;
+    longer.runs.push_back(queue_.runs[2]);
+    longer.runs.back().id.identifier = "zz";
+    if (auto r = session_->edit(0, longer); !r) errors.push_back(r.error().what);
+    // Queue-level fields of an edit are ignored: the running queue's are the ones checked.
+    auto fine = queue_;
+    fine.mass_spectrometer = "not-the-running-queue's";
+    fine.runs.push_back(queue_.runs[2]);
+    accepted = session_->edit(0, fine);
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(errors.size(), 1u);
+  EXPECT_EQ(errors[0], "the queue cannot be saved:\nidentifier 'zz' is not in the database");
+  ASSERT_TRUE(accepted && *accepted) << (accepted && !*accepted ? accepted->error().what : "");
+  EXPECT_EQ(result->runs.size(), 4u);
+  EXPECT_EQ(persister_->saved(), 4u);
+
+  const auto checked = persister_->checked();
+  ASSERT_EQ(checked.size(), 3u);  // the start, and the two edits
+  ASSERT_EQ(checked[1].runs.size(), 4u);
+  EXPECT_TRUE(checked[1].runs[0].skip);  // reached: it is running
+  EXPECT_FALSE(checked[1].runs[3].skip);
+  EXPECT_EQ(checked[2].mass_spectrometer, queue_.mass_spectrometer);
+}
+
 // The store is away for the whole queue: every run is measured and kept in
 // the spool, each says so and why, each is flagged (which is what the queue
 // table, the notification and the save-error counter go by), and the queue

@@ -611,6 +611,27 @@ TEST_F(ElctlExpStoreTest, DryRunSaysWhatTheDatabaseLacks) {
   EXPECT_EQ(fine.code, 0) << fine.out << fine.err;
 }
 
+// The check is of the rows that will run: a queue whose first row the
+// database cannot take is refused from the top, and checked and run from
+// the second row.
+TEST_F(ElctlExpStoreTest, TheCheckIsOfTheRowsThatWillRun) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto queue = queue_with("identifier = \"ba\"", "identifier = \"zz9\"");  // row 0
+  const auto whole = run_queue(queue, {"--dry-run"});
+  EXPECT_NE(whole.code, 0) << whole.out;
+  EXPECT_TRUE(contains(whole.err, "error: identifier 'zz9' is not in the database")) << whole.err;
+  const auto rest = run_queue(queue, {"--dry-run", "--from", "1"});
+  EXPECT_EQ(rest.code, 0) << rest.out << rest.err;
+  EXPECT_FALSE(contains(rest.err, "zz9")) << rest.err;
+
+  const auto ran = run_queue(queue, {"--from", "1"});
+  ASSERT_EQ(ran.code, 0) << ran.out << ran.err;
+  EXPECT_EQ(runids(install_db()), (std::vector<std::string>{"a-01", "a-02", "a-03", "ba-01"}));
+  // And a resume, which starts after the last row: nothing to check, nothing to run.
+  const auto resumed = run_queue(queue, {"--dry-run", "--resume"});
+  EXPECT_EQ(resumed.code, 0) << resumed.out << resumed.err;
+}
+
 TEST_F(ElctlExpStoreTest, ADatabaseThatCannotBeOpenedIsFatal) {
   const auto o = run_queue(root_ / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db"});
   EXPECT_TRUE(contains(o.err, "x.db") || contains(o.err, "unable to open database")) << o.err;

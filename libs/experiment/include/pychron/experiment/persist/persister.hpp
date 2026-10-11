@@ -41,9 +41,15 @@ class IAnalysisPersister {
                                      const std::vector<std::uint8_t>& bytes) = 0;
   virtual Result<void> flush() = 0;
   // What would stop this queue's runs from being saved, one line each; empty
-  // when nothing would.
+  // when nothing would. Asked of the queue as it will run (rows_from): a
+  // skipped row is not checked as a run.
   virtual Result<std::vector<std::string>> check_queue(const QueueSpec& queue) = 0;
 };
+
+// `queue` as a start at `from_row` will run it, for check_queue: the rows
+// before `from_row` marked skipped, since they are not run (again). A row an
+// edit may no longer change is such a row too.
+QueueSpec rows_from(QueueSpec queue, std::size_t from_row);
 
 // Records directory:
 //   <root>/<identifier>/<identifier>-<aliquot><step>.json     analyses
