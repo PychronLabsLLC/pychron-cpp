@@ -92,6 +92,28 @@ Setup: `docs/dev_setup.md`. Presets: `CMakePresets.json` (CI uses `dev`, and
 `dev-ui` for the UI job). Tests are GoogleTest, one `test_<component>.cpp` per
 component under `tests/`, run with `ctest`.
 
+Inner loop (keep waits short):
+
+- Build only target being changed:
+  `cmake --build --preset dev --target pychron_<component>_tests`.
+- Run that binary direct, filtered, not `ctest`: one process, not one per
+  case. `build/dev/tests/<component>/pychron_<component>_tests
+  --gtest_filter='<Suite>.*'`.
+- Wider check while working: `ctest --preset dev-quick` (parallel, skips
+  importer suites `Engines/ProjectImportTest`, `Engines/MetaImportTest`,
+  `ImportCmd*`: about half of serial test time).
+- Before merge into `develop`: full `cmake --build --preset dev` and
+  `ctest --preset dev`. Never `dev-quick` as final run.
+- `dev` and `dev-quick` test presets run on every core (`CTEST_PARALLEL_LEVEL`
+  empty); `dev-ui` runs 2 at a time, as CI. A test that fails only in parallel
+  is a bug (shared file, port, settings): fix it, do not serialize suite.
+- Use `dev-ui` only when change touches `apps/pychron-ui` or `tests/ui`.
+- ccache used when installed (`cmake/PychronCcache.cmake`); base_dir is
+  source tree, so new worktree reuses objects other checkouts built. First
+  build in new worktree still configures and fetches dependencies.
+- `gtest_discover_tests` lists cases when ctest runs (`PRE_TEST`), not after
+  each link.
+
 - CI (`.github/workflows/ci.yml`) builds with clang + ASan/UBSan on macOS,
   gcc 14 and clang 18 + ASan/UBSan on Ubuntu 24.04, and MSVC.
 - `-DPYCHRON_SANITIZE=address,undefined` enables ASan/UBSan, and with them

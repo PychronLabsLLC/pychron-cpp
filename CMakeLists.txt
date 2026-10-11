@@ -16,6 +16,8 @@ set(PYCHRON_SANITIZE "" CACHE STRING "Comma-separated sanitizers, e.g. address,u
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Before any target (FetchContent dependencies included) is created.
+include(PychronCcache)
 include(PychronToolchainFixes)
 include(PychronWarnings)
 include(PychronSanitizers)
@@ -50,6 +52,9 @@ endif()
 if(BUILD_TESTS)
   enable_testing()
   include(GoogleTest)
+  # Test binaries are listed when ctest runs, not after every link, so a build
+  # does not wait on running each one with --gtest_list_tests.
+  set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
   foreach(suite IN LISTS PYCHRON_LIBS ITEMS integration)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/${suite}/CMakeLists.txt")
       add_subdirectory(tests/${suite})

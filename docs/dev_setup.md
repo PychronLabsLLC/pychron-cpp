@@ -14,9 +14,18 @@ xcode-select --install                              # Apple clang
 curl -LsSf https://astral.sh/uv/install.sh | sh     # uv (Python tooling)
 uv tool install cmake
 uv tool install ninja
+brew install ccache
 ```
 
-Homebrew `cmake`/`ninja` work equally well.
+Homebrew `cmake`/`ninja` work equally well. The `dev` presets use Ninja, and
+compile through ccache when it is installed (`cmake/PychronCcache.cmake`;
+`-DPYCHRON_CCACHE=OFF` turns it off). The cache is keyed relative to the
+source tree, so a fresh build directory or a new git worktree reuses objects
+any checkout on the machine already compiled.
+
+A `build/dev` or `build/dev-ui` configured before the switch to Ninja was
+made with Unix Makefiles, and CMake refuses to change the generator of an
+existing build directory: delete it once and configure again.
 
 ### Python >= 3.12 (embedded scripting host)
 
@@ -96,6 +105,15 @@ cd ~/Programming/pychron-cpp
 cmake --preset dev
 cmake --build --preset dev --parallel
 ctest --preset dev
+```
+
+`ctest --preset dev` runs on every core. While working, `ctest --preset
+dev-quick` skips the slow importer suites, and a single suite is quickest run
+from its binary directly:
+
+```bash
+cmake --build --preset dev --target pychron_core_tests
+build/dev/tests/core/pychron_core_tests --gtest_filter='Clock*'
 ```
 
 With the UI:
