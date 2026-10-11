@@ -19,7 +19,9 @@ using namespace pychron::experiment::plan;
 
 namespace {
 
-const fs::path kFixtures = fs::path(__FILE__).parent_path() / "fixtures" / "plans";
+// Given by the build, not taken from __FILE__: a generator that compiles with
+// relative paths (Ninja) makes that one relative to the build directory.
+const fs::path kFixtures = PYCHRON_PLAN_FIXTURES_DIR;
 
 std::string read_file(const fs::path& p) {
   std::ifstream in(p);

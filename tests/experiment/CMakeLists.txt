@@ -13,7 +13,8 @@ if(PYCHRON_EXPERIMENT_TESTS)
   target_link_libraries(pychron_experiment_tests PRIVATE pychron::experiment GTest::gtest_main)
   target_compile_definitions(pychron_experiment_tests PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
-    PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+    PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
+    PYCHRON_PLAN_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/plans")
   # virtual_time.hpp
   target_include_directories(pychron_experiment_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
   if(TARGET pychron_metrics)
