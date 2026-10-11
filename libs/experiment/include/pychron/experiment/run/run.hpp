@@ -18,7 +18,8 @@
 //   truncate()   ends the current measurement block; the run saves as
 //                Success with truncated = true
 // A post-measurement failure still saves. A save failure ends
-// Failed(save_error) with the record left in the spool.
+// Failed(save_error) with the record left in the spool; a record the persister
+// did not take leaves the run as it was, flagged save_error (RunResult).
 //
 // Hooks let the executor coordinate overlapped runs: acquire/release of the
 // extraction device and the spectrometer, and the overlap / pump-time
@@ -31,6 +32,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -138,9 +140,18 @@ struct RunNote {
   TimePoint ts{};
 };
 
+// How the note of a run begins whose record was spooled and not taken by the
+// persister; the persister's own words follow. Whoever reports such a run
+// (the notification, the queue table) finds its reason by this.
+inline constexpr std::string_view kNotSavedNote = "not saved to the data store, kept in the spool: ";
+
 struct RunResult {
   RunState state = RunState::Pending;
   bool truncated = false;
+  // The record is not where finished runs go. Either it could not be spooled
+  // or finalized (the run is then Failed), or it is in the spool and the
+  // persister did not take it (the run keeps its state: a measured run is
+  // still Success, and a note that begins with kNotSavedNote says why).
   bool save_error = false;
   std::optional<Error> error;
   std::string uuid;

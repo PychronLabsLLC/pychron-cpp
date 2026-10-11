@@ -227,7 +227,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     wait_->clear();
     state_->setText(q(exec::to_string(exec::ExecutorState::Idle)));
     const auto pending = bridge_.session().pending_saves();
-    spool_->setText(pending_text(pending));
+    spool_->setText(pending_text(pending, bridge_.session().last_save_error()));
     spool_->setVisible(pending > 0);
     set_running(false);
   });
@@ -327,10 +327,15 @@ QString ExecutorPane::progress_text() const { return progress_label_->text(); }
 QString ExecutorPane::run_text() const { return run_label_->text(); }
 QString ExecutorPane::wait_text() const { return wait_->text(); }
 QString ExecutorPane::error_text() const { return banner_->isHidden() ? QString() : banner_label_->text(); }
-QString ExecutorPane::pending_text(std::size_t pending) const {
-  return bridge_.saves_to_database()
-             ? tr("%n run(s) waiting to be saved to the database", nullptr, static_cast<int>(pending))
-             : tr("%n record(s) in the spool", nullptr, static_cast<int>(pending));
+QString ExecutorPane::pending_text(std::size_t pending, const std::optional<std::string>& why) const {
+  QString count = bridge_.saves_to_database()
+                      ? tr("%n run(s) waiting to be saved to the database", nullptr, static_cast<int>(pending))
+                      : tr("%n record(s) in the spool", nullptr, static_cast<int>(pending));
+  if (!why || why->empty()) return count;
+  // A database's refusal comes with its statement, on several lines: one line here, the row has the rest.
+  QString reason = QString::fromStdString(*why).simplified();
+  if (reason.size() > 300) reason = reason.left(300) + QStringLiteral("...");
+  return count + QStringLiteral(": ") + reason;
 }
 
 QString ExecutorPane::spool_text() const { return spool_->isHidden() ? QString() : spool_->text(); }

@@ -543,7 +543,15 @@ Result<void> Run::save() {
   result_.record = finalized ? *finalized : b.draft();
   if (s_.save != nullptr) {
     // Spooled even when incomplete, so nothing measured is lost.
-    if (auto r = s_.save->save(*result_.record); !r) return r;
+    auto saved = s_.save->save(*result_.record);
+    if (!saved) return fail(saved.error());
+    if (saved->pending) {
+      // In the spool, and not where finished runs go: the run is what it
+      // was, flagged, and says why. The queue goes on; the record is sent
+      // again when a queue next starts.
+      result_.save_error = true;
+      note(std::string(kNotSavedNote) + saved->pending->what);
+    }
   }
   if (!finalized) return fail(finalized.error());
   return {};

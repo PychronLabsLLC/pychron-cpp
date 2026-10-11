@@ -459,7 +459,12 @@ void QueueTableModel::on_run_finished(const experiment::executor::RunFinished& e
   st.aliquot = s.aliquot;
   st.step = s.step;
   st.error = s.error ? q(*s.error) : QString();
-  if (s.save_error && st.error.isEmpty()) st.error = tr("saved to the spool only");
+  if (s.save_error && st.error.isEmpty()) {
+    // A run that was measured and not taken by the store said why as it ended.
+    st.error = tr("saved to the spool only");
+    for (const auto& m : s.messages)
+      if (m.starts_with(experiment::run::kNotSavedNote)) st.error = q(m);
+  }
   run_rows_[s.run_id] = row;
   row_changed(row);
 }

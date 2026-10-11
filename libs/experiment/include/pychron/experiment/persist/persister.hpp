@@ -6,8 +6,9 @@
 //                       database persister and git mirror come later)
 //   Spool               local, durable copy written before anything else
 //   SavePipeline        spool first, then hand the record to the persister;
-//                       a persister failure never blocks the next run and is
-//                       retried by flush() and on startup (recover())
+//                       a persister failure never blocks the next run, is
+//                       told to the caller (Saved::pending) and is retried by
+//                       flush() and on startup (recover())
 //   AliquotAllocator    one source of truth for aliquot numbers
 //
 // Record files are deterministic JSON (record/serialize.hpp).
@@ -89,6 +90,14 @@ class Spool {
   std::filesystem::path dir_;
 };
 
+// What became of a record that was spooled.
+struct Saved {
+  // Why the persister did not take it: the record is in the spool and will be
+  // sent again (flush(), recover()). Empty when the persister has it, and
+  // when the hand-off was posted and its outcome is not known yet.
+  std::optional<Error> pending;
+};
+
 // Spool-first save. With a `post` function the hand-off to the persister runs
 // through it (e.g. onto a Scheduler worker); without one it runs inline.
 class SavePipeline {
@@ -99,8 +108,8 @@ class SavePipeline {
       : spool_(spool), persister_(persister), post_(std::move(post)) {}
 
   // Fails only if the record cannot be spooled (then it is lost: Failed(save_error)).
-  // A persister failure leaves it pending.
-  Result<void> save(const record::AnalysisRecord& record);
+  // A persister failure leaves it pending, and the answer says why.
+  Result<Saved> save(const record::AnalysisRecord& record);
 
   // Retries every pending record; returns how many were persisted. The first
   // failure is returned only if nothing could be persisted.
@@ -109,6 +118,8 @@ class SavePipeline {
   Result<std::size_t> recover() { return flush(); }
 
   std::size_t pending() const;
+  // "<record uuid>: <why>" for the hand-off that failed last, until that
+  // record has been sent; empty when none failed or the last one has gone.
   std::optional<std::string> last_error() const;
 
  private:
@@ -118,7 +129,7 @@ class SavePipeline {
   IAnalysisPersister& persister_;
   Post post_;
   mutable std::mutex mutex_;
-  std::optional<std::string> last_error_;
+  std::optional<std::pair<std::string, std::string>> last_error_;  // record uuid, why
 };
 
 struct Allocation {

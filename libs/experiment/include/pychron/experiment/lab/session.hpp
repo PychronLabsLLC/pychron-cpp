@@ -112,6 +112,10 @@ class LabSession {
   // start() and wait() are called from one thread (the owner's).
   std::optional<executor::QueueResult> wait();
   std::size_t pending_saves() const;  // records still in the spool
+  // Why the last record that was not taken is still in the spool
+  // ("<record uuid>: <the persister's text>"); empty when none was refused
+  // or that record has since been sent.
+  std::optional<std::string> last_save_error() const;
   TimePoint now() const;              // the line's clock (simulated or not)
   // Sends a test message on every configured channel (non-blocking).
   void notify_test();

@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 
 #include <QString>
@@ -71,8 +72,9 @@ class ExecutorPane : public QWidget {
   QString error_text() const;
   QString spool_text() const;
   // The line for `pending` runs not yet saved: in the spool, or, when the
-  // session saves to a database, waiting for it.
-  QString pending_text(std::size_t pending) const;
+  // session saves to a database, waiting for it; then, when there is one, why
+  // the last was not taken (LabSession::last_save_error), on the same line.
+  QString pending_text(std::size_t pending, const std::optional<std::string>& why = {}) const;
   QString notify_text() const;
   int counts_value() const;
   int counts_maximum() const;

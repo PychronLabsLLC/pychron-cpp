@@ -158,6 +158,25 @@ TEST(Notifications, MessagesNameTheRunAndTheQueue) {
   EXPECT_EQ(q.fields.at("failed"), "1");
 }
 
+// A run that was measured and could not be saved is not a failed run: the
+// message says what happened to it, and why.
+TEST(Notifications, ARunThatWasNotSavedSaysSoAndWhy) {
+  executor::RunSummary r;
+  r.row = 2;
+  r.identifier = "66001";
+  r.aliquot = 3;
+  r.state = run::RunState::Success;
+  r.save_error = true;
+  r.messages = {"hole 3: centered", "not saved to the data store, kept in the spool: the database is locked"};
+  auto n = run_failed_notification("q1", r);
+  EXPECT_EQ(n.subject, "pychron: run 66001-3 not saved (queue q1)");
+  EXPECT_NE(n.body.find("Saving:  failed; the record is in the spool and will be saved again\n"), std::string::npos)
+      << n.body;
+  EXPECT_NE(n.body.find("Reason:  the database is locked\n"), std::string::npos) << n.body;
+  EXPECT_EQ(n.fields.at("save_error"), "true");
+  EXPECT_EQ(n.fields.at("state"), "success");
+}
+
 TEST(Notifications, EmailGoesThroughCurlWithItsOptionsOnStdin) {
   set_env("PYCHRON_TEST_SMTP_PW", "s3cret");
   auto c = NotificationConfig::from_toml(R"(

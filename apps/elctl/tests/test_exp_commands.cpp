@@ -541,10 +541,41 @@ TEST_F(ElctlExpStoreTest, AnInstallsQueueGoesToItsDatabase) {
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::seconds(60));
   EXPECT_TRUE(contains(o.out, "5/5 run(s) succeeded; in " + install_db() + "\n")) << o.out;
+  EXPECT_FALSE(contains(o.out, "not saved")) << o.out;
   EXPECT_FALSE(contains(o.out, "records in")) << o.out;
   EXPECT_EQ(runids(install_db()), (std::vector<std::string>{"ba-01", "a-01", "a-02", "a-03", "ba-02"}));
   EXPECT_FALSE(fs::exists(root_ / "data" / "records" / "ba" / "ba-1.json"));
   EXPECT_TRUE(!fs::exists(root_ / "data" / "spool") || fs::is_empty(root_ / "data" / "spool"));
+}
+
+// The database takes no analysis (a trigger of the test's refuses each one):
+// every run is measured, says that it was not saved and why, and the last
+// lines say how many are waiting, where, and why.
+TEST_F(ElctlExpStoreTest, RunsTheDatabaseDidNotTakeAreSaidWithTheReason) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  {
+    QSqlDatabase d = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("exp-refuse-test"));
+    d.setDatabaseName(QString::fromStdString((root_ / "data" / "pychron.db").string()));
+    ASSERT_TRUE(d.open());
+    QSqlQuery q(d);
+    ASSERT_TRUE(q.exec(QStringLiteral(
+        "CREATE TRIGGER no_room BEFORE INSERT ON analysis BEGIN SELECT RAISE(ABORT, 'no room on the disk'); END")));
+    d.close();
+  }
+  QSqlDatabase::removeDatabase(QStringLiteral("exp-refuse-test"));
+
+  const auto o = run_queue(root_ / "experiment.toml");
+  EXPECT_EQ(o.code, 0) << o.out << o.err;  // the queue ran and every record is kept
+  EXPECT_TRUE(contains(o.out, "run 0 ba-1: success (not saved)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "  ba: not saved to the data store, kept in the spool: ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "queue completed")) << o.out;
+  EXPECT_TRUE(contains(o.out, "5/5 run(s) succeeded; 0 of them in " + install_db() + "\n")) << o.out;
+  const std::string waiting = "warning: 5 record(s) waiting in " + (root_ / "data" / "spool").string() + ": ";
+  ASSERT_TRUE(contains(o.out, waiting)) << o.out;
+  const auto line = o.out.substr(o.out.find(waiting));
+  EXPECT_TRUE(contains(line.substr(0, line.find('\n')), "no room on the disk")) << line;  // on that one line
+  EXPECT_LT(line.find('\n'), waiting.size() + 400) << line;  // and not the whole statement
+  EXPECT_TRUE(runids(install_db()).empty());
 }
 
 TEST_F(ElctlExpStoreTest, DbOverridesTheInstall) {

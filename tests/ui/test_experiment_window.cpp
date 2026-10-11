@@ -348,6 +348,12 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(window.executor()->pending_text(2), QStringLiteral("2 record(s) in the spool"));
     bridge.set_saves_to_database(true);
     QCOMPARE(window.executor()->pending_text(2), QStringLiteral("2 run(s) waiting to be saved to the database"));
+    // With the reason the last one was refused, on one line.
+    QCOMPARE(window.executor()->pending_text(2, std::string("7f3a: identifier 'zz' is unknown\n  SQL: insert")),
+             QStringLiteral("2 run(s) waiting to be saved to the database: 7f3a: identifier 'zz' is unknown SQL: insert"));
+    bridge.set_saves_to_database(false);
+    QCOMPARE(window.executor()->pending_text(1, std::string("7f3a: disk full")),
+             QStringLiteral("1 record(s) in the spool: 7f3a: disk full"));
   }
 
   void withoutNotificationsATestSaysSo() {

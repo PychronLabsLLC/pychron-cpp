@@ -482,8 +482,11 @@ Notification run_failed_notification(const std::string& queue, const executor::R
   n.event = NotifyEvent::RunFailed;
   const std::string label = run_label(run);
   const std::string state(run::to_string(run.state));
-  n.subject = "pychron: run " + label + " " + (run.state == run::RunState::Failed ? "failed" : state) + " (queue " +
-              queue + ")";
+  // A run that is reported only because its record was not saved did not fail.
+  const bool only_unsaved = run.save_error && run.state == run::RunState::Success;
+  n.subject = "pychron: run " + label + " " +
+              (run.state == run::RunState::Failed ? "failed" : only_unsaved ? "not saved" : state) + " (queue " + queue +
+              ")";
   std::ostringstream b;
   b << "Run " << label << " " << state << ".\n\n";
   b << "Queue:   " << queue << "\n";
@@ -491,6 +494,8 @@ Notification run_failed_notification(const std::string& queue, const executor::R
   if (!run.run_id.empty()) b << "Run id:  " << run.run_id << "\n";
   if (run.error) b << "Error:   " << *run.error << "\n";
   if (run.save_error) b << "Saving:  failed; the record is in the spool and will be saved again\n";
+  for (const auto& m : run.messages)
+    if (starts_with(m, run::kNotSavedNote)) b << "Reason:  " << m.substr(run::kNotSavedNote.size()) << "\n";
   n.body = b.str();
   n.fields = {{"queue", queue},
               {"identifier", run.identifier},

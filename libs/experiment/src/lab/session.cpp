@@ -288,6 +288,8 @@ std::optional<executor::QueueResult> LabSession::wait() {
 
 std::size_t LabSession::pending_saves() const { return services_->save.pending(); }
 
+std::optional<std::string> LabSession::last_save_error() const { return services_->save.last_error(); }
+
 TimePoint LabSession::now() const { return hardware_.line.clock().now(); }
 
 Result<std::size_t> LabSession::resume_row(const fs::path& data) {

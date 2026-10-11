@@ -62,6 +62,16 @@ class RecordingPersister final : public persist::IAnalysisPersister {
  public:
   RecordingPersister(fs::path root, std::vector<std::string> refusals, std::optional<std::string> cannot_check = {})
       : files_(std::move(root)), refusals_(std::move(refusals)), cannot_check_(std::move(cannot_check)) {}
+  // From now on save_analysis fails with this text (empty: it saves again).
+  void refuse_saves(std::string why) {
+    std::lock_guard lock(mutex_);
+    cannot_save_ = std::move(why);
+  }
+  // The queues it was asked to check, in order.
+  std::vector<QueueSpec> checked() {
+    std::lock_guard lock(mutex_);
+    return checked_;
+  }
   // Numbers from 7, which an empty FilePersister never hands out first.
   Result<int> next_aliquot(const std::string& identifier) override {
     auto n = files_.next_aliquot(identifier);
@@ -72,6 +82,7 @@ class RecordingPersister final : public persist::IAnalysisPersister {
   Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
   Result<void> save_analysis(const record::AnalysisRecord& r) override {
     std::lock_guard lock(mutex_);
+    if (!cannot_save_.empty()) return fail(ErrorKind::Io, cannot_save_);
     if (saved_.empty()) first_aliquot_ = r.identity.aliquot;
     saved_.push_back(r.identity.uuid);
     return {};
@@ -81,9 +92,16 @@ class RecordingPersister final : public persist::IAnalysisPersister {
     return files_.save_artifact(uuid, name, bytes);
   }
   Result<void> flush() override { return {}; }
-  Result<std::vector<std::string>> check_queue(const QueueSpec&) override {
+  // Refuses a row that will run (not skipped) whose identifier is `zz`, as a
+  // store refuses one its catalog lacks; and whatever it was told to refuse.
+  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override {
+    std::lock_guard lock(mutex_);
+    checked_.push_back(queue);
     if (cannot_check_) return fail(ErrorKind::Io, *cannot_check_);
-    return refusals_;
+    std::vector<std::string> lines = refusals_;
+    for (const auto& run : queue.runs)
+      if (!run.skip && run.id.identifier == "zz") lines.emplace_back("identifier 'zz' is not in the database");
+    return lines;
   }
   std::size_t saved() {
     std::lock_guard lock(mutex_);
@@ -101,6 +119,8 @@ class RecordingPersister final : public persist::IAnalysisPersister {
   int first_aliquot_ = 0;
   std::mutex mutex_;
   std::vector<std::string> saved_;
+  std::string cannot_save_;
+  std::vector<QueueSpec> checked_;
 };
 
 class LabSessionTest : public pychron::testing::VirtualTimeTest {
@@ -299,6 +319,74 @@ TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
   EXPECT_FALSE(fs::exists(dir_ / "data" / "records" / "bu" / "bu-1.json"));
   EXPECT_TRUE(fs::is_empty(dir_ / "data" / "spool"));
   EXPECT_EQ(session_->pending_saves(), 0u);
+}
+
+// The store is away for the whole queue: every run is measured and kept in
+// the spool, each says so and why, each is flagged (which is what the queue
+// table, the notification and the save-error counter go by), and the queue
+// goes on to its end. When the store is back the next start sends them.
+TEST_F(LabSessionTest, ARunTheStoreDidNotTakeIsFlaggedSaysWhyAndTheQueueGoesOn) {
+  lab_.notifications.commands.push_back({"log", {"notify-lab"}, {lab::NotifyEvent::RunFailed}});
+  std::mutex m;
+  std::vector<std::string> inputs;
+  auto runner = [&](const ProcessSpec& spec) -> Result<ProcessResult> {
+    std::lock_guard lock(m);
+    inputs.push_back(spec.input);
+    return ProcessResult{};
+  };
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  persister_->refuse_saves("the database is locked");
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, runner, persister_.get()});
+  std::vector<run::RunNote> notes;
+  auto sub = line_->bus().subscribe<run::RunNote>([&](const run::RunNote& n) {
+    std::lock_guard lock(m);
+    notes.push_back(n);
+  });
+  EXPECT_FALSE(session_->last_save_error().has_value());
+
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(result->runs.size(), 3u);
+  const std::string why = "not saved to the data store, kept in the spool: the database is locked";
+  for (const auto& r : result->runs) {
+    EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
+    EXPECT_TRUE(r.save_error) << r.identifier;
+    EXPECT_FALSE(r.error.has_value()) << r.identifier;
+    EXPECT_EQ(std::count(r.messages.begin(), r.messages.end(), why), 1) << r.identifier;
+  }
+  EXPECT_EQ(persister_->saved(), 0u);
+  EXPECT_EQ(session_->pending_saves(), 3u);
+  ASSERT_TRUE(session_->last_save_error().has_value());
+  EXPECT_NE(session_->last_save_error()->find("the database is locked"), std::string::npos);
+  {
+    std::lock_guard lock(m);
+    EXPECT_EQ(std::count_if(notes.begin(), notes.end(), [&](const run::RunNote& n) { return n.text == why; }), 3);
+  }
+  {
+    const Clock::Detached detached(clock_);
+    session_->notifier().wait_idle();
+  }
+  {
+    std::lock_guard lock(m);
+    ASSERT_EQ(inputs.size(), 3u);  // one message a run, as for a run that failed
+    EXPECT_NE(inputs[0].find("not saved (queue"), std::string::npos) << inputs[0];
+    EXPECT_NE(inputs[0].find("Reason:  the database is locked"), std::string::npos) << inputs[0];
+  }
+
+  // The store is back: the next queue's start sends what was kept.
+  persister_->refuse_saves("");
+  queue_.runs.resize(1);
+  ASSERT_TRUE(session_->start(queue_));
+  const auto again = session_->wait();
+  ASSERT_TRUE(again.has_value());
+  ASSERT_EQ(again->runs.size(), 1u);
+  EXPECT_FALSE(again->runs[0].save_error);
+  EXPECT_EQ(persister_->saved(), 4u);
+  EXPECT_EQ(session_->pending_saves(), 0u);
+  EXPECT_FALSE(session_->last_save_error().has_value());
 }
 
 // A subscriber learns the size of the queue before any of its runs starts

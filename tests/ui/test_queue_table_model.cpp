@@ -359,6 +359,20 @@ class TestQueueTableModel : public QObject {
     QCOMPARE(m->data(m->index(1, QueueTableModel::Status), Qt::BackgroundRole).value<QBrush>().color(),
              QueueTableModel::state_color(RunState::Success));
 
+    // Measured, and not saved: the row says why, in the run's own words.
+    s.save_error = true;
+    s.messages = {"hole 3: centered", "not saved to the data store, kept in the spool: the database is locked"};
+    m->on_run_finished(exec::RunFinished{s});
+    QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("success (truncated)"));
+    QCOMPARE(m->data(m->index(1, QueueTableModel::Status), Qt::ToolTipRole).toString().section(QLatin1Char('\n'), 0, 0),
+             QStringLiteral("not saved to the data store, kept in the spool: the database is locked"));
+    // Flagged with nothing said (a record that could not be finalized says it as the run's error).
+    s.messages.clear();
+    m->on_run_finished(exec::RunFinished{s});
+    QVERIFY(m->data(m->index(1, QueueTableModel::Status), Qt::ToolTipRole).toString().contains(
+        QStringLiteral("saved to the spool only")));
+    s.save_error = false;
+
     s.row = 2;
     s.run_id = "uuid-2";
     s.state = RunState::Failed;

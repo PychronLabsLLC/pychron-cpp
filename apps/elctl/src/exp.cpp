@@ -65,6 +65,27 @@ constexpr const char* kExpUsage =
     "       --sim-speed (with --sim): simulated time, <x> times faster than real time; max does not wait at all\n"
     "       elctl exp notify [--lab <dir>]   send a test notification (<lab>/notifications.toml)\n";
 
+// A text of several lines (a database's refusal, with its statement) as one
+// line of at most `limit` characters.
+std::string one_line(const std::string& text, std::size_t limit = 300) {
+  std::string out;
+  bool space = false;
+  for (const char c : text) {
+    if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+      space = !out.empty();
+      continue;
+    }
+    if (space) out += ' ';
+    space = false;
+    out += c;
+  }
+  if (out.size() > limit) {
+    out.resize(limit);
+    out += "...";
+  }
+  return out;
+}
+
 std::string clock_text(experiment::Duration d) {
   const auto total = static_cast<long long>(std::llround(d.count()));
   std::ostringstream s;
@@ -348,6 +369,7 @@ class Exp {
       std::string line_text = "run " + std::to_string(r.row) + " " + r.identifier + "-" + std::to_string(r.aliquot) +
                               r.step + ": " + std::string(run::to_string(r.state));
       if (r.truncated) line_text += " (truncated)";
+      if (r.save_error && r.state == run::RunState::Success) line_text += " (not saved)";  // the run said why
       if (r.error) line_text += ": " + *r.error;
       say(line_text);
       for (const auto& c : r.queue_changes) say("  queue: " + c);
@@ -402,13 +424,21 @@ class Exp {
     subs.clear();
 
     say("queue " + std::string(executor::to_string(result.end)) + (result.reason.empty() ? "" : ": " + result.reason));
-    int ok_runs = 0;
-    for (const auto& r : result.runs) ok_runs += r.state == run::RunState::Success ? 1 : 0;
+    int ok_runs = 0, saved_runs = 0;
+    for (const auto& r : result.runs) {
+      ok_runs += r.state == run::RunState::Success ? 1 : 0;
+      saved_runs += r.state == run::RunState::Success && !r.save_error ? 1 : 0;
+    }
+    // Where the runs went; and, when some got no further than the spool, how many did.
+    const std::string where = store_ ? "in " + show_database(a_.db) : "records in " + (a_.data / "records").string();
     say(std::to_string(ok_runs) + "/" + std::to_string(result.runs.size()) + " run(s) succeeded; " +
-        (store_ ? "in " + show_database(a_.db) : "records in " + (a_.data / "records").string()));
+        (saved_runs == ok_runs ? "" : std::to_string(saved_runs) + " of them ") + where);
     if (session.pending_saves() > 0) {
+      // The reason is the last refusal's; it is the persister's text, which never holds the password.
+      const auto why = session.last_save_error();
       say("warning: " + std::to_string(session.pending_saves()) + " record(s) " +
-          (store_ ? "waiting in " + (a_.data / "spool").string() : std::string("still in the spool")));
+          (store_ ? "waiting in " + (a_.data / "spool").string() : std::string("still in the spool")) +
+          (why ? ": " + one_line(*why) : std::string()));
     }
     const bool good = result.end == executor::QueueEnd::Completed || result.end == executor::QueueEnd::Stopped;
     return good ? kOk : kFailed;

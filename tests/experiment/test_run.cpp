@@ -314,6 +314,53 @@ TEST_F(RunTest, WhatARunSaysIsPublishedAndKeptInItsRecord) {
   EXPECT_EQ(saved->events, r.record->events);
 }
 
+// The persister of a pipeline that will not take the record. Everything else
+// is the lab's files.
+class RefusingPersister final : public persist::IAnalysisPersister {
+ public:
+  explicit RefusingPersister(persist::FilePersister& files) : files_(files) {}
+  Result<int> next_aliquot(const std::string& identifier) override { return files_.next_aliquot(identifier); }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return files_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
+  Result<void> save_analysis(const record::AnalysisRecord&) override {
+    return fail(ErrorKind::Io, "identifier '12345' is unknown");
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return files_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
+
+ private:
+  persist::FilePersister& files_;
+};
+
+// The run was measured and its record is safe in the spool: it is a success,
+// and it is flagged, and it says why it is not where it should be.
+TEST_F(RunTest, ARunThePersisterDidNotTakeSucceedsFlaggedAndSaysWhy) {
+  RefusingPersister refusing(lab_.files);
+  persist::SavePipeline pipeline(lab_.spool, refusing);
+  auto s = services();
+  s.persister = &refusing;
+  s.save = &pipeline;
+  std::vector<RunNote> said;
+  auto sub = bus_.subscribe<RunNote>([&](const RunNote& n) { said.push_back(n); });
+  AutomatedRun run(unknown_run("12345"), queue_, s);
+  auto r = run.execute(control_);
+  EXPECT_EQ(r.state, RunState::Success);
+  EXPECT_TRUE(r.save_error);
+  EXPECT_FALSE(r.error.has_value());
+  ASSERT_FALSE(r.messages.empty());
+  EXPECT_EQ(r.messages.back(), "not saved to the data store, kept in the spool: identifier '12345' is unknown");
+  ASSERT_FALSE(said.empty());
+  EXPECT_EQ(said.back().text, r.messages.back());
+  EXPECT_EQ(pipeline.pending(), 1u);
+  ASSERT_TRUE(r.record);
+  EXPECT_FALSE(r.record->provenance.sha.empty());  // finalized: it can be sent as it is
+  ASSERT_TRUE(lab_.spool.get(r.record->identity.uuid));
+}
+
 TEST_F(RunTest, IncompleteRecordFailsWithSaveErrorAndStaysInTheSpool) {
   auto s = services();
   s.spectrometer_info = nullptr;  // no state hash: the record cannot be finalized
