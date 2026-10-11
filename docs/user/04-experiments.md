@@ -728,6 +728,23 @@ the Executor pane shows overlapping runs in separate lanes, and the
 **Waiting** line says what each is waiting for (the delay, the device, pump
 time).
 
+The timeline does not try to show a long queue all at once. It follows the
+last six runs up to now, so the run in progress and the ones before it stay
+wide enough to read however long the queue has been running. To look further
+back:
+
+| Do this | To |
+|---|---|
+| Ctrl+wheel (Cmd+wheel on macOS) | Zoom in or out about the time under the pointer, from ten seconds to the whole queue. A plain wheel scrolls the pane as usual. |
+| Drag | Move the window earlier or later. |
+| Double-click, or the **Follow** button | Go back to the runs in progress. The button shows whenever the timeline is not following. |
+| Right-click | Follow the last 3, 6 or 12 runs, or show the **Whole queue**. The number of runs is remembered. |
+
+A window you have moved stays where you put it while the queue runs on; the
+dashed line that marks now is drawn only when the window includes it.
+Starting a queue always returns the timeline to following. The times along
+the bottom are elapsed time since the queue's first event.
+
 ### 8.5 What is written: run records
 
 Where a finished run goes depends on whether the program has a database.

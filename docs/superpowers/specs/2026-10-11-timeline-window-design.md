@@ -1,6 +1,7 @@
 # Timeline window: Waits and Lanes on a long queue
 
-Status: agreed 2026-10-11 (owner's decisions in section 8). Task T043
+Status: implemented 2026-10-11 (owner's decisions in section 8; what the
+code settled, section 9). Task T043
 (`pychron usage notes.md`), from T006.
 
 ## 1. Problem
@@ -135,3 +136,19 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
 1. Follow window is by run count: last 6 runs. Not by time.
 2. Zoom needs Ctrl held; plain wheel scrolls the pane.
 3. No whole-queue strip above the window.
+
+## 9. As built
+
+- View's accessors are `time_window()` and `set_time_window(t0, t1)`:
+  `window()` is `QWidget`'s.
+- Follow window is never narrower than 10 s either: `[start, max(start + 10,
+  now)]`.
+- A press that moves under 3 px is a click, not a pan: view stays in Follow.
+- `visible()` assumes starts never go backwards. Model notes the first one
+  that does and from then on answers by looking at every segment: slower,
+  still right.
+- Follow button shows in Whole queue too (any mode but Follow).
+- Settings key: `experiment_window/timeline_follow_runs`.
+- Measured after, same synthetic 1000-run queue, 1200 px: Follow draws 36
+  segments, 18 labelled, widest 127 px, 1.7 ms a paint; Whole queue 6000
+  segments, 11.9 ms. Feeding the model 1000 runs: 11 ms (was 213 ms).
