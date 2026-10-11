@@ -3,9 +3,15 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QAction>
+#include <QContextMenuEvent>
 #include <QHelpEvent>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QToolButton>
 #include <QToolTip>
+#include <QWheelEvent>
 #include <ranges>
 #include <tuple>
 #include <utility>
@@ -22,6 +28,9 @@ using experiment::run::RunState;
 constexpr int kRowHeight = 20;
 constexpr int kLabelWidth = 56;
 constexpr int kAxisHeight = 16;
+constexpr double kZoomPerNotch = 1.25;
+constexpr double kWheelNotch = 120;  // angleDelta of one notch
+constexpr double kDragThreshold = 3;  // px a press may move and still be a click
 
 bool final_state(RunState s) {
   return s == RunState::Success || s == RunState::Failed || s == RunState::Cancelled || s == RunState::Aborted;
@@ -178,9 +187,28 @@ double TimelineModel::drawn_end(const TimelineSegment& s) const {
 
 // ---- view ------------------------------------------------------------------
 
-TimelineView::TimelineView(const TimelineModel& model, QWidget* parent) : QWidget(parent), model_(model) {
+TimelineView::TimelineView(const TimelineModel& model, QWidget* parent)
+    : QWidget(parent), model_(model), follow_(new QToolButton(this)) {
   setMouseTracking(true);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  follow_->setText(tr("Follow"));
+  follow_->setToolTip(tr("Back to the runs in progress"));
+  follow_->setFixedHeight(kRowHeight - 2);
+  follow_->setCursor(Qt::ArrowCursor);
+  follow_->hide();
+  connect(follow_, &QToolButton::clicked, this, [this] { set_mode(Mode::Follow); });
+  for (int runs : {3, kFollowRuns, 12}) {
+    auto* follow = new QAction(tr("Follow last %1 runs").arg(runs), this);
+    connect(follow, &QAction::triggered, this, [this, runs] {
+      set_follow_runs(runs);
+      set_mode(Mode::Follow);
+      emit follow_runs_changed(runs);
+    });
+    actions_ << follow;
+  }
+  auto* whole = new QAction(tr("Whole queue"), this);
+  connect(whole, &QAction::triggered, this, [this] { set_mode(Mode::WholeQueue); });
+  actions_ << whole;
 }
 
 QSize TimelineView::sizeHint() const {
@@ -196,7 +224,12 @@ double TimelineView::full_end() const { return std::max(kMinSpan, model_.now());
 
 void TimelineView::set_mode(Mode mode) {
   if (mode == Mode::Free && mode_ != Mode::Free) std::tie(t0_, t1_) = time_window();  // stays where it was
+  apply_mode(mode);
+}
+
+void TimelineView::apply_mode(Mode mode) {
   mode_ = mode;
+  follow_->setVisible(mode_ != Mode::Follow);
   update();
 }
 
@@ -223,8 +256,7 @@ void TimelineView::set_time_window(double t0, double t1) {
   const double span = std::clamp(t1 - t0, kMinSpan, end);
   t0_ = std::clamp(t0, 0.0, end - span);
   t1_ = t0_ + span;
-  mode_ = Mode::Free;
-  update();
+  apply_mode(Mode::Free);
 }
 
 // Empty for a segment the window does not show; one that crosses an edge of
@@ -308,6 +340,61 @@ void TimelineView::paintEvent(QPaintEvent*) {
     p.setPen(QPen(theme().error, 1, Qt::DashLine));
     p.drawLine(QPointF(xn, area.top()), QPointF(xn, area.bottom()));
   }
+}
+
+// Ctrl+wheel zooms about the time under the cursor. A plain wheel is not
+// ours: the pane the view sits in scrolls with it.
+void TimelineView::wheelEvent(QWheelEvent* event) {
+  const double notches = event->angleDelta().y() / kWheelNotch;
+  if (!event->modifiers().testFlag(Qt::ControlModifier) || notches == 0) {
+    event->ignore();
+    return;
+  }
+  const auto [t0, t1] = time_window();
+  const QRectF area = plot_area();
+  const double at = std::clamp((event->position().x() - area.left()) / area.width(), 0.0, 1.0);
+  const double span = std::clamp((t1 - t0) * std::pow(kZoomPerNotch, -notches), kMinSpan, full_end());
+  const double start = t0 + at * (t1 - t0) - at * span;
+  set_time_window(start, start + span);
+  event->accept();
+}
+
+void TimelineView::mousePressEvent(QMouseEvent* event) {
+  if (event->button() != Qt::LeftButton) return QWidget::mousePressEvent(event);
+  drag_from_ = event->position();
+  std::tie(drag_t0_, drag_t1_) = time_window();
+}
+
+void TimelineView::mouseMoveEvent(QMouseEvent* event) {
+  if (!drag_from_) return QWidget::mouseMoveEvent(event);
+  const double dx = event->position().x() - drag_from_->x();
+  if (mode_ != Mode::Free && std::abs(dx) < kDragThreshold) return;  // still a click
+  const double dt = -dx / plot_area().width() * (drag_t1_ - drag_t0_);
+  set_time_window(drag_t0_ + dt, drag_t1_ + dt);
+}
+
+void TimelineView::mouseReleaseEvent(QMouseEvent* event) {
+  drag_from_.reset();
+  QWidget::mouseReleaseEvent(event);
+}
+
+void TimelineView::mouseDoubleClickEvent(QMouseEvent* event) {
+  if (event->button() != Qt::LeftButton) return QWidget::mouseDoubleClickEvent(event);
+  drag_from_.reset();
+  set_mode(Mode::Follow);
+}
+
+void TimelineView::contextMenuEvent(QContextMenuEvent* event) {
+  QMenu menu(this);
+  menu.addActions(actions_);
+  menu.exec(event->globalPos());
+}
+
+void TimelineView::resizeEvent(QResizeEvent* event) {
+  QWidget::resizeEvent(event);
+  const QRectF area = plot_area();
+  follow_->adjustSize();
+  follow_->move(static_cast<int>(area.right()) - follow_->width() - 1, static_cast<int>(area.top()) + 1);
 }
 
 bool TimelineView::event(QEvent* event) {

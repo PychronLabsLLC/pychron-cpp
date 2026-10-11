@@ -2,6 +2,12 @@
 
 #include <QtTest/QtTest>
 
+#include <QAction>
+#include <QApplication>
+#include <QSignalSpy>
+#include <QToolButton>
+#include <QWheelEvent>
+
 #include "timeline.hpp"
 
 using pychron::TimePoint;
@@ -64,6 +70,16 @@ class TestTimeline : public QObject {
       m.on_state(state(id.c_str(), RunState::PostMeasuring, RunState::Success, b + 1480));
     }
   }
+
+  // One wheel notch at `at`; true when the view took it.
+  static bool wheel(TimelineView& v, QPoint at, int notches, Qt::KeyboardModifiers modifiers) {
+    QWheelEvent e(QPointF(at), QPointF(v.mapToGlobal(at)), QPoint(), QPoint(0, 120 * notches), Qt::NoButton, modifiers,
+                  Qt::NoScrollPhase, false);
+    e.setAccepted(false);
+    QApplication::sendEvent(&v, &e);
+    return e.isAccepted();
+  }
+  static constexpr double kPlotLeft = 56, kPlotWidth = 1200 - 56 - 6;
 
  private slots:
   void aThousandRunsLeaveNothingOpen() {
@@ -268,6 +284,114 @@ class TestTimeline : public QObject {
     QCOMPARE(v.time_window(), std::make_pair(50.0, 60.0));
     v.set_time_window(-1e9, 1e9);  // never wider than the queue
     QCOMPARE(v.time_window(), std::make_pair(0.0, m.now()));
+  }
+
+  void ctrlWheelZoomsAboutTheCursor() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    const auto [a0, a1] = v.time_window();
+    const QPoint p(600, 30);
+    const double under = a0 + (p.x() - kPlotLeft) / kPlotWidth * (a1 - a0);
+    QVERIFY(wheel(v, p, 1, Qt::ControlModifier));
+    QCOMPARE(v.mode(), TimelineView::Mode::Free);
+    const auto [b0, b1] = v.time_window();
+    QCOMPARE(b1 - b0, (a1 - a0) / 1.25);
+    QVERIFY(std::abs(b0 + (p.x() - kPlotLeft) / kPlotWidth * (b1 - b0) - under) < 1e-6 * (a1 - a0));
+    QVERIFY(wheel(v, p, -1, Qt::ControlModifier));  // and out again
+    QVERIFY(std::abs((v.time_window().second - v.time_window().first) - (a1 - a0)) < 1e-6);
+  }
+
+  void aPlainWheelIsLeftToThePane() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    const auto before = v.time_window();
+    QVERIFY(!wheel(v, QPoint(600, 30), 1, Qt::NoModifier));
+    QVERIFY(!wheel(v, QPoint(600, 30), -3, Qt::ShiftModifier));
+    QCOMPARE(v.mode(), TimelineView::Mode::Follow);
+    QCOMPARE(v.time_window(), before);
+  }
+
+  void zoomStopsAtTenSecondsAndAtTheQueue() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    for (int i = 0; i < 100; ++i) wheel(v, QPoint(600, 30), 1, Qt::ControlModifier);
+    QCOMPARE(v.time_window().second - v.time_window().first, 10.0);
+    for (int i = 0; i < 200; ++i) wheel(v, QPoint(600, 30), -1, Qt::ControlModifier);
+    QCOMPARE(v.time_window(), std::make_pair(0.0, m.now()));
+  }
+
+  void dragPansAndStaysInsideTheQueue() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    v.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&v));
+    const auto [a0, a1] = v.time_window();
+    const double per_px = (a1 - a0) / (v.width() - kPlotLeft - 6);
+    QTest::mousePress(&v, Qt::LeftButton, {}, QPoint(400, 30));
+    QCOMPARE(v.mode(), TimelineView::Mode::Follow);  // a press alone moves nothing
+    QTest::mouseMove(&v, QPoint(500, 30));
+    QCOMPARE(v.mode(), TimelineView::Mode::Free);
+    QVERIFY(std::abs(v.time_window().first - (a0 - 100 * per_px)) < 1e-6);  // dragged right: earlier
+    QVERIFY(std::abs(v.time_window().second - (a1 - 100 * per_px)) < 1e-6);
+    QTest::mouseMove(&v, QPoint(-100000, 30));  // far past the end
+    QCOMPARE(v.time_window().second, m.now());
+    QTest::mouseMove(&v, QPoint(100000000, 30));  // far past the start
+    QCOMPARE(v.time_window().first, 0.0);
+    QTest::mouseRelease(&v, Qt::LeftButton, {}, QPoint(500, 30));
+    const auto placed = v.time_window();
+    QTest::mouseMove(&v, QPoint(700, 30));  // no button: a hover
+    QCOMPARE(v.time_window(), placed);
+  }
+
+  void doubleClickAndTheButtonFollow() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    v.resize(1200, v.sizeHint().height());
+    v.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&v));
+    QVERIFY(v.follow_button()->isHidden());
+    v.set_time_window(0, 5000);
+    QVERIFY(!v.follow_button()->isHidden());
+    QVERIFY(v.follow_button()->geometry().right() <= v.width() - 6);
+    QTest::mouseDClick(&v, Qt::LeftButton, {}, QPoint(400, 30));
+    QCOMPARE(v.mode(), TimelineView::Mode::Follow);
+    QVERIFY(v.follow_button()->isHidden());
+    QCOMPARE(v.time_window().second, m.now());
+    v.set_time_window(0, 5000);
+    v.follow_button()->click();
+    QCOMPARE(v.mode(), TimelineView::Mode::Follow);
+    v.set_mode(TimelineView::Mode::WholeQueue);
+    QVERIFY(!v.follow_button()->isHidden());
+  }
+
+  void theMenuSetsTheRunsFollowed() {
+    TimelineModel m;
+    feed_long(m, 1000);
+    TimelineView v(m);
+    QStringList names;
+    for (const QAction* a : v.context_actions()) names << a->text();
+    QCOMPARE(names, (QStringList{QStringLiteral("Follow last 3 runs"), QStringLiteral("Follow last 6 runs"),
+                                 QStringLiteral("Follow last 12 runs"), QStringLiteral("Whole queue")}));
+    QSignalSpy changed(&v, &TimelineView::follow_runs_changed);
+    v.set_time_window(0, 5000);
+    v.context_actions()[0]->trigger();
+    QCOMPARE(v.mode(), TimelineView::Mode::Follow);
+    QCOMPARE(v.follow_runs(), 3);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.front().front().toInt(), 3);
+    QCOMPARE(v.time_window().first, m.run_starts()[997]);
+    v.context_actions()[3]->trigger();
+    QCOMPARE(v.mode(), TimelineView::Mode::WholeQueue);
+    QCOMPARE(changed.count(), 1);
   }
 
   void aWaitsPlannedEndBeyondTheWindowIsCut() {

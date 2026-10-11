@@ -13,6 +13,8 @@
 // The view shows a window of the queue's time, not all of it: a queue of a
 // thousand runs drawn whole is a pixel a run. It follows the last few runs
 // until the operator moves the window, and can show the whole queue.
+// Ctrl+wheel zooms about the cursor (a plain wheel is left to the pane),
+// dragging pans, and a double-click or the Follow button goes back to now.
 //
 // Times are the line's clock (simulated time under --sim-speed), in seconds
 // since the first event. Open segments grow with advance(now).
@@ -29,6 +31,8 @@
 #include <utility>
 #include <vector>
 
+#include <QList>
+#include <QPointF>
 #include <QString>
 #include <QTimer>
 #include <QWidget>
@@ -36,6 +40,9 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/run/state.hpp"
+
+class QAction;
+class QToolButton;
 
 namespace pychron::ui {
 
@@ -113,25 +120,45 @@ class TimelineView : public QWidget {
   void set_time_window(double t0, double t1);
   // How many segments the last paint drew.
   int drawn_count() const noexcept { return drawn_; }
+  // The context menu: follow the last 3, 6 or 12 runs, or the whole queue.
+  const QList<QAction*>& context_actions() const noexcept { return actions_; }
+  // Shown while the view is not following.
+  QToolButton* follow_button() const noexcept { return follow_; }
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
   // The segment under a point, for tooltips and tests.
   const TimelineSegment* segment_at(QPoint p) const;
   QRectF segment_rect(const TimelineSegment& s) const;
 
+ signals:
+  // The operator chose how many runs to follow.
+  void follow_runs_changed(int runs);
+
  protected:
   void paintEvent(QPaintEvent* event) override;
   bool event(QEvent* event) override;
+  void wheelEvent(QWheelEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
+  void mouseDoubleClickEvent(QMouseEvent* event) override;
+  void contextMenuEvent(QContextMenuEvent* event) override;
+  void resizeEvent(QResizeEvent* event) override;
 
  private:
   QRectF plot_area() const;
   double full_end() const;  // the end of the whole queue's window
+  void apply_mode(Mode mode);
 
   const TimelineModel& model_;
   Mode mode_ = Mode::Follow;
   int follow_runs_ = kFollowRuns;
   double t0_ = 0, t1_ = kMinSpan;  // the Free window
   int drawn_ = 0;
+  QToolButton* follow_;
+  QList<QAction*> actions_;
+  std::optional<QPointF> drag_from_;  // where a pan began, and the window then
+  double drag_t0_ = 0, drag_t1_ = 0;
 };
 
 }  // namespace pychron::ui
