@@ -45,6 +45,10 @@ void TimelineModel::clear() {
   lanes_.clear();
   names_.clear();
   busy_.clear();
+  open_.clear();
+  run_starts_.clear();
+  longest_ = 0;
+  ordered_ = true;
 }
 
 double TimelineModel::seconds(TimePoint ts) {
@@ -60,16 +64,61 @@ std::optional<int> TimelineModel::lane_of(const std::string& run_id) const {
   return it->second;
 }
 
+void TimelineModel::add(TimelineSegment s) {
+  if (!segments_.empty() && s.start < segments_.back().start) ordered_ = false;
+  open_.push_back(segments_.size());
+  segments_.push_back(std::move(s));
+}
+
+// `which` returns the end for a segment it closes, nullopt to leave it open.
+template <typename Pick>
+void TimelineModel::close_open(Pick which) {
+  std::erase_if(open_, [&](std::size_t i) {
+    TimelineSegment& s = segments_[i];
+    const std::optional<double> end = which(s);
+    if (!end) return false;
+    s.end = *end;
+    longest_ = std::max(longest_, *end - s.start);
+    return true;
+  });
+}
+
 void TimelineModel::close_run(const std::string& run_id, double at) {
-  for (auto& s : segments_)
-    if (s.run_id == run_id && !s.end) s.end = std::max(s.start, at);
+  close_open([&](const TimelineSegment& s) -> std::optional<double> {
+    if (s.run_id != run_id) return std::nullopt;
+    return std::max(s.start, at);
+  });
+}
+
+std::vector<std::size_t> TimelineModel::visible(double t0, double t1) const {
+  std::vector<std::size_t> out;
+  const auto shows = [&](std::size_t i) {
+    const TimelineSegment& s = segments_[i];
+    return s.start <= t1 && drawn_end(s) >= t0;
+  };
+  if (!ordered_) {
+    for (std::size_t i = 0; i < segments_.size(); ++i)
+      if (shows(i)) out.push_back(i);
+    return out;
+  }
+  // A closed segment that reaches t0 started no earlier than t0 - longest_.
+  const auto first = std::ranges::lower_bound(segments_, t0 - longest_, {}, &TimelineSegment::start);
+  const auto from = static_cast<std::size_t>(first - segments_.begin());
+  for (std::size_t i : open_)
+    if (i < from && shows(i)) out.push_back(i);
+  for (std::size_t i = from; i < segments_.size() && segments_[i].start <= t1; ++i)
+    if (shows(i)) out.push_back(i);
+  return out;
 }
 
 void TimelineModel::on_run_started(const experiment::executor::RunStarted& e) {
   const double t = seconds(e.ts);
   // The queue's own waits (a delay before this run) are over.
-  for (auto& s : segments_)
-    if (s.lane == 0 && s.run_id.empty() && !s.end) s.end = std::min(t, s.planned_end.value_or(t));
+  close_open([&](const TimelineSegment& s) -> std::optional<double> {
+    if (s.lane != 0 || !s.run_id.empty()) return std::nullopt;
+    return std::min(t, s.planned_end.value_or(t));
+  });
+  run_starts_.push_back(t);
   auto free = std::find(busy_.begin(), busy_.end(), false);
   int lane = 0;
   if (free == busy_.end()) {
@@ -93,7 +142,7 @@ void TimelineModel::on_state(const experiment::run::RunStateChanged& e) {
     return;
   }
   if (e.to == RunState::Pending) return;
-  segments_.push_back({it->second, e.run_id, names_[e.run_id], e.to, t, std::nullopt, std::nullopt});
+  add({it->second, e.run_id, names_[e.run_id], e.to, t, std::nullopt, std::nullopt});
 }
 
 void TimelineModel::on_waiting(const experiment::executor::ExecutorWaiting& e) {
@@ -105,13 +154,14 @@ void TimelineModel::on_waiting(const experiment::executor::ExecutorWaiting& e) {
   s.label = who + QString::fromStdString(e.reason);
   s.start = t;
   if (e.duration > experiment::Duration::zero()) s.planned_end = t + e.duration.count();
-  segments_.push_back(std::move(s));
+  add(std::move(s));
 }
 
 void TimelineModel::on_queue_ended(TimePoint ts) {
   const double t = seconds(ts);
-  for (auto& s : segments_)
-    if (!s.end) s.end = std::max(s.start, s.planned_end ? std::min(*s.planned_end, t) : t);
+  close_open([&](const TimelineSegment& s) -> std::optional<double> {
+    return std::max(s.start, s.planned_end ? std::min(*s.planned_end, t) : t);
+  });
   std::fill(busy_.begin(), busy_.end(), false);
 }
 

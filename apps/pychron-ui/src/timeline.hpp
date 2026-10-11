@@ -12,6 +12,12 @@
 //
 // Times are the line's clock (simulated time under --sim-speed), in seconds
 // since the first event. Open segments grow with advance(now).
+//
+// The model keeps every segment of the queue. Neither an event nor a paint
+// walks them all: open segments are indexed, and visible() gives the ones a
+// time window shows (docs/superpowers/specs/2026-10-11-timeline-window-design.md).
+
+#include <cstddef>
 
 #include <map>
 #include <optional>
@@ -54,9 +60,19 @@ class TimelineModel {
   double drawn_end(const TimelineSegment& s) const;
   std::optional<int> lane_of(const std::string& run_id) const;
 
+  // Indices, ascending, of the segments that show in [t0, t1].
+  [[nodiscard]] std::vector<std::size_t> visible(double t0, double t1) const;
+  // When each run started, in the order they did.
+  const std::vector<double>& run_starts() const noexcept { return run_starts_; }
+  std::size_t open_count() const noexcept { return open_.size(); }
+
  private:
   double seconds(TimePoint ts);
   void close_run(const std::string& run_id, double at);  // its open state and waits
+  void add(TimelineSegment s);                           // open, and indexed as such
+  // Closes the open segments `which` picks, each at the time it gives.
+  template <typename Pick>
+  void close_open(Pick which);
 
   std::optional<TimePoint> origin_;
   double now_ = 0;
@@ -64,6 +80,10 @@ class TimelineModel {
   std::map<std::string, int> lanes_;        // run id -> lane
   std::map<std::string, QString> names_;    // run id -> identifier
   std::vector<bool> busy_;                  // run lane i + 1 in use
+  std::vector<std::size_t> open_;           // segments without an end, ascending
+  std::vector<double> run_starts_;
+  double longest_ = 0;                      // the longest closed segment
+  bool ordered_ = true;                     // starts never went backwards
 };
 
 class TimelineView : public QWidget {
