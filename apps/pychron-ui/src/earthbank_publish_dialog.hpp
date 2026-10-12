@@ -111,7 +111,7 @@ class EarthbankPublishDialog : public QDialog {
   QPushButton* there_button() const noexcept { return there_; }
   QPushButton* not_there_button() const noexcept { return not_there_; }
   QProgressBar* progress() const noexcept { return progress_; }
-  QPlainTextEdit* result() const noexcept { return result_; }
+  QPlainTextEdit* result_pane() const noexcept { return result_; }
 
  private:
   struct Row {

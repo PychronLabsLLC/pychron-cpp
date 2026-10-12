@@ -193,7 +193,7 @@ class EarthbankPublishTest : public QObject {
     QVERIFY2(cell(*d, step, Column::Notes).contains(QStringLiteral("No Such Interpretation")),
              qPrintable(cell(*d, step, Column::Notes)));
     QVERIFY(!cell(*d, fus, Column::Notes).contains(QStringLiteral("No Such Interpretation")));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("'No Such Interpretation' is not known to EarthBank")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("'No Such Interpretation' is not known to EarthBank")));
     QCOMPARE(record_posts(w.bank), std::size_t{0});
 
     // Corrected, the row is clean again.
@@ -220,7 +220,7 @@ class EarthbankPublishTest : public QObject {
     QCOMPARE(files[0], QStringLiteral("ArArDataPoint_S-FUS.xlsx"));
     QCOMPARE(files[1], QStringLiteral("ArArDataPoint_S-STEP.xlsx"));
     QVERIFY(files[2].startsWith(QStringLiteral("Samples_")));
-    for (const QString& file : files) QVERIFY2(d->result()->toPlainText().contains(file), qPrintable(file));
+    for (const QString& file : files) QVERIFY2(d->result_pane()->toPlainText().contains(file), qPrintable(file));
     QVERIFY(d->show_folder_button()->isEnabled());
     d->show_folder_button()->click();
     QCOMPARE(shown, out);
@@ -272,7 +272,7 @@ class EarthbankPublishTest : public QObject {
     QCOMPARE(store.samples.size(), std::size_t{2});
     QCOMPARE(store.data_points.size(), std::size_t{2});
     QCOMPARE(store.measurements.size(), std::size_t{16});
-    const QString said = d->result()->toPlainText();
+    const QString said = d->result_pane()->toPlainText();
     QVERIFY2(said.contains(QStringLiteral("S-FUS: complete, data point %1").arg(store.data_points[0].id)),
              qPrintable(said));
     QVERIFY(said.contains(QStringLiteral("S-STEP: complete, data point %1").arg(store.data_points[1].id)));
@@ -283,7 +283,7 @@ class EarthbankPublishTest : public QObject {
     const std::size_t sent = record_posts(w.bank);
     run(*d);
     QCOMPARE(record_posts(w.bank), sent);
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
   }
 
   void upload_writes_nothing_on_no() {
@@ -295,7 +295,7 @@ class EarthbankPublishTest : public QObject {
     set_action(*d, Action::Upload);
     run(*d);
     QCOMPARE(record_posts(w.bank), std::size_t{0});
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("Nothing was sent")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("Nothing was sent")));
     QTRY_COMPARE(d->worker()->outstanding(), 0);
   }
 
@@ -315,7 +315,7 @@ class EarthbankPublishTest : public QObject {
     run(*d);
     QVERIFY(!asked);
     QCOMPARE(record_posts(w.bank), std::size_t{0});
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("Nothing was sent")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("Nothing was sent")));
     QVERIFY(cell(*d, step, Column::Notes).contains(QStringLiteral("No Such Interpretation")));
 
     // Allowed, it is asked and goes without that field.
@@ -333,7 +333,7 @@ class EarthbankPublishTest : public QObject {
     d->package()->clear();
     set_action(*d, Action::Upload);
     run(*d);
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("No data package is chosen")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("No data package is chosen")));
     QCOMPARE(w.bank.requests().size(), std::size_t{0});
   }
 
@@ -345,8 +345,8 @@ class EarthbankPublishTest : public QObject {
     d->password()->setText(QStringLiteral("not-the-password"));
     set_action(*d, Action::Upload);
     run(*d);
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("Nothing was sent")));
-    QVERIFY(!d->result()->toPlainText().contains(QStringLiteral("not-the-password")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("Nothing was sent")));
+    QVERIFY(!d->result_pane()->toPlainText().contains(QStringLiteral("not-the-password")));
     QCOMPARE(record_posts(w.bank), std::size_t{0});
   }
 
@@ -370,10 +370,10 @@ class EarthbankPublishTest : public QObject {
     // The record that was out is in; nothing after it was sent.
     QCOMPARE(w.bank.store().measurements.size(), std::size_t{1});
     QCOMPARE(w.bank.store().data_points.size(), std::size_t{1});
-    QVERIFY2(d->result()->toPlainText().contains(QStringLiteral("S-FUS: stopped, data point")),
-             qPrintable(d->result()->toPlainText()));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: stopped\n")));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("run the upload again")));
+    QVERIFY2(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: stopped, data point")),
+             qPrintable(d->result_pane()->toPlainText()));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: stopped\n")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("run the upload again")));
 
     run(*d);
     const auto store = w.bank.store();
@@ -381,8 +381,8 @@ class EarthbankPublishTest : public QObject {
     QCOMPARE(store.data_points.size(), std::size_t{2});
     QCOMPARE(store.aliquots.size(), std::size_t{7});
     QCOMPARE(store.measurements.size(), std::size_t{16});  // none of them twice
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
   }
 
   void an_in_doubt_record_that_is_there_is_finished_with_its_id() {
@@ -395,16 +395,16 @@ class EarthbankPublishTest : public QObject {
 
     w.bank.drop_next("POST", "/api/arar/ArArAliquot");  // saved, and the answer lost
     run(*d);
-    QVERIFY2(d->result()->toPlainText().contains(QStringLiteral("S-FUS: in doubt")),
-             qPrintable(d->result()->toPlainText()));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("may or may not have been saved")));
+    QVERIFY2(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: in doubt")),
+             qPrintable(d->result_pane()->toPlainText()));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("may or may not have been saved")));
     QVERIFY(d->there_button()->isVisibleTo(d.get()));
     QVERIFY(d->not_there_button()->isVisibleTo(d.get()));
     QVERIFY(!d->there_button()->isEnabled());  // not without its id
     // Nothing more of that sample was sent; the other sample went on, with its one aliquot.
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{2});
     QCOMPARE(w.bank.store().data_points.size(), std::size_t{2});
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
 
     // The user looks on EarthBank and finds it.
     bool asked_again = false;
@@ -418,7 +418,7 @@ class EarthbankPublishTest : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
     QVERIFY(!asked_again);  // it finishes the upload that was agreed to
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{7});  // the one in doubt was not sent again
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
     QVERIFY(!d->there_button()->isVisibleTo(d.get()));
   }
 
@@ -430,13 +430,13 @@ class EarthbankPublishTest : public QObject {
     set_action(*d, Action::Upload);
     w.bank.lose_next("POST", "/api/arar/ArArAliquot");  // never saved, and no answer
     run(*d);
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: in doubt")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: in doubt")));
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{1});  // the other sample's
 
     d->not_there_button()->click();
     QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{7});
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
   }
 
   void the_in_doubt_answer_is_withdrawn_when_what_would_be_sent_changes() {
@@ -489,7 +489,7 @@ class EarthbankPublishTest : public QObject {
     d->not_there_button()->click();
     QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
     QCOMPARE(asked, 1 + static_cast<int>(changes.size()));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
   }
 
   void a_package_list_that_fails_late_is_not_taken_for_the_run() {
@@ -510,10 +510,10 @@ class EarthbankPublishTest : public QObject {
     QVERIFY(!d->run_button()->isEnabled());
     w.gate.release();
     QTRY_VERIFY(d->run_button()->isEnabled());
-    QVERIFY2(!d->result()->toPlainText().contains(QStringLiteral("EarthBank does not let")),
-             qPrintable(d->result()->toPlainText()));
+    QVERIFY2(!d->result_pane()->toPlainText().contains(QStringLiteral("EarthBank does not let")),
+             qPrintable(d->result_pane()->toPlainText()));
     run(*d);
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("Every term the upload would send is known")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("Every term the upload would send is known")));
   }
 
   void a_disagreeing_sample_is_shown_and_left_out() {
@@ -538,7 +538,7 @@ class EarthbankPublishTest : public QObject {
     run(*d);
     const QStringList files = QDir(out).entryList({QStringLiteral("ArArDataPoint_*")}, QDir::Files);
     QCOMPARE(files, QStringList({QStringLiteral("ArArDataPoint_S-FUS.xlsx")}));
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: left out")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: left out")));
   }
 
   void choices_are_remembered_per_sample() {
@@ -608,7 +608,7 @@ class EarthbankPublishTest : public QObject {
     run(*d);
 
     QVERIFY(!w.spy.secrets().empty());
-    QString everything = asked + d->result()->toPlainText();
+    QString everything = asked + d->result_pane()->toPlainText();
     for (int r = 0; r < d->table()->rowCount(); ++r) everything += cell(*d, r, Column::Notes);
     for (const std::string& secret : w.spy.secrets()) {
       QVERIFY2(!everything.contains(QString::fromStdString(secret)), "a token is shown");
@@ -720,7 +720,7 @@ class EarthbankPublishTest : public QObject {
     w.gate.release();
     QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
     QCOMPARE(w.bank.store().measurements.size(), std::size_t{16});
-    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
+    QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
 
     // Idle, it is replaced by one on the new selection.
     browser->publish_action()->trigger();
