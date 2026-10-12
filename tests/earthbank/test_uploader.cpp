@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -168,7 +169,7 @@ struct Call {
   std::size_t skip;
   const char* label;
 };
-constexpr Call kCalls[] = {
+constexpr auto kCalls = std::to_array<Call>({
     {"/api/core/sample-with-locations", 0, "sample"},
     {"/api/arar/ArArDataPoint", 0, "data point"},
     {"/api/arar/ArArAliquot", 0, "aliquot 20001-01"},
@@ -177,7 +178,7 @@ constexpr Call kCalls[] = {
     {"/api/arar/ArArMeasurement", 2, "measurement 3"},
     {"/api/arar/ArArAgeCalc", 0, "age calculation"},
     {"/api/arar/ArArAgeSummary", 0, "age summary"},
-};
+});
 constexpr std::size_t kPosts = std::size(kCalls);
 
 // ---- The plain upload ------------------------------------------------------
@@ -388,7 +389,12 @@ TEST(Uploader, LookupsAreAskedOnce) {
   for (const LoggedRequest& r : rig.bank.requests()) {
     if (r.method != "GET") continue;
     std::string key = r.path;
-    for (const auto& [name, value] : r.query) key += "&" + name + "=" + value;
+    for (const auto& [name, value] : r.query) {
+      key += '&';
+      key += name;
+      key += '=';
+      key += value;
+    }
     asked.insert(key);
   }
   for (const std::string& key : asked) EXPECT_EQ(asked.count(key), 1u) << key;
@@ -931,7 +937,7 @@ TEST(Uploader, AJournalThatCannotBeReadRefusesTheSample) {
   ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Complete);
   {
     std::ofstream out(rig.journal_path("S-1"), std::ios::binary | std::ios::trunc);
-    out << "{\"version\":1,\"ha";
+    out << R"({"version":1,"ha)";
   }
   const std::size_t sent = rig.posts();
   const SampleReport report = rig.run_one(good_submission("S-1"));

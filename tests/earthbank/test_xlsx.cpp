@@ -9,6 +9,7 @@
 // and not as a workbook with a value in another column.
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -255,12 +256,12 @@ void set_env(const char* name, const char* value) {
 struct Rewrite {
   std::string_view sheet, key, given, written;
 };
-constexpr Rewrite kRewrites[] = {
+constexpr auto kRewrites = std::to_array<Rewrite>({
     {"ArArAgeCalc", "fluxMonitor", "FC-2 28.201 Ma",
      "Fish Canyon Tuff Sanidine (FCTs) from Kuiper et al. 2008 (28.201 Ma)"},
     {"Samples", "material", "biotite", "Biotite"},
     {"Samples", "material", "sanidine", "Sanidine"},
-};
+});
 
 // The value as the workbook shows it: a time to the minute in the
 // measurement sheet, a collection date day first, a flag as Yes or No, a
@@ -376,6 +377,7 @@ void expect_sample_workbook(const fs::path& file, const std::vector<Submission>&
 
 std::vector<std::string> file_names(const std::vector<fs::path>& files) {
   std::vector<std::string> out;
+  out.reserve(files.size());
   for (const fs::path& file : files) out.push_back(file.filename().string());
   return out;
 }
@@ -901,7 +903,8 @@ TEST_F(Xlsx, HeaderRowsAreTheTemplates) {
         "xl/worksheets/sheet4.xml", "xl/worksheets/sheet5.xml"}},
       {kSample, {"xl/worksheets/sheet1.xml"}},
   };
-  const std::pair<const char*, fs::path> pairs[] = {{kArAr, result.files[0]}, {kSample, result.files[1]}};
+  const auto pairs =
+      std::to_array<std::pair<const char*, fs::path>>({{kArAr, result.files[0]}, {kSample, result.files[1]}});
   for (const auto& [name, file] : pairs) {
     const ooxml::Workbook original = open(template_dir() / name);
     const ooxml::Workbook copy = open(file);
@@ -1493,6 +1496,7 @@ TEST_F(Xlsx, AValueIsWrittenInItsListsSpellingOrSaidNotToBeThere) {
                       "ArArDataPoints.analysisScale: 'single grain' written as 'Single Grain' (list: Analysis Scale)",
                       "ArArMeasurement.plateauStep: 'no' written as 'No' (list: Yes/No)",
                       "ArArMeasurement.plateauStep: 'YES' written as 'Yes' (list: Yes/No)",
+                      // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one note over two lines, as those below
                       "ArArAgeSummary.interpretation: 'eruption age' is not in the template's list 'Age "
                       "Interpretation'; the importer may refuse the value",
                       "ArArAgeSummary: the rows after row 7 are past the template's formatted rows and are plain",

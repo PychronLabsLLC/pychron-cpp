@@ -176,7 +176,7 @@ TEST(Journal, AFileLeftByACrashedSaveIsIgnored) {
   const fs::path file = dir.path() / "S-1.json";
   ASSERT_TRUE(save_journal(sample_journal(), file).has_value());
   // What a save killed half way leaves: a partial file beside the journal.
-  spit(dir.path() / "S-1.json.tmp.99999.0", "{\"version\":1,\"ha");
+  spit(dir.path() / "S-1.json.tmp.99999.0", R"({"version":1,"ha)");
   const auto loaded = load_journal(file);
   ASSERT_TRUE(loaded.has_value() && loaded->has_value());
   EXPECT_EQ(**loaded, sample_journal());

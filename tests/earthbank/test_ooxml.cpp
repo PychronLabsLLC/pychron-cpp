@@ -141,7 +141,7 @@ std::vector<Part> small_workbook(const std::string& sheet_body, const std::strin
 }
 
 std::string text_cell(const std::string& ref, const std::string& text) {
-  return "<c r=\"" + ref + "\" t=\"inlineStr\"><is><t xml:space=\"preserve\">" + text + "</t></is></c>";
+  return "<c r=\"" + ref + R"(" t="inlineStr"><is><t xml:space="preserve">)" + text + "</t></is></c>";
 }
 
 class Ooxml : public ::testing::Test {
@@ -371,7 +371,7 @@ TEST_F(Ooxml, AWrittenRowFillsThePlaceholderRow) {
                 "<c r=\"B5\" s=\"3\"/><c r=\"C5\" s=\"4\"/><c r=\"D5\" s=\"4\"><v>2</v></c><c r=\"E5\" s=\"4\"/>" +
                 text_cell("G5", "x") + "</row>");
   // Row 6 was not written to: it keeps its spans.
-  const std::string next = "<row r=\"6\" spans=\"1:22\" ht=\"15\">";
+  const std::string next = R"(<row r="6" spans="1:22" ht="15">)";
   EXPECT_EQ(xml.substr(end, next.size()), next);
 }
 
@@ -379,6 +379,7 @@ TEST_F(Ooxml, RowsPastTheLastStoredRowAreAddedAndTheDimensionGrows) {
   // ArArAgeSummary stores rows 1 to 7 and says <dimension ref="A1:BN7"/>.
   Workbook book = open(template_file(kArAr));
   std::vector<std::vector<Cell>> rows;
+  rows.reserve(6);
   for (int i = 0; i < 6; ++i) rows.push_back({Cell{"dp-" + std::to_string(i)}, Cell{}, Cell{static_cast<double>(i)}});
   ASSERT_TRUE(book.write_rows("ArArAgeSummary", 5, rows).has_value());
   const std::vector<std::vector<Cell>> props = {{Cell{"dp-0"}, Cell{"k"}, Cell{"v"}}, {Cell{"dp-1"}}};
@@ -530,7 +531,7 @@ TEST_F(Ooxml, ColumnsPastZAndPastZZAreWrittenAndReadBack) {
   row[26] = Cell{"aa"};
   row[701] = Cell{"zz"};
   row[703] = Cell{7.0};
-  const std::string body = written("<sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData>", 2, {row});
+  const std::string body = written(R"(<sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>)", 2, {row});
   EXPECT_EQ(body, "<sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row><row r=\"2\">" + text_cell("Z2", "z") +
                       text_cell("AA2", "aa") + text_cell("ZZ2", "zz") + "<c r=\"AAB2\"><v>7</v></c></row></sheetData>");
   const auto values = open(file("out.xlsx")).row_values("Data", 2);
@@ -572,6 +573,7 @@ TEST_F(Ooxml, ANumberIsWrittenPlainlyAndReadsBack) {
       {std::numeric_limits<double>::max(), "1.7976931348623157e308"},
   };
   std::vector<Cell> row;
+  row.reserve(numbers.size());
   for (const auto& number : numbers) row.push_back(Cell{number.first});
   written("<sheetData/>", 2, {row});
   const auto values = open(file("out.xlsx")).row_values("Data", 2);
@@ -591,6 +593,7 @@ TEST_F(Ooxml, TextThatLooksLikeAnEscapeIsNotTakenForOne) {
                                           "no _x here, nor _x12_ or _x12345",
                                           "_xD83D__xDE00_", "tail_x004"};
   std::vector<Cell> row;
+  row.reserve(texts.size());
   for (const std::string& text : texts) row.push_back(Cell{text});
   const std::string body = written("<sheetData/>", 2, {row});
   EXPECT_EQ(body, "<sheetData><row r=\"2\">" + text_cell("A2", "_x005F_x000D_") + text_cell("B2", "a_x005F_x0041_b") +
@@ -831,10 +834,10 @@ TEST_F(Ooxml, AWorkbookThatDoesNotHoldTogetherIsAnError) {
   expect_protocol(with(1, "not xml at all"));
   expect_protocol(with(1, "<workbook/>"));                                         // no sheets
   expect_protocol(with(1, "<notAWorkbook><sheets/></notAWorkbook>"));
-  expect_protocol(with(1, "<workbook><sheets><sheet name=\"Data\" sheetId=\"1\"/></sheets></workbook>"));  // no r:id
+  expect_protocol(with(1, R"(<workbook><sheets><sheet name="Data" sheetId="1"/></sheets></workbook>)"));  // no r:id
   expect_protocol(with(2, "<Relationships/>"));                                    // the id leads nowhere
-  expect_protocol(with(2, "<Relationships><Relationship Id=\"rId7\" Target=\"worksheets/gone.xml\"/></Relationships>"));
-  expect_protocol(with(2, "<Relationships><Relationship Id=\"rId7\" Target=\"../../../etc/passwd\"/></Relationships>"));
+  expect_protocol(with(2, R"(<Relationships><Relationship Id="rId7" Target="worksheets/gone.xml"/></Relationships>)"));
+  expect_protocol(with(2, R"(<Relationships><Relationship Id="rId7" Target="../../../etc/passwd"/></Relationships>)"));
 
   // No relationships part at all.
   std::vector<Part> parts = small_workbook("<sheetData/>");
@@ -843,12 +846,13 @@ TEST_F(Ooxml, AWorkbookThatDoesNotHoldTogetherIsAnError) {
 
   // A sheet that is not a sheet: the workbook opens, the sheet does not read.
   for (const std::string sheet : {"<worksheet><sheetData><row r=\"1\">", "", "<worksheet/>", "<chartsheet/>",
-                                  "<worksheet><sheetData><row r=\"2\"/><row r=\"2\"/></sheetData></worksheet>",
+                                  R"(<worksheet><sheetData><row r="2"/><row r="2"/></sheetData></worksheet>)",
                                   "<worksheet><sheetData><row/></sheetData></worksheet>",
+                                  // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one sheet, over two lines
                                   "<worksheet><sheetData><row r=\"2\"><c r=\"B2\"/><c r=\"A2\"/></row></sheetData>"
                                   "</worksheet>",
-                                  "<worksheet><sheetData><row r=\"2\"><c r=\"A3\"/></row></sheetData></worksheet>",
-                                  "<worksheet><sheetData><row r=\"2\"><c r=\"2A\"/></row></sheetData></worksheet>",
+                                  R"(<worksheet><sheetData><row r="2"><c r="A3"/></row></sheetData></worksheet>)",
+                                  R"(<worksheet><sheetData><row r="2"><c r="2A"/></row></sheetData></worksheet>)",
                                   "<worksheet><sheetData><row r=\"2\"><x/></row></sheetData></worksheet>"}) {
     SCOPED_TRACE(sheet);
     auto book = with(3, sheet);
@@ -912,13 +916,14 @@ TEST_F(Ooxml, ARewrittenEntryIsFlaggedAsTheTemplatesEntriesAre) {
   // UTF-8 names. A rewritten sheet's entry follows the template's in both
   // bits, in its local header and in the directory.
   const unsigned kHints = 0x0006;
-  const struct {
+  struct Case {
     const char* file;
     const char* sheet;
     const char* part;
     unsigned flags;
-  } cases[] = {{kArAr, "ArArMeasurement", "xl/worksheets/sheet2.xml", 0x0006},
-               {kSample, "Samples", "xl/worksheets/sheet1.xml", 0x0808}};
+  };
+  const auto cases = std::to_array<Case>({{kArAr, "ArArMeasurement", "xl/worksheets/sheet2.xml", 0x0006},
+                                          {kSample, "Samples", "xl/worksheets/sheet1.xml", 0x0808}});
   for (const auto& each : cases) {
     SCOPED_TRACE(each.file);
     Workbook book = open(template_file(each.file));
@@ -963,22 +968,22 @@ TEST_F(Ooxml, ARowOrCellNumberedPastTheSheetIsAnError) {
   expect_protocol(read("<sheetData><row r=\"99999999999999999999\"/></sheetData>", 5));
   expect_protocol(read("<sheetData><row r=\"five\"/></sheetData>", 5));
   // The cell after XFD; a reference that is none.
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"XFD5\"/><c><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"XFE5\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"AAAA5\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"5A\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"a5\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"A\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"A0\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"A99999999999\"><v>1</v></c></row></sheetData>", 5));
-  expect_protocol(read("<sheetData><row r=\"5\"><c r=\"\"><v>1</v></c></row></sheetData>", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="XFD5"/><c><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="XFE5"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="AAAA5"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="5A"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="a5"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="A"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="A0"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r="A99999999999"><v>1</v></c></row></sheetData>)", 5));
+  expect_protocol(read(R"(<sheetData><row r="5"><c r=""><v>1</v></c></row></sheetData>)", 5));
 
   // Rows and cells that number themselves by position are read.
   const auto counted = read("<sheetData><row r=\"3\"/><row/><row><c><v>1</v></c><c r=\"D5\"><v>4</v></c><c><v>5</v></c>"
                             "</row></sheetData>", 5);
   ASSERT_TRUE(counted.has_value()) << to_string(counted.error());
   EXPECT_EQ(*counted, (std::vector<std::string>{"1", "", "", "4", "5"}));
-  const auto last = read("<sheetData><row r=\"1048576\"><c r=\"XFD1048576\"><v>9</v></c></row></sheetData>", kMaxRow);
+  const auto last = read(R"(<sheetData><row r="1048576"><c r="XFD1048576"><v>9</v></c></row></sheetData>)", kMaxRow);
   ASSERT_TRUE(last.has_value()) << to_string(last.error());
   ASSERT_EQ(last->size(), static_cast<std::size_t>(kMaxColumn));
   EXPECT_EQ(last->back(), "9");
@@ -987,7 +992,7 @@ TEST_F(Ooxml, ARowOrCellNumberedPastTheSheetIsAnError) {
 TEST_F(Ooxml, ASharedStringTheWorkbookHasNotIsAnError) {
   const std::string strings = "<sst><si><t>only</t></si></sst>";
   const auto read = [&](const std::string& index) {
-    const std::string body = "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>" + index + "</v></c></row></sheetData>";
+    const std::string body = R"(<sheetData><row r="1"><c r="A1" t="s"><v>)" + index + "</v></c></row></sheetData>";
     return open(zip_file("strings.xlsx", small_workbook(body, strings))).row_values("Data", 1);
   };
   EXPECT_EQ(read("0").value(), (std::vector<std::string>{"only"}));
@@ -998,15 +1003,15 @@ TEST_F(Ooxml, ASharedStringTheWorkbookHasNotIsAnError) {
     EXPECT_NE(values.error().what.find("A1"), std::string::npos) << values.error().what;
   }
   // And with no shared strings at all.
-  const std::string body = "<sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row></sheetData>";
+  const std::string body = R"(<sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData>)";
   EXPECT_FALSE(open(zip_file("none.xlsx", small_workbook(body))).row_values("Data", 1).has_value());
 }
 
 TEST_F(Ooxml, ARelationshipTargetMayBeAbsoluteOrClimb) {
-  const std::string body = "<sheetData><row r=\"1\"><c r=\"A1\"><v>7</v></c></row></sheetData>";
+  const std::string body = R"(<sheetData><row r="1"><c r="A1"><v>7</v></c></row></sheetData>)";
   const auto with_target = [&](const std::string& target) {
     std::vector<Part> parts = small_workbook(body);
-    parts[2].data = "<Relationships><Relationship Id=\"rId7\" Target=\"" + target + "\"/></Relationships>";
+    parts[2].data = R"(<Relationships><Relationship Id="rId7" Target=")" + target + "\"/></Relationships>";
     return Workbook::open(zip_file("target.xlsx", parts));
   };
   for (const char* target : {"/xl/worksheets/data.xml", "../xl/worksheets/data.xml", "./worksheets/data.xml",
@@ -1018,7 +1023,7 @@ TEST_F(Ooxml, ARelationshipTargetMayBeAbsoluteOrClimb) {
   }
   // Out of the archive, or to nothing in it.
   for (const char* target : {"../../xl/worksheets/data.xml", "/../xl/worksheets/data.xml", "/worksheets/data.xml",
-                             "../worksheets/data.xml", "", "/", "C:\\xl\\worksheets\\data.xml",
+                             "../worksheets/data.xml", "", "/", R"(C:\xl\worksheets\data.xml)",
                              "file:///etc/passwd"}) {
     SCOPED_TRACE(target);
     const auto book = with_target(target);
@@ -1040,7 +1045,7 @@ TEST_F(Ooxml, AnArchiveWithTooManyEntriesOrANameTwiceIsAnError) {
   EXPECT_TRUE(Workbook::open(zip_file("full.xlsx", parts)).has_value());
 
   // Two entries of one name: which is the sheet depends on who reads it.
-  parts = small_workbook("<sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData>");
+  parts = small_workbook(R"(<sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>)");
   parts.push_back({"xl/worksheets/data.xml", std::string(kSheetHead) + "<sheetData/></worksheet>"});
   const auto twice = Workbook::open(zip_file("twice.xlsx", parts));
   ASSERT_FALSE(twice.has_value());
@@ -1069,7 +1074,7 @@ TEST_F(Ooxml, APartJustOverTheLimitIsRefused) {
 }
 
 TEST_F(Ooxml, MarkupHiddenInACommentIsNotWrittenInto) {
-  const std::string row1 = "<row r=\"1\"><c r=\"A1\"><v>1</v></c></row>";
+  const std::string row1 = R"(<row r="1"><c r="A1"><v>1</v></c></row>)";
   // Before the sheet's data: no matter.
   EXPECT_EQ(written("<!-- </sheetData> <row r=\"2\"/> --><sheetData>" + row1 + "</sheetData>", 2, {{Cell{"a"}}}),
             "<!-- </sheetData> <row r=\"2\"/> --><sheetData>" + row1 + "<row r=\"2\">" + text_cell("A2", "a") +
@@ -1081,9 +1086,9 @@ TEST_F(Ooxml, MarkupHiddenInACommentIsNotWrittenInto) {
        {"<sheetData>" + row1 + "<!-- </sheetData> --></sheetData>",
         "<sheetData><!-- </sheetData> -->" + row1 + "</sheetData>",
         "<sheetData>" + row1 + "<![CDATA[</sheetData>]]></sheetData>",
-        "<sheetData>" + row1 + "<row r=\"2\"><!-- </row> --><c r=\"A2\" s=\"1\"/></row></sheetData>",
-        "<sheetData>" + row1 + "<row r=\"2\"><c r=\"A2\" s=\"1\"><!-- </c> --></c><c r=\"B2\"/></row></sheetData>",
-        "<sheetData>" + row1 + "<row r=\"2\"><c r=\"A2\" s=\"1\"/><!-- </row><row r=\"2\"> --></row></sheetData>"}) {
+        "<sheetData>" + row1 + R"(<row r="2"><!-- </row> --><c r="A2" s="1"/></row></sheetData>)",
+        "<sheetData>" + row1 + R"(<row r="2"><c r="A2" s="1"><!-- </c> --></c><c r="B2"/></row></sheetData>)",
+        "<sheetData>" + row1 + R"(<row r="2"><c r="A2" s="1"/><!-- </row><row r="2"> --></row></sheetData>)"}) {
     SCOPED_TRACE(body);
     Workbook book = open(zip_file("comment.xlsx", small_workbook(body)));
     const auto wrote = book.write_rows("Data", 2, {{Cell{}, Cell{"b"}}});
@@ -1267,7 +1272,7 @@ TEST_F(Ooxml, AListValidationInAnyOfItsForms) {
   ASSERT_TRUE(found.has_value()) << to_string(found.error());
   ASSERT_EQ(found->size(), 9u);
   using Source = ListValidation::Source;
-  const auto expect_range = [&](std::size_t i, std::vector<int> columns, const std::string& sheet, int column,
+  const auto expect_range = [&](std::size_t i, const std::vector<int>& columns, const std::string& sheet, int column,
                                 int first_row, int last_row) {
     const ListValidation& one = (*found)[i];
     EXPECT_EQ(one.source, Source::Range) << i;

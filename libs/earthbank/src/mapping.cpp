@@ -42,9 +42,9 @@ using Notes = std::vector<std::string>;
 std::string in_quotes(std::string_view text) { return "\"" + std::string(text) + "\""; }
 
 std::string to_digits(double value, int digits) {
-  char buffer[32];
-  std::snprintf(buffer, sizeof buffer, "%.*g", digits, value);
-  return buffer;
+  std::array<char, 32> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%.*g", digits, value);
+  return buffer.data();
 }
 
 // A number in a message: ten significant figures say which it is without the
@@ -125,20 +125,20 @@ std::optional<Seconds> known_time(double utc_epoch_seconds) {
 // UTC, `YYYY-MM-DD`.
 std::string utc_date(Seconds t) {
   const std::chrono::year_month_day day(std::chrono::floor<std::chrono::days>(t));
-  char buffer[48];
-  std::snprintf(buffer, sizeof buffer, "%04d-%02u-%02u", static_cast<int>(day.year()),
+  std::array<char, 48> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%04d-%02u-%02u", static_cast<int>(day.year()),
                 static_cast<unsigned>(day.month()), static_cast<unsigned>(day.day()));
-  return buffer;
+  return buffer.data();
 }
 
 // UTC, `YYYY-MM-DDTHH:MM:SSZ`.
 std::string utc_time(Seconds t) {
   const auto midnight = std::chrono::floor<std::chrono::days>(t);
   const std::chrono::hh_mm_ss clock(t - midnight);
-  char buffer[48];
-  std::snprintf(buffer, sizeof buffer, "T%02d:%02d:%02dZ", static_cast<int>(clock.hours().count()),
+  std::array<char, 48> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "T%02d:%02d:%02dZ", static_cast<int>(clock.hours().count()),
                 static_cast<int>(clock.minutes().count()), static_cast<int>(clock.seconds().count()));
-  return utc_date(t) + buffer;
+  return utc_date(t) + buffer.data();
 }
 
 // ---------------------------------------------------------------- a sample's analyses
@@ -255,7 +255,7 @@ Result<std::optional<Place>> place_of(std::string_view sample, const Members& me
   const auto latitude = [&](const Member& m) { return finite(m.a().sample_info.latitude); };
   const auto longitude = [&](const Member& m) { return finite(m.a().sample_info.longitude); };
 
-  const auto place = agreed(
+  auto place = agreed(
       sample, members, "location (latitude, longitude)",
       [&](const Member& m) -> std::optional<Place> {
         const auto lat = latitude(m), lon = longitude(m);
@@ -766,6 +766,7 @@ std::map<const pr::ReducedAnalysis*, Released> released_39(const Members& given,
                       "the aliquot");
       continue;
     }
+    // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by what is pointed at (step, then time), never by address
     std::stable_sort(steps.begin(), steps.end(), [](const Member* x, const Member* y) {
       if (x->a().increment != y->a().increment) return x->a().increment < y->a().increment;
       return x->a().timestamp < y->a().timestamp;
@@ -857,7 +858,7 @@ std::optional<r::UFloat> corrected(const Member& m, r::ArgonIsotope isotope) {
 // the same stage with the decay factor, an exact number, divided out again,
 // so that the five have had the same done to them but for 39Ar's decay.
 std::optional<r::UFloat> excluding_interferences(const Member& m, r::ArgonIsotope isotope) {
-  const auto stage = m.reduced->stage(r::to_string(isotope), pr::Stage::DecayCorrected);
+  auto stage = m.reduced->stage(r::to_string(isotope), pr::Stage::DecayCorrected);
   if (!stage || isotope != r::ArgonIsotope::Ar37) return stage;
   return *stage / m.reduced->arar->decay.df37;
 }
@@ -1221,7 +1222,7 @@ Result<Submission> submission_of(const std::string& name, Members members, const
 
   const Group group = group_of(dated);
   if (group.any_step && group.any_fusion) {
-    notes.push_back("the sample has both heating steps and fusion analyses; it is published as step heated");
+    notes.emplace_back("the sample has both heating steps and fusion analyses; it is published as step heated");
   }
   const auto age = preferred_age(name, group, options, so, notes);
   if (!age) return fail(age.error());
@@ -1251,7 +1252,7 @@ Result<Submission> submission_of(const std::string& name, Members members, const
   out.setup_name = options.setup;
   // Nothing on an analysis says it, so nothing can stand in for it.
   if (out.setup_name.empty()) {
-    notes.push_back("no analytical set-up named: every data point refers to one EarthBank already has; give its "
+    notes.emplace_back("no analytical set-up named: every data point refers to one EarthBank already has; give its "
                     "name there as the `setup` setting");
   }
   out.irradiation_name = irradiation_of(name, dated, so, notes);

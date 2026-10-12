@@ -223,12 +223,13 @@ Result<Profiles> parse_profiles(std::string_view text, const std::string& where)
         const std::string prefix = "profiles." + p.name;
         if (names_a_secret(p.name) && !node.is_table()) return refused_secret(where, prefix);
         const toml::table* fields = node.as_table();
-        if (fields == nullptr) return refused(where, prefix + ": a profile is a table ([" + prefix + "])");
+        if (fields == nullptr)
+          return refused(where, std::string(prefix).append(": a profile is a table ([").append(prefix).append("])"));
         if (!valid_profile_name(p.name))
           return refused(where, "profiles: '" + p.name + "' is not a profile's name (letters, digits, `-` and `_`)");
         for (const auto& [field_key, value] : *fields) {
           const std::string field(field_key.str());
-          const std::string at = prefix + "." + field;
+          const std::string at = std::string(prefix).append(".").append(field);
           if (names_a_secret(field)) return refused_secret(where, at);
           if (field == "base_url" || field == "username") {
             const auto said = value.value<std::string>();
@@ -263,7 +264,7 @@ Result<Profiles> parse_profiles(std::string_view text, const std::string& where)
 
 // `text` as a TOML string in double quotes.
 std::string toml_string(std::string_view text) {
-  static constexpr char kHex[] = "0123456789ABCDEF";
+  static constexpr std::string_view kHex = "0123456789ABCDEF";
   std::string out = "\"";
   for (const char c : text) {
     const auto byte = static_cast<unsigned char>(c);
@@ -285,7 +286,7 @@ std::string to_toml(const Profiles& profiles) {
   std::string out;
   if (!profiles.active.empty()) out += "active = " + toml_string(profiles.active) + "\n";
   for (const Profile& p : profiles.profiles) {
-    if (!out.empty()) out += "\n";
+    if (!out.empty()) out += '\n';
     out += "[profiles." + p.name + "]\n";
     out += "base_url = " + toml_string(p.base_url) + "\n";
     out += "username = " + toml_string(p.username) + "\n";
@@ -348,7 +349,7 @@ std::optional<std::string> write_new(const fs::path& file, std::string_view text
 // where a `#` begins a comment.
 std::string unquoted(std::string_view value) {
   value = trimmed(value);
-  for (const std::string_view triple : {std::string_view("'''"), std::string_view("\"\"\"")}) {
+  for (const std::string_view triple : {std::string_view("'''"), std::string_view(R"(""")")}) {
     if (!value.starts_with(triple)) continue;
     value.remove_prefix(3);
     return std::string(value.substr(0, value.rfind(triple)));
@@ -454,7 +455,7 @@ Result<void> save_profiles(const Profiles& profiles, const fs::path& file) {
   // whatever else the reader would not take back (a login that is not text)
   // is found by reading what is about to be written.
   Profiles tidy = profiles;
-  for (Profile& p : tidy.profiles) (void)base_url_fault(std::string(p.base_url), p.base_url);
+  for (Profile& p : tidy.profiles) (void)base_url_fault(p.base_url, p.base_url);
   const std::string text = to_toml(tidy);
   const auto back = parse_profiles(text, where);
   if (!back) return fail(back.error());
@@ -560,7 +561,7 @@ Result<Profiles> import_legacy_ini(const fs::path& ini) {
 
   const std::string blob = keys.contains("profiles_json") ? keys.at("profiles_json") : std::string{};
   if (trimmed(blob).empty()) {
-    out.notes.push_back("the file has no EarthBank profiles in it");
+    out.notes.emplace_back("the file has no EarthBank profiles in it");
     return out;
   }
   const json list = json::parse(blob, nullptr, false);
@@ -577,7 +578,7 @@ Result<Profiles> import_legacy_ini(const fs::path& ini) {
     Profile p;
     p.name = respelled(legacy_name);
     if (p.name.empty()) {
-      out.notes.push_back("a profile with no name was left out");
+      out.notes.emplace_back("a profile with no name was left out");
       continue;
     }
     const bool taken = std::any_of(out.profiles.begin(), out.profiles.end(),
@@ -603,19 +604,28 @@ Result<Profiles> import_legacy_ini(const fs::path& ini) {
       std::string said;
       *id = legacy_id(entry, key, said);
       if (!said.empty())
-        out.notes.push_back("the profile " + shown + ": its " + key + ", '" + said +
-                            "', is not an id (a whole number above 0) and was left out");
+        out.notes.push_back(std::string("the profile ")
+                                .append(shown)
+                                .append(": its ")
+                                .append(key)
+                                .append(", '")
+                                .append(said)
+                                .append("', is not an id (a whole number above 0) and was left out"));
     }
     for (const auto& [key, value] : entry.items())
       if (names_a_secret(key) && !(value.is_string() && value.get<std::string>().empty()) && !value.is_null())
-        out.notes.push_back("the profile " + shown + ": a password in the file (the key '" + key +
-                            "') was ignored: passwords are not kept in files. Sign in once to store it");
+        out.notes.push_back(
+            std::string("the profile ")
+                .append(shown)
+                .append(": a password in the file (the key '")
+                .append(key)
+                .append("') was ignored: passwords are not kept in files. Sign in once to store it"));
     renamed.emplace(legacy_name, p.name);
     out.profiles.push_back(std::move(p));
   }
 
   if (out.profiles.empty()) {
-    out.notes.push_back("no profile of the file could be taken");
+    out.notes.emplace_back("no profile of the file could be taken");
     return out;
   }
   const std::string active = keys.contains("active_profile") ? keys.at("active_profile") : std::string{};

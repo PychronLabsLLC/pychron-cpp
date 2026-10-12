@@ -36,7 +36,7 @@ bool has(std::string_view text, std::string_view part) { return text.find(part) 
 
 std::string random_word() {
   std::random_device device;
-  static constexpr char kHex[] = "0123456789abcdef";
+  static constexpr std::string_view kHex = "0123456789abcdef";
   std::string word;
   for (int i = 0; i < 4; ++i) {
     unsigned int bits = device();

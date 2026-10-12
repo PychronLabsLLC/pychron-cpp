@@ -52,7 +52,6 @@ TEST(ElctlEarthbank, TheNetworkCommandsWithoutPersistence) {
 
 #include <nlohmann/json.hpp>
 
-#include "earthbank.hpp"
 #include "fake_earthbank.hpp"
 #include "ooxml.hpp"
 #include "pychron/earthbank/profiles.hpp"
@@ -399,7 +398,7 @@ TEST_F(ElctlEarthbank, AnUnknownKeyOrSampleInOverridesIsRefused) {
   fs::create_directories(path("overrides.d"));
   for (const bool check : {false, true}) {
     std::vector<std::string> args = {"--overrides", path("overrides.d").string()};
-    if (check) args.push_back("--check");
+    if (check) args.emplace_back("--check");
     const Outcome directory = to_out(args);
     EXPECT_EQ(directory.code, elctl::kUsage);
     EXPECT_EQ(directory.err, "elctl earthbank: " + path("overrides.d").string() + ": not a file\n");
@@ -469,7 +468,7 @@ TEST_F(ElctlEarthbank, EverySettingANoteNamesIsAKeyOfTheOverridesFile) {
 TEST_F(ElctlEarthbank, NothingMatchedExitsOne) {
   for (const bool check : {false, true}) {
     std::vector<std::string> args = {"--out", out_.string(), "--sample", "no-such-sample"};
-    if (check) args.push_back("--check");
+    if (check) args.emplace_back("--check");
     const Outcome none = earthbank(args);
     EXPECT_EQ(none.code, elctl::kFailed);
     EXPECT_EQ(none.err, "elctl earthbank: no analysis matched\n");
@@ -699,7 +698,7 @@ class ElctlEarthbankAccount : public ElctlEarthbank {
   }
 
   // `elctl earthbank <args>` against the fake and the memory store.
-  Outcome eb(std::vector<std::string> args, const std::string& input = "") {
+  Outcome eb(const std::vector<std::string>& args, const std::string& input = "") {
     std::istringstream in(input);
     std::ostringstream out, err;
     Outcome o;
@@ -714,7 +713,7 @@ class ElctlEarthbankAccount : public ElctlEarthbank {
   // The same with the profiles file of this test.
   Outcome with_profiles(std::vector<std::string> args, const std::string& input = "") {
     args.insert(args.end(), {"--profiles", profiles_.string()});
-    return eb(std::move(args), input);
+    return eb(args, input);
   }
 
   Outcome log_in(const std::string& extra_profile = "mylab") {

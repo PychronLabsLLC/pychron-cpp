@@ -234,6 +234,7 @@ class Session {
   // that is already an answer's (from failure()) keeps the sentence it has.
   static std::string sentence(const Error& error, std::string_view path, std::string_view record, bool write);
   // An upload asked for with no package to put it in.
+  // NOLINTNEXTLINE(modernize-use-string-view): a sentence like its neighbours, which callers add to
   static std::string no_package_sentence();
   // A sample whose data point was saved and some of whose other records were
   // not: `missing` names those that were refused or never sent, which may be

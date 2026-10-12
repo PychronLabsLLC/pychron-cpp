@@ -1,6 +1,7 @@
 #include "pychron/earthbank/session.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -139,7 +140,7 @@ std::string reason_of(std::string_view body) {
   for (const char* key : {"detail", "message", "title"}) {
     const auto it = parsed.find(key);
     if (it == parsed.end() || !it->is_string()) continue;
-    const std::string& text = it->get_ref<const std::string&>();
+    const auto& text = it->get_ref<const std::string&>();
     if (!trimmed(text).empty()) return text;
   }
   return {};
@@ -204,6 +205,7 @@ bool is_under(const Address& base, const Address& url) {
   std::string_view root = base.path;
   while (!root.empty() && root.back() == '/') root.remove_suffix(1);
   if (root.empty()) return true;
+  // cppcheck-suppress mismatchingContainers ; the two paths are compared as text; no iterator of one meets the other's
   const std::string_view path = url.path;
   return path == root || (path.starts_with(root) && path[root.size()] == '/');
 }
@@ -275,12 +277,12 @@ std::string constraint_field(std::string_view reason) {
 
 // What a path's record is called when the caller has no better word.
 std::string_view kind_of(std::string_view path) {
-  constexpr std::pair<std::string_view, std::string_view> kRecords[] = {
+  constexpr auto kRecords = std::to_array<std::pair<std::string_view, std::string_view>>({
       {"sample-with-locations", "sample"}, {"ArArDataPoint", "data point"},
       {"ArArAliquot", "aliquot"},          {"ArArMeasurement", "measurement"},
       {"ArArAgeCalc", "age calculation"},  {"ArArAgeSummary", "age summary"},
       {"data-packages", "data package"},
-  };
+  });
   for (const auto& [part, name] : kRecords) {
     if (has(path, part)) return name;
   }
@@ -306,7 +308,7 @@ std::optional<std::int64_t> id_of(const json& object, const char* key) {
   if (it == object.end()) return std::nullopt;
   if (it->is_number_integer()) return it->get<std::int64_t>();
   if (it->is_string()) {
-    const std::string& text = it->get_ref<const std::string&>();
+    const auto& text = it->get_ref<const std::string&>();
     if (!text.empty() && text.size() <= 18 && std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; })) {
       return std::stoll(text);
     }
@@ -493,7 +495,7 @@ Result<HttpResponse> Session::exchange(const HttpRequest& request, std::string_v
   if (!answer) {
     line += answer.error().code == kHttpNotSent ? ": not sent (" : ": no answer (";
     line += to_string(answer.error().kind);
-    line += ")";
+    line += ')';
     // The client's own words are for the log and not for the user. It
     // promises no secret in them (http.hpp); they are scrubbed all the same.
     if (const std::string said = one_line(scrubbed(answer.error().what, trying)); !said.empty()) line += ": " + said;
@@ -710,6 +712,7 @@ std::string Session::sentence(const Error& error, std::string_view path, std::st
   return "EarthBank did not answer (" + what + "). Check the network and try again.";
 }
 
+// NOLINTNEXTLINE(modernize-use-string-view): see the declaration
 std::string Session::no_package_sentence() {
   return "No data package is chosen, and EarthBank keeps every record in one. Choose a package, or make one, before "
          "anything is sent.";

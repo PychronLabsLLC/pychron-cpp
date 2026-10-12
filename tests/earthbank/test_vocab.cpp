@@ -682,7 +682,7 @@ TEST(Vocab, TheMonitorAliasesAreOfTheTemplatesList) {
       // The mark is in the entry as a word of its own: in parentheses, or
       // first.
       const std::string mark(alias.listed);
-      if (entry.find("(" + mark + ")") == std::string::npos && entry.rfind(mark + " ", 0) != 0) continue;
+      if (entry.find("(" + mark + ")") == std::string::npos && !entry.starts_with(mark + " ")) continue;
       ++marked;
       // With the entry's own age the alias finds exactly that entry, unless
       // the monitor has two entries of that age.

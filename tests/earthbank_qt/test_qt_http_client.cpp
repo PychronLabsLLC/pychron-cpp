@@ -4,6 +4,7 @@
 // the test thread runs no loop of its own. Plain HTTP only: the TLS test goes
 // to a port that speaks no TLS.
 
+#include <array>
 #include <cctype>
 #include <clocale>
 #include <cstdio>
@@ -78,10 +79,10 @@ std::string response(int status, const std::string& reason, const std::string& b
 // any of this.
 void ensure_application() {
   static int argc = 1;
-  static char name[] = "test_qt_http_client";
-  static char* argv[] = {name, nullptr};
+  static auto name = std::to_array("test_qt_http_client");
+  static std::array<char*, 2> argv = {name.data(), nullptr};
   static std::unique_ptr<QCoreApplication> app;
-  if (QCoreApplication::instance() == nullptr) app = std::make_unique<QCoreApplication>(argc, argv);
+  if (QCoreApplication::instance() == nullptr) app = std::make_unique<QCoreApplication>(argc, argv.data());
 }
 
 class Server {
@@ -547,9 +548,9 @@ TEST(QtHttpClient, TheApplicationItMakesLeavesNumbersInTheCLocale) {
   QtHttpClient client;
   (void)client.send(request("GET", "http://127.0.0.1:1/x"));
   ASSERT_NE(QCoreApplication::instance(), nullptr);
-  char text[32];
-  std::snprintf(text, sizeof text, "%.1f", 1.5);
-  EXPECT_STREQ(text, "1.5");
+  std::array<char, 32> text{};
+  std::snprintf(text.data(), text.size(), "%.1f", 1.5);
+  EXPECT_STREQ(text.data(), "1.5");
   EXPECT_EQ(std::strtod("1.5", nullptr), 1.5);
 #endif
 }

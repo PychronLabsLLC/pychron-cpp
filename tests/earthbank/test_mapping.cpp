@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -100,9 +101,9 @@ std::optional<double> number(const Record& record, const std::string& field) {
 
 // A number as a sentence of the mapping prints it, to `digits` significant figures.
 std::string printed(double value, int digits) {
-  char buffer[32];
-  std::snprintf(buffer, sizeof buffer, "%.*g", digits, value);
-  return buffer;
+  std::array<char, 32> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%.*g", digits, value);
+  return buffer.data();
 }
 
 // The analyses reduced and put in a dataset, as the report takes them.
@@ -1234,6 +1235,7 @@ TEST(Mapping, AnalysesWithoutAgesAreLeftOutAndCounted) {
   const Submission s = build_one(steps);
   ASSERT_EQ(s.measurements.size(), 8u);
   std::vector<double> numbers;
+  numbers.reserve(s.measurements.size());
   for (const Measurement& m : s.measurements) numbers.push_back(*m.stepNumber);
   EXPECT_EQ(numbers, (std::vector<double>{1, 2, 3, 4, 5, 7, 9, 10}));  // each keeps its own step number
   const std::string note = note_with(s, "without an age");

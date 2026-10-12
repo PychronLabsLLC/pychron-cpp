@@ -7,6 +7,7 @@
 
 #include "earthbank.hpp"
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
@@ -42,7 +43,6 @@ namespace elctl {
 namespace fs = std::filesystem;
 namespace eb = pychron::earthbank;
 namespace pp = pychron::processing;
-using pychron::Error;
 using pychron::ErrorKind;
 using pychron::fail;
 using pychron::Result;
@@ -210,7 +210,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
       a.check = true;
       continue;
     }
-    if (flag.rfind("--", 0) != 0) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
+    if (!flag.starts_with("--")) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
     if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
     const std::string& value = args[++i];
     if (flag == "--db") {
@@ -255,8 +255,9 @@ Result<void> read_overrides(const std::string& file, eb::PublishOptions& options
   std::ifstream in(file, std::ios::binary);
   if (!in) return fail(ErrorKind::Io, file + ": cannot be read");
   std::string content;
-  char block[4096];
-  while (in.read(block, sizeof block) || in.gcount() > 0) content.append(block, static_cast<std::size_t>(in.gcount()));
+  std::array<char, 4096> block{};
+  while (in.read(block.data(), static_cast<std::streamsize>(block.size())) || in.gcount() > 0)
+    content.append(block.data(), static_cast<std::size_t>(in.gcount()));
   if (in.bad() || !in.eof()) return fail(ErrorKind::Io, file + ": could not be read to the end");
   auto parsed = toml::parse(content, file);
   if (!parsed) {
@@ -307,7 +308,7 @@ Result<void> read_overrides(const std::string& file, eb::PublishOptions& options
         eb::SampleOptions& so = options.samples[sample];
         for (auto&& [setting, value] : *settings) {
           const std::string s(setting.str());
-          const std::string path = where + "." + s;
+          const std::string path = std::string(where).append(".").append(s);
           if (s == "interpretation") {
             text(value, path, so.interpretation);
           } else if (s == "flux_monitor") {
@@ -321,7 +322,11 @@ Result<void> read_overrides(const std::string& file, eb::PublishOptions& options
             text(value, path, word);
             so.preferred_age = parse_preferred_age(word);
             if (!so.preferred_age)
-              problem("'" + path + "' is plateau, weighted_mean, isochron or integrated; got '" + word + "'");
+              problem(std::string("'")
+                          .append(path)
+                          .append("' is plateau, weighted_mean, isochron or integrated; got '")
+                          .append(word)
+                          .append("'"));
           } else {
             problem("unknown key '" + path + "'");
           }
@@ -352,8 +357,9 @@ Result<void> check_override_samples(const std::string& file, const eb::PublishOp
       names += (names.empty() ? "" : ", ") + s;
     }
     if (selected.size() > kNamed) names += " and " + std::to_string(selected.size() - kNamed) + " more";
-    return fail(ErrorKind::Config,
-                file + ": sample \"" + sample + "\" is not among the selected analyses (" + names + ")");
+    std::string said = file;
+    said.append(": sample \"").append(sample).append("\" is not among the selected analyses (").append(names).append(")");
+    return fail(ErrorKind::Config, said);
   }
   return {};
 }
@@ -361,9 +367,9 @@ Result<void> check_override_samples(const std::string& file, const eb::PublishOp
 // ---------------------------------------------------------------- report
 
 std::string number(double value, int digits) {
-  char text[32];
-  std::snprintf(text, sizeof text, "%.*g", digits, value);
-  return text;
+  std::array<char, 32> text{};
+  std::snprintf(text.data(), text.size(), "%.*g", digits, value);
+  return text.data();
 }
 
 // "<sample>: 2 analyses, Plateau Age 28.1234 ± 0.0412 Ma (1 sigma)", and the
@@ -467,7 +473,7 @@ Result<PreflightArgs> parse_preflight(const std::vector<std::string>& args) {
     if (shared && !*shared) shared = earthbank_cli::take_connect_flag(a.connect, args, i);
     if (!shared) return fail(shared.error());
     if (*shared) continue;
-    if (flag.rfind("--", 0) != 0) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
+    if (!flag.starts_with("--")) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
     if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
     const std::string& value = args[++i];
     if (flag == "--db") {

@@ -103,7 +103,7 @@ class Walk {
       // id beside the name means there is nothing left to look up.
       const auto name = sent.find(term.name_field);
       if (name == sent.end() || !name->is_string() || sent.contains(term.id_field)) continue;
-      const std::string& value = name->get_ref<const std::string&>();
+      const auto& value = name->get_ref<const std::string&>();
       if (again(record, term.name_field, value)) continue;
 
       Miss miss;

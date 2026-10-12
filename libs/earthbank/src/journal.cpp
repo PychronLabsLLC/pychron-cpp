@@ -46,7 +46,7 @@ bool plain(char c) {
 }
 
 std::string encoded(std::string_view text) {
-  constexpr char kHex[] = "0123456789ABCDEF";
+  constexpr std::string_view kHex = "0123456789ABCDEF";
   std::string out;
   for (const char c : text) {
     if (plain(c) && !(out.empty() && c == '.')) {
@@ -63,7 +63,7 @@ std::string encoded(std::string_view text) {
 
 std::string hex_of(std::string_view text, std::size_t digits) {
   const Sha256Digest digest = sha256(text);
-  constexpr char kHex[] = "0123456789abcdef";
+  constexpr std::string_view kHex = "0123456789abcdef";
   std::string out;
   for (std::size_t i = 0; out.size() < digits && i < digest.size(); ++i) {
     out.push_back(kHex[digest[i] >> 4]);
@@ -203,7 +203,8 @@ Result<std::optional<Journal>> load_journal(const fs::path& file) {
       std::map<std::string, std::int64_t>& into = key == "aliquots" ? out.aliquots : out.measurements;
       for (const auto& [name, id] : value.items()) {
         const auto parsed = id_in(id);
-        if (!parsed) return fail(bad(where, "'" + key + "' has no id for '" + name + "'"));
+        if (!parsed)
+          return fail(bad(where, std::string("'").append(key).append("' has no id for '").append(name).append("'")));
         into.emplace(name, *parsed);
       }
     } else if (key == "inDoubt") {

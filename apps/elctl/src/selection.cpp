@@ -80,7 +80,7 @@ r::PlateauCriteria AgeFlags::criteria() const {
 }
 
 Result<bool> take_selection_flag(Selection& s, const std::vector<std::string>& args, std::size_t& i) {
-  const std::string flag = args[i];
+  const std::string& flag = args[i];
   if (flag == "--include-invalid") {
     s.include_invalid = true;
     return true;
@@ -110,7 +110,7 @@ Result<bool> take_selection_flag(Selection& s, const std::vector<std::string>& a
 }
 
 Result<bool> take_age_flag(AgeFlags& a, const std::vector<std::string>& args, std::size_t& i) {
-  const std::string flag = args[i];
+  const std::string& flag = args[i];
   if (flag == "--decay-error") {
     a.decay_error = true;
     return true;

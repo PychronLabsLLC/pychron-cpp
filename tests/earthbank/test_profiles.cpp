@@ -71,7 +71,7 @@ bool any_note_has(const earthbank::Profiles& profiles, std::string_view part) {
 // An environment variable set, or unset, until the end of the scope.
 class ScopedEnv {
  public:
-  ScopedEnv(std::string name, std::optional<std::string> value)
+  ScopedEnv(std::string name, const std::optional<std::string>& value)
       : name_(std::move(name)), before_(env_var(name_.c_str())) {
     put(value);
   }
@@ -317,9 +317,10 @@ TEST_F(Profiles, NoPasswordKeyIsEverWrittenOrAccepted) {
   const std::string made_up = "hunter2-not-a-real-one";
   for (const std::string key :
        {"password", "Password", "PASSWORD", "token", "Token", "secret", "SECRET", "api_token"}) {
+    const std::string line = std::string(key).append(" = \"").append(made_up).append("\"\n");
     // In a profile, and at the top of the file.
-    for (const std::string& text : {"[profiles.mylab]\nusername = \"r.fixture\"\n" + key + " = \"" + made_up + "\"\n",
-                                    key + " = \"" + made_up + "\"\n[profiles.mylab]\nusername = \"r.fixture\"\n"}) {
+    for (const std::string& text : {"[profiles.mylab]\nusername = \"r.fixture\"\n" + line,
+                                    line + "[profiles.mylab]\nusername = \"r.fixture\"\n"}) {
       const auto loaded = read(text);
       ASSERT_FALSE(loaded.has_value()) << key;
       EXPECT_EQ(loaded.error().kind, ErrorKind::Config) << key;
@@ -358,6 +359,7 @@ TEST_F(Profiles, UnknownKeyIsRefused) {
 
 TEST_F(Profiles, NamesAreLettersDigitsDashAndUnderscore) {
   for (const std::string_view good : {"mylab", "My-Lab_2", "a", "0"}) EXPECT_TRUE(valid_profile_name(good)) << good;
+  // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one name; joined, the escape would take the `b` as a hex digit
   for (const std::string_view bad : {"", "my lab", "lab.one", "lab@host", "lab/one", "l\xC3\xA4" "b", "lab:1"})
     EXPECT_FALSE(valid_profile_name(bad)) << bad;
 

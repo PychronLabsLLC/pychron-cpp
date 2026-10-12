@@ -45,6 +45,7 @@ std::optional<GroupPlateau> group_plateau(const GroupItems& reduced, const r::Pl
     out.steps.push_back(it);
   }
   const std::size_t n = out.steps.size();
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays): find_plateau takes a span of bool, which a vector<bool> cannot give
   std::unique_ptr<bool[]> ex(new bool[std::max<std::size_t>(1, n)]);
   for (std::size_t i = 0; i < n; ++i) ex[i] = out.steps[i]->exclusion.excluded();
   const std::span<const bool> excluded(ex.get(), n);

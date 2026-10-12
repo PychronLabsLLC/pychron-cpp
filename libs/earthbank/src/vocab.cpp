@@ -193,7 +193,7 @@ std::optional<int> uncertainty_type_id(std::string_view name) {
   return std::nullopt;
 }
 
-std::string ar_method(bool any_step, std::optional<double> max_extract_value) {
+std::string_view ar_method(bool any_step, std::optional<double> max_extract_value) {
   if (!any_step) return "Total fusion - laser";
   if (max_extract_value) {
     if (*max_extract_value >= 300.0) return "Step-heating - furnace";
@@ -250,7 +250,7 @@ bool ascii_digit(char c) { return c >= '0' && c <= '9'; }
 //   (TCs)      Taylor Creek Rhyolite Saniditine (sic)
 //   WA1ms      (Western Australia Muscovite)
 // `Mt Dromedary` alone is not here: it is two monitors of the list.
-constexpr MonitorAlias kMonitorAliases[] = {
+constexpr auto kMonitorAliases = std::to_array<MonitorAlias>({
     {"FC-2", "FCTs"},    {"FC2", "FCTs"},         {"FCs", "FCTs"},      {"FCT", "FCTs"},  {"FCTs", "FCTs"},
     {"Fish Canyon", "FCTs"},
     {"ACs", "ACs"},      {"Alder Creek", "ACs"},
@@ -259,21 +259,21 @@ constexpr MonitorAlias kMonitorAliases[] = {
     {"Hb3gr", "Hb3gr"},
     {"TCs", "TCs"},      {"TCR", "TCs"},          {"Taylor Creek", "TCs"},
     {"WA1ms", "WA1ms"},
-};
+});
 
 // Designations that hold one of the names above and are another monitor, one
 // the list has not: FCT-3 is the biotite of the Fish Canyon Tuff, and `FCT`
 // would make it the sanidine. A name that holds one matches nothing.
-constexpr std::string_view kNotListed[] = {"FCT-3", "FCT3"};
+constexpr auto kNotListed = std::to_array<std::string_view>({"FCT-3", "FCT3"});
 
 // The words of the list's entries that are minerals, and the mineral each
 // is. `Saniditine` is the list's spelling in its Taylor Creek entry. A name
 // that says one of these is of an entry that says the same one, and of no
 // other: the same tuff has a sanidine and a biotite, and the list only one.
-constexpr MonitorMineral kMonitorMinerals[] = {
+constexpr auto kMonitorMinerals = std::to_array<MonitorMineral>({
     {"sanidine", "sanidine"},     {"saniditine", "sanidine"}, {"biotite", "biotite"},
     {"hornblende", "hornblende"}, {"muscovite", "muscovite"},
-};
+});
 
 // Words a lab writes for the material of a monitor that are not words of the
 // list: the short forms of the list's four minerals, which are those
@@ -282,7 +282,7 @@ constexpr MonitorMineral kMonitorMinerals[] = {
 // `K-spar` by `spar`. A term of two words is told by the two together
 // (`whole rock`, `whole-rock`).
 // None of these is a word of an alias or of an entry (a test holds that).
-constexpr MonitorMineral kOtherMaterials[] = {
+constexpr auto kOtherMaterials = std::to_array<MonitorMineral>({
     {"san", "sanidine"},          {"bt", "biotite"},         {"bio", "biotite"},
     {"hbl", "hornblende"},        {"ms", "muscovite"},       {"musc", "muscovite"},
     {"plagioclase", "plagioclase"}, {"plag", "plagioclase"},
@@ -295,7 +295,7 @@ constexpr MonitorMineral kOtherMaterials[] = {
     {"alunite", "alunite"},       {"jarosite", "jarosite"},
     {"glass", "glass"},           {"groundmass", "groundmass"},
     {"whole rock", "whole rock"}, {"wholerock", "whole rock"},
-};
+});
 
 // The words of `text`: runs of ASCII letters and digits (and of other bytes
 // that are not ASCII), lower case. `FC-2` is `fc`, `2`.

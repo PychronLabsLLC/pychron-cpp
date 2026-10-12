@@ -18,6 +18,7 @@
 
 namespace elctl::earthbank_cli {
 
+// cppcheck-suppress passedByValue ; Io is three references, and every command takes it by value
 bool at_terminal(Io io) {
   // Only the program's own input, never a stream a caller gave: that one is
   // not a person.

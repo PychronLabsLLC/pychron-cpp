@@ -1,6 +1,7 @@
 #include "pychron/earthbank/uploader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -66,7 +67,7 @@ std::optional<std::int64_t> id_of(const json& object, const char* key) {
     return id >= 1 ? std::optional<std::int64_t>(id) : std::nullopt;
   }
   if (it->is_string()) {
-    const std::string& text = it->get_ref<const std::string&>();
+    const auto& text = it->get_ref<const std::string&>();
     if (text.size() <= 18 && all_digits(text) && std::stoll(text) >= 1) return std::stoll(text);
   }
   return std::nullopt;
@@ -84,12 +85,12 @@ std::string utc_stamp() {
   const auto midnight = std::chrono::floor<std::chrono::days>(second);
   const std::chrono::year_month_day day(midnight);
   const std::chrono::hh_mm_ss clock(second - midnight);
-  char buffer[64];
-  std::snprintf(buffer, sizeof buffer, "%04d%02u%02u-%02d%02d%02d", static_cast<int>(day.year()),
+  std::array<char, 64> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%04d%02u%02u-%02d%02d%02d", static_cast<int>(day.year()),
                 static_cast<unsigned>(day.month()), static_cast<unsigned>(day.day()),
                 static_cast<int>(clock.hours().count()), static_cast<int>(clock.minutes().count()),
                 static_cast<int>(clock.seconds().count()));
-  return buffer;
+  return buffer.data();
 }
 
 // The host (and port) of the service, as the journal's directory is named.
@@ -544,6 +545,7 @@ void SampleRun::send(const Step& step) {
       }
       report_.written.push_back(step.label);
       ++done_;
+      // cppcheck-suppress constStatement ; emit is this class's function, not Qt's word: nothing here knows Qt
       emit(step.label, "saved, id " + std::to_string(posted.id));
       return;
     }
@@ -666,6 +668,7 @@ SampleReport SampleRun::run() {
   }
 
   total_ = static_cast<std::size_t>(std::count_if(steps_.begin(), steps_.end(), [&](const Step& s) { return !recorded(journal_, s); }));
+  // cppcheck-suppress constStatement ; as above: a call of this class's emit
   emit("", "starting");
   for (const Step& step : steps_) {
     if (recorded(journal_, step)) continue;

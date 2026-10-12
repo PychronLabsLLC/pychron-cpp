@@ -1,6 +1,7 @@
 #include "pychron/earthbank/qt_http_client.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <clocale>
@@ -51,12 +52,13 @@ void ensure_application() {
   std::call_once(once, [] {
     if (QCoreApplication::instance() != nullptr) return;
     static int argc = 1;
-    static char name[] = "pychron";
-    static char* argv[] = {name, nullptr};
-    static QCoreApplication application(argc, argv);
+    static auto name = std::to_array("pychron");
+    static std::array<char*, 2> argv = {name.data(), nullptr};
+    static QCoreApplication application(argc, argv.data());
     // Qt takes the locale from the environment, and a comma for a decimal
     // point would reach every printf and strtod of the program. Numbers stay
     // as the C library had them.
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): once, straight after Qt set the locale itself in the line above
     std::setlocale(LC_NUMERIC, "C");
   });
 }
@@ -134,7 +136,7 @@ class AnswerReader {
         case Phase::Head: {
           const qsizetype end = buffer_.indexOf("\r\n\r\n");
           if (end < 0) {
-            if (static_cast<std::size_t>(buffer_.size()) > kMostHead) return bad("the answer's headers are too long");
+            if (std::cmp_greater(buffer_.size(), kMostHead)) return bad("the answer's headers are too long");
             return State::More;
           }
           const std::string head = buffer_.left(end).toStdString();
@@ -156,13 +158,13 @@ class AnswerReader {
         }
         case Phase::Length: {
           if (*length_ > kMostAnswer) return bad("the answer is too large");
-          if (static_cast<std::size_t>(buffer_.size()) < *length_) return State::More;
+          if (std::cmp_less(buffer_.size(), *length_)) return State::More;
           body_.assign(buffer_.constData(), *length_);
           return done();
         }
         case Phase::UntilClose: {
           // Kept in the buffer and taken once, when the connection closes.
-          if (static_cast<std::size_t>(buffer_.size()) > kMostAnswer) return bad("the answer is too large");
+          if (std::cmp_greater(buffer_.size(), kMostAnswer)) return bad("the answer is too large");
           return State::More;
         }
         case Phase::ChunkSize: {
@@ -184,7 +186,7 @@ class AnswerReader {
           continue;
         }
         case Phase::ChunkData: {
-          if (static_cast<std::size_t>(buffer_.size()) < chunk_) return State::More;
+          if (std::cmp_less(buffer_.size(), chunk_)) return State::More;
           body_.append(buffer_.constData(), chunk_);
           buffer_.remove(0, static_cast<qsizetype>(chunk_));
           phase_ = Phase::ChunkEnd;
@@ -280,7 +282,10 @@ std::string wire_form(const HttpRequest& request, const QUrl& url) {
       continue;
     }
     has_agent = has_agent || same_name(name, "user-agent");
-    out += name + ": " + value + "\r\n";
+    out += name;
+    out += ": ";
+    out += value;
+    out += "\r\n";
   }
   if (!has_agent) out += std::string("User-Agent: ") + PYCHRON_EARTHBANK_USER_AGENT + "\r\n";
   const bool carries = request.method == "POST" || request.method == "PUT" || request.method == "PATCH";
@@ -414,7 +419,7 @@ Result<HttpResponse> QtHttpClient::send(const HttpRequest& request) {
 
   timer.start(static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(request.timeout.count(), 0, 0x7fffffff)));
   const QString host = url.host();
-  const quint16 port = static_cast<quint16>(url.port(secure ? 443 : 80));
+  const auto port = static_cast<quint16>(url.port(secure ? 443 : 80));
   if (secure) {
     socket.connectToHostEncrypted(host, port);
   } else {

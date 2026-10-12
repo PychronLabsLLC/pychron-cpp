@@ -344,7 +344,7 @@ TEST(FakeEarthBank, LookupNeedsABearerOnCoreEndpoints) {
   for (const LookupSpec& spec : lookup_specs()) {
     if (spec.endpoint.empty() || !seen.insert(spec.endpoint).second) continue;
     const std::string url = with_query(spec.endpoint, {{"size", "2000"}});
-    const bool core_list = spec.endpoint.substr(0, 12) == "/api/core/l-";
+    const bool core_list = spec.endpoint.starts_with("/api/core/l-");
     EXPECT_EQ(anonymous.get(url).status, core_list ? 401 : 200) << spec.endpoint;
     EXPECT_EQ(client.get(url).status, 200) << spec.endpoint;
     ++(core_list ? with_login_only : open);
@@ -1110,6 +1110,7 @@ TEST(FakeEarthBank, AScriptCanWaitForALaterRequest) {
   EXPECT_EQ(aliquot("g")->status, 201);
 
   std::vector<std::string> made;
+  // cppcheck-suppress danglingTempReference ; the loop's reference to a member keeps the whole store alive
   for (const Store::Record& record : bank.store().aliquots) made.push_back(record.body.at("aliquotName"));
   EXPECT_EQ(made, (std::vector<std::string>{"a", "b", "d", "g"}));
 
@@ -1421,6 +1422,7 @@ TEST(FakeEarthBank, TheSameCallsGiveTheSameIds) {
         ids.push_back(parsed(client.post(path, {{"arArDataPointId", point}})).at("id").get<std::int64_t>());
       }
     }
+    // cppcheck-suppress danglingTempReference ; the loop's reference to a member keeps the whole store alive
     for (const Store::Record& sample : bank.store().samples) ids.push_back(sample.id);
     return std::make_pair(ids, client.token());
   };

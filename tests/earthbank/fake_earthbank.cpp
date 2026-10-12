@@ -63,7 +63,7 @@ std::string lowered(std::string_view text) {
   return out;
 }
 
-bool starts_with(std::string_view text, std::string_view prefix) { return text.substr(0, prefix.size()) == prefix; }
+bool starts_with(std::string_view text, std::string_view prefix) { return text.starts_with(prefix); }
 
 bool contains_without_case(std::string_view text, std::string_view part) {
   return lowered(text).find(lowered(part)) != std::string::npos;
@@ -641,12 +641,11 @@ Store FakeEarthBank::store() const {
 std::optional<FakeEarthBank::Scripted> FakeEarthBank::take_scripted(std::string_view method, std::string_view path) {
   std::optional<Scripted> fired;
   for (auto it = scripted_.begin(); it != scripted_.end();) {
-    if (it->method != method || !starts_with(path, it->path_prefix)) {
-      ++it;
-    } else if (it->skip > 0) {
+    const bool fits = it->method == method && starts_with(path, it->path_prefix);
+    if (fits && it->skip > 0) {
       --it->skip;
       ++it;
-    } else if (!fired) {
+    } else if (fits && !fired) {
       fired = std::move(*it);
       it = scripted_.erase(it);
     } else {
@@ -852,7 +851,7 @@ HttpResponse FakeEarthBank::lookup(const Call& call, const std::vector<json>& ro
   const auto equals = call.param("name.equals");
   const auto contains = call.param("name.contains");
   for (const json& row : rows) {
-    const std::string& name = row["name"].get_ref<const std::string&>();
+    const auto& name = row["name"].get_ref<const std::string&>();
     if (equals && name != *equals) continue;
     if (contains && !contains_without_case(name, *contains)) continue;
     out.push_back(row);

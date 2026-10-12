@@ -67,7 +67,12 @@ void expect_not(const LookupResult& result, LookupOutcome outcome, const std::st
 // What one request asked a list: `name.equals=Sanidine size=2`.
 std::string question(const LoggedRequest& request) {
   std::string out;
-  for (const auto& [key, value] : request.query) out += (out.empty() ? "" : " ") + key + "=" + value;
+  for (const auto& [key, value] : request.query) {
+    if (!out.empty()) out += ' ';
+    out += key;
+    out += '=';
+    out += value;
+  }
   return out;
 }
 

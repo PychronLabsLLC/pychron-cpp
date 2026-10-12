@@ -97,6 +97,7 @@ using Row = std::tuple<std::string, std::string, std::string, std::string, std::
 
 std::vector<Row> rows(const std::vector<Miss>& misses) {
   std::vector<Row> out;
+  out.reserve(misses.size());
   for (const Miss& miss : misses) {
     out.emplace_back(miss.sample, miss.record, miss.field, miss.value, miss.endpoint, miss.outcome);
   }
@@ -207,6 +208,7 @@ using Taken = std::tuple<std::string, std::string, std::string, std::string, std
 
 std::vector<Taken> taken(const std::vector<Resolved>& resolved) {
   std::vector<Taken> out;
+  out.reserve(resolved.size());
   for (const Resolved& one : resolved) {
     out.emplace_back(one.sample, one.record, one.field, one.value, one.matched_name, one.count);
   }

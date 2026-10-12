@@ -5,7 +5,6 @@
 
 #include <charconv>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -16,6 +15,7 @@
 #include <vector>
 
 #include "earthbank_impl.hpp"
+#include "pychron/core/env.hpp"
 
 namespace elctl::earthbank_cli {
 
@@ -57,9 +57,9 @@ Result<std::int64_t> whole_number(const std::string& flag, const std::string& te
 }
 
 std::optional<std::string> password_from_environment() {
-  const char* value = std::getenv(kPasswordVariable);
-  if (value == nullptr || *value == '\0') return std::nullopt;
-  return std::string(value);
+  auto value = pychron::env_var(kPasswordVariable);
+  if (!value || value->empty()) return std::nullopt;
+  return value;
 }
 
 fs::path profiles_path(const ConnectFlags& flags) {
@@ -363,7 +363,7 @@ int import_profiles_command(const std::vector<std::string>& args, Io io) {
     auto taken = take_connect_flag(connect, args, i);
     if (!taken) return fatal(io, taken.error());
     if (*taken) continue;
-    if (args[i].rfind("--", 0) == 0 || !ini.empty()) return fatal(io, "import-profiles: unexpected argument '" + args[i] + "'");
+    if (args[i].starts_with("--") || !ini.empty()) return fatal(io, "import-profiles: unexpected argument '" + args[i] + "'");
     ini = args[i];
   }
   if (ini.empty()) return fatal(io, "import-profiles: the legacy preferences file is required");

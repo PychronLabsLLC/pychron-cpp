@@ -735,10 +735,10 @@ TEST(Session, NoTokenInAnyErrorOrLog) {
   ASSERT_GT(spy.secrets().size(), 4u);
   ASSERT_GT(said.size(), 100u);
   std::vector<std::string> secrets = spy.secrets();
-  secrets.push_back("not-a-real-password");
+  secrets.emplace_back("not-a-real-password");
   secrets.push_back(wrong);
-  secrets.push_back("Bearer ");
-  secrets.push_back("Authorization");
+  secrets.emplace_back("Bearer ");
+  secrets.emplace_back("Authorization");
   for (const std::string& line : said) {
     for (const std::string& secret : secrets) EXPECT_FALSE(has(line, secret)) << line;
   }

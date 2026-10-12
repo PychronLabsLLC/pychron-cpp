@@ -5,6 +5,7 @@
 // time since, interference ratios, a J with an uncertainty.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -55,9 +56,9 @@ inline constexpr int kStepCount = 10;
 // 20001. The two first and the two last steps are older or younger than the
 // six between them, which make the plateau.
 inline std::shared_ptr<processing::Analysis> step_analysis(int step) {
-  const double ar39[kStepCount] = {4, 8, 30, 55, 60, 50, 35, 20, 6, 3};
-  const double ar36[kStepCount] = {0.40, 0.25, 0.12, 0.08, 0.06, 0.05, 0.06, 0.08, 0.20, 0.30};
-  const double f[kStepCount] = {13.0, 11.5, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 8.8, 8.0};
+  const std::array<double, kStepCount> ar39 = {4, 8, 30, 55, 60, 50, 35, 20, 6, 3};
+  const std::array<double, kStepCount> ar36 = {0.40, 0.25, 0.12, 0.08, 0.06, 0.05, 0.06, 0.08, 0.20, 0.30};
+  const std::array<double, kStepCount> f = {13.0, 11.5, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 8.8, 8.0};
   auto a = processing::test::make_step(step, ar39[step], ar36[step], f[step], "20001");
   a->sample = "S-STEP";
   a->material = "sanidine";
@@ -92,7 +93,7 @@ inline constexpr int kFusionCount = 6;
 
 // Fusion `index` of the fusion sample: aliquot index + 1 of identifier 20002.
 inline std::shared_ptr<processing::Analysis> fusion_analysis(int index) {
-  const double ar40[kFusionCount] = {1000.0, 1003.0, 998.0, 1001.5, 999.0, 1002.0};
+  const std::array<double, kFusionCount> ar40 = {1000.0, 1003.0, 998.0, 1001.5, 999.0, 1002.0};
   auto a = processing::test::make_unknown(index, ar40[index]);
   a->identifier = "20002";
   a->uuid = "fusion-20002-" + std::to_string(index);

@@ -197,7 +197,7 @@ Result<std::string> rebuild_zip(std::string_view source, const std::map<std::siz
     // how hard a writer compressed, are 0 (normal) from miniz.
     constexpr unsigned kHasDescriptor = 1u << 3;
     constexpr unsigned kUtf8Name = 1u << 11;
-    mz_uint flags = static_cast<mz_uint>(MZ_DEFAULT_LEVEL);
+    auto flags = static_cast<mz_uint>(MZ_DEFAULT_LEVEL);
     if ((was.m_bit_flag & kHasDescriptor) == 0) flags |= static_cast<mz_uint>(MZ_ZIP_FLAG_WRITE_HEADER_SET_SIZE);
     if ((was.m_bit_flag & kUtf8Name) == 0) flags |= static_cast<mz_uint>(MZ_ZIP_FLAG_ASCII_FILENAME);
     std::string_view bytes = data;
@@ -384,7 +384,7 @@ std::optional<std::string> part_name(std::string_view target) {
   if (!target.empty() && target.front() == '/') {
     target.remove_prefix(1);
   } else {
-    segments.push_back("xl");
+    segments.emplace_back("xl");
   }
   while (!target.empty()) {
     const std::size_t slash = target.find('/');
@@ -1287,7 +1287,8 @@ Result<void> Workbook::write_rows(std::string_view sheet_name, int first_row,
       const Cell& cell = rows[i][j];
       const int column = static_cast<int>(j) + 1;
       const auto refused = [&](const std::string& what) {
-        return fail(ErrorKind::Config, where + " cell " + cell_reference(column, row.row) + ": " + what);
+        return fail(ErrorKind::Config,
+                    std::string(where).append(" cell ").append(cell_reference(column, row.row)).append(": ").append(what));
       };
       if (const auto* number = std::get_if<double>(&cell.value)) {
         if (!std::isfinite(*number)) return refused("a number that is not finite cannot be written");

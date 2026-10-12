@@ -59,7 +59,7 @@ std::optional<int> uncertainty_type_id(std::string_view name);
 // heating step are a laser total fusion. With steps, the largest extraction
 // value decides: at most 50 (watts or percent) is a laser, at least 300
 // (degrees) a furnace, anything between, or no value, is left undefined.
-std::string ar_method(bool any_step, std::optional<double> max_extract_value);
+std::string_view ar_method(bool any_step, std::optional<double> max_extract_value);
 
 // The service's name for the 40K decay constant whose total (lambda_b +
 // lambda_e, per year) this is, and for the atmospheric 40Ar/36Ar; matched to

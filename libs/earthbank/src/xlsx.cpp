@@ -1,6 +1,7 @@
 #include "pychron/earthbank/xlsx.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
@@ -53,12 +54,12 @@ struct SheetSpec {
   int formatted_to;
 };
 
-constexpr SheetSpec kArArSheets[] = {
+constexpr auto kArArSheets = std::to_array<SheetSpec>({
     {"ArArDataPoints", Rec::DataPoint, 927}, {"ArArMeasurement", Rec::Measurement, 863},
     {"ArArAliquot", Rec::Aliquot, 957},      {"ArArAgeSummary", Rec::AgeSummary, 7},
     {"ArArAgeCalc", Rec::AgeCalc, 955},
-};
-constexpr SheetSpec kSampleSheets[] = {{"Samples", Rec::Sample, 883}};
+});
+constexpr auto kSampleSheets = std::to_array<SheetSpec>({{"Samples", Rec::Sample, 883}});
 
 // A template: its file, its data sheets, and the sheet that describes its
 // columns, whose legend shows the colour of a Required one.
@@ -82,7 +83,7 @@ constexpr int kTitleRow = 3;
 constexpr int kFieldRow = 4;
 constexpr int kFirstDataRow = 5;
 constexpr int kLegendRows = 20;
-constexpr std::string_view kLegendWords[] = {"required", "required field"};
+constexpr auto kLegendWords = std::to_array<std::string_view>({"required", "required field"});
 
 // The column every Ar-Ar sheet has for the data point's name, and the three
 // things of a submission a column can take.
@@ -119,6 +120,7 @@ enum class Form { Plain, Date, MinuteUtc, DayFirst };
 //   - `elevationDepthAccuracy` had an entry naming a field no record has.
 //   - `locationComment` ("Additional information about the sample location")
 //     takes the location's `description`, which legacy had nowhere to put.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding): the table below is written in this order, field by field
 struct Exception {
   std::string_view sheet, key;
   Rec record;
@@ -126,7 +128,7 @@ struct Exception {
   Form form = Form::Plain;
 };
 
-constexpr Exception kExceptions[] = {
+constexpr auto kExceptions = std::to_array<Exception>({
     {"ArArDataPoints", kLinkColumn, Rec::Submission, kDatapointName},
     {"ArArDataPoints", "sampleName", Rec::Sample, "name"},
     {"ArArDataPoints", "arArSetUp", Rec::Submission, kSetupName},
@@ -163,10 +165,11 @@ constexpr Exception kExceptions[] = {
     {"Samples", "collectDateMax", Rec::Sample, "collectDateMax", Form::DayFirst},
     {"Samples", "lastKnownArchive", Rec::Sample, "archiveName"},
     {"Samples", "Tag", Rec::None, ""},
-};
+});
 
 // Fields that say again what another field's column holds. Such a field has
 // no column of its own and is not missed while the two agree.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding): the table below is written in this order, field by field
 struct Restated {
   Rec record;
   std::string_view field;
@@ -174,12 +177,12 @@ struct Restated {
   std::string_view as_field;
 };
 
-constexpr Restated kRestated[] = {
+constexpr auto kRestated = std::to_array<Restated>({
     {Rec::Measurement, "analysisUnits", Rec::DataPoint, "analysisUnits"},
     {Rec::Measurement, "apparentAgeUncertainityTypeName", Rec::DataPoint, "apparentAgeUncertaintyTypeName"},
     {Rec::AgeSummary, "ageUncertaintyTypeName", Rec::AgeSummary, "calculatedAgeUncertaintyTypeName"},
     {Rec::Sample, "sampleID", Rec::Sample, "name"},
-};
+});
 
 // Columns the template colours Required that are not wanted of every row.
 // The colour is per column and says nothing of when; these are the cases the
@@ -204,14 +207,14 @@ struct Conditional {
   std::string_view kind, lacking;
 };
 
-constexpr Conditional kConditional[] = {
+constexpr auto kConditional = std::to_array<Conditional>({
     {"ArArMeasurement", "laserPower", false, "furnaceTemperature", "", "furnace temperature"},
     {"ArArMeasurement", "laserPowerUnits", false, "furnaceTemperature", "", "furnace temperature"},
     {"ArArMeasurement", "furnaceTemperature", false, "laserPower", "", "laser power"},
     {"ArArMeasurement", "stepNumber", true, "", " of a step-heating data point", ""},
     {"ArArMeasurement", "Ar39KReleased", true, "", " of a step-heating data point", ""},
     {"ArArMeasurement", "cumulative39ArK", true, "", " of a step-heating data point", ""},
-};
+});
 
 // How the list's methods of heating in steps begin (`Lookup Tables`, D2:D4).
 constexpr std::string_view kStepHeating = "step-heating";
@@ -219,14 +222,14 @@ constexpr std::string_view kStepHeating = "step-heating";
 // ---------------------------------------------------------------- the records
 
 #define PYCHRON_EARTHBANK_FIELD_NAME(kind, name) std::string_view(#name),
-constexpr std::string_view kSampleFields[] = {PYCHRON_EARTHBANK_SAMPLE_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
-constexpr std::string_view kLocationFields[] = {PYCHRON_EARTHBANK_LOCATION_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
-constexpr std::string_view kDataPointFields[] = {PYCHRON_EARTHBANK_DATA_POINT_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
-constexpr std::string_view kAliquotFields[] = {PYCHRON_EARTHBANK_ALIQUOT_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
-constexpr std::string_view kMeasurementFields[] = {
-    PYCHRON_EARTHBANK_MEASUREMENT_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
-constexpr std::string_view kAgeCalcFields[] = {PYCHRON_EARTHBANK_AGE_CALC_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
-constexpr std::string_view kAgeSummaryFields[] = {PYCHRON_EARTHBANK_AGE_SUMMARY_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)};
+constexpr auto kSampleFields = std::to_array<std::string_view>({PYCHRON_EARTHBANK_SAMPLE_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
+constexpr auto kLocationFields = std::to_array<std::string_view>({PYCHRON_EARTHBANK_LOCATION_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
+constexpr auto kDataPointFields = std::to_array<std::string_view>({PYCHRON_EARTHBANK_DATA_POINT_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
+constexpr auto kAliquotFields = std::to_array<std::string_view>({PYCHRON_EARTHBANK_ALIQUOT_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
+constexpr auto kMeasurementFields = std::to_array<std::string_view>({
+    PYCHRON_EARTHBANK_MEASUREMENT_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
+constexpr auto kAgeCalcFields = std::to_array<std::string_view>({PYCHRON_EARTHBANK_AGE_CALC_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
+constexpr auto kAgeSummaryFields = std::to_array<std::string_view>({PYCHRON_EARTHBANK_AGE_SUMMARY_FIELDS(PYCHRON_EARTHBANK_FIELD_NAME)});
 #undef PYCHRON_EARTHBANK_FIELD_NAME
 
 std::span<const std::string_view> fields_of(Rec record) {
@@ -382,13 +385,18 @@ class Notes {
       std::string names;
       for (const auto& [index, column] : columns) {
         if (column.empty == 0) continue;
-        names += (names.empty() ? "" : ", ") + column.name + " empty in " + column.where();
+        if (!names.empty()) names += ", ";
+        names += column.name;
+        names += " empty in ";
+        names += column.where();
       }
       // The colour is all the template says: whether the importer holds a row
       // to it is the importer's to say.
       if (!names.empty()) {
-        add(sheet + ": marked Required by the template's colouring; the importer may refuse a row that leaves one "
-                    "empty: " + names);
+        add(std::string(sheet)
+                .append(": marked Required by the template's colouring; the importer may refuse a row that leaves one "
+                        "empty: ")
+                .append(names));
       }
     }
     required_.clear();
@@ -872,12 +880,12 @@ std::string stamp_of(std::chrono::system_clock::time_point now) {
   const auto midnight = std::chrono::floor<std::chrono::days>(second);
   const std::chrono::year_month_day day(midnight);
   const std::chrono::hh_mm_ss clock(second - midnight);
-  char buffer[64];
-  std::snprintf(buffer, sizeof buffer, "%04d%02u%02u-%02d%02d%02d", static_cast<int>(day.year()),
+  std::array<char, 64> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%04d%02u%02u-%02d%02d%02d", static_cast<int>(day.year()),
                 static_cast<unsigned>(day.month()), static_cast<unsigned>(day.day()),
                 static_cast<int>(clock.hours().count()), static_cast<int>(clock.minutes().count()),
                 static_cast<int>(clock.seconds().count()));
-  return buffer;
+  return buffer.data();
 }
 
 // A sample's name as part of a file name: ASCII letters, digits, `-` and `_`
@@ -1021,6 +1029,7 @@ Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxO
   const std::string stamp = stamp_of(options.now);
 
   std::vector<Records> records;
+  records.reserve(submissions.size());
   for (const Submission& s : submissions) records.push_back(records_of(s));
 
   Notes notes;
@@ -1033,12 +1042,13 @@ Result<Prepared> prepare(const std::vector<Submission>& submissions, const XlsxO
     if (!plan) return fail(plan.error());
     if (options.per_sample) {
       for (std::size_t i = 0; i < records.size(); ++i) {
-        const Records* const one[] = {&records[i]};
+        const std::array<const Records*, 1> one = {&records[i]};
         out.pending.push_back({*book, "ArArDataPoint_" + per_sample_stem(submissions[i], i + 1)});
         if (auto filled = fill(out.pending.back().book, *plan, one, true, notes); !filled) return fail(filled.error());
       }
     } else {
       std::vector<const Records*> all;
+      all.reserve(records.size());
       for (const Records& r : records) all.push_back(&r);
       out.pending.push_back({*book, "ArArDataPoint_" + stamp});
       if (auto filled = fill(out.pending.back().book, *plan, all, true, notes); !filled) return fail(filled.error());
@@ -1087,7 +1097,7 @@ TemplateSearch find_templates(const std::optional<std::string>& named, const fs:
       if (const fs::path canonical = fs::weakly_canonical(dir, ec); !ec) dir = canonical;
       out.tried.push_back(dir.string());
       if (!fs::is_directory(dir, ec)) continue;
-      out.found = dir;
+      out.found = std::move(dir);
       return out;
     }
   }

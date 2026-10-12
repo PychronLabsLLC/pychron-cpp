@@ -41,6 +41,7 @@ template <class Ref>
 using Owned = std::unique_ptr<std::remove_pointer_t<Ref>, Release>;
 
 Owned<CFStringRef> cf_string(std::string_view text) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): CoreFoundation takes text as UInt8 bytes
   return Owned<CFStringRef>(CFStringCreateWithBytes(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(text.data()),
                                                     static_cast<CFIndex>(text.size()), kCFStringEncodingUTF8, false));
 }
@@ -52,6 +53,7 @@ std::string utf8(CFStringRef text) {
   CFStringGetBytes(text, CFRangeMake(0, length), kCFStringEncodingUTF8, '?', false, nullptr, 0, &bytes);
   std::string out(static_cast<std::size_t>(bytes), '\0');
   CFStringGetBytes(text, CFRangeMake(0, length), kCFStringEncodingUTF8, '?', false,
+                   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): CoreFoundation writes text as UInt8 bytes
                    reinterpret_cast<UInt8*>(out.data()), bytes, nullptr);
   return out;
 }
@@ -88,6 +90,7 @@ class KeychainSecretStore final : public ISecretStore {
     if (status != errSecSuccess) return refused("read", account, status);
     if (found == nullptr || CFGetTypeID(found) != CFDataGetTypeID()) return refused("read", account, errSecDecode);
     const auto data = static_cast<CFDataRef>(found);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the keychain gives the password as UInt8 bytes
     return std::optional<std::string>{std::string(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
                                                   static_cast<std::size_t>(CFDataGetLength(data)))};
   }
@@ -95,6 +98,7 @@ class KeychainSecretStore final : public ISecretStore {
   Result<void> set(std::string_view account, std::string_view password) override {
     if (auto ok = detail::check_account(kBackend, account); !ok) return ok;
     if (auto ok = detail::check_password(kBackend, password); !ok) return ok;
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the keychain takes the password as UInt8 bytes
     const Owned<CFDataRef> data(CFDataCreate(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(password.data()),
                                              static_cast<CFIndex>(password.size())));
     const auto adding = item(account);
