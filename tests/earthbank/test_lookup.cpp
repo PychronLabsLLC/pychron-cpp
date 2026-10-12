@@ -61,7 +61,9 @@ void expect_not(const LookupResult& result, LookupOutcome outcome, const std::st
   EXPECT_EQ(result.outcome, outcome) << what << ": " << result.detail;
   EXPECT_EQ(result.id, 0) << what;
   EXPECT_EQ(result.matched_name, "") << what;
-  if (outcome != LookupOutcome::Found) EXPECT_FALSE(result.detail.empty()) << what;
+  if (outcome != LookupOutcome::Found) {
+    EXPECT_FALSE(result.detail.empty()) << what;
+  }
 }
 
 // What one request asked a list: `name.equals=Sanidine size=2`.

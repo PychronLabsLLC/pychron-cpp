@@ -149,7 +149,9 @@ std::string flags(const Submission& s, Text Measurement::*column) {
   std::string out;
   for (const Measurement& m : s.measurements) {
     const Text& flag = m.*column;
-    if (flag) EXPECT_TRUE(*flag == "Yes" || *flag == "No") << *flag;
+    if (flag) {
+      EXPECT_TRUE(*flag == "Yes" || *flag == "No") << *flag;
+    }
     out += !flag ? '-' : *flag == "Yes" ? 'Y' : 'N';
   }
   return out;
@@ -676,7 +678,9 @@ TEST(Mapping, PlateauStepsAreFlagged) {
   }
   EXPECT_EQ(plateau_flags(without), left_steps);
   EXPECT_EQ(std::count(left_steps.begin(), left_steps.end(), "E"), 0);
-  if (left) EXPECT_EQ(flags(without, &Measurement::plateauStepName).find('-'), std::string::npos);
+  if (left) {
+    EXPECT_EQ(flags(without, &Measurement::plateauStepName).find('-'), std::string::npos);
+  }
 }
 
 TEST(Mapping, PreferredAgeRule) {
@@ -1401,8 +1405,12 @@ TEST(Mapping, LeftEmptyFieldsAreAbsent) {
       EXPECT_FALSE(key == "id" || (key.size() > 2 && key.substr(key.size() - 2) == "Id")) << key;
       // Whatever is sent is something: no null, no empty string, no number that is not one.
       EXPECT_FALSE(item.value().is_null()) << key;
-      if (item.value().is_string()) EXPECT_FALSE(item.value().get<std::string>().empty()) << key;
-      if (item.value().is_number_float()) EXPECT_TRUE(std::isfinite(item.value().get<double>())) << key;
+      if (item.value().is_string()) {
+        EXPECT_FALSE(item.value().get<std::string>().empty()) << key;
+      }
+      if (item.value().is_number_float()) {
+        EXPECT_TRUE(std::isfinite(item.value().get<double>())) << key;
+      }
     }
   };
   for (const Submission& s : build(all)) {
@@ -1506,7 +1514,9 @@ TEST(Mapping, NonFiniteValuesAreLeftOutAndNoted) {
     const nlohmann::json record = to_json(m);
     for (const auto& item : record.items()) {
       EXPECT_FALSE(item.value().is_null()) << item.key();
-      if (item.value().is_number_float()) EXPECT_TRUE(std::isfinite(item.value().get<double>())) << item.key();
+      if (item.value().is_number_float()) {
+        EXPECT_TRUE(std::isfinite(item.value().get<double>())) << item.key();
+      }
     }
   }
 }

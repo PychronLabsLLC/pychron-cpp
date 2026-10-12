@@ -961,7 +961,9 @@ TEST_F(Xlsx, ASheetWithNoRowsIsTheTemplates) {
   const auto after = ooxml::read_zip(result.files[0]);
   ASSERT_TRUE(before.has_value() && after.has_value());
   for (std::size_t i = 0; i < before->size(); ++i) {
-    if ((*before)[i].name == "xl/worksheets/sheet3.xml") EXPECT_EQ((*after)[i].data, (*before)[i].data);
+    if ((*before)[i].name == "xl/worksheets/sheet3.xml") {
+      EXPECT_EQ((*after)[i].data, (*before)[i].data);
+    }
   }
 }
 
