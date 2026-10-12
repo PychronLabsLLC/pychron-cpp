@@ -76,13 +76,14 @@ std::string response(int status, const std::string& reason, const std::string& b
 
 // The process's QCoreApplication, made once for the server's sake (a QTcpServer
 // wants one). The client does not: ClientMakesItsOwnApplication runs before
-// any of this.
+// any of this. It is never destroyed: at exit Qt has already taken down what
+// its destructor reads (a crash in ~QCoreApplication with Ubuntu 24.04's Qt).
 void ensure_application() {
   static int argc = 1;
   static auto name = std::to_array("test_qt_http_client");
   static std::array<char*, 2> argv = {name.data(), nullptr};
-  static std::unique_ptr<QCoreApplication> app;
-  if (QCoreApplication::instance() == nullptr) app = std::make_unique<QCoreApplication>(argc, argv.data());
+  [[maybe_unused]] static QCoreApplication* const app =
+      QCoreApplication::instance() != nullptr ? nullptr : new QCoreApplication(argc, argv.data());
 }
 
 class Server {
