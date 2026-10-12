@@ -33,7 +33,11 @@ target_compile_features(pychron_core PUBLIC cxx_std_20)
 
 # toml::table appears in public config headers (DriverConfig::options), so the
 # toml++ configuration must match in every translation unit: no exceptions.
-target_compile_definitions(pychron_core PUBLIC TOML_EXCEPTIONS=0)
+# TOML_FLOAT_CHARCONV=0: toml++ writes a float with std::to_chars where it
+# trusts the compiler's (MSVC: shortest form, 0.1) and through a stream at 17
+# digits elsewhere (0.10000000000000001). A record's bytes, and so its sha,
+# must not depend on what built the program: the stream everywhere.
+target_compile_definitions(pychron_core PUBLIC TOML_EXCEPTIONS=0 TOML_FLOAT_CHARCONV=0)
 target_link_libraries(pychron_core PUBLIC tomlplusplus::tomlplusplus Threads::Threads)
 # spdlog is an implementation detail of LogHub: never exposed (spec 4.6).
 target_link_libraries(pychron_core PRIVATE spdlog::spdlog)
