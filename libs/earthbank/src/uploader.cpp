@@ -165,7 +165,7 @@ struct Resolution {
   std::int64_t id = 0;
 };
 
-Result<std::optional<Resolution>> parse_resolution(const std::optional<std::string>& said) {
+Result<std::optional<Resolution>> parse_resolution(const std::optional<std::string>& said, const std::string& setting) {
   if (!said) return std::optional<Resolution>();
   if (*said == "not-written") return std::optional<Resolution>(Resolution{false, 0});
   constexpr std::string_view kWritten = "written:";
@@ -175,14 +175,15 @@ Result<std::optional<Resolution>> parse_resolution(const std::optional<std::stri
       return std::optional<Resolution>(Resolution{true, std::stoll(digits)});
     }
   }
-  return fail(ErrorKind::Config, "earthbank: resolve_in_doubt is '" + *said +
+  return fail(ErrorKind::Config, "earthbank: " + setting + " is '" + *said +
                                      "'; it is \"written:<id>\" (the record is on EarthBank, with that id) or "
                                      "\"not-written\"");
 }
 
 // What the user is told of a record whose write got no answer. The same
 // words every time, for the run that met the doubt and the runs after it.
-std::string in_doubt_sentence(const std::string& sample, const std::string& label) {
+// `setting` is the caller's name for resolve_in_doubt.
+std::string in_doubt_sentence(const std::string& sample, const std::string& label, const std::string& setting) {
   if (label == kSampleLabel) {
     return sample + ": the sample may or may not have been saved on EarthBank (the request was sent and no usable answer "
                     "came back). Nothing more of " + sample +
@@ -192,7 +193,7 @@ std::string in_doubt_sentence(const std::string& sample, const std::string& labe
   return sample + ": the " + label +
          " may or may not have been saved on EarthBank (the request was sent and no usable answer came back). Nothing "
          "more of " + sample + " was sent, because a record sent twice is there twice and cannot be removed. Look for the " +
-         label + " of " + sample + " on EarthBank, then run again with resolve_in_doubt set to \"written:<id>\" (it is "
+         label + " of " + sample + " on EarthBank, then run again with " + setting + " set to \"written:<id>\" (it is "
          "there; <id> is the id EarthBank shows for it) or to \"not-written\" (it is not).";
 }
 
@@ -284,8 +285,9 @@ std::optional<SampleReport> SampleRun::open_journal() {
   // Other data. A journal that holds nothing has nothing to protect.
   if (old.empty()) return std::nullopt;
   if (!env_.options.new_datapoint) {
+    report_.changed = true;
     return refused(name_ + ": the data changed since the upload of it began, and EarthBank cannot be updated, so nothing was "
-                           "sent. To send " + name_ + " again as new records, run again with new_datapoint (the old records "
+                           "sent. To send " + name_ + " again as new records, run again with " + env_.options.new_datapoint_setting + " (the old records "
                            "stay on EarthBank; remove them there). The journal is " + utf8(path_) + ".");
   }
   fs::path aside;
@@ -320,7 +322,7 @@ bool SampleRun::settle_doubt() {
     // or does not is recorded then.
     journal_.in_doubt.reset();
     if (env_.resolution) {
-      report_.messages.push_back("The value given for resolve_in_doubt was not used for the sample " + name_ +
+      report_.messages.push_back("The value given for " + env_.options.in_doubt_setting + " was not used for the sample " + name_ +
                                  ": it is the sample that is in doubt, and that is settled by searching the data package "
                                  "for a sample of that name.");
     }
@@ -328,23 +330,23 @@ bool SampleRun::settle_doubt() {
   }
   const auto step = std::find_if(steps_.begin(), steps_.end(), [&](const Step& s) { return s.label == label; });
   if (step == steps_.end()) {
-    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label) + " (The journal names a record this submission does not have.)");
+    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label, env_.options.in_doubt_setting) + " (The journal names a record this submission does not have.)");
     return false;
   }
   if (env_.resolution_is_ambiguous) {
-    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label) +
+    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label, env_.options.in_doubt_setting) +
                                     " More than one sample is in doubt and a resolution names none, so none was used: "
                                     "settle them one at a time, uploading only this sample.");
     return false;
   }
   if (!env_.resolution) {
-    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label));
+    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label, env_.options.in_doubt_setting));
     return false;
   }
   if (env_.resolution->written) record(journal_, *step, env_.resolution->id);
   journal_.in_doubt.reset();
   if (const auto saved = save(); !saved) {
-    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label) + " Your answer could not be kept: " + saved.error().what);
+    stop(SampleStatus::InDoubt, in_doubt_sentence(name_, label, env_.options.in_doubt_setting) + " Your answer could not be kept: " + saved.error().what);
     journal_.in_doubt = label;
     return false;
   }
@@ -535,7 +537,7 @@ void SampleRun::send(const Step& step) {
         journal_.in_doubt = step.label;
         stop(SampleStatus::InDoubt, name_ + ": the " + step.label + " was saved on EarthBank with id " + std::to_string(posted.id) +
                                         ", but the journal could not be updated (" + saved.error().what +
-                                        "). Nothing more of " + name_ + " was sent. Run again with resolve_in_doubt set to "
+                                        "). Nothing more of " + name_ + " was sent. Run again with " + env_.options.in_doubt_setting + " set to "
                                         "\"written:" + std::to_string(posted.id) + "\".");
         stopped_ = true;
         return;
@@ -551,8 +553,8 @@ void SampleRun::send(const Step& step) {
       if (const auto saved = save(); !saved) {
         journal_.in_doubt = step.label;
         stop(SampleStatus::Stopped, name_ + ": the " + step.label + " was not saved, but the journal could not be told (" +
-                                        saved.error().what + "), so it still says it is in doubt. Run again with "
-                                        "resolve_in_doubt set to \"not-written\".");
+                                        saved.error().what + "), so it still says it is in doubt. Run again with " +
+                                        env_.options.in_doubt_setting + " set to \"not-written\".");
         stopped_ = true;
         return;
       }
@@ -561,7 +563,7 @@ void SampleRun::send(const Step& step) {
     }
     case Posted::Fate::InDoubt:
       // The journal already says so.
-      report_.messages.push_back(in_doubt_sentence(name_, step.label));
+      report_.messages.push_back(in_doubt_sentence(name_, step.label, env_.options.in_doubt_setting));
       report_.messages.push_back(posted.said);
       forced_ = SampleStatus::InDoubt;
       stopped_ = true;
@@ -574,6 +576,7 @@ void SampleRun::finish() {
     if (!recorded(journal_, step)) report_.missing.push_back(step.label);
   }
   report_.data_point_id = journal_.data_point_id;
+  if (journal_.in_doubt && *journal_.in_doubt != kSampleLabel) report_.in_doubt = journal_.in_doubt;
   if (forced_) {
     report_.status = *forced_;
     return;
@@ -684,7 +687,7 @@ Result<UploadReport> upload(const std::vector<Submission>& submissions, Session&
                             const UploadOptions& options) {
   if (options.data_package_id < 1) return fail(ErrorKind::Config, Session::no_package_sentence());
   if (options.journal_dir.empty()) return fail(ErrorKind::Config, "earthbank: no directory was named for the upload's journals");
-  const Result<std::optional<Resolution>> resolution = parse_resolution(options.resolve_in_doubt);
+  const Result<std::optional<Resolution>> resolution = parse_resolution(options.resolve_in_doubt, options.in_doubt_setting);
   if (!resolution) return fail(resolution.error());
   if (!session.signed_in()) {
     Error error{ErrorKind::NotConnected, {}, ""};

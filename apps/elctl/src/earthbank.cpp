@@ -1,11 +1,14 @@
 // elctl earthbank export-xlsx and preflight: select analyses from the store as
 // `export` does, build one submission per sample (pychron::earthbank
 // mapping.hpp) and write them into the service's import workbooks (xlsx.hpp),
-// or ask the service whether it knows every term they hold (preflight.hpp).
-// The account subcommands are in earthbank_account.cpp.
+// ask the service whether it knows every term they hold (preflight.hpp), or
+// send them to it (uploader.hpp). The account subcommands are in
+// earthbank_account.cpp.
 
 #include "earthbank.hpp"
 
+#include <charconv>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -15,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 #include <toml++/toml.hpp>
@@ -25,6 +29,9 @@
 #include "pychron/earthbank/mapping.hpp"
 #include "pychron/earthbank/model.hpp"
 #include "pychron/earthbank/preflight.hpp"
+#include "pychron/earthbank/profiles.hpp"
+#include "pychron/earthbank/session.hpp"
+#include "pychron/earthbank/uploader.hpp"
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/earthbank/xlsx.hpp"
 #include "pychron/processing/model.hpp"
@@ -134,6 +141,26 @@ constexpr const char* kUsageText =
     "      analyses would send, and writes nothing. Without a login it asks what\n"
     "      needs none and says which it could not ask. Misses are grouped by\n"
     "      sample. Exit 0: nothing unknown or unasked; 1: some; 2: could not run.\n"
+    "  elctl earthbank upload --db <url> [selection] [ages] [--overrides <file>] --yes\n"
+    "                         [--package <id>] [--allow-unresolved] [--new-datapoint]\n"
+    "                         [--in-doubt written:<id>|not-written] [--journal <dir>]\n"
+    "      Sends the selected analyses to the data package (--package, else the\n"
+    "      profile's): for each sample the sample if the package has none of that\n"
+    "      name, a data point, its aliquots and measurements, the age calculation\n"
+    "      and the age summary. EarthBank gives this program no way to change or\n"
+    "      remove a record, so it first prints who it would send as, into which\n"
+    "      package, what for each sample and what the pre-flight check found, and\n"
+    "      sends only with --yes. Terms EarthBank does not know stop it (exit 1)\n"
+    "      unless --allow-unresolved, which sends without those fields. What was\n"
+    "      written is kept in a journal on this machine (--journal, default: beside\n"
+    "      the profiles file), so a run that stopped is finished by running the\n"
+    "      command again: it prints the line. A record whose answer never came is\n"
+    "      in doubt: look for it on EarthBank and say which with --in-doubt. Data\n"
+    "      that changed since its upload began is refused; --new-datapoint sends\n"
+    "      it as new records. The password is the one login kept, else\n"
+    "      $EARTHBANK_PASSWORD, else asked for at a terminal. Exit 0: every sample\n"
+    "      is complete; 1: nothing matched, or unknown terms; 2: anything else,\n"
+    "      a sample that is not complete included.\n"
     "  elctl earthbank import-profiles <preferences.ini>\n"
     "      Takes the profiles of legacy pychron's preferences file, without\n"
     "      passwords, into the profiles file; one already there is left alone.\n"
@@ -340,8 +367,9 @@ std::string number(double value, int digits) {
 }
 
 // "<sample>: 2 analyses, Plateau Age 28.1234 ± 0.0412 Ma (1 sigma)", and the
-// submission's notes under it, the age's description among them.
-void print_sample(std::ostream& out, const eb::Submission& s) {
+// submission's notes under it, the age's description among them (`notes`
+// false: the line alone, for a caller that prints the notes elsewhere).
+void print_sample(std::ostream& out, const eb::Submission& s, bool notes = true) {
   const std::size_t n = s.measurements.size();
   out << s.sample.name.value_or(s.datapoint_name) << ": " << n << (n == 1 ? " analysis, " : " analyses, ");
   const auto& age = s.age_summary;
@@ -353,6 +381,7 @@ void print_sample(std::ostream& out, const eb::Submission& s) {
     out << "no age";
   }
   out << '\n';
+  if (!notes) return;
   // The mapping notes the sentence it wrote as the age's description: said
   // to be that, it does not read as the age told a third time.
   for (const auto& note : s.notes)
@@ -535,6 +564,251 @@ int preflight(const PreflightArgs& a, Io io, const EarthbankDeps& deps) {
   return report.clean() ? kOk : kFailed;
 }
 
+// ---------------------------------------------------------------- upload
+
+struct UploadArgs {
+  Source source;
+  earthbank_cli::ConnectFlags connect;
+  std::optional<std::int64_t> package;
+  std::optional<std::string> journal, in_doubt;
+  bool allow_unresolved = false;
+  bool new_datapoint = false;
+  bool yes = false;
+};
+
+// All of `text` as an id of the service: a whole number of 1 or more.
+std::optional<std::int64_t> parse_id(std::string_view text) {
+  std::int64_t value = 0;
+  const char* end = text.data() + text.size();
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage): from_chars is given the end
+  const auto [stop, error] = std::from_chars(text.data(), end, value);
+  if (text.empty() || error != std::errc{} || stop != end || value < 1) return std::nullopt;
+  return value;
+}
+
+Result<UploadArgs> parse_upload(const std::vector<std::string>& args) {
+  UploadArgs a;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const std::string& flag = args[i];
+    auto shared = take_selection_flag(a.source.selection, args, i);
+    if (shared && !*shared) shared = take_age_flag(a.source.ages, args, i);
+    if (shared && !*shared) shared = earthbank_cli::take_connect_flag(a.connect, args, i);
+    if (!shared) return fail(shared.error());
+    if (*shared) continue;
+    if (flag == "--yes") {
+      a.yes = true;
+      continue;
+    }
+    if (flag == "--allow-unresolved") {
+      a.allow_unresolved = true;
+      continue;
+    }
+    if (flag == "--new-datapoint") {
+      a.new_datapoint = true;
+      continue;
+    }
+    if (!flag.starts_with("--")) return fail(ErrorKind::Config, "unexpected argument '" + flag + "'");
+    if (i + 1 >= args.size()) return fail(ErrorKind::Config, flag + " needs a value");
+    const std::string& value = args[++i];
+    if (flag == "--db") {
+      a.source.db = value;
+    } else if (flag == "--overrides") {
+      if (value.empty()) return fail(ErrorKind::Config, "--overrides needs a file");
+      a.source.overrides = value;
+    } else if (flag == "--package") {
+      a.package = parse_id(value);
+      if (!a.package) return fail(ErrorKind::Config, "--package takes a number (the data package's id), not '" + value + "'");
+    } else if (flag == "--journal") {
+      if (value.empty()) return fail(ErrorKind::Config, "--journal needs a directory");
+      a.journal = value;
+    } else if (flag == "--in-doubt") {
+      constexpr std::string_view kWritten = "written:";
+      const bool written = value.starts_with(kWritten) && parse_id(std::string_view(value).substr(kWritten.size()));
+      if (!written && value != "not-written")
+        return fail(ErrorKind::Config, "--in-doubt is written:<id> (the record is on EarthBank, with that id) or "
+                                       "not-written; got '" + value + "'");
+      a.in_doubt = value;
+    } else {
+      return fail(ErrorKind::Config, "unknown flag '" + flag + "'");
+    }
+  }
+  if (a.source.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
+  if (auto ok = check_selection(a.source.selection); !ok) return fail(ok.error());
+  return a;
+}
+
+// A word as a POSIX shell takes it whole.
+std::string shell_word(std::string_view word) {
+  constexpr std::string_view kPlain = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:=@%+,";
+  if (!word.empty() && word.find_first_not_of(kPlain) == std::string_view::npos) return std::string(word);
+  std::string out = "'";
+  for (const char c : word) {
+    if (c == '\'') {
+      out += "'\\''";
+    } else {
+      out += c;
+    }
+  }
+  return out + "'";
+}
+
+// `elctl earthbank upload` with the words it was given, less the two that
+// are one run's (--in-doubt and its value, --new-datapoint), and `more`: the
+// line that continues an upload. The journal knows the rest.
+std::string upload_line(const std::vector<std::string>& args, const std::vector<std::string>& more) {
+  std::string line = "elctl earthbank upload";
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--new-datapoint") continue;
+    if (args[i] == "--in-doubt") {
+      ++i;
+      continue;
+    }
+    line += ' ' + shell_word(args[i]);
+  }
+  for (const std::string& word : more) line += ' ' + shell_word(word);
+  return line;
+}
+
+std::string counted(std::size_t n, const char* one, const char* many) {
+  return std::to_string(n) + ' ' + (n == 1 ? one : many);
+}
+
+const char* word_for(eb::SampleStatus status) {
+  switch (status) {
+    case eb::SampleStatus::Complete: return "complete";
+    case eb::SampleStatus::Partial: return "partial";
+    case eb::SampleStatus::Stopped: return "stopped";
+    case eb::SampleStatus::InDoubt: return "in doubt";
+    case eb::SampleStatus::Refused: return "refused";
+  }
+  return "refused";
+}
+
+// What became of a sample, what the upload has to say of it, and the line
+// that takes it further when there is one.
+void print_outcome(std::ostream& out, const eb::SampleReport& sample, const std::vector<std::string>& args) {
+  out << sample.sample << ": " << word_for(sample.status);
+  if (sample.data_point_id) out << ", data point " << *sample.data_point_id;
+  out << '\n';
+  for (const std::string& message : sample.messages) out << "  " << message << '\n';
+  if (sample.status == eb::SampleStatus::Complete) return;
+  if (sample.in_doubt) {
+    out << "  if the " << *sample.in_doubt << " is on EarthBank (put its id there for <id>):\n    "
+        << upload_line(args, {"--in-doubt", "written:<id>"}) << "\n  if it is not:\n    "
+        << upload_line(args, {"--in-doubt", "not-written"}) << '\n';
+  } else if (sample.changed) {
+    out << "  to send it as new records:\n    " << upload_line(args, {"--new-datapoint"}) << '\n';
+  } else if (sample.status != eb::SampleStatus::Refused) {
+    out << "  to finish:\n    " << upload_line(args, {}) << '\n';
+  }
+}
+
+// Signed in, or the exit code: the password login kept, else the variable
+// (go_online), else asked for at a terminal. An upload never goes without.
+int sign_in_for_upload(const UploadArgs& a, Io io, const EarthbankDeps& deps, earthbank_cli::Online& online) {
+  if (const int code = earthbank_cli::go_online(a.connect, false, io, deps, online); code != kOk) return code;
+  constexpr const char* kLogin = "run `elctl earthbank login`, then upload again";
+  if (online.session->signed_in()) return kOk;
+  if (!online.no_password || !earthbank_cli::at_terminal(io))
+    return fatal(io, "upload: not signed in: " + online.not_signed_in + " (" + kLogin + "). Nothing was sent.");
+  auto password = earthbank_cli::read_password(
+      io, "Password for " + online.profile->username + " at " + online.session->base_url() + ": ");
+  if (!password || password->empty()) return fatal(io, "upload: no password was given. Nothing was sent.");
+  const auto in = online.session->sign_in(online.profile->username, *password);
+  password->assign(password->size(), '\0');
+  if (!in) return fatal(io, "upload: not signed in: " + in.error().what + " (" + kLogin + "). Nothing was sent.");
+  return kOk;
+}
+
+int upload(const UploadArgs& a, const std::vector<std::string>& args, Io io, const EarthbankDeps& deps) {
+  earthbank_cli::Online online;
+  if (const int code = sign_in_for_upload(a, io, deps, online); code != kOk) return code;
+  eb::Session& session = *online.session;
+
+  const std::optional<std::int64_t> package = a.package ? a.package : online.profile->data_package_id;
+  if (!package) {
+    return fatal(io, "upload: profile '" + online.profile->name + "' has no data package, and EarthBank keeps every record in "
+                     "one: name it with --package <id> (`elctl earthbank packages` lists them), or make one with "
+                     "`elctl earthbank packages --create <name>`. Nothing was sent.");
+  }
+  const fs::path journal_dir = a.journal ? fs::path(*a.journal) : [] {
+    const fs::path profiles = eb::default_profiles_file();
+    return profiles.empty() ? fs::path() : profiles.parent_path() / "journal";
+  }();
+  if (journal_dir.empty()) return fatal(io, "upload: there is no home directory to keep the upload's journal in: name one with --journal <dir>");
+
+  const Built built = build(a.source, io);
+  if (built.code != kOk) return built.code;
+
+  // Who and where: asked of the service, so that what is confirmed is what
+  // it holds. An upload that cannot say either does not start.
+  const auto account = session.account();
+  if (!account) return fatal(io, "upload: " + account.error().what + " Nothing was sent.");
+  const auto packages = session.packages(std::nullopt);
+  if (!packages) return fatal(io, "upload: " + packages.error().what + " Nothing was sent.");
+  const eb::DataPackage* into = nullptr;
+  for (const eb::DataPackage& p : *packages)
+    if (p.id == *package) into = &p;
+  if (into == nullptr) {
+    return fatal(io, "upload: data package " + std::to_string(*package) + " is not among the packages EarthBank lists "
+                     "(`elctl earthbank packages`). Nothing was sent.");
+  }
+
+  io.out << "upload to " << session.base_url() << " as profile '" << online.profile->name << "'\n";
+  io.out << "account: " << account->name << " (" << account->login << "), id " << account->id << '\n';
+  io.out << "data package: " << into->id << " '" << into->name << "'\n";
+  for (const auto& s : built.submissions) {
+    print_sample(io.out, s, false);  // the pre-flight report below has the notes
+    io.out << "  to write: the sample if the package has none of that name, 1 data point, "
+           << counted(s.aliquots.size(), "aliquot", "aliquots") << ", "
+           << counted(s.measurements.size(), "measurement", "measurements") << ", 1 age calculation, 1 age summary\n";
+  }
+
+  eb::LookupResolver resolver(session);
+  const eb::PreflightReport checked = eb::preflight(built.submissions, resolver);
+  print_preflight(io.out, built.submissions, checked);
+  const std::size_t unasked = checked.could_not_ask().size();
+  if (!checked.clean() && (!a.allow_unresolved || unasked > 0)) {
+    io.err << "elctl earthbank: nothing was sent: ";
+    if (unasked > 0) {
+      io.err << counted(unasked, "term", "terms") << " could not be asked about, and --allow-unresolved does not cover "
+             << "a term EarthBank may know; try again\n";
+    } else {
+      io.err << "correct the terms EarthBank does not know (--overrides), or add --allow-unresolved to send without "
+             << "those fields\n";
+    }
+    return kFailed;
+  }
+  if (!a.yes) {
+    io.err << "elctl earthbank: nothing was sent; add --yes to upload (a record on EarthBank cannot be changed or "
+              "removed from here)\n";
+    return kUsage;
+  }
+
+  eb::UploadOptions options;
+  options.data_package_id = *package;
+  options.allow_unresolved = a.allow_unresolved;
+  options.new_datapoint = a.new_datapoint;
+  options.resolve_in_doubt = a.in_doubt;
+  options.in_doubt_setting = "--in-doubt";
+  options.new_datapoint_setting = "--new-datapoint";
+  options.journal_dir = journal_dir;
+  options.on_event = [&](const eb::UploadEvent& event) {
+    if (!event.record.empty()) io.out << event.sample << ": " << event.record << ": " << event.detail << std::endl;
+  };
+  const auto report = eb::upload(built.submissions, session, resolver, options);
+  if (!report) return fatal(io, "upload: " + report.error().what);
+
+  bool complete = true;
+  for (const eb::SampleReport& sample : report->samples) {
+    print_outcome(io.out, sample, args);
+    complete = complete && sample.status == eb::SampleStatus::Complete;
+  }
+  if (complete) return kOk;
+  io.err << "elctl earthbank: not every sample is complete on EarthBank; see above for each\n";
+  return kUsage;
+}
+
 bool is_help(const std::string& word) { return word == "help" || word == "--help"; }
 
 }  // namespace
@@ -542,8 +816,8 @@ bool is_help(const std::string& word) { return word == "help" || word == "--help
 int earthbank_command(const std::vector<std::string>& args, Io io, EarthbankDeps deps) {
   if (args.empty()) return usage(io, "a subcommand is required");
   const std::string& sub = args[0];
-  const bool known = sub == "export-xlsx" || sub == "preflight" || sub == "login" || sub == "account" ||
-                     sub == "packages" || sub == "import-profiles";
+  const bool known = sub == "export-xlsx" || sub == "preflight" || sub == "upload" || sub == "login" ||
+                     sub == "account" || sub == "packages" || sub == "import-profiles";
   if (is_help(sub) || (known && args.size() > 1 && is_help(args[1]))) {
     io.out << kUsageText;
     return kOk;
@@ -551,7 +825,7 @@ int earthbank_command(const std::vector<std::string>& args, Io io, EarthbankDeps
   if (!known) return usage(io, "unknown subcommand '" + sub + "'");
   const std::vector<std::string> rest(args.begin() + 1, args.end());
   // What needs the network says so before it looks at a flag or opens a file.
-  const bool online = sub == "login" || sub == "account" || sub == "packages" || sub == "preflight";
+  const bool online = sub == "login" || sub == "account" || sub == "packages" || sub == "preflight" || sub == "upload";
   if (online && deps.http == nullptr && pychron::earthbank::make_http_client() == nullptr) {
     io.err << earthbank_cli::kNoNetwork << '\n';
     return kUsage;
@@ -567,6 +841,11 @@ int earthbank_command(const std::vector<std::string>& args, Io io, EarthbankDeps
       auto parsed = parse_preflight(rest);
       if (!parsed) return usage(io, parsed.error().what);
       return preflight(*parsed, io, deps);
+    }
+    if (sub == "upload") {
+      auto parsed = parse_upload(rest);
+      if (!parsed) return usage(io, parsed.error().what);
+      return upload(*parsed, rest, io, deps);
     }
     auto parsed = parse(rest);
     if (!parsed) return usage(io, parsed.error().what);

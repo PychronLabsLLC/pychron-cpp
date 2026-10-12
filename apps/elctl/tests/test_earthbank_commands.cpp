@@ -23,7 +23,7 @@ TEST(ElctlEarthbank, StubWithoutPersistence) {
 // The commands that talk to the service say what is missing: the network
 // first, when this build has none either.
 TEST(ElctlEarthbank, TheNetworkCommandsWithoutPersistence) {
-  for (const char* sub : {"login", "account", "packages", "preflight"}) {
+  for (const char* sub : {"login", "account", "packages", "preflight", "upload"}) {
     const Outcome o = run_raw({"earthbank", sub});
     EXPECT_EQ(o.code, elctl::kUsage) << sub;
     EXPECT_EQ(o.out, "") << sub;
@@ -1025,20 +1025,20 @@ TEST_F(ElctlEarthbankAccount, NoPasswordOrTokenInAnyOutput) {
 }
 
 TEST_F(ElctlEarthbankAccount, HelpListsTheAccountCommands) {
-  for (const char* sub : {"login", "account", "packages", "preflight", "import-profiles"}) {
+  for (const char* sub : {"login", "account", "packages", "preflight", "upload", "import-profiles"}) {
     const Outcome help = run_raw({"earthbank", sub, "--help"});
     EXPECT_EQ(help.code, elctl::kOk) << sub;
     EXPECT_TRUE(contains(help.out, std::string("elctl earthbank ") + sub)) << sub << help.out;
     EXPECT_TRUE(contains(help.out, "EARTHBANK_PASSWORD")) << help.out;
   }
-  EXPECT_TRUE(contains(run_raw({"help"}).out, "earthbank login|account|packages|preflight|import-profiles"));
+  EXPECT_TRUE(contains(run_raw({"help"}).out, "earthbank login|account|packages|preflight|upload|import-profiles"));
 }
 
 #ifndef PYCHRON_ELCTL_HAS_NETWORK
 // A build with persistence and no Qt6 Network: the commands that need the
 // network say so and exit 2, before they ask for anything.
 TEST_F(ElctlEarthbankAccount, WithoutNetworkSupportTheNetworkCommandsSayNo) {
-  for (const char* sub : {"login", "account", "packages", "preflight"}) {
+  for (const char* sub : {"login", "account", "packages", "preflight", "upload"}) {
     std::istringstream in;
     std::ostringstream out, err;
     const int code = elctl::earthbank_command({sub, "--profiles", profiles_.string()}, elctl::Io{in, out, err});
@@ -1048,6 +1048,326 @@ TEST_F(ElctlEarthbankAccount, WithoutNetworkSupportTheNetworkCommandsSayNo) {
   }
 }
 #endif
+
+// ---------------------------------------------------------------- upload
+
+// `elctl earthbank upload` against the fake: signed in as `mylab`, into the
+// fixture's writable package, with the journals in a directory of the test's.
+// Whatever any of these tests printed is searched for a password or a token
+// when the test ends (the plan's NoPasswordOrTokenInAnyOutput, over every
+// upload test), and so are the journals.
+class ElctlEarthbankUpload : public ElctlEarthbankAccount {
+ protected:
+  void SetUp() override {
+    ElctlEarthbankAccount::SetUp();
+    journal_ = path("journal");
+    package_ = bank_.writable_package();
+    ASSERT_EQ(log_in().code, elctl::kOk);
+  }
+
+  void TearDown() override {
+    std::vector<std::string> secrets = spy_.secrets();
+    EXPECT_FALSE(secrets.empty());
+    secrets.insert(secrets.end(), {"not-a-real-password", "a-changed-password-8812", "Bearer"});
+    std::vector<std::string> texts = outputs_;
+    std::error_code code;
+    if (fs::exists(journal_, code)) {
+      for (const auto& entry : fs::recursive_directory_iterator(journal_))
+        if (entry.is_regular_file()) texts.push_back(slurp(entry.path()));
+    }
+    for (const std::string& text : texts) {
+      for (const std::string& secret : secrets) EXPECT_FALSE(contains(text, secret)) << secret << " in " << text;
+    }
+    ElctlEarthbankAccount::TearDown();
+  }
+
+  std::vector<std::string> upload_args(const std::vector<std::string>& more = {}) const {
+    std::vector<std::string> args{"upload", "--db", db_, "--package", std::to_string(package_), "--journal", journal_.string()};
+    args.insert(args.end(), more.begin(), more.end());
+    return args;
+  }
+  Outcome upload(const std::vector<std::string>& more = {}) { return with_profiles(upload_args(more)); }
+
+  // The records written to the service: every POST but a login.
+  std::size_t posts() const { return bank_.count("POST", "/api/core") + bank_.count("POST", "/api/arar"); }
+
+  std::size_t journals() const {
+    std::size_t n = 0;
+    std::error_code code;
+    if (!fs::exists(journal_, code)) return 0;
+    for (const auto& entry : fs::recursive_directory_iterator(journal_))
+      if (entry.is_regular_file() && entry.path().extension() == ".json") ++n;
+    return n;
+  }
+
+  // The words of a command line the program printed, as a shell would take
+  // them: single quotes kept together, `'\''` a quote.
+  static std::vector<std::string> words(const std::string& line) {
+    std::vector<std::string> out;
+    std::string word;
+    bool quoted = false, any = false;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+      const char c = line[i];
+      if (quoted) {
+        if (c == '\'') {
+          quoted = false;
+        } else {
+          word += c;
+        }
+      } else if (c == '\'') {
+        quoted = any = true;
+      } else if (c == '\\' && i + 1 < line.size()) {
+        word += line[++i];
+        any = true;
+      } else if (c == ' ') {
+        if (any) out.push_back(word);
+        word.clear();
+        any = false;
+      } else {
+        word += c;
+        any = true;
+      }
+    }
+    if (any) out.push_back(word);
+    return out;
+  }
+
+  // The command lines `text` offers (the lines that begin, indented, with
+  // `elctl earthbank `), each as the arguments of `earthbank`.
+  static std::vector<std::vector<std::string>> offered(const std::string& text) {
+    std::vector<std::vector<std::string>> out;
+    std::istringstream lines(text);
+    for (std::string line; std::getline(lines, line);) {
+      const std::string start = "    elctl earthbank ";
+      if (!line.starts_with(start)) continue;
+      out.push_back(words(line.substr(start.size())));
+    }
+    return out;
+  }
+
+  fs::path journal_;
+  std::int64_t package_ = 0;
+};
+
+TEST_F(ElctlEarthbankUpload, UploadWithoutYesSendsNothingAndSaysWhatItWould) {
+  const Outcome o = upload();
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  // Who it would be sent as, and where.
+  EXPECT_TRUE(contains(o.out, "(" + bank_.login() + ")")) << o.out;
+  EXPECT_TRUE(contains(o.out, "data package: " + std::to_string(package_) + " '")) << o.out;
+  // What, by sample: the analyses and the age, then the records.
+  EXPECT_TRUE(contains(o.out, "FC-2: 2 analyses, ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "S-FUS: 2 analyses, ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "  to write: the sample if the package has none of that name, 1 data point, 1 aliquot, "
+                              "2 measurements, 1 age calculation, 1 age summary\n"))
+      << o.out;
+  EXPECT_TRUE(contains(o.out, "every term the upload would send is known to EarthBank")) << o.out;
+  EXPECT_TRUE(contains(o.err, "nothing was sent; add --yes to upload")) << o.err;
+  EXPECT_EQ(posts(), 0u);
+  EXPECT_EQ(journals(), 0u);
+}
+
+TEST_F(ElctlEarthbankUpload, UploadWritesAndPrintsTheIds) {
+  const Outcome o = upload({"--yes"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err << o.out;
+  const auto store = bank_.store();
+  ASSERT_EQ(store.samples.size(), 2u);
+  ASSERT_EQ(store.data_points.size(), 2u);
+  EXPECT_EQ(store.measurements.size(), 4u);
+  EXPECT_EQ(store.age_calcs.size(), 2u);
+  EXPECT_EQ(store.age_summaries.size(), 2u);
+  for (const auto& point : store.data_points) EXPECT_EQ(point.package_id, package_);
+  // A line for each record as it is written, then each sample's outcome.
+  EXPECT_TRUE(contains(o.out, "FC-2: data point: saved, id " + std::to_string(store.data_points[0].id) + "\n")) << o.out;
+  EXPECT_TRUE(contains(o.out, "FC-2: age summary: saved, id ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "FC-2: complete, data point " + std::to_string(store.data_points[0].id) + "\n")) << o.out;
+  EXPECT_TRUE(contains(o.out, "S-FUS: complete, data point " + std::to_string(store.data_points[1].id) + "\n")) << o.out;
+  EXPECT_EQ(journals(), 2u);
+
+  // Again: it is all there, and nothing is sent twice.
+  const std::size_t sent = posts();
+  const Outcome again = upload({"--yes"});
+  EXPECT_EQ(again.code, elctl::kOk) << again.err << again.out;
+  EXPECT_EQ(posts(), sent);
+  EXPECT_TRUE(contains(again.out, "FC-2: complete, data point " + std::to_string(store.data_points[0].id) + "\n")) << again.out;
+}
+
+TEST_F(ElctlEarthbankUpload, UploadStopsOnMissesWithExitOne) {
+  const std::string file = overrides("[samples.\"FC-2\"]\ninterpretation = \"No Such Interpretation\"\n");
+  for (const bool yes : {false, true}) {
+    std::vector<std::string> more{"--overrides", file};
+    if (yes) more.emplace_back("--yes");
+    const Outcome o = upload(more);
+    EXPECT_EQ(o.code, elctl::kFailed) << o.err << o.out;
+    EXPECT_TRUE(contains(o.out, "\nFC-2\n  ArArAgeSummary.interpretationName: 'No Such Interpretation' is not known to EarthBank"))
+        << o.out;
+    EXPECT_TRUE(contains(o.err, "nothing was sent")) << o.err;
+    EXPECT_TRUE(contains(o.err, "--allow-unresolved")) << o.err;
+    EXPECT_EQ(posts(), 0u);
+    EXPECT_EQ(journals(), 0u);
+  }
+}
+
+TEST_F(ElctlEarthbankUpload, AllowUnresolvedProceeds) {
+  const std::string file = overrides("[samples.\"FC-2\"]\ninterpretation = \"No Such Interpretation\"\n");
+  const Outcome o = upload({"--overrides", file, "--allow-unresolved", "--yes"});
+  ASSERT_EQ(o.code, elctl::kOk) << o.err << o.out;
+  const auto store = bank_.store();
+  ASSERT_EQ(store.age_summaries.size(), 2u);
+  // The term is not sent, by name or by id, and the sample says so.
+  for (const auto& summary : store.age_summaries) EXPECT_FALSE(contains(summary.body.dump(), "No Such Interpretation"));
+  EXPECT_TRUE(contains(o.out, "No Such Interpretation")) << o.out;
+  EXPECT_TRUE(contains(o.out, "FC-2: complete, data point ")) << o.out;
+}
+
+TEST_F(ElctlEarthbankUpload, UploadWithNoPackageSaysHowToSetOne) {
+  // The profile has no package and none is given.
+  const Outcome o = with_profiles({"upload", "--db", db_, "--journal", journal_.string(), "--yes"});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  EXPECT_TRUE(contains(o.err, "--package <id>")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl earthbank packages --create <name>")) << o.err;
+  EXPECT_EQ(posts(), 0u);
+
+  // A package the profile has is the one used.
+  ASSERT_EQ(with_profiles({"packages", "--create", "Mine"}).code, elctl::kOk);
+  const std::size_t before = posts();
+  const Outcome mine = with_profiles({"upload", "--db", db_, "--journal", journal_.string(), "--sample", "FC-2", "--yes"});
+  ASSERT_EQ(mine.code, elctl::kOk) << mine.err << mine.out;
+  EXPECT_TRUE(contains(mine.out, "'Mine'")) << mine.out;
+  EXPECT_GT(posts(), before);
+  ASSERT_EQ(bank_.store().data_points.size(), 1u);
+  EXPECT_NE(bank_.store().data_points[0].package_id, package_);
+}
+
+TEST_F(ElctlEarthbankUpload, APartialUploadPrintsTheCommandToFinish) {
+  // The age summary is refused: the data point is there and one record is not.
+  bank_.fail_next("POST", "/api/arar/ArArAgeSummary", 400, R"({"title":"Bad Request","status":400,"detail":"not today"})");
+  const Outcome o = upload({"--sample", "FC-2", "--yes"});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  ASSERT_EQ(bank_.store().data_points.size(), 1u);
+  EXPECT_TRUE(bank_.store().age_summaries.empty());
+  EXPECT_TRUE(contains(o.out, "FC-2: partial, data point " + std::to_string(bank_.store().data_points[0].id) + "\n")) << o.out;
+  EXPECT_TRUE(contains(o.out, "age summary")) << o.out;
+  const auto commands = offered(o.out);
+  ASSERT_EQ(commands.size(), 1u) << o.out;
+  // It is this command again, word for word: the journal knows the rest.
+  std::vector<std::string> expected = upload_args({"--sample", "FC-2", "--yes"});
+  expected.insert(expected.end(), {"--profiles", profiles_.string()});
+  EXPECT_EQ(commands[0], expected);
+
+  const Outcome finished = eb(commands[0]);
+  ASSERT_EQ(finished.code, elctl::kOk) << finished.err << finished.out;
+  const auto store = bank_.store();
+  EXPECT_EQ(store.samples.size(), 1u);
+  EXPECT_EQ(store.data_points.size(), 1u);
+  EXPECT_EQ(store.aliquots.size(), 1u);
+  EXPECT_EQ(store.measurements.size(), 2u);
+  EXPECT_EQ(store.age_calcs.size(), 1u);
+  EXPECT_EQ(store.age_summaries.size(), 1u);
+  EXPECT_TRUE(contains(finished.out, "FC-2: age summary: saved, id ")) << finished.out;
+  EXPECT_FALSE(contains(finished.out, "FC-2: data point: saved")) << finished.out;
+}
+
+TEST_F(ElctlEarthbankUpload, InDoubtPrintsTheTwoWaysToContinue) {
+  // The age calculation is written and its answer lost.
+  bank_.drop_next("POST", "/api/arar/ArArAgeCalc");
+  const Outcome o = upload({"--sample", "FC-2", "--yes"});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  EXPECT_TRUE(contains(o.out, "FC-2: in doubt, data point ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "the age calculation may or may not have been saved on EarthBank")) << o.out;
+  // The library's own word for the setting is not what the user types.
+  EXPECT_FALSE(contains(o.out, "resolve_in_doubt")) << o.out;
+  const auto commands = offered(o.out);
+  ASSERT_EQ(commands.size(), 2u) << o.out;
+  std::vector<std::string> base = upload_args({"--sample", "FC-2", "--yes"});
+  base.insert(base.end(), {"--profiles", profiles_.string()});
+  std::vector<std::string> written = base, not_written = base;
+  written.insert(written.end(), {"--in-doubt", "written:<id>"});
+  not_written.insert(not_written.end(), {"--in-doubt", "not-written"});
+  EXPECT_EQ(commands[0], written);
+  EXPECT_EQ(commands[1], not_written);
+
+  // Run again as it was: it stops at the same place, and sends nothing.
+  const std::size_t sent = posts();
+  const Outcome same = upload({"--sample", "FC-2", "--yes"});
+  EXPECT_EQ(same.code, elctl::kUsage);
+  EXPECT_EQ(posts(), sent);
+  EXPECT_EQ(offered(same.out).size(), 2u) << same.out;
+
+  // The user looked: it is there. The first way, with its id, finishes it;
+  // the command that is printed then does not carry the answer on.
+  ASSERT_EQ(bank_.store().age_calcs.size(), 1u);
+  std::vector<std::string> answer = commands[0];
+  answer.back() = "written:" + std::to_string(bank_.store().age_calcs[0].id);
+  const Outcome finished = eb(answer);
+  ASSERT_EQ(finished.code, elctl::kOk) << finished.err << finished.out;
+  EXPECT_EQ(bank_.store().age_calcs.size(), 1u);
+  EXPECT_EQ(bank_.store().age_summaries.size(), 1u);
+  EXPECT_TRUE(offered(finished.out).empty()) << finished.out;
+
+  // A word that is neither way is refused before anything is asked.
+  const std::size_t requests = bank_.requests().size();
+  EXPECT_EQ(upload({"--yes", "--in-doubt", "maybe"}).code, elctl::kUsage);
+  EXPECT_EQ(upload({"--yes", "--in-doubt", "written:x"}).code, elctl::kUsage);
+  EXPECT_EQ(bank_.requests().size(), requests);
+}
+
+TEST_F(ElctlEarthbankUpload, AChangedSubmissionPrintsTheCommandThatSendsItAsNew) {
+  ASSERT_EQ(upload({"--sample", "FC-2", "--yes"}).code, elctl::kOk);
+  const std::size_t sent = posts();
+  const std::string file = overrides("[samples.\"FC-2\"]\ndatapoint_name = \"FC-2 again\"\n");
+  const Outcome o = upload({"--sample", "FC-2", "--overrides", file, "--yes"});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  EXPECT_EQ(posts(), sent);
+  EXPECT_TRUE(contains(o.out, "FC-2: refused\n")) << o.out;
+  EXPECT_FALSE(contains(o.out, "new_datapoint")) << o.out;
+  const auto commands = offered(o.out);
+  ASSERT_EQ(commands.size(), 1u) << o.out;
+  EXPECT_EQ(commands[0].back(), "--new-datapoint");
+  const Outcome fresh = eb(commands[0]);
+  ASSERT_EQ(fresh.code, elctl::kOk) << fresh.err << fresh.out;
+  EXPECT_EQ(bank_.store().data_points.size(), 2u);
+}
+
+TEST_F(ElctlEarthbankUpload, NoStoredPasswordAndNoTerminalExitsTwoHavingSentNothing) {
+  const auto profiles = pychron::earthbank::load_profiles(profiles_);
+  ASSERT_TRUE(profiles);
+  ASSERT_TRUE(secrets_->erase(pychron::earthbank::secret_account(*profiles->find("mylab"))));
+  const std::size_t requests = bank_.requests().size();
+  const Outcome o = upload({"--yes"});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  EXPECT_TRUE(contains(o.err, "no password is kept for profile 'mylab' and $EARTHBANK_PASSWORD is not set")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl earthbank login")) << o.err;
+  EXPECT_EQ(bank_.requests().size(), requests);  // not even a question
+  EXPECT_EQ(journals(), 0u);
+
+  // The variable is enough for a script.
+  set_variable(bank_.password());
+  const Outcome with_variable = upload({"--sample", "FC-2", "--yes"});
+  set_variable(std::nullopt);
+  EXPECT_EQ(with_variable.code, elctl::kOk) << with_variable.err << with_variable.out;
+}
+
+TEST_F(ElctlEarthbankUpload, AWrongStoredPasswordSaysToLoginAgain) {
+  bank_.set_password("a-changed-password-8812");
+  const Outcome o = upload({"--yes"});
+  EXPECT_EQ(o.code, elctl::kUsage) << o.err << o.out;
+  EXPECT_TRUE(contains(o.err, "elctl earthbank login")) << o.err;
+  EXPECT_EQ(posts(), 0u);
+  EXPECT_EQ(journals(), 0u);
+}
+
+TEST_F(ElctlEarthbankUpload, UsageAndSelectionErrors) {
+  const std::size_t requests = bank_.requests().size();
+  EXPECT_EQ(with_profiles({"upload", "--yes"}).code, elctl::kUsage);  // no --db
+  EXPECT_EQ(upload({"--frob", "x"}).code, elctl::kUsage);
+  EXPECT_EQ(upload({"--package", "none"}).code, elctl::kUsage);
+  EXPECT_EQ(upload({"--journal", ""}).code, elctl::kUsage);
+  EXPECT_EQ(bank_.requests().size(), requests);
+  // Nothing matched: as for the workbooks.
+  EXPECT_EQ(upload({"--sample", "nobody", "--yes"}).code, elctl::kFailed);
+  EXPECT_EQ(posts(), 0u);
+}
 
 }  // namespace
 

@@ -617,6 +617,43 @@ TEST(Uploader, ATimeoutAfterSendIsInDoubtAndNothingMoreIsSent) {
   EXPECT_TRUE(journal->aliquots.empty());
   EXPECT_TRUE(any_has(report.missing, "aliquot 20001-01"));
   EXPECT_TRUE(any_has(report.missing, "age summary"));
+  // What a caller offers the next step from, without reading the sentence.
+  EXPECT_EQ(report.in_doubt, "aliquot 20001-01");
+  EXPECT_FALSE(report.changed);
+
+  // The run after says the same; settled, the report has nothing in doubt.
+  EXPECT_EQ(rig.run_one(good_submission("S-1")).in_doubt, "aliquot 20001-01");
+  rig.options.resolve_in_doubt = "written:" + std::to_string(rig.bank.store().aliquots.at(0).id);
+  const SampleReport settled = rig.run_one(good_submission("S-1"));
+  EXPECT_EQ(settled.status, SampleStatus::Complete);
+  EXPECT_FALSE(settled.in_doubt.has_value());
+}
+
+// A caller whose user sets these by other names (a command line's flags) has
+// the sentences say those names.
+TEST(Uploader, TheSentencesNameTheSettingsAsTheCallerDoes) {
+  Rig rig;
+  rig.options.in_doubt_setting = "--in-doubt";
+  rig.options.new_datapoint_setting = "--new-datapoint";
+  rig.bank.drop_next("POST", "/api/arar/ArArAliquot");
+  const SampleReport doubt = rig.run_one(good_submission("S-1"));
+  ASSERT_EQ(doubt.status, SampleStatus::InDoubt);
+  EXPECT_TRUE(has(doubt.messages.front(), "run again with --in-doubt set to \"written:<id>\"")) << doubt.messages.front();
+  EXPECT_FALSE(any_has(doubt.messages, "resolve_in_doubt"));
+  rig.options.resolve_in_doubt = "perhaps";
+  const auto bad = rig.run({good_submission("S-1")});
+  ASSERT_FALSE(bad.has_value());
+  EXPECT_TRUE(has(bad.error().what, "--in-doubt is 'perhaps'")) << bad.error().what;
+
+  rig.options.resolve_in_doubt = "not-written";
+  ASSERT_EQ(rig.run_one(good_submission("S-1")).status, SampleStatus::Complete);
+  rig.options.resolve_in_doubt.reset();
+  Submission changed = good_submission("S-1");
+  changed.age_summary.age = 29.0;
+  const SampleReport refused = rig.run_one(changed);
+  ASSERT_EQ(refused.status, SampleStatus::Refused);
+  EXPECT_TRUE(has(refused.messages.front(), "run again with --new-datapoint (")) << refused.messages.front();
+  EXPECT_FALSE(any_has(refused.messages, "new_datapoint"));
 }
 
 TEST(Uploader, TheJournalSaysInDoubtBeforeTheRequestIsSent) {
@@ -773,6 +810,7 @@ TEST(Uploader, ASampleInDoubtIsResolvedBySearch) {
     EXPECT_TRUE(has(first.messages.front(), "sample")) << first.messages.front();
     EXPECT_EQ(rig.bank.count("POST", "/api/arar/"), 0u);
     EXPECT_EQ(rig.journal("S-1")->in_doubt, "sample");
+    EXPECT_FALSE(first.in_doubt.has_value()) << "a sample in doubt is not the user's to settle";
 
     // No resolution is asked of the user: the search settles it.
     const SampleReport second = rig.run_one(s);
@@ -820,6 +858,7 @@ TEST(Uploader, AChangedSubmissionIsRefused) {
   ASSERT_FALSE(report.messages.empty());
   EXPECT_TRUE(has(report.messages.front(), "changed")) << report.messages.front();
   EXPECT_TRUE(has(report.messages.front(), "new_datapoint")) << report.messages.front();
+  EXPECT_TRUE(report.changed);
   EXPECT_EQ(rig.posts(), sent);
 }
 

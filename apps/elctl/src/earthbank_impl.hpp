@@ -52,6 +52,9 @@ struct Online {
   std::optional<pychron::earthbank::Profile> profile;
   // Why the session is not signed in, when it is not, in a sentence.
   std::string not_signed_in;
+  // It is not signed in because no password was to be had (none kept, none in
+  // the variable): the one case a person at a terminal can mend on the spot.
+  bool no_password = false;
 };
 
 // Opens `online` from the profiles file and the flags. `need_login`: no

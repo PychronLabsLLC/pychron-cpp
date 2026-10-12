@@ -156,6 +156,7 @@ int go_online(const ConnectFlags& flags, bool need_login, Io io, const Earthbank
     if (need_login) return fatal(io, *store_error);
     io.err << "warning: " << store_error->what << '\n';
   }
+  if (!password) online.no_password = true;
   if (!password)
     return unsigned_because("no password is kept for profile '" + online.profile->name + "' and $" + kPasswordVariable +
                             " is not set");

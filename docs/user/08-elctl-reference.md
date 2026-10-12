@@ -32,7 +32,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Legacy data](#legacy-data): `import ...`
 - [The store's schema](#the-stores-schema): `db status`, `db migrate`
 - [Publication data](#publication-data): `export`
-- [EarthBank workbooks and account](#earthbank-workbooks): `earthbank export-xlsx`, `login`, `account`, `packages`, `preflight`, `import-profiles`
+- [EarthBank workbooks and account](#earthbank-workbooks): `earthbank export-xlsx`, `login`, `account`, `packages`, `preflight`, `upload`, `import-profiles`
 - [Sample and package entry](#sample-and-package-entry): `entry ...`
 - [Not yet implemented / unverified](#not-yet-implemented--unverified)
 
@@ -927,6 +927,7 @@ ends, and `login` says so).
 | `earthbank packages [--institution ID] [--profile NAME]` | Lists the data packages, of one institution when given or when the profile has one. `*` marks the one the profile uploads to. |
 | `earthbank packages --create NAME [--institution ID]` | Makes a private data package in progress and sets the profile's data package to it. |
 | `earthbank preflight --db URL [selection] [ages] [--overrides FILE] [--base-url URL]` | Builds what an upload would send for the selected analyses and asks EarthBank whether it knows every controlled term in it. Writes nothing to the service. Without a login it asks what needs none and lists the rest as not asked. |
+| `earthbank upload --db URL [selection] [ages] [--overrides FILE] --yes [--package ID] [--allow-unresolved] [--new-datapoint] [--in-doubt written:ID\|not-written] [--journal DIR]` | Sends the selected analyses to a data package: for each sample the sample itself (if the package has none of that name), a data point, its aliquots and measurements, the age calculation and the age summary. See [Uploading](#uploading) below. |
 | `earthbank import-profiles FILE` | Takes the profiles of a legacy Pychron preferences file into the profiles file, without passwords (sign in once per profile with `login`). A profile whose name is already there is left alone. |
 
 `preflight` prints, for each sample, the terms EarthBank does not know (or
@@ -944,6 +945,59 @@ EARTHBANK_PASSWORD=... elctl earthbank account            # in a script
 elctl earthbank packages --create "Ar-Ar results 2031"
 elctl earthbank preflight --db sqlite:$HOME/pychron/data.db --project examples
 ```
+
+### Uploading
+
+`elctl` cannot change or remove a record on EarthBank, so `upload` shows what
+it is about to do before it does anything. It signs in, then prints the
+account, the data package (its id and its name, as EarthBank has them), for
+each sample the age it reports and the records it would write, and the
+pre-flight report. Without `--yes` it stops there and exits 2: read it, then
+run the same command with `--yes`.
+
+```bash
+elctl earthbank upload --db sqlite:$HOME/pychron/data.db --sample MB-12 --overrides earthbank.toml
+elctl earthbank upload --db sqlite:$HOME/pychron/data.db --sample MB-12 --overrides earthbank.toml --yes
+```
+
+- **The data package** is `--package ID`, else the profile's (set by
+  `packages --create`). With neither, nothing is sent.
+- **The password** is the one `login` kept, else `$EARTHBANK_PASSWORD`, else
+  it is asked for at a terminal. With none of these, or when EarthBank refuses
+  it, the command exits 2 having sent nothing and says to run `login`.
+- **Terms EarthBank does not know** stop the upload (exit 1, nothing sent).
+  Correct them in the overrides file, or add `--allow-unresolved` to send the
+  records without those fields; each one left out is listed under its sample.
+  A term EarthBank could not be asked about always stops it: try again.
+- **Progress** is one line for each record as EarthBank takes it, with the id
+  it gave, then one line for each sample: `complete`, `partial`, `stopped`,
+  `in doubt` or `refused`, with the data point's id.
+
+What has been written is kept in a **journal** on this computer, one file for
+each sample and data package (`--journal DIR`; by default the `journal`
+directory beside the profiles file). It is the only record of an upload that
+did not finish, so do not delete it, and finish an upload on the computer it
+was begun on.
+
+- **`partial` or `stopped`**: some records were not written (EarthBank
+  refused one, or the connection failed before it was sent). The command
+  prints the line that finishes it: the same command again. Only what is
+  missing is sent.
+- **`in doubt`**: a record was sent and no answer came back, so it may or may
+  not be on EarthBank, and a record sent twice is there twice. Nothing more of
+  that sample is sent. Look for the record on EarthBank, then run one of the
+  two lines the command prints: `--in-doubt written:ID` with the id EarthBank
+  shows for it, or `--in-doubt not-written`. The answer is applied to one
+  sample: when several are in doubt, upload them one at a time (`--sample`).
+  A sample in doubt needs no answer; run the command again and it is looked
+  for by name.
+- **`refused`**, the data changed: the analyses, or what the overrides say of
+  them, are not what the journal's upload sent. `--new-datapoint` sends the
+  sample again as new records; the old ones stay on EarthBank until you remove
+  them there.
+
+Exit codes: 0 every sample is complete; 1 no analysis matched, or terms
+unknown or unasked; 2 anything else, a sample that is not complete included.
 
 ## Sample and package entry
 

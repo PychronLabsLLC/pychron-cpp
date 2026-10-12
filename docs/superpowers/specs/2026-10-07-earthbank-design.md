@@ -1020,7 +1020,8 @@ elctl earthbank account                             who am I
 elctl earthbank packages [--create <name>]          list the institution's packages, or make one
 elctl earthbank preflight   --db <url> [selection] [options]
 elctl earthbank export-xlsx --db <url> [selection] --out <dir> [--per-sample] [--no-samples] [options]
-elctl earthbank upload      --db <url> [selection] [--package <id>] [--allow-unresolved] [--new-datapoint] --yes [options]
+elctl earthbank upload      --db <url> [selection] [--package <id>] [--allow-unresolved] [--new-datapoint]
+                            [--in-doubt written:<id>|not-written] [--journal <dir>] --yes [options]
 elctl earthbank import-profiles <ini>
 ```
 
@@ -1031,6 +1032,35 @@ interpretation, preferred age, flux monitor, data point name; and the decay
 constant and air ratio names). Exit codes as `export`: 0 done, 1 nothing
 matched or there were misses, 2 usage or a fatal error. Built without Qt
 Network, the network commands say so and exit 2; `export-xlsx` works.
+
+`upload`, as built. Order: sign in (password: secret store, else
+`EARTHBANK_PASSWORD`, else prompt at terminal; none or refused: exit 2, says
+to run `login`); data package (`--package`, else profile's; none: exit 2,
+names `--package` and `packages --create`); build submissions; ask service
+for account and package list (package id not in list: exit 2); print profile
+and server, account name and login, package id and name, per sample age line
+and record counts, pre-flight report. Nothing is written before all of this
+is printed. Misses then stop it, exit 1 (`--allow-unresolved` covers unknown
+terms, never unasked ones). Without `--yes` it stops here: exit 2, `nothing
+was sent; add --yes to upload`. With it: one line per record written
+(`<sample>: <record>: saved, id <n>`), then per sample
+`<sample>: complete|partial|stopped|in doubt|refused[, data point <id>]`, its
+messages, and the command line that continues: same words (less `--in-doubt
+<v>` and `--new-datapoint`) for `partial`, `stopped` and a sample in doubt;
+twice, with `--in-doubt written:<id>` and `--in-doubt not-written`, for a
+record in doubt; with `--new-datapoint` for changed data. Words are
+shell-quoted. Exit: 0 every sample `Complete`; 1 nothing matched, or misses;
+2 anything else, any sample not `Complete` included. Journal directory:
+`--journal`, else `journal` beside default profiles file whatever
+`--profiles` says. No interrupt handling: a killed run leaves the record
+being sent in doubt (5.3).
+
+For that line the uploader's `SampleReport` carries `in_doubt` (record the
+journal has in doubt at the end and only the user can settle; never the
+sample) and `changed` (refused because journal is of other data), and
+`UploadOptions` carries the caller's names for the two settings
+(`in_doubt_setting`, `new_datapoint_setting`; defaults `resolve_in_doubt`,
+`new_datapoint`), used in the sentences that say to set them.
 
 ### 8.2 pychron-ui
 

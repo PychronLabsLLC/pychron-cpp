@@ -84,6 +84,10 @@ struct UploadOptions {
   // EarthBank: "written:<id>" (it is there, with that id) or "not-written".
   // It names no sample, so it is used only when one sample is in doubt.
   std::optional<std::string> resolve_in_doubt;
+  // What the caller's user knows resolve_in_doubt and new_datapoint as (a
+  // command line: its flags), for the sentences that say to set them.
+  std::string in_doubt_setting = "resolve_in_doubt";
+  std::string new_datapoint_setting = "new_datapoint";
   std::filesystem::path journal_dir;
   std::function<void(const UploadEvent&)> on_event;
   // Asked before each record is sent; true stops the sample there.
@@ -101,12 +105,18 @@ enum class SampleStatus {
 // `written`: the records this call sent and the service took (the record's
 // name as in UploadEvent). `missing`: every record the journal does not have
 // at the end, a record in doubt included. `messages` are sentences for the
-// user.
+// user. What a caller needs to offer the next step without reading them:
+// `in_doubt`, the record the journal has in doubt at the end and only the user
+// can settle (resolve_in_doubt; never the sample, which a re-run settles by
+// search), and `changed`, refused because the journal is of other data
+// (new_datapoint sends it as new records).
 struct SampleReport {
   std::string sample;
   SampleStatus status = SampleStatus::Refused;
   std::optional<std::int64_t> data_point_id;
   std::vector<std::string> written, missing, messages;
+  std::optional<std::string> in_doubt;
+  bool changed = false;
 };
 
 // `misses` are the pre-flight's, when they stopped the upload; every sample
