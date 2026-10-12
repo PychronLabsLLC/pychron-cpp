@@ -66,13 +66,17 @@ const PlanParameter* find(const std::vector<PlanParameter>& ps, const std::strin
 TEST(PlanParameters, ExposedInExposeOrderWithTypesAndDefaults) {
   auto ps = plan_parameters(example());
   ASSERT_TRUE(ps) << ps.error().what;
-  ASSERT_EQ(ps->size(), 4u);
+  ASSERT_EQ(ps->size(), 5u);
   EXPECT_EQ((*ps)[0].path, "main.cycles");
   EXPECT_EQ((*ps)[0].kind, ParamKind::Int);
   EXPECT_EQ((*ps)[0].value, ParamValue(std::int64_t{2}));
   EXPECT_TRUE((*ps)[0].exposed);
   EXPECT_EQ((*ps)[1].path, "main.hops[0].counts");
   EXPECT_EQ((*ps)[3].path, "baseline.counts");
+  EXPECT_EQ((*ps)[4].path, "main.time_zero");
+  EXPECT_EQ((*ps)[4].label, "Time zero");
+  EXPECT_EQ((*ps)[4].kind, ParamKind::String);
+  EXPECT_EQ((*ps)[4].value, ParamValue(std::string("on_inlet_close")));
 
   // An exposed table lists every value under it; labels come from expose.
   ps = plan_parameters(other());
@@ -86,6 +90,34 @@ TEST(PlanParameters, ExposedInExposeOrderWithTypesAndDefaults) {
   EXPECT_EQ(exclude->kind, ParamKind::List);
   EXPECT_EQ(exclude->value, ParamValue(std::string("CDD, L2")));
   EXPECT_EQ(find(*ps, "equilibration.time_s"), nullptr);  // not exposed
+}
+
+// Time zero a number of seconds after the inlet opens is a table in the plan:
+// exposed, it is shown as that number, and a run may change it.
+TEST(PlanParameters, ATimeZeroOffsetIsShownAsItsSeconds) {
+  std::string text = kOther;
+  const std::string main_table = "[main]\ncycles = 3\n";
+  const auto at = text.find(main_table);
+  ASSERT_NE(at, std::string::npos);
+  text.insert(at + main_table.size(), "time_zero = { offset_s = 20.0 }\n");
+  const std::string expose = R"("detectors.exclude"])";
+  const auto end = text.find(expose);
+  ASSERT_NE(end, std::string::npos);
+  text.replace(end, expose.size(), R"("detectors.exclude", { path = "main.time_zero", label = "Time zero" }])");
+  auto tmpl = parse_plan_template(text, "argus_hop.toml");
+  ASSERT_TRUE(tmpl) << tmpl.error().what;
+
+  auto ps = plan_parameters(*tmpl);
+  ASSERT_TRUE(ps) << ps.error().what;
+  const auto* offset = find(*ps, "main.time_zero.offset_s");
+  ASSERT_NE(offset, nullptr);
+  EXPECT_EQ(offset->kind, ParamKind::Float);  // as authored: written 20, it would take whole seconds only
+  EXPECT_EQ(offset->value, ParamValue(20.0));
+  EXPECT_TRUE(offset->exposed);
+
+  auto changed = render_effective_plan(*tmpl, {{"main.time_zero.offset_s", 35.5}}, LoadOptions{false});
+  ASSERT_TRUE(changed) << changed.error().what;
+  EXPECT_NE(changed->find("35.5"), std::string::npos) << *changed;
 }
 
 TEST(PlanParameters, AllForAdvancedMode) {

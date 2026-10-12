@@ -21,6 +21,7 @@
 
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
+#include "pychron/experiment/plan/parameters.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
@@ -435,6 +436,36 @@ TEST(Profiles, NgxShipsTheThreeStarterPlans) {
   EXPECT_EQ(installed_hops(root, site, "multicollect_hop_ar39"),
             (std::vector<Positions>{{{"Ar40", "H4"}, {"Ar38", "AX"}, {"Ar37", "L1"}, {"Ar36", "L2"}},
                                     {{"Ar39", "L4"}}}));
+  fs::remove_all(root);
+}
+
+// Every shipped plan says where its time zero is and lets a run change it:
+// the measurement panel shows what a plan exposes.
+TEST(Profiles, EveryShippedPlanShowsItsTimeZero) {
+  namespace plan = experiment::plan;
+  const auto lib = library();
+  const fs::path root = scratch("argus-time-zero");
+  const auto site = install(lib, "argus", {}, root);
+  auto lab = experiment::lab::load_lab({site.root, site.path(site.line), site.path(site.spectrometer)});
+  ASSERT_TRUE(lab.problems.empty()) << lab.problems.front();
+  for (const char* name : {"multicollect", "detector_ic", "multicollect_hop_ar39"}) {
+    const auto* tmpl = lab.plans->find(name);
+    ASSERT_NE(tmpl, nullptr) << name;
+    const auto params = plan::plan_parameters(*tmpl);
+    ASSERT_TRUE(params) << name << ": " << params.error().what;
+    const auto shown = std::find_if(params->begin(), params->end(), [](const auto& p) { return p.path == "main.time_zero"; });
+    ASSERT_NE(shown, params->end()) << name;
+    EXPECT_EQ(shown->label, "Time zero") << name;
+    EXPECT_EQ(shown->value, experiment::ParamValue(std::string("on_inlet_close"))) << name;
+
+    auto as_shipped = lab.plans->load(name, {});
+    ASSERT_TRUE(as_shipped) << name << ": " << as_shipped.error().what;
+    EXPECT_EQ(as_shipped->plan.main.time_zero.kind, plan::TimeZeroKind::OnInletClose) << name;
+    auto changed = lab.plans->load(name, {{"main.time_zero", std::string("on_first_count")}});
+    ASSERT_TRUE(changed) << name << ": " << changed.error().what;
+    EXPECT_EQ(changed->plan.main.time_zero.kind, plan::TimeZeroKind::OnFirstCount) << name;
+    EXPECT_FALSE(lab.plans->load(name, {{"main.time_zero", std::string("soon")}})) << name;
+  }
   fs::remove_all(root);
 }
 

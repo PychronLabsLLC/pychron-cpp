@@ -170,6 +170,17 @@ Normally only parameters the plan exposes may be overridden;
 `advanced = true` lifts that. The plan format itself is in the
 [Configuration reference](07-configuration-reference.md).
 
+The plans an install ships expose **Time zero**: where the time axis of the
+fits starts, and so the moment the intercepts are taken at. It is
+`on_inlet_close` (when equilibration ends, the default) or `on_first_count`,
+and a run may choose the other in the **Measurement** tab or with
+`overrides = { "main.time_zero" = "on_first_count" }`. A lab that wants time
+zero a number of seconds after the inlet opens writes that in its plan,
+`time_zero = { offset_s = 20.0 }` under `[main]`; the tab then shows the
+seconds as a number a run may change (`"main.time_zero.offset_s" = 35.5`).
+Write the number with a decimal point: written `20`, it takes whole seconds
+only.
+
 ### 2.4 Checks done before a queue runs
 
 Every time you load or edit a queue it is checked, all problems at once:

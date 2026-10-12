@@ -703,7 +703,7 @@ Top-level tables (others are errors): `plan`, `hook`, `detectors`,
 | | `integration_s` | seconds > 0 | 1 | |
 | `[main]` | `cycles` | whole number >= 1 | 1 | |
 | | `integration_s` | seconds > 0 | 1 | |
-| | `time_zero` | `"on_inlet_close"`, `"on_first_count"` or `{ offset_s = N }` | `on_inlet_close` | |
+| | `time_zero` | `"on_inlet_close"`, `"on_first_count"` or `{ offset_s = N }` | `on_inlet_close` | where the fits' time axis starts; `offset_s` is seconds after the inlet opens. The shipped plans expose it |
 | `[[main.hops]]` (at least one) | `positions` | table `isotope = "detector"` | required | one detector per isotope in a hop |
 | | `counts` | whole number >= 1 | | |
 | | `settle_s` | seconds >= 0 | 0 | |
