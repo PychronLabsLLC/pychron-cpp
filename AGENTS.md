@@ -27,6 +27,12 @@ Day to day:
   another run: what is pushed is what was tested.
 - CI does not run on `develop` or work branches, only on `main` and pull
   requests into it. Local tests are the only ones before a release: run them.
+  While a pull request from `develop` into `main` is open, every push to
+  `develop` runs CI on it: read that run (`gh pr checks <n>`). A red run is
+  fixed before other work lands on top of it.
+- Branch landed: remove its worktree (`git worktree remove <path>`), then the
+  branch. Each worktree holds its own build tree, 2 to 16 GB (October 2026:
+  33 landed worktrees, 181 GB). Never one this session did not make.
 - Never skip or disable failing test; find root cause.
 - Never push to `main`. Do not open a pull request into `main` or merge one
   unless asked to release.
@@ -113,7 +119,9 @@ Inner loop (keep waits short):
 - `dev` and `dev-quick` test presets run on every core (`CTEST_PARALLEL_LEVEL`
   empty); `dev-ui` runs 2 at a time, as CI. A test that fails only in parallel
   is a bug (shared file, port, settings): fix it, do not serialize suite.
-- Use `dev-ui` only when change touches `apps/pychron-ui` or `tests/ui`.
+- Use `dev-ui` only when change touches `apps/pychron-ui` or `tests/ui`. It
+  builds and runs everything `dev` does and the UI tests: one run of it
+  covers both.
 - ccache used when installed (`cmake/PychronCcache.cmake`); base_dir is
   source tree, so new worktree reuses objects other checkouts built. First
   build in new worktree still configures and fetches dependencies.
@@ -122,6 +130,38 @@ Inner loop (keep waits short):
 
 - CI (`.github/workflows/ci.yml`) builds with clang + ASan/UBSan on macOS,
   gcc 14 and clang 18 + ASan/UBSan on Ubuntu 24.04, and MSVC.
+- Apple clang does not give those compilers' warnings, and each CI job stops
+  at its first error. After changing C++, with the static analysis:
+  `python3 tools/compiler_sweep.py` (every source through Homebrew's `g++`,
+  `-fsyntax-only`, all warnings at once; needs `brew install gcc` and a
+  configured build directory). Nearest thing to CI a Mac has, not CI: gcc 16
+  does not give every gcc 14 warning. Met in CI and not locally, October
+  2026:
+  - gcc: `EXPECT_*` under an unbraced `if` (`-Wdangling-else`); a local or a
+    lambda parameter named as an outer one (`-Wshadow`); `const auto [a, b]`
+    over pairs (`-Wrange-loop-construct`, gcc 14 only: write `const auto&`);
+    a reference returned from a call given a temporary
+    (`-Wdangling-reference`: take the argument by value); a `//` line ending
+    in a backslash; a dropped `json::parse` result even under `(void)`.
+  - clang 18: a designated initializer that leaves fields out
+    (`-Wmissing-field-initializers`).
+  - MSVC: `sscanf` and its kind (C4996); `const auto*` from a container's
+    iterator, which is no pointer there; code after `FAIL()` or a `return`
+    (C4702: `FAIL()` returns, so use `ADD_FAILURE()` before an abort); a raw
+    string literal as argument of a gtest macro (C2017).
+  - Qt on Ubuntu 24.04 is 6.4: an API newer than that is behind
+    `QT_VERSION_CHECK`.
+- Reading CI: `gh pr checks <n>`. Log of a failed job while other jobs still
+  run: `gh api --allow-escape-sequences
+  repos/<owner>/<repo>/actions/jobs/<job id>/logs` (`gh run view
+  --log-failed` gives nothing until the whole run ends). What a failed test
+  printed is in the log's tail (`tools/ci_failed_output.py`), before the
+  rerun.
+- Bytes that are a file format do not depend on the compiler:
+  `TOML_FLOAT_CHARCONV=0` (`libs/core/CMakeLists.txt`) makes toml++ write a
+  float the same under MSVC as under gcc and clang, so a record has one sha.
+  Never removed; a new writer of a stored format is checked on Windows CI
+  against a fixture written elsewhere.
 - `-DPYCHRON_SANITIZE=address,undefined` enables ASan/UBSan, and with them
   standard library's own checks (empty optional dereferenced, index past the
   end): static analysis does not look for those here, this does.
@@ -632,6 +672,12 @@ Systems components take non-owning references (`Scheduler&`, `SignalBus&`,
 must outlive them. In tests, declare fakes before the fixture that owns the
 component: locals are destroyed in reverse order of declaration.
 
+A component whose work runs on another thread (a scheduler job, a bus
+handler) is not gone when its state says idle: its destructor waits until
+that thread has left it. `JobRunner` publishes `JobFinished` after it is idle
+again, so it counts the threads inside `execute()` and waits for them; before
+it did, ASan on Linux read a destroyed runner.
+
 ## Time
 
 Time is injected (`pychron::Clock`, `libs/core` `clock.hpp`). On hardware it
@@ -706,8 +752,17 @@ Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
   thing tested, and its real lower bound is the point) and `elctl`'s
   interrupt test (`AnInterruptStopsAPacedQueueInRealTime`); their upper
   bounds follow the rule all the same.
+- A real-time upper bound has room. Under ASan on CI's four-core Linux
+  runner a test costs up to 1.5 times what it costs alone when every core is
+  busy, and macOS runners stretch a 40 ms timed wait to 50 to 75 ms. So: the
+  bound is at least three times the slowest time CI has shown for the test;
+  the fixture's dead-man is above the bound; ctest's `TIMEOUT` for the
+  target is above the dead-man. Three numbers, moved together. No test
+  asserts a rate, or an order of events, that rests on a real sleep of under
+  100 ms: put the thing on an injected clock (`LaserBridgeDeps::video_clock`
+  is the model).
 - A stuck test does not hang: the fixture's dead-man always aborts it after
-  30 s of real time, with a message. When some thread is waiting in the clock
+  30 s of real time (or what its fixture gives it), with a message. When some thread is waiting in the clock
   for a deadline, the clock also reports `virtual clock stalled; runnable:
   <name>` on stderr after 10 s, naming the participants that are not waiting
   in it (start looking there: a raw wait, a plain mutex, a bare join). With

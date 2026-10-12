@@ -251,6 +251,26 @@ libc++'s hardening): an empty `std::optional` dereferenced or a container
 indexed past its end stops the test there. That is why clang-tidy's
 `bugprone-unchecked-optional-access` is off (its reason is in `.clang-tidy`).
 
+### The other compilers' warnings
+
+CI builds with gcc 14, clang 18 and MSVC, and each job stops at its first
+error. Apple clang does not give all of their warnings, so a Mac build that is
+clean can still fail there. `tools/compiler_sweep.py` runs every source of a
+configured build directory through a second compiler with `-fsyntax-only` (no
+objects, nothing linked, a minute or two) and lists every warning the
+project's `-Werror` would stop on:
+
+```bash
+brew install gcc
+python3 tools/compiler_sweep.py                 # Homebrew's newest g++
+python3 tools/compiler_sweep.py --build-dir build/dev-ui
+```
+
+It is not CI: Homebrew's gcc is newer than CI's and has let a gcc 14 warning
+through, and it says nothing of MSVC. `AGENTS.md` lists what CI has caught
+that a Mac did not.
+
+
 ### Importing legacy data
 
 `elctl import` brings legacy pychron repositories (and a converted database
