@@ -66,6 +66,14 @@ class ChangedLines(unittest.TestCase):
 
 
 class Findings(unittest.TestCase):
+    def test_a_windows_path_keeps_its_drive(self):
+        match = qc.FINDING_RE.match(
+            r"D:\a\repo\libs\core\src\a.cpp:57:14: warning: use nullptr [modernize-use-nullptr]"
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(match["file"], r"D:\a\repo\libs\core\src\a.cpp")
+        self.assertEqual(match["line"], "57")
+
     def test_clang_tidy_line(self):
         output = (
             f"{qc.ROOT}/libs/core/src/a.cpp:57:14: warning: use nullptr [modernize-use-nullptr]\n"

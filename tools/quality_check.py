@@ -48,7 +48,7 @@ BREW_LLVM = ("/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin")
 HEADER_SOURCES = 2  # sources analysed for one changed header
 
 FINDING_RE = re.compile(
-    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+):(?P<column>\d+): "
+    r"^(?P<file>(?:[A-Za-z]:)?[^\s:][^:]*):(?P<line>\d+):(?P<column>\d+): "
     r"(?P<severity>warning|error|performance|portability|style): "
     r"(?P<message>.*) \[(?P<check>[^\]\s]+)\]$"
 )
