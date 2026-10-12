@@ -28,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pychron/core/error.hpp"
@@ -66,7 +67,7 @@ pychron::Result<bool> take_age_flag(AgeFlags& ages, const std::vector<std::strin
 // What only the whole selection can say: --to before --from.
 pychron::Result<void> check_selection(const Selection& selection);
 
-std::optional<int> parse_int(const std::string& text);
+std::optional<int> parse_int(std::string_view text);
 
 // The store at `db_url`, for reading. A command that reads does not make a
 // store: a SQLite file that is not there, or is empty, is an error.
