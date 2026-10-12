@@ -71,8 +71,10 @@ TEST(NgxExampleConfig, ALinkTransportLoads) {
 
 class NgxSystem : public pychron::testing::VirtualTimeTest {
  protected:
-  // Ten simulated minutes cost some twenty seconds under the thread sanitizer.
-  NgxSystem() : VirtualTimeTest(50s) {}
+  // Ten simulated minutes cost some twenty seconds under the thread sanitizer,
+  // and 44 were seen under AddressSanitizer on a four-core CI runner with
+  // every core busy; ctest gives a test 180.
+  NgxSystem() : VirtualTimeTest(150s) {}
 
   void SetUp() override {
     model_->clock = &clock_;
@@ -171,8 +173,9 @@ TEST_F(NgxSystemVirtual, AcquiresSixHundredFramesWithNoPump) {
   EXPECT_LT(took, 630s);
   // The simulated peer is read every millisecond of clock time, which is
   // 600 000 reads here: two or three seconds as built for debugging, twenty
-  // under the thread sanitizer. The bound tells that from the ten minutes.
-  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 40s);
+  // under the thread sanitizer, forty and more on a busy CI runner. The
+  // bound tells that from the ten minutes.
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 120s);
 }
 
 namespace {

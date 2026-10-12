@@ -143,6 +143,10 @@ struct Ran {
 
 class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::WithParamInterface<std::string> {
  protected:
+  // The queue run twice is 24 to 27 s under AddressSanitizer on a four-core
+  // CI runner, and past 30 with every core busy; ctest gives a test 120.
+  InstallE2E() : VirtualTimeTest(90s) {}
+
   void SetUp() override {
     if (!scripting::scripting_enabled()) GTEST_SKIP() << "the shipped queue's scripts need PYCHRON_SCRIPTING";
     dir_ = fs::temp_directory_path() /
@@ -532,7 +536,7 @@ TEST_P(InstallE2E, AFreshInstallsQueueLandsInItsDatabase) {
 
   // 19 min 15 s of the lab's time, with the install and the database made
   // first: a bound in real time that only tells "took no real time" from a stall.
-  EXPECT_LT(std::chrono::steady_clock::now() - began_, 30s);
+  EXPECT_LT(std::chrono::steady_clock::now() - began_, 75s);
 }
 
 // A second session on the same database goes on numbering where the first
@@ -546,7 +550,7 @@ TEST_P(InstallE2E, RunningItAgainNumbersOn) {
   ASSERT_NO_FATAL_FAILURE(expect_five_good_runs(second));
   EXPECT_EQ(runids(browse()), (std::vector<std::string>{"ba-04", "a-06", "a-05", "a-04", "ba-03", "ba-02", "a-03",
                                                          "a-02", "a-01", "ba-01"}));
-  EXPECT_LT(std::chrono::steady_clock::now() - began_, 30s);
+  EXPECT_LT(std::chrono::steady_clock::now() - began_, 75s);
 }
 
 // Every plan the install ships is run once, and so is one the test writes
@@ -660,7 +664,7 @@ TEST_P(InstallE2E, EveryShippedPlanIsStoredAndReadsAsItsRecord) {
       EXPECT_EQ(stored, 1u);
     }
   }
-  EXPECT_LT(std::chrono::steady_clock::now() - began_, 30s);
+  EXPECT_LT(std::chrono::steady_clock::now() - began_, 75s);
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, InstallE2E, ::testing::ValuesIn(ps::testing::engines()));

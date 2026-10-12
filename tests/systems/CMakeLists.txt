@@ -13,5 +13,5 @@ if(PYCHRON_SYSTEMS_TESTS)
   # spectrometer sim drivers register from static initializers nothing references
   pychron_link_drivers(pychron_systems_tests pychron_sim)
   pychron_set_warnings(pychron_systems_tests)
-  gtest_discover_tests(pychron_systems_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+  gtest_discover_tests(pychron_systems_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 180)
 endif()
