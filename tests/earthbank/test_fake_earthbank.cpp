@@ -621,7 +621,7 @@ TEST(FakeEarthBank, ASampleNeedsItsPackageInBothPlaces) {
   for (const json& body : {no_wrapper, no_inner, disagree, flat}) {
     const HttpResponse response = client.post(path, body);
     EXPECT_EQ(response.status, 500) << body.dump();
-    EXPECT_EQ(parsed(response).at("title"), kNotWritable);
+    EXPECT_EQ(parsed(response).at("title").get<std::string>(), kNotWritable);
   }
   EXPECT_TRUE(bank.store().samples.empty());
 
@@ -764,7 +764,7 @@ TEST(FakeEarthBank, SubRecordsHangFromTheDataPoint) {
                            json{{"aliquotName", "x"}, {"arArDataPointId", store.samples[0].id}}}) {
     const HttpResponse response = client.post("/api/arar/ArArAliquot", body);
     EXPECT_EQ(response.status, 500) << body.dump();
-    EXPECT_EQ(parsed(response).at("title"), kNotWritable);
+    EXPECT_EQ(parsed(response).at("title").get<std::string>(), kNotWritable);
   }
   EXPECT_EQ(Client(bank, false).post("/api/arar/ArArAliquot", {{"arArDataPointId", point}}).status, 401);
 }
@@ -882,7 +882,7 @@ TEST(FakeEarthBank, UnwritablePackageIsRefused) {
   const std::int64_t ours = new_sample(client, open, "S1");
   const HttpResponse point = client.post("/api/arar/ArArDataPoint", data_point_body(bank, locked, ours, "S1"));
   EXPECT_EQ(point.status, 500);
-  EXPECT_EQ(parsed(point).at("title"), kNotWritable);
+  EXPECT_EQ(parsed(point).at("title").get<std::string>(), kNotWritable);
 
   // Permission taken away in the middle of an upload: what hangs from the
   // data point is refused from then on.
@@ -891,7 +891,7 @@ TEST(FakeEarthBank, UnwritablePackageIsRefused) {
   bank.set_writable(open, false);
   const HttpResponse late = client.post("/api/arar/ArArAliquot", {{"aliquotName", "b"}, {"arArDataPointId", id}});
   EXPECT_EQ(late.status, 500);
-  EXPECT_EQ(parsed(late).at("title"), kNotWritable);
+  EXPECT_EQ(parsed(late).at("title").get<std::string>(), kNotWritable);
   EXPECT_EQ(bank.store().aliquots.size(), 1u);
   // Reading is not writing.
   EXPECT_EQ(client.get(with_query("/api/core/sample-with-locations",

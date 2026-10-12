@@ -1186,8 +1186,10 @@ TEST(Session, Sentences) {
   }
   // The field out of the constraint's name, where no key is given; and no
   // field, where neither is.
-  EXPECT_EQ(said(s.session, 400, R"({"detail":"violates foreign key constraint \"fk_measurement_plateau_step_id\""})",
-                              "/api/arar/ArArMeasurement", "measurement 20001-01A"),
+  // (A raw string is named first: MSVC cannot take one with a quote in it
+  // inside an assertion's arguments.)
+  const std::string constraint = R"({"detail":"violates foreign key constraint \"fk_measurement_plateau_step_id\""})";
+  EXPECT_EQ(said(s.session, 400, constraint, "/api/arar/ArArMeasurement", "measurement 20001-01A"),
             "EarthBank did not take the measurement 20001-01A: it does not know the value sent for 'plateau step'. "
             "The term is probably not on EarthBank's list; a pre-flight check names such terms before anything is "
             "sent.");
@@ -1196,8 +1198,8 @@ TEST(Session, Sentences) {
             "probably not on EarthBank's list; a pre-flight check names such terms before anything is sent.");
   // A constraint on the package's own column is still a value not known, not
   // a package that cannot be written to.
-  EXPECT_TRUE(has(said(s.session, 500, R"({"detail":"Key (data_package_id)=(9) is not present in table \"data_package\""})",
-                                    "/api/core/sample-with-locations", ""),
+  const std::string package_key = R"({"detail":"Key (data_package_id)=(9) is not present in table \"data_package\""})";
+  EXPECT_TRUE(has(said(s.session, 500, package_key, "/api/core/sample-with-locations", ""),
                   "the value sent for 'data package'"));
 
   // "...was partly uploaded...".
