@@ -73,7 +73,11 @@ QString color_by_label(ColorBy by) {
 
 QDateTimeEdit* utc_edit() {
   auto* edit = new QDateTimeEdit;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
   edit->setTimeZone(QTimeZone::utc());
+#else
+  edit->setTimeSpec(Qt::UTC);
+#endif
   edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd hh:mm"));
   edit->setCalendarPopup(true);
   edit->setDateTime(QDateTime(QDate(2000, 1, 1), QTime(0, 0), QTimeZone::utc()));
