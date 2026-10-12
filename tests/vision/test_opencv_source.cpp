@@ -121,7 +121,7 @@ TEST_F(OpenCvSourceVideo, LumaIdentityStream) { expect_stream({}, kW, kH, {0, 1,
 
 TEST_F(OpenCvSourceVideo, ChannelsPickTheRightPlane) {
   // A pure-red quadrant must be bright in R and dark in B: this catches a BGR index swap.
-  for (const auto [ch, idx] : {std::pair{SourceConfig::Channel::R, 0}, std::pair{SourceConfig::Channel::G, 1},
+  for (const auto& [ch, idx] : {std::pair{SourceConfig::Channel::R, 0}, std::pair{SourceConfig::Channel::G, 1},
                                std::pair{SourceConfig::Channel::B, 2}}) {
     SourceConfig c;
     c.channel = ch;

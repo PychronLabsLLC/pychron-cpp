@@ -398,9 +398,10 @@ void record_value(const std::string& name, double value) {
 
 class LabSim : public pychron::testing::VirtualTimeTest {
  protected:
-  // The five-run queue is half a minute under the thread sanitizer; ctest
-  // gives a test sixty.
-  LabSim() : VirtualTimeTest(55s) {}
+  // The five-run queue is half a minute under a sanitizer on a machine of
+  // its own, and 47 s was seen on a four-core CI runner with every core
+  // busy; ctest gives a test 180.
+  LabSim() : VirtualTimeTest(150s) {}
 
   void SetUp() override {
     if (!scripting::make_script_host()->available()) GTEST_SKIP() << "needs embedded Python to run the example scripts";
@@ -928,9 +929,9 @@ TEST_F(LabSim, FiveRunsTakeNoRealTime) {
   ASSERT_EQ(runs.size(), 5u);
   record_value("real_s", real);
   record_value("simulated_s", simulated);
-  // Under the fixture's dead-man (55 s), which would abort first: a bound
-  // that can fail.
-  EXPECT_LT(real, 45.0);
+  // Under the fixture's dead-man (150 s), which would abort first: a bound
+  // that can fail, and far under the half hour and more it stands for.
+  EXPECT_LT(real, 120.0);
   EXPECT_GT(simulated, 1800.0) << "the queue was half an hour of the lab's time or more";
 
   // Blank, air, air, air, blank.

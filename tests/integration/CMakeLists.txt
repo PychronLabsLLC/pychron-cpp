@@ -29,7 +29,7 @@ if(PYCHRON_INTEGRATION_TESTS)
   # spectrometer sim drivers register from static initializers nothing references
   pychron_link_drivers(pychron_integration_tests pychron_sim)
   pychron_set_warnings(pychron_integration_tests)
-  gtest_discover_tests(pychron_integration_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+  gtest_discover_tests(pychron_integration_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 180)
 endif()
 
 # A fresh install's queue, run on simulated hardware into the install's

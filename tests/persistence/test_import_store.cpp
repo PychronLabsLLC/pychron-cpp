@@ -760,7 +760,7 @@ TEST_P(ImportStoreTest, LastAnalysisIsNulloptForAnIdentifierWithNone) {
 }
 
 TEST_P(ImportStoreTest, LastAnalysisIsTheHighestAliquotAndItsHighestIncrement) {
-  for (const auto [aliquot, increment] : {std::pair{1, -1}, {2, 0}, {2, 1}, {3, 0}}) {
+  for (const auto& [aliquot, increment] : {std::pair{1, -1}, {2, 0}, {2, 1}, {3, 0}}) {
     auto item = analysis_item(lab_, aliquot, series(1), series(0), "66574");
     std::get<AnalysisIngest>(item.body).increment = increment;
     auto ack = store_->ingest(item);
