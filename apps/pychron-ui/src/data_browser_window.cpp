@@ -208,6 +208,15 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   export_ = toolbar_->addAction(data_icon(QStringLiteral("export")), tr("Export"), this, &DataBrowserWindow::request_export);
   export_->setToolTip(tr("Export: write the selected analyses (or all shown) as a 40Ar/39Ar data report after "
                          "Schaen et al. (2021), CSV or JSON"));
+  publish_ = toolbar_->addAction(data_icon(QStringLiteral("publish")), tr("Publish"), this, [this] {
+    if (const QStringList ids = selected_uuids(); !ids.isEmpty()) emit publish_requested(ids);
+  });
+  publish_->setToolTip(tr("Publish to EarthBank...: check, export as EarthBank's workbooks, or upload the selected "
+                          "analyses"));
+  publish_->setEnabled(false);
+  connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+          [this] { publish_->setEnabled(!selected_uuids().isEmpty()); });
+  connect(model_, &QAbstractItemModel::modelReset, this, [this] { publish_->setEnabled(!selected_uuids().isEmpty()); });
   ask_export_path = [this](const QString& suggested) {
     return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
                                         tr("CSV report (*.csv);;JSON report (*.json)"));

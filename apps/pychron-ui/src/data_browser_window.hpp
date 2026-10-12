@@ -16,6 +16,9 @@
 //                            spectrum_isochron, then the fit windows isotope_evolution_fit, blank_fit,
 //                            icfactor_fit
 //   toolbar, Recall          recall_requested(uuid of the current row)
+//   toolbar, Publish         publish_requested(selected uuids): Publish to EarthBank,
+//                            on what is selected and nothing else (it leaves the
+//                            lab, so "all shown" is not assumed)
 //   toolbar, Export          export_requested(path, selected uuids or all shown): one
 //                            click asks for a file name and the workspace writes the
 //                            Schaen et al. (2021) data report there (.csv or .json)
@@ -103,6 +106,7 @@ class DataBrowserWindow : public QWidget {
   QAction* plot_action(const QString& kind) const;
   QAction* recall_action() const noexcept { return recall_; }
   QAction* export_action() const noexcept { return export_; }
+  QAction* publish_action() const noexcept { return publish_; }  // enabled with a selection
   QLabel* status() const noexcept { return status_; }
   QLabel* unavailable() const noexcept { return unavailable_; }
   // A line for the status label (the workspace reports an export here).
@@ -121,6 +125,7 @@ class DataBrowserWindow : public QWidget {
   void recall_requested(const QString& uuid);
   void figure_requested(const QString& kind, const QStringList& uuids);
   void export_requested(const QString& path, const QStringList& uuids);
+  void publish_requested(const QStringList& uuids);
   void color_by_changed(pychron::ui::ColorBy by);
 
  private:
@@ -166,6 +171,7 @@ class DataBrowserWindow : public QWidget {
   QToolBar* toolbar_;
   QAction* recall_;
   QAction* export_;
+  QAction* publish_;
   QLabel* status_;
   QLabel* unavailable_;
   int page_size_ = Preferences::kDefaultPageSize;

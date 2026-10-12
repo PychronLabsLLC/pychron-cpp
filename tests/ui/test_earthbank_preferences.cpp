@@ -4,11 +4,9 @@
 // in-memory fake, the store a memory store and the file one in a temp folder:
 // nothing here reaches EarthBank, the keychain or the user's own profiles.
 
-#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -29,8 +27,8 @@
 
 #include "earthbank_package_dialog.hpp"
 #include "earthbank_preferences_page.hpp"
+#include "earthbank_fixture.hpp"
 #include "earthbank_worker.hpp"
-#include "fake_earthbank.hpp"
 #include "preferences_dialog.hpp"
 #include "pychron/earthbank/http.hpp"
 #include "pychron/earthbank/profiles.hpp"
@@ -39,66 +37,12 @@
 
 using namespace pychron;
 namespace eb = pychron::earthbank;
-using eb::testing::FakeEarthBank;
 using pychron::ui::EarthbankPackageDialog;
 using pychron::ui::EarthbankPreferencesPage;
 using pychron::ui::EarthbankSetup;
 using Column = pychron::ui::EarthbankPreferencesPage::Column;
 
 namespace {
-
-// Passes requests on to the fake; while held, a request waits here, on the
-// worker's thread, until the test lets it go.
-class Gate final : public eb::IHttpClient {
- public:
-  explicit Gate(FakeEarthBank& bank) : bank_(bank) {}
-  Result<eb::HttpResponse> send(const eb::HttpRequest& request) override {
-    {
-      std::unique_lock lock(mutex_);
-      ++waiting_;
-      changed_.notify_all();
-      changed_.wait(lock, [this] { return !held_; });
-      --waiting_;
-    }
-    return bank_.send(request);
-  }
-  void hold() {
-    const std::scoped_lock lock(mutex_);
-    held_ = true;
-  }
-  void release() {
-    const std::scoped_lock lock(mutex_);
-    held_ = false;
-    changed_.notify_all();
-  }
-  bool waiting() {
-    const std::scoped_lock lock(mutex_);
-    return held_ && waiting_ > 0;
-  }
-
- private:
-  FakeEarthBank& bank_;
-  std::mutex mutex_;
-  std::condition_variable changed_;
-  bool held_ = false;
-  int waiting_ = 0;
-};
-
-// The service and the gate before it: shared with the worker's client, which
-// may outlive a test that closes its page with a request still out.
-struct Service {
-  FakeEarthBank bank;
-  Gate gate{bank};
-};
-
-class Through final : public eb::IHttpClient {
- public:
-  explicit Through(std::shared_ptr<Service> service) : service_(std::move(service)) {}
-  Result<eb::HttpResponse> send(const eb::HttpRequest& request) override { return service_->gate.send(request); }
-
- private:
-  std::shared_ptr<Service> service_;
-};
 
 std::string slurp(const std::filesystem::path& file) {
   const std::ifstream in(file);
@@ -112,42 +56,7 @@ std::string slurp(const std::filesystem::path& file) {
 class EarthbankPreferencesTest : public QObject {
   Q_OBJECT
 
-  // A service, a store and a folder of its own for each test.
-  struct World {
-    std::shared_ptr<Service> service = std::make_shared<Service>();
-    FakeEarthBank& bank = service->bank;
-    Gate& gate = service->gate;
-    std::shared_ptr<eb::ISecretStore> store{eb::make_memory_secret_store()};
-    QTemporaryDir dir;
-
-    std::filesystem::path file() const { return std::filesystem::path(dir.path().toStdString()) / "profiles.toml"; }
-    EarthbankSetup setup() {
-      EarthbankSetup s;
-      s.http = [service = service] { return std::make_unique<Through>(service); };
-      s.secrets = [store = store] { return store; };
-      s.profiles_file = file();
-      return s;
-    }
-    // The fixture account's profile, as a user would have typed it.
-    eb::Profile profile(const std::string& name = "mylab") const {
-      eb::Profile p;
-      p.name = name;
-      p.base_url = bank.base_url();
-      p.username = bank.login();
-      p.institution_id = 9301;
-      return p;
-    }
-    void write(const eb::Profile& p) const {
-      eb::Profiles all;
-      all.active = p.name;
-      all.profiles = {p};
-      QVERIFY(eb::save_profiles(all, file()));
-    }
-    std::optional<std::string> stored(const eb::Profile& p) const {
-      auto got = store->get(eb::secret_account(p));
-      return got ? *got : std::optional<std::string>("<the store failed>");
-    }
-  };
+  using World = ui::test::EarthbankWorld;
 
   static void type(QTableWidget* table, int row, Column column, const QString& text) {
     table->item(row, static_cast<int>(column))->setText(text);

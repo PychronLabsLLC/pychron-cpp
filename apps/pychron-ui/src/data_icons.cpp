@@ -122,6 +122,14 @@ QIcon data_icon(const QString& name) {
     head.lineTo(9, 2.5);
     head.lineTo(12.4, 5.8);
     p.drawPath(head);
+  } else if (name == QLatin1String("publish")) {
+    // an arrow up to a line: sent somewhere else
+    p.drawLine(QPointF(3.5, 2.5), QPointF(14.5, 2.5));
+    p.drawLine(QPointF(9, 15.5), QPointF(9, 6));
+    QPainterPath head(QPointF(5.6, 9.3));
+    head.lineTo(9, 6);
+    head.lineTo(12.4, 9.3);
+    p.drawPath(head);
   } else {
     return {};
   }

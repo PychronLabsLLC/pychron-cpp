@@ -1102,13 +1102,13 @@ class TestDataWindows : public QObject {
     // Each button names itself under its icon.
     QCOMPARE(w.toolbar()->toolButtonStyle(), Qt::ToolButtonTextUnderIcon);
     for (const QAction* a : w.toolbar()->actions()) QVERIFY(a->isSeparator() || !a->text().isEmpty());
-    // Five figures | three fit windows | recall, export; an icon and a tip each.
+    // Five figures | three fit windows | recall, export, publish; an icon and a tip each.
     const QStringList expected{QStringLiteral("time_series"), QStringLiteral("ideogram"), QStringLiteral("spectrum"),
                                QStringLiteral("inverse_isochron"), QStringLiteral("spectrum_isochron"), QString(),
                                QStringLiteral("isotope_evolution_fit"),
                                QStringLiteral("blank_fit"), QStringLiteral("icfactor_fit"), QString()};
     const auto actions = w.toolbar()->actions();
-    QCOMPARE(actions.size(), expected.size() + 2);
+    QCOMPARE(actions.size(), expected.size() + 3);
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
     for (int i = 0; i < expected.size(); ++i) {
       QCOMPARE(actions[i]->isSeparator(), expected[i].isEmpty());
@@ -1125,7 +1125,8 @@ class TestDataWindows : public QObject {
     }
     QCOMPARE(actions[expected.size()], w.recall_action());
     QCOMPARE(actions[expected.size() + 1], w.export_action());
-    for (QAction* a : {w.recall_action(), w.export_action()}) {
+    QCOMPARE(actions[expected.size() + 2], w.publish_action());
+    for (QAction* a : {w.recall_action(), w.export_action(), w.publish_action()}) {
       QVERIFY(!a->icon().isNull());
       QVERIFY(!a->toolTip().isEmpty());
     }

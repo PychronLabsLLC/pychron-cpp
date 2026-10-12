@@ -1,7 +1,7 @@
 #pragma once
 
 // Glyphs of the data browser's toolbar: one per figure and fit window, plus
-// recall and export. Line drawings in the manner of MainWindow::view_icon,
+// recall, export and publish. Line drawings in the manner of MainWindow::view_icon,
 // in the theme's text colour.
 
 #include <QIcon>
@@ -10,7 +10,7 @@
 namespace pychron::ui {
 
 // `name`: a figure kind (time_series, ideogram, spectrum, inverse_isochron,
-// spectrum_isochron, isotope_evolution_fit, blank_fit, icfactor_fit), "recall" or "export". A
+// spectrum_isochron, isotope_evolution_fit, blank_fit, icfactor_fit), "recall", "export" or "publish". A
 // null icon for any other name.
 QIcon data_icon(const QString& name);
 

@@ -17,6 +17,8 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   # the EarthBank suites talk to the service in memory (tests/earthbank)
   if(name MATCHES "^test_earthbank")
     target_link_libraries(${target} PRIVATE pychron::earthbank_fake)
+    # tests/earthbank/analyses.hpp builds on "processing/fixtures.hpp"
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
   endif()
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"

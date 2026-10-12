@@ -1,7 +1,9 @@
 #include "data_workspace.hpp"
 
 #include <filesystem>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <QSettings>
 
@@ -24,10 +26,12 @@ void DataWorkspace::clear() {
   for (auto& w : children_)
     if (w) delete w.data();  // they hold the old bridge and source
   children_.clear();
+  if (publish_) delete publish_.data();
   delete browser_;
   browser_ = nullptr;
   processing_.reset();
   export_channel_ = 0;
+  publish_channel_ = 0;
 }
 
 bool DataWorkspace::export_report(const QString& path, const QStringList& uuids) {
@@ -71,6 +75,41 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
     say(tr("Wrote %1: %n analyses, %2 groups", nullptr, static_cast<int>(report.analyses.rows.size()))
             .arg(path)
             .arg(report.summary.rows.size()));
+  });
+  return true;
+}
+
+bool DataWorkspace::open_publish(const QStringList& uuids) {
+  if (!processing_ || uuids.isEmpty()) return false;
+  if (publish_channel_ == 0) publish_channel_ = processing_->new_channel();
+  const auto& reg = processing::UnitRegistry::builtin();
+  processing::Pipeline pipeline;
+  pipeline.name = "publish";
+  auto& select = pipeline.add(reg, "select", "select");
+  std::vector<std::string> ids;
+  for (const auto& id : uuids) ids.push_back(id.toStdString());
+  (void)select.options.set("uuids", ids);
+  (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
+  // Reduced only to have them loaded: the dialog reduces what it publishes itself.
+  pipeline.add(reg, "reduce", "reduce", {"select"});
+  if (browser_) browser_->show_message(tr("Loading %n analyses to publish...", nullptr, static_cast<int>(uuids.size())));
+  processing_->submit(publish_channel_, pipeline, {"reduce"}, [this](const PipelineResult& r) {
+    if (r.outputs.empty() || !r.outputs[0]) {
+      const QString text =
+          tr("Publish failed: %1").arg(QString::fromStdString(r.outputs.empty() ? std::string() : r.outputs[0].error().what));
+      if (browser_) browser_->show_message(text);
+      if (log_) log_(QStringLiteral("[ui] ") + text);
+      return;
+    }
+    std::vector<processing::AnalysisPtr> analyses;
+    for (const auto& item : std::get<processing::DatasetPtr>(r.outputs[0]->at(0))->items()) {
+      analyses.push_back(item.analysis->analysis);
+    }
+    if (browser_) browser_->show_message(tr("%n analyses to publish", nullptr, static_cast<int>(analyses.size())));
+    if (publish_) delete publish_.data();
+    publish_ = new EarthbankPublishDialog(std::move(analyses), earthbank_, settings_, owner_);
+    publish_->setAttribute(Qt::WA_DeleteOnClose);
+    publish_->show();
   });
   return true;
 }
@@ -120,6 +159,8 @@ DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
             [this](const QString& kind, const QStringList& ids) { open_figure(kind, ids); });
     connect(browser_, &DataBrowserWindow::export_requested, this,
             [this](const QString& path, const QStringList& ids) { export_report(path, ids); });
+    connect(browser_, &DataBrowserWindow::publish_requested, this,
+            [this](const QStringList& ids) { open_publish(ids); });
   }
   return browser_;
 }
