@@ -438,7 +438,7 @@ class Exp {
           ended_cv.wait_for(lock, std::chrono::milliseconds(50), [&] { return ended; });
         }
         const int n = interrupt_count();
-        answer_interrupts(handled, n, [&](const std::string& line) { say(line); },
+        answer_interrupts(handled, n, [&](const std::string& text) { say(text); },
                           {[&] { session.stop(); }, [&] { session.cancel(); }, [&] { session.abort(); }});
       }
     }

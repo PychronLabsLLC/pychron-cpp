@@ -199,8 +199,9 @@ bool secret_parameter(std::string_view key) {
 // guess is wrong (an `@` in a parameter of a url with no user) more is left
 // out than need be, never less. nullopt: not a postgres url.
 std::optional<Shown> show_postgres(std::string_view url) {
-  const auto* scheme = std::find_if(kPostgresSchemes.begin(), kPostgresSchemes.end(),
-                                    [&](std::string_view s) { return url.starts_with(s); });
+  // NOLINTNEXTLINE(readability-qualified-auto): an array's iterator is a pointer only in some standard libraries
+  const auto scheme = std::find_if(kPostgresSchemes.begin(), kPostgresSchemes.end(),
+                                   [&](std::string_view s) { return url.starts_with(s); });
   if (scheme == kPostgresSchemes.end()) return std::nullopt;
   std::string_view rest = url.substr(scheme->size());
   Shown out;

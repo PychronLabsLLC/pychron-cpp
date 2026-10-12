@@ -211,11 +211,11 @@ ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, Signa
                  {{"state", label_of(to_string(s.state))}, {"truncated", bool_name(s.truncated)}})
         .inc();
     if (s.save_error) registry_.counter(kSaveErrors, kSaveErrorsHelp).inc();
-    const double now = now_();
+    const double finished = now_();
     std::size_t done = 0;
     {
       const std::lock_guard lock(mutex_);
-      last_finished_ = now;
+      last_finished_ = finished;
       done = ++done_;
     }
     registry_.gauge(kQueueRuns, kQueueRunsHelp, {{"status", "done"}}).set(static_cast<double>(done));
