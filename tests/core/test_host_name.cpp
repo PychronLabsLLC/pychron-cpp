@@ -19,7 +19,9 @@ TEST(HostName, IsTheMachinesAndNeverEmpty) {
 #ifndef _WIN32
   std::array<char, 256> buf{};
   ASSERT_EQ(::gethostname(buf.data(), buf.size() - 1), 0);
-  if (buf[0] != '\0') EXPECT_EQ(name, std::string(buf.data()));
+  if (buf[0] != '\0') {
+    EXPECT_EQ(name, std::string(buf.data()));
+  }
   // HOSTNAME has no say.
   ::setenv("HOSTNAME", "not-this-machine", 1);
   EXPECT_EQ(pychron::host_name(), name);

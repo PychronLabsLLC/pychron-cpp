@@ -502,9 +502,10 @@ TEST(RecordIngest, TextThatIsNotUtf8IsReplacedNotThrown) {
   EXPECT_EQ(*meta.queue_names_json, *body_of(b).meta->queue_names_json);
   EXPECT_EQ(json::parse(*meta.queue_names_json), (json{"queue\xEF\xBF\xBD name"}));  // U+FFFD
   EXPECT_EQ(json::parse(*meta.software_json).at("software_version"), "0.1\xEF\xBF\xBD");
-  EXPECT_NO_THROW((void)json::parse(*meta.whiff_result_json));
-  EXPECT_NO_THROW((void)json::parse(*meta.conditionals_json));
-  EXPECT_NO_THROW((void)json::parse(body_of(a).spectrometer_snapshot->settings_json));
+  // Parsed into a value: gcc holds json::parse to its result whatever it is cast to.
+  EXPECT_NO_THROW({ const json parsed = json::parse(*meta.whiff_result_json); });
+  EXPECT_NO_THROW({ const json parsed = json::parse(*meta.conditionals_json); });
+  EXPECT_NO_THROW({ const json parsed = json::parse(body_of(a).spectrometer_snapshot->settings_json); });
   EXPECT_EQ(body_of(a).spectrometer_snapshot->settings_json, body_of(b).spectrometer_snapshot->settings_json);
 }
 
@@ -791,7 +792,9 @@ TEST(RecordIngest, AnInterceptTakesItsDetectorFromAnySeriesOfItsIsotope) {
       found = true;
       EXPECT_EQ(r.detector, "H2");  // the lowest name
     }
-    if (r.isotope == "Ar40") EXPECT_EQ(r.detector, "H1");  // its signal series
+    if (r.isotope == "Ar40") {
+      EXPECT_EQ(r.detector, "H1");  // its signal series
+    }
   }
   EXPECT_TRUE(found);
 }

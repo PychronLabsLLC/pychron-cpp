@@ -250,8 +250,12 @@ TEST_P(SeedStore, AnEmptyStoreGetsEverything) {
   for (const auto& s : samples) {
     EXPECT_TRUE(store_->find_identifier(s.name == "air" ? "a" : "bu").value().has_value());
     EXPECT_TRUE(in_use(s)) << s.name << " has no identifier";
-    if (s.name == "air" || s.name == "detector_ic") EXPECT_EQ(s.material_name, "air");
-    if (s.name == "background") EXPECT_EQ(s.material_name, "blank");
+    if (s.name == "air" || s.name == "detector_ic") {
+      EXPECT_EQ(s.material_name, "air");
+    }
+    if (s.name == "background") {
+      EXPECT_EQ(s.material_name, "blank");
+    }
   }
   for (const char* id : {"bu", "ba", "bc", "be", "bg", "a", "c", "ic"})
     EXPECT_TRUE(store_->find_identifier(id).value().has_value()) << id;
@@ -398,8 +402,11 @@ TEST_P(SeedStore, WhatIsThereIsKept) {
   EXPECT_EQ(project("references")->principal_investigator, std::optional<Uuid>(*pi));
   const auto samples = samples_of("references");
   EXPECT_EQ(samples.size(), 8u);
-  for (const auto& s : samples)
-    if (s.name == "air") EXPECT_EQ(s.fields.note, std::optional<std::string>("the lab's own"));
+  for (const auto& s : samples) {
+    if (s.name == "air") {
+      EXPECT_EQ(s.fields.note, std::optional<std::string>("the lab's own"));
+    }
+  }
 }
 
 // Review focus 2: a special identifier the legacy importer made has no sample.
@@ -415,8 +422,11 @@ TEST_P(SeedStore, AnIdentifierThatIsThereIsKeptAsItIs) {
   EXPECT_EQ(report->identifiers, 7);
   EXPECT_EQ(report->samples, 8);
   EXPECT_TRUE(has(report->kept, "identifier bu"));
-  for (const auto& s : samples_of("references"))
-    if (s.name == "blank_unknown") EXPECT_FALSE(in_use(s)) << "the identifier was given a sample";
+  for (const auto& s : samples_of("references")) {
+    if (s.name == "blank_unknown") {
+      EXPECT_FALSE(in_use(s)) << "the identifier was given a sample";
+    }
+  }
 }
 
 TEST_P(SeedStore, AnEditedReactorIsNotChangedAndAMissingOneIsAdded) {

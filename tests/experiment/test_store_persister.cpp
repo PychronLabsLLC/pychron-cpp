@@ -9,6 +9,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "failing_store.hpp"
 #include "pychron/experiment/persist/persister.hpp"
@@ -25,6 +26,14 @@ namespace pt = pychron::persistence::testing;
 namespace fs = std::filesystem;
 
 namespace {
+
+// Field by field: clang 18 warns of the fields a designated initializer leaves
+// out.
+ps::AnalysisQuery by_identifier(std::string identifier) {
+  ps::AnalysisQuery query;
+  query.identifier = std::move(identifier);
+  return query;
+}
 
 fs::path scratch_dir() {
   auto dir = fs::temp_directory_path() / ("pychron_persister_" + pt::TestDatabase::unique_tag());
@@ -92,7 +101,7 @@ class StorePersisterTest : public pt::StoreTest {
   }
 
   std::size_t analyses_of(const std::string& identifier) {
-    auto found = store_->find_analyses({.identifier = identifier});
+    auto found = store_->find_analyses(by_identifier(identifier));
     EXPECT_TRUE(found.has_value());
     return found ? found->size() : 0;
   }
@@ -121,7 +130,7 @@ TEST_P(StorePersisterTest, ASavedRecordIsAnAnalysisWithItsSignals) {
   for (const auto& h : (*view)->heads) kinds.insert(h.kind);
   for (auto k : {ps::Kind::Signals, ps::Kind::Intercepts, ps::Kind::Baselines, ps::Kind::Tags})
     EXPECT_TRUE(kinds.contains(k)) << static_cast<int>(k);
-  auto found = store_->find_analyses({.identifier = "66573"});
+  auto found = store_->find_analyses(by_identifier("66573"));
   ASSERT_TRUE(found.has_value());
   ASSERT_EQ(found->size(), 1U);
   EXPECT_EQ((*found)[0].signals_state, "complete");
@@ -135,7 +144,7 @@ TEST_P(StorePersisterTest, SavingTwiceIsOneAnalysis) {
 
 TEST_P(StorePersisterTest, ARecordWithNoSeriesIsComplete) {
   ASSERT_TRUE(persister_->save_analysis(record_without_series()));
-  auto found = store_->find_analyses({.identifier = "66573"});
+  auto found = store_->find_analyses(by_identifier("66573"));
   ASSERT_TRUE(found.has_value());
   ASSERT_EQ(found->size(), 1U);
   EXPECT_EQ((*found)[0].signals_state, "complete");
@@ -417,7 +426,7 @@ class AcquisitionTest : public ::testing::TestWithParam<std::string> {
   std::size_t analyses_of(const std::string& identifier) {
     auto reader = pt::open_or_die(tdb_->url());
     if (!reader) return 0;
-    auto found = reader->find_analyses({.identifier = identifier});
+    auto found = reader->find_analyses(by_identifier(identifier));
     EXPECT_TRUE(found.has_value());
     return found ? found->size() : 0;
   }
@@ -514,7 +523,7 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
   EXPECT_EQ(write_error, "");
   EXPECT_EQ(read_error, "");
   EXPECT_GT(reads, 0);
-  auto found = reader->find_analyses({.identifier = "66573"});
+  auto found = reader->find_analyses(by_identifier("66573"));
   ASSERT_TRUE(found.has_value());
   EXPECT_EQ(found->size(), static_cast<std::size_t>(kRuns));
 }

@@ -529,7 +529,9 @@ TEST(SpectrumIsochron, OptionsAreBothFiguresOwnAndTheSharedOnesOnce) {
       const auto* shared = schema->field(f.key);
       const auto* own = schema->field(prefix + f.key);
       EXPECT_TRUE((shared != nullptr) != (own != nullptr)) << prefix << f.key;
-      if (own) EXPECT_EQ(own->section.substr(0, prefix.size() + 1), prefix == "spectrum." ? "Spectrum: " : "Isochron: ");
+      if (own) {
+        EXPECT_EQ(own->section.substr(0, prefix.size() + 1), prefix == "spectrum." ? "Spectrum: " : "Isochron: ");
+      }
     }
   }
   EXPECT_EQ(schema->field("graph_columns"), nullptr);

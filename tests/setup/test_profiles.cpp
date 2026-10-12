@@ -314,7 +314,9 @@ TEST_P(InstrumentProfile, EveryInstalledPlanPutsItsIsotopesOnItsDetectors) {
       }
     }
     // A plan that is only one detector per hop (detector_ic) has nothing to compare; the others do.
-    if (plan.info.name != "detector_ic") EXPECT_GT(compared, 1u) << label;
+    if (plan.info.name != "detector_ic") {
+      EXPECT_GT(compared, 1u) << label;
+    }
   }
   EXPECT_EQ(plans, 3u) << name;
   fs::remove_all(root);

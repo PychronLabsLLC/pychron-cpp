@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -74,9 +75,13 @@ class ElctlExpTest : public ElctlTest {
     if (key == std::string::npos) return std::nullopt;
     const auto open = text.find('"', text.find(':', key));
     if (open == std::string::npos) return std::nullopt;
+    // "YYYY-MM-DDThh:mm:ssZ": each separator is read as a character, so no
+    // number takes the hyphen before it for a sign.
+    std::istringstream stamp_text(text.substr(open + 1));
     int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
-    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the count of fields read is checked
-    if (std::sscanf(text.c_str() + open, "\"%d-%d-%dT%d:%d:%dZ\"", &y, &mo, &d, &h, &mi, &sec) != 6) return std::nullopt;
+    char s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, z = 0;
+    stamp_text >> y >> s1 >> mo >> s2 >> d >> s3 >> h >> s4 >> mi >> s5 >> sec >> z;
+    if (!stamp_text || s1 != '-' || s2 != '-' || s3 != 'T' || s4 != ':' || s5 != ':' || z != 'Z') return std::nullopt;
     const std::chrono::year_month_day day{std::chrono::year{y}, std::chrono::month{static_cast<unsigned>(mo)},
                                           std::chrono::day{static_cast<unsigned>(d)}};
     return std::chrono::sys_days{day} + std::chrono::hours{h} + std::chrono::minutes{mi} + std::chrono::seconds{sec};

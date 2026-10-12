@@ -296,8 +296,10 @@ TEST(CancelToken, ACallbackThatThrowsLeavesNothingToWaitFor) {
   });
   if (!eventually_real([&] { return removed->load(); })) {
     remover.detach();  // stuck in the token: it cannot be joined
-    FAIL() << "remove_on_cancel waits for a callback that threw";
-    std::abort();      // nor can the token be destroyed under it
+    // Not FAIL(): it returns, and the token cannot be destroyed under the
+    // remover.
+    ADD_FAILURE() << "remove_on_cancel waits for a callback that threw";
+    std::abort();
   }
   remover.join();
 }

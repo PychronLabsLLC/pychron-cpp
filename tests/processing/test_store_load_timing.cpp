@@ -1,8 +1,8 @@
 // Not a test of behaviour: a stopwatch on the figure pipeline against a real
 // store, for when loading is slow or a change might make it so. It does
-// nothing unless told which store:
+// nothing unless told which store (one command line):
 //
-//   PYCHRON_BENCH_DB=sqlite:/path/to/store.db [PYCHRON_BENCH_N=400] \
+//   PYCHRON_BENCH_DB=sqlite:/path/to/store.db [PYCHRON_BENCH_N=400]
 //     build/dev/tests/processing/pychron_processing_store_tests --gtest_filter='StoreLoadTiming.*'
 //
 // It writes nothing to the store. It takes the PYCHRON_BENCH_N analyses

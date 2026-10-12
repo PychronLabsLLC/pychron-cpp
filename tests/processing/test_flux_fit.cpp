@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "flux_level_inputs.hpp"
@@ -471,7 +472,9 @@ TEST(FluxFitLevel, ModelNames) {
   EXPECT_FALSE(parse_model_kind(""));
 }
 
-const FittedPosition::UsedAnalysis& by_record(const FittedPosition& p, const std::string& id) {
+// The id by value: gcc takes a reference returned from a call given a
+// temporary string for one into it.
+const FittedPosition::UsedAnalysis& by_record(const FittedPosition& p, std::string_view id) {
   return *std::find_if(p.analyses.begin(), p.analyses.end(), [&](auto& a) { return a.record_id == id; });
 }
 
