@@ -796,7 +796,9 @@ you open it.
 `elctl earthbank export-xlsx` writes the 40Ar/39Ar results of the selected
 analyses into EarthBank's own import workbooks (EarthBank is AuScope's
 AusGeochem data platform). **Needs persistence.** `elctl earthbank help` prints
-every option.
+every option. The guide, for the window and the command line alike, with what
+is sent for a sample and what each message means, is
+[Publishing to EarthBank](../earthbank.md).
 
 ```bash
 elctl earthbank export-xlsx --db <url> --out <dir> [selection] [options]

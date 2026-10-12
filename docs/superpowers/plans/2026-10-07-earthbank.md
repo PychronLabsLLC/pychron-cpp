@@ -557,6 +557,6 @@ Replace every real name, login, id in saved files; drop over hand-written fixtur
 
 Do not block Tasks 1 to 13:
 
-1. Ask AuScope / Lithodat (`support@lithodat.com`) whether the two template workbooks may ship with pychron's installers. Until answered they stay in repository and build tree; refused → remove from install step, `default_template_dir()` falls back to `<config>/earthbank/templates`, which guide tells user to fill once.
+1. Settled on 2026-10-12: the owner decided that the two template workbooks ship with pychron's installers. They are installed by `cmake/PychronInstall.cmake`, and the fallback to a folder the user fills once was not needed.
 2. Read API licence linked from legacy's README for any condition on clients (identification, rate limits).
 3. Run capture step of Task 6 and live run of Task 14 Step 6.

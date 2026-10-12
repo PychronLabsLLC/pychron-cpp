@@ -1,7 +1,7 @@
 # EarthBank: publishing Ar-Ar data from pychron-cpp
 
 Date: 2026-10-07
-Status: Draft
+Status: Implemented (2026-10-12), but for section 11
 Owner: Jake Ross
 Source being migrated: `UMelbournePychron/pychron`, branch `dev/dc2025`,
 `pychron/ausgeochem/` (about 5300 lines of Python; last commit e541a4ffa,
@@ -1077,6 +1077,59 @@ sample) and `changed` (refused because journal is of other data), and
 - The dialog remembers the last choices per sample name in the UI's settings,
   not on EarthBank.
 
+As built (2026-10-12):
+
+- `EarthbankWorker` (`earthbank_worker.hpp`): one thread, real time, not a
+  clock participant. Requests queued, run one at a time; each signs in for
+  itself, no token kept between requests. Exception: `prepare_upload` keeps
+  session, `LookupResolver` and submissions for `upload` (or
+  `abandon_upload`), so an upload sends what its confirmation showed and asks
+  for no term twice. Owner going away does not wait for a request that is
+  out: thread finishes it, drops the rest, ends.
+- `EarthbankSetup { http factory, secrets factory, profiles_file }`:
+  `system()` in programs, fake service + memory store + temp file in tests.
+  Factories are called only when first needed.
+- Preferences page (`earthbank_preferences_page.hpp`): table Active, Name,
+  Server, Username, Institution id, Data package id. Reads profiles file and
+  opens password store only when first shown. OK / Apply write the file only
+  when table differs from it; a file that could not be read is said and never
+  written over. One password field, for the selected row, emptied when the
+  selection changes; kept when Test signs in with it, or on Apply. Removing a
+  profile erases its password when the removal is applied, not before.
+- Package dialog (`earthbank_package_dialog.hpp`): name, id, state; filter;
+  name + Create selects the new one.
+- Data browser: toolbar action Publish, enabled only with a selection (never
+  "all shown": it leaves the lab). Workspace loads the selection on the
+  processing thread, then opens the dialog.
+- Publish dialog (`earthbank_publish_dialog.hpp`). Survey on the worker: per
+  sample, `build_submissions` under the rule and under each of the four age
+  kinds. Row: sample, analyses, interpretation (free text), preferred age
+  (rule's pick with its age first, then each kind with age ± 1 sigma in Ma;
+  one that cannot be computed is greyed with the reason), flux monitor (found
+  one shown; sent as an override only when edited), notes. Fields: analytical
+  set-up, decay constant, air ratio. Actions in this order: Pre-flight,
+  Export xlsx, Upload.
+  - A sample the rule leaves to the lab (several step-heated aliquots) says
+    "Choose an age…" and stays out until one is chosen. A sample no kind of
+    age can be computed for (its analyses disagree) is greyed with the reason
+    and left out; the others proceed.
+  - Upload: confirmation shows profile and server, account name and login,
+    package name and id, per sample the record counts; nothing is sent before
+    Yes. Misses block it before the question unless Allow unresolved terms;
+    a term that could not be asked about always blocks.
+  - Progress: one line per record with its id. Cancel stops between records,
+    as does closing the dialog.
+  - In doubt: two buttons, shown only when exactly one sample has a record in
+    doubt (`resolve_in_doubt` names no sample). They finish the upload already
+    agreed to, without asking again.
+  - Remembered under `earthbank/` in the UI's settings: per sample name
+    (percent-encoded) interpretation, preferred age, an edited flux monitor;
+    and set-up, constants' names, folder.
+
+Not built: interpretation entries offered from the service's list.
+`LookupResolver` gives no way to read a whole list; pre-flight says when the
+name typed is unknown.
+
 ## 9. Tests
 
 Nothing in CI reaches EarthBank.
@@ -1118,12 +1171,28 @@ Nothing in CI reaches EarthBank.
   each store against the real platform API in a test that is skipped where
   the platform is not the store's, using a throwaway service name.
 - **`elctl`.** Each command against the fake, including without Qt Network.
-- **Live**, by hand, never in CI: with `PYCHRON_TEST_EARTHBANK_URL`,
-  `_USER`, `_PASSWORD`, `_INSTITUTION` set, a test creates a package named
-  `pychron-test-<UTC date and time>`, uploads the fixture, reads the records
-  back, and deletes the package. A runbook in `docs/earthbank.md` says when
-  to run it (before a release that touches this library, and after the
-  vendor announces an API change).
+- **UI** (`tests/ui/test_earthbank_preferences.cpp`,
+  `test_earthbank_publish.cpp`, `earthbank_fixture.hpp`): Qt Test, offscreen,
+  fake service behind a gate that holds a request on the worker's thread,
+  memory store, profiles file and settings in a temp folder. Page: file
+  written only when changed; password in store, not in file or table; Test
+  right and wrong; package selected and created; removal erases on Apply; UI
+  turns while a request is out; closing does not wait. Dialog: rows and
+  candidates; misses in their rows; workbooks written; nothing sent before
+  Yes or on No; cancel then re-run sends nothing twice; in doubt both ways;
+  disagreeing sample left out; choices remembered; no secret in anything
+  shown; 300 samples with progress.
+- **Live**, by hand, never in CI: `pychron_earthbank_live_tests` (ctest label
+  `live`), skipped unless `PYCHRON_TEST_EARTHBANK_URL`, `_USER`, `_PASSWORD`,
+  `_INSTITUTION` are all set. As built: creates a package named
+  `pychron-test-<UTC date and time>` and prints name and id first, uploads
+  the two fixture samples, requires every record acknowledged, uploads again
+  (nothing sent), deletes the package in a guard that runs on failure too; a
+  package that could not be deleted is a failure naming it. It does not read
+  records back (section 11). Its steps (`tests/earthbank/live_round_trip.hpp`)
+  run against the fake on every build. Runbook in `docs/earthbank.md`: run it
+  before a release that touches this library, and after the vendor announces
+  an API change.
 
 ## 10. Order of work
 
@@ -1140,12 +1209,27 @@ Nothing in CI reaches EarthBank.
 7. `docs/earthbank.md` (user guide, from legacy's `UPLOAD_GUIDE.md` and what
    was built), the AGENTS.md bullet, the live-test runbook, one live run.
 
-## 11. Open points to settle before release, none blocking the work
+## 11. Not yet
 
-- Redistribution of the two template workbooks with the installers: ask
-  AuScope / Lithodat (`support@lithodat.com`). If refused, the exporter asks
-  the user for the template files once and keeps them in the config
-  directory; the code path is the same.
+Settled:
+
+- Redistribution of the two template workbooks: owner, 2026-10-12: they ship
+  with the installers (`cmake/PychronInstall.cmake`). The fallback (user
+  supplies the files once) was not built; `PYCHRON_EARTHBANK_TEMPLATES` names
+  another folder.
+
+Open, none blocking:
+
+- First live run, by the owner (`docs/earthbank.md`, "The first live run"):
+  one sample by workbook and by upload into two test packages, compared on
+  the website; then the live test. Nothing here has yet talked to the real
+  service.
+- Capture step: replacing the fake's hand-written lists with what the service
+  returns (`tests/earthbank/fixtures/README.md` numbers the assumptions).
+- Reading a data point back: no endpoint known, so the live test checks
+  acknowledgements, not stored values.
+- Interpretation entries offered in the Publish dialog (8.2).
+- `beamSize` (4.5): unit of `ExtractionInfo::beam_diameter` unsettled.
 - The API licence (linked from legacy's README) and whether an application
   identifier or user agent is expected.
 - The names EarthBank uses for the four age types and for the decay constants

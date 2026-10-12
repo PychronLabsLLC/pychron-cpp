@@ -19,7 +19,8 @@ because the website's importer has only ever been shown these files. A newer
 template from the vendor replaces a file here whole (and its hash above), as
 long as the field-name row still names the fields.
 
-Permission to redistribute the templates in pychron's installers has not been
-confirmed with AuScope. It is an open question for the owner
-(`docs/superpowers/specs/2026-10-07-earthbank-design.md`, section 11) and must
-be settled before the first release that ships them.
+They ship with pychron's installers (`cmake/PychronInstall.cmake`): the owner
+settled that on 2026-10-12
+(`docs/superpowers/specs/2026-10-07-earthbank-design.md`, section 11). How a
+newer template replaces one is in `docs/earthbank.md`, "A newer template from
+EarthBank".

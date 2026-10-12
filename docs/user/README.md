@@ -21,6 +21,7 @@ includes a 15-minute walkthrough in the simulator. Developers want
 | Build and run a queue of runs, write conditionals | [04 Experiments](04-experiments.md) |
 | Use the laser, stage, camera, patterns | [05 Laser](05-laser.md) |
 | Browse, reduce, plot and export data | [06 Data analysis](06-data-analysis.md), [Export](../export.md) |
+| Publish results to EarthBank (AusGeochem) | [Publishing to EarthBank](../earthbank.md) |
 | Enter samples and irradiations | [Sample and package entry](../entry.md) |
 | Edit a config file | [07 Configuration reference](07-configuration-reference.md) |
 | Use the command line | [08 elctl reference](08-elctl-reference.md) |
@@ -46,5 +47,5 @@ includes a 15-minute walkthrough in the simulator. Developers want
 
 Other guides, one topic each: [installation](../installation_runbook.md),
 [legacy import](../legacy_import.md), [entry](../entry.md),
-[export](../export.md), [notifications](../notifications.md),
+[export](../export.md), [EarthBank](../earthbank.md), [notifications](../notifications.md),
 [the simulated lab](../simulator.md), [vision fixtures](../vision_fixtures.md).

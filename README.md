@@ -122,7 +122,9 @@ series, ideogram, age spectrum, inverse isochron, or the last two as a pair). Fi
 options are edited in the dock and saved as named presets. "Export" in the
 browser (or "Export table..." in a figure, or `elctl export`) writes the
 analyses as a 40Ar/39Ar data report after Schaen et al. (2021), CSV or JSON;
-see [docs/export.md](docs/export.md).
+see [docs/export.md](docs/export.md). To publish them to EarthBank
+(AusGeochem), by upload or as its import workbooks, see
+[docs/earthbank.md](docs/earthbank.md).
 
 A lab's monitoring box (Prometheus and Grafana) can follow an instrument:
 `[metrics]` in `extraction_line.toml` publishes pressures, valve states, run
