@@ -1,14 +1,18 @@
 #pragma once
 
 // File > Preferences…: a page list on the left (Appearance, Data, with a
-// spectrometer Spectrometer, and with a line Logging and Metrics), the page
-// on the right. OK and Apply hand the values to the window's `apply`, which
+// spectrometer Spectrometer, with a line Logging and Metrics, and EarthBank),
+// the page on the right. OK and Apply hand the values to the window's `apply`, which
 // saves and applies them; Restore Defaults only resets the fields; Cancel
 // drops what was not applied.
 //
 // The line's two pages are saved first, to the line's local override file,
 // and that can fail (a folder that cannot be written). The dialog then says
 // so, stays open and applies nothing.
+//
+// The EarthBank page keeps a file of its own too, the profiles `elctl` also
+// reads (earthbank_preferences_page.hpp). It is written before anything else,
+// and a row that is wrong likewise leaves the dialog open with nothing applied.
 
 #include <functional>
 #include <map>
@@ -35,6 +39,7 @@ class QStackedWidget;
 
 namespace pychron::ui {
 
+class EarthbankPreferencesPage;
 class LoggingPage;
 class MetricsPage;
 
@@ -114,6 +119,7 @@ class PreferencesDialog : public QDialog {
   QDoubleSpinBox* confirm_move() const noexcept { return confirm_move_; }  // null without a spectrometer
   LoggingPage* logging_page() const noexcept { return logging_; }          // null without a line
   MetricsPage* metrics_page() const noexcept { return metrics_; }          // null without a line
+  EarthbankPreferencesPage* earthbank_page() const noexcept { return earthbank_; }
   QLabel* problem() const noexcept { return problem_; }                    // why OK or Apply did nothing
   QDialogButtonBox* buttons() const noexcept { return buttons_; }
 
@@ -138,6 +144,7 @@ class PreferencesDialog : public QDialog {
   QDoubleSpinBox* confirm_move_ = nullptr;
   LoggingPage* logging_ = nullptr;
   MetricsPage* metrics_ = nullptr;
+  EarthbankPreferencesPage* earthbank_ = nullptr;
   QLabel* problem_;
   QDialogButtonBox* buttons_;
 };

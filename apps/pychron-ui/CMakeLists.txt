@@ -73,6 +73,9 @@ add_library(pychron_ui_lib STATIC
   src/metrics_page.cpp
   src/preferences.cpp
   src/preferences_dialog.cpp
+  src/earthbank_worker.cpp
+  src/earthbank_preferences_page.cpp
+  src/earthbank_package_dialog.cpp
   src/laser_bridge.cpp
   src/tray_view.cpp
   src/camera_view.cpp
@@ -142,6 +145,9 @@ add_library(pychron_ui_lib STATIC
   src/metrics_page.hpp
   src/preferences.hpp
   src/preferences_dialog.hpp
+  src/earthbank_worker.hpp
+  src/earthbank_preferences_page.hpp
+  src/earthbank_package_dialog.hpp
   src/laser_bridge.hpp
   src/tray_view.hpp
   src/camera_view.hpp
@@ -153,6 +159,15 @@ add_library(pychron::ui ALIAS pychron_ui_lib)
 target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
   qcustomplot)
+# Publishing to EarthBank: libs/earthbank says what to ask, libs/earthbank_qt
+# asks it over HTTPS. Without Qt6 Network there is no client
+# (src/earthbank_no_network.cpp) and the EarthBank pages say so.
+target_link_libraries(pychron_ui_lib PUBLIC pychron::earthbank)
+if(TARGET pychron_earthbank_qt)
+  target_link_libraries(pychron_ui_lib PUBLIC pychron::earthbank_qt)
+else()
+  target_sources(pychron_ui_lib PRIVATE src/earthbank_no_network.cpp)
+endif()
 pychron_set_warnings(pychron_ui_lib)
 target_compile_definitions(pychron_ui_lib PRIVATE PYCHRON_VERSION="${PROJECT_VERSION}")
 # --db browses the DVC store; it needs the persistence library.

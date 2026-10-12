@@ -16,6 +16,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+#include "earthbank_preferences_page.hpp"
+#include "earthbank_worker.hpp"
 #include "logging_page.hpp"
 #include "metrics_page.hpp"
 #include "spectrometer_window.hpp"
@@ -165,8 +167,12 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
     add_page(tr("Logging"), logging_);
     metrics_ = new MetricsPage;
     add_page(tr("Metrics"), metrics_);
-    resize(680, 520);  // the logger table needs the room
   }
+  // Nothing of it is read until the page is shown (the profiles file, the
+  // password store), so a dialog opened for something else touches neither.
+  earthbank_ = new EarthbankPreferencesPage(EarthbankSetup::system());
+  add_page(tr("EarthBank"), earthbank_);
+  resize(680, 520);  // the logger and profile tables need the room
 
   problem_->setWordWrap(true);
   style::set_tone(problem_, style::Tone::Error);
@@ -202,6 +208,10 @@ bool PreferencesDialog::commit() {
       complain(wrong, metrics_);
       return false;
     }
+  }
+  if (const QString wrong = earthbank_->apply(); !wrong.isEmpty()) {
+    complain(wrong, earthbank_);
+    return false;
   }
   const Values v = values();
   // The line's file first: it is the part that can fail, and nothing else

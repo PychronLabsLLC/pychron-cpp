@@ -14,6 +14,10 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   # tests/processing: flux_seed.hpp, the seeded level of the flux tests
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
+  # the EarthBank suites talk to the service in memory (tests/earthbank)
+  if(name MATCHES "^test_earthbank")
+    target_link_libraries(${target} PRIVATE pychron::earthbank_fake)
+  endif()
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_UI_SOURCE_DIR="${PROJECT_SOURCE_DIR}/apps/pychron-ui/src")
