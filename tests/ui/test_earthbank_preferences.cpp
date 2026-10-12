@@ -348,6 +348,42 @@ class EarthbankPreferencesTest : public QObject {
     QCOMPARE(eb::load_profiles(w.file())->profiles.size(), std::size_t{0});
   }
 
+  void a_password_applied_just_before_the_page_closes_is_still_kept() {
+    World w;
+    QVERIFY(w.store->set(eb::secret_account(w.profile()), w.bank.password()));
+    {
+      EarthbankPreferencesPage page(w.setup());
+      page.load();
+      add(page, w.profile());
+      // The worker is busy (a Test waiting for the service) when OK is pressed.
+      w.gate.hold();
+      page.test_button()->click();
+      QTRY_VERIFY(w.gate.waiting());
+      page.password()->setText(QStringLiteral("typed-then-ok"));
+      QCOMPARE(page.apply(), QString());
+    }  // OK closes the dialog at once: the page is gone before the store was reached
+    w.gate.release();
+    QTRY_COMPARE(w.stored(w.profile()), std::optional<std::string>("typed-then-ok"));
+  }
+
+  void a_removal_applied_just_before_the_page_closes_still_erases_the_password() {
+    World w;
+    w.write(w.profile());
+    QVERIFY(w.store->set(eb::secret_account(w.profile()), "kept-until-removed"));
+    {
+      EarthbankPreferencesPage page(w.setup());
+      page.load();
+      page.table()->selectRow(0);
+      w.gate.hold();
+      page.test_button()->click();
+      QTRY_VERIFY(w.gate.waiting());
+      page.remove_button()->click();
+      QCOMPARE(page.apply(), QString());
+    }
+    w.gate.release();
+    QTRY_COMPARE(w.stored(w.profile()), std::optional<std::string>());
+  }
+
   void the_ui_stays_responsive_while_a_request_is_outstanding() {
     World w;
     QVERIFY(w.store->set(eb::secret_account(w.profile()), w.bank.password()));

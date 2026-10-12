@@ -81,6 +81,14 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
 
 bool DataWorkspace::open_publish(const QStringList& uuids) {
   if (!processing_ || uuids.isEmpty()) return false;
+  // A dialog that is in the middle of something is not replaced: closing it
+  // would cut an upload short without anyone having said so.
+  if (publish_ && publish_->busy()) {
+    publish_->raise();
+    publish_->activateWindow();
+    if (browser_) browser_->show_message(tr("Publish to EarthBank is still running: let it finish, or cancel it, first"));
+    return false;
+  }
   if (publish_channel_ == 0) publish_channel_ = processing_->new_channel();
   const auto& reg = processing::UnitRegistry::builtin();
   processing::Pipeline pipeline;
@@ -105,6 +113,7 @@ bool DataWorkspace::open_publish(const QStringList& uuids) {
     for (const auto& item : std::get<processing::DatasetPtr>(r.outputs[0]->at(0))->items()) {
       analyses.push_back(item.analysis->analysis);
     }
+    if (publish_ && publish_->busy()) return;  // it began something while these were loading
     if (browser_) browser_->show_message(tr("%n analyses to publish", nullptr, static_cast<int>(analyses.size())));
     if (publish_) delete publish_.data();
     publish_ = new EarthbankPublishDialog(std::move(analyses), earthbank_, settings_, owner_);

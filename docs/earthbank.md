@@ -322,7 +322,10 @@ What it does, in order:
    `complete` with every record acknowledged.
 5. Uploads again and requires that nothing is sent.
 6. Deletes the package, whether the steps before passed or not. A package
-   that could not be deleted is a failure naming its id.
+   that could not be deleted is a failure naming its id. The test sees that
+   the package is gone, not what became of the samples and data points that
+   were in it: after the first run, look on the website that they went with
+   it, and remove them by hand if they did not.
 
 The same steps run against the fake on every build
 (`tests/earthbank/test_live.cpp`, `live_round_trip.hpp`).

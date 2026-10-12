@@ -20,6 +20,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QStandardItemModel>
@@ -254,14 +255,32 @@ EarthbankPublishDialog::EarthbankPublishDialog(std::vector<processing::AnalysisP
   layout->addLayout(bottom);
 
   connect(close, &QPushButton::clicked, this, &QDialog::close);
-  connect(action_, &QComboBox::currentIndexChanged, this, [this] { update_controls(); });
+  connect(action_, &QComboBox::currentIndexChanged, this, [this] {
+    withdraw_in_doubt();
+    update_controls();
+  });
   connect(folder_, &QLineEdit::textChanged, this, [this] { update_controls(); });
+  // The in-doubt answer finishes the upload that was agreed to. Whatever
+  // changes where it goes or what it sends makes it another upload, to be
+  // asked about again: the answer is withdrawn, and Run says it anew.
+  for (QLineEdit* field : {package_, setup_name_, decay_constant_, air_ratio_}) {
+    connect(field, &QLineEdit::textChanged, this, [this] { withdraw_in_doubt(); });
+  }
+  for (QCheckBox* box : {allow_unresolved_, new_datapoint_}) {
+    connect(box, &QCheckBox::toggled, this, [this] { withdraw_in_doubt(); });
+  }
+  connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+    if (item->column() == index(Column::Interpretation) || item->column() == index(Column::FluxMonitor)) {
+      withdraw_in_doubt();
+    }
+  });
   connect(in_doubt_id_, &QLineEdit::textChanged, this, [this] { update_controls(); });
   connect(profile_, &QComboBox::currentIndexChanged, this, [this] {
     // The package is the profile's until the user names another for this run.
     const auto p = current_profile();
     package_->setText(p && p->data_package_id ? QString::number(*p->data_package_id) : QString());
     password_->clear();
+    withdraw_in_doubt();
     update_controls();
   });
   connect(browse_, &QPushButton::clicked, this, [this] {
@@ -304,8 +323,9 @@ EarthbankPublishDialog::EarthbankPublishDialog(std::vector<processing::AnalysisP
     progress_->setValue(1);
     update_controls();
   });
+  connect(worker_, &EarthbankWorker::outstanding_changed, this, [this] { update_controls(); });
   connect(worker_, &EarthbankWorker::failed, this, [this](const QString& profile, const QString& what) {
-    if (package_dialog_ || !running_) return;  // the package dialog's own request
+    if (!running_) return;
     say(profile.isEmpty() ? what : tr("%1: %2").arg(profile, what));
     finished();
   });
@@ -314,10 +334,10 @@ EarthbankPublishDialog::EarthbankPublishDialog(std::vector<processing::AnalysisP
     finished();
   });
   connect(worker_, &EarthbankWorker::exported, this, [this](const eb::XlsxResult& written) {
-    for (const auto& file : written.files) say(tr("Wrote %1").arg(QString::fromStdString(file.filename().string())));
+    for (const auto& file : written.files) say(tr("Wrote %1").arg(QString::fromStdU16String(file.filename().u16string())));
     for (const std::string& note : written.notes) say(tr("note: %1").arg(qs(note)));
     if (!written.files.empty()) {
-      last_folder_ = QString::fromStdString(written.files.front().parent_path().string());
+      last_folder_ = QString::fromStdU16String(written.files.front().parent_path().u16string());
       say(tr("%n workbook(s) in %1. Import them on EarthBank's website.", nullptr, static_cast<int>(written.files.size()))
               .arg(last_folder_));
     }
@@ -341,7 +361,11 @@ EarthbankPublishDialog::EarthbankPublishDialog(std::vector<processing::AnalysisP
                           counted(sample.measurements, tr("measurement"), tr("measurements")));
       }
       lines << QString() << tr("A record on EarthBank cannot be changed or removed from here.");
-      if (!ask_confirm || !ask_confirm(lines.join(QLatin1Char('\n')))) {
+      // The question turns the event loop: this dialog may be gone when it returns.
+      const QPointer<EarthbankPublishDialog> alive(this);
+      const bool yes = ask_confirm && ask_confirm(lines.join(QLatin1Char('\n')));
+      if (!alive) return;
+      if (!yes) {
         worker_->abandon_upload();
         say(tr("Nothing was sent."));
         finished();
@@ -369,6 +393,10 @@ EarthbankPublishDialog::EarthbankPublishDialog(std::vector<processing::AnalysisP
 }
 
 EarthbankPublishDialog::~EarthbankPublishDialog() = default;
+
+EarthbankPackageDialog* EarthbankPublishDialog::package_dialog() const { return package_dialog_; }
+
+bool EarthbankPublishDialog::ready() const { return surveyed_ && !running_ && worker_->outstanding() == 0; }
 
 std::unique_ptr<QSettings> EarthbankPublishDialog::settings() const {
   return settings_ ? settings_() : std::make_unique<QSettings>();
@@ -434,7 +462,10 @@ void EarthbankPublishDialog::fill(const std::vector<EarthbankSampleRow>& rows) {
       ages->setCurrentIndex(remembered);
     }
     ages->setEnabled(usable);
-    connect(ages, &QComboBox::currentIndexChanged, this, [this] { update_controls(); });
+    connect(ages, &QComboBox::currentIndexChanged, this, [this] {
+      withdraw_in_doubt();
+      update_controls();
+    });
     table_->setCellWidget(row, index(Column::PreferredAge), ages);
     kept->endGroup();
 
@@ -548,7 +579,7 @@ void EarthbankPublishDialog::start(std::optional<std::string> resolve_in_doubt) 
       eb::XlsxOptions options;
       options.per_sample = per_sample_->isChecked();
       options.samples = include_samples_->isChecked();
-      worker_->export_xlsx(what, std::filesystem::path(folder_->text().toStdString()), options);
+      worker_->export_xlsx(what, std::filesystem::path(folder_->text().toStdU16String()), options);
       break;
     }
     case Action::Preflight:
@@ -569,6 +600,10 @@ void EarthbankPublishDialog::start(std::optional<std::string> resolve_in_doubt) 
       break;
     }
   }
+}
+
+void EarthbankPublishDialog::withdraw_in_doubt() {
+  if (!running_) in_doubt_box_->hide();
 }
 
 void EarthbankPublishDialog::finished() {
@@ -665,7 +700,9 @@ void EarthbankPublishDialog::update_controls() {
   hint_->setText(hint);
   hint_->setVisible(!hint.isEmpty());
 
-  run_->setEnabled(idle && hint.isEmpty());
+  // Not while any request is out, a package list among them: one thing at a time.
+  const bool quiet = worker_->outstanding() == 0;
+  run_->setEnabled(idle && quiet && hint.isEmpty());
   if (!running_) cancel_->setEnabled(false);
   action_->setEnabled(!running_);
   table_->setEnabled(idle);
@@ -678,8 +715,8 @@ void EarthbankPublishDialog::update_controls() {
   show_folder_->setEnabled(!last_folder_.isEmpty());
   bool id_ok = false;
   const qlonglong id = in_doubt_id_->text().trimmed().toLongLong(&id_ok);
-  there_->setEnabled(idle && id_ok && id > 0);
-  not_there_->setEnabled(idle);
+  there_->setEnabled(idle && quiet && id_ok && id > 0);
+  not_there_->setEnabled(idle && quiet);
 }
 
 }  // namespace pychron::ui

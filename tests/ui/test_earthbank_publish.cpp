@@ -5,6 +5,7 @@
 // EarthBank.
 
 #include <cstddef>
+#include <functional>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -17,6 +18,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
@@ -30,6 +32,7 @@
 #include "data_browser_window.hpp"
 #include "data_workspace.hpp"
 #include "earthbank_fixture.hpp"
+#include "earthbank_package_dialog.hpp"
 #include "earthbank_publish_dialog.hpp"
 #include "earthbank_worker.hpp"
 #include "pychron/processing/options.hpp"
@@ -436,6 +439,83 @@ class EarthbankPublishTest : public QObject {
     QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
   }
 
+  void the_in_doubt_answer_is_withdrawn_when_what_would_be_sent_changes() {
+    World w;
+    w.signed_up();
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    int asked = 0;
+    d->ask_confirm = [&asked](const QString&) {
+      ++asked;
+      return true;
+    };
+    set_action(*d, Action::Upload);
+    w.bank.lose_next("POST", "/api/arar/ArArAliquot");
+    run(*d);
+    QCOMPARE(asked, 1);
+    QVERIFY(d->not_there_button()->isVisibleTo(d.get()));
+
+    // The answer finishes the upload that was agreed to. Once something of
+    // it is changed (where it goes, what a row says, what is done), it is no
+    // longer that upload, and the buttons go: Run asks again. Each change is
+    // put back before the run, so the same record is still in doubt after it.
+    const int step = row_of(*d, QStringLiteral("S-STEP"));
+    QTableWidgetItem* interpretation = d->table()->item(step, static_cast<int>(Column::Interpretation));
+    const QString package = d->package()->text();
+    struct Change {
+      std::function<void()> make, undo;
+    };
+    const std::vector<Change> changes{
+        {[&] { interpretation->setText(QStringLiteral("Something else")); }, [&] { interpretation->setText(QString()); }},
+        {[&] { d->package()->setText(QStringLiteral("610002")); }, [&] { d->package()->setText(package); }},
+        {[&] { d->preferred_age(step)->setCurrentIndex(2); }, [&] { d->preferred_age(step)->setCurrentIndex(0); }},
+        {[&] { d->allow_unresolved()->setChecked(true); }, [&] { d->allow_unresolved()->setChecked(false); }},
+        {[&] { d->decay_constant()->setText(QStringLiteral("Min (2000)")); }, [&] { d->decay_constant()->clear(); }},
+        {[&] { set_action(*d, Action::Preflight); }, [&] { set_action(*d, Action::Upload); }},
+    };
+    for (const Change& change : changes) {
+      QVERIFY(d->not_there_button()->isVisibleTo(d.get()));
+      change.make();
+      QVERIFY(!d->not_there_button()->isVisibleTo(d.get()));
+      QVERIFY(!d->there_button()->isVisibleTo(d.get()));
+      change.undo();
+      QVERIFY(!d->not_there_button()->isVisibleTo(d.get()));  // put back is not agreed to either
+      const int before = asked;
+      run(*d);
+      QCOMPARE(asked, before + 1);
+    }
+    // Untouched since, the answer finishes it without another question.
+    QVERIFY(d->not_there_button()->isVisibleTo(d.get()));
+    d->not_there_button()->click();
+    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    QCOMPARE(asked, 1 + static_cast<int>(changes.size()));
+    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
+  }
+
+  void a_package_list_that_fails_late_is_not_taken_for_the_run() {
+    World w;
+    w.signed_up();
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    set_action(*d, Action::Preflight);
+    w.bank.fail_next("GET", "/api/management/data-packages", 403, R"({"detail":"packages are closed today"})");
+    w.gate.hold_at("GET", "/api/management/data-packages");
+    d->package_button()->click();
+    QVERIFY(d->package_dialog() != nullptr);
+    QTRY_VERIFY(w.gate.waiting());
+    d->package_dialog()->reject();  // closed with its list still on the way
+    QTRY_VERIFY(d->package_dialog() == nullptr);
+
+    // Nothing is run while a request is out: its answer is not the run's.
+    QVERIFY(!d->run_button()->isEnabled());
+    w.gate.release();
+    QTRY_VERIFY(d->run_button()->isEnabled());
+    QVERIFY2(!d->result()->toPlainText().contains(QStringLiteral("EarthBank does not let")),
+             qPrintable(d->result()->toPlainText()));
+    run(*d);
+    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("Every term the upload would send is known")));
+  }
+
   void a_disagreeing_sample_is_shown_and_left_out() {
     World w;
     AnalysisList analyses = eb::testing::fusion_sample();
@@ -604,6 +684,52 @@ class EarthbankPublishTest : public QObject {
     QTRY_VERIFY(d->ready());
     QCOMPARE(d->table()->rowCount(), 2);
     QCOMPARE(cell(*d, row_of(*d, QStringLiteral("S-STEP")), Column::Analyses), QStringLiteral("10"));
+  }
+
+  void a_second_publish_does_not_replace_a_dialog_that_is_uploading() {
+    World w;
+    w.signed_up();
+    pp::MemorySource source(publishable());
+    pp::PresetStore presets(w.folder() / "presets");
+    QWidget owner;
+    ui::DataWorkspace workspace(&owner, {});
+    workspace.set_source(&source, &presets);
+    workspace.set_settings(w.settings());
+    workspace.set_earthbank_setup(w.setup());
+    DataBrowserWindow* browser = workspace.browser();
+    QList<int> rows;
+    for (int r = 0; r < 16; ++r) rows << r;
+    browser->select_rows(rows);
+    browser->publish_action()->trigger();
+    QTRY_VERIFY(workspace.publish_dialog() != nullptr);
+    QPointer<EarthbankPublishDialog> d = workspace.publish_dialog();
+    QTRY_VERIFY(d->ready());
+    d->ask_confirm = [](const QString&) { return true; };
+    d->setup_name()->setText(QStringLiteral("Noble gas lab"));
+    set_action(*d, Action::Upload);
+    w.gate.hold_at("POST", "/api/arar/ArArMeasurement");
+    d->run_button()->click();
+    QTRY_VERIFY_WITH_TIMEOUT(w.gate.waiting(), 20000);
+
+    browser->select_rows({0, 1});
+    browser->publish_action()->trigger();
+    QTRY_VERIFY2(browser->status()->text().contains(QStringLiteral("still running")), qPrintable(browser->status()->text()));
+    QVERIFY(!d.isNull());
+    QCOMPARE(workspace.publish_dialog(), d.data());
+
+    w.gate.release();
+    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    QCOMPARE(w.bank.store().measurements.size(), std::size_t{16});
+    QVERIFY(d->result()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
+
+    // Idle, it is replaced by one on the new selection.
+    browser->publish_action()->trigger();
+    QTRY_VERIFY(workspace.publish_dialog() != nullptr && workspace.publish_dialog() != d.data());
+    EarthbankPublishDialog* next = workspace.publish_dialog();
+    QTRY_VERIFY(next->ready());
+    int analyses = 0;
+    for (int r = 0; r < next->table()->rowCount(); ++r) analyses += cell(*next, r, Column::Analyses).toInt();
+    QCOMPARE(analyses, 2);
   }
 
   void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }

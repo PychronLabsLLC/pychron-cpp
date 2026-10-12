@@ -66,7 +66,7 @@ class DataWorkspace : public QObject {
   // them (earthbank_publish_dialog.hpp); a dialog already open is closed
   // first. False without data.
   bool open_publish(const QStringList& uuids);
-  EarthbankPublishDialog* publish_dialog() const { return publish_; }  // null unless open
+  EarthbankPublishDialog* publish_dialog() const { return publish_.data(); }  // null unless open
   // The service, password store and profiles file the dialog uses (default:
   // EarthbankSetup::system()).
   void set_earthbank_setup(EarthbankSetup setup) { earthbank_ = std::move(setup); }

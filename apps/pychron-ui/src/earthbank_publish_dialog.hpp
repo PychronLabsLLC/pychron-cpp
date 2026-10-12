@@ -74,8 +74,10 @@ class EarthbankPublishDialog : public QDialog {
                          QWidget* parent = nullptr);
   ~EarthbankPublishDialog() override;
 
-  // The rows are in and nothing is running.
-  bool ready() const noexcept { return surveyed_ && !running_; }
+  // The rows are in, nothing is running and no request is out.
+  bool ready() const;
+  // A run (a check, an export, an upload) is under way.
+  bool busy() const noexcept { return running_; }
 
   // Asked before an upload sends anything, with who, where and how much;
   // false sends nothing. Tests replace the message box.
@@ -89,6 +91,7 @@ class EarthbankPublishDialog : public QDialog {
   QComboBox* profile() const noexcept { return profile_; }
   QLineEdit* package() const noexcept { return package_; }
   QPushButton* package_button() const noexcept { return package_button_; }
+  EarthbankPackageDialog* package_dialog() const;  // null unless open
   QLineEdit* password() const noexcept { return password_; }
   QLabel* hint() const noexcept { return hint_; }  // why Run is off, when it is not plain
   QTableWidget* table() const noexcept { return table_; }
@@ -128,6 +131,8 @@ class EarthbankPublishDialog : public QDialog {
   void recall_fields();
   void start(std::optional<std::string> resolve_in_doubt = std::nullopt);
   void finished();
+  // Hides the in-doubt answer: what it would finish is no longer what is set.
+  void withdraw_in_doubt();
   void say(const QString& line);
   void show_preflight(const earthbank::PreflightReport& report);
   void show_upload(const earthbank::UploadReport& report);

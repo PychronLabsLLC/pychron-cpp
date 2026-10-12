@@ -161,10 +161,8 @@ void EarthbankPreferencesPage::load() {
             }
             say(line, !note.isEmpty());
           });
-  connect(worker_, &EarthbankWorker::failed, this, [this](const QString& profile, const QString& what) {
-    if (package_dialog_) return;  // the dialog says it
-    say(tr("%1: %2").arg(profile, what), true);
-  });
+  connect(worker_, &EarthbankWorker::failed, this,
+          [this](const QString& profile, const QString& what) { say(tr("%1: %2").arg(profile, what), true); });
   connect(worker_, &EarthbankWorker::password_kept, this, [this](const QString& profile, const QString& problem) {
     if (!problem.isEmpty()) say(tr("%1: the password store failed. %2").arg(profile, problem), true);
   });

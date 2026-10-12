@@ -28,7 +28,8 @@
 // The thread waits on the outside world and is not a clock participant
 // (AGENTS.md, "Time"). An owner that goes away with a request still out does
 // not wait for it: the thread finishes that request, drops the rest and ends
-// on its own.
+// on its own. Not dropped: a password to keep or to forget, which the owner
+// asked for on its way out (OK in Preferences) and is owed.
 
 #include <cstddef>
 #include <cstdint>
@@ -182,8 +183,13 @@ class EarthbankWorker : public QObject {
   void tested(const QString& profile, const QString& name, const QString& login, const QString& note);
   void packages_listed(const QString& profile, const std::vector<pychron::earthbank::DataPackage>& packages);
   void package_created(const QString& profile, const pychron::earthbank::DataPackage& package);
-  // A request that asked the service for something and did not get it.
+  // A request that asked the service for something and did not get it:
+  // `test` and the publishing requests.
   void failed(const QString& profile, const QString& what);
+  // The same of `list_packages` and, with `creating`, of `create_package`:
+  // theirs alone, so that a list that fails late is not taken for the
+  // failure of whatever was asked for next.
+  void package_failed(const QString& profile, const QString& what, bool creating);
   void password_kept(const QString& profile, const QString& problem);
   void progress(int done, int total, const QString& what);
   void surveyed(const std::vector<pychron::ui::EarthbankSampleRow>& rows);
@@ -194,11 +200,16 @@ class EarthbankWorker : public QObject {
   // After every answer, with what is still outstanding.
   void outstanding_changed(int outstanding);
 
+ private slots:
+  // Runs, on this object's thread, one answer the worker's thread has left.
+  void deliver();
+
  private:
   class Job;
   using Reply = std::function<void()>;
   // Runs `work` on the worker's thread; what it returns runs here.
-  void ask(std::function<Reply(Job&)> work);
+  // `must_run`: it is done even if this object is gone by then.
+  void ask(std::function<Reply(Job&)> work, bool must_run = false);
 
   QThread* thread_;
   Job* job_;  // lives on thread_, which deletes it when it ends

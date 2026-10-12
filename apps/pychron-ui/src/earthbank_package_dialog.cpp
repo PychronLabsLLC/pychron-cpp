@@ -87,12 +87,14 @@ EarthbankPackageDialog::EarthbankPackageDialog(EarthbankWorker& worker, eb::Prof
     say(tr("Made package %1, id %2.").arg(QString::fromStdString(made.name)).arg(made.id), false);
     update_buttons();
   });
-  connect(&worker_, &EarthbankWorker::failed, this, [this, mine](const QString& of, const QString& what) {
-    if (of != mine) return;
-    creating_ = false;
-    say(what, true);
-    update_buttons();
-  });
+  connect(&worker_, &EarthbankWorker::package_failed, this,
+          [this, mine](const QString& of, const QString& what, bool creating) {
+            if (of != mine) return;
+            // A list that failed says nothing of a Create that is still out.
+            if (creating) creating_ = false;
+            say(what, true);
+            update_buttons();
+          });
 
   say(tr("Asking EarthBank for the packages…"), false);
   update_buttons();

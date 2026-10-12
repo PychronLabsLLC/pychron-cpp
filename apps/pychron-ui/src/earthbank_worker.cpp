@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include <QPointer>
 #include <QThread>
 
 #include "pychron/core/error.hpp"
@@ -36,15 +37,30 @@ namespace {
 // Where the worker's thread leaves its answers. The owner takes itself out
 // when it goes away; an answer for an owner that is gone is dropped, and the
 // thread, seeing `stopping`, drops what it has not begun.
+//
+// An answer is handed over under this mutex and not inside the event that
+// announces it: the event queue is Qt's, whose locking a thread sanitizer
+// does not see, and what crosses threads here should be plain to one.
 struct Mailbox {
   std::mutex mutex;
   QObject* owner = nullptr;
   bool stopping = false;
   std::atomic<bool> cancelled{false};  // EarthbankWorker::cancel
+  std::deque<std::function<void()>> replies;
 
   void post(std::function<void()> reply) {
     const std::scoped_lock lock(mutex);
-    if (owner != nullptr) QMetaObject::invokeMethod(owner, std::move(reply), Qt::QueuedConnection);
+    if (owner == nullptr) return;
+    replies.push_back(std::move(reply));
+    QMetaObject::invokeMethod(owner, "deliver", Qt::QueuedConnection);
+  }
+  // The oldest answer not yet delivered; empty when there is none.
+  std::function<void()> take() {
+    const std::scoped_lock lock(mutex);
+    if (replies.empty()) return {};
+    std::function<void()> reply = std::move(replies.front());
+    replies.pop_front();
+    return reply;
   }
   bool is_stopping() {
     const std::scoped_lock lock(mutex);
@@ -115,18 +131,30 @@ class EarthbankWorker::Job : public QObject {
       std::shared_ptr<Mailbox> mailbox)
       : make_http_(std::move(make_http)), secrets_(std::move(secrets)), mailbox_(std::move(mailbox)) {}
 
-  void enqueue(std::function<Reply(Job&)> work) {
-    queue_.push_back(std::move(work));
+  // `must_run`: done even when the owner has gone meanwhile. What the owner
+  // was promised on its way out (a password kept, or forgotten) is not
+  // dropped with the requests whose answers nobody is left to read.
+  void enqueue(std::function<Reply(Job&)> work, bool must_run) {
+    queue_.push_back({std::move(work), must_run});
     if (running_) return;
     running_ = true;
     while (!queue_.empty()) {
-      auto next = std::move(queue_.front());
+      Queued next = std::move(queue_.front());
       queue_.pop_front();
-      if (mailbox_->is_stopping()) continue;
-      mailbox_->post(next(*this));
+      if (mailbox_->is_stopping() && !next.must_run) continue;
+      mailbox_->post(next.work(*this));
     }
     running_ = false;
-    if (mailbox_->is_stopping()) thread()->quit();
+    if (leaving_) thread()->quit();
+  }
+
+  // The owner's last word, posted after everything it asked for: so every
+  // request before it is in the queue by now, and the thread ends when the
+  // queue has been gone through (now, unless a request is out and this was
+  // heard from inside it).
+  void leave() {
+    leaving_ = true;
+    if (!running_) thread()->quit();
   }
 
   eb::ISecretStore& secrets() { return *secrets_; }
@@ -178,8 +206,13 @@ class EarthbankWorker::Job : public QObject {
  private:
   std::shared_ptr<eb::ISecretStore> secrets_;
   std::shared_ptr<Mailbox> mailbox_;
-  std::deque<std::function<Reply(Job&)>> queue_;
+  struct Queued {
+    std::function<Reply(Job&)> work;
+    bool must_run = false;
+  };
+  std::deque<Queued> queue_;
   bool running_ = false;
+  bool leaving_ = false;
 };
 
 EarthbankWorker::EarthbankWorker(std::function<std::unique_ptr<eb::IHttpClient>()> http,
@@ -201,11 +234,9 @@ EarthbankWorker::~EarthbankWorker() {
     const std::scoped_lock lock(mailbox->mutex);
     mailbox->owner = nullptr;
     mailbox->stopping = true;
+    mailbox->replies.clear();
   }
-  // An empty request: the queue then sees `stopping` once the request that
-  // is out, if any, has come back, and ends the thread from inside it.
-  QMetaObject::invokeMethod(
-      job_, [job = job_] { job->enqueue([](Job&) { return Reply([] {}); }); }, Qt::QueuedConnection);
+  QMetaObject::invokeMethod(job_, [job = job_] { job->leave(); }, Qt::QueuedConnection);
   if (thread_->wait(250)) {
     delete thread_;
     return;
@@ -216,20 +247,28 @@ EarthbankWorker::~EarthbankWorker() {
   if (thread_->isFinished()) thread_->deleteLater();
 }
 
-void EarthbankWorker::ask(std::function<Reply(Job&)> work) {
+void EarthbankWorker::deliver() {
+  if (const Reply reply = std::static_pointer_cast<Mailbox>(mailbox_)->take()) reply();
+}
+
+void EarthbankWorker::ask(std::function<Reply(Job&)> work, bool must_run) {
   ++outstanding_;
   emit outstanding_changed(outstanding_);
   QMetaObject::invokeMethod(
       job_,
-      [job = job_, this, work = std::move(work)]() mutable {
-        job->enqueue([this, work = std::move(work)](Job& j) {
-          Reply reply = work(j);
-          return Reply([this, reply = std::move(reply)] {
-            --outstanding_;
-            reply();
-            emit outstanding_changed(outstanding_);
-          });
-        });
+      [job = job_, this, must_run, work = std::move(work)]() mutable {
+        job->enqueue(
+            [this, work = std::move(work)](Job& j) {
+              Reply reply = work(j);
+              return Reply([this, reply = std::move(reply)] {
+                --outstanding_;
+                // What an answer sets off may close the window that owns this.
+                const QPointer<EarthbankWorker> alive(this);
+                reply();
+                if (alive) emit outstanding_changed(outstanding_);
+              });
+            },
+            must_run);
       },
       Qt::QueuedConnection);
 }
@@ -257,10 +296,10 @@ void EarthbankWorker::list_packages(const eb::Profile& profile, const QString& p
   ask([this, profile, typed = password.toStdString()](Job& job) -> Reply {
     const QString name = profile_name(profile);
     auto session = job.sign_in(profile, typed);
-    if (!session) return [this, name, what = QString::fromStdString(session.error().what)] { emit failed(name, what); };
+    if (!session) return [this, name, what = QString::fromStdString(session.error().what)] { emit package_failed(name, what, false); };
     auto packages = (*session)->packages(profile.institution_id);
     if (!packages) {
-      return [this, name, what = QString::fromStdString(packages.error().what)] { emit failed(name, what); };
+      return [this, name, what = QString::fromStdString(packages.error().what)] { emit package_failed(name, what, false); };
     }
     return [this, name, packages = std::move(*packages)] { emit packages_listed(name, packages); };
   });
@@ -270,9 +309,9 @@ void EarthbankWorker::create_package(const eb::Profile& profile, const QString& 
   ask([this, profile, typed = password.toStdString(), package = package.toStdString()](Job& job) -> Reply {
     const QString name = profile_name(profile);
     auto session = job.sign_in(profile, typed);
-    if (!session) return [this, name, what = QString::fromStdString(session.error().what)] { emit failed(name, what); };
+    if (!session) return [this, name, what = QString::fromStdString(session.error().what)] { emit package_failed(name, what, true); };
     auto made = (*session)->create_package(package, profile.institution_id);
-    if (!made) return [this, name, what = QString::fromStdString(made.error().what)] { emit failed(name, what); };
+    if (!made) return [this, name, what = QString::fromStdString(made.error().what)] { emit package_failed(name, what, true); };
     return [this, name, made = std::move(*made)] { emit package_created(name, made); };
   });
 }
@@ -282,7 +321,7 @@ void EarthbankWorker::store_password(const eb::Profile& profile, const QString& 
     const auto kept = job.secrets().set(eb::secret_account(profile), typed);
     const QString problem = kept ? QString() : QString::fromStdString(kept.error().what);
     return [this, name = profile_name(profile), problem] { emit password_kept(name, problem); };
-  });
+  }, true);
 }
 
 void EarthbankWorker::erase_password(const eb::Profile& profile) {
@@ -290,7 +329,7 @@ void EarthbankWorker::erase_password(const eb::Profile& profile) {
     const auto erased = job.secrets().erase(eb::secret_account(profile));
     const QString problem = erased ? QString() : QString::fromStdString(erased.error().what);
     return [this, name = profile_name(profile), problem] { emit password_kept(name, problem); };
-  });
+  }, true);
 }
 
 void EarthbankWorker::cancel() { std::static_pointer_cast<Mailbox>(mailbox_)->cancelled.store(true); }
