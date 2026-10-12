@@ -37,6 +37,7 @@
 #include <QString>
 #include <QStringList>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
@@ -58,6 +59,11 @@ struct LaserBridgeDeps {
   // drawn on the frames between.
   std::chrono::milliseconds video{40};
   std::chrono::milliseconds find_every{250};
+  // What the video thread keeps time by: null, real time. Given (it must
+  // outlive the bridge), that thread takes part in the clock and a test
+  // counts its frames exactly. The commands and the snapshots stay on real
+  // time whatever this is.
+  const Clock* video_clock = nullptr;
 };
 
 class LaserBridge : public QObject {
@@ -151,6 +157,8 @@ class LaserBridge : public QObject {
   Result<void> change_calibration(const std::function<void(std::vector<laser::CalibrationPoint>&, double, double)>& edit);
 
   LaserBridgeDeps deps_;
+  SteadyClock real_time_;      // the video thread's clock when none is given
+  const Clock& video_clock_;
   laser::LaserSystem& system_;
   laser::LaserSnapshot state_;
   bool watch_only_ = false;

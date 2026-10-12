@@ -340,7 +340,11 @@ interrupt). Nor are the log hub flusher, the vision live feed, the
 `process.cpp` reader, the store-source workers, the UI's own threads (the Qt
 thread, the core and spectrometer bridges' executor threads, the laser
 bridge's command and video threads, the processing and entry bridges'
-workers) or the clock's watchdog: they deal with the outside world only. They
+workers) or the clock's watchdog: they deal with the outside world only.
+One exception, for tests: the laser bridge's video thread keeps time by the
+clock it is given (`LaserBridgeDeps::video_clock`; none given, real time, as
+every program gives it) and is then a participant in that clock, started and
+joined by the rules above, so that a test counts its frames exactly. They
 may call everything on the clock; their waits are woken by a jump but never
 hold time back.
 

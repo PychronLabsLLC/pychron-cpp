@@ -60,8 +60,9 @@ struct LaserBridge::Worker {
 // frames, it does not queue them.
 struct LaserBridge::Video {
   std::mutex mutex;
-  std::condition_variable wake;
+  std::condition_variable wake;  // waited on and notified through the video clock
   bool quit = false;
+  bool done = false;  // the thread has said it is finished
   std::optional<laser::CameraView> pending;
   bool posted = false;
 };
@@ -77,6 +78,7 @@ void LaserBridge::post(F&& f) {
 LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
     : QObject(parent),
       deps_(std::move(deps)),
+      video_clock_(deps_.video_clock != nullptr ? *deps_.video_clock : real_time_),
       system_(system_of(deps_)),
       gate_(std::make_shared<Gate>()),
       worker_(std::make_unique<Worker>()) {
@@ -87,7 +89,19 @@ LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
   worker_->watch_only = watch_only_;
   thread_ = std::thread([this] { loop(); });
   video_ = std::make_unique<Video>();
-  if (system_.has_camera()) video_thread_ = std::thread([this] { show(); });
+  if (system_.has_camera()) {
+    // Held until the thread is a participant: time does not go past it first.
+    auto hold = std::make_shared<Clock::Hold>(video_clock_);
+    video_thread_ = std::thread([this, hold]() mutable {
+      const Clock::Participant participant(video_clock_, "laser video");
+      hold.reset();
+      show();
+      // Said while still a participant: the destructor waits for it in the clock.
+      const std::lock_guard lock(video_->mutex);
+      video_->done = true;
+      video_clock_.notify_all(video_->wake);
+    });
+  }
 }
 
 void LaserBridge::show() {
@@ -96,12 +110,12 @@ void LaserBridge::show() {
   Video& v = *video_;
   std::optional<vision::Target> target;       // what the finder last made out
   std::vector<vision::Target> targets;
-  auto found_at = std::chrono::steady_clock::time_point{};
+  auto found_at = TimePoint{};
   std::uint64_t shown_seq = 0;
   std::string shown_trouble, failed;
   int shown_age_s = -1;
   for (;;) {
-    const auto began = std::chrono::steady_clock::now();
+    const TimePoint began = video_clock_.now();
     // The finder runs only while the device itself is looking for something.
     const bool looking = system_.looking();
     if (!looking) {
@@ -140,7 +154,9 @@ void LaserBridge::show() {
       post([this, why = QString::fromStdString(failed)] { emit viewFailed(why); });
     }
     std::unique_lock lock(v.mutex);
-    if (v.wake.wait_until(lock, began + deps_.video, [&v] { return v.quit; })) return;
+    const TimePoint next = began + deps_.video;
+    while (!v.quit && video_clock_.now() < next) video_clock_.wait_until(v.wake, lock, next);
+    if (v.quit) return;
   }
 }
 
@@ -171,8 +187,14 @@ LaserBridge::~LaserBridge() {
     std::lock_guard lock(video_->mutex);
     video_->quit = true;
   }
-  video_->wake.notify_all();
-  if (video_thread_.joinable()) video_thread_.join();
+  video_clock_.notify_all(video_->wake);
+  if (video_thread_.joinable()) {
+    {
+      std::unique_lock lock(video_->mutex);
+      while (!video_->done) video_clock_.wait(video_->wake, lock);
+    }
+    video_thread_.join();
+  }
   if (thread_.joinable()) thread_.join();
   // Nobody is left to close a beam this bridge's window opened. A queue's
   // beam is the queue's: its own end closes it.

@@ -2,23 +2,21 @@
 // section 5).
 
 #include <atomic>
-#include <condition_variable>
+#include <chrono>
+#include <cstdint>
 #include <map>
-#include <mutex>
+#include <memory>
+#include <optional>
 #include <ranges>
 #include <thread>
 #include <vector>
 
-#if defined(__APPLE__)
-#include <pthread/qos.h>
-#endif
-
-#include <QElapsedTimer>
-#include <QEventLoop>
-#include <QTimer>
+#include <QCoreApplication>
 #include <QtTest/QtTest>
 
 #include "laser_fixture.hpp"
+#include "pychron/core/clock.hpp"
+#include "pychron/core/virtual_clock.hpp"
 
 using namespace pychron;
 using namespace pychron::ui;
@@ -79,6 +77,8 @@ class LaserBridgeTest : public QObject {
   void cleanup() {
     heard_.reset();
     bridge_.reset();
+    on_video_clock_.reset();
+    video_clock_.reset();
     lab_.reset();
   }
 
@@ -332,83 +332,23 @@ class LaserBridgeTest : public QObject {
     QVERIFY2(heard_->why("measure_scale").contains("nothing to follow"), qPrintable(heard_->why("measure_scale")));
   }
 
-  // What this machine makes of the waits the video loop is built on, for a
-  // rate that comes up short: the cost of a picture and of a stage poll, and
-  // how long a millisecond's sleep, a 40 ms timed wait and a 10 ms event-loop
-  // wait really take.
-  QString timing() {
-    auto& sys = lab_->system();
-    QElapsedTimer t;
-    t.start();
-    for (int i = 0; i < 10; ++i) (void)sys.picture();
-    const auto picture_us = t.nsecsElapsed() / 10000;
-    t.restart();
-    for (int i = 0; i < 10; ++i) (void)sys.moving();
-    const auto moving_us = t.nsecsElapsed() / 10000;
-    t.restart();
-    for (int i = 0; i < 10; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    const auto sleep_us = t.nsecsElapsed() / 10000;
-    const auto wait_us = timed_wait_us();
-    t.restart();
-    QTest::qWait(10);
-    const auto qwait_us = t.nsecsElapsed() / 1000;
-    // A call queued from another thread, as a frame is: how long until the
-    // event loop runs it.
-    qint64 queued_us = 0;
-    {
-      QEventLoop loop;
-      QObject target;
-      QElapsedTimer posted;
-      std::thread other([&] {
-        posted.start();
-        QMetaObject::invokeMethod(
-            &target,
-            [&] {
-              queued_us = posted.nsecsElapsed() / 1000;
-              loop.quit();
-            },
-            Qt::QueuedConnection);
-      });
-      QTimer::singleShot(2000, &loop, &QEventLoop::quit);
-      loop.exec();
-      other.join();
-    }
-    int qos = -1;  // the test thread's quality of service, on macOS
-#if defined(__APPLE__)
-    qos = static_cast<int>(qos_class_self());
-#endif
-    return QStringLiteral(
-               "picture %1 us, moving %2 us, sleep_for(1 ms) %3 us, wait_for(40 ms) %4 us, qWait(10) %5 us, a queued "
-               "call %6 us, QoS 0x%7")
-        .arg(picture_us)
-        .arg(moving_us)
-        .arg(sleep_us)
-        .arg(wait_us)
-        .arg(qwait_us)
-        .arg(queued_us)
-        .arg(qos, 0, 16);
-  }
-
-  // How long a 40 ms timed wait really takes here, the wait the video loop
-  // paces itself with.
-  static qint64 timed_wait_us() {
-    std::mutex m;
-    std::condition_variable cv;
-    std::unique_lock lock(m);
-    QElapsedTimer t;
-    t.start();
-    cv.wait_for(lock, std::chrono::milliseconds(40), [] { return false; });
-    return t.nsecsElapsed() / 1000;
-  }
-
-  // The picture is video: a dozen frames a second at least, whatever else
-  // the bridge is doing. The finder is not run on it: that is for a
-  // centering or a dragonfly, while one runs.
+  // The picture is video: a frame every `video` (25 a second), whatever else
+  // the bridge is doing. Counted on a clock of the test's own, which the
+  // video thread keeps time by and which moves only while this thread sleeps
+  // in it: the count is exact on any machine, where a rate against real time
+  // came up short on one whose timed waits overrun. The finder is not run on
+  // the picture: that is for a centering or a dragonfly, while one runs.
   void the_picture_is_shown_as_video() {
-    bridge_->set_tray(QStringLiteral("example-9"));
-    bridge_->go_to(QStringLiteral("5"), false);
-    test::settle(*bridge_);
-    QElapsedTimer clock;
+    heard_.reset();
+    bridge_.reset();
+    video_clock_ = std::make_unique<VirtualClock>();
+    on_video_clock_.emplace(*video_clock_, "test");
+    auto deps = lab_->deps();
+    deps.video_clock = video_clock_.get();
+    const auto period = deps.video;
+    bridge_ = std::make_unique<LaserBridge>(std::move(deps));
+    heard_ = std::make_unique<Heard>(*bridge_);
+
     int frames = 0, with_target = 0;
     std::uint64_t last_seq = 0;
     bool in_order = true;
@@ -420,48 +360,44 @@ class LaserBridgeTest : public QObject {
       if (last_seq != 0 && seen.frame.seq > last_seq + 1) skipped += static_cast<int>(seen.frame.seq - last_seq - 1);
       last_seq = seen.frame.seq;
     });
-    // Frames a second over the next second, watched through an event loop as
-    // the window does: QTest::qWait sleeps between its looks at the queue,
-    // and on a machine with coarse timers each of those sleeps is longer than
-    // a frame.
-    const auto rate = [&] {
-      frames = 0;
-      clock.start();
-      QEventLoop loop;
-      QTimer::singleShot(1000, &loop, &QEventLoop::quit);
-      loop.exec();
-      return frames * 1000.0 / static_cast<double>(clock.elapsed());
+    // Every frame taken so far is shown: the video thread is asleep in the
+    // clock again (waited for in real time), and what it posted is delivered.
+    const auto shown = [&] {
+      const bool asleep = QTest::qWaitFor([&] { return video_clock_->waiters() == 1; }, 20000);
+      QCoreApplication::processEvents();
+      return asleep;
     };
-    const double idle = rate();  // with nothing else going on
-    bridge_->jog(20, 0, 0);      // a move under way: 4 simulated seconds
-    const double moving = rate();
-    const qint64 wait_us = timed_wait_us();
-    const auto why = [&] {
-      return QStringLiteral("%1 frames a second while moving, %2 idle, %3 frames skipped; %4")
-          .arg(moving)
-          .arg(idle)
-          .arg(skipped)
-          .arg(timing());
+    // The frames of one second of the video clock, a period at a time as the
+    // window's event loop would see them; -1 if the video thread stopped.
+    const auto a_second = [&] {
+      const int before = frames;
+      for (auto t = std::chrono::milliseconds(0); t < std::chrono::seconds(1); t += period) {
+        video_clock_->sleep_for(period);
+        if (!shown()) return -1;
+      }
+      return frames - before;
     };
-    // What the bridge is doing never slows the picture.
-    QVERIFY2(moving >= 0.8 * idle, qPrintable(why()));
-    // A dozen a second, wherever the machine's timed waits keep time. Where a
-    // 40 ms wait takes 50 or more (the macOS CI runners, which coalesce timers
-    // by tens of milliseconds) no loop paced by one can make it, and the line
-    // above is what is checked.
-    if (wait_us < 50'000) {
-      QVERIFY2(moving >= 12.0, qPrintable(why()));
-    } else {
-      qWarning("timed waits here overrun (a 40 ms wait took %lld us): %s", static_cast<long long>(wait_us),
-               qPrintable(why()));
-    }
+    const int every_second = static_cast<int>(std::chrono::seconds(1) / period);
+    QCOMPARE(every_second, 25);
+
+    QVERIFY(shown());
+    bridge_->set_tray(QStringLiteral("example-9"));
+    bridge_->go_to(QStringLiteral("5"), false);
+    test::settle(*bridge_);
+    QCOMPARE(a_second(), every_second);  // with nothing else going on
+    // What the bridge is doing never slows the picture: a move under way.
+    const double from = lab_->x();
+    bridge_->jog(20, 0, 0);
+    QVERIFY(test::under_way(*lab_, from + 0.5));
+    QCOMPARE(a_second(), every_second);
+    QCOMPARE(skipped, 0);
     QVERIFY(in_order);
     test::settle(*bridge_);
     // nothing is looked for in it: the stage sat on a hole, and no frame says so
     QCOMPARE(with_target, 0);
     bridge_->go_to(QStringLiteral("5"), false);
     test::settle(*bridge_);
-    QTest::qWait(300);
+    QCOMPARE(a_second(), every_second);
     QCOMPARE(with_target, 0);
   }
 
@@ -610,6 +546,10 @@ class LaserBridgeTest : public QObject {
 
  private:
   std::unique_ptr<test::SimLaserLab> lab_;
+  // A clock for a bridge's video thread, and this thread's part in it: after
+  // the bridge in cleanup(), which waits for that thread through it.
+  std::unique_ptr<VirtualClock> video_clock_;
+  std::optional<Clock::Participant> on_video_clock_;
   std::unique_ptr<LaserBridge> bridge_;
   std::unique_ptr<Heard> heard_;
   std::atomic<int> aborts_{0};
