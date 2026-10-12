@@ -2,7 +2,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <future>
+#include <memory>
+#include <mutex>
 #include <thread>
 
 #include "jobs_fakes.hpp"
@@ -224,6 +227,47 @@ TEST(JobRunner, CancelRunningJobSignalsToken) {
   runner.wait_idle();
   EXPECT_EQ(runner.job(*id)->state, JobState::Cancelled);
   EXPECT_TRUE(runner.job(*id)->after.has_value());
+}
+
+// A job's end is told (JobFinished) after the runner is idle again, by the
+// thread that ran it, which is still in the runner: a runner that goes then
+// waits for that thread to have left.
+TEST(JobRunner, GoingWaitsForAJobsEndToHaveBeenTold) {
+  JobRig r;
+  ASSERT_TRUE(r.spec);
+  auto runner = std::make_unique<JobRunner>(*r.spec, r.scheduler, r.bus, r.clock);
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool telling = false, release = false;
+  auto heard = r.bus.subscribe<JobFinished>([&](const JobFinished&) {
+    std::unique_lock lock(mutex);
+    telling = true;
+    cv.notify_all();
+    cv.wait(lock, [&] { return release; });
+  });
+  ASSERT_TRUE(runner->submit(returning(1)).has_value());
+  auto worker = std::async(std::launch::async, [&] { r.scheduler.run_pending(); });
+  {
+    std::unique_lock lock(mutex);
+    cv.wait(lock, [&] { return telling; });
+  }
+  runner->wait_idle();  // returns: the job itself is over
+  std::atomic<bool> gone = false;
+  std::thread going([&] {
+    runner.reset();
+    gone = true;
+  });
+  // Long enough for a destructor that does not wait to have returned.
+  std::this_thread::sleep_for(50ms);
+  EXPECT_FALSE(gone);
+  {
+    std::lock_guard lock(mutex);
+    release = true;
+  }
+  cv.notify_all();
+  going.join();
+  worker.get();
+  EXPECT_TRUE(gone);
 }
 
 TEST(JobRunner, CancelUnknownJobIsConfigError) {
