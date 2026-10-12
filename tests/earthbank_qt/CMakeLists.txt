@@ -62,3 +62,17 @@ if(PYCHRON_TLS_READY)
 endif()
 pychron_set_warnings(pychron_earthbank_qt_tests)
 gtest_discover_tests(pychron_earthbank_qt_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
+
+# The live test (test_live.cpp): an upload to a real EarthBank, skipped unless
+# the four PYCHRON_TEST_EARTHBANK_* variables are set, which nothing in the
+# tree or in CI does. A program of its own so that it has a label of its own:
+# `ctest -LE live` leaves it out, `ctest -L live` runs only it. Its steps are
+# tests/earthbank's (live_round_trip.hpp), built on tests/processing's fixtures.
+add_executable(pychron_earthbank_live_tests test_live.cpp)
+target_include_directories(pychron_earthbank_live_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/tests/earthbank ${PROJECT_SOURCE_DIR}/tests)
+target_compile_definitions(pychron_earthbank_live_tests PRIVATE QT_NO_KEYWORDS)
+target_link_libraries(pychron_earthbank_live_tests PRIVATE pychron::earthbank_qt pychron::earthbank pychron::processing
+                                                           pychron::reduction pychron::core GTest::gtest_main)
+pychron_set_warnings(pychron_earthbank_live_tests)
+gtest_discover_tests(pychron_earthbank_live_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 600 LABELS live)
