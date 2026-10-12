@@ -1121,7 +1121,14 @@ As built (2026-10-12):
     as does closing the dialog.
   - In doubt: two buttons, shown only when exactly one sample has a record in
     doubt (`resolve_in_doubt` names no sample). They finish the upload already
-    agreed to, without asking again.
+    agreed to, without asking again. The buttons are withdrawn as soon as the
+    profile, package, a row, an option or the action is changed: Run then asks
+    again and, the record still being in doubt, shows them again.
+  - Nothing is run while any request of the worker is out. Package requests
+    fail through their own signal (`package_failed`), never the run's.
+  - Workspace does not replace a dialog that is running: it is raised.
+  - Worker: a password to keep or forget is carried out even when its owner
+    has gone (OK in Preferences); every other queued request is dropped.
   - Remembered under `earthbank/` in the UI's settings: per sample name
     (percent-encoded) interpretation, preferred age, an edited flux monitor;
     and set-up, constants' names, folder.
