@@ -224,6 +224,10 @@ EarthbankWorker::EarthbankWorker(std::function<std::unique_ptr<eb::IHttpClient>(
   job_ = new Job(std::move(http), std::move(secrets), std::move(mailbox));
   job_->moveToThread(thread_);
   connect(thread_, &QThread::finished, job_, &QObject::deleteLater);
+  // Connected before the thread starts, not when this object goes: a thread
+  // that ended between the destructor's wait and a connection made there
+  // would never be deleted.
+  connect(thread_, &QThread::finished, thread_, &QObject::deleteLater);
   thread_->setObjectName(QStringLiteral("earthbank"));
   thread_->start();
 }
@@ -237,14 +241,10 @@ EarthbankWorker::~EarthbankWorker() {
     mailbox->replies.clear();
   }
   QMetaObject::invokeMethod(job_, [job = job_] { job->leave(); }, Qt::QueuedConnection);
-  if (thread_->wait(250)) {
-    delete thread_;
-    return;
-  }
-  // Still waiting for the service. It is not waited for: the thread object
-  // goes when the thread has ended.
-  connect(thread_, &QThread::finished, thread_, &QObject::deleteLater);
-  if (thread_->isFinished()) thread_->deleteLater();
+  // Ended: deleted here, and its own deleteLater, still queued for this
+  // thread, goes with it. Still waiting for the service: it is not waited
+  // for, and the thread object goes when the thread has ended.
+  if (thread_->wait(250)) delete thread_;
 }
 
 void EarthbankWorker::deliver() {

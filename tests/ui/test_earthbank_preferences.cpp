@@ -18,10 +18,12 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPointer>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QtTest/QtTest>
 
@@ -425,6 +427,34 @@ class EarthbankPreferencesTest : public QObject {
     page.reset();
     QVERIFY(clock.elapsed() < 5000);
     w.gate.release();  // the worker's thread ends on its own; it shares the service
+  }
+
+  // The thread of a worker that went while it waited for the service is
+  // deleted when the answer has come and the thread has ended.
+  void a_worker_left_waiting_takes_its_thread_with_it_when_the_answer_comes() {
+    World w;
+    const auto setup = w.setup();
+    auto worker = std::make_unique<ui::EarthbankWorker>(setup.http, setup.secrets());
+    w.gate.hold();
+    worker->test(w.profile(), QString::fromStdString(w.bank.password()));
+    QTRY_VERIFY(w.gate.waiting());
+    const QPointer<QThread> thread = worker->worker_thread();
+    worker.reset();
+    QVERIFY(!thread.isNull());  // not waited for
+    QVERIFY(thread->isRunning());
+    w.gate.release();
+    QTRY_VERIFY(thread.isNull());
+  }
+
+  void a_worker_with_nothing_outstanding_takes_its_thread_at_once() {
+    World w;
+    const auto setup = w.setup();
+    auto worker = std::make_unique<ui::EarthbankWorker>(setup.http, setup.secrets());
+    const QPointer<QThread> thread = worker->worker_thread();
+    QVERIFY(!thread.isNull());
+    worker.reset();
+    QVERIFY(thread.isNull());
+    QCoreApplication::processEvents();  // nothing is left queued for the thread that is gone
   }
 
   void the_preferences_dialog_has_the_page_and_ok_saves_it() {

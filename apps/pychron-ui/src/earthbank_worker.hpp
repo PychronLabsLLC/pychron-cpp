@@ -177,6 +177,9 @@ class EarthbankWorker : public QObject {
 
   // Requests asked for and not yet answered.
   int outstanding() const noexcept { return outstanding_; }
+  // The thread the requests run on. It outlives this object while it still
+  // waits for the service, and is deleted when it has ended. For tests.
+  QThread* worker_thread() const noexcept { return thread_; }
 
  signals:
   // `note`: empty, or why the password that signed in was not kept.
