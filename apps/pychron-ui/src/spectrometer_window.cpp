@@ -114,6 +114,12 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   intensities_dock_ = new QDockWidget(tr("Intensities"), this);
   intensities_dock_->setObjectName(QStringLiteral("SpectrometerIntensitiesDock"));
   intensities_dock_->setWidget(table);
+  intensities_view_ = table;
+  // The table is the detector list: a double click on a row hides or shows
+  // that detector's line.
+  connect(table, &QTableView::doubleClicked, this, [this](const QModelIndex& cell) {
+    if (cell.isValid()) show_detector(cell.row(), !intensities_->shown(cell.row()));
+  });
   default_layout();
   layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(),
                              QStringLiteral("spectrometer_window/%1").arg(bridge_.name()),
@@ -228,27 +234,7 @@ QWidget* SpectrometerWindow::build_controls() {
   connect(ymin_, &QLineEdit::editingFinished, this, [this] { edit_manual_y(); });
   connect(clear, &QPushButton::clicked, this, [this] { clear_chart(); });
 
-  auto* detector_box = new QGroupBox(tr("Detectors"));
-  auto* detector_rows = new QVBoxLayout(detector_box);
   const auto& detectors = model_.detectors();
-  for (std::size_t i = 0; i < detectors.size(); ++i) {
-    auto* swatch = new QLabel;
-    swatch->setFixedSize(14, 14);
-    swatch->setStyleSheet(QStringLiteral("background: %1;").arg(detectors[i].color.name()));
-    auto* shown = new QCheckBox(QString::fromStdString(detectors[i].name));
-    shown->setChecked(detectors[i].visible);
-    connect(shown, &QCheckBox::toggled, this, [this, i](bool on) {
-      model_.set_visible(i, on);
-      dirty_ = true;
-    });
-    shown_.push_back(shown);
-    auto* row = new QHBoxLayout;
-    row->addWidget(shown);
-    row->addWidget(swatch);
-    row->addStretch();
-    detector_rows->addLayout(row);
-  }
-  column->addWidget(detector_box);
 
   auto* magnet_box = new QGroupBox(tr("Magnet"));
   auto* magnet_form = new QFormLayout(magnet_box);
@@ -410,9 +396,14 @@ int SpectrometerWindow::detector_index(const QString& detector) const {
 
 void SpectrometerWindow::set_detector_shown(const QString& detector, bool shown) {
   const int index = detector_index(detector);
-  if (index >= 0) {
-    shown_[static_cast<std::size_t>(index)]->setChecked(shown);
-  }
+  if (index >= 0) show_detector(index, shown);
+}
+
+void SpectrometerWindow::show_detector(int index, bool shown) {
+  if (intensities_->shown(index) == shown) return;
+  model_.set_visible(static_cast<std::size_t>(index), shown);
+  intensities_->set_shown(index, shown);
+  dirty_ = true;
 }
 
 void SpectrometerWindow::select_target(const QString& detector, const QString& isotope) {

@@ -35,6 +35,7 @@ class QFrame;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QTableView;
 
 namespace pychron::ui {
 
@@ -55,6 +56,7 @@ class SpectrometerWindow : public QMainWindow {
   DockLayouts* dock_layouts() const noexcept { return layouts_; }
   StripChartView* chart_view() const { return view_; }
   IntensitiesModel* intensities() const { return intensities_; }
+  QTableView* intensities_view() const { return intensities_view_; }
 
   // Asked before a large move with the mass change on the reference detector
   // (NaN when the current mass is unknown). Default: Yes/No dialog, default No.
@@ -99,6 +101,7 @@ class SpectrometerWindow : public QMainWindow {
   void save_settings();
 
   int detector_index(const QString& detector) const;  // -1 when unknown
+  void show_detector(int index, bool shown);          // chart and table together
   double integration_s() const;
   void select_integration(double seconds);
   void fill_isotopes();
@@ -119,6 +122,7 @@ class SpectrometerWindow : public QMainWindow {
   StripChartModel model_;
   StripChartView* view_;
   IntensitiesModel* intensities_;
+  QTableView* intensities_view_ = nullptr;
 
   QFrame* banner_;
   QLabel* banner_label_;
@@ -129,7 +133,6 @@ class SpectrometerWindow : public QMainWindow {
   QCheckBox* autoscale_ = nullptr;
   QLineEdit* ymax_ = nullptr;
   QLineEdit* ymin_ = nullptr;
-  std::vector<QCheckBox*> shown_;  // model order
   QComboBox* target_detector_ = nullptr;
   QComboBox* target_isotope_ = nullptr;
   QPushButton* apply_ = nullptr;

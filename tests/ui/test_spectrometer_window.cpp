@@ -11,10 +11,12 @@
 #include <optional>
 #include <vector>
 
+#include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QGroupBox>
+#include <QTableView>
 #include <QTemporaryDir>
-#include <QDockWidget>
 #include <QtTest/QtTest>
 
 #include "spectrometer_bridge.hpp"
@@ -132,6 +134,49 @@ class TestSpectrometerWindow : public QObject {
 
     SpectrometerWindow real(*bridge_, false, settings());
     QCOMPARE(real.windowTitle(), QStringLiteral("Spectrometer"));
+  }
+
+  // The detector list is the Intensities table: a double click on a row
+  // hides or shows that detector's line; the row greys and goes on updating.
+  void doubleClickingADetectorRowTogglesItsLine() {
+    open();
+    window_->show();
+    QTRY_VERIFY_WITH_TIMEOUT(window_->chart_view()->point_count(kAX) >= 2, kWaitMs);
+    QTableView* table = window_->intensities_view();
+    QVERIFY(table);
+    const QModelIndex cell = table->model()->index(kAX, IntensitiesModel::ColIntensity);
+    const auto double_click = [&] {
+      table->scrollTo(cell);
+      // As a hand does it: the view takes a double click only on the cell it was pressed on.
+      QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier, table->visualRect(cell).center());
+      QTest::mouseDClick(table->viewport(), Qt::LeftButton, Qt::NoModifier, table->visualRect(cell).center());
+      window_->chart_view()->refresh();
+    };
+
+    double_click();
+    QVERIFY(!window_->chart_view()->graph_visible(kAX));
+    QVERIFY(window_->chart_view()->graph_visible(kH1));
+    QVERIFY(!window_->intensities()->shown(kAX));
+    QVERIFY(window_->intensities()->shown(kH1));
+    // Off, and its number still moves.
+    const int before = window_->chart_view()->point_count(kAX);
+    QTRY_VERIFY_WITH_TIMEOUT(window_->chart_view()->point_count(kAX) > before, kWaitMs);
+    QVERIFY(table->model()->data(cell).toString() != QStringLiteral("\u2014"));
+
+    double_click();
+    QVERIFY(window_->chart_view()->graph_visible(kAX));
+    QVERIFY(window_->intensities()->shown(kAX));
+
+    // What the window is told by name (its saved settings) reaches the table too.
+    window_->set_detector_shown("AX", false);
+    QVERIFY(!window_->intensities()->shown(kAX));
+    window_->set_detector_shown("AX", true);
+    QVERIFY(window_->intensities()->shown(kAX));
+  }
+
+  void theControlsHaveNoDetectorList() {
+    open();
+    for (const auto* box : window_->findChildren<QGroupBox*>()) QVERIFY(box->title() != QStringLiteral("Detectors"));
   }
 
   void uncheckingDetectorHidesGraphButKeepsBuffering() {

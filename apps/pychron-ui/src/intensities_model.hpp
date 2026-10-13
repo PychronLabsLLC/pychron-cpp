@@ -4,7 +4,8 @@
 // columns Color, Name, Isotope, Intensity, ±1σ, Units. The sigma is the
 // population standard deviation of the previous kWindow means plus the current
 // one; a row with no value shows an em dash and does not enter the window.
-// Values are already gain-corrected.
+// Values are already gain-corrected. A detector whose line is not drawn in
+// the chart (set_shown) is greyed; its values go on updating.
 
 #include <deque>
 #include <optional>
@@ -28,6 +29,10 @@ class IntensitiesModel : public QAbstractTableModel {
 
   void update(const spectrometer::IntensityReading& r);
   void set_isotope(const std::string& detector, const QString& isotope);
+  // Whether the detector's line is drawn in the strip chart. A row that does
+  // not exist is ignored (and is shown).
+  void set_shown(int row, bool shown);
+  bool shown(int row) const;
 
   int rowCount(const QModelIndex& parent = {}) const override;
   int columnCount(const QModelIndex& parent = {}) const override;

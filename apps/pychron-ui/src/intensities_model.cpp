@@ -2,6 +2,7 @@
 #include "theme.hpp"
 
 #include <cmath>
+#include <utility>
 
 #include <QBrush>
 
@@ -71,9 +72,15 @@ QVariant IntensitiesModel::data(const QModelIndex& index, int role) const {
     if (col == ColIntensity && saturated) return QBrush(theme().error);
     return {};
   }
+  if (role == Qt::ForegroundRole) {
+    if (col != ColColour && !row.series.visible) return QBrush(theme().faint_text);
+    return {};
+  }
   if (role == Qt::ToolTipRole) {
     if (col == ColIntensity && saturated) return QStringLiteral("saturated");
-    return {};
+    if (col != ColName) return {};
+    return row.series.visible ? tr("Double-click to hide this detector's line")
+                              : tr("Not drawn. Double-click to show this detector's line");
   }
   if (role != Qt::DisplayRole) return {};
 
@@ -86,6 +93,18 @@ QVariant IntensitiesModel::data(const QModelIndex& index, int role) const {
     case ColUnits: return row.series.units;
     default: return {};
   }
+}
+
+void IntensitiesModel::set_shown(int row, bool shown) {
+  if (row < 0 || std::cmp_greater_equal(row, rows_.size())) return;
+  bool& visible = rows_[static_cast<std::size_t>(row)].series.visible;
+  if (visible == shown) return;
+  visible = shown;
+  emit dataChanged(index(row, 0), index(row, ColCount - 1), {Qt::ForegroundRole, Qt::ToolTipRole});
+}
+
+bool IntensitiesModel::shown(int row) const {
+  return row < 0 || std::cmp_greater_equal(row, rows_.size()) || rows_[static_cast<std::size_t>(row)].series.visible;
 }
 
 QVariant IntensitiesModel::headerData(int section, Qt::Orientation orientation, int role) const {

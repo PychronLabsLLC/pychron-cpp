@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include <QSignalSpy>
 #include <QtTest/QtTest>
 
 #include "intensities_model.hpp"
@@ -284,6 +285,41 @@ class TestStripChartModel : public QObject {
     m.update(row(1.0, {{"H1", 4.0}}));
     QVERIFY(!m.data(cell, Qt::BackgroundRole).isValid());
     QVERIFY(!m.data(cell, Qt::ToolTipRole).isValid());
+  }
+
+  void anOffDetectorIsGreyAndStillUpdates() {
+    IntensitiesModel m(two());
+    QVERIFY(m.shown(0) && m.shown(1));
+    QSignalSpy changed(&m, &QAbstractItemModel::dataChanged);
+    m.set_shown(1, false);
+    QVERIFY(!m.shown(1));
+    QCOMPARE(changed.count(), 1);
+    for (int col : {IntensitiesModel::ColName, IntensitiesModel::ColIsotope, IntensitiesModel::ColIntensity,
+                    IntensitiesModel::ColSigma, IntensitiesModel::ColUnits}) {
+      QCOMPARE(m.data(m.index(1, col), Qt::ForegroundRole).value<QBrush>().color(), pychron::ui::theme().faint_text);
+      QVERIFY(!m.data(m.index(0, col), Qt::ForegroundRole).isValid());
+    }
+    // Its swatch stays, so the row can still be told from the others.
+    QCOMPARE(m.data(m.index(1, IntensitiesModel::ColColour), Qt::BackgroundRole).value<QBrush>().color(),
+             StripChartModel::palette_color(1));
+    m.update(row(0.0, {{"H1", 1.0}, {"AX", 7.0}}));
+    QCOMPARE(m.data(m.index(1, IntensitiesModel::ColIntensity)).toString(), QStringLiteral("7.00000"));
+    m.update(row(1.0, {{"H1", 1.0}, {"AX", 8.0}}));
+    QCOMPARE(m.data(m.index(1, IntensitiesModel::ColIntensity)).toString(), QStringLiteral("8.00000"));
+
+    m.set_shown(1, true);
+    QVERIFY(m.shown(1));
+    QVERIFY(!m.data(m.index(1, IntensitiesModel::ColName), Qt::ForegroundRole).isValid());
+    m.set_shown(1, true);  // no change: nothing announced
+    QCOMPARE(changed.count(), 4);  // off, two readings, on
+    m.set_shown(9, false);  // no such row: ignored
+  }
+
+  void aRowSaysHowToToggleIt() {
+    IntensitiesModel m(two());
+    QVERIFY(m.data(m.index(0, IntensitiesModel::ColName), Qt::ToolTipRole).toString().contains(QStringLiteral("hide")));
+    m.set_shown(0, false);
+    QVERIFY(m.data(m.index(0, IntensitiesModel::ColName), Qt::ToolTipRole).toString().contains(QStringLiteral("show")));
   }
 
   void missingValueShowsEmDash() {

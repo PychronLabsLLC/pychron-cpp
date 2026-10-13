@@ -44,8 +44,8 @@ Close it before running something that wants the spectrometer to itself.
 | Area | Contents |
 |---|---|
 | Centre | The strip chart. A red banner with a **Restart** button appears above it when something is wrong (see below). |
-| Left dock **Controls** | Integration time, graph settings, the detector list, the Magnet group. |
-| Right dock **Intensities** | A table of each detector's latest value. |
+| Left dock **Controls** | Integration time, graph settings, the Magnet group. |
+| Right dock **Intensities** | A table of each detector's latest value, where you also choose which detectors are drawn. |
 
 Docks can be dragged, floated and resized; the layout is remembered per
 spectrometer and per user. **Window > Panels** shows or hides Intensities
@@ -69,8 +69,10 @@ Under **Graph** in the Controls dock:
 | Max / Min | Y limits. Read-only while autoscale is on; when you turn autoscale off they start at the current range. A pair that is not Min < Max (or Min <= 0 on a log axis) is rejected and reverts. |
 | Clear | Empties the chart. The data table and the instrument are unaffected. |
 
-Unchecking a detector under **Detectors** hides its line only. It keeps being
-read and still shows in the table; nothing is sent to the hardware.
+To hide a detector's line, double-click its row in the **Intensities**
+table; double-click again to show it. A hidden detector's row is greyed. It
+keeps being read and its numbers keep updating in the table; nothing is sent
+to the hardware. Which detectors are hidden is remembered.
 
 ### Intensities table
 
@@ -85,6 +87,8 @@ Columns: Color, Name, Isotope, Intensity, ±1σ, Units.
 - A **red** Intensity cell with the tooltip `saturated` means the detector is
   reporting saturation for that reading (the detector's `saturation` limit).
 - A dash means no reading has arrived for that detector yet.
+- A **greyed** row is a detector whose line is not drawn in the chart
+  (double-click the row to draw it again).
 
 ### Integration time
 
