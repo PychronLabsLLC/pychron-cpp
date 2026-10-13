@@ -522,6 +522,39 @@ TEST(AcquisitionEngine, StopWaitsForInFlightNext) {
   EXPECT_FALSE(f.engine->running());
 }
 
+// A tick the scheduler has dispatched and no worker has begun is not yet in
+// poll(): stop() cannot see it there, and the engine's owner destroys the
+// engine when stop() returns. The tick must not then run. (Under ASan the
+// poll of a destroyed engine is a heap-use-after-free; CI met it in
+// IntensityStreamVirtual.CollectForADurationEndsAtTheDeadline.)
+TEST(AcquisitionEngine, ATickDispatchedBeforeStopNeverReachesADestroyedEngine) {
+  fakes::FakeAcquirer a({"H1"});
+  std::atomic<int> nexts{0};
+  a.on_next = [&] { ++nexts; };
+  ManualClock clock{kT0};
+  SignalBus bus;
+  Scheduler sched{clock, &bus, Scheduler::Options{1}};
+  Gate busy, release;
+  ASSERT_TRUE(sched.after("blocker", 1ms, [&] {
+    busy.open();
+    release.wait(10000ms);
+  }));
+  clock.advance(1ms);
+  ASSERT_EQ(sched.run_pending(), 1u);
+  ASSERT_TRUE(busy.wait());  // the only worker is inside the blocker
+
+  auto engine = AcquisitionEngine::create({&a}, {faraday("H1", "H1")}, sched, bus, clock);
+  ASSERT_TRUE(engine.has_value()) << to_string(engine.error());
+  ASSERT_TRUE((*engine)->start(1s).has_value());
+  clock.advance(50ms);  // past the 20 ms poll interval
+  ASSERT_EQ(sched.run_pending(), 1u);  // the poll, queued behind the blocker
+
+  engine->reset();
+  release.open();
+  sched.wait_idle();
+  EXPECT_EQ(nexts.load(), 0);
+}
+
 TEST(AcquisitionEngine, StartAfterStopNeverOverlapsPreviousNext) {
   fakes::FakeAcquirer a({"H1"});
   Gate entered;

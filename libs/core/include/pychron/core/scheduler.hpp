@@ -94,8 +94,15 @@ class Scheduler {
   // Re-arms a watchdog. Cancelled if the job no longer exists; Config if not a watchdog.
   Result<void> heartbeat(JobId id);
 
-  // Removes a job. An execution already in progress finishes normally.
+  // Removes a job. An execution already in progress finishes normally; one
+  // dispatched and not yet begun (queued behind a busy worker, or next in an
+  // inline run_pending()) does not begin. True if the job was still registered.
   bool cancel(JobId id);
+  // cancel(), and then waits in the clock until an execution in progress has
+  // finished: when it returns the job's task is not running and will not run
+  // again, so what the task refers to may be destroyed. Called from the job's
+  // own task it does not wait for that execution, which is its caller.
+  bool cancel_and_wait(JobId id);
 
   // Dispatches every job due at clock.now(); returns how many were dispatched.
   std::size_t run_pending();
@@ -125,6 +132,8 @@ class Scheduler {
 
   Result<JobId> add(std::string name, Kind kind, Duration period, std::function<bool()> body);
   std::vector<std::shared_ptr<Job>> collect_due_locked(TimePoint now);
+  // Caller holds mutex_. The job if it is dispatched and not finished.
+  std::shared_ptr<Job> cancel_locked(JobId id, bool& removed);
   void execute(const std::shared_ptr<Job>& job);
   void publish_log(LogLevel level, std::string message) const;
   // `started` is the starter's Clock::Hold, dropped once the thread has
@@ -141,10 +150,12 @@ class Scheduler {
   mutable std::mutex mutex_;
   std::condition_variable wake_;       // dispatcher: jobs changed or stop requested
   std::condition_variable work_ready_;  // workers: queue non-empty or shutdown
-  std::condition_variable idle_;       // wait_idle(): in_flight_ reached zero
+  std::condition_variable idle_;       // wait_idle(), cancel_and_wait(): an execution ended
   std::condition_variable exited_;     // stop(), destructor: a thread has finished
   std::map<JobId, std::shared_ptr<Job>> jobs_;
   std::deque<std::shared_ptr<Job>> queue_;
+  // Dispatched and not finished: a one-shot is no longer in jobs_ by then.
+  std::vector<std::shared_ptr<Job>> active_;
   std::size_t in_flight_ = 0;
   JobId next_id_ = 1;
   bool dispatching_ = false;

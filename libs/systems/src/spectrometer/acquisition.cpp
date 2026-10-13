@@ -239,7 +239,8 @@ Result<void> AcquisitionEngine::start(Duration integration) {
     auto id = scheduler_.every("acquisition:" + std::to_string(i), options_.poll_interval,
                                [this, i] { poll(i); });
     if (!id) {
-      for (auto j : jobs) scheduler_.cancel(j);
+      // No tick of them is left that would find the engine gone.
+      for (auto j : jobs) (void)scheduler_.cancel_and_wait(j);
       undo();
       return fail(id.error());
     }
@@ -286,14 +287,18 @@ void AcquisitionEngine::stop() {
     stopping_ = true;  // start() and other stoppers wait until the acquirers are stopped
     jobs.swap(jobs_);
   }
-  for (auto j : jobs) scheduler_.cancel(j);
+  // Waits for a tick in progress, and a tick dispatched and not yet begun
+  // never begins. polling_ alone does not say that: a tick is in it only
+  // once it is inside poll(), and one a worker was about to run would find,
+  // after the wait below, an engine that stop() had let its owner destroy.
+  // Without the lock a poll needs to finish.
+  for (auto j : jobs) (void)scheduler_.cancel_and_wait(j);
   {
-    // Scheduler::cancel() lets an execution in progress finish; wait for it,
-    // without the lock a poll needs to finish. Polls on this thread are our
-    // own callers and cannot be waited for. Through the clock, as every wait
-    // on polls_cv_ is: the poll may itself be waiting in the clock's time
-    // (a driver reading its wire), which passes only while this thread is
-    // seen to wait.
+    // A poll called directly, not by the scheduler, is waited for here. Polls
+    // on this thread are our own callers and cannot be waited for. Through
+    // the clock, as every wait on polls_cv_ is: the poll may itself be
+    // waiting in the clock's time (a driver reading its wire), which passes
+    // only while this thread is seen to wait.
     std::unique_lock lock(mutex_);
     while (polling_.size() != polls_on_this_thread()) clock_.wait(polls_cv_, lock);
   }

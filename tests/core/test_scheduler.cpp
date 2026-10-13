@@ -126,6 +126,106 @@ TEST(Scheduler, CancelPreventsExecution) {
   EXPECT_EQ(runs, 0);
 }
 
+// A worker that is busy leaves the next job dispatched and waiting. What that
+// job refers to may be destroyed once it is cancelled, so it must not begin.
+TEST(Scheduler, CancelDropsADispatchedExecutionThatHasNotBegun) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, Scheduler::Options{1});
+  std::promise<void> busy;
+  std::promise<void> release;
+  auto gate = release.get_future().share();
+  std::atomic<int> runs{0};
+
+  ASSERT_TRUE(s.after("blocker", 10ms, [&] {
+    busy.set_value();
+    gate.wait();
+  }));
+  clock.advance(10ms);
+  EXPECT_EQ(s.run_pending(), 1u);
+  busy.get_future().wait();  // the only worker is inside the blocker
+
+  const auto periodic = s.every("periodic", 10ms, [&] { ++runs; });
+  const auto once = s.after("once", 10ms, [&] { ++runs; });
+  ASSERT_TRUE(periodic);
+  ASSERT_TRUE(once);
+  clock.advance(10ms);
+  EXPECT_EQ(s.run_pending(), 2u);  // both queued behind the blocker
+
+  EXPECT_TRUE(s.cancel(*periodic));
+  EXPECT_FALSE(s.cancel_and_wait(*once));  // dispatched: no longer registered, and nothing to wait for
+  release.set_value();
+  s.wait_idle();
+  EXPECT_EQ(runs.load(), 0);
+}
+
+TEST(Scheduler, CancelAndWaitWaitsForTheExecutionInProgress) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, Scheduler::Options{2});
+  std::promise<void> entered;
+  std::promise<void> release;
+  auto gate = release.get_future().share();
+  std::atomic<bool> finished{false};
+
+  const auto id = s.every("slow", 10ms, [&] {
+    entered.set_value();
+    gate.wait();
+    finished = true;
+  });
+  ASSERT_TRUE(id);
+  clock.advance(10ms);
+  EXPECT_EQ(s.run_pending(), 1u);
+  entered.get_future().wait();
+
+  auto cancelled = std::async(std::launch::async, [&] { return s.cancel_and_wait(*id); });
+  EXPECT_EQ(cancelled.wait_for(100ms), std::future_status::timeout);  // the task is still running
+  EXPECT_FALSE(finished.load());
+  release.set_value();
+  ASSERT_EQ(cancelled.wait_for(5s), std::future_status::ready);
+  EXPECT_TRUE(finished.load());
+  EXPECT_TRUE(cancelled.get());
+
+  clock.advance(1s);
+  EXPECT_EQ(s.run_pending(), 0u);
+}
+
+// The execution in progress is the caller: waiting for it would never end.
+TEST(Scheduler, CancelAndWaitFromTheJobItselfReturns) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, inline_pool());
+  int runs = 0;
+  bool removed = false;
+  JobId own = 0;
+  const auto id = s.every("self", 10ms, [&] {
+    ++runs;
+    removed = s.cancel_and_wait(own);
+  });
+  ASSERT_TRUE(id);
+  own = *id;
+  clock.advance(10ms);
+  s.run_pending();
+  clock.advance(10ms);
+  s.run_pending();
+  EXPECT_EQ(runs, 1);
+  EXPECT_TRUE(removed);
+}
+
+// Inline, the jobs due together run one after another on one thread: the
+// second is dispatched while the first runs, and cannot be waited for there.
+TEST(Scheduler, CancelAndWaitInlineDropsAJobDueInTheSamePass) {
+  ManualClock clock;
+  Scheduler s(clock, nullptr, inline_pool());
+  int second_runs = 0;
+  JobId second = 0;
+  ASSERT_TRUE(s.every("first", 10ms, [&] { (void)s.cancel_and_wait(second); }));
+  const auto id = s.every("second", 10ms, [&] { ++second_runs; });
+  ASSERT_TRUE(id);
+  second = *id;
+  clock.advance(10ms);
+  EXPECT_EQ(s.run_pending(), 2u);
+  EXPECT_EQ(second_runs, 0);
+  EXPECT_EQ(s.job_count(), 1u);
+}
+
 TEST(Scheduler, WatchdogFiresOnlyWhenHeartbeatMissed) {
   ManualClock clock;
   Scheduler s(clock, nullptr, inline_pool());

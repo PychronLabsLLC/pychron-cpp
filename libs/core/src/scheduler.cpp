@@ -15,7 +15,10 @@ struct Scheduler::Job {
   Duration period{};
   TimePoint due{};
   std::function<bool()> body;  // returns false on a failed run
-  bool running = false;
+  bool running = false;    // dispatched and not finished
+  bool executing = false;  // its body has begun and not returned
+  bool cancelled = false;  // a dispatched execution that has not begun is dropped
+  std::thread::id runner;  // the thread executing it
   JobStats stats;
 };
 
@@ -135,11 +138,34 @@ Result<void> Scheduler::heartbeat(JobId id) {
   return {};
 }
 
+std::shared_ptr<Scheduler::Job> Scheduler::cancel_locked(JobId id, bool& removed) {
+  removed = jobs_.erase(id) > 0;
+  const auto it = std::find_if(active_.begin(), active_.end(), [id](const auto& job) { return job->id == id; });
+  if (it == active_.end()) return nullptr;
+  (*it)->cancelled = true;
+  return *it;
+}
+
 bool Scheduler::cancel(JobId id) {
   bool removed = false;
   {
     std::lock_guard lock(mutex_);
-    removed = jobs_.erase(id) > 0;
+    (void)cancel_locked(id, removed);
+  }
+  clock_.notify_all(wake_);
+  return removed;
+}
+
+bool Scheduler::cancel_and_wait(JobId id) {
+  bool removed = false;
+  {
+    std::unique_lock lock(mutex_);
+    const auto job = cancel_locked(id, removed);
+    // Only an execution that has begun is waited for: one that has not will
+    // not, and may be queued on this very thread (an inline run_pending()).
+    if (job) {
+      while (job->executing && job->runner != std::this_thread::get_id()) clock_.wait(idle_, lock);
+    }
   }
   clock_.notify_all(wake_);
   return removed;
@@ -171,6 +197,7 @@ std::vector<std::shared_ptr<Scheduler::Job>> Scheduler::collect_due_locked(TimeP
     if (!overlapping) {
       job->running = true;
       ++in_flight_;
+      active_.push_back(job);
       due.push_back(job);
     }
     if (job->kind == Kind::OneShot && !overlapping) {
@@ -198,18 +225,35 @@ std::size_t Scheduler::run_pending() {
 }
 
 void Scheduler::execute(const std::shared_ptr<Job>& job) {
+  bool begun = false;
+  {
+    std::lock_guard lock(mutex_);
+    // Cancelled between its dispatch and now: what its task refers to may be
+    // gone already.
+    if (!job->cancelled) {
+      begun = true;
+      job->executing = true;
+      job->runner = std::this_thread::get_id();
+    }
+  }
   bool ok = false;
-  try {
-    ok = job->body();
-  } catch (...) {
-    publish_log(LogLevel::Error, "job " + job->name + " threw an exception");
+  if (begun) {
+    try {
+      ok = job->body();
+    } catch (...) {
+      publish_log(LogLevel::Error, "job " + job->name + " threw an exception");
+    }
   }
   {
     std::lock_guard lock(mutex_);
     job->running = false;
-    ++job->stats.runs;
-    if (!ok) ++job->stats.failures;
+    job->executing = false;
+    if (begun) {
+      ++job->stats.runs;
+      if (!ok) ++job->stats.failures;
+    }
     --in_flight_;
+    std::erase(active_, job);
   }
   clock_.notify_all(idle_);
   clock_.notify_all(wake_);
