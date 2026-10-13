@@ -1,7 +1,7 @@
 # Staged gas release: line steps between the gases of one run
 
-Status: draft 2026-10-13, not agreed. Written by an unattended run; questions
-for owner in section 8. Nothing built. Task T027 (`pychron usage notes.md`).
+Status: draft 2026-10-13, not agreed; waits for plan v2 (owner 2026-10-13:
+agree v2 first, section 8). Written by an unattended run. Nothing built. Task T027 (`pychron usage notes.md`).
 Builds on `2026-10-05-measurement-plan-v2-design.md` (itself "Draft": this
 cannot be agreed before it) and `2026-09-29-experiment-system-design.md`
 sections 3 (run lifecycle) and 4 (plan and engine).
@@ -130,7 +130,12 @@ spectrometer's name when not the plan's.
   work; this starts after its item 6.
 - Reduction of non-argon gases (He, Ne, Kr, Xe ages or abundances).
 - Quadrupole driver: none in the tree; 4.4 defines only how a plan names a
-  second spectrometer.
+  second spectrometer. Owner 2026-10-13: the quadrupole is another kind of
+  mass spectrometer; legacy talks to Pfeiffer's Quadera
+  (`pychron/spectrometer/pfeiffer/spectrometer/quadera.py`,
+  `hardware/quadera_spectrometer_controller.py`,
+  `pyscripts/measurement/quadera_measurement_pyscript.py`). A Quadera driver
+  is its own spec, before stage 2.
 - Conditionals that choose the next release temperature from the fraction
   just measured.
 
@@ -146,20 +151,24 @@ spectrometer's name when not the plan's.
   signal appears only after its release.
 - Queue validation refuses overlap with a staged plan.
 
-## 8. Questions for owner
+## 8. Owner, 2026-10-13, and what is still open
+
+Answered:
+
+- Order: measurement plan v2 is agreed first; this spec is taken up after
+  (its five open decisions, its section 10, come before these).
+- The second spectrometer is a quadrupole, another kind of mass spectrometer;
+  legacy drives one through Quadera (section 6).
+
+Open, for when v2 is agreed:
 
 1. Is "extraction script per gas" (4.1) the right handle, or should release
    be declarative too (`release = { cryo_temp, hold_s, getter_s }`) with no
    script? Draft: script, because the steps differ by line.
-2. Run states (4.3): keep one Measuring phase holding both line and
-   spectrometer, or add alternating states the executor and timeline show
-   (extracting, measuring, extracting, ...)? Draft: one phase, blocks named
-   on the timeline.
-3. Second spectrometer (4.4): which instrument is the "quadrupole" in the
-   owner's case, and is it on the same line and install? Decides whether
-   stage 2 is one install with two spectrometers or two installs
-   coordinating.
-4. Should this be folded into the v2 spec as its item 6b rather than a spec
-   of its own?
-5. v2 is still "Draft" with five open decisions (its section 10): agree it
-   first?
+2. Run states (4.3): one Measuring phase holding both line and spectrometer,
+   or alternating states the executor and timeline show? Draft: one phase,
+   blocks named on the timeline.
+3. Is the quadrupole on the same line and install as the noble gas
+   spectrometer? Decides whether stage 2 is one install with two
+   spectrometers or two installs coordinating.
+4. Fold this into the v2 spec as its item 6b rather than a spec of its own?
