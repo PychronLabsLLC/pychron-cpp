@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <string_view>
 
 #include "schema_builder.hpp"
 
@@ -62,7 +63,21 @@ std::vector<FieldSpec> common_figure_fields() {
 }
 
 void apply_common_style(const Options& o, Scene& scene) {
+  apply_fit_style(o, scene);
   scene.columns = static_cast<int>(o.get_int("graph_columns"));
+  scene.style.graph_spacing = static_cast<int>(o.get_int("graph_spacing"));
+}
+
+std::vector<FieldSpec> fit_figure_fields() {
+  static const std::set<std::string_view> keys{
+      "panel_spacing", "font.family",     "font.title", "font.axis",   "font.tick",      "font.annotation",
+      "background",    "plot_background", "show_grid",  "show_legend", "legend_location"};
+  auto fields = common_figure_fields();
+  std::erase_if(fields, [](const FieldSpec& f) { return !keys.contains(f.key); });
+  return fields;
+}
+
+void apply_fit_style(const Options& o, Scene& scene) {
   scene.style.background = parse_color(o.get_string("background")).value_or(Color{255, 255, 255, 255});
   scene.style.plot_background = parse_color(o.get_string("plot_background")).value_or(Color{255, 255, 255, 255});
   scene.style.grid = o.get_bool("show_grid");
@@ -74,7 +89,6 @@ void apply_common_style(const Options& o, Scene& scene) {
   scene.style.legend = o.get_bool("show_legend");
   scene.style.legend_corner = parse_corner(o.get_string("legend_location")).value_or(Corner::TopRight);
   scene.style.panel_spacing = static_cast<int>(o.get_int("panel_spacing"));
-  scene.style.graph_spacing = static_cast<int>(o.get_int("graph_spacing"));
 }
 
 SchemaPtr group_row_schema(bool fixed_steps) {

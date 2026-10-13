@@ -9,6 +9,7 @@
 #include <set>
 #include <utility>
 
+#include "figure_common.hpp"
 #include "pychron/processing/units.hpp"
 #include "schema_builder.hpp"
 
@@ -136,9 +137,8 @@ SchemaPtr make_schema_impl() {
   list.max_rows = 32;
   for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"})
     list.default_rows_toml.push_back(std::string("isotope = \"") + iso + "\"");
-  auto s = std::const_pointer_cast<Schema>(make_schema(
-      "figure.isotope_evolution_fit", "Isotope evolutions",
-      {boolean("keep_user_excluded", "Keep left-out points", "Fit", true,
+  std::vector<FieldSpec> fields{
+      boolean("keep_user_excluded", "Keep left-out points", "Fit", true,
                "Refit without the points each analysis already leaves out"),
        boolean("skip_reviewed", "Keep reviewed values", "Fit", false,
                "Intercepts and baselines already marked reviewed are not refitted or saved"),
@@ -149,8 +149,10 @@ SchemaPtr make_schema_impl() {
                  "Changes when the training changes; set by the window"),
             "use_classifier"),
        integer("nsigma", "Error bars (σ)", "Display", 1, 1, 3),
-       boolean("show_current", "Show current values", "Display", true)},
-      {list}));
+       boolean("show_current", "Show current values", "Display", true)};
+  for (auto& f : detail::fit_figure_fields()) fields.push_back(std::move(f));
+  auto s = std::const_pointer_cast<Schema>(
+      make_schema("figure.isotope_evolution_fit", "Isotope evolutions", std::move(fields), {list}));
   s->factory_presets = {{"Default", ""}};
   return s;
 }
@@ -463,6 +465,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     g.panels.push_back(std::move(p));
   }
   fig.scene.graphs.push_back(std::move(g));
+  detail::apply_fit_style(o, fig.scene);
   fig.scene.warnings = fig.fits.warnings;
   if (fig.fits.reviewed_kept > 0)
     fig.scene.warnings.push_back(std::to_string(fig.fits.reviewed_kept) + " reviewed intercept(s) kept");

@@ -363,5 +363,77 @@ TEST(IsotopeEvolutionFits, UnitReadsRawFromTheSource) {
   EXPECT_EQ(to_string(PortType::IsotopeFits), "isotope_fits");
 }
 
+// The style fields the fit figures share with the other figures
+// (figure_common.hpp, fit_figure_fields).
+void set_a_style(Options& o) {
+  ASSERT_TRUE(o.set("background", std::string("#101010")));
+  ASSERT_TRUE(o.set("plot_background", std::string("#202020")));
+  ASSERT_TRUE(o.set("show_grid", false));
+  ASSERT_TRUE(o.set("show_legend", false));
+  ASSERT_TRUE(o.set("legend_location", std::string("bottom_left")));
+  ASSERT_TRUE(o.set("font.family", std::string("Courier")));
+  ASSERT_TRUE(o.set("font.title", 20.0));
+  ASSERT_TRUE(o.set("font.axis", 18.0));
+  ASSERT_TRUE(o.set("font.tick", 16.0));
+  ASSERT_TRUE(o.set("font.annotation", 14.0));
+  ASSERT_TRUE(o.set("panel_spacing", std::int64_t{0}));
+}
+
+void expect_that_style(const SceneStyle& s) {
+  EXPECT_EQ(s.background, (Color{0x10, 0x10, 0x10, 255}));
+  EXPECT_EQ(s.plot_background, (Color{0x20, 0x20, 0x20, 255}));
+  EXPECT_FALSE(s.grid);
+  EXPECT_FALSE(s.legend);
+  EXPECT_EQ(s.legend_corner, Corner::BottomLeft);
+  EXPECT_EQ(s.fonts.family, "Courier");
+  EXPECT_EQ(s.fonts.title, 20.0);
+  EXPECT_EQ(s.fonts.axis_title, 18.0);
+  EXPECT_EQ(s.fonts.tick, 16.0);
+  EXPECT_EQ(s.fonts.annotation, 14.0);
+  EXPECT_EQ(s.panel_spacing, 0);
+}
+
+void expect_the_default_style(const SceneStyle& s) {
+  const SceneStyle d;
+  EXPECT_EQ(s.background, d.background);
+  EXPECT_EQ(s.plot_background, d.plot_background);
+  EXPECT_EQ(s.grid, d.grid);
+  EXPECT_EQ(s.legend, d.legend);
+  EXPECT_EQ(s.legend_corner, d.legend_corner);
+  EXPECT_EQ(s.fonts.family, d.fonts.family);
+  EXPECT_EQ(s.fonts.title, d.fonts.title);
+  EXPECT_EQ(s.fonts.axis_title, d.fonts.axis_title);
+  EXPECT_EQ(s.fonts.tick, d.fonts.tick);
+  EXPECT_EQ(s.fonts.annotation, d.fonts.annotation);
+  EXPECT_EQ(s.panel_spacing, d.panel_spacing);
+}
+
+TEST(IsotopeEvolutionFits, TheSharedStyleOptionsReachTheScene) {
+  auto f = make(2);
+  Options o(isotope_evolution_fit_schema());
+  set_a_style(o);
+  auto fig = build_isotope_evolution_fits(f.dataset, o, f.loader());
+  ASSERT_TRUE(fig) << fig.error().what;
+  expect_that_style(fig->scene.style);
+}
+
+TEST(IsotopeEvolutionFits, WithNoStyleSetTheSceneIsStyledAsItWas) {
+  auto f = make(2);
+  auto fig = build_isotope_evolution_fits(f.dataset, Options(isotope_evolution_fit_schema()), f.loader());
+  ASSERT_TRUE(fig) << fig.error().what;
+  expect_the_default_style(fig->scene.style);
+}
+
+// A preset written before the style fields existed has none of their keys.
+TEST(IsotopeEvolutionFits, APresetSavedBeforeTheStyleFieldsStillLoads) {
+  auto loaded = options_from_toml(isotope_evolution_fit_schema(), "nsigma = 2\nkeep_user_excluded = false\n");
+  ASSERT_TRUE(loaded) << loaded.error().what;
+  EXPECT_TRUE(loaded->warnings.empty());
+  EXPECT_EQ(loaded->options.get_int("nsigma"), 2);
+  EXPECT_FALSE(loaded->options.get_bool("keep_user_excluded"));
+  EXPECT_TRUE(loaded->options.get_bool("show_legend"));
+  EXPECT_EQ(loaded->options.get_double("font.tick"), 9.0);
+}
+
 }  // namespace
 }  // namespace pychron::processing

@@ -10,6 +10,7 @@
 #include <set>
 #include <utility>
 
+#include "figure_common.hpp"
 #include "pychron/processing/units.hpp"
 #include "pychron/reduction/fits.hpp"
 #include "pychron/reduction/stats.hpp"
@@ -410,11 +411,13 @@ std::vector<std::string> fit_choices() {
 }
 
 std::vector<FieldSpec> common_fields() {
-  return {integer("nsigma", "Error bars (σ)", "Display", 1, 1, 3),
-          boolean("show_current", "Show current values", "Display", true,
-                  "The unknowns' stored values beside the predicted ones"),
-          boolean("skip_reviewed", "Keep reviewed values", "Fit", false,
-                  "Values already marked reviewed are shown but not refitted or saved")};
+  std::vector<FieldSpec> fields{integer("nsigma", "Error bars (σ)", "Display", 1, 1, 3),
+                                boolean("show_current", "Show current values", "Display", true,
+                                        "The unknowns' stored values beside the predicted ones"),
+                                boolean("skip_reviewed", "Keep reviewed values", "Fit", false,
+                                        "Values already marked reviewed are shown but not refitted or saved")};
+  for (auto& f : detail::fit_figure_fields()) fields.push_back(std::move(f));
+  return fields;
 }
 
 SchemaPtr make_blank_schema() {
@@ -733,7 +736,7 @@ Result<ReferenceFigure> build_reference_figure(ReferenceFitTarget target, const 
   g.x.min = xmin - pad;
   g.x.max = pad;
   fig.scene.graphs.push_back(std::move(g));
-  fig.scene.style.legend = true;
+  detail::apply_fit_style(o, fig.scene);
   if (references.empty()) fig.scene.warnings.emplace_back("no references");
   for (const DatasetItem* item : fitted)
     if (auto it = by_uuid.find(item->analysis->analysis->uuid); it != by_uuid.end())

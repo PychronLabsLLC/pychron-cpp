@@ -26,6 +26,13 @@ Color with_alpha(Color c, std::uint8_t a);
 std::vector<FieldSpec> common_figure_fields();
 void apply_common_style(const Options& o, Scene& scene);
 
+// The part of the common fields a fit figure (blanks, IC factors, isotope
+// evolution refit) takes: panel_spacing, font.*, background,
+// plot_background, show_grid, show_legend, legend_location. Same keys and
+// defaults, so a preset saved before a figure had them reads as it drew.
+std::vector<FieldSpec> fit_figure_fields();
+void apply_fit_style(const Options& o, Scene& scene);
+
 // Group rows: colour, marker, legend label, fill opacity; with
 // `fixed_steps` also fixed_start / fixed_end step letters (spectra).
 SchemaPtr group_row_schema(bool fixed_steps = false);

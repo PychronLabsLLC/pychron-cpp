@@ -526,6 +526,12 @@ Factory presets: **Default**, **Filled 95%**, **Plateau steps**.
 Colours are `#rrggbb` or `#rrggbbaa`. A value outside its range or the wrong
 type is dropped when a preset is loaded, with a warning.
 
+The fit windows for blanks, IC factors and isotope evolutions take part of
+this list, with the same names and defaults: `panel_spacing`, the `font.*`
+sizes and family, `background`, `plot_background`, `show_grid`,
+`show_legend` and `legend_location`. A preset of one of those windows saved
+before they had these settings loads as it did and draws as it drew.
+
 ### What can be plotted: quantities
 
 Wherever a setting asks for a *quantity* it takes a small expression:
