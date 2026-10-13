@@ -186,6 +186,8 @@ inline const QString kRefObjectAtHead = QStringLiteral(
 inline const QString kDerivedRows = QStringLiteral(
     "SELECT name, value, error, units FROM derived_value WHERE analysis_uuid = ? AND fingerprint = ? "
     "ORDER BY name");
+inline const QString kDeleteOtherDerived =
+    QStringLiteral("DELETE FROM derived_value WHERE analysis_uuid = ? AND fingerprint <> ?");
 inline const QString kDerivedVersions =
     QStringLiteral("SELECT DISTINCT reduction_version FROM derived_value WHERE analysis_uuid = ?");
 inline const QString kPruneDerived = QStringLiteral(

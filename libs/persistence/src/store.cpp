@@ -518,6 +518,9 @@ class TinyStore final : public IStore {
                            const std::vector<DerivedRow>& rows) override {
     return detail::put_derived(*db_, analysis, fingerprint, reduction_version, rows);
   }
+  Result<void> put_derived_many(std::span<const DerivedPut> puts, const std::string& reduction_version) override {
+    return detail::put_derived_many(*db_, puts, reduction_version);
+  }
   Result<std::optional<std::vector<DerivedRow>>> get_derived(Uuid analysis,
                                                             const std::string& reduction_version) override {
     return detail::get_derived(*db_, analysis, reduction_version);

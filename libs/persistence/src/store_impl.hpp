@@ -84,6 +84,7 @@ Result<RefResolution> resolve_refs(Db& db, Uuid analysis, const RefPolicy& polic
 Result<Sha256Digest> input_fingerprint(Db& db, Uuid analysis, const std::string& reduction_version);
 Result<void> put_derived(Db& db, Uuid analysis, const Sha256Digest& fingerprint, const std::string& reduction_version,
                          const std::vector<DerivedRow>& rows);
+Result<void> put_derived_many(Db& db, std::span<const DerivedPut> puts, const std::string& reduction_version);
 Result<std::optional<std::vector<DerivedRow>>> get_derived(Db& db, Uuid analysis, const std::string& reduction_version);
 Result<int> prune_derived(Db& db, Uuid analysis);
 

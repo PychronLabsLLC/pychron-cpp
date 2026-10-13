@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -472,6 +473,14 @@ struct DerivedRow {
   friend bool operator==(const DerivedRow&, const DerivedRow&) = default;
 };
 
+// What one reduction of one analysis gives the cache: the fingerprint of the
+// inputs it was computed from, and its rows.
+struct DerivedPut {
+  Uuid analysis;
+  Sha256Digest fingerprint;
+  std::vector<DerivedRow> rows;
+};
+
 struct AppliedMigration {
   int version = 0;
   std::string description;
@@ -682,8 +691,12 @@ class IStore {
   // SHA-256 over the analysis's head revisions, its resolved reference
   // revisions and the reduction version (section 4.3).
   virtual Result<Sha256Digest> input_fingerprint(Uuid analysis, const std::string& reduction_version) = 0;
+  // After a put the cache holds rows of that fingerprint only for the
+  // analysis: rows of any other fingerprint are deleted with it.
   virtual Result<void> put_derived(Uuid analysis, const Sha256Digest& fingerprint,
                                    const std::string& reduction_version, const std::vector<DerivedRow>& rows) = 0;
+  // The same for many analyses, in one transaction: all of them or none.
+  virtual Result<void> put_derived_many(std::span<const DerivedPut> puts, const std::string& reduction_version) = 0;
   // Cached rows only if computed from the current inputs (I14); else nullopt.
   virtual Result<std::optional<std::vector<DerivedRow>>> get_derived(Uuid analysis,
                                                                     const std::string& reduction_version) = 0;

@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <utility>
 
 #include "pychron/persistence/store.hpp"
@@ -93,6 +94,7 @@ class ForwardingStore : public persistence::IStore {
   Result<persistence::RefResolution> resolve_refs(Uuid analysis, const persistence::RefPolicy& policy) override { return inner_.resolve_refs(analysis, policy); }
   Result<Sha256Digest> input_fingerprint(Uuid analysis, const std::string& reduction_version) override { return inner_.input_fingerprint(analysis, reduction_version); }
   Result<void> put_derived(Uuid analysis, const Sha256Digest& fingerprint, const std::string& reduction_version, const std::vector<persistence::DerivedRow>& rows) override { return inner_.put_derived(analysis, fingerprint, reduction_version, rows); }
+  Result<void> put_derived_many(std::span<const persistence::DerivedPut> puts, const std::string& reduction_version) override { return inner_.put_derived_many(puts, reduction_version); }
   Result<std::optional<std::vector<persistence::DerivedRow>>> get_derived(Uuid analysis, const std::string& reduction_version) override { return inner_.get_derived(analysis, reduction_version); }
   Result<int> prune_derived(Uuid analysis) override { return inner_.prune_derived(analysis); }
   Result<persistence::IngestAck> ingest(const persistence::IngestItem& item) override { return inner_.ingest(item); }

@@ -93,21 +93,32 @@ Result<Sha256Digest> input_fingerprint(Db& db, Uuid analysis, const std::string&
 
 Result<void> put_derived(Db& db, Uuid analysis, const Sha256Digest& fingerprint, const std::string& reduction_version,
                          const std::vector<DerivedRow>& rows) {
+  const DerivedPut put{analysis, fingerprint, rows};
+  return put_derived_many(db, std::span<const DerivedPut>(&put, 1), reduction_version);
+}
+
+Result<void> put_derived_many(Db& db, std::span<const DerivedPut> puts, const std::string& reduction_version) {
   // A cache, not a record: no revision and no change_log entry (section 4.3).
   WriteTx tx(db);
   if (auto r = tx.begin(); !r) return fail(r.error());
   const UtcTime now = UtcTime::now();
-  for (const auto& d : rows) {
-    Row r;
-    r["analysis_uuid"] = qv(analysis);
-    r["fingerprint"] = qv(fingerprint);
-    r["name"] = qv(d.name);
-    r["value"] = qv(d.value);
-    r["error"] = qv(d.error);
-    r["units"] = qv(d.units);
-    r["reduction_version"] = qv(reduction_version);
-    r["computed_utc"] = qv(now);
-    if (auto ins = db.insert_or_ignore("derived_value", r); !ins) return fail(ins.error());
+  for (const auto& put : puts) {
+    // One fingerprint per analysis (age cache spec 4.2): what was computed
+    // from other inputs goes before this is filed.
+    if (auto gone = db.affecting(sql::kDeleteOtherDerived, {qv(put.analysis), qv(put.fingerprint)}); !gone)
+      return fail(gone.error());
+    for (const auto& d : put.rows) {
+      Row r;
+      r["analysis_uuid"] = qv(put.analysis);
+      r["fingerprint"] = qv(put.fingerprint);
+      r["name"] = qv(d.name);
+      r["value"] = qv(d.value);
+      r["error"] = qv(d.error);
+      r["units"] = qv(d.units);
+      r["reduction_version"] = qv(reduction_version);
+      r["computed_utc"] = qv(now);
+      if (auto ins = db.insert_or_ignore("derived_value", r); !ins) return fail(ins.error());
+    }
   }
   return tx.commit();
 }
