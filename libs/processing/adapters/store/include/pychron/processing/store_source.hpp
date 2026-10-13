@@ -79,6 +79,8 @@ struct StoreAnalysisParts {
   std::map<persistence::Kind, persistence::RevisionPayload> heads;
   std::map<persistence::Kind, persistence::Uuid> head_revisions;
   std::vector<persistence::RefPayload> refs;
+  // persistence::fingerprint_of the heads and references read, as hex.
+  std::string input_fingerprint;
   // The catalog row of the analysis's sample (location, lithology, IGSN for
   // the report); absent when the store has no sample of that name.
   std::optional<persistence::SampleRow> sample;

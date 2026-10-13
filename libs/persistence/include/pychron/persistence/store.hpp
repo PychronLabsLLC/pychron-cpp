@@ -466,6 +466,13 @@ struct RefResolution {
 
 // ---------------------------------------------------------------- derived cache (4.3)
 
+// The input fingerprint of an analysis from what has already been read of
+// it: its heads (in any order) and its resolved references (as resolve_refs
+// gives them, by ref_object). IStore::input_fingerprint reads both and
+// returns this.
+[[nodiscard]] Sha256Digest fingerprint_of(const std::vector<HeadInfo>& heads, const std::vector<ResolvedRef>& refs,
+                                          const std::string& reduction_version);
+
 struct DerivedRow {
   std::string name;  // e.g. "age", "kca"
   std::optional<double> value, error;

@@ -403,6 +403,32 @@ TEST_F(StoreSourceTest, LoadRawDecodesUploadedBlobsAndSlicesWindows) {
   EXPECT_FALSE(source().load_raw(ps::Uuid::v7().str()));
 }
 
+TEST_F(StoreSourceTest, LoadCarriesTheInputFingerprint) {
+  const std::string version(reduction::kReductionVersion);
+  auto& src = source();
+  auto loaded = src.load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  const std::string first = (*loaded)->input_fingerprint;
+  EXPECT_EQ(first.size(), 64u);
+  EXPECT_EQ(first, to_hex(*store_->input_fingerprint(unknown_, version)));
+
+  // A new head is a new input.
+  auto uow = *store_->begin(reducer());
+  ASSERT_TRUE(uow->add_revision(unknown_, ps::Kind::Tags, ps::TagValue{"invalid", std::nullopt, std::nullopt},
+                                *store_->head(unknown_, ps::Kind::Tags)));
+  ASSERT_TRUE(uow->commit(ps::ChangesetKind::Reduction, "tag"));
+  ASSERT_TRUE(src.refresh());
+  auto again = src.load(unknown_.str());
+  ASSERT_TRUE(again);
+  EXPECT_NE((*again)->input_fingerprint, first);
+  EXPECT_EQ((*again)->input_fingerprint, to_hex(*store_->input_fingerprint(unknown_, version)));
+
+  // Another analysis has its own.
+  auto air = src.load(air_.str());
+  ASSERT_TRUE(air);
+  EXPECT_NE((*air)->input_fingerprint, (*again)->input_fingerprint);
+}
+
 TEST_F(StoreSourceTest, RefreshSeesNewAnalysesAndNewRevisions) {
   auto& src = source();
   const auto g0 = src.generation();

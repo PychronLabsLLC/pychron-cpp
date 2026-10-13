@@ -1,6 +1,7 @@
 // Reference data, interpreted ages and the derived cache (DVC schema spec,
 // sections 4.3, 5.7, 6; invariant I14).
 
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include "store_fixture.hpp"
@@ -154,6 +155,37 @@ TEST_P(ReferenceTest, PinsFreezeAReferenceRevision) {
   auto latest = *store_->resolve_refs(a, RefPolicy{false});
   EXPECT_EQ(latest.refs[0].revision, v2);
   EXPECT_FALSE(latest.refs[0].pinned);
+}
+
+// A loader that has read an analysis's heads and resolved its references
+// has the fingerprint without asking the store again.
+TEST_P(ReferenceTest, TheFingerprintOfWhatWasReadIsTheInputFingerprint) {
+  RefObjectSpec pos;
+  pos.position = lab_.position;
+  const Uuid fl = object(RefType::FluxPosition, "NM-300/A/1", pos);
+  publish(fl, flux(0.01));
+  const Uuid a = ingest(1);
+  const auto of_what_was_read = [&] {
+    auto heads = store_->heads(a);
+    EXPECT_TRUE(heads);
+    auto refs = store_->resolve_refs(a, RefPolicy{});
+    EXPECT_TRUE(refs);
+    return fingerprint_of(*heads, refs->refs, "red-1");
+  };
+  const Sha256Digest first = of_what_was_read();
+  EXPECT_EQ(first, *store_->input_fingerprint(a, "red-1"));
+  EXPECT_NE(first, *store_->input_fingerprint(a, "red-2"));
+
+  publish(fl, flux(0.02));
+  const Sha256Digest second = of_what_was_read();
+  EXPECT_NE(second, first);
+  EXPECT_EQ(second, *store_->input_fingerprint(a, "red-1"));
+
+  // The order the heads were read in is no part of it.
+  auto heads = *store_->heads(a);
+  ASSERT_GT(heads.size(), 1u);
+  std::reverse(heads.begin(), heads.end());
+  EXPECT_EQ(fingerprint_of(heads, store_->resolve_refs(a, RefPolicy{})->refs, "red-1"), second);
 }
 
 TEST_P(ReferenceTest, DerivedValuesAreServedOnlyForCurrentInputs) {

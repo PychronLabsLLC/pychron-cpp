@@ -82,13 +82,7 @@ Result<Sha256Digest> input_fingerprint(Db& db, Uuid analysis, const std::string&
   if (!heads) return fail(heads.error());
   auto refs = resolve_refs(db, analysis, RefPolicy{});
   if (!refs) return fail(refs.error());
-  std::map<std::string, Uuid> by_kind;
-  for (const auto& h : *heads) by_kind[std::string(to_string(h.kind))] = h.revision;
-  std::string text = "pychron-derived-fingerprint/1\n";
-  for (const auto& [kind, rev] : by_kind) text += "head " + kind + " " + rev.str() + "\n";
-  for (const auto& r : refs->refs) text += "ref " + r.ref_object.str() + " " + r.revision.str() + "\n";
-  text += "reduction_version " + reduction_version + "\n";
-  return sha256(std::string_view{text});
+  return fingerprint_of(*heads, refs->refs, reduction_version);
 }
 
 Result<void> put_derived(Db& db, Uuid analysis, const Sha256Digest& fingerprint, const std::string& reduction_version,
@@ -153,3 +147,19 @@ Result<int> prune_derived(Db& db, Uuid analysis) {
 }
 
 }  // namespace pychron::persistence::detail
+
+namespace pychron::persistence {
+
+// The text is input_fingerprint's (detail, above).
+Sha256Digest fingerprint_of(const std::vector<HeadInfo>& heads, const std::vector<ResolvedRef>& refs,
+                            const std::string& reduction_version) {
+  std::map<std::string, Uuid> by_kind;
+  for (const auto& h : heads) by_kind[std::string(to_string(h.kind))] = h.revision;
+  std::string text = "pychron-derived-fingerprint/1\n";
+  for (const auto& [kind, rev] : by_kind) text += "head " + kind + " " + rev.str() + "\n";
+  for (const auto& r : refs) text += "ref " + r.ref_object.str() + " " + r.revision.str() + "\n";
+  text += "reduction_version " + reduction_version + "\n";
+  return sha256(std::string_view{text});
+}
+
+}  // namespace pychron::persistence

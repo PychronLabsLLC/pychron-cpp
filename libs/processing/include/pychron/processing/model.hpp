@@ -98,6 +98,10 @@ struct Analysis {
   int aliquot = 0;
   int increment = -1;  // -1: no step
   std::string runid;   // identifier-aliquot[step]
+  // What the store's derived cache keys a reduction of this analysis by: a
+  // SHA-256 (lower-case hex) over its head revisions, its resolved
+  // references and the reduction version. Empty from a source that has none.
+  std::string input_fingerprint;
   std::string analysis_type;
   double timestamp = 0.0;  // UTC epoch seconds
   std::string mass_spectrometer, extract_device;

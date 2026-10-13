@@ -369,6 +369,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   a.repository = row.repository;
   a.analyst = d.analyst.value_or("");
   a.tag = row.tag.empty() ? "ok" : row.tag;
+  a.input_fingerprint = parts.input_fingerprint;
   if (const auto* t = head_payload<ps::TagValue>(parts.heads, ps::Kind::Tags); t && !t->name.empty()) a.tag = t->name;
   if (const auto* n = head_payload<ps::AnnotationValue>(parts.heads, ps::Kind::Annotation)) a.comment = n->comment.value_or("");
   for (const auto& [kind, revision] : parts.head_revisions) a.heads[std::string(ps::to_string(kind))] = revision.str();
@@ -718,6 +719,10 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
     }
     auto refs = s.resolve_refs(id, ps::RefPolicy{});
     if (!refs) return fail(refs.error());
+    // Of what this load read: no statement of its own (age cache spec 4.3).
+    if (*view)
+      p.input_fingerprint =
+          to_hex(ps::fingerprint_of((*view)->heads, refs->refs, std::string(reduction::kReductionVersion)));
     for (const auto& ref : refs->refs) {
       auto payload = s.load_payload(ref.revision);
       if (!payload) return fail(payload.error());
