@@ -99,7 +99,7 @@ run: section 4.8.
 ```cpp
 enum class Repeat { Safe, Unsafe };   // may this call be sent twice?
 
-struct LinkPolicy {                   // per transport; [transports.<name>.link]
+struct LinkPolicy {                   // per transport; [transports.<name>.recovery]
   bool reconnect = true;
   Duration backoff_min = 1s, backoff_max = 30s;   // doubling
   Duration call_window = 20s;         // how long one call keeps trying
@@ -122,7 +122,8 @@ struct LinkPolicy {                   // per transport; [transports.<name>.link]
 - `SwitchManager::actuate`: `outcome_unknown` from actuator -> read state
   back (already there when `verify`); matches target: success; else repeat
   once; `verify = false` valve: repeat (absolute target). State stays
-  `Unknown` on bus until resolved, as today.
+  `Unknown` on bus until resolved, as today. No shipped valve driver has an
+  `Unsafe` command (section 9): rule for a driver that will.
 - Known `Reconnector` window (generation not tied to connection) closed:
   generation taken under transport transaction.
 - Every reconnect publishes `LinkReconnected{transport, attempts, down_for}`;
@@ -138,7 +139,7 @@ configured: for run `r`, required links = transports under (a) every valve,
 switch and gauge its scripts' line serves (whole line: scripts are code, not
 analysed), (b) its extraction device, (c) spectrometer, when run has plan.
 `LabSession` builds `LinkSet` per run from hardware it already holds.
-`optional = true` on a transport (`[transports.<name>.link]`) takes it out of
+`optional = true` on a transport (`[transports.<name>.recovery]`) takes it out of
 (a): camera, cryostat readout, monitoring gauges.
 
 ### 4.4 Run phases
@@ -313,7 +314,10 @@ max_pending = 200
 ```
 
 Per transport, in line and spectrometer files:
-`[transports.<name>.link]` `reconnect`, `optional`, `call_window_s`.
+`[transports.<name>.recovery]` `reconnect`, `optional`, `call_window_s`.
+(Not `link`: a spectrometer transport has a string key of that name, kind
+`"link"`, the NGX's shared connection. Such a transport uses the policy of
+the transport it names.)
 
 Loader range-checks every key; example file lists each commented out with
 default; test holds example and defaults together (as `sim.toml`).
@@ -430,7 +434,11 @@ Completion apart from acceptance, and `Repeat`:
   repeated `Stop` or `MoveTo` cannot arrive after a later command of the
   same caller.
 - NGX: `StartAcq` is `Unsafe` (the only wire acquisition start in the tree);
-  4.4's restart-once rule is about it.
+  4.4's restart-once rule is about it. A valve actuation is three commands
+  (`SAB 1`, `OpenValve` or `CloseValve`, `SAB 0`): repeated as one unit.
+- Other drivers, same reading: `Unsafe` are the reads that take something
+  off the instrument, Agilent `SYST:ERR?` (error queue) and the pulse
+  counter's `R` (count since last read). Rest `Safe`; table in plan, Task 6.
 
 `status`: additive, version stays 2. `serialize.cpp` rejects any
 `schema_version` other than `kRecordSchemaVersion` (2) and ignores unknown

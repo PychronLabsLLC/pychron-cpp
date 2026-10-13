@@ -49,7 +49,7 @@ Phases follow spec section 7. Phases 1 to 4 each help alone and may land on `dev
 | `libs/devices/include/pychron/devices/device.hpp`, `src/device.cpp` | `Device::call(op, Repeat)`. |
 | `libs/devices/include/pychron/devices/reconnect.hpp`, `src/reconnect.cpp` | Removed once `QtegraLink` is on `Link`. |
 | every driver under `libs/devices/src` (list in Task 6) | Each wire call marked; the table in the driver's header. |
-| `libs/core/include/pychron/core/config/system_config.hpp` and its loader | `[transports.<name>.link]`. |
+| `libs/core/include/pychron/core/config/system_config.hpp` and its loader; `libs/systems/src/spectrometer/config_loader.cpp` | `[transports.<name>.recovery]`. |
 | `libs/core/include/pychron/core/events.hpp` | `LinkReconnected`. |
 | `libs/systems/src/switch_manager.cpp` | `outcome_unknown` resolved by reading back. |
 | `libs/experiment/include/pychron/experiment/record/types.hpp`, `src/record/serialize.cpp`, `src/record/builder.cpp` | `provenance.status`, `provenance.failure`. |
@@ -81,8 +81,8 @@ Today `open` stays true after the peer closes (`queued_transport.cpp:56`) and `e
   - `QueuedTransport.AnIoErrorClosesTheChannel`: after one `Io` from `do_read`, `do_close` was called once, health is `Down`, and the next `exchange` fails `NotConnected` without `do_write` being called.
   - `QueuedTransport.ATimeoutLeavesTheChannelOpen`.
   - `QueuedTransport.WriteIsNeverSentTwice`: `retries = 3`, `do_write` fails `Timeout`: one call.
-  - `QueuedTransport.ExchangeRepeatsOnlyWhenAsked`: `exchange(tx, spec)` with `retries = 3` sends once; `exchange(tx, spec, Resend::Allowed)` sends up to four times on `Timeout`, and stops at once on `Io` (the channel is closed).
-- [ ] Implement: in the worker, `Io` from `do_write` or `do_read` runs `do_close()`, sets `open = false` and calls `note_closed`. Remove the loop from `write()`. Add `enum class Resend { Never, Allowed }` as a defaulted third parameter of `Transport::exchange` (default `Never`); the loop stays for `Allowed`.
+  - `QueuedTransport.ExchangeRepeatsOnlyWhenAsked`: `exchange(tx, spec)` with `retries = 3` sends once; `exchange(tx, spec, timeout, Resend::Allowed)` sends up to four times on `Timeout`, and stops at once on `Io` (the channel is closed).
+- [ ] Implement: in the worker, `Io` from `do_write` or `do_read` runs `do_close()`, sets `open = false` and calls `note_closed`. Remove the loop from `write()`. Add `enum class Resend { Never, Allowed }` as a defaulted fourth parameter of `Transport::exchange`, after `timeout` (`transport.hpp:40`; default `Never`); the loop stays for `Allowed`. `exchange` is virtual with default arguments: every override and every fake in `tests/` takes the parameter, and the default is written on the base only. `retries` keeps its meaning for the calls that pass `Allowed`, which from Task 5 on are the `Safe` ones (spec 4.1): `Device::call` hands the driver's op the `Resend` to use.
 - [ ] `grep -rn 'retries' libs apps configs profiles tests`: no shipped config sets it (spec section 2); fix any test that counted on the old meaning by passing `Resend::Allowed`, never by deleting the case.
 - [ ] `build/dev/tests/transport/pychron_transport_tests --gtest_filter='QueuedTransport.*'`, then `ctest --preset dev-quick`.
 - [ ] Commit: `fix(transport): an Io error closes the channel and nothing is resent unasked`.
@@ -135,7 +135,7 @@ class Link {  // one per transport, shared by the devices on it
   template <class T>
   [[nodiscard]] Result<T> call(const std::function<Result<T>()>& op, Repeat repeat,
                                std::optional<Duration> window = std::nullopt);
-  [[nodiscard]] Result<void> probe();     // the connect step, Safe; Task 16
+  [[nodiscard]] Result<void> probe();     // the connect step, Safe; Task 17
   [[nodiscard]] std::uint64_t reconnects() const noexcept;
   [[nodiscard]] std::uint64_t repeats() const noexcept;
 };
@@ -159,7 +159,7 @@ class Link {  // one per transport, shared by the devices on it
 
 **Files:** `libs/devices/include/pychron/devices/device.hpp`, `libs/devices/src/device.cpp`, `libs/devices/src/spectrometer/qtegra_link.cpp` and its header, `thermo_qtegra.cpp`, `qtegra_valves.cpp`, `qtegra_gauges.cpp`, `libs/devices/include/pychron/devices/reconnect.hpp` and `src/reconnect.cpp` (deleted), `tests/devices/test_link.cpp`, `tests/devices/test_reconnect.cpp` (its cases moved, none dropped), `tests/systems/test_qtegra_system.cpp`.
 
-- [ ] `DeviceOptions` gains `Link* link = nullptr`. `Device::call(op, Repeat)` is `observe(link ? link->call(op, repeat) : op())`: a device without a link behaves as today.
+- [ ] `DeviceOptions` gains `Link* link = nullptr`. `Device::call(op, Repeat)` is `observe(link ? link->call(op, repeat) : op())`, where `op` takes the `Resend` for its exchanges (`Allowed` when `Safe`, `Never` when `Unsafe`): a device without a link behaves as today, and an `Unsafe` command is resent by neither layer (test: `retries = 3`, an `Unsafe` call that times out is seen once by the `SimTransport`).
 - [ ] `QtegraLink` owns a `Link` in place of its `Reconnector`; `set_handshake` becomes `Link::set_connect`. Every Qtegra command is `Safe` (spec section 9).
 - [ ] Move each case of `test_reconnect.cpp` into `test_link.cpp` under its old name where the behaviour is kept; where the rate limit was asserted, assert the backoff instead and say so in the commit body.
 - [ ] `QtegraAcquireSteady` and `test_qtegra_system` pass unchanged.
@@ -175,25 +175,28 @@ One commit a driver family, in this order; each is small and lands alone.
 |---|---|---|
 | `QtegraSpectrometer`, `QtegraValves`, `QtegraGauges` (Task 5) | all | none |
 | `ChromiumLaser` | every query; `Laser.Enable 0\|1`, `Laser.Output`, `Stage.MoveTo`, `Scans.MoveTo`, `Laser.Stop`, `Stage.Stop`, `Scans.Stop`, `Scans.Status_Verbosity` | `Laser.Fire` |
-| `NgxLink` users (`NgxSpectrometer`, `NgxValves`) | `Login`, `SetAcqPeriod`, `SetMass`, `GETMASS`, `SSO`, `GSO`, `OpenValve`, `CloseValve`, `GetValveStatus`, `StopAcq`, `SAB` (check `SAB` in the codec first: mark it `Unsafe` if it is not an absolute set) | `StartAcq` |
-| `AgilentSwitch` | `*IDN?`, `SYST:ERR?`, `ROUT:OPEN`, `ROUT:CLOSE`, `ROUT:OPEN?`, `ROUT:CLOSE?` | `*CLS` only if it clears an error another caller has yet to read: read the driver, decide, write why |
+| `NgxLink` users (`NgxSpectrometer`, `NgxValves`) | `Login`, `SetAcqPeriod`, `SetMass`, `GETMASS`, `SSO`, `GSO`, `GetValveStatus`, `StopAcq`; a valve actuation as one unit: `SAB 1`, `OpenValve` or `CloseValve`, `SAB 0` (`ngx.cpp:526-541`; `SAB` is an absolute set) | `StartAcq` |
+| `AgilentSwitch` | `*IDN?`, `*CLS` (sent in `connect()`, which a reconnect runs again anyway), `ROUT:OPEN`, `ROUT:CLOSE`, `ROUT:OPEN?`, `ROUT:CLOSE?` | `SYST:ERR?` (a read that takes the error off the instrument's queue: a repeat after a lost reply loses it) |
 | `PychronValves`, `Plc2000Valves`, `ProxrRelay` | open, close, on, off, state reads, bank select | none |
 | `Plc2000Heater`, `Lakeshore` | reads; `SETP`, `RANGE`, coil and register writes (absolute) | none |
 | `GpMicroIon`, `PfeifferMaxiGauge`, `Plc2000Gauges`, `VarianXgs600` | reads; `IG1 ON\|OFF` | none |
-| `AdcBank`, `PulseCounter`, `SerialHv`, `Map215Dac` | reads; `VSET` | `PulseCounter` `R` if the read clears the count: read the codec, decide |
+| `AdcBank`, `PulseCounter`, `SerialHv`, `Map215Dac` | reads; `VSET`; `B`, `W` | `PulseCounter` `R` (the read clears the count, `pulse_counter.hpp:5`: an `outcome_unknown` poll costs that interval's counts and the acquirer does not ask again for it) |
 
 - [ ] For each driver: a test line per command in `test_repeat_tables.cpp` (`RepeatTable.<Driver>`): the link is taken down for 3 s around that one command; a `Safe` command is seen twice by the `SimTransport` and the call succeeds; an `Unsafe` one is seen once and the call returns `outcome_unknown`.
-- [ ] Each wire call goes through `Device::call`. A driver that sends several writes in one `transact` (Chromium's `act`, Agilent, Lakeshore, Pfeiffer, ProXR) repeats the whole transaction, never one write of it.
-- [ ] `ChromiumLaser::fire_laser`: on `outcome_unknown`, send `Laser.Stop` (its recovery path already does, `chromium.cpp:386`) and return the error.
-- [ ] `NgxLink` keeps its reader loop and takes `backoff_min` and `backoff_max` from `LinkPolicy` in place of `reconnect_min` and `reconnect_max`; `NgxLinkSteady` passes unchanged.
+- [ ] Each wire call goes through `Device::call`. A driver that sends several writes in one `transact` (Chromium's `act`, Agilent, Lakeshore, Pfeiffer, ProXR) repeats the whole transaction, never one write of it. The same holds for a sequence that is several calls under a driver's own mutex: an NGX valve actuation is repeated as the whole `SAB 1` ... `SAB 0` bracket, and `RepeatTable.NgxValves` fails if the simulator's `unbracketed_actuations` (`ngx_sim.hpp:59`) is not zero.
+- [ ] Tests here make their `Link` by hand and give it to the driver; the line and the spectrometer assembler hand out links in Task 7.
+- [ ] `ChromiumLaser::fire_laser`: on `outcome_unknown`, send `Laser.Stop` (its recovery path already does, `chromium.cpp:386`) with the critical window (10 min, spec 4.4), not the call window, and return the error. Test: the link is down for 30 s after the lost `Laser.Fire`; the `Stop` arrives when it returns and `Laser.Fire` was seen at most once.
 - [ ] The table goes in each driver's header as a comment above the class. `libs/devices/AGENTS.md` states the marking rule (spec 4.2: absolute target or read is `Safe`; a command whose second arrival does more is `Unsafe`) and that a new command without a row in `test_repeat_tables.cpp` is not done.
 - [ ] Commits: `feat(devices): <driver> marks which commands may be sent twice`.
 
-### Task 7: `[transports.<name>.link]`
+### Task 7: `[transports.<name>.recovery]`
 
 **Files:** `libs/core/include/pychron/core/config/system_config.hpp` (`TransportConfig`, `:73`) and its loader, `libs/systems/src/extraction_line.cpp` (`:206-229`, where transports are built), `libs/systems/src/spectrometer/assembler.cpp`, `configs/examples` line and spectrometer files, `tests/systems/test_extraction_line.cpp`, `tests/setup`.
 
-- [ ] Failing tests: the three keys `reconnect`, `optional`, `call_window_s` load and are range-checked (`call_window_s` 0 to 3600; an unknown key under `link` is a `Config` error naming it); absent table gives `LinkPolicy{}`; the line makes one `Link` per transport and every driver on that transport is given the same one.
+The spec called the table `link`; a spectrometer transport already has a string key of that name (`config_loader.cpp:145-155`, kind `"link"`: the NGX's shared connection), so the table is `recovery` (spec 4.2, 4.3 and 4.10 changed in this branch).
+
+- [ ] Failing tests: the three keys `reconnect`, `optional`, `call_window_s` load and are range-checked (`call_window_s` 0 to 3600; an unknown key under `recovery` is a `Config` error naming it), in the line's loader and in the spectrometer's (`libs/systems/src/spectrometer/config_loader.cpp`); absent table gives `LinkPolicy{}`; the line makes one `Link` per transport and every driver on that transport is given the same one; a transport of kind `"link"` uses the `Link` of the transport it names and may not have a `recovery` table of its own (error naming it).
+- [ ] `NgxLink` keeps its reader loop and takes `backoff_min` and `backoff_max` from `LinkPolicy` in place of `reconnect_min` and `reconnect_max`; `NgxLinkSteady` passes unchanged.
 - [ ] Read `libs/setup/AGENTS.md` before touching `configs/examples`: the example line shows the table commented out with its defaults, and `optional = true` on its camera transport.
 - [ ] Commit: `feat(systems): a transport's reconnect policy is read from the line file`.
 
@@ -251,7 +254,7 @@ struct Provenance { /* ... */ RecordStatus status = RecordStatus::Complete; std:
 
 ### Task 11: The built-in steps
 
-**Files:** `libs/experiment/src/run/run.cpp`, `include/pychron/experiment/run/run.hpp`, `libs/experiment/src/measurement/engine.cpp` (the inlet close and detector unprotect it tries once today), `libs/core/include/pychron/core/events.hpp` (`Alarm` severity), `tests/experiment/test_run.cpp`.
+**Files:** `libs/experiment/src/run/run.cpp`, `include/pychron/experiment/run/run.hpp`, `libs/experiment/src/measurement/engine.cpp` (the inlet close and detector unprotect it tries once today), `tests/experiment/test_run.cpp`. (`AlarmSeverity::Critical` exists, `events.hpp:19`.)
 
 ```cpp
 struct SafeStateResult { std::vector<std::string> failed_steps; };  // empty: safe
@@ -263,8 +266,8 @@ struct SafeStateResult { std::vector<std::string> failed_steps; };  // empty: sa
   - `SafeState.EachStepKeepsTryingForTheCriticalWindow`: the valve's link down for 5 min: the step succeeds at 5 min; an `Alarm` is published at 20 s.
   - `SafeState.AStepThatFailsDoesNotStopTheLaterOnes`: link down for good: after 10 min the step is in `failed_steps`, a critical `Alarm` is on the bus, the next step ran.
   - `SafeState.ApplyingItTwiceChangesNothing`.
-  - `Run.AFailedRunPastNoReturnIsMadeSafe`; `Run.AFailedPrepareIsNot`.
-- [ ] Implement with `Link::call(op, Repeat::Safe, critical_window)` (default 10 min; from `executor.toml` after Task 18, a constant until then). `RunResult` gains `unsafe` (true when `failed_steps` is not empty) for Task 15.
+  - `Run.AFailedRunPastNoReturnIsMadeSafe`; `Run.AFailedPrepareIsNot`; `Run.APostMeasureFailureStillSavesAndIsMadeSafe` (spec 4.4, PostMeasure row).
+- [ ] Implement with `Link::call(op, Repeat::Safe, critical_window)` (default 10 min; from `executor.toml` after Task 15, a constant until then). `RunResult` gains `unsafe` (true when `failed_steps` is not empty) for Task 17.
 - [ ] TSan run of `SafeState.*`.
 - [ ] Commit: `feat(experiment): a failed run leaves the line in a safe state`.
 
@@ -292,6 +295,7 @@ struct SafeStateResult { std::vector<std::string> failed_steps; };  // empty: sa
   - `MeasurementGap.EnoughCountsIsTruncatedWithReasonLink`; `...TooFewCountsIsFailed` (`min_counts`: 20% of planned and never under the fit's minimum; both bounds tested).
   - `MeasurementGap.AnAcquisitionStartOfUnknownOutcomeIsRestartedOnce` (NGX `StartAcq`).
   - `MeasurementGap.EquilibrationFollowsTheSameRule`.
+  - `MeasurementEngine.AValveCallInMeasurementKeepsTryingForTheCriticalWindow` (spec 4.4, valve row): the inlet valve's link is down for 5 min at inlet close: the call succeeds at 5 min, an `Alarm` went out at 20 s, the run goes on. Down for good: the run is `Failed` after 10 min, saved (Task 10) and made safe (Task 11). Same for detector unprotect.
   - `MeasurementEngine.WithNoGapNothingChanges`: an existing record fixture compares equal.
 - [ ] Implement: `timeout_factor` and `timeout_slack` now mark the start of a gap, not the end of the block; the wait is `clock.wait_until(min(gap_start + max_gap, block_end))`.
 - [ ] TSan run of `MeasurementGap.*`.
@@ -366,7 +370,9 @@ Result<void> Executor::skip();   // only a row that has not started
   - `...InOverlapTheRunInFlightCarriesOn`.
   - `...AnUnsafeRunEndsTheQueueWithoutHolding` (`code = "unsafe"`, Task 11).
   - `...ADefiniteFailureEndsTheQueueAsToday`, and with `continue_on_failure` goes on as today.
-  - `...TheStateFileCarriesTheHoldAndTheLastFailedRow`: round trip; a file written before this task still gives its `resume_row`.
+  - `...ALinkThatDropsDuringPrepareHoldsAndStartsTheRowAgain` (spec 4.4, first row): `RunResult` gains `started` (false when the run failed before its point of no return for a transient error); the executor then does not consume the row: `next_row` in the state file still names it, its aliquot is given back or allocated once, and it runs once after the hold. A definite failure in Prepare ends the queue as today.
+  - `...AFailedRunIsFlaggedInItsSummary`: `RunSummary` gains `status` (the record's `RecordStatus`) and `failure`; `truncated` stays for its readers.
+  - `...TheStateFileCarriesTheHoldAndTheLastFailedRow`: round trip; a file written before this task still gives its `resume_row`; a file with the new `holding` object gives the same `resume_row` as one without.
   - `...AQueueNeverEndsForATransientFailureWithoutHavingHeld` (spec section 5).
 - [ ] Implement. The hold's wait is a `clock.wait_until` on the executor's condition variable, woken through the clock by a `TransportHealth` subscription, `resume()`, `skip()` and the stop family. `write_state` writes with a JSON library if the file is still hand-built, and `resume_row` reads `next_row` as before.
 - [ ] Safe state is applied on entering a hold when a run failed past no return (Task 11 did it at the run's end; here assert it is not skipped and applying twice is harmless).
@@ -402,7 +408,7 @@ Result<void> Executor::skip();   // only a row that has not started
 **Files:** `libs/experiment/src/lab/notifier.cpp`, `include/pychron/experiment/lab/notifier.hpp`, `src/lab/notifications.cpp`, `include/.../lab/notifications.hpp` (`NotifyEvent`, `:51`), `tests/experiment/test_notifications.cpp`, `docs/notifications.md`, `configs/examples/notifications.toml`.
 
 - [ ] Failing tests, with the injected runner the tests already use in place of `curl`: a notification is a file in `<data>/outbox/` before delivery is tried and is removed on success; a new `Notifier` on the same directory delivers what the last one left, in order per channel; retry at 1, 2, 4 ... 60 min; given up after 24 h with one log line and the file removed; the `command` channel is tried first and does not wait for a failing email channel; `queue_holding`, `queue_resumed` and `unsafe` are sent for `ExecutorHolding`, the return to `Running`, and an `unsafe` queue end; each can be switched per channel as `run_failed` is.
-- [ ] The notifier's thread and its real-time `curl` timeout stay as they are (listed in the virtual clock spec, 4.5); the retry schedule is on the injected clock.
+- [ ] The notifier's thread and its real-time `curl` timeout stay as they are (virtual clock spec, 4.5), and so does the retry schedule: the thread is no participant of the clock, so it may not wait in a `VirtualClock`. Add "notification retry" to that spec's list. The schedule is a pure function (`next_attempt(first_tried, attempts)`), and delivery of what is due is one step, `deliver_due(now)`, which the thread calls with real time and the tests call with times they choose: no test sleeps.
 - [ ] No secret is written to the outbox: a file holds the event and its text, and the channel's credentials are read from `notifications.toml` at delivery. Test that an outbox file has no key of the config in it.
 - [ ] Commit: `feat(experiment): a notification that cannot be sent waits on disk and is sent later`.
 
@@ -416,7 +422,7 @@ Result<void> Executor::skip();   // only a row that has not started
 
 Read `libs/metrics/AGENTS.md` first: a label is a configured name, a counter is born at zero, every metric has a panel.
 
-- [ ] `pychron_link_reconnects_total{transport}` and `pychron_link_repeats_total{transport}` (core exporter, from `LinkReconnected` and a `LinkRepeated` event or the link's counters); `pychron_executor_holds_total{reason}` (reason an enumeration: `link`, `spool`, `run_failed`), `pychron_executor_holding`, `pychron_measurement_gaps_total`, `pychron_spool_pending`, `pychron_notifications_outbox` (experiment metrics).
+- [ ] `pychron_link_reconnects_total{transport}` and `pychron_link_repeats_total{transport}` (core exporter; both read at scrape from `Link::reconnects()` and `Link::repeats()` through the accessor Task 16 gives the line, so each is there at zero for every configured transport; no `LinkRepeated` event); `pychron_executor_holds_total{reason}` (reason an enumeration: `link`, `spool`, `run_failed`), `pychron_executor_holding`, `pychron_measurement_gaps_total`, `pychron_spool_pending`, `pychron_notifications_outbox` (experiment metrics).
 - [ ] Tests: each counter exists at zero for every configured transport or reason before any event; each moves on its event; `MetricsPackaging` finds a panel for each.
 - [ ] Commit: `feat(metrics): link recoveries, holds, gaps and backlogs are counted`.
 
@@ -450,5 +456,6 @@ Read `libs/metrics/AGENTS.md` first: a label is a configured name, a counter is 
 
 None blocks the plan. Two choices made here that the owner may want otherwise:
 
-1. A run truncated by the operator is also written `status = truncated` from Task 10 on (the spec says only that the record carries the status). Records truncated before that carry no key and read as `complete`.
+1. A run truncated by the operator or by a conditional is also written `status = truncated` from Task 10 on (`Run.ATruncatedRunIsMarkedTruncated` is that case; truncation for a link is Task 13's). So the record of such a run, made with no fault, gains a key and a new sha; only a complete record keeps its bytes (spec section 5, as reworded). The other way is to write the key for `failed` and for link truncation only. Records truncated before Task 10 carry no key and read as `complete`.
+3. The per-transport table is `recovery`, not `link` as the spec had it: `link` is taken (Task 7).
 2. `RecordIngest` refuses a `failed` record unless asked, so the store never holds one by default (Task 9). The record stays in the data directory either way.
