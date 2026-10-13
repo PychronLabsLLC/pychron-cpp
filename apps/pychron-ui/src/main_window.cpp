@@ -255,6 +255,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
     if (spectrometer_window_ == nullptr) {
       spectrometer_window_ = new SpectrometerWindow(*spectrometer_, simulation_, spectrometer_settings(), this);
       spectrometer_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+      spectrometer_window_->set_wall_clock([this] { return bridge_.wall_now(); });
     }
     spectrometer_window_->show();
     spectrometer_window_->raise();

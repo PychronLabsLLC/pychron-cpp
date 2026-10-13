@@ -12,6 +12,7 @@
 // default.
 
 #include <functional>
+#include <optional>
 #include <memory>
 #include <vector>
 
@@ -23,6 +24,7 @@
 #include <QTimer>
 
 #include "intensities_model.hpp"
+#include "rise_rate_panel.hpp"
 #include "spectrometer_bridge.hpp"
 #include "strip_chart_model.hpp"
 #include "strip_chart_view.hpp"
@@ -57,6 +59,10 @@ class SpectrometerWindow : public QMainWindow {
   StripChartView* chart_view() const { return view_; }
   IntensitiesModel* intensities() const { return intensities_; }
   QTableView* intensities_view() const { return intensities_view_; }
+  RiseRatePanel* rise_rate() const { return rise_; }
+  // The wall time a rise rate result is stamped with (the line's clock, so a
+  // simulated session is stamped in simulated time). Not given: no stamp.
+  void set_wall_clock(std::function<QDateTime()> now);
 
   // Asked before a large move with the mass change on the reference detector
   // (NaN when the current mass is unknown). Default: Yes/No dialog, default No.
@@ -111,6 +117,7 @@ class SpectrometerWindow : public QMainWindow {
   void update_banner();
   void update_magnet_labels();
   void update_actual_integration();
+  void update_rise_marks();  // the rise rate run's start and stop on the chart
   void on_readings(const std::vector<spectrometer::IntensityReading>& batch);
   void on_command_finished(const QString& what, const Result<void>& result);
 
@@ -123,6 +130,8 @@ class SpectrometerWindow : public QMainWindow {
   StripChartView* view_;
   IntensitiesModel* intensities_;
   QTableView* intensities_view_ = nullptr;
+  RiseRatePanel* rise_ = nullptr;
+  std::optional<TimePoint> rise_start_, rise_stop_;
 
   QFrame* banner_;
   QLabel* banner_label_;

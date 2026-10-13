@@ -69,6 +69,7 @@ class RiseRatePanel : public QWidget {
   std::function<QDateTime()> wall_now_;
   RiseRun run_;
   bool announced_ = false;  // started() sent for this run
+  bool void_said_ = false;  // cleared() sent for this run's having gone void
   int count_ = 0;           // results since the table was last cleared
 
   QComboBox* detector_;

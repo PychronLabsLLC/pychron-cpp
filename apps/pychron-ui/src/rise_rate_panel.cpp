@@ -99,6 +99,7 @@ void RiseRatePanel::toggle() {
     if (detector_->currentIndex() < 0) return;
     run_.start(detector_->currentText().toStdString());
     announced_ = false;
+    void_said_ = false;
     detector_->setEnabled(false);
     toggle_->setText(tr("Stop"));
     status_->clear();
@@ -112,7 +113,6 @@ void RiseRatePanel::toggle() {
   const auto rate = run_.current();
   if (run_.restarted()) {
     status_->setText(tr("No result: the readings began again while it ran (the scan was restarted)."));
-    emit cleared();
   } else if (!rate) {
     status_->setText(tr("No result: fewer than two readings."));
     emit cleared();
@@ -129,6 +129,10 @@ void RiseRatePanel::on_reading(const spectrometer::IntensityReading& reading) {
   if (!announced_ && run_.first()) {
     announced_ = true;
     emit started(*run_.first());
+  }
+  if (run_.restarted() && !void_said_) {
+    void_said_ = true;
+    emit cleared();  // the chart's time began again: the start mark means nothing now
   }
   show_live();
 }

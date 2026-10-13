@@ -145,6 +145,7 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   connect(&bridge_, &SpectrometerBridge::magnetRead, this, [this] { update_magnet_labels(); });
   connect(&bridge_, &SpectrometerBridge::detectorChanged, this, [this](const spectrometer::DetectorState& e) {
     intensities_->set_isotope(e.detector, QString::fromStdString(e.isotope));
+    rise_->set_isotope(e.detector, QString::fromStdString(e.isotope));
   });
   // Statuses can arrive out of order; the bridge's mirror keeps the newest.
   connect(&bridge_, &SpectrometerBridge::scanStatus, this, [this] {
@@ -252,7 +253,28 @@ QWidget* SpectrometerWindow::build_controls() {
   magnet_form->addRow(tr("Position"), position_);
   magnet_form->addRow(tr("Mass on %1").arg(bridge_.reference_detector()), mass_);
   column->addWidget(magnet_box);
-  column->addStretch();
+
+  auto* rise_box = new QGroupBox(tr("Rise rate"));
+  auto* rise_layout = new QVBoxLayout(rise_box);
+  rise_ = new RiseRatePanel(detectors);
+  rise_layout->addWidget(rise_);
+  column->addWidget(rise_box, 1);
+  connect(rise_, &RiseRatePanel::started, this, [this](TimePoint at) {
+    rise_start_ = at;
+    rise_stop_.reset();
+    update_rise_marks();
+  });
+  connect(rise_, &RiseRatePanel::stopped, this, [this](TimePoint at) {
+    rise_stop_ = at;
+    update_rise_marks();
+  });
+  connect(rise_, &RiseRatePanel::cleared, this, [this] {
+    rise_start_.reset();
+    rise_stop_.reset();
+    update_rise_marks();
+  });
+  // The detector the magnet group names is the one a rise is usually wanted of.
+  connect(target_detector_, &QComboBox::currentTextChanged, rise_, &RiseRatePanel::set_detector);
 
   // Changing a combo moves nothing; only Apply does.
   connect(target_detector_, &QComboBox::currentIndexChanged, this, [this](int) { fill_isotopes(); });
@@ -495,7 +517,22 @@ void SpectrometerWindow::sync_y_fields() {
 
 void SpectrometerWindow::clear_chart() {
   model_.clear();
+  // A mark's place is in the chart's time, which has just begun again.
+  rise_start_.reset();
+  rise_stop_.reset();
+  update_rise_marks();
   dirty_ = true;
+}
+
+void SpectrometerWindow::set_wall_clock(std::function<QDateTime()> now) { rise_->set_wall_clock(std::move(now)); }
+
+void SpectrometerWindow::update_rise_marks() {
+  std::vector<ChartMark> marks;
+  if (rise_start_)
+    if (const auto x = model_.x_of(*rise_start_)) marks.push_back({*x, theme().text});
+  if (rise_stop_)
+    if (const auto x = model_.x_of(*rise_stop_)) marks.push_back({*x, theme().error});
+  view_->set_marks(marks);
 }
 
 QString SpectrometerWindow::banner_text() const { return banner_->isHidden() ? QString() : banner_label_->text(); }
@@ -536,6 +573,7 @@ void SpectrometerWindow::on_readings(const std::vector<spectrometer::IntensityRe
   for (const auto& reading : batch) {
     model_.append(reading);
     intensities_->update(reading);
+    rise_->on_reading(reading);
   }
   dirty_ = true;
 }

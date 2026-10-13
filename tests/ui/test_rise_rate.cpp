@@ -306,12 +306,17 @@ class TestRiseRate : public QObject {
   void aRunTheScanRestartedUnderMakesNoRow() {
     RiseRatePanel panel(two());
     QSignalSpy stopped(&panel, &RiseRatePanel::stopped);
+    QSignalSpy cleared(&panel, &RiseRatePanel::cleared);
     panel.toggle();
     panel.on_reading(row(100, {{"H1", 0.0}}));
     panel.on_reading(row(160, {{"H1", 1.0}}));
+    QCOMPARE(cleared.count(), 1);
     panel.on_reading(row(3, {{"H1", 0.0}}));
     QVERIFY(panel.live_text().contains(QStringLiteral("began again")));
+    QCOMPARE(cleared.count(), 2);  // its start mark goes at once
+    panel.on_reading(row(63, {{"H1", 1.0}}));
     panel.toggle();
+    QCOMPARE(cleared.count(), 2);  // and is not taken away twice
     QCOMPARE(panel.results()->rowCount(), 0);
     QVERIFY(panel.status_text().contains(QStringLiteral("began again")));
     QCOMPARE(stopped.count(), 0);

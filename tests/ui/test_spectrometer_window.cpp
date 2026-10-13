@@ -11,11 +11,13 @@
 #include <optional>
 #include <vector>
 
+#include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QGroupBox>
 #include <QTableView>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -276,6 +278,63 @@ class TestSpectrometerWindow : public QObject {
     window_->set_scale(YScale::Linear);
     view->refresh();
     QVERIFY(std::isfinite(view->shown_y().lo) && view->shown_y().lo < view->shown_y().hi);
+  }
+
+  void theControlsHaveARiseRateGroup() {
+    open();
+    bool found = false;
+    for (const auto* box : window_->findChildren<QGroupBox*>()) found = found || box->title() == QStringLiteral("Rise rate");
+    QVERIFY(found);
+    QVERIFY(window_->rise_rate() != nullptr);
+    // It starts on the detector the magnet group names, and follows it.
+    QCOMPARE(window_->rise_rate()->detector_box()->currentText(), bridge_->reference_detector());
+    window_->select_target("AX", "Ar40");
+    QCOMPARE(window_->rise_rate()->detector_box()->currentText(), QStringLiteral("AX"));
+  }
+
+  void aRiseRateRunOnTheSimulatedSpectrometer() {
+    open();
+    window_->show();
+    QTRY_VERIFY_WITH_TIMEOUT(window_->chart_view()->point_count(kH1) >= 2, kWaitMs);
+    ui::RiseRatePanel* rise = window_->rise_rate();
+    rise->set_detector(QStringLiteral("H1"));
+    QCOMPARE(window_->chart_view()->mark_count(), 0);
+
+    rise->toggle();
+    QTRY_COMPARE_WITH_TIMEOUT(window_->chart_view()->mark_count(), 1, kWaitMs);  // the start, at its first reading
+    const int before = window_->chart_view()->point_count(kH1);
+    QTRY_VERIFY_WITH_TIMEOUT(window_->chart_view()->point_count(kH1) >= before + 5, kWaitMs);
+    QVERIFY(rise->live_text().contains(QStringLiteral("readings")));
+    rise->toggle();
+    QCOMPARE(rise->results()->rowCount(), 1);
+    QCOMPARE(window_->chart_view()->mark_count(), 2);
+    QVERIFY(rise->results()->item(0, ui::RiseRatePanel::ColDetector)->text().startsWith(QStringLiteral("H1")));
+    QVERIFY(rise->results()->item(0, ui::RiseRatePanel::ColReadings)->text().toInt() >= 5);
+    QVERIFY(rise->results()->item(0, ui::RiseRatePanel::ColTime)->text().isEmpty());  // this window was given no clock
+
+    // A new run takes the last one's marks away at once.
+    rise->toggle();
+    QVERIFY(window_->chart_view()->mark_count() <= 1);
+    QTRY_COMPARE_WITH_TIMEOUT(window_->chart_view()->mark_count(), 1, kWaitMs);
+    // And clearing the chart takes its own: their place was in the chart's time.
+    window_->clear_chart();
+    QCOMPARE(window_->chart_view()->mark_count(), 0);
+    // The run itself goes on over a cleared chart; its stop is marked on the new one.
+    QTRY_VERIFY_WITH_TIMEOUT(rise->live_text().contains(QStringLiteral("readings")), kWaitMs);
+    rise->toggle();
+    QCOMPARE(rise->results()->rowCount(), 2);
+    QCOMPARE(window_->chart_view()->mark_count(), 1);
+  }
+
+  void aResultIsStampedWithTheTimeTheWindowIsGiven() {
+    open();
+    window_->set_wall_clock([] { return QDateTime(QDate(2026, 10, 13), QTime(1, 2, 3)); });
+    window_->show();
+    ui::RiseRatePanel* rise = window_->rise_rate();
+    rise->toggle();
+    QTRY_VERIFY_WITH_TIMEOUT(rise->live_text().contains(QStringLiteral("readings")), kWaitMs);
+    rise->toggle();
+    QCOMPARE(rise->results()->item(0, ui::RiseRatePanel::ColTime)->text(), QStringLiteral("2026-10-13 01:02:03"));
   }
 
   void marksAreDrawnAndReplaced() {
