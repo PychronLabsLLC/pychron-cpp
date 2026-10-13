@@ -53,10 +53,19 @@ inline experiment::QueueSpec example_queue(const std::filesystem::path& dir, con
   return *q;
 }
 
+// A virtual clock's options with only the speed set (simulated seconds per
+// real second). Not a designated initializer: one that leaves fields out is
+// a warning under clang 18 and gcc.
+inline VirtualClock::Options at_speed(double speed) {
+  VirtualClock::Options options;
+  options.speed = speed;
+  return options;
+}
+
 // Destroy any bridge or window built on this before the fixture itself.
 struct SimLab {
   std::filesystem::path dir = scratch_lab();
-  VirtualClock clock{VirtualClock::Options{.speed = 400}};  // outlives everything below
+  VirtualClock clock{at_speed(400)};  // outlives everything below
   std::unique_ptr<systems::ExtractionLine> line;
   std::unique_ptr<spectrometer::Spectrometer> spec;
   std::unique_ptr<spectrometer::ScanService> scan;

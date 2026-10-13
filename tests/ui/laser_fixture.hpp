@@ -36,10 +36,18 @@ struct SimLaserLab {
   experiment::lab::Lab lab;
   std::unique_ptr<experiment::lab::Lasers> lasers;
 
+  // Only the speed set. Not a designated initializer: one that leaves
+  // fields out is a warning under clang 18 and gcc.
+  static VirtualClock::Options clock_options(double speed) {
+    VirtualClock::Options options;
+    options.speed = speed;
+    return options;
+  }
+
   // `speed`: simulated seconds per real second. A test that stops a move
   // part way takes it slowly, so that the move cannot end first on a busy
   // machine: 40 mm at the stage's 5 mm/s is 1.6 s at 5x.
-  explicit SimLaserLab(double speed = 50) : clock(VirtualClock::Options{.speed = speed}) {
+  explicit SimLaserLab(double speed = 50) : clock(clock_options(speed)) {
     namespace fs = std::filesystem;
     std::random_device rd;
     dir = fs::temp_directory_path() / ("pychron-ui-laser-" + std::to_string(rd()) + std::to_string(rd()));

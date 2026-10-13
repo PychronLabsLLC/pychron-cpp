@@ -1157,7 +1157,7 @@ void FluxWindow::save_then(std::function<void()> next) {
     FluxWindow& w = *self;
     --w.busy_;
     w.saving_ = false;
-    std::function<void()> next = std::exchange(w.after_save_, {});
+    std::function<void()> then = std::exchange(w.after_save_, {});
     w.switch_queued_ = false;
     w.update_enabled();
     w.update_actions();
@@ -1169,7 +1169,7 @@ void FluxWindow::save_then(std::function<void()> next) {
     // The level was asked for again meanwhile: that read follows the save on
     // the worker, so it shows what was saved, and what was to follow is moot.
     const bool reread = generation != w.load_generation_;
-    if (reread) next = {};
+    if (reread) then = {};
     const QString text = result ? save_text(result->outcome, result->saved_by, result->saved_utc)
                                 : save_error_text(result.error().what);
     const bool failed = !result || result->outcome.conflict.has_value();
@@ -1192,9 +1192,9 @@ void FluxWindow::save_then(std::function<void()> next) {
       // stay so over every read of this level.
       w.loaded_skip_ = w.skip_;
     }
-    if (next) {
+    if (then) {
       // What was asked for takes the window elsewhere: said after its status.
-      next();
+      then();
       if (!self) return;
       w.message_ = text;
       w.message_details_.clear();
