@@ -7,8 +7,10 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <future>
 #include <string>
 #include <thread>
+#include <utility>
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -136,17 +138,36 @@ TEST(UdpTransport, NoReplyTimesOut) {
 TEST(UdpTransport, LateReplyIsDiscardedBeforeTheNextExchange) {
   // The first reply arrives after the client gave up on it; the next exchange
   // must not take it for its own.
-  LoopbackPeer peer([](LoopbackPeer& p) {
+  // No sleep says which came first: the peer answers the first request only
+  // once the client has given up on it, and the client asks again only once
+  // that answer has been sent (on the loopback interface a datagram sent is
+  // a datagram queued at its receiver).
+  std::promise<void> gave_up;
+  std::promise<void> late_reply_sent;
+  LoopbackPeer peer([&](LoopbackPeer& p) {
     const auto first = p.receive();
-    std::this_thread::sleep_for(150ms);
+    gave_up.get_future().wait();
     p.send("re:" + first);
+    late_reply_sent.set_value();
     p.send("re:" + p.receive());
   });
+  // The peer is let go whatever ends the test, or its destructor waits for good.
+  struct LetGo {
+    std::promise<void>& promise;
+    bool done = false;
+    void now() {
+      if (!std::exchange(done, true)) promise.set_value();
+    }
+    ~LetGo() { now(); }
+  } let_go{gave_up};
   UdpTransport t({"127.0.0.1", peer.port()}, opts());
   ASSERT_TRUE(t.open());
   EXPECT_FALSE(t.exchange(to_bytes("one\r"), kCr, 50ms));
-  std::this_thread::sleep_for(200ms);  // the late reply is now queued
-  EXPECT_EQ(to_string(*t.exchange(to_bytes("two\r"), kCr)), "re:two\r");
+  let_go.now();
+  late_reply_sent.get_future().wait();
+  auto second = t.exchange(to_bytes("two\r"), kCr);
+  ASSERT_TRUE(second) << second.error().what;
+  EXPECT_EQ(to_string(*second), "re:two\r");
 }
 
 TEST(UdpTransport, DatagramsFromOtherPeersAreIgnored) {
