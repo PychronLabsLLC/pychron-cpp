@@ -695,7 +695,7 @@ Top-level tables (others are errors): `plan`, `hook`, `detectors`,
 | | `detector` | text | the reference | |
 | | `isotope` | text | required when before or after | |
 | | `config` | text | `default` | a name from `peak_center.toml` |
-| | `min_signal` | number >= 0 | 0 (no minimum) | the peak centre after the run is skipped when the isotope's last ten readings on the detector average less than this, in the detector's units |
+| | `min_signal` | number >= 0 | 0 (no minimum) | the peak centre after the run is skipped when the isotope's last ten readings on the detector average less than this, in the detector's units. The shipped plans set 3.0 and expose it |
 | `[baseline]` | `before`, `after` | true/false | false | |
 | | `counts` | whole number | 0 (>= 1 when used) | |
 | | `mass` | number > 0 | where the magnet is | |

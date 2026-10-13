@@ -201,7 +201,7 @@ after = true
 detector = "H1"
 isotope = "Ar40"
 config = "default"      # a named table in the lab's peak_center.toml
-# min_signal = 0.05     # skip the peak centre after a run with less signal than this
+min_signal = 3.0        # skip the peak centre after a run with less signal than this
 
 [baseline]              # measure with the magnet off the peaks
 after = true
@@ -310,8 +310,12 @@ isotope on the detector, in the run just measured, average less than
 centre after the run is not made: the magnet is not swept and the table is
 left alone. The run's events say `peak_center.after skipped: signal 0.011
 below min_signal 0.05`, and the record keeps the same line. A peak centre
-before the run has no readings to compare and is always made. The shipped
-plans set no minimum. (`min_peak_height` in `peak_center.toml` is a
+before the run has no readings to compare and is always made. The plans an
+install ships set `min_signal = 3.0` and expose it as **Peak center minimum
+signal**, so a run may change it in the **Measurement** tab or with
+`overrides = { "peak_center.min_signal" = 50.0 }` (a blank whose remaining
+peak is above 3 is still centred unless its rows raise it); 0 is no minimum.
+(`min_peak_height` in `peak_center.toml` is a
 different thing: it fails a centring whose swept peak is lower, after the
 sweep has been made.)
 

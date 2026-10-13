@@ -27,6 +27,9 @@ after = true
 detector = "H1"
 isotope = "Ar40"
 config = "default"
+# the peak center after a run is not made when the isotope's last ten readings
+# on the detector average less than this (detector units); 0: always made
+min_signal = 3.0
 
 [baseline]
 after = true
@@ -61,4 +64,4 @@ baseline = { default = "average" }
 include = ["@conditionals.default_unknown"]
 
 [parameters]
-expose = ["main.cycles", "main.hops[0].counts", "main.hops[1].counts", "baseline.counts", { path = "main.time_zero", label = "Time zero" }]
+expose = ["main.cycles", "main.hops[0].counts", "main.hops[1].counts", "baseline.counts", { path = "main.time_zero", label = "Time zero" }, { path = "peak_center.min_signal", label = "Peak center minimum signal" }]

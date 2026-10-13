@@ -66,7 +66,7 @@ const PlanParameter* find(const std::vector<PlanParameter>& ps, const std::strin
 TEST(PlanParameters, ExposedInExposeOrderWithTypesAndDefaults) {
   auto ps = plan_parameters(example());
   ASSERT_TRUE(ps) << ps.error().what;
-  ASSERT_EQ(ps->size(), 5u);
+  ASSERT_EQ(ps->size(), 6u);
   EXPECT_EQ((*ps)[0].path, "main.cycles");
   EXPECT_EQ((*ps)[0].kind, ParamKind::Int);
   EXPECT_EQ((*ps)[0].value, ParamValue(std::int64_t{2}));
@@ -77,6 +77,10 @@ TEST(PlanParameters, ExposedInExposeOrderWithTypesAndDefaults) {
   EXPECT_EQ((*ps)[4].label, "Time zero");
   EXPECT_EQ((*ps)[4].kind, ParamKind::String);
   EXPECT_EQ((*ps)[4].value, ParamValue(std::string("on_inlet_close")));
+  EXPECT_EQ((*ps)[5].path, "peak_center.min_signal");
+  EXPECT_EQ((*ps)[5].label, "Peak center minimum signal");
+  EXPECT_EQ((*ps)[5].kind, ParamKind::Float);
+  EXPECT_EQ((*ps)[5].value, ParamValue(3.0));
 
   // An exposed table lists every value under it; labels come from expose.
   ps = plan_parameters(other());

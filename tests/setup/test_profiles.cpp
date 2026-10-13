@@ -439,6 +439,38 @@ TEST(Profiles, NgxShipsTheThreeStarterPlans) {
 
 // Every shipped plan says where its time zero is and lets a run change it:
 // the measurement panel shows what a plan exposes.
+// Every shipped plan leaves the field table alone after a run with next to
+// no signal (legacy's pre-check, 3), and lets a run change the minimum.
+TEST(Profiles, EveryShippedPlanHasAPeakCenterMinimumSignalAndShowsIt) {
+  namespace plan = experiment::plan;
+  const auto lib = library();
+  const fs::path root = scratch("argus-peak-center-minimum");
+  const auto site = install(lib, "argus", {}, root);
+  auto lab = experiment::lab::load_lab({site.root, site.path(site.line), site.path(site.spectrometer)});
+  ASSERT_TRUE(lab.problems.empty()) << lab.problems.front();
+  for (const char* name : {"multicollect", "detector_ic", "multicollect_hop_ar39"}) {
+    const auto* tmpl = lab.plans->find(name);
+    ASSERT_NE(tmpl, nullptr) << name;
+    const auto params = plan::plan_parameters(*tmpl);
+    ASSERT_TRUE(params) << name << ": " << params.error().what;
+    const auto shown =
+        std::find_if(params->begin(), params->end(), [](const auto& p) { return p.path == "peak_center.min_signal"; });
+    ASSERT_NE(shown, params->end()) << name;
+    EXPECT_EQ(shown->label, "Peak center minimum signal") << name;
+    EXPECT_EQ(shown->value, experiment::ParamValue(3.0)) << name;
+
+    auto as_shipped = lab.plans->load(name, {});
+    ASSERT_TRUE(as_shipped) << name << ": " << as_shipped.error().what;
+    EXPECT_TRUE(as_shipped->plan.peak_center.after) << name;
+    EXPECT_DOUBLE_EQ(as_shipped->plan.peak_center.min_signal, 3.0) << name;
+    auto changed = lab.plans->load(name, {{"peak_center.min_signal", 12.5}});
+    ASSERT_TRUE(changed) << name << ": " << changed.error().what;
+    EXPECT_DOUBLE_EQ(changed->plan.peak_center.min_signal, 12.5) << name;
+    EXPECT_FALSE(lab.plans->load(name, {{"peak_center.min_signal", -1.0}})) << name;
+  }
+  fs::remove_all(root);
+}
+
 TEST(Profiles, EveryShippedPlanShowsItsTimeZero) {
   namespace plan = experiment::plan;
   const auto lib = library();

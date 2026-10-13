@@ -278,7 +278,9 @@ Fixed block sequence; each block is a small class with `run(ctx, token)`:
   `skipped = true`, Info log `peak_center.after skipped: signal S below
   min_signal X`, record event `peak_center` with detail `skipped: ...`. A
   block with no such series (`peak_center.before`, or isotope not collected
-  on that detector) runs. Shipped plans set none.
+  on that detector) runs. Shipped plans set `min_signal = 3.0` (legacy's
+  pre-check threshold; owner, 2026-10-13) and expose it as "Peak center
+  minimum signal".
 - The engine owns equilibrate/sniff timing; `OverlapReady` is published when
   the inlet closes.
 - Collection blocks drive the `Collector` (section 8).
