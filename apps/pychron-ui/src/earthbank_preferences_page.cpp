@@ -1,6 +1,7 @@
 #include "earthbank_preferences_page.hpp"
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <utility>
 
@@ -27,6 +28,9 @@ namespace eb = pychron::earthbank;
 namespace {
 
 int index(EarthbankPreferencesPage::Column column) { return static_cast<int>(column); }
+
+// On a row's Name item: the account the row's password is kept under.
+constexpr int kSavedAccountRole = Qt::UserRole + 1;
 
 // An id cell: empty is none; anything but a whole number above zero is wrong.
 bool read_id(const QString& text, std::optional<std::int64_t>& id) {
@@ -180,12 +184,12 @@ void EarthbankPreferencesPage::load() {
   }
   saved_ = std::move(*file);
   saved_.notes.clear();
-  for (const eb::Profile& profile : saved_.profiles) add_row(profile, profile.name == saved_.active);
+  for (const eb::Profile& profile : saved_.profiles) add_row(profile, profile.name == saved_.active, true);
   if (table_->rowCount() > 0) table_->selectRow(0);
   update_buttons();
 }
 
-int EarthbankPreferencesPage::add_row(const eb::Profile& profile, bool active) {
+int EarthbankPreferencesPage::add_row(const eb::Profile& profile, bool active, bool saved) {
   const QSignalBlocker quiet(table_);
   const int row = table_->rowCount();
   table_->insertRow(row);
@@ -194,7 +198,10 @@ int EarthbankPreferencesPage::add_row(const eb::Profile& profile, bool active) {
   tick->setCheckState(active ? Qt::Checked : Qt::Unchecked);
   table_->setItem(row, index(Column::Active), tick);
   auto id_text = [](const std::optional<std::int64_t>& id) { return id ? QString::number(*id) : QString(); };
-  table_->setItem(row, index(Column::Name), new QTableWidgetItem(QString::fromStdString(profile.name)));
+  auto* name = new QTableWidgetItem(QString::fromStdString(profile.name));
+  // The account its password is kept under now; none for a row not yet saved.
+  if (saved) name->setData(kSavedAccountRole, QString::fromStdString(eb::secret_account(profile)));
+  table_->setItem(row, index(Column::Name), name);
   table_->setItem(row, index(Column::Server), new QTableWidgetItem(QString::fromStdString(profile.base_url)));
   table_->setItem(row, index(Column::Username), new QTableWidgetItem(QString::fromStdString(profile.username)));
   table_->setItem(row, index(Column::Institution), new QTableWidgetItem(id_text(profile.institution_id)));
@@ -260,12 +267,39 @@ QString EarthbankPreferencesPage::apply() {
     if (const auto written = eb::save_profiles(now, setup_.profiles_file); !written) {
       return tr("The EarthBank profiles were not saved. %1").arg(QString::fromStdString(written.error().what));
     }
-    // A profile that is gone (or now names another account) takes its password with it.
+    // What each saved account's row is now.
+    std::map<std::string, const eb::Profile*> row_of;
+    for (int row = 0; row < table_->rowCount(); ++row) {
+      const QString account = table_->item(row, index(Column::Name))->data(kSavedAccountRole).toString();
+      if (!account.isEmpty()) row_of[account.toStdString()] = &now.profiles[static_cast<std::size_t>(row)];
+    }
+    const auto host_part = [](const std::string& account) {
+      return account.substr(std::min(account.find('@'), account.size()));
+    };
+    const auto saved_account = [this](const std::string& account) {
+      return std::ranges::any_of(saved_.profiles, [&](const eb::Profile& p) { return eb::secret_account(p) == account; });
+    };
+    // A profile that is gone, or is now at another server, takes its password
+    // with it. One that only has another name keeps it, under that name.
     for (const eb::Profile& old : saved_.profiles) {
       const std::string account = eb::secret_account(old);
       const bool kept = std::any_of(now.profiles.begin(), now.profiles.end(),
                                     [&](const eb::Profile& p) { return eb::secret_account(p) == account; });
-      if (!kept) worker_->erase_password(old);
+      if (kept) continue;
+      const auto row = row_of.find(account);
+      const bool renamed = row != row_of.end() && eb::valid_profile_name(row->second->name) &&
+                           eb::checked_base_url(row->second->base_url) &&
+                           host_part(eb::secret_account(*row->second)) == host_part(account) &&
+                           !saved_account(eb::secret_account(*row->second));
+      if (renamed) worker_->move_password(old, *row->second);
+      else worker_->erase_password(old);
+    }
+    const QSignalBlocker quiet(table_);
+    for (int row = 0; row < table_->rowCount(); ++row) {
+      const eb::Profile& p = now.profiles[static_cast<std::size_t>(row)];
+      const bool whole = eb::valid_profile_name(p.name) && eb::checked_base_url(p.base_url);
+      table_->item(row, index(Column::Name))
+          ->setData(kSavedAccountRole, whole ? QVariant(QString::fromStdString(eb::secret_account(p))) : QVariant());
     }
   }
   if (const int row = selected_row(); row >= 0 && !password_->text().isEmpty()) {

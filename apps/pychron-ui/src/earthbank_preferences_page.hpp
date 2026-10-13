@@ -73,7 +73,9 @@ class EarthbankPreferencesPage : public QWidget {
   void showEvent(QShowEvent* event) override;
 
  private:
-  int add_row(const earthbank::Profile& profile, bool active);
+  // `saved`: the profile is in the file, so its password, if it has one, is
+  // kept under its account.
+  int add_row(const earthbank::Profile& profile, bool active, bool saved = false);
   int selected_row() const;
   // The table as profiles; `problem` is set, and the result not to be used,
   // when a cell is not what it should be.

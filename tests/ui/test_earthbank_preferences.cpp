@@ -333,6 +333,55 @@ class EarthbankPreferencesTest : public QObject {
     QCOMPARE(dialog->packages()->rowCount(), 0);
   }
 
+  // A password is kept under `<profile>@<host>`: a profile given another
+  // name is the same account at the same server, and its password goes with it.
+  void renaming_a_profile_keeps_its_password() {
+    World w;
+    w.write(w.profile());
+    QVERIFY(w.store->set(eb::secret_account(w.profile()), "kept-through-a-rename"));
+    EarthbankPreferencesPage page(w.setup());
+    page.load();
+    eb::Profile renamed = w.profile();
+    renamed.name = "renamed";
+    QVERIFY(eb::secret_account(renamed) != eb::secret_account(w.profile()));
+    type(page.table(), 0, Column::Name, QStringLiteral("renamed"));
+    // not before it is applied: Cancel must be able to drop the rename
+    QCOMPARE(w.stored(w.profile()), std::optional<std::string>("kept-through-a-rename"));
+    QCOMPARE(w.stored(renamed), std::optional<std::string>());
+
+    QCOMPARE(page.apply(), QString());
+    QTRY_COMPARE(w.stored(renamed), std::optional<std::string>("kept-through-a-rename"));
+    QTRY_COMPARE(w.stored(w.profile()), std::optional<std::string>());
+    QCOMPARE(eb::load_profiles(w.file())->profiles.at(0).name, std::string("renamed"));
+
+    // Renamed again, with a password typed for it: the one typed is kept.
+    eb::Profile again = renamed;
+    again.name = "again";
+    type(page.table(), 0, Column::Name, QStringLiteral("again"));
+    page.table()->selectRow(0);
+    page.password()->setText(QStringLiteral("typed-with-the-rename"));
+    QCOMPARE(page.apply(), QString());
+    QTRY_COMPARE(w.stored(again), std::optional<std::string>("typed-with-the-rename"));
+    QTRY_COMPARE(w.stored(renamed), std::optional<std::string>());
+  }
+
+  // Another server is another account: the password does not follow there.
+  void a_profile_pointed_at_another_server_leaves_its_password_behind() {
+    World w;
+    w.write(w.profile());
+    QVERIFY(w.store->set(eb::secret_account(w.profile()), "for-the-first-server"));
+    EarthbankPreferencesPage page(w.setup());
+    page.load();
+    eb::Profile moved = w.profile();
+    moved.name = "renamed";
+    moved.base_url = "https://elsewhere.test";
+    type(page.table(), 0, Column::Name, QStringLiteral("renamed"));
+    type(page.table(), 0, Column::Server, QStringLiteral("https://elsewhere.test"));
+    QCOMPARE(page.apply(), QString());
+    QTRY_COMPARE(w.stored(w.profile()), std::optional<std::string>());
+    QCOMPARE(w.stored(moved), std::optional<std::string>());
+  }
+
   void removing_a_profile_erases_its_password() {
     World w;
     w.write(w.profile());

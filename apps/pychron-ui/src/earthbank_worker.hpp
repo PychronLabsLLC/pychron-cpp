@@ -155,6 +155,11 @@ class EarthbankWorker : public QObject {
   // `password_kept` either way, with what went wrong when it did.
   void store_password(const earthbank::Profile& profile, const QString& password);
   void erase_password(const earthbank::Profile& profile);
+  // Keeps under `to` the password kept under `from`, and forgets it there:
+  // a profile that was given another name. Nothing to move is not a
+  // problem; a password that could not be kept under `to` stays under
+  // `from`. `password_kept` for `to`.
+  void move_password(const earthbank::Profile& from, const earthbank::Profile& to);
 
   // ---- Publishing ----------------------------------------------------------
   // What each sample of `publication` would report: `surveyed`, with

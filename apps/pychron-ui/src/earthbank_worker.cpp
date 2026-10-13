@@ -332,6 +332,22 @@ void EarthbankWorker::erase_password(const eb::Profile& profile) {
   }, true);
 }
 
+void EarthbankWorker::move_password(const eb::Profile& from, const eb::Profile& to) {
+  ask([this, from, to](Job& job) -> Reply {
+    QString problem;
+    if (const auto had = job.secrets().get(eb::secret_account(from)); !had) {
+      problem = QString::fromStdString(had.error().what);
+    } else if (*had) {
+      if (const auto kept = job.secrets().set(eb::secret_account(to), **had); !kept) {
+        problem = QString::fromStdString(kept.error().what);
+      } else if (const auto erased = job.secrets().erase(eb::secret_account(from)); !erased) {
+        problem = QString::fromStdString(erased.error().what);
+      }
+    }
+    return [this, name = profile_name(to), problem] { emit password_kept(name, problem); };
+  }, true);
+}
+
 void EarthbankWorker::cancel() { std::static_pointer_cast<Mailbox>(mailbox_)->cancelled.store(true); }
 
 void EarthbankWorker::survey(const EarthbankPublication& publication) {
