@@ -3,7 +3,9 @@
 Status: owner approved spec, plan and implementation ahead, in task's own
 words (T083, inbox 2026-10-13: "this task should do spec, plan and
 implementation. I give my approval"). Written and built by an unattended run
-2026-10-13; choices owner did not make are in section 9.
+2026-10-13 (branch `feat/rise-rate`); choices owner did not make are in
+section 9. Built as written, with: detector box follows the Magnet group's
+detector whenever that changes and no run is on (4.3 said "starts on").
 
 ## 1. Problem
 

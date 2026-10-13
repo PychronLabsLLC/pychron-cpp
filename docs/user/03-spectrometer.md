@@ -44,7 +44,7 @@ Close it before running something that wants the spectrometer to itself.
 | Area | Contents |
 |---|---|
 | Centre | The strip chart. A red banner with a **Restart** button appears above it when something is wrong (see below). |
-| Left dock **Controls** | Integration time, graph settings, the Magnet group. |
+| Left dock **Controls** | Integration time, graph settings, the Magnet group, the Rise rate calculator. |
 | Right dock **Intensities** | A table of each detector's latest value, where you also choose which detectors are drawn. |
 
 Docks can be dragged, floated and resized; the layout is remembered per
@@ -116,6 +116,46 @@ Preferences... > Spectrometer** ("Ask before moving the magnet more than");
 set it to 0 ("Never ask") to switch the question off. Be careful with that
 setting on a real instrument: on a vendor instrument the detector protection
 and beam-blank behaviour for a move come from the field table.
+
+### Rise rate
+
+How fast a detector's signal climbs: the static rise of the isolated
+spectrometer for a leak or outgassing check, before and after a bake, after
+a filament change. The calculator only listens to the readings the window
+already shows. It moves nothing and closes no valve: isolate the
+spectrometer yourself first.
+
+1. Choose the **detector**. The box follows the Magnet group's detector
+   until you change it.
+2. Press **Start**. A dark vertical line marks the start on the chart.
+3. Watch the line under the button: the number of readings, the minutes
+   elapsed and the two rates so far. Let it run until the rates stop
+   moving.
+4. Press **Stop**. A red line marks the end, and the result is added to the
+   table.
+
+| Column | Meaning |
+|---|---|
+| Endpoints | The last reading less the first, divided by the minutes between them. What a hand calculation gives; one noisy reading at either end moves it. |
+| Linear | The slope of a straight line fitted to every reading of the run. The steadier of the two. |
+| ± | The standard error of that slope (1σ). Blank for a run of two readings. |
+| Units | The detector's units per minute (`fA/min`, `cps/min`). |
+| Minutes, n | How long the run was and how many readings it used. |
+| Time | When it was stopped. |
+| Note | `saturated` when the detector reported saturation during the run: do not trust that rate. |
+
+If the two rates disagree by much more than the ±, the signal was not
+rising in a straight line (still equilibrating, or a burst): run longer, or
+start again once it has settled.
+
+**Copy** puts the table on the clipboard, tab separated, to paste into a
+spreadsheet or a notebook. **Clear results** empties the table. The results
+are kept while the window is open; they are not written to a file.
+
+A run of fewer than two readings gives no result. Neither does one during
+which the scan was restarted: the window says so, and you start again.
+Changing the integration time or moving the magnet during a run is not
+prevented, and makes the result meaningless.
 
 ### When the banner appears
 
