@@ -11,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
 #include <string_view>
@@ -303,13 +304,15 @@ inline RunSpec unknown_run(const std::string& identifier, const std::string& pla
   return r;
 }
 
-// A temporary lab: records, spool, pipeline, aliquots.
+// A temporary lab: records, spool, pipeline, aliquots. Its directory is named
+// by chance as well as by the clock: ctest runs each case in a process of its
+// own, several at once, and two that read the same tick would share a spool.
 class Lab {
  public:
   Lab()
       : dir_(std::filesystem::temp_directory_path() /
              ("lab_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" +
-              std::to_string(counter()++))),
+              std::to_string(std::random_device{}()) + "_" + std::to_string(counter()++))),
         files(dir_ / "records"),
         spool(dir_ / "spool"),
         save(spool, files),
