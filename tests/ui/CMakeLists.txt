@@ -29,8 +29,9 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   add_test(NAME ui.${name} COMMAND ${target})
   # The longest (the experiment window's) runs its queues in simulated time
   # paced at 400x (VirtualClock), which holds whatever a sleep costs on the
-  # runner; the rest is real waiting for the UI, slower on a loaded one.
+  # runner; the rest is real waiting for the UI, slower on a loaded one. It
+  # takes 155 to 170 s on CI's macOS runner, and more on a slow day.
   set_tests_properties(ui.${name} PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    TIMEOUT 180)
+    TIMEOUT 300)
 endforeach()
