@@ -1,0 +1,1 @@
+@../../libs/persistence/AGENTS.md

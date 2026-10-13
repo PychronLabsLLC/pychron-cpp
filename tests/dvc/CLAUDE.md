@@ -1,0 +1,1 @@
+@../../libs/ingest/AGENTS.md

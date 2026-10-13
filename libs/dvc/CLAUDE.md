@@ -1,0 +1,1 @@
+@../ingest/AGENTS.md
