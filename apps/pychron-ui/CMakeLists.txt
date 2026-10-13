@@ -54,6 +54,7 @@ add_library(pychron_ui_lib STATIC
   src/data_browser_window.cpp
   src/data_icons.cpp
   src/recall_window.cpp
+  src/rise_rate.cpp
   src/figure_window.cpp
   src/reference_fit_window.cpp
   src/preset_bar.cpp
@@ -127,6 +128,7 @@ add_library(pychron_ui_lib STATIC
   src/data_browser_window.hpp
   src/data_icons.hpp
   src/recall_window.hpp
+  src/rise_rate.hpp
   src/figure_window.hpp
   src/reference_fit_window.hpp
   src/preset_bar.hpp
