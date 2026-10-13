@@ -1,7 +1,9 @@
 # Reference series in the experiment window
 
 Status: agreed in outline 2026-10-13 (owner: blanks and airs as a live time
-series pane; section 9). Drafted by an unattended run. Nothing built. Task T028 (`pychron usage notes.md`):
+series pane; section 9). Drafted by an unattended run. Plan:
+`docs/superpowers/plans/2026-10-13-experiment-reference-series.md`; 4, 5.1,
+5.2, 5.4 corrected from code when it was written. Nothing built. Task T028 (`pychron usage notes.md`):
 "implement legacy's auto time series plotter in the experiment".
 
 ## 1. Problem
@@ -52,18 +54,25 @@ a run is saved.
   Air monitor, Blanks, Unknowns, Spectrometer.
 - `SceneView`: zoom, pan, save, copy, tooltip, context menu.
 - `ExperimentBridge::runFinished`; the data source's `generation()`, which
-  changes when the store has something new.
+  changes when the store has something new (only when `refresh()` is
+  called: today by the data browser, on the UI thread).
+- `select` unit takes a query (`analysis_types`, `mass_spectrometers`,
+  `from`, `limit`), `group` unit a key `analysis_type`: a tab is the figure
+  window's pipeline with other options. No new SQL.
+- `ProcessingBridge`: one worker; a newer job on a channel replaces the
+  older.
 
 ## 5. Design
 
 ### 5.1 Dock
 
-New dock "References" in `ExperimentWindow`, tabbed with Evolutions by
-default (`default_layout`). Hidden when the session has no store (a queue
+New dock "References" in `ExperimentWindow`, tabbed behind Evolutions by
+default (`default_layout`; Evolutions sits alone on the right today). Hidden when the session has no store (a queue
 saved to files only): nothing to read.
 
 - Tab bar: two tabs, Blanks and Airs (owner, 2026-10-13). Blanks holds every
-  blank kind the store has (`blank_unknown`, `blank_air`, `blank_cocktail`),
+  blank kind the store has (`blank_unknown`, `blank_air`, `blank_cocktail`,
+  `blank_extractionline`, and imported data's bare `blank`),
   each kind a group of the figure with its own colour and legend entry.
   Airs holds `air`. Other reference types (cocktail, detector_ic) are not
   shown: out of scope, section 7.
@@ -82,8 +91,9 @@ reset point (none: no lower bound). Then loaded and reduced as a figure
 window loads its selection.
 
 - Query and load run off the UI thread and off the executor's, the way a
-  figure window loads its selection (not read for this draft: the plan
-  names the mechanism). A read still running when the next run finishes is
+  figure window loads its selection: a pipeline on the data workspace's
+  `ProcessingBridge`, own channel a tab. Bridge calls source's `refresh()`
+  on its worker before such a job. A read still running when the next run finishes is
   followed by one more read, not a queue of them.
 - Query is by spectrometer and time, ordered by time descending with a
   limit: must use an index in that order (persistence rules, "Queries":
@@ -104,8 +114,9 @@ window loads its selection.
 
 ### 5.4 Time
 
-"Now" for the figure's x axis and for Reset comes from the line's wall
-clock (`CoreBridge::wall_now()`): a simulated session resets and plots in
+"Now" for the figure's x axis and for Reset comes from the session's wall
+clock (`LabSession::wall_now()` through the experiment bridge; pipeline's
+`RunContext` gains `now`, since the time-series unit reads the system clock): a simulated session resets and plots in
 simulated time (AGENTS.md, Time).
 
 ## 6. Rules
