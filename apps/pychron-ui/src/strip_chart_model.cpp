@@ -53,6 +53,11 @@ void StripChartModel::append(const spectrometer::IntensityReading& r) {
   }
 }
 
+std::optional<double> StripChartModel::x_of(TimePoint ts) const {
+  if (!origin_) return std::nullopt;
+  return std::chrono::duration<double>(ts - *origin_).count();
+}
+
 void StripChartModel::clear() {
   for (auto& ring : rings_) ring.clear();
   origin_.reset();

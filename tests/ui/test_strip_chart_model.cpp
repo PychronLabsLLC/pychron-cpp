@@ -70,6 +70,20 @@ class TestStripChartModel : public QObject {
     QCOMPARE(m.latest_x(), 2.5);
   }
 
+  void xOfAReadingTime() {
+    StripChartModel m(two());
+    QVERIFY(!m.x_of(kT0));  // an empty chart has no origin
+    m.append(row(100.0, {{"H1", 1.0}}));
+    m.append(row(102.5, {{"H1", 2.0}}));
+    using std::chrono::duration_cast;
+    const TimePoint first = TimePoint{} + duration_cast<Duration>(std::chrono::duration<double>(100.0));
+    QCOMPARE(*m.x_of(first), 0.0);
+    QCOMPARE(*m.x_of(first + 2500ms), 2.5);
+    QCOMPARE(*m.x_of(first + 60s), 60.0);  // of a reading yet to come, too
+    m.clear();
+    QVERIFY(!m.x_of(first));
+  }
+
   void xRangeBeforeAndAfterWindowFills() {
     StripChartModel m(two());
     QCOMPARE(m.latest_x(), 0.0);

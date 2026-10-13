@@ -54,6 +54,9 @@ class StripChartModel {
   void append(const spectrometer::IntensityReading& r);
   void clear();
   double latest_x() const { return latest_x_; }  // 0 when empty
+  // The x a reading of that time has, or would have, on this chart; nullopt
+  // while the chart is empty (it has no origin).
+  std::optional<double> x_of(TimePoint ts) const;
 
   // Seconds, minimum 1; the ring span follows as 1.8 * width.
   void set_scan_width(double seconds);

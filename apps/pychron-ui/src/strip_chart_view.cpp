@@ -63,6 +63,25 @@ StripChartView::StripChartView(StripChartModel& model, QWidget* parent)
 
 void StripChartView::set_y_label(const QString& label) { plot_->yAxis->setLabel(label); }
 
+void StripChartView::set_marks(const std::vector<ChartMark>& marks) {
+  for (QCPItemStraightLine* line : marks_) plot_->removeItem(line);
+  marks_.clear();
+  for (const ChartMark& mark : marks) {
+    auto* line = new QCPItemStraightLine(plot_);  // the plot owns its items
+    // x in the chart's seconds; y as a fraction of the plot's height, so that
+    // a logarithmic axis has no say in it.
+    for (QCPItemPosition* end : {line->point1, line->point2}) {
+      end->setTypeX(QCPItemPosition::ptPlotCoords);
+      end->setTypeY(QCPItemPosition::ptAxisRectRatio);
+    }
+    line->point1->setCoords(mark.x, 0.0);
+    line->point2->setCoords(mark.x, 1.0);
+    line->setPen(QPen(mark.color, 1.5));
+    marks_.push_back(line);
+  }
+  replot();
+}
+
 void StripChartView::apply_scale() {
   const bool log = model_.scale() == YScale::Log;
   if (log) {

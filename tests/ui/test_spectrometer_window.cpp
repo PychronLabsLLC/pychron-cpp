@@ -278,6 +278,21 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(std::isfinite(view->shown_y().lo) && view->shown_y().lo < view->shown_y().hi);
   }
 
+  void marksAreDrawnAndReplaced() {
+    ui::StripChartModel model(bridge_->detectors());
+    ui::StripChartView view(model);
+    QCOMPARE(view.mark_count(), 0);
+    view.set_marks({{1.0, QColor(Qt::black)}, {2.0, QColor(Qt::red)}});
+    QCOMPARE(view.mark_count(), 2);
+    view.set_marks({{3.0, QColor(Qt::black)}});
+    QCOMPARE(view.mark_count(), 1);
+    model.set_scale(ui::YScale::Log);  // a mark does not mind the axis
+    view.refresh();
+    QCOMPARE(view.mark_count(), 1);
+    view.set_marks({});
+    QCOMPARE(view.mark_count(), 0);
+  }
+
   // A minute of 0.1 s readings on every trace: the repaint runs on the GUI
   // thread, so one that takes long freezes the window.
   void repaintOfFullChartStaysShort() {

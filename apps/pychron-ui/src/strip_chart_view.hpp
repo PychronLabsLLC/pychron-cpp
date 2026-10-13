@@ -9,15 +9,25 @@
 // into NaN as well, and the axis is never handed a non-positive or non-finite
 // range.
 
+#include <vector>
+
+#include <QColor>
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QWidget>
 
 #include "strip_chart_model.hpp"
 
+class QCPItemStraightLine;
 class QCustomPlot;
 
 namespace pychron::ui {
+
+// A vertical rule across the chart at x (the model's seconds).
+struct ChartMark {
+  double x = 0.0;
+  QColor color;
+};
 
 class StripChartView : public QWidget {
  public:
@@ -32,6 +42,11 @@ class StripChartView : public QWidget {
 
   void set_y_label(const QString& label);
 
+  // Replaces the marks drawn. They are the caller's to take away when the
+  // chart's time begins again: an x means nothing after that.
+  void set_marks(const std::vector<ChartMark>& marks);
+  int mark_count() const { return static_cast<int>(marks_.size()); }
+
   int graph_count() const;
   int point_count(int graph) const;
   bool graph_visible(int graph) const;
@@ -45,6 +60,7 @@ class StripChartView : public QWidget {
   StripChartModel& model_;
   QCustomPlot* plot_;
   YScale applied_scale_ = YScale::Linear;
+  std::vector<QCPItemStraightLine*> marks_;  // the plot's
   QElapsedTimer since_replot_;
   QTimer deferred_;  // single shot: the repaint a too-early refresh() asked for
 };
