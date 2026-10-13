@@ -38,10 +38,14 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
 
 ### 3.1 Modes
 
-- **Follow** (default, and on queue start): `t1 = now`, `t0` = start of the
-  Nth most recent run started, N = `follow_runs` (default 6); queue's leading
-  wait included when fewer than N runs have started. Window moves as time
-  does.
+- **Follow** (default, and on queue start): `t1 = now`. Window moves as time
+  does. `t0` by `follow_runs`:
+  - 0, the default since 2026-10-12 (T053, section 10): the active run.
+    `t0` = start of the earliest run still in progress (overlapped runs are
+    all in progress: both show); when none is (delay between runs, queue
+    ended), start of the run that started last; before any run, 0.
+  - N > 0: start of the Nth most recent run started; queue's leading wait
+    included when fewer than N runs have started.
 - **Free**: operator moved or zoomed window. Window stays where put; time
   marker ("now" dashed line) drawn only when inside window.
 - **Whole queue**: `[0, now]`, as today. Kept as a choice, not the default.
@@ -53,7 +57,8 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
   not taken by the view: it scrolls the pane as before.
 - Drag with left button: pan. Enters Free.
 - Double-click: back to Follow.
-- Context menu: Follow last 3 / 6 / 12 runs, Whole queue.
+- Context menu: Follow the active run, Follow last 3 / 6 / 12 runs, Whole
+  queue.
 - While not in Follow, a small "Follow" button shows at view's right edge;
   click returns to Follow.
 - Zoom limits: span never under 10 s, never over `[0, now]`. Pan clamped to
@@ -152,3 +157,15 @@ View draws time window `[t0, t1]` (seconds since first event), not `[0, now]`.
 - Measured after, same synthetic 1000-run queue, 1200 px: Follow draws 36
   segments, 18 labelled, widest 127 px, 1.7 ms a paint; Whole queue 6000
   segments, 11.9 ms. Feeding the model 1000 runs: 11 ms (was 213 ms).
+
+## 10. Changed 2026-10-12 (T053)
+
+Owner: "the waits and lane widget should default to following just the
+active run". Replaces decision 8.1's default (last 6 runs stays a choice).
+
+- `follow_runs` 0 (`TimelineView::kFollowActive`) means the active run; it is
+  the default and the first entry of the context menu.
+- `TimelineModel::active_since()`: start of the earliest run between its
+  `RunStarted` and its final state; nullopt when none.
+- A stored `experiment_window/timeline_follow_runs` of 3, 6 or 12 keeps its
+  meaning: only an install that never chose sees the new default.

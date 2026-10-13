@@ -321,7 +321,8 @@ class TestExperimentWindow : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
     QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
     QCOMPARE(pane->timeline().run_starts().size(), std::size_t{3});
-    QCOMPARE(pane->timeline_view()->time_window().first, 0.0);  // fewer runs than it follows: all of them
+    // Nothing is in progress any more: the run that started last.
+    QCOMPARE(pane->timeline_view()->time_window().first, pane->timeline().run_starts().back());
   }
 
   void theRunsFollowedAreRemembered() {
@@ -330,8 +331,8 @@ class TestExperimentWindow : public QObject {
     ExperimentBridge bridge(*sim.session, sim.line->bus());
     {
       ExperimentWindow window(bridge, true, settings());
-      QCOMPARE(window.executor()->timeline_view()->follow_runs(), 6);  // nothing stored yet
-      window.executor()->timeline_view()->context_actions()[2]->trigger();  // Follow last 12 runs
+      QCOMPARE(window.executor()->timeline_view()->follow_runs(), TimelineView::kFollowActive);  // nothing stored yet
+      window.executor()->timeline_view()->context_actions()[3]->trigger();  // Follow last 12 runs
       QCOMPARE(window.executor()->timeline_view()->follow_runs(), 12);
     }
     ExperimentWindow again(bridge, true, settings());

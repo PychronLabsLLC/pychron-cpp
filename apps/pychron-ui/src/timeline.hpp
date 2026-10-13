@@ -11,7 +11,7 @@
 //           so it takes the next free lane: overlap shows as two lanes.
 //
 // The view shows a window of the queue's time, not all of it: a queue of a
-// thousand runs drawn whole is a pixel a run. It follows the last few runs
+// thousand runs drawn whole is a pixel a run. It follows the runs in progress
 // until the operator moves the window, and can show the whole queue.
 // Ctrl+wheel zooms about the cursor (a plain wheel is left to the pane),
 // dragging pans, and a double-click or the Follow button goes back to now.
@@ -76,6 +76,8 @@ class TimelineModel {
   [[nodiscard]] std::vector<std::size_t> visible(double t0, double t1) const;
   // When each run started, in the order they did.
   const std::vector<double>& run_starts() const noexcept { return run_starts_; }
+  // When the earliest run still in progress started; nullopt when none is.
+  std::optional<double> active_since() const;
   std::size_t open_count() const noexcept { return open_.size(); }
 
  private:
@@ -94,6 +96,7 @@ class TimelineModel {
   std::vector<bool> busy_;                  // run lane i + 1 in use
   std::vector<std::size_t> open_;           // segments without an end, ascending
   std::vector<double> run_starts_;
+  std::map<std::string, double> active_;    // run id -> its start, until its final state
   double longest_ = 0;                      // the longest closed segment
   bool ordered_ = true;                     // starts never went backwards
 };
@@ -102,10 +105,11 @@ class TimelineView : public QWidget {
   Q_OBJECT
 
  public:
-  // Follow: from the start of the follow_runs()-th most recent run to now.
-  // Free: where the operator put it. WholeQueue: the first event to now.
+  // Follow: to now, from the start of the earliest run in progress
+  // (follow_runs() is kFollowActive) or of the follow_runs()-th most recent
+  // run. Free: where the operator put it. WholeQueue: the first event to now.
   enum class Mode { Follow, Free, WholeQueue };
-  static constexpr int kFollowRuns = 6;
+  static constexpr int kFollowActive = 0;  // follow_runs(): the runs in progress
   static constexpr double kMinSpan = 10;  // seconds; a window is never narrower
 
   explicit TimelineView(const TimelineModel& model, QWidget* parent = nullptr);
@@ -120,7 +124,8 @@ class TimelineView : public QWidget {
   void set_time_window(double t0, double t1);
   // How many segments the last paint drew.
   int drawn_count() const noexcept { return drawn_; }
-  // The context menu: follow the last 3, 6 or 12 runs, or the whole queue.
+  // The context menu: follow the active run, the last 3, 6 or 12 runs, or
+  // the whole queue.
   const QList<QAction*>& context_actions() const noexcept { return actions_; }
   // Shown while the view is not following.
   QToolButton* follow_button() const noexcept { return follow_; }
@@ -152,7 +157,7 @@ class TimelineView : public QWidget {
 
   const TimelineModel& model_;
   Mode mode_ = Mode::Follow;
-  int follow_runs_ = kFollowRuns;
+  int follow_runs_ = kFollowActive;
   double t0_ = 0, t1_ = kMinSpan;  // the Free window
   int drawn_ = 0;
   QToolButton* follow_;

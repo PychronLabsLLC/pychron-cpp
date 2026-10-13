@@ -57,6 +57,7 @@ void TimelineModel::clear() {
   busy_.clear();
   open_.clear();
   run_starts_.clear();
+  active_.clear();
   longest_ = 0;
   ordered_ = true;
 }
@@ -129,6 +130,7 @@ void TimelineModel::on_run_started(const experiment::executor::RunStarted& e) {
     return std::min(t, s.planned_end.value_or(t));
   });
   run_starts_.push_back(t);
+  active_[e.run_id] = t;
   auto free = std::find(busy_.begin(), busy_.end(), false);
   int lane = 0;
   if (free == busy_.end()) {
@@ -148,6 +150,7 @@ void TimelineModel::on_state(const experiment::run::RunStateChanged& e) {
   const double t = seconds(e.ts);
   close_run(e.run_id, t);
   if (final_state(e.to)) {
+    active_.erase(e.run_id);
     if (it->second >= 1 && std::cmp_less_equal(it->second, busy_.size())) busy_[static_cast<std::size_t>(it->second - 1)] = false;
     return;
   }
@@ -173,6 +176,12 @@ void TimelineModel::on_queue_ended(TimePoint ts) {
     return std::max(s.start, s.planned_end ? std::min(*s.planned_end, t) : t);
   });
   std::fill(busy_.begin(), busy_.end(), false);
+  active_.clear();
+}
+
+std::optional<double> TimelineModel::active_since() const {
+  if (active_.empty()) return std::nullopt;
+  return std::ranges::min(active_ | std::views::values);
 }
 
 void TimelineModel::advance(TimePoint now) {
@@ -197,8 +206,8 @@ TimelineView::TimelineView(const TimelineModel& model, QWidget* parent)
   follow_->setCursor(Qt::ArrowCursor);
   follow_->hide();
   connect(follow_, &QToolButton::clicked, this, [this] { set_mode(Mode::Follow); });
-  for (int runs : {3, kFollowRuns, 12}) {
-    auto* follow = new QAction(tr("Follow last %1 runs").arg(runs), this);
+  for (int runs : {kFollowActive, 3, 6, 12}) {
+    auto* follow = new QAction(runs == kFollowActive ? tr("Follow the active run") : tr("Follow last %1 runs").arg(runs), this);
     connect(follow, &QAction::triggered, this, [this, runs] {
       set_follow_runs(runs);
       set_mode(Mode::Follow);
@@ -234,7 +243,7 @@ void TimelineView::apply_mode(Mode mode) {
 }
 
 void TimelineView::set_follow_runs(int runs) {
-  follow_runs_ = std::max(1, runs);
+  follow_runs_ = std::max(kFollowActive, runs);
   update();
 }
 
@@ -244,10 +253,15 @@ std::pair<double, double> TimelineView::time_window() const {
     case Mode::Free: return {t0_, t1_};
     case Mode::Follow: break;
   }
-  // The queue's leading wait shows until enough runs have started.
   const auto& starts = model_.run_starts();
-  const auto n = static_cast<std::size_t>(follow_runs_);
-  const double start = starts.size() >= n ? starts[starts.size() - n] : 0.0;
+  double start = 0.0;
+  if (follow_runs_ == kFollowActive) {
+    // Overlapped runs are all in progress; between runs, the last one stays.
+    if (const auto active = model_.active_since()) start = *active;
+    else if (!starts.empty()) start = starts.back();
+  } else if (const auto n = static_cast<std::size_t>(follow_runs_); starts.size() >= n) {
+    start = starts[starts.size() - n];  // until then the queue's leading wait shows
+  }
   return {start, std::max(start + kMinSpan, model_.now())};
 }
 
