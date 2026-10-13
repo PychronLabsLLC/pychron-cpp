@@ -252,7 +252,22 @@ class Runner(unittest.TestCase):
         result = json.loads((self.results / "missing" / "double-1.json").read_text())
         self.assertEqual(result["agent"]["exit"], 127)
         self.assertFalse(result["passed"])
-        self.assertEqual(done.returncode, 1)
+        self.assertTrue(result["agent"]["never_started"])
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("did not start", done.stderr)
+
+    def test_an_agent_that_is_not_signed_in_stops_the_set_and_says_why(self):
+        self.agent.write_text(textwrap.dedent('''\
+            import json, sys
+            print(json.dumps({"is_error": True, "num_turns": 1, "total_cost_usd": 0,
+                              "result": "Not logged in"}))
+            sys.exit(1)
+        '''))
+        done, result = self.run_bench("signed-out", "--repeats", "3")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("Not logged in", done.stderr)
+        self.assertEqual(result["agent"]["error"], "Not logged in")
+        self.assertEqual(len(list((self.results / "signed-out").glob("*.json"))), 1)  # not three
 
 
 def run_of(passed, cost):

@@ -146,7 +146,13 @@ def run_agent(command: list[str], prompt: str, work: Path, timeout_s: float) -> 
         pass
     kept = {key: envelope.get(key) for key in
             ("session_id", "is_error", "num_turns", "duration_ms", "total_cost_usd", "usage", "subtype")}
-    return {"exit": status, "seconds": seconds, "stderr_tail": err[-TAIL:], **kept}
+    result = {"exit": status, "seconds": seconds, "stderr_tail": err[-TAIL:], **kept}
+    if status != 0 or envelope.get("is_error"):
+        # What it said for itself ("Not logged in"), never the answer to a task that ran.
+        result["error"] = str(envelope.get("result") or err or "no answer")[:300]
+    result["never_started"] = status != 0 and not envelope.get("total_cost_usd") and (
+        envelope.get("num_turns") or 0) <= 1
+    return result
 
 
 def diff_stat(work: Path, since: str) -> dict:
@@ -290,6 +296,12 @@ def main() -> int:
                   f"{agent.get('num_turns')} turns, ${agent.get('total_cost_usd')}, {agent.get('seconds')} s",
                   flush=True)
             failed += 0 if result.get("passed") else 1
+            if agent.get("never_started"):
+                # Nothing was asked of a model: every other run would end the same way.
+                print(f"run: the agent did not start: {agent.get('error')}\n"
+                      f"run: stopped; this run is not a result (remove {Path(options.results) / options.label})",
+                      file=sys.stderr)
+                return 2
     return 1 if failed else 0
 
 
