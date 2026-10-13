@@ -4,6 +4,7 @@
 // A measurement is `main.cycles` repetitions of an ordered hop list;
 // multicollect is the degenerate case of one hop and one cycle.
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
@@ -42,11 +43,17 @@ struct Sniff {
   friend bool operator==(const Sniff&, const Sniff&) = default;
 };
 
+inline constexpr std::size_t kPeakCenterSignalReadings = 10;
+
 struct PeakCenter {
   bool before = false, after = false;
   std::string detector;  // empty = detectors.reference
   std::string isotope;
   std::string config = "default";
+  // A peak center after the run is skipped when the mean of the last
+  // kPeakCenterSignalReadings readings of `isotope` on `detector` in the main
+  // block is below this (detector units). 0: no minimum.
+  double min_signal = 0;
   friend bool operator==(const PeakCenter&, const PeakCenter&) = default;
 };
 

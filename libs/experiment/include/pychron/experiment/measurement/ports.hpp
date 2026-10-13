@@ -49,6 +49,7 @@ struct PeakCenterRequest {
 struct PeakCenterReport {
   PeakCenterRequest request;
   bool ok = false;
+  bool skipped = false;  // by the MeasurementEngine, under the plan's min_signal: the port was not called
   std::optional<double> center;  // native magnet value when ok
   std::string message;
   std::optional<double> table_value;  // the uncorrected center written to the field table

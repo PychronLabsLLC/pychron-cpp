@@ -1,8 +1,11 @@
 #include "pychron/experiment/measurement/engine.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <numeric>
 #include <utility>
 
 #include "pychron/core/events.hpp"
@@ -20,6 +23,13 @@ std::vector<collect::Channel> channels_of(const plan::MeasurementPlan& plan, con
   std::vector<collect::Channel> out;
   for (const auto& a : plan::active_detectors(plan, hop)) out.push_back({a.isotope, a.detector});
   return out;
+}
+
+// A number as a person writes it: 500, 0.05, 1.2e-05.
+std::string plain(double v) {
+  std::array<char, 32> buf{};
+  std::snprintf(buf.data(), buf.size(), "%g", v);
+  return buf.data();
 }
 
 }  // namespace
@@ -243,6 +253,27 @@ Result<void> MeasurementEngine::peak_center(Block block) {
   PeakCenterRequest req{p.peak_center.isotope,
                         p.peak_center.detector.empty() ? p.detectors.reference : p.peak_center.detector,
                         p.peak_center.config};
+  // A small peak (after a blank) still fits, and its centre would go into the
+  // field table. Only readings of the main block say how much signal there
+  // is: with none (before the gas is in) the block runs.
+  if (p.peak_center.min_signal > 0) {
+    const auto series = collector_.series({req.isotope, req.detector, collect::SeriesKind::Signal});
+    if (series && !series->v.empty()) {
+      const auto n = std::min(series->v.size(), plan::kPeakCenterSignalReadings);
+      const double mean = std::accumulate(series->v.end() - static_cast<std::ptrdiff_t>(n), series->v.end(), 0.0) /
+                          static_cast<double>(n);
+      if (mean < p.peak_center.min_signal) {
+        PeakCenterReport skipped;
+        skipped.request = std::move(req);
+        skipped.skipped = true;
+        skipped.message = "signal " + plain(mean) + " below min_signal " + plain(p.peak_center.min_signal);
+        skipped.finished = ctx_.clock.now();
+        publish_log(LogLevel::Info, std::string(to_string(block)) + " skipped: " + skipped.message);
+        result_.peak_centers.push_back(std::move(skipped));
+        return {};
+      }
+    }
+  }
   auto rep = ctx_.peak_center->peak_center(req, *token_);
   position_.reset();  // the job leaves the magnet wherever it ended
   if (!rep) {

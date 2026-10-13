@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -235,7 +236,7 @@ class EngineTest : public ::testing::Test {
 
 TEST_F(EngineTest, RunsTheBlockSequenceInOrder) {
   auto p = multicollect();
-  p.peak_center = {true, true, "", "Ar40", "default"};
+  p.peak_center = {true, true, "", "Ar40", "default", 0};
   p.baseline.before = p.baseline.after = true;
   std::vector<std::string> events;
   auto s1 = bus_.subscribe<BlockStarted>([&](const BlockStarted& e) { events.push_back("+" + std::string(to_string(e.block))); });
@@ -676,7 +677,7 @@ TEST_F(EngineTest, PositionFailureFails) {
 TEST_F(EngineTest, FailedPeakCenterIsReportedAndForcesARepositioning) {
   auto p = multicollect(3);
   p.sniff.enabled = false;
-  p.peak_center = {true, false, "AX", "Ar39", "default"};
+  p.peak_center = {true, false, "AX", "Ar39", "default", 0};
   peak_.ok = false;
   std::vector<std::string> warnings;
   auto sub = bus_.subscribe<Log>([&](const Log& l) {
@@ -689,6 +690,68 @@ TEST_F(EngineTest, FailedPeakCenterIsReportedAndForcesARepositioning) {
   EXPECT_EQ(peak_.requests[0].detector, "AX");
   ASSERT_EQ(warnings.size(), 1u);
   EXPECT_NE(warnings[0].find("no peak"), std::string::npos);
+}
+
+// A peak center after a blank would fit whatever small peak is left and move
+// the field table by it: below the plan's minimum the block does nothing.
+TEST_F(EngineTest, APeakCenterAfterIsSkippedWhenTheSignalIsBelowThePlansMinimum) {
+  auto p = multicollect(12);
+  p.sniff.enabled = false;
+  p.peak_center.after = true;
+  p.peak_center.isotope = "Ar39";
+  p.peak_center.detector = "AX";
+  p.peak_center.min_signal = 5000;  // Ar39 reads about 1100 here, Ar40 about 11000
+  std::vector<std::string> said;
+  auto sub = bus_.subscribe<Log>([&](const Log& l) { said.push_back(l.message); });
+  auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_TRUE(peak_.requests.empty());
+  ASSERT_EQ(r.peak_centers.size(), 1u);
+  EXPECT_TRUE(r.peak_centers[0].skipped);
+  EXPECT_FALSE(r.peak_centers[0].ok);
+  EXPECT_FALSE(r.peak_centers[0].table_updated);
+  EXPECT_EQ(r.peak_centers[0].request.isotope, "Ar39");
+  EXPECT_EQ(r.peak_centers[0].request.detector, "AX");
+  EXPECT_NE(r.peak_centers[0].message.find("below min_signal 5000"), std::string::npos) << r.peak_centers[0].message;
+  EXPECT_EQ(r.blocks.back(), Block::PeakCenterAfter);
+  const auto told = std::ranges::count_if(said, [](const std::string& m) { return m.find("skipped") != std::string::npos; });
+  EXPECT_EQ(told, 1);
+}
+
+// The signal compared is the mean of the last ten readings of the main block.
+TEST_F(EngineTest, APeakCenterAfterRunsWhenTheSignalReachesTheMinimum) {
+  auto p = multicollect(12);
+  p.sniff.enabled = false;
+  p.peak_center.after = true;
+  p.peak_center.isotope = "Ar40";
+  auto plain = run(p);
+  const auto& v = plain.data.series.at({"Ar40", "H1", SeriesKind::Signal}).v;
+  ASSERT_EQ(v.size(), 12u);
+  double last_ten = 0;
+  for (std::size_t i = 2; i < v.size(); ++i) last_ten += v[i] / 10;
+  ASSERT_LT(v.front(), v.back());  // the fake's signal grows: the mean of all twelve is lower
+
+  peak_.requests.clear();
+  p.peak_center.min_signal = last_ten;
+  auto at = run(p);
+  ASSERT_EQ(at.peak_centers.size(), 1u);
+  EXPECT_FALSE(at.peak_centers[0].skipped);
+  EXPECT_TRUE(at.peak_centers[0].ok);
+  EXPECT_EQ(peak_.requests.size(), 1u);
+}
+
+// Before the gas is in there is no reading to compare: the block runs.
+TEST_F(EngineTest, APeakCenterBeforeIsNotHeldToTheMinimumSignal) {
+  auto p = multicollect(3);
+  p.sniff.enabled = false;
+  p.peak_center.before = true;
+  p.peak_center.isotope = "Ar40";
+  p.peak_center.min_signal = 1e9;
+  auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed);
+  ASSERT_EQ(r.peak_centers.size(), 1u);
+  EXPECT_FALSE(r.peak_centers[0].skipped);
+  EXPECT_EQ(peak_.requests.size(), 1u);
 }
 
 TEST_F(EngineTest, ValidateNamesMissingServices) {

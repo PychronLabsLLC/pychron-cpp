@@ -210,6 +210,24 @@ counts = 0
   EXPECT_NE(r.error().what.find("main.hops[0].counts: must be >= 1"), std::string::npos);
 }
 
+TEST(PlanSchema, PeakCenterMinimumSignal) {
+  const std::string head = std::string(kMinimal).replace(std::string(kMinimal).find("CYCLES"), 6, "1");
+  const std::string text = std::string(head).replace(head.find("COUNTS"), 6, "5");
+  auto none = resolve_plan(text + "[peak_center]\nafter = true\nisotope = \"Ar40\"\n", kResolvers);
+  ASSERT_TRUE(none.has_value()) << none.error().what;
+  EXPECT_DOUBLE_EQ(none->peak_center.min_signal, 0);  // no minimum: every peak center runs
+
+  auto set = resolve_plan(text + "[peak_center]\nafter = true\nisotope = \"Ar40\"\nmin_signal = 0.05\n", kResolvers);
+  ASSERT_TRUE(set.has_value()) << set.error().what;
+  EXPECT_DOUBLE_EQ(set->peak_center.min_signal, 0.05);
+
+  auto negative = resolve_plan(text + "[peak_center]\nafter = true\nisotope = \"Ar40\"\nmin_signal = -1\n", kResolvers,
+                               "neg.toml");
+  ASSERT_FALSE(negative);
+  EXPECT_NE(negative.error().what.find("peak_center.min_signal: must be >= 0"), std::string::npos)
+      << negative.error().what;
+}
+
 // ---- parameters.expose / overrides -------------------------------------------
 
 TEST(PlanOverrides, ExposedIndexedPathIsSettable) {

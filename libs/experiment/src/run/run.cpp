@@ -525,6 +525,8 @@ Result<void> Run::save() {
         std::snprintf(buf, sizeof buf, ", table value %.6f", *pc.table_value);
         detail += buf;
       }
+    } else if (pc.skipped) {
+      detail += "skipped: " + pc.message;
     } else {
       detail += "failed: " + pc.message;
     }

@@ -190,7 +190,7 @@ inlet_delay_s = 3
 close_inlet = true
 
 [sniff]        enabled = true   counts = "@equilibration.time_s"  integration_s = 1
-[peak_center]  before = false   after = true   detector = "H1"  isotope = "Ar40"  config = "default"
+[peak_center]  before = false   after = true   detector = "H1"  isotope = "Ar40"  config = "default"  min_signal = 0
 [baseline]     before = false   after = true   counts = 120  mass = 34.2  detector = "H1"  settle_s = 15  integration_s = 1
 
 # A measurement is `cycles` repetitions of an ordered list of hops.
@@ -270,6 +270,15 @@ Fixed block sequence; each block is a small class with `run(ctx, token)`:
 
 - Blocks use only spectrometer primitives (`position`, `acquire` stream,
   `protect`, `submit_job(PeakCenterSpec)`) and extraction-line open/close.
+- `[peak_center] min_signal` (default 0: none), added 2026-10-12 (T004): the
+  `peak_center.after` block is skipped when the mean of the last 10 readings
+  of main block's signal series for its isotope on its detector is below
+  `min_signal` (detector units, not baseline corrected). Skipped: job not
+  submitted, magnet not moved, field table untouched; report has
+  `skipped = true`, Info log `peak_center.after skipped: signal S below
+  min_signal X`, record event `peak_center` with detail `skipped: ...`. A
+  block with no such series (`peak_center.before`, or isotope not collected
+  on that detector) runs. Shipped plans set none.
 - The engine owns equilibrate/sniff timing; `OverlapReady` is published when
   the inlet closes.
 - Collection blocks drive the `Collector` (section 8).

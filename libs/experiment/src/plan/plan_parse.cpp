@@ -224,12 +224,14 @@ void read_sniff(const Section& s, Sniff& out) {
 }
 
 void read_peak_center(const Section& s, PeakCenter& out) {
-  s.keys({"before", "after", "detector", "isotope", "config"});
+  s.keys({"before", "after", "detector", "isotope", "config", "min_signal"});
   s.get("before", out.before);
   s.get("after", out.after);
   s.get("detector", out.detector);
   s.get("isotope", out.isotope);
   s.get("config", out.config);
+  s.get("min_signal", out.min_signal);
+  s.at_least("min_signal", out.min_signal, 0);
   if ((out.before || out.after) && out.isotope.empty())
     s.problems().add(s.at("isotope"), "required when before or after");
 }

@@ -185,6 +185,7 @@ existing fixture and template parses and the engine has one input form:
 | `[baseline] before` | a `baseline` segment at `before_inlet`, one position collecting every detector that appears in any signal position, `at = { mass, detector }` |
 | `[baseline] after` | the same at `after_main` |
 | `[peak_center] before / after` | `peak_center` steps at `before_inlet` / `after_run` |
+| `[peak_center] min_signal` | `min_signal` of the `after_run` step: step skipped when mean of last 10 signal readings of its isotope on its detector is below it; a step with no such readings (`before_inlet`) runs |
 | `[sniff]` | a `sniff` segment at `during_equilibration` on the first signal position's detectors |
 | `[whiff]` | a `whiff` segment at `after_inlet`, before the signal segment |
 | `[fits] signal.Ar40` | `Ar40` applies to every detector of Ar40; `[fits] baseline.H1` applies to every baseline series on H1 |
