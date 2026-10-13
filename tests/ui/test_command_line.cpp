@@ -1,6 +1,7 @@
 // pychron-ui argument parsing: positional files, --sim, --spectrometer and the
 // experiment options.
 
+#include <cstddef>
 #include <filesystem>
 
 #include <QtTest/QtTest>
@@ -85,14 +86,36 @@ class TestCommandLine : public QObject {
              QStringLiteral("--lab needs a directory"));
     QCOMPARE(QString::fromStdString(parse_command_line({QStringLiteral("--queue"), QStringLiteral("--sim")}).error().what),
              QStringLiteral("--queue needs a file"));
-    for (const char* bad : {"0", "-2", "fast", "inf"}) {
+    for (const char* bad : {"0", "-2", "fast", "inf", "nan", "maximum"}) {
       auto cli = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QString::fromLatin1(bad)});
       QVERIFY2(!cli.has_value(), bad);
+      QCOMPARE(QString::fromStdString(cli.error().what), QStringLiteral("--sim-speed needs a positive number"));
     }
     QVERIFY(!parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed")}).has_value());
-    auto no_sim = parse_command_line({QStringLiteral("--sim-speed"), QStringLiteral("10")});
-    QVERIFY(!no_sim.has_value());
-    QCOMPARE(QString::fromStdString(no_sim.error().what), QStringLiteral("--sim-speed needs --sim"));
+    // Unlimited speed is elctl's: a window would finish a queue before it painted.
+    auto max = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("max")});
+    QVERIFY(!max.has_value());
+    QCOMPARE(QString::fromStdString(max.error().what), QStringLiteral("--sim-speed max is for tests; give a number"));
+    // --sim-save takes no value and is off unless given.
+    QVERIFY(!parse_command_line({QStringLiteral("--sim")})->sim_save);
+    auto saving = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-save"), QStringLiteral("--db"),
+                                      QStringLiteral("sqlite:/x.db")});
+    QVERIFY(saving.has_value());
+    QVERIFY(saving->sim_save);
+    QCOMPARE(QString::fromStdString(saving->db.value_or("")), QStringLiteral("sqlite:/x.db"));
+    auto paced = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-speed"), QStringLiteral("50")});
+    QVERIFY(paced.has_value());
+    QCOMPARE(paced->sim_speed, 50.0);
+  }
+
+  // An install set up for simulation needs no --sim: main() refuses the
+  // option once it knows whether anything is simulated.
+  void simSpeedAloneParses() {
+    auto cli = parse_command_line({QStringLiteral("--install"), QStringLiteral("argus"), QStringLiteral("--sim-speed"),
+                                   QStringLiteral("20")});
+    QVERIFY(cli.has_value());
+    QVERIFY(!cli->sim);
+    QCOMPARE(cli->sim_speed, 20.0);
   }
 
   void laserOpensOnlyTheLaserWindow() {

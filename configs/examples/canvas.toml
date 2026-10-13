@@ -21,6 +21,8 @@ connection_width = 6
 [colors]
 valve = "#1e90ff"
 pipette = "#cccccc"
+# what is behind the drawing; left out: the application's own
+# background = "#f4f6f8"
 
 [[valve]]
 name = "A"

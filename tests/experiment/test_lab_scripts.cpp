@@ -2,13 +2,13 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 
 #include "pychron/experiment/lab/scripts.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment::lab {
 namespace {
@@ -19,9 +19,7 @@ using scripting::ScriptKind;
 class LabScriptsTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    dir_ = fs::temp_directory_path() /
-           ("pychron-scripts-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("pychron-scripts-");
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::create_directories(dir_ / "scripts" / "extraction" / "co2");
     std::ofstream(dir_ / "scripts" / "extraction" / "co2" / "degas.py") << "def main():\n    sleep(1)\n";
@@ -40,6 +38,7 @@ TEST_F(LabScriptsTest, ListsScriptsWithQueueNamesAndPaths) {
   std::vector<std::string> names;
   for (const auto& f : files) names.push_back(std::string(scripting::to_string(f.kind)) + "/" + f.name);
   EXPECT_EQ(names, (std::vector<std::string>{"extraction/co2:degas", "extraction/laser_extract",
+                                             "extraction/sim_air", "extraction/sim_blank",
                                              "extraction/sim_extract", "post_measurement/sim_pump",
                                              "extraction/lib:pump"}));
   EXPECT_TRUE(fs::is_regular_file(files[1].path));

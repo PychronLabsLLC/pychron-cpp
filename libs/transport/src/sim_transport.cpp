@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <mutex>
-#include <thread>
+#include <optional>
 
 namespace pychron {
 
@@ -75,10 +77,14 @@ struct SimTransport::State {
   Hook hook;  // set at construction, then read-only
   Unsolicited unsolicited;  // likewise; empty: none
 
+  SteadyClock steady;
+  const Clock* clock = &steady;  // the transport's; set at construction, then read-only
+
   std::mutex mutex;
+  std::condition_variable cv;  // a read waiting for the unsolicited source; through the clock
   std::deque<SimStep> steps;
   std::deque<Chunk> rx;
-  std::vector<Bytes> written;
+  std::deque<Bytes> written;  // the newest kWrittenLimit
   std::vector<std::string> unexpected;
   std::size_t drop = 0;
   Duration extra_delay{};
@@ -87,7 +93,10 @@ struct SimTransport::State {
 };
 
 SimTransport::SimTransport(TransportOptions options, std::shared_ptr<State> state)
-    : QueuedTransport(std::move(options)), state_(std::move(state)) {}
+    : QueuedTransport(std::move(options)), state_(std::move(state)) {
+  // Before the first job can run: nothing is queued until this returns.
+  if (this->options().clock) state_->clock = this->options().clock;
+}
 
 SimTransport::~SimTransport() { shutdown(); }
 
@@ -162,7 +171,7 @@ void SimTransport::expect(SimStep step) {
 
 std::vector<Bytes> SimTransport::written() const {
   std::lock_guard lock(state_->mutex);
-  return state_->written;
+  return {state_->written.begin(), state_->written.end()};
 }
 
 Result<void> SimTransport::verify() const {
@@ -211,6 +220,7 @@ Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
 
   std::lock_guard lock(s.mutex);
   s.written.push_back(tx);
+  if (s.written.size() > kWrittenLimit) s.written.pop_front();
   if (s.mode == State::Mode::Scripted) {
     if (s.steps.empty() || s.steps.front().expect != tx) {
       std::string what = "unexpected tx '" + escape(tx) + "'";
@@ -235,9 +245,11 @@ Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
 }
 
 Result<Bytes> SimTransport::do_read(const ReadSpec& rs, Duration timeout) {
-  // With an unsolicited source the read waits in real time, like a socket,
-  // for input the source produces; without one, time is virtual.
-  const auto real_deadline = std::chrono::steady_clock::now() + timeout;
+  // With an unsolicited source the read waits, in the transport's clock and
+  // like a socket, for input the source produces; without one it does not
+  // wait at all: a reply's delay is compared with the timeout.
+  const Clock& clock = *state_->clock;
+  const TimePoint deadline = clock.now() + timeout;
   std::unique_lock lock(state_->mutex);
   auto& rx = state_->rx;
   Bytes buf;
@@ -254,15 +266,17 @@ Result<Bytes> SimTransport::do_read(const ReadSpec& rs, Duration timeout) {
         chunk.garble = false;
       }
       buf.insert(buf.end(), chunk.data.begin(), chunk.data.end());
+      // NOLINTNEXTLINE(bugprone-assignment-in-if-condition): the length is kept when there is one
       if ((n = frame_length(rs, buf))) break;
     }
     // A simulated peer has said all it will once its reply is queued: for
     // UntilClose that is the frame, as if it then closed.
     if (!n && rs.kind == ReadSpec::Kind::UntilClose && !buf.empty()) n = buf.size();
-    if (n || !state_->unsolicited || std::chrono::steady_clock::now() >= real_deadline) break;
-    lock.unlock();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    lock.lock();
+    if (n || !state_->unsolicited) break;
+    const TimePoint now = clock.now();
+    if (now >= deadline) break;
+    // The source is polled: nothing notifies, the wait ends at its deadline.
+    clock.wait_until(state_->cv, lock, std::min(deadline, now + std::chrono::milliseconds(1)));
   }
   if (!n) {
     return fail(ErrorKind::Timeout, (buf.empty() ? "no reply within " : "incomplete reply within ") +

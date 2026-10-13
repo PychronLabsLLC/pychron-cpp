@@ -23,7 +23,7 @@ Bytes ModbusDeviceSim::respond(const Bytes& tx) const {
   if (!request) {
     // A well-framed request for a function we do not read: say so.
     if (auto fn = mb::request_function(tx); fn && tx.size() >= 7 && tx[6] == unit) {
-      const std::uint16_t tid = static_cast<std::uint16_t>((tx[0] << 8) | tx[1]);
+      const auto tid = static_cast<std::uint16_t>((tx[0] << 8) | tx[1]);
       return mb::encode_exception(tid, unit, *fn, kIllegalFunction);
     }
     return {};

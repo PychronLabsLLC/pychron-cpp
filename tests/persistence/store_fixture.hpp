@@ -31,7 +31,7 @@ inline std::string pg_url() {
 // "sqlite" always; "pg" when PYCHRON_TEST_PG_URL is set.
 inline std::vector<std::string> engines() {
   std::vector<std::string> e{"sqlite"};
-  if (!pg_url().empty()) e.push_back("pg");
+  if (!pg_url().empty()) e.emplace_back("pg");
   return e;
 }
 

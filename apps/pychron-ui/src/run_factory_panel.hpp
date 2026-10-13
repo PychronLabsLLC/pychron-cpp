@@ -14,13 +14,21 @@
 // unknowns (and/or before and after); Block inserts one of the lab's blocks.
 // Everything goes through QueueTableModel, so it is revalidated and refused
 // while a queue runs.
+//
+// With an IdentifierSource (identifier-select design) the identifier can also
+// be picked: Package and Level selects narrow a dropdown of the identifiers
+// the source knows. A pick is the same as typing the identifier.
 
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
+#include <QPointer>
 #include <QWidget>
 
+#include "identifier_source.hpp"
 #include "pychron/experiment/factory/form.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "queue_table_model.hpp"
@@ -28,6 +36,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -67,8 +76,21 @@ class RunFactoryPanel : public QWidget {
   // The lab's conditionals files changed (the editor made or deleted one).
   void refresh_conditionals();
   void set_conditional_checked(const QString& name, bool on);
+  // Null: no selects (the default). The panel does not own it; a source
+  // destroyed first hides the selects.
+  void set_identifier_source(IdentifierSource* source);
+  // What the operator's pick in a select does.
+  void choose_package(int index);     // 0 is "(none)"
+  void choose_level(int index);       // 0 is "(all)"
+  void choose_identifier(int index);  // a row of the dropdown
 
   // For tests.
+  QStringList package_choices() const;
+  QStringList level_choices() const;
+  QStringList identifier_choices() const;  // item texts
+  bool selects_visible() const;            // the Package and Level rows
+  QString identifier_tooltip() const;
+  QString package_tooltip() const;
   QString preview_text() const;
   bool add_enabled() const;
   bool field_enabled(const char* name) const;  // "value", "position", "script", "plan", ...
@@ -77,6 +99,10 @@ class RunFactoryPanel : public QWidget {
   QStringList block_choices() const;
   QStringList conditional_choices() const;
   QString conditionals_text() const;  // the button: the ticked files or "(none)"
+
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
+  void showEvent(QShowEvent* event) override;
 
  signals:
   // Rows the panel just inserted (sorted), for the window to select.
@@ -94,6 +120,15 @@ class RunFactoryPanel : public QWidget {
   void refresh();  // field enabling and preview, after any edit
   void on_identifier_changed();
   void report_inserted(std::size_t at, std::size_t count);
+  void load_packages();
+  void load_contents();  // of the package just chosen
+  // Asks for the chosen package's contents; `keep_level` is selected again
+  // when the answer still lists it.
+  void request_contents(std::optional<std::string> keep_level);
+  void clear_contents();
+  void show_selects(bool on);
+  void fill_levels();
+  void fill_identifiers();  // the dropdown, for the chosen level; the typed text stays
 
   const experiment::lab::Lab& lab_;
   QueueTableModel& model_;
@@ -104,36 +139,48 @@ class RunFactoryPanel : public QWidget {
   experiment::FactoryForm overrides_carrier_;  // keeps overrides from defaults or a row
   std::vector<std::string> conditionals_;      // the ticked conditionals files, in the order ticked
 
-  QComboBox* type_;
-  QLineEdit* identifier_;
-  QLineEdit* aliquot_;
-  QLineEdit* step_;
-  QLineEdit* device_;
-  QLineEdit* position_;
-  QCheckBox* per_hole_;
-  QSpinBox* identifier_step_;
-  QDoubleSpinBox* value_;
-  QComboBox* units_;
-  QDoubleSpinBox* duration_;
-  QDoubleSpinBox* cleanup_;
-  QComboBox* script_;
-  QLineEdit* step_heat_;
-  QComboBox* plan_;
-  QComboBox* post_equilibration_;
-  QComboBox* post_measurement_;
-  QLineEdit* comment_;
-  QToolButton* conditionals_button_;
-  QLabel* preview_;
-  QPushButton* add_;
-  QCheckBox* after_selection_;
-  QSpinBox* inc_identifier_;
-  QSpinBox* inc_position_;
-  QComboBox* freq_type_;
-  QSpinBox* freq_every_;
-  QCheckBox* freq_before_;
-  QCheckBox* freq_after_;
-  QComboBox* block_;
-  QSpinBox* block_times_;
+  QPointer<IdentifierSource> source_;
+  std::vector<PackageChoice> packages_;
+  PackageContents contents_;  // of the chosen package
+  // The latest request of each kind; an answer to an earlier one is dropped.
+  std::uint64_t packages_serial_ = 0;
+  std::uint64_t contents_serial_ = 0;
+  bool packages_failed_ = false;  // the first list never came: asked again when the panel is shown
+
+  QFormLayout* run_form_ = nullptr;
+  QComboBox* type_ = nullptr;
+  QComboBox* package_ = nullptr;
+  QComboBox* level_ = nullptr;
+  QComboBox* identifier_select_ = nullptr;
+  QLineEdit* identifier_ = nullptr;  // identifier_select_'s line edit
+  QLineEdit* aliquot_ = nullptr;
+  QLineEdit* step_ = nullptr;
+  QLineEdit* device_ = nullptr;
+  QLineEdit* position_ = nullptr;
+  QCheckBox* per_hole_ = nullptr;
+  QSpinBox* identifier_step_ = nullptr;
+  QDoubleSpinBox* value_ = nullptr;
+  QComboBox* units_ = nullptr;
+  QDoubleSpinBox* duration_ = nullptr;
+  QDoubleSpinBox* cleanup_ = nullptr;
+  QComboBox* script_ = nullptr;
+  QLineEdit* step_heat_ = nullptr;
+  QComboBox* plan_ = nullptr;
+  QComboBox* post_equilibration_ = nullptr;
+  QComboBox* post_measurement_ = nullptr;
+  QLineEdit* comment_ = nullptr;
+  QToolButton* conditionals_button_ = nullptr;
+  QLabel* preview_ = nullptr;
+  QPushButton* add_ = nullptr;
+  QCheckBox* after_selection_ = nullptr;
+  QSpinBox* inc_identifier_ = nullptr;
+  QSpinBox* inc_position_ = nullptr;
+  QComboBox* freq_type_ = nullptr;
+  QSpinBox* freq_every_ = nullptr;
+  QCheckBox* freq_before_ = nullptr;
+  QCheckBox* freq_after_ = nullptr;
+  QComboBox* block_ = nullptr;
+  QSpinBox* block_times_ = nullptr;
   std::vector<QWidget*> groups_;  // disabled while locked
   QWidget* block_box_ = nullptr;  // stays disabled when the lab has no blocks
 };

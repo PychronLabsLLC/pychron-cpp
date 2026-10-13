@@ -7,6 +7,7 @@
     "tomlplusplus",
     "spdlog",
     "nlohmann-json",
+    "pugixml",
     "gtest"
   ],
   "features": {

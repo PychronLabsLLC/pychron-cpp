@@ -78,6 +78,8 @@ class StoreSourceTest : public ::testing::Test {
     const auto pi = *store_->add_principal_investigator(acq_, {"Ross", "J", std::nullopt, std::nullopt, std::nullopt});
     const auto project = *store_->add_project(acq_, {"Fish Canyon", pi, std::nullopt});
     const auto material = *store_->add_material(acq_, {"sanidine", "60-80", std::nullopt});
+    project_ = project;
+    material_ = material;
     const auto sample = *store_->add_sample(acq_, {.name = "FC-2",
                                                    .project = project,
                                                    .material = material,
@@ -210,7 +212,7 @@ class StoreSourceTest : public ::testing::Test {
   std::string url_;
   std::unique_ptr<ps::IStore> store_;
   std::unique_ptr<StoreSource> source_;
-  ps::Uuid acq_, red_, reducer_, ms_, irr_, level_, position_, unknown_, air_;
+  ps::Uuid acq_, red_, reducer_, ms_, irr_, level_, position_, unknown_, air_, project_, material_;
   ps::Bytes signal_;
 };
 
@@ -332,6 +334,45 @@ TEST_F(StoreSourceTest, LoadAssemblesTheAnalysisAndItsReductionContext) {
   EXPECT_EQ(source().load(unknown_.str())->get(), loaded->get());
   EXPECT_FALSE(source().load("not-a-uuid"));
   EXPECT_FALSE(source().load(ps::Uuid::v7().str()));
+}
+
+// The sample of an analysis is the one of that name, not whichever of the
+// samples containing the name a capped search happens to return. A lab's
+// catalog has hundreds of names with a monitor's name inside them.
+TEST_F(StoreSourceTest, TheSampleIsFoundAmongManyWhoseNamesContainIts) {
+  for (int i = 0; i < 510; ++i) {
+    char name[32];
+    std::snprintf(name, sizeof name, "A%03d FC-2", i);  // sorts before "FC-2"
+    ASSERT_TRUE(store_->add_sample(acq_, {.name = name, .project = project_, .material = material_, .lat = 1.0, .lon = 2.0}));
+  }
+  auto loaded = source().load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  EXPECT_EQ((*loaded)->sample, "FC-2");
+  EXPECT_EQ((*loaded)->sample_info.latitude, 37.75);
+  EXPECT_EQ((*loaded)->sample_info.igsn, "IEFC20001");
+}
+
+// A name that only differs in case, or that is a longer name, is another sample.
+TEST_F(StoreSourceTest, ASampleWithASimilarNameIsNotTaken) {
+  ASSERT_TRUE(store_->add_sample(acq_, {.name = "FC-2b", .project = project_, .material = material_, .lat = 9.0, .lon = 9.0}));
+  ASSERT_TRUE(store_->add_sample(acq_, {.name = "AFC-2", .project = project_, .material = material_, .lat = 8.0, .lon = 8.0}));
+  auto loaded = source().load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  EXPECT_EQ((*loaded)->sample_info.latitude, 37.75);
+}
+
+// One name, a sample in every project that uses it (a monitor is entered
+// under each): the analysis gets the one it was measured on.
+TEST_F(StoreSourceTest, TheSampleIsItsOwnAmongNamesakes) {
+  const auto pi = *store_->add_principal_investigator(acq_, {"Other", "P", std::nullopt, std::nullopt, std::nullopt});
+  for (int i = 0; i < 40; ++i) {
+    const auto project = *store_->add_project(acq_, {"Project " + std::to_string(i), pi, std::nullopt});
+    ASSERT_TRUE(store_->add_sample(acq_, {.name = "FC-2", .project = project, .material = material_, .lat = 1.0 + i, .lon = 2.0}));
+  }
+  auto loaded = source().load(unknown_.str());
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  EXPECT_EQ((*loaded)->sample_info.latitude, 37.75);
+  EXPECT_EQ((*loaded)->sample_info.lithology, "ash-flow tuff");
 }
 
 TEST_F(StoreSourceTest, ReferenceValuesWithoutContentAreNoValues) {

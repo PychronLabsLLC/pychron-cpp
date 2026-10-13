@@ -56,6 +56,7 @@ void DataMainWindow::set_installations_handler(std::function<void()> handler) {
 
 void DataMainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory settings) {
   preferences_settings_ = std::move(settings);
+  data_->set_settings(preferences_settings_);
 }
 
 PreferencesDialog* DataMainWindow::open_preferences() {
@@ -67,7 +68,7 @@ PreferencesDialog* DataMainWindow::open_preferences() {
 
 void DataMainWindow::apply_preferences(const Preferences& preferences) {
   apply_application_preferences(preferences);
-  data_->set_page_size(preferences.browser_page_size);
+  data_->apply_preferences(preferences);
 }
 
 }  // namespace pychron::ui

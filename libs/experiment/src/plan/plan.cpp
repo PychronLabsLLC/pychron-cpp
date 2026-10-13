@@ -53,7 +53,7 @@ reduction::FitSpec signal_fit(const Fits& fits, const std::string& isotope) {
 
 reduction::FitSpec baseline_fit(const Fits& fits, const std::string& detector) {
   auto spec = fit_for(fits.baseline, fits, detector);
-  if (fits.baseline.find(detector) == fits.baseline.end() && fits.baseline.find("default") == fits.baseline.end())
+  if (!fits.baseline.contains(detector) && !fits.baseline.contains("default"))
     spec.kind = reduction::FitKind::Average;
   return spec;
 }

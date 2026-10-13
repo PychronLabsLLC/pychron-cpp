@@ -13,15 +13,16 @@
 // the spectrometer driver always did: reopen the transport, run the owner's
 // handshake, retry. Borrowers trigger the same repair.
 
+#include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <string_view>
 
 #include "pychron/codecs/codec.hpp"
 #include "pychron/codecs/thermo_qtegra.hpp"
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/devices/link_registry.hpp"
 #include "pychron/devices/reconnect.hpp"
@@ -61,7 +62,9 @@ class QtegraLink {
   Transport& transport_;
   const codec::qtegra::Terminator terminator_;
   Reconnector reconnector_;
-  std::mutex handshake_mutex_;  // held while handshake_ runs or is replaced
+  // Held while handshake_ runs or is replaced. The handshake talks to the
+  // instrument, which waits in clock time: a ClockMutex.
+  ClockMutex handshake_mutex_;
   Handshake handshake_;
 };
 

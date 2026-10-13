@@ -49,7 +49,7 @@ cv::Mat preprocess(const FrameView& v) {
   const double depth = v.pixel_depth > 0 ? v.pixel_depth : 255.0;
   cv::Mat f(v.height, v.width, CV_64F);
   for (int y = 0; y < v.height; ++y) {
-    double* row = f.ptr<double>(y);
+    auto* row = f.ptr<double>(y);
     for (int x = 0; x < v.width; ++x) row[x] = v.at(x, y) / depth;
   }
   cv::pow(f, kGamma, f);
@@ -76,7 +76,7 @@ void apply_mask(cv::Mat& src, double radius, double outside) {
   if (radius <= 0) return;
   const double cx = src.cols / 2.0, cy = src.rows / 2.0;
   for (int y = 0; y < src.rows; ++y) {
-    double* row = src.ptr<double>(y);
+    auto* row = src.ptr<double>(y);
     for (int x = 0; x < src.cols; ++x) {
       const double dx = x - cx, dy = y - cy;
       if (dx * dx + dy * dy >= radius * radius) row[x] = outside;
@@ -89,8 +89,8 @@ void apply_mask(cv::Mat& src, double radius, double outside) {
 std::vector<Cand> find_at(const cv::Mat& src, double t, bool limit) {
   cv::Mat fg(src.rows, src.cols, CV_8U);
   for (int y = 0; y < src.rows; ++y) {
-    const double* s = src.ptr<double>(y);
-    std::uint8_t* d = fg.ptr<std::uint8_t>(y);
+    const auto* s = src.ptr<double>(y);
+    auto* d = fg.ptr<std::uint8_t>(y);
     for (int x = 0; x < src.cols; ++x) d[x] = s[x] >= t ? 0 : 255;
   }
 

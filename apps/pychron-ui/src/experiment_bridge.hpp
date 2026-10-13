@@ -61,6 +61,11 @@ class ExperimentBridge : public QObject {
   void truncate(bool quick = false);
   bool running() const;
 
+  // Whether the session's runs go to a database (a store persister) rather
+  // than to files: the executor pane words what is still to be saved by it.
+  void set_saves_to_database(bool on) noexcept { saves_to_database_ = on; }
+  bool saves_to_database() const noexcept { return saves_to_database_; }
+
  signals:
   void executorStateChanged(const pychron::experiment::executor::ExecutorStateChanged& event);
   void runStarted(const pychron::experiment::executor::RunStarted& event);
@@ -69,6 +74,7 @@ class ExperimentBridge : public QObject {
   void queueEdited(const pychron::experiment::executor::QueueEdited& event);
   void queueFrontier(const pychron::experiment::executor::QueueFrontier& event);
   void notificationSent(const pychron::experiment::lab::NotificationSent& event);
+  void queueStarted(const pychron::experiment::lab::QueueStarted& event);
   void queueEnded(const pychron::experiment::lab::QueueEnded& event);
   void runStateChanged(const pychron::experiment::run::RunStateChanged& event);
   void runNote(const pychron::experiment::run::RunNote& event);
@@ -90,6 +96,7 @@ class ExperimentBridge : public QObject {
 
   experiment::lab::LabSession& session_;
   SignalBus& bus_;
+  bool saves_to_database_ = false;
   std::shared_ptr<Gate> gate_;
   std::vector<SignalBus::Subscription> subscriptions_;
 };

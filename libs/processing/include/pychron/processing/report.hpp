@@ -71,6 +71,11 @@ struct Report {
 
 Report make_report(const Dataset& dataset, const ReportOptions& options = {});
 
+// One RFC 4180 field: the text as it is, or quoted (a quote doubled) when it
+// holds a comma, a quote or a line break, or starts or ends with a space,
+// which some readers trim. Shared by every CSV the application writes.
+std::string csv_quote(std::string_view text);
+
 // "# " header lines, then every table as "[name]", its column line and its
 // rows (RFC 4180 fields), separated by blank lines.
 std::string report_csv(const Report& report);

@@ -1,0 +1,147 @@
+# Static analysis for first-party code, run by tools/quality_check.py on the
+# lines a branch changes (docs/dev_setup.md, "Static analysis").
+#
+# The list is the checks that find defects: lifetime, ownership, undefined
+# behaviour, thread safety, C idioms where C++ has a safe one. Checks that only
+# restate a style this tree does not follow are off, each with its reason, so a
+# finding is something to fix and not something to argue with.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-mt-unsafe,
+  cppcoreguidelines-avoid-capturing-lambda-coroutines,
+  cppcoreguidelines-avoid-reference-coroutine-parameters,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-interfaces-global-init,
+  cppcoreguidelines-misleading-capture-default-by-value,
+  cppcoreguidelines-no-malloc,
+  cppcoreguidelines-no-suspend-with-lock,
+  cppcoreguidelines-owning-memory,
+  cppcoreguidelines-pro-type-const-cast,
+  cppcoreguidelines-pro-type-cstyle-cast,
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-pro-type-reinterpret-cast,
+  cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-rvalue-reference-param-not-moved,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-virtual-class-destructor,
+  misc-coroutine-hostile-raii,
+  misc-definitions-in-headers,
+  misc-misleading-bidirectional,
+  misc-misleading-identifier,
+  misc-misplaced-const,
+  misc-new-delete-overloads,
+  misc-non-copyable-objects,
+  misc-redundant-expression,
+  misc-static-assert,
+  misc-throw-by-value-catch-by-reference,
+  misc-unconventional-assign-operator,
+  misc-uniqueptr-reset-release,
+  misc-unused-alias-decls,
+  misc-unused-parameters,
+  misc-unused-using-decls,
+  modernize-*,
+  performance-*,
+  readability-container-contains,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-duplicate-include,
+  readability-misleading-indentation,
+  readability-misplaced-array-index,
+  readability-non-const-parameter,
+  readability-redundant-smartptr-get,
+  readability-redundant-string-cstr,
+  readability-simplify-boolean-expr,
+  readability-static-accessed-through-instance,
+  readability-string-compare,
+  readability-use-std-min-max,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-misplaced-widening-cast,
+  -bugprone-optional-value-conversion,
+  -bugprone-signed-bitwise,
+  -bugprone-unchecked-optional-access,
+  -bugprone-throwing-static-initialization,
+  -modernize-return-braced-init-list,
+  -modernize-use-designated-initializers,
+  -modernize-use-nodiscard,
+  -modernize-use-std-numbers,
+  -modernize-use-ranges,
+  -modernize-use-scoped-lock,
+  -modernize-use-trailing-return-type,
+  -performance-avoid-endl,
+  -performance-enum-size
+# Why each of those is off:
+#   easily-swappable-parameters   fires on any (double x, double y)
+#   implicit-widening-of-multiplication-result, misplaced-widening-cast
+#                                 `64 * 1024`, `4 * i`, `r * p + c` for a small
+#                                 matrix: all 25 found were products that
+#                                 cannot leave int
+#   optional-value-conversion     `a.step = *number` where both are optionals:
+#                                 it asks for `a.step = number`, which is not
+#                                 the same when number is tested first (19 of 19)
+#   signed-bitwise                the codecs mask and shift bytes held in int
+#   throwing-static-initialization  every namespace-scope std::string constant
+#   unchecked-optional-access     it follows a test only within one function
+#       and only on one spelling. Here an optional is most often tested
+#       somewhere it cannot see: a member emplaced by the constructor, a report
+#       whose ok() means its config is there, a toml node asked is_integer()
+#       before value<int64_t>(). Of the 196 it found (2026-10-08) none read was
+#       a defect. The same mistake is caught where it happens instead: a build
+#       with PYCHRON_SANITIZE has the standard library's own checks on
+#       (cmake/PychronSanitizers.cmake), and an empty optional dereferenced in
+#       a test stops the test.
+#   return-braced-init-list, use-designated-initializers, use-nodiscard,
+#   use-ranges, use-scoped-lock, use-trailing-return-type   style, not defects
+#   use-std-numbers               not a matter of style here: it takes any literal
+#       near a constant for that constant (its fix made a legacy algorithm's
+#       3.1415 into pi) and std::log(10.0) for std::numbers::ln10, which need
+#       not agree in the last bit, where the golden vectors look
+#   avoid-endl                    where it is written the flush is wanted (a
+#                                 progress line, a message before an abort)
+#   enum-size                     layout is not a concern for these enums
+# Not listed at all, though it is a defect check elsewhere:
+#   cppcoreguidelines-pro-type-vararg   every use is the printf family, whose
+#       arguments -Wformat already checks under -Werror; the conversions that
+#       lose errors are bugprone-unchecked-string-to-number-conversion's
+#
+#   cppcoreguidelines-missing-std-forward   all 27 found were a callable taken
+#       as F&& and called, often more than once: forwarding it would be wrong
+#
+#   cppcoreguidelines-prefer-member-initializer   moving `x_ = new QWidget(this)`
+#       from a constructor's body to its initializer list makes the widgets in
+#       declaration order, not the order written, and Qt's tab order follows
+#       the order they are made; elsewhere it is a matter of style
+#
+#   readability-inconsistent-declaration-parameter-name   its fix renames the
+#       declaration after the definition, and the header had the better name
+#       (`hardware_name` became `n`); which to keep is a matter of style
+#
+# Directories that turn one more check off, each saying why:
+#   apps/pychron-ui, tests/ui   cppcoreguidelines-owning-memory (Qt parents)
+#   tests, apps/elctl/tests     bugprone-exception-escape
+
+# First-party headers only: nothing under build/ (fetched dependencies,
+# generated code) and nothing from the system.
+HeaderFilterRegex: '.*/(libs|apps|tests)/.*'
+ExcludeHeaderFilterRegex: '.*/build/.*'
+
+CheckOptions:
+  # What is left is an exception the code itself throws, or one from the
+  # system. Not counted:
+  #   bad_alloc, bad_array_new_length, length_error: out of memory inside a
+  #     noexcept function or a destructor terminates, which is the outcome
+  #     wanted, and is no reason to drop the noexcept;
+  #   out_of_range, bad_variant_access, bad_optional_access, bad_function_call:
+  #     the library's own guard in substr(), bitset::test(), Result's
+  #     operator* and std::function, behind a test the caller has just made
+  #     (the 2026-10-08 backlog read all fifteen of these: none can happen).
+  bugprone-exception-escape.IgnoredExceptions: 'bad_alloc,bad_array_new_length,length_error,out_of_range,bad_variant_access,bad_optional_access,bad_function_call'
+  # `!(lo <= x && x <= hi)` is not `x < lo || x > hi` when x is a double: the
+  # first refuses a NaN and the second lets it through. Its fix rewrote five
+  # range checks that way.
+  readability-simplify-boolean-expr.SimplifyDeMorgan: false
+  misc-unused-parameters.StrictMode: false
+  performance-unnecessary-value-param.AllowedTypes: 'QModelIndex;QPoint;QPointF;QSize;QSizeF;QRect;QRectF;QColor'
+  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: true

@@ -13,6 +13,8 @@
 #include <QPolygonF>
 #include <QStyle>
 #include <QTemporaryDir>
+#include <QToolButton>
+#include <QTreeView>
 #include <QVariant>
 #include <QWidget>
 
@@ -70,6 +72,8 @@ Theme light() {
   t.row_air = rgb(0xe5f6ec);
   t.row_cocktail = rgb(0xfff2dc);
   t.row_detector_ic = rgb(0xf0e9fc);
+  t.row_category = {rgb(0xe7effd), rgb(0xe5f6ec), rgb(0xfff2dc), rgb(0xf0e9fc),
+                    rgb(0xddf3f4), rgb(0xfce9f3), rgb(0xf3f0d3), rgb(0xe9ecef)};
 
   t.diff_changed = rgb(0xffeca0);
   t.diff_added = rgb(0xcef0ce);
@@ -143,18 +147,38 @@ QString arrow_dir(const Theme& t) {
   static bool drawn = false;
   if (drawn || !dir.isValid()) return dir.path();
   drawn = true;
-  const auto draw = [&](const QString& name, bool up, const QColor& color) {
+  const auto stroke = [&](const QString& name, const QPolygonF& line, const QColor& color) {
     QImage image(20, 20, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
     QPainter p(&image);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(QPen(color, 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    const double a = up ? 13 : 7;
-    const double b = up ? 7 : 13;
-    p.drawPolyline(QPolygonF({QPointF(4, a), QPointF(10, b), QPointF(16, a)}));
+    p.drawPolyline(line);
     p.end();
     image.save(dir.filePath(name));
   };
+  const auto draw = [&](const QString& name, bool up, const QColor& color) {
+    const double a = up ? 13 : 7;
+    const double b = up ? 7 : 13;
+    stroke(name, QPolygonF({QPointF(4, a), QPointF(10, b), QPointF(16, a)}), color);
+  };
+  // What a ticked box and a partly ticked one show, in the page's white on the accent.
+  stroke(QStringLiteral("check.png"), QPolygonF({QPointF(4.5, 10.5), QPointF(8.5, 14.5), QPointF(15.5, 6)}), t.base);
+  stroke(QStringLiteral("dash.png"), QPolygonF({QPointF(5, 10), QPointF(15, 10)}), t.base);
+  // A tree's branch is as wide as its indentation and shows an image at up to
+  // its own size, so these carry their margin: a chevron of 8 in a square of 20.
+  const auto branch = [&](const QString& name, const QPolygonF& line) {
+    QImage image(40, 40, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter p(&image);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(t.muted_text, 3.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPolyline(line);
+    p.end();
+    image.save(dir.filePath(name));
+  };
+  branch(QStringLiteral("branch-closed.png"), QPolygonF({QPointF(16, 12), QPointF(24, 20), QPointF(16, 28)}));
+  branch(QStringLiteral("branch-open.png"), QPolygonF({QPointF(12, 16), QPointF(20, 24), QPointF(28, 16)}));
   draw(QStringLiteral("down.png"), false, t.muted_text);
   draw(QStringLiteral("up.png"), true, t.muted_text);
   draw(QStringLiteral("down-off.png"), false, t.strong_border);
@@ -201,23 +225,31 @@ QToolButton { background: transparent; border: 1px solid transparent; border-rad
 QToolButton:hover { background: @accent_wash; border-color: @border; }
 QToolButton:pressed, QToolButton:checked { background: @accent_soft; border-color: @accent; color: @accent_strong; }
 QToolButton:disabled { color: @faint_text; }
+QToolButton[outlined="true"] { background: @base; border-color: @strong_border; min-width: 14px; }
+QToolButton[outlined="true"]:hover { background: @accent_wash; border-color: @accent; }
+QToolButton[outlined="true"]:pressed { background: @accent_soft; border-color: @accent_strong; }
+QToolButton[outlined="true"]:disabled { background: @alt_base; border-color: @border; }
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-  background: @base; color: @text; border: 1px solid @strong_border; border-radius: 6px;
+  background: @base; color: @text; border: 1px solid @border; border-radius: 6px;
   padding: 4px 6px; selection-background-color: @accent; selection-color: @base; }
-QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @outline; }
-QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: @accent; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @strong_border; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+  border: 2px solid @accent; padding: 3px 5px; }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
   background: @alt_base; border-color: @border; color: @faint_text; }
 QLineEdit:read-only { background: @alt_base; }
 QComboBox { padding-right: 22px; }
-QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 20px; border: none; }
+QComboBox:focus { padding-right: 21px; }
+QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: center right; width: 20px; margin-right: 1px;
+  border: none; }
 QComboBox::down-arrow { image: url(@arrows/down.png); width: 10px; height: 10px; }
 QComboBox::down-arrow:disabled { image: url(@arrows/down-off.png); }
 QComboBox::down-arrow:on { image: url(@arrows/up.png); }
 QComboBox QAbstractItemView { background: @base; border: 1px solid @strong_border; outline: 0;
   selection-background-color: @accent_soft; selection-color: @accent_strong; }
 QSpinBox, QDoubleSpinBox { padding-right: 18px; }
+QSpinBox:focus, QDoubleSpinBox:focus { padding-right: 17px; }
 QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {
   subcontrol-origin: border; width: 16px; border: none; background: transparent; }
 QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-position: top right; margin: 2px 2px 0 0; }
@@ -230,6 +262,25 @@ QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled, QSpinBox::do
 QDoubleSpinBox::down-arrow:off { image: url(@arrows/down-off.png); }
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: @accent_wash; border-radius: 3px; }
+
+QCheckBox::indicator, QGroupBox::indicator, QAbstractItemView::indicator {
+  width: 14px; height: 14px; background: @base; border: 1px solid @strong_border; border-radius: 4px; }
+QCheckBox::indicator:hover, QGroupBox::indicator:hover { border-color: @accent; }
+QCheckBox::indicator:checked, QGroupBox::indicator:checked, QAbstractItemView::indicator:checked {
+  background: @accent; border-color: @accent; image: url(@arrows/check.png); }
+QCheckBox::indicator:indeterminate, QGroupBox::indicator:indeterminate, QAbstractItemView::indicator:indeterminate {
+  background: @accent; border-color: @accent; image: url(@arrows/dash.png); }
+QCheckBox::indicator:disabled, QGroupBox::indicator:disabled, QAbstractItemView::indicator:disabled {
+  background: @alt_base; border-color: @border; }
+QCheckBox::indicator:checked:disabled, QGroupBox::indicator:checked:disabled,
+QAbstractItemView::indicator:checked:disabled, QCheckBox::indicator:indeterminate:disabled,
+QGroupBox::indicator:indeterminate:disabled, QAbstractItemView::indicator:indeterminate:disabled {
+  background: @accent_soft; border-color: @accent_soft; }
+
+QListWidget#PreferencesPages { outline: 0; }
+QListWidget#PreferencesPages::item { padding: 0 10px; }
+QListWidget#PreferencesPages::item:hover { background: @accent_wash; }
+QListWidget#PreferencesPages::item:selected { background: @accent; color: @base; }
 
 QPlainTextEdit, QTextEdit, QAbstractItemView {
   background: @base; border: 1px solid @border; selection-background-color: @accent; selection-color: @base; }
@@ -274,6 +325,19 @@ QFrame#CommandPalette QTreeView { border: none; padding: 2px 0; }
 QFrame#CommandPalette QTreeView::item { padding: 0 10px; border: none; background: transparent; }
 QFrame#CommandPalette QTreeView::item:hover { background: @accent_wash; }
 QFrame#CommandPalette QTreeView::item:selected { background: @accent_soft; color: @accent_strong; }
+
+QTreeView[sidebar="true"] { background: @window; border: none; padding: 4px; outline: 0;
+  show-decoration-selected: 1; }
+QTreeView[sidebar="true"]::item { padding: 4px 6px 4px 2px; border: none; }
+QTreeView[sidebar="true"]::item:hover, QTreeView[sidebar="true"]::branch:hover { background: @accent_wash; }
+QTreeView[sidebar="true"]::item:selected, QTreeView[sidebar="true"]::branch:selected {
+  background: @accent_soft; color: @accent_strong; }
+QTreeView[sidebar="true"]::item:selected { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+QTreeView[sidebar="true"]::branch:has-children:closed { image: url(@arrows/branch-closed.png); }
+QTreeView[sidebar="true"]::branch:has-children:open { image: url(@arrows/branch-open.png); }
+
+QTreeView#PackageTree { background: @window; border: none; padding: 4px 0; outline: 0;
+  selection-background-color: transparent; show-decoration-selected: 0; }
 )");
   const std::pair<const char*, QColor> colors[] = {
       {"accent_strong", t.accent_strong}, {"accent_soft", t.accent_soft}, {"accent_wash", t.accent_wash},
@@ -339,8 +403,9 @@ QString style_sheet() {
   tone(Tone::Error, t.error_text);
 
   // After the chrome, and with :focus spelled out, so it beats the focus ring.
-  s += QStringLiteral("*[invalid=\"true\"], *[invalid=\"true\"]:focus, *[invalid=\"true\"]:hover "
-                      "{ border: 1px solid %1; background: %2; }\n")
+  // With the focus it is a ring of the same two pixels: the field keeps its size.
+  s += QStringLiteral("*[invalid=\"true\"], *[invalid=\"true\"]:hover { border: 1px solid %1; background: %2; }\n"
+                      "*[invalid=\"true\"]:focus { border: 2px solid %1; background: %2; }\n")
            .arg(t.error.name(), t.error_bg.name());
 
   s += QStringLiteral("*[banner=\"true\"] { background: %1; color: %2; }\n"
@@ -405,6 +470,17 @@ void set_tone(QWidget* widget, Tone tone) { set_property(widget, "tone", QLatin1
 void set_invalid(QWidget* widget, bool invalid) { set_property(widget, "invalid", invalid); }
 
 void make_banner(QWidget* widget) { set_property(widget, "banner", true); }
+
+void make_outlined(QToolButton* button) { set_property(button, "outlined", true); }
+
+void make_sidebar(QTreeView* tree) {
+  set_property(tree, "sidebar", true);
+  tree->setHeaderHidden(true);
+  tree->setIndentation(18);
+  tree->setAnimated(true);
+  tree->setExpandsOnDoubleClick(true);
+  tree->setMouseTracking(true);  // the hover of a row
+}
 
 QColor level_color(Level level) {
   const Theme& t = theme();

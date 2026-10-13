@@ -371,6 +371,12 @@ struct BlobIngest {
   std::optional<int> n_points;
 };
 
+// Where an identifier's numbering stands (increment -1: no step).
+struct LastAnalysis {
+  int aliquot = 0;
+  int increment = -1;
+};
+
 struct IngestItem {
   Uuid item;                    // idempotency key
   Sha256Digest payload_sha256;  // of the canonical outbox payload
@@ -506,6 +512,10 @@ struct BrowseRow {
   std::optional<int> position;
   std::optional<double> extract_value;
   std::string extract_units;
+  // The sample itself, where the analysis has one (`sample` is its name):
+  // the identifier's own, else its position's. Several samples may share a
+  // name, one per project; this says which.
+  std::optional<Uuid> sample_uuid = std::nullopt;
 };
 
 struct BrowseResult {
@@ -606,6 +616,9 @@ class IStore {
   virtual Result<std::optional<Uuid>> find_identifier(const std::string& identifier) = 0;
   // The analysis that has this run identity now (increment -1: no step).
   virtual Result<std::optional<Uuid>> find_analysis(const std::string& identifier, int aliquot, int increment) = 0;
+  // The highest aliquot among the analyses of `identifier`, and the highest
+  // increment within it; nullopt when it has none or the identifier is unknown.
+  virtual Result<std::optional<LastAnalysis>> last_analysis(const std::string& identifier) = 0;
   // The identifier that sits at an irradiation position; nullopt when the
   // position does not exist or holds none.
   virtual Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
@@ -705,6 +718,12 @@ class IStore {
 };
 
 Result<std::unique_ptr<IStore>> open_store(const StoreConfig& config);
+
+// QtSql needs an application object. A host that is not a Qt application gets
+// a private one, made on the calling thread and never destroyed; a host with
+// its own is left alone. open_store does this itself; call it first, from the
+// program's main thread, when the first store will be opened on another thread.
+void ensure_host_application();
 
 // True for the error IStore::ingest returns when an analysis names an
 // identifier, mass spectrometer or extract device that is not in the catalog.

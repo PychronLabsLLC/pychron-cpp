@@ -1,0 +1,1 @@
+@../earthbank/AGENTS.md

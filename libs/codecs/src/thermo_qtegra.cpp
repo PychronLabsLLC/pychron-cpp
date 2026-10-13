@@ -103,7 +103,7 @@ std::string lower(std::string s) {
 Result<std::string> body(const Bytes& reply) {
   const std::string raw = to_string(reply);
   std::string text(trim(raw));
-  if (text.rfind("ERROR", 0) == 0) return protocol_error("device error: " + text, reply);
+  if (text.starts_with("ERROR")) return protocol_error("device error: " + text, reply);
   return text;
 }
 
@@ -185,6 +185,7 @@ std::string format_number(double v) {
   auto sci = std::to_chars(buf.data(), buf.data() + buf.size(), v, std::chars_format::scientific);
   std::string s(buf.data(), sci.ptr);
   const auto e = s.find('e');
+  // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the exponent to_chars wrote just above
   const int exponent = e == std::string::npos ? 0 : std::atoi(s.c_str() + e + 1);
   if (exponent >= -4 && exponent < 16) {
     auto fixed = std::to_chars(buf.data(), buf.data() + buf.size(), v, std::chars_format::fixed);

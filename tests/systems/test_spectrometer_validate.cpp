@@ -163,7 +163,7 @@ TEST(SpectrometerValidate, Roles_ReferencedRoleMissingOnDriver) {
 }
 
 TEST(SpectrometerValidate, Roles_UnknownDriverAndAcquirerWithoutChannels) {
-  auto c = parse(with("acquirers = [\"faradays\", \"multiplier\"]", "acquirers = [\"faradays\", \"spellman\", \"nope\"]"));
+  auto c = parse(with(R"(acquirers = ["faradays", "multiplier"])", R"(acquirers = ["faradays", "spellman", "nope"])"));
   auto ds = check_roles(c);
   EXPECT_TRUE(mentions(ds, "acquisition.acquirers[1]", "does not have role 'acquirer'")) << dump(ds);
   EXPECT_TRUE(mentions(ds, "acquisition.acquirers[2]", "unknown driver 'nope'")) << dump(ds);
@@ -205,14 +205,14 @@ TEST(SpectrometerValidate, Channels_UnboundAcquirerChannel) {
 }
 
 TEST(SpectrometerValidate, Channels_IgnoredChannelMustExistAndNotBeBound) {
-  auto c = parse(with("ignored_channels = [\"faradays:L1\"]", "ignored_channels = [\"faradays:L1\", \"faradays:Q\", \"faradays:H1\"]"));
+  auto c = parse(with("ignored_channels = [\"faradays:L1\"]", R"(ignored_channels = ["faradays:L1", "faradays:Q", "faradays:H1"])"));
   auto ds = check_channels(c);
   EXPECT_TRUE(mentions(ds, "acquisition.ignored_channels[1]", "no acquirer channel")) << dump(ds);
   EXPECT_TRUE(mentions(ds, "acquisition.ignored_channels[2]", "bound to detector 'H1'")) << dump(ds);
 }
 
 TEST(SpectrometerValidate, Channels_DuplicateChannelOnDriver) {
-  auto c = parse(with("channels = [\"AX\", \"H1\", \"L1\"]", "channels = [\"AX\", \"H1\", \"L1\", \"H1\"]"));
+  auto c = parse(with(R"(channels = ["AX", "H1", "L1"])", R"(channels = ["AX", "H1", "L1", "H1"])"));
   EXPECT_TRUE(mentions(check_channels(c), "drivers.faradays.channels[3]", "duplicate channel 'H1'"));
 }
 
@@ -257,7 +257,7 @@ TEST(SpectrometerValidate, FieldTable_HvTableCheckedToo) {
 // ---- check_protection -----------------------------------------------------
 
 TEST(SpectrometerValidate, Protection_DetectorWithoutProtectionConfig) {
-  auto c = parse(with("detectors = [\"EM\"]", "detectors = [\"EM\", \"AX\", \"QQ\"]"));
+  auto c = parse(with("detectors = [\"EM\"]", R"(detectors = ["EM", "AX", "QQ"])"));
   auto ds = check_protection(c);
   EXPECT_TRUE(mentions(ds, "magnet.protection.detectors[1]", "'AX' has no protection config")) << dump(ds);
   EXPECT_TRUE(mentions(ds, "magnet.protection.detectors[2]", "unknown detector 'QQ'")) << dump(ds);

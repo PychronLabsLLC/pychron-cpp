@@ -43,6 +43,7 @@ class FakeMagnet final : public IMassPositioner {
   }
   Result<double> read() override { return remaining_ > 0 ? (target_ + position_) / 2 : target_; }
   Result<bool> moving() override {
+    // NOLINTNEXTLINE(bugprone-inc-dec-in-conditions): counts down to the arrival
     if (remaining_ > 0 && --remaining_ == 0) position_ = target_;
     return remaining_ > 0;
   }

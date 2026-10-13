@@ -1,10 +1,17 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 
 namespace pychron::spectrometer {
@@ -42,7 +49,49 @@ std::optional<std::string> first_non_simulated(const cfg::SpectrometerConfig& co
 
 }  // namespace
 
+Result<BeamFeed> feed_beam_from_line(sim::BeamModel& beam, sim::SimSystem& line) {
+  // Everything is checked first: nothing below the checks can fail.
+  if (&beam.clock() != &line.clock()) {
+    return fail(ErrorKind::Config, "the simulated beam and the simulated line are on different clocks: a reading's "
+                                   "instant would not be the line's time");
+  }
+  const sim::SimSettings& settings = line.settings();
+  const std::string where = settings.file.empty() ? std::string("sim settings") : settings.file;
+  const std::vector<std::string> known = beam.detector_names();
+  for (const auto& [name, detector] : settings.detectors) {
+    if (std::ranges::find(known, name) == known.end()) {
+      std::string what = where + ": detectors." + name + ": unknown detector '" + name + "'; known: ";
+      for (std::size_t i = 0; i < known.size(); ++i) what += (i == 0 ? "" : ", ") + known[i];
+      if (known.empty()) what += "none";
+      return fail(ErrorKind::Config, std::move(what));
+    }
+    if (!std::isfinite(detector.baseline) || !std::isfinite(detector.drift_per_h)) {
+      return fail(ErrorKind::Config, where + ": detectors." + name + ": baseline and drift must be finite numbers");
+    }
+  }
+  for (const auto& [name, detector] : settings.detectors) {
+    // Cannot fail: the name and both numbers were checked above.
+    [[maybe_unused]] const auto set = beam.set_baseline(name, detector.baseline, detector.drift_per_h);
+    assert(set && "feed_beam_from_line: a baseline was refused after it was checked");
+  }
+  // One seed for the simulated lab: the line's, when it was given one. A
+  // line left at the default seed leaves the beam the seed it was built with
+  // (the same number, unless whoever built the beam chose another).
+  if (settings.seed != sim::SimSettings{}.seed) beam.set_seed(settings.seed);
+  auto gas = line.beam_gas();
+  if (!gas) return BeamFeed::FixedGas;
+  beam.set_gas_provider(std::move(gas));
+  return BeamFeed::LineGas;
+}
+
 bool is_simulated(const cfg::SpectrometerData& data) { return !first_non_simulated(data.config).has_value(); }
+
+bool simulated_session(bool forced, std::optional<bool> spectrometer_is_simulated, const config::SystemConfig& line) {
+  if (forced) return true;
+  if (spectrometer_is_simulated) return *spectrometer_is_simulated;
+  return std::any_of(line.transports.begin(), line.transports.end(),
+                     [](const auto& t) { return t.second.kind == config::TransportKind::Sim; });
+}
 
 Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(const std::filesystem::path& config,
                                                                 SpectrometerContext ctx,
@@ -60,11 +109,20 @@ Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(cfg::Spectromete
                   "simulation requested but " + data.config.source_file + " is not a simulated spectrometer: " + *real);
     }
   }
+  std::shared_ptr<sim::BeamModel> beam;
   if (options.sim_beam_from_table) {
-    sim::BeamModelRegistry::global().set(
-        "default", std::make_shared<sim::BeamModel>(ctx.clock, beam_settings_from_config(data)));
+    beam = std::make_shared<sim::BeamModel>(ctx.clock, beam_settings_from_config(data));
+    sim::BeamModelRegistry::global().set("default", beam);
   }
-  return SpectrometerAssembler::assemble(std::move(data), ctx);
+  auto spec = SpectrometerAssembler::assemble(std::move(data), ctx);
+  // The line's gas and baselines, now that the drivers have given the beam
+  // its detectors.
+  if (spec && beam && options.line_sim != nullptr) {
+    auto fed = feed_beam_from_line(*beam, *options.line_sim);
+    if (!fed) return fail(fed.error());
+    if (options.fed != nullptr) *options.fed = *fed;
+  }
+  return spec;
 }
 
 }  // namespace pychron::spectrometer

@@ -74,7 +74,7 @@ class FakeSpectrometer final : public ISpectrometerPort {
     return std::optional<spectrometer::Reading>(std::move(r));
   }
   void stop_acquisition() override {
-    log.push_back("stop");
+    log.emplace_back("stop");
     acquiring = false;
   }
 

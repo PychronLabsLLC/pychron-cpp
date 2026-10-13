@@ -200,10 +200,10 @@ Result<Profile> load_profile(const fs::path& dir) {
       spec.check = (*f)["check"].value_or(std::string{});
       spec.convert = (*f)["convert"].value_or(std::string{});
       if (!spec.convert.empty() && spec.convert != "legacy_line" && spec.convert != "legacy_canvas")
-        err(w + ".convert", "must be \"legacy_line\" or \"legacy_canvas\"");
+        err(w + ".convert", R"(must be "legacy_line" or "legacy_canvas")");
       if (!spec.convert.empty() && spec.copy.empty()) err(w + ".convert", "needs copy naming the legacy folder");
       if (!spec.check.empty() && spec.check != "line" && spec.check != "canvas")
-        err(w + ".check", "must be \"line\" or \"canvas\"");
+        err(w + ".check", R"(must be "line" or "canvas")");
       if (spec.template_path.empty() == spec.copy.empty()) err(w, "needs exactly one of template and copy");
       if (spec.to.empty()) err(w + ".to", "missing");
       if (fs::path(spec.to).is_absolute() || spec.to.find("..") != std::string::npos)

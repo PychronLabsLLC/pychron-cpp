@@ -70,7 +70,7 @@ TEST(ArArTypes, LegacyPresetsMatchLegacy) {
   int seen = 0;
   for (const golden::Json& c : doc["cases"].as_array()) {
     const std::string& name = c["name"].as_string();
-    ConstantsPreset p;
+    ConstantsPreset p = ConstantsPreset::Default;
     if (name == "preset/legacy") p = ConstantsPreset::Legacy;
     else if (name == "preset/legacy_preferences") p = ConstantsPreset::LegacyPreferences;
     else if (name == "preset/default") p = ConstantsPreset::Default;

@@ -256,7 +256,7 @@ class TestStripChartModel : public QObject {
 
   void sigmaOverElevenValuesMatchesHandCalc() {
     IntensitiesModel m(two());
-    for (int v = 1; v <= 11; ++v) m.update(row(v, {{"H1", double(v)}}));
+    for (int v = 1; v <= 11; ++v) m.update(row(v, {{"H1", static_cast<double>(v)}}));
     QCOMPARE(m.data(m.index(0, IntensitiesModel::ColIntensity)).toString(), QStringLiteral("11.00000"));
     QCOMPARE(m.data(m.index(0, IntensitiesModel::ColSigma)).toString(), QStringLiteral("3.16228"));
   }

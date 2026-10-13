@@ -102,7 +102,8 @@ class TestMeasurementPanel : public QObject {
     QCOMPARE(panel_->plans(), (QStringList{QStringLiteral("argus_hop"), QStringLiteral("sim_multicollect")}));
     QCOMPARE(panel_->parameter_paths(),
              (QStringList{QStringLiteral("main.cycles"), QStringLiteral("main.hops[0].counts"),
-                          QStringLiteral("main.hops[1].counts"), QStringLiteral("baseline.counts")}));
+                          QStringLiteral("main.hops[1].counts"), QStringLiteral("baseline.counts"),
+                          QStringLiteral("main.time_zero")}));
     QCOMPARE(panel_->parameter_text(QStringLiteral("main.cycles")), QStringLiteral("2"));
     QVERIFY(!panel_->overridden(QStringLiteral("main.cycles")));
     QVERIFY(panel_->status_ok());

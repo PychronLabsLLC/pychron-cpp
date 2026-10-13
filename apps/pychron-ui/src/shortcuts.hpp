@@ -1,7 +1,7 @@
 #pragma once
 
 // Every keyboard shortcut in pychron-ui, in one place. Windows take their keys
-// from here (key(Shortcut::SaveQueue)) rather than spelling them out, so
+// from here (key(Shortcut::FileSave)) rather than spelling them out, so
 // Help > Keyboard Shortcuts, which lists this catalog, is always what the
 // keys do. tests/ui/test_shortcuts.cpp checks that no two entries that can be
 // live at once share a key, and that the menus use these keys.
@@ -30,9 +30,12 @@ enum class Shortcut {
   KeyboardShortcuts,
   CommandPalette,
   MinimizeWindow,
+  // File > New, Open, Save: what the window in front registered with the
+  // unified bar (MenuHub::set_file_action). Save As has no key.
+  FileNew,
+  FileOpen,
+  FileSave,
   // The experiment window.
-  OpenQueue,
-  SaveQueue,
   MoveRowsUp,
   MoveRowsDown,
   DuplicateRows,
@@ -43,21 +46,22 @@ enum class Shortcut {
   StartQueue,
   ScriptEditor,
   // The script editor.
-  NewScript,
-  SaveScript,
   CloseScriptTab,
   CheckScript,
   GoToGosub,
-  // The conditionals editor.
-  SaveConditionals,
   // The data browser.
   RecallNext,
   RecallPrevious,
 };
 
-// Where a shortcut works. Everywhere overlaps every window; the others are
-// separate windows, so their keys may repeat between them.
-enum class ShortcutContext { Everywhere, ExperimentWindow, ScriptEditor, ConditionalsEditor, DataBrowser };
+// Where a shortcut works. Everywhere overlaps every window. FileMenu is the
+// windows that answer the File commands (the experiment window, the script
+// and conditionals editors) and overlaps those. The others are separate
+// windows, so their keys may repeat between them.
+enum class ShortcutContext { Everywhere, FileMenu, ExperimentWindow, ScriptEditor, DataBrowser };
+
+// Whether a key of `a` and one of `b` can be live in the same window.
+bool overlap(ShortcutContext a, ShortcutContext b);
 
 struct ShortcutEntry {
   Shortcut id;

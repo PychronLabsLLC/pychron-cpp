@@ -17,6 +17,7 @@ add_library(pychron_entry STATIC
   src/sample_fields.cpp
   src/sample_import.cpp
   src/sample_search.cpp
+  src/seed.cpp
   src/settings.cpp
 )
 add_library(pychron::entry ALIAS pychron_entry)

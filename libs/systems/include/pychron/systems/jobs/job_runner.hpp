@@ -71,6 +71,7 @@ class JobRunner {
   mutable std::mutex mutex_;
   mutable std::condition_variable idle_;
   std::shared_ptr<Slot> current_;
+  int executing_ = 0;  // threads inside execute(): the destructor waits for them
   std::deque<Job> history_;
   JobId next_id_ = 1;
 };

@@ -1,0 +1,10 @@
+# What the virtual box scrapes. Prometheus reads this again within half a
+# minute of a change; nothing needs restarting.
+#
+# host.docker.internal is this computer, seen from inside a container: a
+# pychron started here with `[metrics] enabled = true` on port 9464. For a
+# pychron on another computer, give that computer's address instead. A second
+# instrument is a second entry.
+- targets: ["host.docker.internal:9464"]
+  labels:
+    instrument: "sim"

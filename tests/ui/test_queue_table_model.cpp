@@ -62,6 +62,12 @@ class TestQueueTableModel : public QObject {
     QVERIFY(!m->data(m->index(1, QueueTableModel::Plan), Qt::BackgroundRole).isValid());
   }
 
+  void rowsAreNumberedFromOne() {
+    auto m = model();
+    QCOMPARE(cell(*m, 0, QueueTableModel::Row), QStringLiteral("1"));
+    QCOMPARE(cell(*m, m->rowCount() - 1, QueueTableModel::Row), QString::number(m->rowCount()));
+  }
+
   void editingRevalidatesAndFlagsTheRow() {
     auto m = model();
     QSignalSpy edited(m.get(), &QueueTableModel::edited);
@@ -343,6 +349,11 @@ class TestQueueTableModel : public QObject {
     QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("measuring"));
     QCOMPARE(m->data(m->index(1, QueueTableModel::Status), Qt::BackgroundRole).value<QBrush>().color(),
              QueueTableModel::state_color(RunState::Measuring));
+    // the whole row wears the state's colour, not the status cell alone
+    for (int c = 0; c < QueueTableModel::Count; ++c)
+      QCOMPARE(m->data(m->index(1, c), Qt::BackgroundRole).value<QBrush>().color(),
+               QueueTableModel::state_color(RunState::Measuring));
+    QVERIFY(!m->data(m->index(0, QueueTableModel::Identifier), Qt::BackgroundRole).isValid());
     m->on_run_state(pychron::experiment::run::RunStateChanged{"other", RunState::Preparing, RunState::Failed, {}, {}});
     QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("measuring"));
 
@@ -358,6 +369,20 @@ class TestQueueTableModel : public QObject {
     QCOMPARE(cell(*m, 1, QueueTableModel::Aliquot), QStringLiteral("7"));
     QCOMPARE(m->data(m->index(1, QueueTableModel::Status), Qt::BackgroundRole).value<QBrush>().color(),
              QueueTableModel::state_color(RunState::Success));
+
+    // Measured, and not saved: the row says why, in the run's own words.
+    s.save_error = true;
+    s.messages = {"hole 3: centered", "not saved to the data store, kept in the spool: the database is locked"};
+    m->on_run_finished(exec::RunFinished{s});
+    QCOMPARE(cell(*m, 1, QueueTableModel::Status), QStringLiteral("success (truncated)"));
+    QCOMPARE(m->data(m->index(1, QueueTableModel::Status), Qt::ToolTipRole).toString().section(QLatin1Char('\n'), 0, 0),
+             QStringLiteral("not saved to the data store, kept in the spool: the database is locked"));
+    // Flagged with nothing said (a record that could not be finalized says it as the run's error).
+    s.messages.clear();
+    m->on_run_finished(exec::RunFinished{s});
+    QVERIFY(m->data(m->index(1, QueueTableModel::Status), Qt::ToolTipRole).toString().contains(
+        QStringLiteral("saved to the spool only")));
+    s.save_error = false;
 
     s.row = 2;
     s.run_id = "uuid-2";

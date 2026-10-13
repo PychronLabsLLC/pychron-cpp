@@ -245,7 +245,8 @@ TEST(SimLegacyConfig, DacScanFindsEachPeak) {
   auto& magnet = rig.positioner();
 
   std::map<std::string, std::pair<double, double>> best;  // channel -> {signal, dac}
-  for (double dac = 4.0; dac <= 6.0 + 1e-9; dac += 0.01) {
+  for (int step = 0; step <= 200; ++step) {
+    const double dac = 4.0 + step * 0.01;
     ASSERT_TRUE(magnet.set(dac));
     for (const auto& [channel, v] : rig.acquire(1)) {
       if (channel.starts_with("faradays:") && v > best[channel].first) best[channel] = {v, *magnet.read()};

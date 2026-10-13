@@ -19,6 +19,7 @@
 #include <QTableWidget>
 #include <QTimeZone>
 #include <QVBoxLayout>
+#include <utility>
 
 #include "holder_view.hpp"
 #include "theme.hpp"
@@ -333,7 +334,7 @@ ProductionDialog::ProductionDialog(EntryBridge& bridge, ps::IrradiationRow packa
 
 void ProductionDialog::show_production(int index) {
   new_name_->setVisible(which_->itemData(index).toString().isEmpty());
-  const ps::ProductionValue* value = index >= 0 && index < static_cast<int>(productions_.size())
+  const ps::ProductionValue* value = index >= 0 && std::cmp_less(index, productions_.size())
                                          ? &productions_[static_cast<std::size_t>(index)].value
                                          : nullptr;
   for (int r = 0; r < ratios_->rowCount(); ++r) {
@@ -495,7 +496,7 @@ HoldersDialog::HoldersDialog(EntryBridge& bridge, QWidget* parent) : QDialog(par
   layout->addLayout(left);
   layout->addWidget(view_, 1);
   connect(list_, &QListWidget::currentRowChanged, this, [this](int row) {
-    if (row < 0 || row >= static_cast<int>(holders_.size())) return view_->set_holder(std::nullopt);
+    if (row < 0 || std::cmp_greater_equal(row, holders_.size())) return view_->set_holder(std::nullopt);
     auto it = values_.find(holders_[static_cast<std::size_t>(row)].uuid);
     view_->set_holder(it == values_.end() ? std::nullopt : std::optional<ps::HolderValue>(it->second));
   });

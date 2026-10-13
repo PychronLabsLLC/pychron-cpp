@@ -1,5 +1,6 @@
 #include "core_bridge.hpp"
 
+#include <chrono>
 #include <mutex>
 #include <utility>
 
@@ -85,6 +86,11 @@ CoreBridge::~CoreBridge() {
   subscriptions_.clear();
   executor_.quit();  // finishes the command in flight; queued ones are dropped
   executor_.wait();
+}
+
+QDateTime CoreBridge::wall_now() const {
+  using namespace std::chrono;
+  return QDateTime::fromMSecsSinceEpoch(duration_cast<milliseconds>(line_.clock().wall_now().time_since_epoch()).count());
 }
 
 void CoreBridge::actuate(const QString& qname, systems::SwitchOp op) {
@@ -237,7 +243,7 @@ void CoreBridge::on_snapshot(const Snapshot& e) {
     state_.pressures[name] = value;
   }
   for (auto& [name, info] : state_.switches) {
-    info.locked = e.locked.count(name) != 0;
+    info.locked = e.locked.contains(name);
   }
   emit snapshot(e);
 }

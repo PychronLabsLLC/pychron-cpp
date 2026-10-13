@@ -63,8 +63,8 @@ std::vector<std::string> split_sql(std::string_view sql) {
     if (c == '\'' && !in_dollar) in_quote = !in_quote;
     if (c == ';' && !in_quote && !in_dollar) {
       const std::string upper = upper_trimmed(buf);
-      const bool trigger_body = upper.rfind("CREATE TRIGGER", 0) == 0 && has_word(upper, "BEGIN");
-      if (trigger_body && !(upper.size() >= 3 && upper.compare(upper.size() - 3, 3, "END") == 0)) {
+      const bool trigger_body = upper.starts_with("CREATE TRIGGER") && has_word(upper, "BEGIN");
+      if (trigger_body && !(upper.size() >= 3 && upper.ends_with("END"))) {
         buf.push_back(c);
         continue;
       }
@@ -100,6 +100,7 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
     Pending p{};
     if (!parse_file_name(m.file, p.version, p.description))
       return fail(ErrorKind::Config, std::string("migration file name must be NNNN_<name>.sql: ") + m.file);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the embedded file's bytes as text
     p.text = std::string_view(reinterpret_cast<const char*>(m.data), m.size);
     p.checksum = sha256(p.text);
     known.push_back(std::move(p));
@@ -117,6 +118,7 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
       const QByteArray sum = r.value("checksum").toByteArray();
       applied[r.value("version").toInt()] = AppliedMigration{
           r.value("version").toInt(), to_std(r.value("description")),
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the digest's bytes
           to_hex(std::span(reinterpret_cast<const std::uint8_t*>(sum.constData()), static_cast<std::size_t>(sum.size())))};
     }
     return applied;
@@ -139,8 +141,9 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
       continue;
     }
     if (!apply)
-      return fail(ErrorKind::Config,
-                  "database schema is out of date (migration " + std::to_string(m.version) + " not applied)");
+      return fail(ErrorKind::Config, "database schema is out of date (migration " + std::to_string(m.version) + " " +
+                                         m.description +
+                                         " not applied); bring it up to date with: elctl db migrate --db <url>");
     for (const auto& statement : split_sql(m.text))
       if (auto r = db.unprepared(qs(statement)); !r) return fail(r.error());
     Row row;

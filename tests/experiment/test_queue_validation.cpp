@@ -11,16 +11,16 @@ const IdentifierRules kIds = IdentifierRules::defaults();
 
 struct Plans : IPlanResolver {
   std::set<std::string> names{"argon"};
-  bool has_plan(std::string_view name) const override { return names.count(std::string(name)) > 0; }
+  bool has_plan(std::string_view name) const override { return names.contains(std::string(name)); }
   std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& o, bool) const override {
     if (!has_plan(name)) return std::nullopt;
-    return Duration(o.count("counts") ? 200 : 100);
+    return Duration(o.contains("counts") ? 200 : 100);
   }
 };
 
 struct Scripts : IScriptResolver {
   std::set<std::string> names{"felix", "pe", "pm"};
-  bool has_script(std::string_view name) const override { return names.count(std::string(name)) > 0; }
+  bool has_script(std::string_view name) const override { return names.contains(std::string(name)); }
 };
 
 struct Conds : IConditionalResolver {

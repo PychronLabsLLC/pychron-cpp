@@ -1,9 +1,12 @@
 #pragma once
 
 // M1 status/control window (spec section 10.3): canvas in the center, log and
-// alarm docks, per-transport health chips in the status bar. Owns the
-// CoreBridge; the ExtractionLine must outlive the window.
+// alarm docks (and the cryostat's and the heaters', when the line has them),
+// per-transport health chips in the status bar. Owns the CoreBridge; the
+// ExtractionLine must outlive the window. Where the docks are is kept per
+// line (dock_layouts.hpp).
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -12,27 +15,32 @@
 #include <optional>
 
 #include <QAction>
+#include <QString>
 #include <QList>
 #include <QIcon>
 #include <QMainWindow>
 #include <QPointer>
 #include <QSettings>
+#include <QSize>
 
 #include "alarm_dock.hpp"
 #include "brand.hpp"
 #include "data_browser_window.hpp"
 #include "data_workspace.hpp"
+#include "dock_layouts.hpp"
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
 #include "cryo_dock.hpp"
 #include "heater_dock.hpp"
 #include "experiment_window.hpp"
 #include "health_bar.hpp"
+#include "identifier_source.hpp"
 #include "laser_bridge.hpp"
 #include "laser_window.hpp"
 #include "pattern_maker_window.hpp"
 #include "log_dock.hpp"
 #include "preferences_dialog.hpp"
+#include "pychron/core/log_hub.hpp"
 #include "processing_bridge.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
@@ -44,7 +52,13 @@ class MainWindow : public QMainWindow {
   Q_OBJECT
 
  public:
-  explicit MainWindow(systems::ExtractionLine& line, QWidget* parent = nullptr);
+  // `settings` keeps the panel layout between sessions, per line, and the
+  // layouts saved under a name; with none (the default) nothing is kept.
+  // The size the window has until it is given another (and kept, with settings).
+  static constexpr QSize kDefaultSize{1200, 850};
+
+  explicit MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings> settings = nullptr,
+                      QWidget* parent = nullptr);
 
   // The glyph beside each View menu item: a line drawing, a mask icon the
   // platform colours to suit its menus.
@@ -62,6 +76,8 @@ class MainWindow : public QMainWindow {
   // Null unless the line has [[heaters]].
   HeaterDock* heater_dock() const noexcept { return heaters_; }
   HealthBar* health_bar() const noexcept { return health_; }
+  // Where the panels are: the factory layout, the last one, the named ones.
+  DockLayouts* dock_layouts() const noexcept { return layouts_; }
 
   // Enables View > Spectrometer for `bridge` (null disables it and closes
   // the window). The bridge must outlive the main window or be cleared first.
@@ -80,6 +96,12 @@ class MainWindow : public QMainWindow {
                       std::function<std::unique_ptr<QSettings>()> settings = {});
   QAction* experiment_action() const noexcept { return experiment_action_; }
   ExperimentWindow* experiment_window() const noexcept { return experiment_window_; }
+  // Where the experiment window's run factory picks identifiers from (null:
+  // typed only). Not owned; given to the window when there is one.
+  void set_identifier_source(IdentifierSource* source);
+  // File > New and File > Open, in menu order (New Queue, New Script…, New
+  // Conditionals…, Open Queue…, Open Script…, Open Conditionals…).
+  const QList<QAction*>& file_entries() const noexcept { return file_entries_; }
 
   // Enables View > Laser for `bridges`, one laser window each (a submenu when
   // there are several); none disables it and closes the laser windows and
@@ -99,6 +121,13 @@ class MainWindow : public QMainWindow {
   // with figure presets from `presets` (null disables it and closes every data
   // window). Both must outlive the main window or be cleared first.
   void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets);
+  // Why the data window has less than was expected (a database that could
+  // not be opened): DataBrowserWindow::set_unavailable, whenever it is made.
+  void set_data_unavailable(const QString& reason);
+  // DataBrowserWindow::refresh_if_changed, when there is a data window (one
+  // is not made for this). Called when the experiment bridge says a queue
+  // started or a run finished.
+  void refresh_data();
   QAction* data_action() const noexcept { return data_action_; }
   DataBrowserWindow* data_window() const noexcept { return data_->existing_browser(); }
   ProcessingBridge* processing_bridge() const noexcept { return data_->processing_bridge(); }
@@ -113,13 +142,19 @@ class MainWindow : public QMainWindow {
   // Over `over` (default: this window). File > Preferences… opens it over the
   // window in front, whichever one's bar it was chosen from.
   PreferencesDialog* open_preferences(QWidget* over = nullptr);
+  // The line's config file. With it, Preferences has Logging and Metrics
+  // pages, kept in that file's local override (line_settings.hpp); without
+  // it (the default) it has neither.
+  void set_line_config_file(std::filesystem::path main_file);
+  // What the metrics endpoint is doing, for the Metrics page.
+  void set_metrics_status(QString status);
   // Fonts (application wide) and the data browser's page size.
   void apply_preferences(const Preferences& preferences);
   // Opens a recall window / a time-series figure window (null without data).
   QWidget* open_recall(const QString& uuid);
   QWidget* open_time_series(const QStringList& uuids);
   // A figure window of a figure unit kind (time_series, ideogram, spectrum,
-  // inverse_isochron); null without data or for an unknown kind.
+  // inverse_isochron, spectrum_isochron); null without data or for an unknown kind.
   QWidget* open_figure(const QString& kind, const QStringList& uuids);
 
   // Help > About pychron; the dialog is null until the action is first triggered.
@@ -132,11 +167,16 @@ class MainWindow : public QMainWindow {
   void closeEvent(QCloseEvent* event) override;
 
  private:
+  ExperimentWindow* ensure_experiment_window();  // made on first use; nullptr without a session
+  ExperimentWindow* show_experiment_window();    // and brought to the front
+  void build_file_entries();
   // The window in front, to open a dialog over: not a dialog itself, and
   // this window when none of the application's is active.
   QWidget* preferences_parent();
   std::unique_ptr<QSettings> spectrometer_settings() const;
+  void default_layout();
 
+  std::unique_ptr<QSettings> settings_;  // null: the layout is not kept
   CoreBridge bridge_;
   CanvasView* canvas_;
   LogDock* log_;
@@ -144,6 +184,7 @@ class MainWindow : public QMainWindow {
   CryoDock* cryo_ = nullptr;
   HeaterDock* heaters_ = nullptr;
   HealthBar* health_;
+  DockLayouts* layouts_ = nullptr;
   QAction* spectrometer_action_;
   SpectrometerBridge* spectrometer_ = nullptr;
   bool simulation_ = false;
@@ -151,10 +192,13 @@ class MainWindow : public QMainWindow {
   SpectrometerWindow* spectrometer_window_ = nullptr;
   QAction* experiment_action_;
   ExperimentBridge* experiment_ = nullptr;
+  std::array<QMetaObject::Connection, 2> experiment_refreshes_;  // the bridge's signals to refresh_data()
   bool experiment_simulation_ = false;
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
+  QPointer<IdentifierSource> identifier_source_;
+  QList<QAction*> file_entries_;  // File > New and File > Open: live while there is a session
   QAction* data_action_;
   QAction* laser_action_;
   std::vector<LaserBridge*> lasers_;
@@ -170,6 +214,9 @@ class MainWindow : public QMainWindow {
   QAction* preferences_;
   PreferencesDialog::SettingsFactory preferences_settings_;
   QPointer<PreferencesDialog> preferences_dialog_;
+  std::filesystem::path line_config_file_;
+  QString metrics_status_;
+  std::weak_ptr<LogHub> log_hub_;  // the line's, for levels that change at once
 };
 
 }  // namespace pychron::ui

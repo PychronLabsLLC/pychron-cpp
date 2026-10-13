@@ -1,0 +1,6 @@
+# Qt tests: what apps/pychron-ui/.clang-tidy turns off, for the same reasons,
+# and CallAndMessage: QVERIFY(p != nullptr) returns when p is null, which the
+# analyzer does not see, so every use of p after it is reported.
+# Adds to tests/.clang-tidy.
+InheritParentConfig: true
+Checks: '-cppcoreguidelines-owning-memory,-clang-analyzer-cplusplus.NewDeleteLeaks,-cppcoreguidelines-pro-type-static-cast-downcast,-cppcoreguidelines-misleading-capture-default-by-value,-clang-analyzer-core.CallAndMessage'

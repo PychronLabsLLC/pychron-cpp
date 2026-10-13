@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
+#include <cstddef>
 #include <set>
 #include <utility>
 
@@ -130,7 +130,7 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
     e->spec = std::move(spec);
     const auto& s = e->spec;
     if (s.name.empty()) {
-      problems.push_back("switch with empty name");
+      problems.emplace_back("switch with empty name");
       continue;
     }
     if (by_name.contains(s.name)) {
@@ -189,9 +189,14 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
   }
   if (!problems.empty()) return fail(ErrorKind::Config, join(problems));
 
+  // Each partner once, in the order the configuration gave them: the first
+  // one found open is the one a refusal names, so the order must not be the
+  // addresses' (which differ from run to run).
   for (auto& e : entries) {
-    std::sort(e->exclusive.begin(), e->exclusive.end());
-    e->exclusive.erase(std::unique(e->exclusive.begin(), e->exclusive.end()), e->exclusive.end());
+    std::vector<Entry*> once;
+    for (Entry* o : e->exclusive)
+      if (std::find(once.begin(), once.end(), o) == once.end()) once.push_back(o);
+    e->exclusive = std::move(once);
   }
   return std::unique_ptr<SwitchManager>(new SwitchManager(std::move(entries), options));
 }
@@ -199,10 +204,12 @@ Result<std::unique_ptr<SwitchManager>> SwitchManager::create(std::vector<SwitchS
 SwitchManager::SwitchManager(std::vector<std::unique_ptr<Entry>> entries, Options options)
     : clock_(options.clock ? options.clock : &default_clock()),
       bus_(options.bus),
-      wall_(options.wall ? std::move(options.wall) : std::function<WallTime()>([] {
-        return std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+      // The clock's calendar time: under a simulated clock, simulated time.
+      wall_(options.wall ? std::move(options.wall) : std::function<WallTime()>([clock = clock_] {
+        return std::chrono::floor<std::chrono::seconds>(clock->wall_now());
       })),
-      entries_(std::move(entries)) {
+      entries_(std::move(entries)),
+      actuation_(*clock_) {
   for (auto& e : entries_) by_name_.emplace(e->spec.name, e.get());
 }
 
@@ -236,7 +243,10 @@ Result<void> SwitchManager::command(std::string_view name, SwitchOp op, const st
     if (allowed && op == SwitchOp::Open) allowed = check_interlocks(*e);
   }
   // Published outside state_ so handlers may query the manager.
-  if (!allowed) return failed(*e, std::move(allowed).error());
+  if (!allowed) {
+    count(*e, &SwitchStats::refusals);
+    return failed(*e, std::move(allowed).error());
+  }
 
   const auto target = target_of(op);
   if (e->spec.kind == SwitchKind::ManualValve) {
@@ -327,14 +337,7 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
   return {};
 }
 
-void SwitchManager::settle(Duration d) const {
-  if (d <= Duration::zero()) return;
-  const auto deadline = clock_->now() + d;
-  std::mutex m;
-  std::condition_variable cv;
-  std::unique_lock lk(m);
-  while (clock_->now() < deadline) clock_->wait_until(cv, lk, deadline);
-}
+void SwitchManager::settle(Duration d) const { clock_->sleep_for(d); }
 
 bool SwitchManager::record(Entry& e, ValveState s) {
   std::lock_guard lk(state_);
@@ -350,7 +353,7 @@ bool SwitchManager::record(Entry& e, ValveState s) {
 void SwitchManager::count(Entry& e, std::int64_t SwitchStats::* what) {
   std::lock_guard lk(state_);
   ++(e.stats.*what);
-  if (what != &SwitchStats::failures) e.stats.last_actuation = wall_();
+  if (what == &SwitchStats::opens || what == &SwitchStats::closes) e.stats.last_actuation = wall_();
 }
 
 void SwitchManager::seed_stats(std::string_view name, SwitchStats stats) {

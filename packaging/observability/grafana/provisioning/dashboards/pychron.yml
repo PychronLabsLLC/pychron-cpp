@@ -1,0 +1,14 @@
+# Copy to /etc/grafana/provisioning/dashboards/ on the box. Grafana then
+# loads every dashboard under `path` into a folder called Pychron.
+apiVersion: 1
+
+providers:
+  - name: pychron
+    orgId: 1
+    folder: Pychron
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards/pychron

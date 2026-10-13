@@ -1,9 +1,11 @@
 // LabSession on the sim lab: a scratch copy of configs/examples run on a
-// simulated clock pumped 400x, as `elctl exp run --sim --sim-speed 400` does.
+// VirtualClock at unlimited speed, as `elctl exp run --sim --sim-speed max`
+// does. The test's thread takes part in the clock: time moves only while it
+// waits there (session.wait(), eventually()), so what a test does between two
+// waits happens at one instant of the queue's time.
 
 #include <gtest/gtest.h>
 
-#include <random>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -20,8 +22,11 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <string_view>
+#include <cstdint>
+#include <cstddef>
 
-#include "pychron/core/clock_pump.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
@@ -35,6 +40,14 @@
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
+#include "virtual_time.hpp"
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+#include "http_client.hpp"
+#include "metrics_text.hpp"
+#include "pychron/core/config/metrics_config.hpp"
+#include "pychron/experiment/metrics/service.hpp"
+#include "temp_path.hpp"
+#endif
 
 namespace pychron::experiment::lab {
 namespace {
@@ -42,22 +55,94 @@ namespace {
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
-template <class F>
-bool eventually(F done, std::chrono::seconds limit = 30s) {
-  const auto until = std::chrono::steady_clock::now() + limit;
-  while (!done()) {
-    if (std::chrono::steady_clock::now() > until) return false;
-    std::this_thread::sleep_for(2ms);
+// A persister that keeps no file of its own under <data>/records: it counts
+// what it is asked to save and lends aliquots and the rest of FilePersister,
+// on a directory of its own.
+class RecordingPersister final : public persist::IAnalysisPersister {
+ public:
+  RecordingPersister(fs::path root, std::vector<std::string> refusals, std::optional<std::string> cannot_check = {})
+      : files_(std::move(root)), refusals_(std::move(refusals)), cannot_check_(std::move(cannot_check)) {}
+  // From now on save_analysis fails with this text (empty: it saves again).
+  void refuse_saves(std::string why) {
+    std::lock_guard lock(mutex_);
+    cannot_save_ = std::move(why);
   }
-  return true;
-}
+  // The queues it was asked to check, in order.
+  std::vector<QueueSpec> checked() {
+    std::lock_guard lock(mutex_);
+    return checked_;
+  }
+  // Numbers from 7, which an empty FilePersister never hands out first.
+  Result<int> next_aliquot(const std::string& identifier) override {
+    auto n = files_.next_aliquot(identifier);
+    if (!n) return n;
+    return *n + 6;
+  }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return files_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
+  Result<void> save_analysis(const record::AnalysisRecord& r) override {
+    std::lock_guard lock(mutex_);
+    if (!cannot_save_.empty()) return fail(ErrorKind::Io, cannot_save_);
+    if (saved_.empty()) first_aliquot_ = r.identity.aliquot;
+    saved_.push_back(r.identity.uuid);
+    return {};
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return files_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return {}; }
+  // Refuses a row that will run (not skipped) whose identifier is `zz`, as a
+  // store refuses one its catalog lacks; and whatever it was told to refuse.
+  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override {
+    std::lock_guard lock(mutex_);
+    checked_.push_back(queue);
+    if (cannot_check_) return fail(ErrorKind::Io, *cannot_check_);
+    std::vector<std::string> lines = refusals_;
+    for (const auto& run : queue.runs)
+      if (!run.skip && run.id.identifier == "zz") lines.emplace_back("identifier 'zz' is not in the database");
+    return lines;
+  }
+  std::size_t saved() {
+    std::lock_guard lock(mutex_);
+    return saved_.size();
+  }
+  int first_aliquot() {
+    std::lock_guard lock(mutex_);
+    return first_aliquot_;
+  }
 
-class LabSessionTest : public ::testing::Test {
+ private:
+  persist::FilePersister files_;
+  std::vector<std::string> refusals_;
+  std::optional<std::string> cannot_check_;
+  int first_aliquot_ = 0;
+  std::mutex mutex_;
+  std::vector<std::string> saved_;
+  std::string cannot_save_;
+  std::vector<QueueSpec> checked_;
+};
+
+class LabSessionTest : public pychron::testing::VirtualTimeTest {
  protected:
+  // A dragonfly's twelve seconds are some four hundred pictures made and
+  // searched: under the thread sanitizer that alone is nearly twenty seconds.
+  LabSessionTest() : VirtualTimeTest(50s) {}
+
+  // Waits in the clock's time, looking every 100 ms of it, until `done`;
+  // false when an hour of it has passed first.
+  template <class F>
+  bool eventually(F done) {
+    const TimePoint until = clock_.now() + std::chrono::hours(1);
+    while (!done()) {
+      if (clock_.now() > until) return false;
+      clock_.sleep_for(100ms);
+    }
+    return true;
+  }
+
   void SetUp() override {
-    dir_ = fs::temp_directory_path() /
-           ("pychron-session-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("pychron-session-");
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
     prepare_lab();
@@ -65,19 +150,17 @@ class LabSessionTest : public ::testing::Test {
     systems::ExtractionLine::Options options;
     options.clock = &clock_;
     options.force_sim = true;
-    options.scheduler.threads = 0;
-    options.run_scheduler = false;
     options.state_file = dir_ / "line.state.toml";
     auto line = systems::ExtractionLine::load(dir_ / "extraction_line.toml", dir_ / "canvas.toml", options);
     ASSERT_TRUE(line) << line.error().what;
     line_ = std::move(*line);
-    pump_.drive(&line_->scheduler());
     ASSERT_TRUE(line_->start());
 
     auto spec = spectrometer::load_spectrometer_for_app(
         dir_ / "spectrometer.sim-integrated.toml",
         spectrometer::SpectrometerContext{clock_, line_->scheduler(), line_->bus()},
-        spectrometer::SpectrometerBringup{.sim_beam_from_table = true});
+        // As the applications do: the beam measures the line's gas.
+        spectrometer::SpectrometerBringup{.sim_beam_from_table = true, .line_sim = line_->sim()});
     ASSERT_TRUE(spec) << spec.error().what;
     spec_ = std::move(*spec);
     scan_ = std::make_unique<spectrometer::ScanService>(*spec_, line_->bus(), clock_);
@@ -124,13 +207,20 @@ class LabSessionTest : public ::testing::Test {
     subs_.clear();
     session_.reset();
     scan_.reset();
-    pump_.drive(nullptr);
-    pump_.stop();
     if (line_) line_->stop();
     spec_.reset();
     sim::BeamModelRegistry::global().clear();
     line_.reset();
     fs::remove_all(dir_);
+  }
+
+  // For a queue aborted straight after start(), as a test does that has
+  // nothing more to ask of it.
+  void expect_aborted_before_any_run() {
+    const auto result = session_->wait();
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->end, executor::QueueEnd::Aborted) << result->reason;
+    EXPECT_TRUE(result->runs.empty());
   }
 
   std::vector<QueueEnded> ended() {
@@ -139,13 +229,14 @@ class LabSessionTest : public ::testing::Test {
   }
 
   fs::path dir_;
-  ManualClock clock_{TimePoint{} + std::chrono::hours(1)};
-  ClockPump pump_{clock_, 400};
+  VirtualClock clock_;  // before everything that is given a reference to it
+  Clock::Participant test_{clock_, "test"};
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<spectrometer::Spectrometer> spec_;
   std::unique_ptr<spectrometer::ScanService> scan_;
   Lab lab_;
   QueueSpec queue_;
+  std::unique_ptr<RecordingPersister> persister_;  // outlives session_
   std::unique_ptr<LabSession> session_;
   std::mutex mutex_;
   std::vector<QueueEnded> ended_;
@@ -177,12 +268,362 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   ASSERT_TRUE(row);
   EXPECT_EQ(*row, 3u);
 
-  // QueueEnded comes after the scan is resumed.
-  ASSERT_TRUE(eventually([&] { return !ended().empty(); }));
+  // QueueEnded comes after the scan is resumed, and before wait() returns.
+  ASSERT_FALSE(ended().empty());
   EXPECT_EQ(ended().front().result.end, executor::QueueEnd::Completed);
   EXPECT_TRUE(scan_->running());
   EXPECT_FALSE(scan_->paused());
 }
+
+TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere",
+                                                    std::vector<std::string>{"identifier 'zz' is not in the database"});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  std::atomic<int> announced{0};
+  auto sub = line_->bus().subscribe<QueueStarted>([&](const QueueStarted&) { ++announced; });
+
+  auto refused = session_->start(queue_);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_NE(refused.error().what.find("the queue cannot be saved:"), std::string::npos) << refused.error().what;
+  EXPECT_NE(refused.error().what.find("identifier 'zz' is not in the database"), std::string::npos);
+  EXPECT_FALSE(session_->running());
+  clock_.sleep_for(1s);
+  EXPECT_EQ(announced.load(), 0);
+}
+
+TEST_F(LabSessionTest, AQueueIsNotStartedWhenThePersisterCannotCheckIt) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{},
+                                                    std::optional<std::string>("db down"));
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  auto refused = session_->start(queue_);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().what, "the queue cannot be saved: db down");
+  EXPECT_FALSE(session_->running());
+}
+
+TEST_F(LabSessionTest, RunsAreSavedThroughTheGivenPersister) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  EXPECT_EQ(persister_->saved(), 3u);
+  EXPECT_EQ(persister_->first_aliquot(), 7);
+  EXPECT_FALSE(fs::exists(dir_ / "data" / "records" / "bu" / "bu-1.json"));
+  EXPECT_TRUE(fs::is_empty(dir_ / "data" / "spool"));
+  EXPECT_EQ(session_->pending_saves(), 0u);
+}
+
+// A session told that its hardware is a simulator's marks every record it
+// makes; one that is not told leaves them as they always were.
+TEST_F(LabSessionTest, ASimulatedSessionMarksItsRecords) {
+  const auto simulated_of = [&](const fs::path& data) {
+    std::vector<bool> out;
+    for (const auto& dir : fs::directory_iterator(data / "records")) {
+      if (!dir.is_directory()) continue;
+      for (const auto& f : fs::directory_iterator(dir.path())) {
+        const std::string name = f.path().filename().string();
+        if (!name.ends_with(".json") || name.ends_with(".extraction.json")) continue;
+        std::ifstream in(f.path());
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        auto rec = record::from_json(text);
+        EXPECT_TRUE(rec.has_value());
+        if (rec) out.push_back(rec->instrument.simulated);
+      }
+    }
+    return out;
+  };
+  queue_.runs.resize(1);
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(session_->wait().has_value());
+  EXPECT_EQ(simulated_of(dir_ / "data"), std::vector<bool>{false});
+
+  session_.reset();
+  auto hw = hardware();
+  hw.simulation = true;
+  session_ = std::make_unique<LabSession>(lab_, hw, SessionOptions{dir_ / "sim-data", {}, {}});
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(session_->wait().has_value());
+  EXPECT_EQ(simulated_of(dir_ / "sim-data"), std::vector<bool>{true});
+}
+
+// The check is of what will run. Row 0 names something the database lacks:
+// from the top the queue is refused, from row 1 it starts, and the persister
+// is asked about a queue whose earlier rows are marked as not running.
+TEST_F(LabSessionTest, AQueueIsCheckedFromTheRowItStartsAt) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  queue_.runs[0] = queue_.runs[1];  // an unknown, so that any identifier will do for the lab
+  queue_.runs[0].id.identifier = "zz";
+
+  auto refused = session_->start(queue_, 0);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().what, "the queue cannot be saved:\nidentifier 'zz' is not in the database");
+
+  ASSERT_TRUE(session_->start(queue_, 1));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(result->runs.size(), 2u);
+  EXPECT_EQ(result->runs[0].row, 1u);
+  EXPECT_EQ(persister_->saved(), 2u);
+
+  const auto checked = persister_->checked();
+  ASSERT_EQ(checked.size(), 2u);
+  EXPECT_FALSE(checked[0].runs[0].skip);
+  ASSERT_EQ(checked[1].runs.size(), 3u);
+  EXPECT_TRUE(checked[1].runs[0].skip);  // before the start row
+  EXPECT_FALSE(checked[1].runs[1].skip);
+  EXPECT_FALSE(checked[1].runs[2].skip);
+  EXPECT_EQ(checked[1].mass_spectrometer, queue_.mass_spectrometer);
+}
+
+// A row added while the queue runs is checked like the rows it started with:
+// one the database cannot take is refused then, not measured and kept in the
+// spool. Rows the executor has reached are not asked about again.
+TEST_F(LabSessionTest, AnEditThatCannotBeSavedIsRefused) {
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, {}, persister_.get()});
+  std::vector<std::string> errors;
+  std::optional<Result<std::uint64_t>> accepted;
+  auto sub = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted& e) {
+    if (e.row != 0) return;
+    auto longer = queue_;
+    longer.runs.push_back(queue_.runs[2]);
+    longer.runs.back().id.identifier = "zz";
+    if (auto r = session_->edit(0, longer); !r) errors.push_back(r.error().what);
+    // Queue-level fields of an edit are ignored: the running queue's are the ones checked.
+    auto fine = queue_;
+    fine.mass_spectrometer = "not-the-running-queue's";
+    fine.runs.push_back(queue_.runs[2]);
+    accepted = session_->edit(0, fine);
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(errors.size(), 1u);
+  EXPECT_EQ(errors[0], "the queue cannot be saved:\nidentifier 'zz' is not in the database");
+  ASSERT_TRUE(accepted && *accepted) << (accepted && !*accepted ? accepted->error().what : "");
+  EXPECT_EQ(result->runs.size(), 4u);
+  EXPECT_EQ(persister_->saved(), 4u);
+
+  const auto checked = persister_->checked();
+  ASSERT_EQ(checked.size(), 3u);  // the start, and the two edits
+  ASSERT_EQ(checked[1].runs.size(), 4u);
+  EXPECT_TRUE(checked[1].runs[0].skip);  // reached: it is running
+  EXPECT_FALSE(checked[1].runs[3].skip);
+  EXPECT_EQ(checked[2].mass_spectrometer, queue_.mass_spectrometer);
+}
+
+// The store is away for the whole queue: every run is measured and kept in
+// the spool, each says so and why, each is flagged (which is what the queue
+// table, the notification and the save-error counter go by), and the queue
+// goes on to its end. When the store is back the next start sends them.
+TEST_F(LabSessionTest, ARunTheStoreDidNotTakeIsFlaggedSaysWhyAndTheQueueGoesOn) {
+  lab_.notifications.commands.push_back({"log", {"notify-lab"}, {lab::NotifyEvent::RunFailed}});
+  std::mutex m;
+  std::vector<std::string> inputs;
+  auto runner = [&](const ProcessSpec& spec) -> Result<ProcessResult> {
+    std::lock_guard lock(m);
+    inputs.push_back(spec.input);
+    return ProcessResult{};
+  };
+  session_.reset();
+  persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere", std::vector<std::string>{});
+  persister_->refuse_saves("the database is locked");
+  session_ = std::make_unique<LabSession>(lab_, hardware(), SessionOptions{dir_ / "data", {}, runner, persister_.get()});
+  std::vector<run::RunNote> notes;
+  auto sub = line_->bus().subscribe<run::RunNote>([&](const run::RunNote& n) {
+    std::lock_guard lock(m);
+    notes.push_back(n);
+  });
+  EXPECT_FALSE(session_->last_save_error().has_value());
+
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_EQ(result->runs.size(), 3u);
+  const std::string why = "not saved to the data store, kept in the spool: the database is locked";
+  for (const auto& r : result->runs) {
+    EXPECT_EQ(r.state, run::RunState::Success) << r.identifier << " " << r.error.value_or("");
+    EXPECT_TRUE(r.save_error) << r.identifier;
+    EXPECT_FALSE(r.error.has_value()) << r.identifier;
+    EXPECT_EQ(std::count(r.messages.begin(), r.messages.end(), why), 1) << r.identifier;
+  }
+  EXPECT_EQ(persister_->saved(), 0u);
+  EXPECT_EQ(session_->pending_saves(), 3u);
+  ASSERT_TRUE(session_->last_save_error().has_value());
+  EXPECT_NE(session_->last_save_error()->find("the database is locked"), std::string::npos);
+  {
+    std::lock_guard lock(m);
+    EXPECT_EQ(std::count_if(notes.begin(), notes.end(), [&](const run::RunNote& n) { return n.text == why; }), 3);
+  }
+  {
+    const Clock::Detached detached(clock_);
+    session_->notifier().wait_idle();
+  }
+  {
+    std::lock_guard lock(m);
+    ASSERT_EQ(inputs.size(), 3u);  // one message a run, as for a run that failed
+    EXPECT_NE(inputs[0].find("not saved (queue"), std::string::npos) << inputs[0];
+    EXPECT_NE(inputs[0].find("Reason:  the database is locked"), std::string::npos) << inputs[0];
+  }
+
+  // The store is back: the next queue's start sends what was kept.
+  persister_->refuse_saves("");
+  queue_.runs.resize(1);
+  ASSERT_TRUE(session_->start(queue_));
+  const auto again = session_->wait();
+  ASSERT_TRUE(again.has_value());
+  ASSERT_EQ(again->runs.size(), 1u);
+  EXPECT_FALSE(again->runs[0].save_error);
+  EXPECT_EQ(persister_->saved(), 4u);
+  EXPECT_EQ(session_->pending_saves(), 0u);
+  EXPECT_FALSE(session_->last_save_error().has_value());
+}
+
+// A subscriber learns the size of the queue before any of its runs starts
+// (the metrics' queue progress depends on it).
+TEST_F(LabSessionTest, TheQueuesStartIsAnnouncedBeforeItsFirstRun) {
+  std::mutex m;
+  std::vector<std::string> order;
+  std::vector<QueueStarted> started;
+  auto s1 = line_->bus().subscribe<QueueStarted>([&](const QueueStarted& e) {
+    std::lock_guard lock(m);
+    order.emplace_back("queue");
+    started.push_back(e);
+  });
+  auto s2 = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted&) {
+    std::lock_guard lock(m);
+    order.emplace_back("run");
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+
+  std::lock_guard lock(m);
+  ASSERT_EQ(started.size(), 1u);
+  EXPECT_EQ(started.front().rows, queue_.runs.size());
+  EXPECT_EQ(started.front().from_row, 0u);
+  ASSERT_FALSE(order.empty());
+  EXPECT_EQ(order.front(), "queue");
+  EXPECT_EQ(order.size(), 1u + result->runs.size());
+}
+
+// --- the metrics endpoint over a whole queue (observability design, 6) --------
+
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+
+// The session's line with `[metrics]` on, at a loopback port the OS picks.
+class MetricsSessionTest : public LabSessionTest {
+ protected:
+  void SetUp() override {
+    LabSessionTest::SetUp();
+    config::MetricsConfig c;
+    c.enabled = true;
+    c.bind = "127.0.0.1";
+    c.port = 0;
+    metrics_ = metrics::MetricsService::start(c, line_->bus(), line_->scheduler(), clock_, line_->log_hub(), "0.0.0");
+    ASSERT_NE(metrics_, nullptr);
+    ASSERT_TRUE(metrics_->listening());
+    subs_.push_back(line_->bus().subscribe<executor::RunStarted>([this](const executor::RunStarted& e) {
+      std::lock_guard lock(mutex_);
+      named_.push_back(e.run_id);
+      named_.push_back(e.identifier);
+    }));
+  }
+  // As the application does: the line is stopped (nothing publishes, no job
+  // runs) before the service goes, and the service before the line.
+  void TearDown() override {
+    subs_.clear();
+    session_.reset();
+    scan_.reset();
+    if (line_) line_->stop();
+    metrics_.reset();
+    LabSessionTest::TearDown();
+  }
+
+  // What the lab's Prometheus would read now.
+  std::string scrape() { return http_client::body(http_client::get(metrics_->port(), "/metrics")); }
+
+  std::unique_ptr<metrics::MetricsService> metrics_;
+  std::vector<std::string> named_;  // every run id and identifier the queue used
+};
+
+TEST_F(MetricsSessionTest, ASimulatedQueueIsCountedAndNamesNoRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  const auto runs = static_cast<double>(result->runs.size());
+  ASSERT_GT(runs, 0);
+
+  const std::string body = scrape();
+  using metrics_text::value;
+  EXPECT_DOUBLE_EQ(value(body, "pychron_runs_started_total"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_runs_finished_total{state=\"success\",truncated=\"false\"}"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queues_ended_total{end=\"completed\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queue_active"), 0.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_executor_state{state=\"idle\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queue_runs{status=\"total\"}"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_queue_runs{status=\"done\"}"), runs);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_run_save_errors_total"), 0.0);
+  // Every run went through each phase once, and the phases took simulated time.
+  for (const char* state : {"preparing", "extracting", "equilibrating", "measuring", "post_measuring", "saving"}) {
+    EXPECT_DOUBLE_EQ(value(body, std::string("pychron_run_state_duration_seconds_count{state=\"") + state + "\"}"), runs)
+        << state;
+  }
+  EXPECT_GT(value(body, "pychron_run_state_duration_seconds_sum{state=\"measuring\"}"), 1.0);
+  EXPECT_GT(value(body, "pychron_measurement_blocks_total{block=\"main\",ok=\"true\"}"), 0.0);
+  EXPECT_TRUE(metrics_text::has(body, "pychron_last_run_finished_age_seconds"));
+  EXPECT_GE(value(body, "pychron_scheduler_heartbeat_age_seconds"), 0.0);
+  EXPECT_LT(value(body, "pychron_scheduler_heartbeat_age_seconds"), 60.0);
+  // The line was read while the queue ran.
+  EXPECT_NE(body.find("\npychron_pressure{"), std::string::npos);
+  EXPECT_GT(value(body, "pychron_scheduler_job_runs_total{job=\"metrics.heartbeat\"}"), 0.0);
+  EXPECT_DOUBLE_EQ(value(body, "pychron_metrics_dropped_series_total"), 0.0);
+
+  // No run is named: neither its id nor its sample's identifier.
+  std::lock_guard lock(mutex_);
+  ASSERT_FALSE(named_.empty());
+  for (const std::string& name : named_) {
+    ASSERT_FALSE(name.empty());
+    // As a label's whole value: an identifier may be as short as "bu".
+    EXPECT_EQ(body.find("\"" + name + "\""), std::string::npos) << "the scrape names " << name;
+  }
+}
+
+TEST_F(MetricsSessionTest, ScrapingDuringAQueueDoesNotDisturbIt) {
+  std::atomic<bool> stop{false};
+  std::atomic<int> scrapes{0}, bad{0};
+  std::thread scraper([&] {
+    while (!stop) {
+      const std::string response = http_client::get(metrics_->port(), "/metrics");
+      ++scrapes;
+      if (!response.starts_with("HTTP/1.1 200")) ++bad;
+    }
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  stop = true;
+  scraper.join();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  for (const auto& r : result->runs) EXPECT_EQ(r.state, run::RunState::Success) << r.identifier;
+  EXPECT_GT(scrapes.load(), 0);
+  EXPECT_EQ(bad.load(), 0);
+}
+
+#endif  // PYCHRON_EXPERIMENT_HAS_METRICS
 
 // --- lasers shared with whoever else drives them (laser window design, 2) -----
 
@@ -258,7 +699,7 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedWhileTheLaserIsDrivenByHand) {
   hand->release();
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 TEST_F(SharedLasersSessionTest, AQueueIsNotStartedUntilAnEmergencyStopIsReset) {
@@ -271,7 +712,7 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedUntilAnEmergencyStopIsReset) {
   lasers_->find("co2")->reset_stop();
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 // A beam somebody opened by hand has no owner once that command is over: a
@@ -291,7 +732,7 @@ TEST_F(SharedLasersSessionTest, AQueueIsNotStartedWhileABeamIsOn) {
   EXPECT_TRUE(lasers_->firing().empty());
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
@@ -299,9 +740,9 @@ TEST_F(SharedLasersSessionTest, TheLasersAreTheQueuesWhileItRuns) {
   EXPECT_EQ(lasers_->driver(), Lasers::Driver::Queue);
   EXPECT_FALSE(lasers_->drive(Lasers::Driver::Manual));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
   // given back by the time anyone is told the queue has ended
-  ASSERT_TRUE(eventually([&] { return !ended().empty(); }));
+  ASSERT_FALSE(ended().empty());
   EXPECT_EQ(lasers_->driver(), Lasers::Driver::None);
   EXPECT_TRUE(lasers_->drive(Lasers::Driver::Manual));
 }
@@ -428,7 +869,7 @@ TEST_F(LiveViewCameraThatIsNotThereTest, IsANoteAndStopsNoQueue) {
   EXPECT_NE(lasers_->notes().front().find("co2"), std::string::npos) << lasers_->notes().front();
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 // --- laser queues (laser system design, sections 5 and 7) --------------------
@@ -808,7 +1249,7 @@ TEST_F(SimCameraOnARealLaserTest, ASimulatedCameraOnARealLaserStopsItsQueues) {
   // a queue with no laser in it is not held up by the laser's camera
   ASSERT_TRUE(session_->start(queue_));
   session_->abort();
-  session_->wait();
+  expect_aborted_before_any_run();
 }
 
 // A pattern that runs off the edge of the stage's travel: the stage refuses
@@ -960,7 +1401,11 @@ TEST_F(LabSessionTest, TheQueueEndIsNotified) {
   ASSERT_TRUE(session_->start(queue_));
   auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
-  session_->notifier().wait_idle();
+  {
+    // The notifier's commands are the outside world's: not waited for in the clock.
+    const Clock::Detached detached(clock_);
+    session_->notifier().wait_idle();
+  }
   std::lock_guard lock(m);
   ASSERT_EQ(sent.size(), 1u);
   EXPECT_TRUE(sent[0].ok) << sent[0].error;
@@ -991,20 +1436,85 @@ TEST_F(LabSessionTest, CancelEndsTheQueueAndTheSessionCanStartAgain) {
   EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
 }
 
+// A request made straight after start() comes before the queue's thread has
+// got as far as the executor: it ends the queue all the same. The test's
+// thread does not wait in the clock in between, so no run can have started.
+TEST_F(LabSessionTest, AnAbortStraightAfterStartEndsTheQueueBeforeAnyRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_->abort();
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Aborted) << result->reason;
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+  EXPECT_FALSE(fs::exists(dir_ / "data" / "records"));
+}
+
+TEST_F(LabSessionTest, ACancelStraightAfterStartEndsTheQueueBeforeAnyRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_->cancel();
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Cancelled) << result->reason;
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+}
+
+TEST_F(LabSessionTest, AStopStraightAfterStartEndsTheQueueBeforeAnyRun) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_->stop();
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Stopped) << result->reason;
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+}
+
+TEST_F(LabSessionTest, DestroyingASessionStraightAfterStartAbortsItsQueue) {
+  ASSERT_TRUE(session_->start(queue_));
+  session_.reset();
+  ASSERT_EQ(ended().size(), 1u);
+  EXPECT_EQ(ended().front().result.end, executor::QueueEnd::Aborted) << ended().front().result.reason;
+  EXPECT_TRUE(ended().front().result.runs.empty());
+  EXPECT_EQ(started_.load(), 0);
+}
+
+// A cancel from a thread the clock knows nothing of (the UI's, a signal's)
+// reaches a queue that is asleep in simulated time. The test's thread keeps
+// time where it is meanwhile, so the cancel lands in the first run.
+TEST_F(LabSessionTest, ACancelFromOutsideTheClockEndsTheQueue) {
+  ASSERT_TRUE(session_->start(queue_));
+  ASSERT_TRUE(eventually([&] { return started_ > 0; }));
+  const TimePoint at = clock_.now();
+  std::thread outsider([&] { session_->cancel(); });
+  outsider.join();  // not a participant: nothing for the clock to wait for
+  EXPECT_EQ(clock_.now(), at);
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Cancelled) << result->reason;
+  // The run that had started is the only one, and it did not finish.
+  ASSERT_EQ(result->runs.size(), 1u);
+  EXPECT_EQ(result->runs.front().state, run::RunState::Cancelled);
+  EXPECT_FALSE(session_->running());
+}
+
 // A QueueEnded subscriber may call back into the session while the owner
 // starts the next queue (which joins the previous queue's thread).
 TEST_F(LabSessionTest, AQueueEndedSubscriberMayCallBackIn) {
   std::atomic<int> called{0};
   subs_.push_back(line_->bus().subscribe<QueueEnded>([this, &called](const QueueEnded&) {
-    std::this_thread::sleep_for(200ms);  // still publishing when the next start() comes
+    clock_.sleep_for(200ms);  // still publishing when the next start() comes
     (void)session_->running();
     (void)session_->state();
     ++called;
   }));
   queue_.runs.resize(1);
   ASSERT_TRUE(session_->start(queue_));
+  // Seen within 100 ms of the queue's end: the subscriber has 200 ms to go.
   ASSERT_TRUE(eventually([&] { return !session_->running(); }));
+  EXPECT_EQ(called.load(), 0);
   ASSERT_TRUE(session_->start(queue_));  // joins the first thread mid-publish
+  EXPECT_EQ(called.load(), 1);
   ASSERT_TRUE(session_->wait().has_value());
   EXPECT_EQ(called.load(), 2);
 }

@@ -14,6 +14,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDockWidget>
+#include <QIcon>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QKeySequence>
@@ -21,10 +22,12 @@
 #include <QListWidget>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QSplitter>
+#include <QPainter>
+#include <QPixmap>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace pychron::ui {
 
@@ -65,6 +68,19 @@ QString skeleton(ScriptKind kind) {
   }
 }
 
+// The mark of a problem in the list, in its severity's colour.
+QIcon severity_dot(const QColor& color) {
+  QPixmap pixmap(32, 32);
+  pixmap.fill(Qt::transparent);
+  QPainter p(&pixmap);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.setPen(Qt::NoPen);
+  p.setBrush(color);
+  p.drawEllipse(QRectF(9, 9, 14, 14));
+  p.end();
+  return QIcon(pixmap);
+}
+
 }  // namespace
 
 ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::unique_ptr<QSettings> settings,
@@ -76,12 +92,14 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
       tree_(new QTreeWidget),
       tabs_(new QTabWidget),
       problems_(new QListWidget),
+      problems_dock_(new QDockWidget(this)),
       status_(new QLabel) {
   setObjectName(QStringLiteral("ScriptEditorWindow"));
   setWindowTitle(tr("Script Editor"));
   resize(1100, 750);
 
-  tree_->setHeaderHidden(true);
+  tree_->setObjectName(QStringLiteral("ScriptTree"));
+  style::make_sidebar(tree_);
   auto* tree_dock = new QDockWidget(tr("Scripts"), this);
   tree_dock->setObjectName(QStringLiteral("ScriptEditorTreeDock"));
   tree_dock->setWidget(tree_);
@@ -90,21 +108,26 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
   tabs_->setTabsClosable(true);
   tabs_->setDocumentMode(true);
   status_->setWordWrap(true);
+  // What the check found, under a title that says so and counts them.
+  problems_->setObjectName(QStringLiteral("ScriptProblems"));
+  status_->setContentsMargins(8, 4, 8, 2);
   auto* bottom = new QWidget;
   auto* bcol = new QVBoxLayout(bottom);
   bcol->setContentsMargins(0, 0, 0, 0);
+  bcol->setSpacing(0);
   bcol->addWidget(status_);
-  bcol->addWidget(problems_);
-  auto* split = new QSplitter(Qt::Vertical);
-  split->addWidget(tabs_);
-  split->addWidget(bottom);
-  split->setStretchFactor(0, 4);
-  split->setStretchFactor(1, 1);
-  split->setSizes({600, 160});  // an empty tab widget would otherwise get almost nothing
-  setCentralWidget(split);
+  bcol->addWidget(problems_, 1);
+  problems_dock_->setObjectName(QStringLiteral("ScriptEditorProblemsDock"));
+  problems_dock_->setFeatures(QDockWidget::NoDockWidgetFeatures);
+  problems_dock_->setWidget(bottom);
+  addDockWidget(Qt::BottomDockWidgetArea, problems_dock_);
+  setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+  resizeDocks({problems_dock_}, {170}, Qt::Vertical);
+  setCentralWidget(tabs_);
 
   // Two groups in the unified Scripts menu (MenuHub), enabled while this
-  // window is active.
+  // window is active. Save is the File menu's, which has its key; File > New
+  // and File > Open are the main window's, and call new_dialog() and open_picked().
   QList<QAction*> file;
   QList<QAction*> code;
   auto add = [this](QList<QAction*>& group, const QString& text, const QKeySequence& key, std::function<void()> f) {
@@ -114,20 +137,8 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     group.append(a);
     return a;
   };
-  add(file, tr("&New..."), key(Shortcut::NewScript), [this] {
-    QStringList kinds;
-    for (auto k : kKinds) kinds.append(q(scripting::to_string(k)));
-    bool ok = false;
-    const QString kind = QInputDialog::getItem(this, tr("New script"), tr("Kind"), kinds, 0, false, &ok);
-    if (!ok) return;
-    const QString name = QInputDialog::getText(this, tr("New script"), tr("Name (e.g. co2_degas or co2:degas)"),
-                                               QLineEdit::Normal, QString(), &ok);
-    if (!ok || name.trimmed().isEmpty()) return;
-    QString error;
-    if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
-      QMessageBox::warning(this, tr("New script"), error);
-  });
-  add(file, tr("&Save"), key(Shortcut::SaveScript), [this] {
+  QList<QAction*> of_file;
+  save_ = add(of_file, tr("&Save"), {}, [this] {
     QString error;
     if (current() != nullptr && !save(&error)) QMessageBox::warning(this, tr("Save"), error);
   });
@@ -137,9 +148,15 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (Document* d = current())
       if (auto name = d->editor->gosub_under_cursor()) follow_gosub(*name);
   });
+  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_, tr("Script"));
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, file, MenuHub::Scope::Window);
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, code, MenuHub::Scope::Window);
 
+  pick_script_ = [this](const QStringList& names) -> std::optional<QString> {
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, tr("Open script"), tr("Script"), names, 0, false, &ok);
+    return ok ? std::optional<QString>(name) : std::nullopt;
+  };
   ask_unsaved_ = [this](const QString& name) {
     const auto b = QMessageBox::question(this, tr("Unsaved script"), tr("%1 has unsaved changes. Save them?").arg(name),
                                          QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
@@ -158,6 +175,11 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     for (const auto& f : experiment::lab::lab_scripts(lab_))
       if (q(f.path.string()) == path.toString()) open(f);
   });
+  // A kind's row opens and closes at a click anywhere on it, not only on its chevron.
+  tree_->setExpandsOnDoubleClick(false);
+  connect(tree_, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item) {
+    if (item->parent() == nullptr) item->setExpanded(!item->isExpanded());
+  });
   connect(problems_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
     if (Document* d = current()) d->editor->go_to_line(item->data(Qt::UserRole).toInt());
   });
@@ -171,6 +193,43 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
 
 ScriptEditorWindow::~ScriptEditorWindow() = default;
 
+namespace {
+
+// A script as the tree lists it: under its kind, or under lib.
+QString tree_name(const ScriptFile& file) {
+  if (file.name.starts_with("lib:")) return QStringLiteral("lib/") + q(file.name.substr(4));
+  return q(scripting::to_string(file.kind)) + QLatin1Char('/') + q(file.name);
+}
+
+}  // namespace
+
+void ScriptEditorWindow::new_dialog() {
+  QStringList kinds;
+  for (auto k : kKinds) kinds.append(q(scripting::to_string(k)));
+  bool ok = false;
+  const QString kind = QInputDialog::getItem(this, tr("New script"), tr("Kind"), kinds, 0, false, &ok);
+  if (!ok) return;
+  const QString name = QInputDialog::getText(this, tr("New script"), tr("Name (e.g. co2_degas or co2:degas)"),
+                                             QLineEdit::Normal, QString(), &ok);
+  if (!ok || name.trimmed().isEmpty()) return;
+  QString error;
+  if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
+    QMessageBox::warning(this, tr("New script"), error);
+}
+
+bool ScriptEditorWindow::open_picked() {
+  const QStringList names = script_names();
+  if (names.isEmpty()) {
+    status_->setText(tr("The lab has no scripts yet: start one with File > New."));
+    return false;
+  }
+  const std::optional<QString> picked = pick_script_(names);
+  if (!picked) return false;
+  const auto scripts = experiment::lab::lab_scripts(lab_);
+  const auto it = std::find_if(scripts.begin(), scripts.end(), [&](const ScriptFile& f) { return tree_name(f) == *picked; });
+  return it != scripts.end() && open(*it);
+}
+
 QString ScriptEditorWindow::label(const ScriptFile& file) { return q(scripting::to_string(file.kind)) + QLatin1Char('/') + q(file.name); }
 
 void ScriptEditorWindow::fill_tree() {
@@ -181,8 +240,16 @@ void ScriptEditorWindow::fill_tree() {
     groups[q(scripting::to_string(k))] = g;
   }
   auto* lib = new QTreeWidgetItem(tree_, {QStringLiteral("lib")});
+  QFont group_font = tree_->font();
+  group_font.setWeight(QFont::DemiBold);
+  for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+    QTreeWidgetItem* g = tree_->topLevelItem(i);
+    g->setFont(0, group_font);
+    g->setForeground(0, theme().muted_text);
+    g->setFlags(Qt::ItemIsEnabled);  // a kind opens and closes; only a script is selected
+  }
   for (const auto& f : experiment::lab::lab_scripts(lab_)) {
-    const bool in_lib = f.name.rfind("lib:", 0) == 0;
+    const bool in_lib = f.name.starts_with("lib:");
     QTreeWidgetItem* parent = in_lib ? lib : groups[q(scripting::to_string(f.kind))];
     auto* item = new QTreeWidgetItem(parent, {q(in_lib ? f.name.substr(4) : f.name)});
     item->setData(0, Qt::UserRole, q(f.path.string()));
@@ -202,7 +269,7 @@ QStringList ScriptEditorWindow::script_names() const {
 
 ScriptEditorWindow::Document* ScriptEditorWindow::current() const {
   const int i = tabs_->currentIndex();
-  return i >= 0 && i < static_cast<int>(docs_.size()) ? docs_[static_cast<std::size_t>(i)].get() : nullptr;
+  return i >= 0 && std::cmp_less(i, docs_.size()) ? docs_[static_cast<std::size_t>(i)].get() : nullptr;
 }
 
 ScriptEditorWindow::Document* ScriptEditorWindow::find(const ScriptFile& file) const {
@@ -237,6 +304,7 @@ bool ScriptEditorWindow::open(const ScriptFile& file) {
     update_tab_title(*d);
   });
   connect(doc->editor, &QPlainTextEdit::textChanged, this, [this, d] {
+    // NOLINTNEXTLINE(clang-analyzer-core.NullDereference): `d` is doc.get(), never null
     if (current() == d && d->editor->toPlainText() != d->checked_text) check_timer_.start();
   });
   connect(doc->editor, &CodeEditor::gosubActivated, this, [this](const QString& name) { follow_gosub(name); });
@@ -321,7 +389,7 @@ bool ScriptEditorWindow::resolve_unsaved(Document& doc) {
 }
 
 bool ScriptEditorWindow::close_document(int index) {
-  if (index < 0 || index >= static_cast<int>(docs_.size())) return false;
+  if (index < 0 || std::cmp_greater_equal(index, docs_.size())) return false;
   Document& d = *docs_[static_cast<std::size_t>(index)];
   if (!resolve_unsaved(d)) return false;
   tabs_->removeTab(index);
@@ -360,9 +428,11 @@ void ScriptEditorWindow::check_now() {
 
 void ScriptEditorWindow::show_check() {
   problems_->clear();
+  problems_dock_->setWindowTitle(tr("Problems"));
   Document* d = current();
+  save_->setEnabled(d != nullptr);
   if (d == nullptr) {
-    status_->setText(tr("Open a script from the list, or Script > New."));
+    status_->setText(tr("Open a script from the list or with File > Open, or start one with File > New."));
     style::set_tone(status_, style::Tone::Normal);
     return;
   }
@@ -380,6 +450,15 @@ void ScriptEditorWindow::show_check() {
     auto* item = new QListWidgetItem(text, problems_);
     item->setData(Qt::UserRole, diag.line);
     item->setForeground(error ? theme().error_text : theme().warning_text);
+    item->setIcon(severity_dot(error ? theme().error : theme().warning));
+  }
+  if (!listed.empty()) {
+    const auto errors = static_cast<int>(d->check.report.errors().size());
+    const auto warnings = static_cast<int>(d->check.report.warnings().size());
+    QStringList counts;
+    if (errors > 0) counts.append(errors == 1 ? tr("1 error") : tr("%1 errors").arg(errors));
+    if (warnings > 0) counts.append(warnings == 1 ? tr("1 warning") : tr("%1 warnings").arg(warnings));
+    problems_dock_->setWindowTitle(tr("Problems: %1").arg(counts.join(QStringLiteral(", "))));
   }
   QString text;
   bool bad = false;
@@ -406,6 +485,8 @@ QStringList ScriptEditorWindow::diagnostic_lines() const {
 }
 
 QString ScriptEditorWindow::estimate_text() const { return status_->text(); }
+
+QString ScriptEditorWindow::problems_title() const { return problems_dock_->windowTitle(); }
 
 void ScriptEditorWindow::update_tab_title(Document& doc) {
   for (std::size_t i = 0; i < docs_.size(); ++i)

@@ -452,7 +452,7 @@ std::string late_revision_detail(const RevisionItem& revision, const Late& late)
   try {
     Json content = content_of(revision);
     if (dump(content).size() <= kMaxContentBytes) out["content"] = std::move(content);
-  } catch (const std::exception&) {
+  } catch (const std::exception&) {  // NOLINT(bugprone-empty-catch): see below
     // Text nlohmann cannot hold: the blob sha still names the content.
   }
   return dump(out);

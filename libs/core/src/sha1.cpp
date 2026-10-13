@@ -12,12 +12,12 @@ constexpr std::uint32_t rotl(std::uint32_t x, int n) { return (x << n) | (x >> (
 void compress(std::array<std::uint32_t, 5>& h, const std::uint8_t* p) {
   std::uint32_t w[80];
   for (int i = 0; i < 16; ++i)
-    w[i] = (std::uint32_t(p[4 * i]) << 24) | (std::uint32_t(p[4 * i + 1]) << 16) | (std::uint32_t(p[4 * i + 2]) << 8) |
-           std::uint32_t(p[4 * i + 3]);
+    w[i] = (static_cast<std::uint32_t>(p[4 * i]) << 24) | (static_cast<std::uint32_t>(p[4 * i + 1]) << 16) | (static_cast<std::uint32_t>(p[4 * i + 2]) << 8) |
+           static_cast<std::uint32_t>(p[4 * i + 3]);
   for (int i = 16; i < 80; ++i) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
   auto [a, b, c, d, e] = h;
   for (int i = 0; i < 80; ++i) {
-    std::uint32_t f, k;
+    std::uint32_t f = 0, k = 0;
     if (i < 20) {
       f = (b & c) | (~b & d);
       k = 0x5a827999;
@@ -49,6 +49,7 @@ void compress(std::array<std::uint32_t, 5>& h, const std::uint8_t* p) {
 
 std::array<std::uint8_t, 20> sha1(std::string_view bytes) {
   std::array<std::uint32_t, 5> h{0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the text's bytes
   const auto* p = reinterpret_cast<const std::uint8_t*>(bytes.data());
   std::size_t n = bytes.size();
   const std::uint64_t bits = std::uint64_t{n} * 8;

@@ -547,7 +547,7 @@ std::string to_string(const Expr& e) {
     case K::Var: return "$" + e.var;
     case K::Call: {
       std::string s(to_string(e.func));
-      s += "(";
+      s += '(';
       for (size_t i = 0; i < e.children.size(); ++i) {
         if (i) s += ", ";
         s += to_string(*e.children[i]);

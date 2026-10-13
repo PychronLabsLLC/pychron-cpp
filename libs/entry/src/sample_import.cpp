@@ -209,19 +209,19 @@ SampleImportPlan plan_sample_import(const CsvTable& table, const ColumnMapping& 
     std::map<ImportField, std::string> v;
     for (std::size_t c = 0; c < mapping.size() && c < cells.size(); ++c)
       if (mapping[c]) v[*mapping[c]] = cells[c];
-    const auto get = [&](ImportField f) { return v.count(f) ? trim(v[f]) : std::string(); };
+    const auto get = [&](ImportField f) { return v.contains(f) ? trim(v[f]) : std::string(); };
     if (std::find(table.ragged.begin(), table.ragged.end(), row.line) != table.ragged.end())
-      row.messages.push_back("the row does not have one value per column");
+      row.messages.emplace_back("the row does not have one value per column");
 
     row.sample = get(ImportField::Sample);
     row.project = get(ImportField::Project);
     row.material = get(ImportField::Material);
     row.grainsize = get(ImportField::Grainsize);
     const std::string pi_text = get(ImportField::PrincipalInvestigator);
-    if (row.sample.empty()) row.messages.push_back("no sample name");
-    if (row.project.empty()) row.messages.push_back("no project");
-    if (row.material.empty()) row.messages.push_back("no material");
-    if (pi_text.empty()) row.messages.push_back("no principal investigator");
+    if (row.sample.empty()) row.messages.emplace_back("no sample name");
+    if (row.project.empty()) row.messages.emplace_back("no project");
+    if (row.material.empty()) row.messages.emplace_back("no material");
+    if (pi_text.empty()) row.messages.emplace_back("no principal investigator");
     std::optional<PiName> pi;
     if (!pi_text.empty()) {
       auto parsed = parse_pi(pi_text, options.pi_names_allowed);
@@ -261,7 +261,7 @@ SampleImportPlan plan_sample_import(const CsvTable& table, const ColumnMapping& 
     const std::string zone = get(ImportField::Zone);
     if (!f.lat && !f.lon && (easting || northing || !zone.empty())) {
       if (!easting || !northing || zone.empty()) {
-        row.messages.push_back("UTM needs easting, northing and zone");
+        row.messages.emplace_back("UTM needs easting, northing and zone");
       } else {
         auto ll = utm_to_lat_lon(*easting, *northing, zone);
         if (ll) {
@@ -322,7 +322,7 @@ SampleImportPlan plan_sample_import(const CsvTable& table, const ColumnMapping& 
       } else {
         row.state = RowState::Update;
         ++plan.updates;
-        if (!options.update_existing) row.messages.push_back("differs from the stored sample; not updated");
+        if (!options.update_existing) row.messages.emplace_back("differs from the stored sample; not updated");
       }
     }
     plan.rows.push_back(std::move(row));
@@ -359,7 +359,7 @@ ps::CatalogEditBatch to_batch(const SampleImportPlan& plan, const CatalogSnapsho
         u.expected[name] = before.at(name);
         u.values[name] = given.at(name);
       }
-      samples.push_back(std::move(u));
+      samples.emplace_back(std::move(u));
       continue;
     }
     if (row.state != RowState::Create) continue;
@@ -368,21 +368,20 @@ ps::CatalogEditBatch to_batch(const SampleImportPlan& plan, const CatalogSnapsho
     if (pi_it == pi_ids.end()) {
       const ps::Uuid id = ps::Uuid::v7();
       pi_it = pi_ids.emplace(std::make_pair(pi.last_name, pi.first_initial), id).first;
-      pis.push_back(ps::CatalogInsert{ps::CatalogTable::PrincipalInvestigator, id,
+      pis.emplace_back(ps::CatalogInsert{ps::CatalogTable::PrincipalInvestigator, id,
                                       {{"last_name", pi.last_name}, {"first_initial", pi.first_initial}}});
     }
     auto project_it = project_ids.find({row.project, pi_it->second});
     if (project_it == project_ids.end()) {
       const ps::Uuid id = ps::Uuid::v7();
       project_it = project_ids.emplace(std::make_pair(row.project, pi_it->second), id).first;
-      projects.push_back(ps::CatalogInsert{ps::CatalogTable::Project, id, {{"name", row.project}, {"pi_uuid", pi_it->second}}});
+      projects.emplace_back(ps::CatalogInsert{ps::CatalogTable::Project, id, {{"name", row.project}, {"pi_uuid", pi_it->second}}});
     }
     auto material_it = material_ids.find({row.material, row.grainsize});
     if (material_it == material_ids.end()) {
       const ps::Uuid id = ps::Uuid::v7();
       material_it = material_ids.emplace(std::make_pair(row.material, row.grainsize), id).first;
-      materials.push_back(
-          ps::CatalogInsert{ps::CatalogTable::Material, id, {{"name", row.material}, {"grainsize", row.grainsize}}});
+      materials.emplace_back(ps::CatalogInsert{ps::CatalogTable::Material, id, {{"name", row.material}, {"grainsize", row.grainsize}}});
     }
     ps::CatalogFields values = sample_columns(row.fields);
     for (auto it = values.begin(); it != values.end();)
@@ -390,7 +389,7 @@ ps::CatalogEditBatch to_batch(const SampleImportPlan& plan, const CatalogSnapsho
     values["name"] = row.sample;
     values["project_uuid"] = project_it->second;
     values["material_uuid"] = material_it->second;
-    samples.push_back(ps::CatalogInsert{ps::CatalogTable::Sample, ps::Uuid::v7(), std::move(values)});
+    samples.emplace_back(ps::CatalogInsert{ps::CatalogTable::Sample, ps::Uuid::v7(), std::move(values)});
   }
   for (auto* part : {&pis, &projects, &materials, &samples})
     for (auto& e : *part) batch.edits.push_back(std::move(e));

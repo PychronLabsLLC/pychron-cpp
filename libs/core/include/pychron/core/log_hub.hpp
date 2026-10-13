@@ -6,6 +6,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/logging_config.hpp"
@@ -51,6 +53,11 @@ class LogHub {
   // Adds or replaces the rule for `pattern` and re-resolves every existing
   // hub logger whose level was not set explicitly. Thread-safe.
   void set_level(std::string_view pattern, LogLevel level);
+
+  // Replaces the default level and every rule at once: a rule that is not in
+  // `levels` no longer applies. Explicitly set loggers keep their level, as
+  // with set_level. Thread-safe.
+  void set_levels(LogLevel default_level, const std::vector<std::pair<std::string, LogLevel>>& levels);
 
   // Blocks until every record written so far is on disk.
   void flush();

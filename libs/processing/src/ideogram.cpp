@@ -160,7 +160,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
     g.x.title = o.get_string("x.title").empty() ? q->label() : o.get_string("x.title");
 
     struct GroupData {
-      int group;
+      int group{};
       GroupStyle style;
       GroupItems items;
       std::vector<Val> all, included;
@@ -335,7 +335,9 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
           }
           if (!p.y.max) p.y.max = top * (1.12 + 0.08 * std::max<int>(0, k - 1));
         }
+        // Never below zero: the axis starts there and the view holds it there.
         if (!p.y.min) p.y.min = 0.0;
+        p.y.pin_min = true;
         if (!lines.empty()) {
           TextLayer t;
           t.lines = std::move(lines);
@@ -454,7 +456,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
     }
     scene.graphs.push_back(std::move(g));
   }
-  if (scene.graphs.empty()) scene.warnings.push_back("no analyses");
+  if (scene.graphs.empty()) scene.warnings.emplace_back("no analyses");
   return scene;
 }
 

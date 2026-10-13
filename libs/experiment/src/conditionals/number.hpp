@@ -22,6 +22,7 @@ inline std::string shortest(double v) {
     if (std::strtod(b, nullptr) == v) break;
   }
   std::string s = b;
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): read only; snprintf above read the same locale
   const std::string point = std::localeconv()->decimal_point;
   if (point != ".")
     if (const auto at = s.find(point); at != std::string::npos) s.replace(at, point.size(), ".");

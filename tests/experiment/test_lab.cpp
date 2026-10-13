@@ -3,14 +3,13 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment::lab {
 namespace {
@@ -20,9 +19,7 @@ namespace fs = std::filesystem;
 class LabTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    dir_ = fs::temp_directory_path() /
-           ("pychron-lab-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("pychron-lab-");
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
   }

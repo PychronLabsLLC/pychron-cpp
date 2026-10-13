@@ -7,7 +7,8 @@
 //   current run: identifier, run state, block, counts bar
 //   the executor's current wait (reason and duration)
 //   Start / Stop / Cancel / Abort / Truncate
-//   conditionals that tripped; one line per run start/finish, thing a run
+//   conditionals that tripped; a table of events, each with the time it was
+//   seen on the line's clock: one row per run start/finish, thing a run
 //   said (a script's info(), whether a hole was centered), queue edit,
 //   peak-center result and queue end; records left in the spool
 //   what the session cannot do (LabSession::problems), from the start
@@ -16,10 +17,14 @@
 // row): the pane emits startRequested. The other controls go straight to the
 // bridge. Cancel and Abort ask first (default No).
 
+#include <cstddef>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 
+#include <QDateTime>
+#include <QList>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -33,6 +38,7 @@ class QLabel;
 class QListWidget;
 class QProgressBar;
 class QPushButton;
+class QTableWidget;
 
 namespace pychron::ui {
 
@@ -69,10 +75,23 @@ class ExecutorPane : public QWidget {
   QString wait_text() const;
   QString error_text() const;
   QString spool_text() const;
+  // The line for `pending` runs not yet saved: in the spool, or, when the
+  // session saves to a database, waiting for it; then, when there is one, why
+  // the last was not taken (LabSession::last_save_error), on the same line.
+  QString pending_text(std::size_t pending, const std::optional<std::string>& why = {}) const;
   QString notify_text() const;
   int counts_value() const;
   int counts_maximum() const;
-  QStringList events() const;
+  QStringList events() const;  // what each event says, oldest first
+  // When each was seen, on the line's clock (simulated time in a simulated
+  // session); the table shows the time of day and the date in a tooltip.
+  QList<QDateTime> event_times() const;
+  QStringList event_time_texts() const;  // the Time column as shown
+  // The events table keeps its newest lines only: a queue of a thousand runs
+  // says more than ten thousand things, and the list is not their record
+  // (the log is).
+  static constexpr int kEventLimit = 5000;
+  void set_event_limit(int lines);
   QStringList conditionals() const;
   const TimelineModel& timeline() const noexcept { return timeline_; }
   TimelineView* timeline_view() const noexcept { return timeline_view_; }
@@ -82,6 +101,7 @@ class ExecutorPane : public QWidget {
 
  private:
   void add_event(const QString& line);
+  void trim_events();
   void update_buttons();
   void update_progress();
 
@@ -89,6 +109,7 @@ class ExecutorPane : public QWidget {
   Confirm confirm_;
   bool runnable_ = false, running_ = false;
   int rows_ = 0, done_ = 0;
+  int event_limit_ = kEventLimit;
   QString run_, run_state_, block_;
   std::map<std::string, QString> identifiers_;  // by run id, for the queue being run
 
@@ -108,7 +129,7 @@ class ExecutorPane : public QWidget {
   QPushButton* abort_;
   QPushButton* truncate_;
   QListWidget* conditionals_;
-  QListWidget* events_;
+  QTableWidget* events_;
   TimelineModel timeline_;
   TimelineView* timeline_view_;
   QTimer timeline_clock_;  // grows open segments with the line's clock while running

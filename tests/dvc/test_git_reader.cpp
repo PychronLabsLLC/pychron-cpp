@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <ranges>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -69,7 +70,7 @@ class ScopedEnv {
     put(name, value);
   }
   ~ScopedEnv() {
-    for (auto it = saved_.rbegin(); it != saved_.rend(); ++it) put(it->first, it->second);
+    for (auto& it : std::views::reverse(saved_)) put(it.first, it.second);
   }
   ScopedEnv() = default;
   ScopedEnv(const ScopedEnv&) = delete;
@@ -652,8 +653,8 @@ TEST(GitReader, OddFileNames) {
   repo.init();
   std::vector<std::string> names{"664/in tercepts/57 01A.inte.json", "dir/na\xc3\xafve.json"};
 #ifndef _WIN32
-  names.push_back("dir/q\"uote.json");  // Windows has neither '"' nor ':' in file names
-  names.push_back(":colon.json");
+  names.emplace_back("dir/q\"uote.json");  // Windows has neither '"' nor ':' in file names
+  names.emplace_back(":colon.json");
 #endif
   for (const auto& name : names) repo.write(name, "text of " + name);
   const std::string c1 = repo.commit("odd names", "2016-03-04T05:06:07+00:00");

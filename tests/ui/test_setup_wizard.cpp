@@ -167,6 +167,122 @@ class TestSetupWizard : public QObject {
     QCOMPARE(QString::fromStdString(w.installed()->database), QStringLiteral("postgresql://pychron@db.lab.edu:5432/pychron"));
   }
 
+  // Install defaults: an instrument's database is made, then given the seed.
+  void anInstrumentInstallMakesAndSeedsItsDatabase() {
+    std::vector<std::string> calls;
+    SetupWizard::OpenDatabase open = [&](const std::string& url, bool create) -> Result<std::string> {
+      calls.push_back(std::string(create ? "create " : "open ") + url);
+      return std::string("schema version 7");
+    };
+    bool succeed = true;
+    SetupWizard::SeedDatabase seed = [&](const std::string& url, const fs::path& file, bool migrate) -> Result<std::string> {
+      calls.push_back(std::string(migrate ? "seed+migrate " : "seed ") + url + " " + file.filename().string());
+      if (!succeed) return fail(ErrorKind::Config, "seed.toml: syntax error");
+      return std::string("seeded 1 project");
+    };
+    const fs::path root = dir("argus-seeded");
+    const std::string db = "sqlite:" + (root / "data" / "pychron.db").generic_string();
+    {
+      SetupWizard w(library_, {dir("site-s.toml"), open, QStringLiteral("argus"), {}, seed});
+      w.restart();
+      w.next();
+      w.root_edit()->setText(QString::fromStdString(root.string()));
+      QVERIFY(walk_to(w, SetupWizard::kReady));
+      w.next();
+      QCOMPARE(w.currentId(), int(SetupWizard::kDone));
+      // The seed makes the local database; the doctor then opens it.
+      QCOMPARE(calls, (std::vector<std::string>{"seed+migrate " + db + " seed.toml", "open " + db}));
+      QVERIFY(fs::is_directory(root / "data"));
+      QCOMPARE(QString::fromStdString(w.installed()->database), QString::fromStdString(db));
+      QVERIFY(!setup::any_fail(w.checks()));
+      bool said = false;
+      for (const auto& c : w.checks()) said |= c.name == "seed" && c.status == setup::Check::Status::Ok && c.detail == "seeded 1 project";
+      QVERIFY(said);
+    }
+    // A seed that cannot run is a warning on the last page, not a failed install.
+    succeed = false;
+    calls.clear();
+    const fs::path other = dir("helix-seed-fails");
+    SetupWizard w(library_, {dir("site-s2.toml"), open, QStringLiteral("helix"), {}, seed});
+    w.restart();
+    w.next();
+    w.root_edit()->setText(QString::fromStdString(other.string()));
+    QVERIFY(walk_to(w, SetupWizard::kReady));
+    w.next();
+    QCOMPARE(w.currentId(), int(SetupWizard::kDone));
+    QVERIFY(w.installed().has_value());
+    QVERIFY(!setup::any_fail(w.checks()));
+    bool warned = false;
+    for (const auto& c : w.checks()) {
+      if (c.name != "seed") continue;
+      warned = c.status == setup::Check::Status::Warn && c.detail.find("seed.toml: syntax error") != std::string::npos &&
+               c.hint.find("elctl entry seed ") != std::string::npos;
+    }
+    QVERIFY(warned);
+  }
+
+  // The lab's server is seeded as it is: setup never migrates it.
+  void anInstrumentOnTheLabsServerIsSeededWithoutMigrating() {
+    std::vector<std::string> calls;
+    bool succeed = true;
+    SetupWizard::SeedDatabase seed = [&](const std::string& url, const fs::path&, bool migrate) -> Result<std::string> {
+      calls.push_back(std::string(migrate ? "seed+migrate " : "seed ") + url);
+      if (!succeed) return fail(ErrorKind::NotConnected, "the database could not be opened: refused\nmore");
+      return std::string("seeded 1 project");
+    };
+    SetupWizard::OpenDatabase open = [](const std::string&, bool) -> Result<std::string> { return std::string("schema version 7"); };
+    for (const char* site : {"site-u.toml", "site-u2.toml"}) {
+      calls.clear();
+      SetupWizard w(library_, {dir(site), open, QStringLiteral("argus"), {}, seed});
+      w.restart();
+      w.next();
+      w.name_edit()->setText(QString::fromLatin1(succeed ? "served" : "served2"));
+      w.root_edit()->setText(QString::fromStdString(dir(succeed ? "argus-server" : "argus-server2").string()));
+      int guard = 0;
+      while (!w.is_shown(QStringLiteral("data_source")) && guard++ < 20) w.next();
+      QVERIFY(w.is_shown(QStringLiteral("data_source")));
+      radio(w.editor(QStringLiteral("data_source")), "data_source-server")->click();
+      qobject_cast<QLineEdit*>(w.editor(QStringLiteral("db_host")))->setText(QStringLiteral("db.lab.edu"));
+      qobject_cast<QLineEdit*>(w.editor(QStringLiteral("db_password")))->setText(QStringLiteral("s3cret-Zq9"));
+      QVERIFY(walk_to(w, SetupWizard::kDone));
+      QCOMPARE(calls, (std::vector<std::string>{"seed postgresql://pychron:s3cret-Zq9@db.lab.edu:5432/pychron"}));
+      for (const auto& c : w.checks()) {
+        if (c.name != "seed") continue;
+        QVERIFY(c.detail.find("s3cret") == std::string::npos && c.hint.find("s3cret") == std::string::npos);
+        if (!succeed) {
+          QCOMPARE(c.status, setup::Check::Status::Warn);
+          QCOMPARE(QString::fromStdString(c.detail), QStringLiteral("skipped: the database could not be opened: refused"));
+          // The command that has the password.
+          QCOMPARE(QString::fromStdString(c.hint), QStringLiteral("elctl init --reconfigure --install served2"));
+        }
+      }
+      succeed = false;
+    }
+  }
+
+  void aDataReductionInstallIsNotSeededAndNoSeederIsNoSeed() {
+    int seeded = 0;
+    SetupWizard::SeedDatabase seed = [&](const std::string&, const fs::path&, bool) -> Result<std::string> {
+      ++seeded;
+      return std::string("seeded");
+    };
+    SetupWizard::OpenDatabase open = [](const std::string&, bool) -> Result<std::string> { return std::string("schema version 7"); };
+    {
+      SetupWizard w(library_, {dir("site-t.toml"), open, QStringLiteral("data-reduction"), {}, seed});
+      w.restart();
+      w.next();
+      w.root_edit()->setText(QString::fromStdString(dir("dr-not-seeded").string()));
+      QVERIFY(walk_to(w, SetupWizard::kDone));
+      QCOMPARE(seeded, 0);
+    }
+    SetupWizard w(library_, {dir("site-t2.toml"), open, QStringLiteral("argus"), {}, {}});
+    w.restart();
+    w.next();
+    w.root_edit()->setText(QString::fromStdString(dir("argus-no-seeder").string()));
+    QVERIFY(walk_to(w, SetupWizard::kDone));
+    for (const auto& c : w.checks()) QVERIFY(c.name != "seed");
+  }
+
   void simulationSkipsTheConnectionPage() {
     SetupWizard w(library_, {dir("site-d.toml"), {}, QStringLiteral("argus"), {}});
     w.restart();

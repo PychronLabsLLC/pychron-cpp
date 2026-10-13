@@ -200,6 +200,22 @@ TEST_F(RunTest, TruncateSavesAsTruncatedSuccess) {
   EXPECT_NE(std::find(st.begin(), st.end(), RunState::Truncated), st.end());
 }
 
+// The run's own state does not depend on anyone listening: it is measuring
+// while the main block runs, bus or no bus.
+TEST_F(RunTest, TheRunIsMeasuringDuringTheMainBlockWithoutABus) {
+  auto s = services();
+  s.bus = nullptr;
+  AutomatedRun run(unknown_run("12345"), queue_, std::move(s), {}, 3, 7);
+  std::optional<RunState> during;
+  spec_.on_reading = [&](int n) {
+    if (n == 8) during = run.state();
+  };
+  auto r = run.execute(control_);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(during);
+  EXPECT_EQ(*during, RunState::Measuring);
+}
+
 TEST_F(RunTest, TruncateBeforeMeasurementApplies) {
   control_.truncate(true);  // e.g. requested during extraction
   auto r = go(unknown_run("12345"));
@@ -298,6 +314,53 @@ TEST_F(RunTest, WhatARunSaysIsPublishedAndKeptInItsRecord) {
   EXPECT_EQ(saved->events, r.record->events);
 }
 
+// The persister of a pipeline that will not take the record. Everything else
+// is the lab's files.
+class RefusingPersister final : public persist::IAnalysisPersister {
+ public:
+  explicit RefusingPersister(persist::FilePersister& files) : files_(files) {}
+  Result<int> next_aliquot(const std::string& identifier) override { return files_.next_aliquot(identifier); }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return files_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& r) override { return files_.save_extraction(r); }
+  Result<void> save_analysis(const record::AnalysisRecord&) override {
+    return fail(ErrorKind::Io, "identifier '12345' is unknown");
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return files_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
+
+ private:
+  persist::FilePersister& files_;
+};
+
+// The run was measured and its record is safe in the spool: it is a success,
+// and it is flagged, and it says why it is not where it should be.
+TEST_F(RunTest, ARunThePersisterDidNotTakeSucceedsFlaggedAndSaysWhy) {
+  RefusingPersister refusing(lab_.files);
+  persist::SavePipeline pipeline(lab_.spool, refusing);
+  auto s = services();
+  s.persister = &refusing;
+  s.save = &pipeline;
+  std::vector<RunNote> said;
+  auto sub = bus_.subscribe<RunNote>([&](const RunNote& n) { said.push_back(n); });
+  AutomatedRun run(unknown_run("12345"), queue_, s);
+  auto r = run.execute(control_);
+  EXPECT_EQ(r.state, RunState::Success);
+  EXPECT_TRUE(r.save_error);
+  EXPECT_FALSE(r.error.has_value());
+  ASSERT_FALSE(r.messages.empty());
+  EXPECT_EQ(r.messages.back(), "not saved to the data store, kept in the spool: identifier '12345' is unknown");
+  ASSERT_FALSE(said.empty());
+  EXPECT_EQ(said.back().text, r.messages.back());
+  EXPECT_EQ(pipeline.pending(), 1u);
+  ASSERT_TRUE(r.record);
+  EXPECT_FALSE(r.record->provenance.sha.empty());  // finalized: it can be sent as it is
+  ASSERT_TRUE(lab_.spool.get(r.record->identity.uuid));
+}
+
 TEST_F(RunTest, IncompleteRecordFailsWithSaveErrorAndStaysInTheSpool) {
   auto s = services();
   s.spectrometer_info = nullptr;  // no state hash: the record cannot be finalized
@@ -349,15 +412,15 @@ TEST_F(RunTest, ResourceHooksWrapPhasesAndCanCancel) {
   std::vector<std::string> calls;
   RunHooks hooks;
   hooks.acquire_extraction = [&] {
-    calls.push_back("+extraction");
+    calls.emplace_back("+extraction");
     return true;
   };
-  hooks.release_extraction = [&] { calls.push_back("-extraction"); };
+  hooks.release_extraction = [&] { calls.emplace_back("-extraction"); };
   hooks.acquire_spectrometer = [&] {
-    calls.push_back("+spectrometer");
+    calls.emplace_back("+spectrometer");
     return true;
   };
-  hooks.release_spectrometer = [&] { calls.push_back("-spectrometer"); };
+  hooks.release_spectrometer = [&] { calls.emplace_back("-spectrometer"); };
   auto r = go(unknown_run("12345"), hooks);
   EXPECT_EQ(r.state, RunState::Success);
   EXPECT_EQ(calls, (std::vector<std::string>{"+extraction", "-extraction", "+spectrometer", "-spectrometer"}));
@@ -389,6 +452,7 @@ class RunDeviceTest : public RunTest {
       if (name == "diode") return &diode_;
       return nullptr;
     };
+    // NOLINTNEXTLINE(clang-analyzer-core.StackAddressEscape): returned by value; the function captures `this` only
     return s;
   }
   void extract_on_the_bound_device() {

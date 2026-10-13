@@ -77,7 +77,6 @@ void ScriptHighlighter::highlightBlock(const QString& text) {
     }
     setFormat(0, end + 3, str);
     i = end + 3;
-    state = kNormal;
   }
   setCurrentBlockState(kNormal);
   while (i < text.size()) {

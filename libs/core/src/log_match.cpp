@@ -33,7 +33,7 @@ bool log_name_matches(std::string_view pattern, std::string_view logger) noexcep
   if (pattern.empty()) return false;
   if (pattern.find('*') != std::string_view::npos) return glob_match(pattern, logger);
   if (logger == pattern) return true;
-  return logger.size() > pattern.size() && logger.compare(0, pattern.size(), pattern) == 0 &&
+  return logger.size() > pattern.size() && logger.starts_with(pattern) &&
          logger[pattern.size()] == '.';
 }
 

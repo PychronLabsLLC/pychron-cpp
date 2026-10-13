@@ -11,6 +11,7 @@
 #include <locale>
 #include <optional>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
 #include "pychron/vision/finder.hpp"
@@ -22,9 +23,23 @@ namespace pychron::laser {
 using extraction::IStage;
 using extraction::StagePosition;
 
+namespace {
+
+const Clock& default_clock() {
+  static const SteadyClock clock;
+  return clock;
+}
+
+}  // namespace
+
 LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver, const TrayLibrary& trays,
-                         const CalibrationStore& calibrations, const PatternLibrary* patterns)
-    : name_(std::move(name)), driver_(driver), trays_(trays), calibrations_(calibrations) {
+                         const CalibrationStore& calibrations, const PatternLibrary* patterns, const Clock* clock)
+    : name_(std::move(name)),
+      driver_(driver),
+      trays_(trays),
+      calibrations_(calibrations),
+      gate_(clock != nullptr ? *clock : default_clock()),
+      gate_clock_(clock) {
   // The runner moves this system's stage, not the driver's directly, so
   // whatever the system adds to a move applies to a pattern's too.
   if (patterns != nullptr) runner_ = std::make_unique<PatternRunner>(name_, *this, *patterns);
@@ -32,7 +47,20 @@ LaserSystem::LaserSystem(std::string name, extraction::IExtractionDevice& driver
 
 namespace {
 
-using Gate = std::lock_guard<std::recursive_mutex>;
+using Gate = std::lock_guard<RecursiveClockMutex>;
+
+// Calendar time for a stamp that is written down: the clock's, so a simulated
+// session is stamped in simulated time.
+std::tm utc_parts(const Clock& clock) {
+  const std::time_t now = std::chrono::system_clock::to_time_t(clock.wall_now());
+  std::tm parts{};
+#ifdef _WIN32
+  gmtime_s(&parts, &now);
+#else
+  gmtime_r(&now, &parts);
+#endif
+  return parts;
+}
 
 }  // namespace
 
@@ -240,13 +268,13 @@ Result<std::string> LaserSystem::snapshot(std::string_view name) {
   std::string stem(name);
   if (stem.ends_with(".png")) stem.erase(stem.size() - 4);
   if (stem.empty()) {
-    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm parts{};
-#ifdef _WIN32
-    gmtime_s(&parts, &now);
-#else
-    gmtime_r(&now, &parts);
-#endif
+    const Clock* clock = nullptr;
+    {
+      Gate gate(gate_);  // attach_camera() sets both
+      if (frames_ == nullptr) return fail(ErrorKind::Config, "no camera", name_);
+      clock = clock_;
+    }
+    const std::tm parts = utc_parts(*clock);
     char text[32];
     std::strftime(text, sizeof text, "%Y%m%d-%H%M%S", &parts);
     stem = text;
@@ -439,14 +467,8 @@ constexpr int kStaleTries = 5;
 
 double apart(StageXY a, StageXY b) { return std::hypot(a.x - b.x, a.y - b.y); }
 
-std::string utc_now() {
-  const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  std::tm parts{};
-#ifdef _WIN32
-  gmtime_s(&parts, &now);
-#else
-  gmtime_r(&now, &parts);
-#endif
+std::string utc_now(const Clock& clock) {
+  const std::tm parts = utc_parts(clock);
   char text[32];
   std::strftime(text, sizeof text, "%Y-%m-%dT%H:%M:%SZ", &parts);
   return text;
@@ -456,9 +478,23 @@ std::string utc_now() {
 
 void LaserSystem::set_corrections(const CorrectionStore& corrections) { correction_store_ = &corrections; }
 
+// The gate is waited for on the system's clock and the camera's settle and
+// stamps are read from the camera's: with two, a wait in simulated time would
+// be measured against real time. A system given no clock is on real time, and
+// one SteadyClock is as good as another.
+Result<void> LaserSystem::one_clock(const Clock& clock) const {
+  if (gate_clock_ == &clock) return {};
+  if (gate_clock_ == nullptr && dynamic_cast<const SteadyClock*>(&clock) != nullptr) return {};
+  return fail(ErrorKind::Config,
+              "two clocks in " + name_ + ": its camera is on another clock than the one the system was " +
+                  (gate_clock_ != nullptr ? "given" : "left on (real time, none given)"),
+              name_);
+}
+
 Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
                                         const Clock& clock) {
   Gate gate(gate_);
+  if (auto same = one_clock(clock); !same) return same;
   // Whether the stage and the camera suit each other is the caller's to
   // know; that a recording, or a camera for looking, never moves a stage is
   // known here.
@@ -481,6 +517,7 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
 Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,
                                         const Clock& clock) {
   Gate gate(gate_);
+  if (auto same = one_clock(clock); !same) return same;
   if (frames == nullptr) return fail(ErrorKind::Config, "the camera of " + name_ + " has no frames", name_);
   camera_ = std::move(config);
   frames_ = std::move(frames);
@@ -786,7 +823,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
     moving_.store(false);
     return false;
   }
-  if (static_cast<int>(frames.size()) < camera_->frames_per_step) return give_up(stage, vision::AutocenterReason::Camera);
+  if (std::cmp_less(frames.size(), camera_->frames_per_step)) return give_up(stage, vision::AutocenterReason::Camera);
   std::vector<vision::FrameView> views;
   for (const auto& frame : frames) views.push_back(frame.view());
   const vision::AutocenterStep step = c.controller.step(views);
@@ -822,7 +859,7 @@ Result<bool> LaserSystem::look(IStage& stage) {
     outcome.found = here;
     outcome.moved_mm = {here.x - c.start.x, here.y - c.start.y};
     outcome.residual_mm = c.residual;
-    const HoleCorrection correction{here.x, here.y, c.residual, utc_now()};
+    const HoleCorrection correction{here.x, here.y, c.residual, utc_now(*clock_)};
     const std::string hole = c.hole;
     centering_.reset();
 

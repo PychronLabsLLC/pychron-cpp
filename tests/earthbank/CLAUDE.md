@@ -1,0 +1,1 @@
+@../../libs/earthbank/AGENTS.md

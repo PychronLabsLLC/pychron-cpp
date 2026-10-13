@@ -8,7 +8,9 @@
 // Fit overlay: the collector's live fit of each series (FitsUpdated) is drawn
 // as a curve in the series' colour from time zero to its last point, with a
 // diamond at the intercept (time zero) and a grey cross on points the fit
-// excluded as outliers. The intercepts are listed under the plot.
+// excluded as outliers. The intercepts are a table under the plot, a row per
+// series: isotope, detector, fit, intercept, its error (absolute and percent)
+// and the points the fit used.
 //
 // Isotopes differ by orders of magnitude, so a series selector shows either
 // every series of the kind or one, with the axes scaled to it.
@@ -21,6 +23,7 @@
 #include <vector>
 
 #include <QColor>
+#include <QList>
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
@@ -37,6 +40,7 @@ class QComboBox;
 class QLabel;
 class QListWidget;
 class QTabBar;
+class QTableWidget;
 
 namespace pychron::ui {
 
@@ -68,7 +72,9 @@ class EvolutionsView : public QWidget {
   std::size_t point_count(experiment::collect::SeriesKind kind) const;  // over every series of `kind`
   QString title_text() const;
   QStringList peak_centers() const;
-  QStringList intercept_lines() const;  // the listed intercepts of the shown kind
+  // The intercepts table of the shown kind: its column titles, and each row's cells.
+  QStringList intercept_columns() const;
+  QList<QStringList> intercept_rows() const;
   // The latest fit of a series and its time zero, if one arrived.
   std::optional<reduction::Intercept> fit_of(const experiment::collect::SeriesKey& key) const;
   int fit_curve_count() const;  // fit curves drawn for the shown kind
@@ -105,7 +111,7 @@ class EvolutionsView : public QWidget {
   QLabel* title_;
   QCustomPlot* plot_;
   QListWidget* peaks_;
-  QListWidget* intercepts_;
+  QTableWidget* intercepts_;
   QTimer refresh_;
   bool dirty_ = false;
 };

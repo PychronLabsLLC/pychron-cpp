@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "pychron/devices/proxr_board_sim.hpp"
 
 namespace pychron {
@@ -37,12 +39,12 @@ SimTransport::Hook ProxrBoardSim::hook() {
 }
 
 bool ProxrBoardSim::energized(std::int64_t index) const {
-  if (index < 0 || index >= static_cast<std::int64_t>(kRelays)) return false;
+  if (index < 0 || std::cmp_greater_equal(index, kRelays)) return false;
   return relays_[static_cast<std::size_t>(index)];
 }
 
 void ProxrBoardSim::set_energized(std::int64_t index, bool on) {
-  if (index < 0 || index >= static_cast<std::int64_t>(kRelays)) return;
+  if (index < 0 || std::cmp_greater_equal(index, kRelays)) return;
   relays_[static_cast<std::size_t>(index)] = on;
 }
 

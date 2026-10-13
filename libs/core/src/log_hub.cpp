@@ -138,6 +138,7 @@ void refresh_crash_output(const LogHub::Impl& impl) noexcept;
 struct LogHub::Impl {
   const Clock* clock = nullptr;
   SignalBus* bus = nullptr;
+  SignalBus::Subscription bus_failures;  // handlers of the bus that threw
   bool echo_stderr = false;
   std::mutex echo_mutex;
 
@@ -183,7 +184,7 @@ struct LogHub::Impl {
     if (!last_error_report.compare_exchange_strong(last, now)) return;
     try {
       std::cerr << "pychron logging error: " << what << '\n';
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): nowhere left to report that reporting failed
     }
   }
 
@@ -194,7 +195,7 @@ struct LogHub::Impl {
       } else {
         std::cerr << "[error] logging: " << message << '\n';
       }
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): nowhere left to report that reporting failed
     }
   }
 
@@ -241,21 +242,21 @@ struct LogHub::Impl {
       if (level >= LogLevel::Error) sync_flush();
     } catch (const std::exception& e) {
       report_spdlog_error(e.what());
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): nothing to say of an exception that has no what()
     }
 
     if (echo_stderr) {
       try {
         std::lock_guard lock(echo_mutex);
         std::cerr << '[' << to_string(level) << "] " << name << ": " << message << '\n';
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): stderr is gone; the file and the bus still have the line
       }
     }
 
     if (bus != nullptr) {
       try {
         bus->publish(Log{level, std::string(name), std::string(message), clock->now()});
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): a subscriber's failure is not the logger's
       }
     }
   }
@@ -302,7 +303,7 @@ struct LogHub::Impl {
       lock.unlock();
       if (!barrier_sink->wait_until(target, deadline)) return;
       if (file_sink) file_sink->flush();
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): a flush that could not be made; the next one is tried as usual
     }
   }
 
@@ -343,6 +344,7 @@ struct CrashState {
   bool installed = false;
 };
 CrashState& crash_state() {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): never freed, on purpose: it must outlive every static
   static auto* state = new CrashState;
   return *state;
 }
@@ -444,6 +446,7 @@ std::string terminate_text() {
   const auto active = std::current_exception();
   if (!active) return "terminate called without an active exception";
   try {
+    // cppcheck-suppress missingReturn ; std::rethrow_exception does not return
     std::rethrow_exception(active);
   } catch (const std::exception& e) {
     return std::string("terminate called after throwing: ") + e.what();
@@ -465,7 +468,7 @@ std::string terminate_text() {
   if (hub) {
     try {
       hub->crash_flush(terminate_text());
-    } catch (...) {
+    } catch (...) {  // NOLINT(bugprone-empty-catch): terminating already
     }
   }
   hub.reset();
@@ -554,6 +557,21 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   auto impl = std::make_shared<Impl>();
   impl->clock = &clock;
   impl->bus = bus;
+  if (bus != nullptr) {
+    // A subscriber that throws is otherwise silent. Its first failure is
+    // written, then the 10th, the 100th...: one that throws at every reading
+    // must not fill the log, and this record is itself an event on the bus.
+    impl->bus_failures = bus->subscribe<HandlerFailed>([weak = std::weak_ptr<Impl>(impl)](const HandlerFailed& e) {
+      std::uint64_t power = 1;
+      while (power < e.count && power <= e.count / 10) power *= 10;
+      if (e.count != power) return;
+      const auto self = weak.lock();
+      if (!self) return;
+      std::string message = "a handler of " + e.event + " threw: " + e.what;
+      if (e.count > 1) message += " (" + std::to_string(e.count) + " times so far)";
+      self->write(LogLevel::Error, "bus", message);
+    });
+  }
   impl->echo_stderr = config.echo_stderr;
   impl->default_level = config.default_level;
   for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
@@ -621,6 +639,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
 LogHub::LogHub(std::shared_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 LogHub::~LogHub() {
+  impl_->bus_failures.reset();
   // Hub loggers may still hold impl_: stop accepting writes and let the ones
   // in progress finish before the back end goes away.
   impl_->alive.store(false);
@@ -633,7 +652,7 @@ LogHub::~LogHub() {
   if (impl_->flusher.joinable()) impl_->flusher.join();
   try {
     impl_->sync_flush();
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): a destructor has no one to tell
   }
   // Loggers first; the pool's destructor drains whatever is still queued and
   // joins the writer thread.
@@ -649,7 +668,7 @@ void LogHub::flush() {
     impl_->sync_flush();
   } catch (const std::exception& e) {
     impl_->report_spdlog_error(e.what());
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): nothing to say of an exception that has no what()
   }
 }
 
@@ -664,6 +683,14 @@ SignalBus* LogHub::bus() const noexcept { return impl_->bus; }
 void LogHub::set_level(std::string_view pattern, LogLevel level) {
   std::unique_lock lock(impl_->rules_mutex);
   impl_->put_rule(pattern, level);
+  impl_->epoch.fetch_add(1);
+}
+
+void LogHub::set_levels(LogLevel default_level, const std::vector<std::pair<std::string, LogLevel>>& levels) {
+  std::unique_lock lock(impl_->rules_mutex);
+  impl_->default_level = default_level;
+  impl_->rules.clear();
+  for (const auto& [pattern, level] : levels) impl_->put_rule(pattern, level);
   impl_->epoch.fetch_add(1);
 }
 

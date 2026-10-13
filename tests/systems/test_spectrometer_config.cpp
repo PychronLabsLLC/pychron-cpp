@@ -179,7 +179,7 @@ TEST(SpectrometerConfig, ParsesIntegratedSpecExample) {
 }
 
 TEST(SpectrometerConfig, DriverKeepsExtraKeysAsOptions) {
-  auto r = parse(with("channels = [\"H1\", \"CDD\"]", "channels = [\"H1\", \"CDD\"]\nsample_hz = 100"));
+  auto r = parse(with(R"(channels = ["H1", "CDD"])", "channels = [\"H1\", \"CDD\"]\nsample_hz = 100"));
   ASSERT_TRUE(r.ok()) << dump(r);
   const auto* d = r.config->driver("qtegra");
   ASSERT_NE(d->options.get("sample_hz"), nullptr);
@@ -356,7 +356,7 @@ TEST(DetectorColor, BadDetectorColorIsDiagnosticWithLine) {
     const auto key_line = 1u + static_cast<unsigned>(std::count(text.begin(), text.begin() + text.find("\ncolor ") + 1, '\n'));
     bool found = false;
     for (const auto& d : r.diagnostics) {
-      if (d.field.size() >= 6 && d.field.compare(d.field.size() - 6, 6, ".color") == 0) {
+      if (d.field.size() >= 6 && d.field.ends_with(".color")) {
         found = true;
         EXPECT_EQ(d.loc.line, key_line) << bad;
       }

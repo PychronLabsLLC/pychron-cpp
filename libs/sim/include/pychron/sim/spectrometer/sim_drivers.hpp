@@ -15,7 +15,9 @@
 // (default "default"); tests construct them directly with a model. Time comes
 // from the model's Clock, so a ManualClock drives frame pacing and motion.
 
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -32,8 +34,8 @@ namespace pychron::sim {
 namespace detail {
 
 // Decides when the next frame of a fixed-period stream is due. wait() blocks
-// on the Clock until due or until `timeout` passes on the clock or in real
-// time (so a ManualClock nobody advances cannot hang a caller).
+// on the Clock until due or until `timeout` passes on that clock: on a
+// ManualClock nobody advances, a wait with a timeout does not end.
 class FramePacer {
  public:
   explicit FramePacer(const Clock& clock) : clock_(clock) {}
@@ -49,7 +51,7 @@ class FramePacer {
  private:
   const Clock& clock_;
   mutable std::mutex mutex_;
-  std::condition_variable cv_;
+  std::condition_variable cv_;  // waited on and notified through clock_
   bool running_ = false;
   Duration period_{};
   TimePoint due_{};

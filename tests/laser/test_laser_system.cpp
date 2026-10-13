@@ -7,7 +7,9 @@
 #include "laser_harness.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -21,15 +23,16 @@
 #include "extraction/conformance.hpp"
 #include "extraction/fake.hpp"
 #include "pychron/core/clock.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/transport/sim_transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::extraction;
 using namespace pychron::laser;
 using namespace std::chrono_literals;
-namespace fs = std::filesystem;
 
 using namespace pychron::laser::harness;
 
@@ -289,4 +292,127 @@ TEST(LaserSystemFeatures, AStageThatCannotStopSaysSo) {
   auto r = system.stage()->stop();
   ASSERT_FALSE(r);
   EXPECT_TRUE(is_not_supported(r.error()));
+}
+
+// ---- On a VirtualClock: the test's thread takes part in the clock's time ----
+
+namespace {
+
+struct LaserSystemVirtual : pychron::testing::VirtualTimeTest {};
+
+}  // namespace
+
+// A call holds the gate while the device answers, and a slow answer is clock
+// time. A second caller (the window's watcher beside a script) waits for the
+// gate through the clock: blocked any other way it looks runnable, time
+// stands, and the answer never comes.
+TEST_F(LaserSystemVirtual, TwoCallersContendWithoutStallingTime) {
+  LabDir lab;
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  ChromiumSim sim{clock};
+  // The simulator answers at once; this wire makes two of its answers slow.
+  std::atomic<int> slow_answers{0};
+  const auto slowly = [&](const Bytes& tx) {
+    const std::string text = to_string(tx);
+    const Duration takes = text.starts_with("Laser.Enable?") ? Duration(2s)
+                           : text.starts_with("Stage.Pos?")  ? Duration(1s)
+                                                             : Duration(0s);
+    if (takes > 0s) {
+      ++slow_answers;
+      clock.sleep_for(takes);
+    }
+    return sim.hook()(tx);
+  };
+  auto wire = SimTransport::hooked(slowly, TransportOptions{.name = "laser_pc", .clock = &clock});
+  ASSERT_TRUE(wire->open());
+  ChromiumLaser driver("co2", *wire, options());
+  const TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
+  const CalibrationStore store{lab.dir / "stage_calibrations"};
+  LaserSystem system{"co2", driver, trays, store, nullptr, &clock};
+  const TimePoint start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  TimePoint asked{}, read{};
+  bool enabled_ok = false, position_ok = false;
+  pychron::testing::Crew crew(clock);
+  crew.start("script", [&] {
+    enabled_ok = system.is_enabled().has_value();
+    asked = clock.now();
+  });
+  // The first caller has the gate, and its question is with the device.
+  ASSERT_TRUE(pychron::testing::eventually_real([&] { return slow_answers.load() == 1; }));
+  crew.start("watcher", [&] {
+    position_ok = system.position().has_value();
+    read = clock.now();
+  });
+  crew.join();
+
+  EXPECT_TRUE(enabled_ok);
+  EXPECT_TRUE(position_ok);
+  // One after the other: two seconds for the first answer, then one for the
+  // second, which was not asked for until the first caller let go.
+  EXPECT_EQ(asked, start + 2s);
+  EXPECT_EQ(read, start + 3s);
+  EXPECT_EQ(slow_answers.load(), 2);
+  EXPECT_EQ(clock.now(), start + 3s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// A system waits for its gate on the clock it was given, and its camera's
+// settle and stamps are read from the camera's: two clocks in one system
+// would let simulated time and real time meet. Refused, in every build.
+TEST(LaserSystemClocks, ACameraIsOnTheClockTheSystemWasGiven) {
+  LabDir lab;
+  ManualClock clock;
+  ManualClock other;
+  ChromiumSim sim{clock};
+  auto wire = SimTransport::hooked(sim.hook(), TransportOptions{.name = "laser_pc", .clock = &clock});
+  ASSERT_TRUE(wire->open());
+  ChromiumLaser driver("co2", *wire, options());
+  const TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
+  const CalibrationStore store{lab.dir / "stage_calibrations"};
+  LaserSystem system{"co2", driver, trays, store, nullptr, &clock};
+  const CameraConfig config = camera_config();
+
+  const auto viewer = system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other);
+  ASSERT_FALSE(viewer);
+  EXPECT_EQ(viewer.error().kind, ErrorKind::Config);
+  EXPECT_NE(viewer.error().what.find("two clocks"), std::string::npos) << viewer.error().what;
+  const auto camera = system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), other), other);
+  ASSERT_FALSE(camera);
+  EXPECT_EQ(camera.error().kind, ErrorKind::Config);
+  EXPECT_NE(camera.error().what.find("two clocks"), std::string::npos) << camera.error().what;
+  EXPECT_FALSE(system.has_camera());  // a refused camera is not kept
+
+  EXPECT_TRUE(system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock));
+  EXPECT_TRUE(system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock));
+}
+
+// A system given no clock waits for its gate in real time, so its camera is
+// on real time too: any SteadyClock, and no other kind.
+TEST(LaserSystemClocks, ASystemGivenNoClockTakesOnlyACameraOnRealTime) {
+  LabDir lab;
+  ManualClock clock;
+  const SteadyClock real;
+  ChromiumSim sim{clock};
+  auto wire = SimTransport::hooked(sim.hook(), TransportOptions{.name = "laser_pc", .clock = &clock});
+  ASSERT_TRUE(wire->open());
+  ChromiumLaser driver("co2", *wire, options());
+  const TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
+  const CalibrationStore store{lab.dir / "stage_calibrations"};
+  LaserSystem system{"co2", driver, trays, store};
+  const CameraConfig config = camera_config();
+
+  const auto viewer = system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock);
+  ASSERT_FALSE(viewer);
+  EXPECT_EQ(viewer.error().kind, ErrorKind::Config);
+  EXPECT_NE(viewer.error().what.find("two clocks"), std::string::npos) << viewer.error().what;
+  const auto camera = system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), clock), clock);
+  ASSERT_FALSE(camera);
+  EXPECT_EQ(camera.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(system.has_camera());
+
+  EXPECT_TRUE(system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), real), real));
+  EXPECT_TRUE(system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), real), real));
 }

@@ -55,21 +55,27 @@ EntryActions::EntryActions(QWidget* owner, std::string store_url)
 }
 
 EntryActions::~EntryActions() {
+  Q_EMIT closing();
   // The windows use the bridge: they go first.
   delete samples_.data();
   delete packages_.data();
 }
 
-bool EntryActions::ensure_bridge() {
-  if (bridge_) return true;
+Result<void> EntryActions::open_bridge() {
+  if (bridge_) return {};
   auto opened = EntryBridge::open({url_, {}, {}});
+  if (!opened) return Unexpected<Error>(opened.error());
+  bridge_ = std::move(*opened);
+  return {};
+}
+
+bool EntryActions::ensure_bridge() {
+  const auto opened = open_bridge();
   if (!opened) {
     QMessageBox::critical(owner_, tr("Entry"),
                           tr("The store could not be opened for entry:\n%1").arg(QString::fromStdString(to_string(opened.error()))));
-    return false;
   }
-  bridge_ = std::move(*opened);
-  return true;
+  return opened.has_value();
 }
 
 SamplesWindow* EntryActions::samples() {
@@ -79,7 +85,10 @@ SamplesWindow* EntryActions::samples() {
 }
 
 PackagesWindow* EntryActions::packages() {
-  if (!packages_ && ensure_bridge()) packages_ = new PackagesWindow(*bridge_, owner_);
+  if (!packages_ && ensure_bridge()) {
+    packages_ = new PackagesWindow(*bridge_, owner_);
+    connect(packages_, &PackagesWindow::flux_requested, this, &EntryActions::flux_requested);
+  }
   if (packages_) packages_->setWindowFlag(Qt::Window);
   return packages_;
 }

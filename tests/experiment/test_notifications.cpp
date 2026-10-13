@@ -158,6 +158,25 @@ TEST(Notifications, MessagesNameTheRunAndTheQueue) {
   EXPECT_EQ(q.fields.at("failed"), "1");
 }
 
+// A run that was measured and could not be saved is not a failed run: the
+// message says what happened to it, and why.
+TEST(Notifications, ARunThatWasNotSavedSaysSoAndWhy) {
+  executor::RunSummary r;
+  r.row = 2;
+  r.identifier = "66001";
+  r.aliquot = 3;
+  r.state = run::RunState::Success;
+  r.save_error = true;
+  r.messages = {"hole 3: centered", "not saved to the data store, kept in the spool: the database is locked"};
+  auto n = run_failed_notification("q1", r);
+  EXPECT_EQ(n.subject, "pychron: run 66001-3 not saved (queue q1)");
+  EXPECT_NE(n.body.find("Saving:  failed; the record is in the spool and will be saved again\n"), std::string::npos)
+      << n.body;
+  EXPECT_NE(n.body.find("Reason:  the database is locked\n"), std::string::npos) << n.body;
+  EXPECT_EQ(n.fields.at("save_error"), "true");
+  EXPECT_EQ(n.fields.at("state"), "success");
+}
+
 TEST(Notifications, EmailGoesThroughCurlWithItsOptionsOnStdin) {
   set_env("PYCHRON_TEST_SMTP_PW", "s3cret");
   auto c = NotificationConfig::from_toml(R"(
@@ -246,7 +265,7 @@ from = "pychron@example.org"
   for (const char* expected :
        {"email[0].api_key_env: missing", "email[0].url: not used with provider", "email[0].username: not used with provider",
         "email[0].password_env: not used with provider", "email[0].tls: not used with provider",
-        "email[1].provider: must be \"brevo\", \"resend\" or \"postmark\"",
+        R"(email[1].provider: must be "brevo", "resend" or "postmark")",
         "email[2].api_key_env: only used with provider"})
     EXPECT_NE(e.find(expected), std::string::npos) << expected << "\n" << e;
   // The missing url of a provider channel is not a mistake.
@@ -295,10 +314,10 @@ TEST(Notifications, BrevoGetsItsJsonAndTheKeyInAHeader) {
   expect_has(s.config(), "header = \"api-key: k3y-s3cret\"");
   expect_has(s.config(), "header = \"Content-Type: application/json\"");
   expect_has(s.config(), "fail-with-body");  // the service's own words on a refusal
-  expect_has(s.payload(), "\"sender\": {\"email\": \"pychron@example.org\"}");
-  expect_has(s.payload(), "\"to\": [{\"email\": \"a@example.org\"}, {\"email\": \"user@example.org\"}]");
+  expect_has(s.payload(), R"("sender": {"email": "pychron@example.org"})");
+  expect_has(s.payload(), R"("to": [{"email": "a@example.org"}, {"email": "user@example.org"}])");
   expect_has(s.payload(), "\"subject\": \"pychron: run 66001-3 failed (queue q1)\"");
-  expect_has(s.payload(), "\"textContent\": \"Run 66001-3 failed.\\n\\n");
+  expect_has(s.payload(), R"("textContent": "Run 66001-3 failed.\n\n)");
   EXPECT_EQ(s.payload().find("k3y-s3cret"), std::string::npos);
 
   // The payload is gone once the delivery ends.
@@ -312,10 +331,10 @@ TEST(Notifications, ResendGetsItsJsonAndABearerKey) {
   EXPECT_TRUE(s.deliveries[0].ok) << s.deliveries[0].error;
   expect_has(s.config(), "url = \"https://api.resend.com/emails\"");
   expect_has(s.config(), "header = \"Authorization: Bearer k3y-s3cret\"");
-  expect_has(s.payload(), "\"from\": \"pychron@example.org\"");
-  expect_has(s.payload(), "\"to\": [\"a@example.org\", \"user@example.org\"]");
+  expect_has(s.payload(), R"("from": "pychron@example.org")");
+  expect_has(s.payload(), R"("to": ["a@example.org", "user@example.org"])");
   expect_has(s.payload(), "\"subject\": \"pychron: run 66001-3 failed (queue q1)\"");
-  expect_has(s.payload(), "\"text\": \"Run 66001-3 failed.\\n\\n");
+  expect_has(s.payload(), R"("text": "Run 66001-3 failed.\n\n)");
 }
 
 TEST(Notifications, PostmarkGetsItsJsonAndAServerToken) {
@@ -325,10 +344,10 @@ TEST(Notifications, PostmarkGetsItsJsonAndAServerToken) {
   expect_has(s.config(), "url = \"https://api.postmarkapp.com/email\"");
   expect_has(s.config(), "header = \"X-Postmark-Server-Token: k3y-s3cret\"");
   expect_has(s.config(), "header = \"Accept: application/json\"");
-  expect_has(s.payload(), "\"From\": \"pychron@example.org\"");
-  expect_has(s.payload(), "\"To\": \"a@example.org, user@example.org\"");
+  expect_has(s.payload(), R"("From": "pychron@example.org")");
+  expect_has(s.payload(), R"("To": "a@example.org, user@example.org")");
   expect_has(s.payload(), "\"Subject\": \"pychron: run 66001-3 failed (queue q1)\"");
-  expect_has(s.payload(), "\"TextBody\": \"Run 66001-3 failed.\\n\\n");
+  expect_has(s.payload(), R"("TextBody": "Run 66001-3 failed.\n\n)");
 }
 
 TEST(Notifications, AMailServiceRefusalIsReportedInItsOwnWords) {

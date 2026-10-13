@@ -46,7 +46,7 @@ struct FakePositioner : IMassPositioner {
   Result<bool> moving() override {
     ++moving_calls;
     if (fail_moving) {
-      log.push_back("moving-fail");
+      log.emplace_back("moving-fail");
       return fail(ErrorKind::Io, "moving failed", "magnet");
     }
     if (moving_left > 0) {
@@ -119,10 +119,10 @@ struct FakeBlank : IBeamBlank {
   explicit FakeBlank(CallLog& call_log) : log(call_log) {}
   Result<void> blank(bool on) override {
     if (on ? fail_on : fail_off) {
-      log.push_back(std::string(on ? "blank-fail" : "unblank-fail"));
+      log.emplace_back(on ? "blank-fail" : "unblank-fail");
       return fail(ErrorKind::Io, "blank failed", "blank");
     }
-    log.push_back(on ? "blank" : "unblank");
+    log.emplace_back(on ? "blank" : "unblank");
     blanked = on;
     return {};
   }
@@ -210,7 +210,7 @@ struct FakeAcquirer : IIntensityAcquirer {
   void note(const char* what) {
     if (log == nullptr) return;
     std::lock_guard lock(m);
-    log->push_back(what);
+    log->emplace_back(what);
   }
 
   std::vector<ChannelId> chans;

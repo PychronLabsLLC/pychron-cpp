@@ -8,11 +8,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <optional>
-#include <random>
 #include <string>
 #include <variant>
 #include <vector>
@@ -20,6 +18,7 @@
 #include "legacy/lite.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/canvas/loader.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::setup;
@@ -28,11 +27,7 @@ namespace fs = std::filesystem;
 namespace {
 
 struct Tmp {
-  // ctest runs each test in its own process, several at once: the clock
-  // alone can name two of them the same directory.
-  fs::path dir = fs::temp_directory_path() /
-                 ("pychron-legacy-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                  std::to_string(std::random_device{}()));
+  fs::path dir = pychron::testing::unique_temp_path("pychron-legacy-");
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
   void write(const fs::path& rel, const std::string& text) const {
@@ -527,6 +522,18 @@ TEST(LegacyLineXml, ValvesXmlAndCanvasXml) {
   EXPECT_TRUE(has_note(*made, "check_actuation_enabled not carried over")) << notes;
   EXPECT_FALSE(has_note(*made, "offset not carried over")) << notes;
   EXPECT_TRUE(has_note(*made, "devices/furnace.cfg not found")) << notes;
+}
+
+// A window size that is not a number leaves the default, not a window of 0.
+TEST(LegacyLineValves2D, AWindowSizeThatIsNotANumberKeepsTheDefault) {
+  Tmp t;
+  t.write("extractionline/valves.yaml", "- name: V1\n  address: 1\n");
+  t.write("canvas2D/valves2D.cfg", "[General]\nwindow_width = wide\nwindow_height = 300\n[Valve-V1]\npos = 100,200\n");
+  auto made = import_legacy_line(t.dir);
+  ASSERT_TRUE(made) << made.error().what;
+  auto drawing = canvas::load_canvas_from_string(made->canvas_toml, "canvas.toml");
+  ASSERT_TRUE(drawing) << drawing.error().what;
+  EXPECT_EQ(drawing->canvas.size, (canvas::Size{800, 300}));
 }
 
 // The oldest drawing: pixel positions in valves2D.cfg, y up.

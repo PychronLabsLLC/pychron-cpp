@@ -1,5 +1,8 @@
 #include "conditionals_editor_window.hpp"
 
+#include <algorithm>
+#include <optional>
+
 #include <QAction>
 #include <QCloseEvent>
 #include <QHBoxLayout>
@@ -20,7 +23,6 @@
 #include "menu_hub.hpp"
 #include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
-#include "shortcuts.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -66,6 +68,7 @@ QToolButton* tool(const QString& text, const QString& tip) {
   auto* b = new QToolButton;
   b->setText(text);
   b->setToolTip(tip);
+  style::make_outlined(b);
   return b;
 }
 
@@ -98,7 +101,7 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
 
   // Files.
   auto* new_button = tool(QStringLiteral("+"), tr("New conditionals file"));
-  auto* delete_button = tool(QStringLiteral("-"), tr("Delete the selected file"));
+  auto* delete_button = tool(QStringLiteral("\u2212"), tr("Delete the selected file"));
   auto* file_buttons = new QHBoxLayout;
   file_buttons->addWidget(new_button);
   file_buttons->addWidget(delete_button);
@@ -125,7 +128,7 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   row_buttons->addStretch(1);
 
   auto* disable_add = tool(QStringLiteral("+"), tr("Disable a conditional of an earlier level by name"));
-  auto* disable_remove = tool(QStringLiteral("-"), tr("Remove the selected name"));
+  auto* disable_remove = tool(QStringLiteral("\u2212"), tr("Remove the selected name"));
   auto* disable_buttons = new QVBoxLayout;
   disable_buttons->addWidget(disable_add);
   disable_buttons->addWidget(disable_remove);
@@ -156,10 +159,11 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   edit_controls_ = {add_button, remove_button, duplicate_button, up_button, down_button,
                     disable_add, disable_remove, form_,          disable_};
 
-  // In the unified Scripts menu (MenuHub), enabled while this window is active.
-  auto* save_action = new QAction(tr("&Save Conditionals"), this);
-  save_action->setShortcut(key(Shortcut::SaveConditionals));
-  MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, {save_action}, MenuHub::Scope::Window);
+  // What File > Save (MenuHub) does while this window is in front; the key
+  // is the menu's. File > New and File > Open are the main window's, and
+  // call new_dialog() and open_picked().
+  auto* save_action = new QAction(tr("&Save"), this);
+  MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_action, tr("Conditionals"));
   connect(save_action, &QAction::triggered, this, [this] {
     QString error;
     if (!save(&error) && !error.isEmpty()) QMessageBox::warning(this, tr("Save"), error);
@@ -184,13 +188,13 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
     if (name != current_ && !open(name)) fill_files();  // put the highlight back
   });
   connect(files_, &QListWidget::itemClicked, files_, &QListWidget::itemActivated);
-  connect(new_button, &QToolButton::clicked, this, [this] {
+  pick_file_ = [this](const QStringList& names) -> std::optional<QString> {
     bool ok = false;
-    const QString name =
-        QInputDialog::getText(this, tr("New conditionals file"), tr("Name"), QLineEdit::Normal, QString(), &ok);
-    QString error;
-    if (ok && !new_file(name.trimmed(), &error) && !error.isEmpty()) QMessageBox::warning(this, tr("New file"), error);
-  });
+    const QString name = QInputDialog::getItem(this, tr("Open conditionals"), tr("File"), names,
+                                               std::max(0, static_cast<int>(names.indexOf(current_))), false, &ok);
+    return ok ? std::optional<QString>(name) : std::nullopt;
+  };
+  connect(new_button, &QToolButton::clicked, this, [this] { new_dialog(); });
   connect(delete_button, &QToolButton::clicked, this, [this] {
     QString error;
     if (!current_.isEmpty() && !delete_file(current_, &error) && !error.isEmpty())
@@ -365,6 +369,21 @@ bool ConditionalsEditorWindow::open(const QString& name) {
   return true;
 }
 
+void ConditionalsEditorWindow::new_dialog() {
+  bool ok = false;
+  const QString name =
+      QInputDialog::getText(this, tr("New conditionals file"), tr("Name"), QLineEdit::Normal, QString(), &ok);
+  QString error;
+  if (ok && !new_file(name.trimmed(), &error) && !error.isEmpty()) QMessageBox::warning(this, tr("New file"), error);
+}
+
+bool ConditionalsEditorWindow::open_picked() {
+  const QStringList names = file_names();
+  if (names.isEmpty()) return false;
+  const std::optional<QString> picked = pick_file_(names);
+  return picked && open(*picked);
+}
+
 bool ConditionalsEditorWindow::new_file(const QString& name, QString* error) {
   auto refuse = [&](const QString& why) {
     if (error != nullptr) *error = why;
@@ -532,7 +551,7 @@ void ConditionalsEditorWindow::closeEvent(QCloseEvent* event) {
     return;
   }
   // Discarded edits are gone the next time the window shows.
-  if (model_.modified() || file_names().contains(was) == false) {
+  if (model_.modified() || !file_names().contains(was)) {
     if (file_names().contains(was)) load(was);
     else if (const QStringList names = file_names(); !names.isEmpty()) load(names.first());
     else show_nothing();

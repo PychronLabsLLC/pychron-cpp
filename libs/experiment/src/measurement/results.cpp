@@ -3,6 +3,8 @@
 #include <map>
 #include <set>
 
+#include "pychron/experiment/record/names.hpp"
+
 namespace pychron::experiment::measurement {
 
 record::Data to_record_data(const collect::RunData& data) {
@@ -34,7 +36,11 @@ FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits) {
 
   for (const auto& [key, s] : data.series) {
     if (key.kind != collect::SeriesKind::Signal) continue;
-    const std::string name = detectors_of[key.isotope].size() > 1 ? key.isotope + ":" + key.detector : key.isotope;
+    // On several detectors: one intercept a detector, under a name of its own
+    // (record/names.hpp says what an analysis then calls it).
+    const std::string name = detectors_of[key.isotope].size() > 1
+                                 ? record::acquisition_isotope_key(key.isotope, key.detector)
+                                 : key.isotope;
     reduction::Series series;
     series.y = s.v;
     for (double t : s.t) series.x.push_back(t - t0);

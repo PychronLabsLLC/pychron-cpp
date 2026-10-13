@@ -1,0 +1,18 @@
+[
+  {"id": 2101, "name": "Ore"},
+  {"id": 2102, "name": "Xenolith"},
+  {"id": 2103, "name": "Regolith"},
+  {"id": 2104, "name": "Meteorite"},
+  {"id": 2105, "name": "Organic material"},
+  {"id": 2106, "name": "Loose sediment"},
+  {"id": 2107, "name": "Soil"},
+  {"id": 2108, "name": "Fluid"},
+  {"id": 2109, "name": "Fossil"},
+  {"id": 2110, "name": "Mineral"},
+  {"id": 2111, "name": "Rock"},
+  {"id": 2112, "name": "Unknown"},
+  {"id": 2113, "name": "Gas"},
+  {"id": 2114, "name": "Vein"},
+  {"id": 2115, "name": "Other"},
+  {"id": 2116, "name": "Mine Waste"}
+]

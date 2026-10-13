@@ -33,7 +33,7 @@ namespace {
 constexpr LogLevel kLevels[] = {LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
 
 int level_index(LogLevel level) {
-  for (int i = 0; i < static_cast<int>(std::size(kLevels)); ++i)
+  for (int i = 0; std::cmp_less(i, std::size(kLevels)); ++i)
     if (kLevels[i] == level) return i;
   return 0;
 }
@@ -190,7 +190,7 @@ LogDock::LogDock(QWidget* parent)
   setWidget(container);
 
   connect(level_combo_, &QComboBox::currentIndexChanged, this, [this](int i) {
-    if (i >= 0 && i < static_cast<int>(std::size(kLevels))) proxy_->set_min_level(kLevels[i]);
+    if (i >= 0 && std::cmp_less(i, std::size(kLevels))) proxy_->set_min_level(kLevels[i]);
   });
   connect(logger_edit_, &QLineEdit::textChanged, proxy_, &LogFilterProxy::set_logger_pattern);
   connect(text_edit_, &QLineEdit::textChanged, proxy_, &LogFilterProxy::set_text);

@@ -204,6 +204,7 @@ void HostState::raise(const Error& error) {
     exc = rt.hardware(std::string(to_string(error.kind)), error.what, error.device);
   last_error_ = error;
   last_exception_ = exc;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): CPython's own idiom: a type object is an object
   PyErr_SetObject(reinterpret_cast<PyObject*>(Py_TYPE(exc.ptr())), exc.ptr());
   throw py::error_already_set();
 }
@@ -249,6 +250,7 @@ void HostState::wait_while(const std::function<Result<bool>()>& busy, const std:
   }
 }
 
+// cppcheck-suppress returnTempReference ; the environment's clock or a member: neither is a temporary
 const Clock& HostState::clock() const { return env_.clock ? *env_.clock : steady_; }
 
 extraction::IValveService& HostState::valves() {

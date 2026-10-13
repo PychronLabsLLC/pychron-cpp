@@ -1,13 +1,19 @@
 #include "data_workspace.hpp"
 
 #include <filesystem>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include <QSettings>
 
 #include "figure_window.hpp"
 #include "isotope_evolution_window.hpp"
 #include "pychron/processing/report.hpp"
 #include "recall_window.hpp"
 #include "reference_fit_window.hpp"
+#include "row_colors.hpp"
+#include "theme.hpp"
 
 namespace pychron::ui {
 
@@ -20,10 +26,12 @@ void DataWorkspace::clear() {
   for (auto& w : children_)
     if (w) delete w.data();  // they hold the old bridge and source
   children_.clear();
+  if (publish_) delete publish_.data();
   delete browser_;
   browser_ = nullptr;
   processing_.reset();
   export_channel_ = 0;
+  publish_channel_ = 0;
 }
 
 bool DataWorkspace::export_report(const QString& path, const QStringList& uuids) {
@@ -71,6 +79,50 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
   return true;
 }
 
+bool DataWorkspace::open_publish(const QStringList& uuids) {
+  if (!processing_ || uuids.isEmpty()) return false;
+  // A dialog that is in the middle of something is not replaced: closing it
+  // would cut an upload short without anyone having said so.
+  if (publish_ && publish_->busy()) {
+    publish_->raise();
+    publish_->activateWindow();
+    if (browser_) browser_->show_message(tr("Publish to EarthBank is still running: let it finish, or cancel it, first"));
+    return false;
+  }
+  if (publish_channel_ == 0) publish_channel_ = processing_->new_channel();
+  const auto& reg = processing::UnitRegistry::builtin();
+  processing::Pipeline pipeline;
+  pipeline.name = "publish";
+  auto& select = pipeline.add(reg, "select", "select");
+  std::vector<std::string> ids;
+  for (const auto& id : uuids) ids.push_back(id.toStdString());
+  (void)select.options.set("uuids", ids);
+  (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
+  // Reduced only to have them loaded: the dialog reduces what it publishes itself.
+  pipeline.add(reg, "reduce", "reduce", {"select"});
+  if (browser_) browser_->show_message(tr("Loading %n analyses to publish...", nullptr, static_cast<int>(uuids.size())));
+  processing_->submit(publish_channel_, pipeline, {"reduce"}, [this](const PipelineResult& r) {
+    if (r.outputs.empty() || !r.outputs[0]) {
+      const QString text =
+          tr("Publish failed: %1").arg(QString::fromStdString(r.outputs.empty() ? std::string() : r.outputs[0].error().what));
+      if (browser_) browser_->show_message(text);
+      if (log_) log_(QStringLiteral("[ui] ") + text);
+      return;
+    }
+    std::vector<processing::AnalysisPtr> analyses;
+    for (const auto& item : std::get<processing::DatasetPtr>(r.outputs[0]->at(0))->items()) {
+      analyses.push_back(item.analysis->analysis);
+    }
+    if (publish_ && publish_->busy()) return;  // it began something while these were loading
+    if (browser_) browser_->show_message(tr("%n analyses to publish", nullptr, static_cast<int>(analyses.size())));
+    if (publish_) delete publish_.data();
+    publish_ = new EarthbankPublishDialog(std::move(analyses), earthbank_, settings_, owner_);
+    publish_->setAttribute(Qt::WA_DeleteOnClose);
+    publish_->show();
+  });
+  return true;
+}
+
 void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::PresetStore* presets) {
   clear();
   source_ = source;
@@ -78,22 +130,46 @@ void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::
   if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source);
 }
 
-void DataWorkspace::set_page_size(int rows) {
-  page_size_ = rows;
-  if (browser_ != nullptr) browser_->set_page_size(rows);
+namespace {
+
+const QString kColorBy = QStringLiteral("data_browser/color_by");
+
+void apply_to(DataBrowserWindow& browser, const Preferences& preferences) {
+  browser.set_page_size(preferences.browser_page_size);
+  browser.set_gap_hours(preferences.browser_gap_hours);
+  browser.set_type_colors(type_colors(preferences.browser_type_colors, theme()));
+}
+
+}  // namespace
+
+void DataWorkspace::apply_preferences(const Preferences& preferences) {
+  preferences_ = preferences;
+  if (browser_ != nullptr) apply_to(*browser_, preferences_);
+}
+
+void DataWorkspace::set_unavailable(const QString& reason) {
+  unavailable_ = reason;
+  if (browser_ != nullptr) browser_->set_unavailable(reason);
 }
 
 DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
   if (source_ == nullptr || processing_ == nullptr) return nullptr;
   if (browser_ == nullptr) {
     browser_ = new DataBrowserWindow(*source_, owner_);
-    browser_->set_page_size(page_size_);
+    apply_to(*browser_, preferences_);
+    browser_->set_unavailable(unavailable_);
+    const auto settings = [this] { return settings_ ? settings_() : std::make_unique<QSettings>(); };
+    browser_->set_color_by(color_by_from_text(settings()->value(kColorBy).toString()));
+    connect(browser_, &DataBrowserWindow::color_by_changed, this,
+            [settings](ColorBy by) { settings()->setValue(kColorBy, to_text(by)); });
     if (embed_in != nullptr) browser_->setParent(embed_in, Qt::Widget);
     connect(browser_, &DataBrowserWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
     connect(browser_, &DataBrowserWindow::figure_requested, this,
             [this](const QString& kind, const QStringList& ids) { open_figure(kind, ids); });
     connect(browser_, &DataBrowserWindow::export_requested, this,
             [this](const QString& path, const QStringList& ids) { export_report(path, ids); });
+    connect(browser_, &DataBrowserWindow::publish_requested, this,
+            [this](const QStringList& ids) { open_publish(ids); });
   }
   return browser_;
 }

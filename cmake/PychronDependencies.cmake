@@ -185,6 +185,22 @@ if(PYCHRON_PERSISTENCE)
   endif()
 endif()
 
+# HTTPS to EarthBank (libs/earthbank_qt) on Qt6 Network: the one place in the
+# tree that opens a socket for a program of ours. libs/earthbank is Qt-free and
+# only says what to ask through IHttpClient. Built when Qt6 Core and Network are
+# found; elsewhere elctl's `earthbank` commands that need the network say so
+# and the UI's upload is off (PYCHRON_EARTHBANK_NETWORK_ENABLED is OFF).
+option(PYCHRON_EARTHBANK_NETWORK "Build libs/earthbank_qt (HTTPS to EarthBank; needs Qt6 Core + Network)" ON)
+set(PYCHRON_EARTHBANK_NETWORK_ENABLED OFF)
+if(PYCHRON_EARTHBANK_NETWORK)
+  find_package(Qt6 6.2 QUIET COMPONENTS Core Network)
+  if(Qt6Network_FOUND)
+    set(PYCHRON_EARTHBANK_NETWORK_ENABLED ON)
+  else()
+    message(STATUS "PYCHRON_EARTHBANK_NETWORK: Qt6 Core/Network not found; libs/earthbank_qt is not built")
+  endif()
+endif()
+
 # Time zone conversion for libs/ingest. C++20 std::chrono::locate_zone where
 # the standard library ships the tzdb (libstdc++ 13+, MSVC); Apple's libc++
 # does not, so Howard Hinnant's date (same API, the library the C++20 one came
@@ -212,19 +228,67 @@ if(PYCHRON_PERSISTENCE_ENABLED)
   endif()
 endif()
 
-# JSON for libs/dvc (legacy repository files) and libs/ingest (the verifier
-# reads stored detail). Header-only and PRIVATE to both: it appears in no
-# public header.
-if(PYCHRON_PERSISTENCE_ENABLED)
-  set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-  set(JSON_Install OFF CACHE BOOL "" FORCE)
-  # Third-party headers must not trip PYCHRON_WARNINGS_AS_ERRORS.
-  set(JSON_SystemInclude ON CACHE BOOL "" FORCE)
-  FetchContent_Declare(nlohmann_json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-    URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SYSTEM
-    FIND_PACKAGE_ARGS CONFIG)
-  FetchContent_MakeAvailable(nlohmann_json)
+# JSON for libs/dvc (legacy repository files), libs/ingest (the verifier
+# reads stored detail) and libs/earthbank (the service's records are JSON, and
+# its public headers say so). Header-only. Fetched whether or not persistence
+# is built: libs/earthbank builds on every platform.
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+# Third-party headers must not trip PYCHRON_WARNINGS_AS_ERRORS.
+set(JSON_SystemInclude ON CACHE BOOL "" FORCE)
+FetchContent_Declare(nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+  URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SYSTEM
+  FIND_PACKAGE_ARGS CONFIG)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# Zip and XML for libs/earthbank's workbook writer (ooxml.cpp): an .xlsx is a
+# zip of XML parts. Both are PRIVATE to pychron_earthbank.
+#
+# miniz, unlike every other dependency here, is never looked for as an
+# installed package: it is always built from these pinned sources. An
+# installed miniz (vcpkg, Homebrew, apt) keeps its header at <miniz/miniz.h>
+# while the fetched one is <miniz.h>, so a find-first build would compile in
+# one arrangement only, and CI would not see which. Its own CMake project is
+# not used either (it asks for CMake 3.0, which CMake 4 refuses, forces
+# verbose makefiles and names no miniz::miniz target): as for QCustomPlot,
+# only the sources are fetched and the static library is defined here.
+# MINIZ_NO_STDIO: archives are read from and written to memory only, which
+# leaves miniz's file API (and its portability) out of the build.
+FetchContent_Declare(miniz
+  URL https://github.com/richgel999/miniz/archive/refs/tags/3.0.2.tar.gz
+  URL_HASH SHA256=c4b4c25a4eb81883448ff8924e6dba95c800094a198dc9ce66a292ac2ef8e018
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR pychron-defines-the-target)
+FetchContent_MakeAvailable(miniz)
+enable_language(C)
+include(GenerateExportHeader)
+add_library(miniz STATIC
+  "${miniz_SOURCE_DIR}/miniz.c"
+  "${miniz_SOURCE_DIR}/miniz_zip.c"
+  "${miniz_SOURCE_DIR}/miniz_tinfl.c"
+  "${miniz_SOURCE_DIR}/miniz_tdef.c")
+generate_export_header(miniz EXPORT_FILE_NAME "${miniz_BINARY_DIR}/miniz_export.h")
+target_compile_definitions(miniz PUBLIC MINIZ_STATIC_DEFINE MINIZ_NO_STDIO)
+target_include_directories(miniz SYSTEM PUBLIC "${miniz_SOURCE_DIR}" "${miniz_BINARY_DIR}")
+set_target_properties(miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Third-party code: not ours to keep warning-clean.
+if(MSVC)
+  target_compile_options(miniz PRIVATE /w)
+else()
+  target_compile_options(miniz PRIVATE -w)
 endif()
+add_library(miniz::miniz ALIAS miniz)
+
+# XPath is not used; leaving it out halves the library.
+set(PUGIXML_NO_XPATH ON CACHE BOOL "" FORCE)
+set(PUGIXML_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(pugixml
+  URL https://github.com/zeux/pugixml/archive/refs/tags/v1.15.tar.gz
+  URL_HASH SHA256=b39647064d9e28297a34278bfb897092bf33b7c487906ddfc094c9e8868bddcb
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SYSTEM
+  FIND_PACKAGE_ARGS CONFIG)
+FetchContent_MakeAvailable(pugixml)

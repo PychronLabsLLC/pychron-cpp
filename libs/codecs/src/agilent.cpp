@@ -57,7 +57,7 @@ Result<std::string> channel(std::string_view address) {
                   std::isdigit(static_cast<unsigned char>(a[2])) && !(a[1] == '0' && a[2] == '0');
   if (!ok) {
     return fail(ErrorKind::Config, "agilent: channel \"" + std::string(address) +
-                                       "\" is not slot 1..3 then channel 01..99 (e.g. \"101\")");
+                                       R"(" is not slot 1..3 then channel 01..99 (e.g. "101"))");
   }
   return std::string(a);
 }
@@ -137,7 +137,7 @@ Result<Request> decode_request(const Bytes& tx) {
 
 std::optional<std::string> single_channel(std::string_view argument) {
   const auto a = trim(argument);
-  if (a.size() < 4 || a.substr(0, 2) != "(@" || a.back() != ')') return std::nullopt;
+  if (a.size() < 4 || !a.starts_with("(@") || a.back() != ')') return std::nullopt;
   auto ch = channel(a.substr(2, a.size() - 3));
   if (!ch) return std::nullopt;
   return *ch;

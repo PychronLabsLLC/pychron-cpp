@@ -1,0 +1,10 @@
+# A square: the beam goes once around a square about wherever the stage is
+# when the pattern starts, and returns there. A polygon of four sides, turned
+# 45 degrees so its sides lie along the stage's axes; radius is the distance
+# from the center to a corner, so a side is radius x 1.414.
+kind = "polygon"
+velocity = 1.0      # mm/s
+iterations = 1
+radius = 1.0        # mm
+nsides = 4
+rotation = 45

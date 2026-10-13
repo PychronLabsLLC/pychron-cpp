@@ -178,6 +178,7 @@ std::string format_float(double v) {
   auto e = sci.find('e');
   std::string digits;
   for (char c : sci.substr(0, e)) if (c != '.') digits += c;
+  // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the exponent to_chars wrote just above
   int exp = std::atoi(std::string(sci.substr(e + 1)).c_str());
 
   std::string out = neg ? "-" : "";
@@ -196,7 +197,7 @@ std::string format_float(double v) {
     if (n > 1) out += "." + digits.substr(1);
     out += exp < 0 ? "e-" : "e+";
     int a = std::abs(exp);
-    if (a < 10) out += "0";
+    if (a < 10) out += '0';
     out += std::to_string(a);
   }
   return out;

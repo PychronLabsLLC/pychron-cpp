@@ -5,6 +5,7 @@
 #include "shortcuts.hpp"
 #include "theme.hpp"
 
+#include <string>
 #include <utility>
 
 #include <QApplication>
@@ -147,36 +148,43 @@ QIcon MainWindow::view_icon(View view) {
   return icon;
 }
 
-MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
+MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings> settings, QWidget* parent)
     : QMainWindow(parent),
+      settings_(std::move(settings)),
       bridge_(line),
       canvas_(new CanvasView(bridge_, this)),
       log_(new LogDock(this)),
-      alarms_(new AlarmDock(this)),
-      health_(new HealthBar(this)),
+      // Both tell the time by the line's clock, which stamped what they show.
+      alarms_(new AlarmDock(this, [this] { return bridge_.wall_now(); })),
+      health_(new HealthBar(this, [this] { return bridge_.now(); })),
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
       laser_action_(new QAction(QStringLiteral("Laser"), this)),
       data_(new DataWorkspace(this, [this](const QString& text) { log_->append_line(text); })),
       installations_(new QAction(QStringLiteral("Installations…"), this)),
-      preferences_(new QAction(QStringLiteral("Preferences…"), this)) {
+      preferences_(new QAction(QStringLiteral("Preferences…"), this)),
+      log_hub_(line.log_hub()) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
+  resize(kDefaultSize);  // the saved geometry, if any, wins below
   setCentralWidget(canvas_);
-  addDockWidget(Qt::BottomDockWidgetArea, log_);
-  addDockWidget(Qt::RightDockWidgetArea, alarms_);
   if (bridge_.cryo_outputs() > 0 || !bridge_.cryo_inputs().empty()) {
     cryo_ = new CryoDock(bridge_, this);
-    addDockWidget(Qt::RightDockWidgetArea, cryo_);
     connect(cryo_, &CryoDock::cryoFailed, log_,
             [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [cryo] ") + message); });
   }
   if (!line.config().heaters.empty()) {
     heaters_ = new HeaterDock(bridge_, this);
-    addDockWidget(Qt::RightDockWidgetArea, heaters_);
     connect(heaters_, &HeaterDock::heaterFailed, log_,
             [this](const QString& message) { log_->append_line(QStringLiteral("ERROR [heater] ") + message); });
   }
+  default_layout();
+  // Per line: which panels there are depends on it.
+  layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(),
+                             QStringLiteral("main_window/%1").arg(QString::fromStdString(line.config().system.name)));
+  layouts_->restore_last();
+  connect(layouts_, &DockLayouts::applyFailed, log_,
+          [this](const QString& message) { log_->append_line(QStringLiteral("WARN [ui] ") + message); });
   statusBar()->addPermanentWidget(health_, 1);
 
   spectrometer_action_->setShortcut(key(Shortcut::SpectrometerWindow));
@@ -217,6 +225,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
     action->setIconVisibleInMenu(true);
   }
   auto& menus = MenuHub::instance();
+  build_file_entries();
   menus.contribute(this, MenuHub::Menu::File, {installations_, preferences_}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::File, {quit}, MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::View,
@@ -238,25 +247,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
     w->raise();
     w->activateWindow();
   });
-  connect(experiment_action_, &QAction::triggered, this, [this] {
-    if (experiment_ == nullptr) {
-      return;
-    }
-    if (experiment_window_ == nullptr) {
-      experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
-                                                experiment_settings_ ? experiment_settings_() : nullptr, this);
-      experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
-      if (experiment_queue_) {
-        QString error;
-        if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
-          log_->append_line(QStringLiteral("ERROR [ui] queue not opened: ") + error);
-        }
-      }
-    }
-    experiment_window_->show();
-    experiment_window_->raise();
-    experiment_window_->activateWindow();
-  });
+  connect(experiment_action_, &QAction::triggered, this, [this] { show_experiment_window(); });
   connect(spectrometer_action_, &QAction::triggered, this, [this] {
     if (spectrometer_ == nullptr) {
       return;
@@ -290,6 +281,35 @@ MainWindow::MainWindow(systems::ExtractionLine& line, QWidget* parent)
   });
 }
 
+// The panels as installed: the log along the bottom, the rest down the right.
+// Run again by Reset Layout, so it undoes whatever was done to a panel.
+void MainWindow::default_layout() {
+  const auto place = [this](QDockWidget* dock, Qt::DockWidgetArea area) {
+    if (dock == nullptr) return;
+    dock->setFloating(false);
+    addDockWidget(area, dock);
+    dock->show();
+  };
+  place(log_, Qt::BottomDockWidgetArea);
+  place(alarms_, Qt::RightDockWidgetArea);
+  place(cryo_, Qt::RightDockWidgetArea);
+  place(heaters_, Qt::RightDockWidgetArea);
+  // And the sizes they ask for, not the ones they were dragged to.
+  QList<QDockWidget*> side;
+  QList<int> widths;
+  QList<int> heights;
+  for (QDockWidget* dock : {static_cast<QDockWidget*>(alarms_), static_cast<QDockWidget*>(cryo_),
+                            static_cast<QDockWidget*>(heaters_)}) {
+    if (dock == nullptr) continue;
+    side.append(dock);
+    widths.append(dock->sizeHint().width());
+    heights.append(dock->sizeHint().height());
+  }
+  resizeDocks(side, widths, Qt::Horizontal);
+  resizeDocks(side, heights, Qt::Vertical);
+  resizeDocks({log_}, {log_->sizeHint().height()}, Qt::Vertical);
+}
+
 std::unique_ptr<QSettings> MainWindow::spectrometer_settings() const {
   return settings_factory_ ? settings_factory_() : std::make_unique<QSettings>();
 }
@@ -316,11 +336,96 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
     delete experiment_window_;  // it holds the old bridge
     experiment_window_ = nullptr;
   }
+  for (const auto& connection : experiment_refreshes_) disconnect(connection);  // the old bridge may be gone
   experiment_ = bridge;
+  if (bridge != nullptr) {
+    // What a run saved is in the data window when the run ends; a queue's
+    // start picks up whatever was entered since. The bridge delivers on this
+    // thread; queued, so the experiment window hears of the run first.
+    experiment_refreshes_[0] =
+        connect(bridge, &ExperimentBridge::runFinished, this, &MainWindow::refresh_data, Qt::QueuedConnection);
+    experiment_refreshes_[1] =
+        connect(bridge, &ExperimentBridge::queueStarted, this, &MainWindow::refresh_data, Qt::QueuedConnection);
+  }
   experiment_simulation_ = simulation;
   experiment_queue_ = std::move(queue);
   experiment_settings_ = std::move(settings);
   experiment_action_->setEnabled(bridge != nullptr);
+  for (QAction* entry : file_entries_) entry->setEnabled(bridge != nullptr);
+}
+
+// The experiment window, made on first use; nullptr without a session.
+ExperimentWindow* MainWindow::ensure_experiment_window() {
+  if (experiment_ == nullptr) return nullptr;
+  if (experiment_window_ == nullptr) {
+    experiment_window_ = new ExperimentWindow(*experiment_, experiment_simulation_,
+                                              experiment_settings_ ? experiment_settings_() : nullptr, this);
+    experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+    experiment_window_->factory()->set_identifier_source(identifier_source_);
+    if (experiment_queue_) {
+      QString error;
+      if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
+        log_->append_line(QStringLiteral("ERROR [ui] queue not opened: ") + error);
+      }
+    }
+  }
+  return experiment_window_;
+}
+
+void MainWindow::set_identifier_source(IdentifierSource* source) {
+  identifier_source_ = source;
+  if (experiment_window_ != nullptr) experiment_window_->factory()->set_identifier_source(source);
+}
+
+ExperimentWindow* MainWindow::show_experiment_window() {
+  ExperimentWindow* window = ensure_experiment_window();
+  if (window == nullptr) return nullptr;
+  window->show();
+  window->raise();
+  window->activateWindow();
+  return window;
+}
+
+// File > New and File > Open: what there is to start or open, from any
+// window. Each brings up the window it acts in (the experiment window, or
+// one of its editors alone) and then asks what that window asks. The key of
+// New and of Open goes to the entry whose window is in front (MenuHub).
+void MainWindow::build_file_entries() {
+  using List = MenuHub::FileList;
+  const auto entry = [this](const QString& text, std::function<void()> run,
+                            std::function<bool(const QWidget*)> home) {
+    auto* action = new QAction(text, this);
+    action->setEnabled(false);  // until there is a session (set_experiment)
+    connect(action, &QAction::triggered, this, [run = std::move(run)] { run(); });
+    file_entries_.append(action);
+    return MenuHub::FileEntry{action, std::move(home)};
+  };
+  const auto in_experiment = [this](const QWidget* w) { return experiment_window_ != nullptr && w == experiment_window_; };
+  const auto in_scripts = [this](const QWidget* w) {
+    return experiment_window_ != nullptr && experiment_window_->script_editor() != nullptr &&
+           w == experiment_window_->script_editor();
+  };
+  const auto in_conditionals = [this](const QWidget* w) {
+    return experiment_window_ != nullptr && experiment_window_->conditionals_editor() != nullptr &&
+           w == experiment_window_->conditionals_editor();
+  };
+  auto& menus = MenuHub::instance();
+  menus.contribute_file(
+      this, List::New,
+      {entry(tr("New &Queue"), [this] { if (auto* w = show_experiment_window()) w->new_dialog(); }, in_experiment),
+       entry(tr("New &Script…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_script_editor()->new_dialog(); }, in_scripts),
+       entry(tr("New &Conditionals…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_conditionals_editor()->new_dialog(); },
+             in_conditionals)});
+  menus.contribute_file(
+      this, List::Open,
+      {entry(tr("Open &Queue…"), [this] { if (auto* w = show_experiment_window()) w->open_dialog(); }, in_experiment),
+       entry(tr("Open &Script…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_script_editor()->open_picked(); }, in_scripts),
+       entry(tr("Open &Conditionals…"),
+             [this] { if (auto* w = ensure_experiment_window()) w->open_conditionals_editor()->open_picked(); },
+             in_conditionals)});
 }
 
 void MainWindow::set_lasers(std::vector<LaserBridge*> bridges, bool simulation, laser::PatternLibrary* patterns,
@@ -406,6 +511,12 @@ void MainWindow::set_data(processing::IAnalysisSource* source, processing::Prese
   data_action_->setEnabled(data_->enabled());
 }
 
+void MainWindow::set_data_unavailable(const QString& reason) { data_->set_unavailable(reason); }
+
+void MainWindow::refresh_data() {
+  if (DataBrowserWindow* browser = data_->existing_browser()) browser->refresh_if_changed();
+}
+
 void MainWindow::set_installations_handler(std::function<void()> handler) {
   on_installations_ = std::move(handler);
   installations_->setVisible(static_cast<bool>(on_installations_));
@@ -413,7 +524,12 @@ void MainWindow::set_installations_handler(std::function<void()> handler) {
 
 void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory settings) {
   preferences_settings_ = std::move(settings);
+  data_->set_settings(preferences_settings_);
 }
+
+void MainWindow::set_line_config_file(std::filesystem::path main_file) { line_config_file_ = std::move(main_file); }
+
+void MainWindow::set_metrics_status(QString status) { metrics_status_ = std::move(status); }
 
 // The spectrometer's move threshold goes through its window when one is open
 // (it keeps the value in use), else straight to its saved settings, which the
@@ -431,8 +547,16 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
   } else if (spectrometer_ != nullptr) {
     confirm_move = SpectrometerWindow::saved_confirm_move_amu(*spectrometer_settings(), spectrometer_->name());
   }
+  // The line's logging and metrics are read from its files each time: what
+  // was applied a moment ago is in them, not in the config the line loaded.
+  std::optional<LineSettings> line;
+  if (!line_config_file_.empty()) {
+    line = load_line_settings(line_config_file_);
+    if (line) line->metrics_status = metrics_status_;
+  }
   return PreferencesDialog::show_for(
-      over != nullptr ? over : this, preferences_dialog_, preferences_settings_, confirm_move, [this](const PreferencesDialog::Values& values) {
+      over != nullptr ? over : this, preferences_dialog_, preferences_settings_, confirm_move,
+      [this](const PreferencesDialog::Values& values) {
         apply_preferences(values.preferences);
         if (!values.confirm_move_amu) return;
         if (spectrometer_window_ != nullptr) {
@@ -441,12 +565,31 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
           SpectrometerWindow::save_confirm_move_amu(*spectrometer_settings(), spectrometer_->name(),
                                                     *values.confirm_move_amu);
         }
+      },
+      std::move(line),
+      [this](const LineSettings& wanted) {
+        const std::optional<LineSettings> before = load_line_settings(line_config_file_);
+        const QString failed = save_line_settings(line_config_file_, wanted);
+        if (!failed.isEmpty()) return failed;
+        // Saved. Where the log file goes and the metrics endpoint are read
+        // at the next start; the levels are in force from now, when they
+        // are what changed. An Apply about something else leaves the hub
+        // alone, and with it a level set for the session from the log panel.
+        const auto levels = [](const config::LoggingConfig& l) {
+          return std::map<std::string, LogLevel>(l.levels.begin(), l.levels.end());
+        };
+        const bool changed = !before || before->logging.default_level != wanted.logging.default_level ||
+                             levels(before->logging) != levels(wanted.logging);
+        if (changed) {
+          if (const auto hub = log_hub_.lock()) hub->set_levels(wanted.logging.default_level, wanted.logging.levels);
+        }
+        return QString();
       });
 }
 
 void MainWindow::apply_preferences(const Preferences& preferences) {
   apply_application_preferences(preferences);
-  data_->set_page_size(preferences.browser_page_size);
+  data_->apply_preferences(preferences);
 }
 
 QWidget* MainWindow::open_recall(const QString& uuid) { return data_->open_recall(uuid); }
@@ -465,6 +608,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   }
   for (auto& [device, window] : laser_windows_) window->close();
   if (pattern_maker_ != nullptr) pattern_maker_->close();
+  layouts_->save_last();
   QMainWindow::closeEvent(event);
 }
 

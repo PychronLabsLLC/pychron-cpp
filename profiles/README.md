@@ -15,9 +15,14 @@ copying. Question types: string, host, port, int, float, bool, choice, path
 | `argus` | instrument | Thermo Argus VI over Qtegra |
 | `helix` | instrument | Thermo Helix over Qtegra |
 | `ngx` | instrument | Isotopx NGX |
-| `instrument-common`, `lab-common`, `extraction-line-starter` | fragment | shared pieces |
+| `instrument-common`, `lab-common`, `extraction-line-starter`, `store-common` | fragment | shared pieces (`store-common`: where the database is) |
 
 Templates use `{{ name }}`, `{{ name | toml }}`, `{% if %}`/`{% else %}`/
 `{% endif %}` and `{% for x in list %}`/`{% endfor %}` (see
 `libs/setup/include/pychron/setup/template.hpp`). Every profile is tested:
 it renders with its defaults, the result loads, and doctor passes.
+
+`instrument-common/seed.toml` is what setup puts in a new instrument
+database (the references project, a sample per kind of reference run, the
+Triga production ratios); `defaults.toml` and the example queue name the
+same samples, and `tests/setup/test_profiles.cpp` holds the three together.

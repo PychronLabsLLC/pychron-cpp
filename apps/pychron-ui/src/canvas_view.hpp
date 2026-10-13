@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,9 @@ class CanvasView : public QGraphicsView {
 
   // Colour of an isolated volume.
   static QColor isolated_color();
+  // The canvas file's `[colors] background`, if it names a colour; without
+  // one the view keeps the theme's own.
+  static std::optional<QColor> background_color(const canvas::Canvas& c);
   // The theme's colour for a source (a region takes its source's). Tanks
   // differ by `ordinal`, their place among the canvas's tanks; the other
   // kinds have one colour each.

@@ -132,6 +132,13 @@ Not done in D2 (moved to later stages): the aliquot-lease check at ingest
 
 ### D3 outbox (needs experiment E4 `IAnalysisPersister`)
 
+Note 2026-10-10: the direct path came first. `StorePersister`
+(`libs/experiment/adapters/store`, plan `2026-10-10-e2e-store-path.md`)
+ingests each finished run into the store inline, with the experiment's spool
+covering a store that is away. The `AnalysisRecord` to `AnalysisIngest`
+conversion below exists there (`record_ingest.hpp`) and is what an uploader
+would send. Nothing of D3 itself is built: no outbox, uploader or leases.
+
 - [ ] `Outbox` (SQLite spool, `outbox_*` tables, WAL, `synchronous=FULL`).
 - [ ] `Uploader` Scheduler task: dependency order, backoff, poison,
       classification by `ErrorKind` (`NotConnected`/`Timeout` retryable,

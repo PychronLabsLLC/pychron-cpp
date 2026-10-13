@@ -45,8 +45,8 @@ Result<Command> read_pressure(std::string_view address, std::string_view label) 
 Result<double> decode_pressure(const Bytes& reply) {
   const std::string whole = to_string(reply);
   const auto text = trim(whole);
-  if (text.starts_with("?")) return protocol_error("xgs600: the controller rejected the command", reply);
-  if (!text.starts_with(">")) return protocol_error("xgs600: expected '>'", reply);
+  if (text.starts_with('?')) return protocol_error("xgs600: the controller rejected the command", reply);
+  if (!text.starts_with('>')) return protocol_error("xgs600: expected '>'", reply);
   const auto body = trim(text.substr(1));
   if (body == "OFF") return protocol_error("xgs600: gauge off", reply);
   auto value = parse_decimal(body);

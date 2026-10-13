@@ -76,7 +76,7 @@ std::string to_toml(const ConditionalSet& set) {
   for (const ConditionalKind kind : kFileOrder) {
     for (const auto& c : set.items) {
       if (c.kind != kind) continue;
-      if (!out.empty()) out += "\n";
+      if (!out.empty()) out += '\n';
       write_item(out, c);
     }
   }

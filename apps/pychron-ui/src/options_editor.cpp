@@ -11,6 +11,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCompleter>
+#include <QFontDatabase>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -22,6 +23,7 @@
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace pychron::ui {
 
@@ -44,7 +46,18 @@ QString swatch_style(const QString& color) {
       .arg(color, QColor(color).lightness() < 128 ? QStringLiteral("white") : QStringLiteral("black"));
 }
 
-// "key == value", "key != value" or "key" (a bool).
+// The families a figure can be drawn in, without the system's private ones.
+const QStringList& font_families() {
+  static const QStringList families = [] {
+    QStringList out;
+    for (const QString& family : QFontDatabase::families())
+      if (!QFontDatabase::isPrivateFamily(family)) out << family;
+    return out;
+  }();
+  return families;
+}
+
+// "key == value", "key != value", "key in v1|v2|..." or "key" (a bool).
 bool condition_holds(const std::string& cond, const pp::Options& o) {
   if (cond.empty()) return true;
   auto trim = [](std::string s) {
@@ -59,6 +72,19 @@ bool condition_holds(const std::string& cond, const pp::Options& o) {
     if (!o.schema() || !o.schema()->field(key)) return true;
     const bool eq = o.get_string(key) == value;
     return op[0] == '=' ? eq : !eq;
+  }
+  if (const auto p = cond.find(" in "); p != std::string::npos) {
+    const std::string key = trim(cond.substr(0, p));
+    if (!o.schema() || !o.schema()->field(key)) return true;
+    const std::string have = o.get_string(key);
+    const std::string list = cond.substr(p + 4);
+    std::size_t start = 0;
+    for (;;) {
+      const auto bar = list.find('|', start);
+      if (trim(list.substr(start, bar == std::string::npos ? bar : bar - start)) == have) return true;
+      if (bar == std::string::npos) return false;
+      start = bar + 1;
+    }
   }
   const std::string key = trim(cond);
   if (!o.schema() || !o.schema()->field(key)) return true;
@@ -279,6 +305,30 @@ QWidget* OptionsEditor::make_editor(const pp::FieldSpec& f, const pp::Options& v
       w = edit;
       break;
     }
+    case pp::FieldType::Font: {
+      // The item data is the stored family; each installed family is shown in
+      // its own face. A family that is not installed here (a preset from
+      // another machine) keeps its entry, and is never handed to Qt as a font.
+      auto* combo = new QComboBox;
+      combo->addItem(tr("Default"), QString());
+      for (const QString& family : font_families()) {
+        combo->addItem(family, family);
+        combo->setItemData(combo->count() - 1, QFont(family), Qt::FontRole);
+      }
+      const QString family = qs(values.get_string(f.key));
+      int at = combo->findData(family);
+      if (at < 0) at = combo->findData(family, Qt::UserRole, Qt::MatchFixedString);
+      if (at < 0) {
+        combo->insertItem(1, tr("%1 (not installed)").arg(family), family);
+        at = 1;
+      }
+      combo->setCurrentIndex(at);
+      connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), this, [=, this](int index) {
+        if (!building_) report(combo, set(combo->itemData(index).toString().toStdString()));
+      });
+      w = combo;
+      break;
+    }
     case pp::FieldType::String: {
       auto* edit = new QLineEdit;
       edit->setText(qs(values.get_string(f.key)));
@@ -372,27 +422,27 @@ void OptionsEditor::rebuild() {
         if (next == -2) return;
         if (options_.set_rows(key, rows)) {
           rebuild();
-          if (lists_.count(lkey)) lists_[lkey].list->setCurrentRow(std::min<int>(next, static_cast<int>(rows.size()) - 1));
+          if (lists_.contains(lkey)) lists_[lkey].list->setCurrentRow(std::min<int>(next, static_cast<int>(rows.size()) - 1));
           emit changed();
         }
       };
       connect(add, &QPushButton::clicked, this, [this, key, edit_rows] {
         edit_rows([this, key](std::vector<pp::Options>& rows, int cur) {
-          pp::Options row = cur >= 0 && cur < static_cast<int>(rows.size()) ? rows[cur] : options_.new_row(key);
+          pp::Options row = cur >= 0 && std::cmp_less(cur, rows.size()) ? rows[cur] : options_.new_row(key);
           rows.push_back(row);
           return static_cast<int>(rows.size()) - 1;
         });
       });
       connect(remove, &QPushButton::clicked, this, [edit_rows] {
         edit_rows([](std::vector<pp::Options>& rows, int cur) {
-          if (cur < 0 || cur >= static_cast<int>(rows.size())) return -2;
+          if (cur < 0 || std::cmp_greater_equal(cur, rows.size())) return -2;
           rows.erase(rows.begin() + cur);
           return std::max(0, cur - 1);
         });
       });
       connect(up, &QPushButton::clicked, this, [edit_rows] {
         edit_rows([](std::vector<pp::Options>& rows, int cur) {
-          if (cur <= 0 || cur >= static_cast<int>(rows.size())) return -2;
+          if (cur <= 0 || std::cmp_greater_equal(cur, rows.size())) return -2;
           std::swap(rows[cur], rows[cur - 1]);
           return cur - 1;
         });
@@ -422,7 +472,7 @@ void OptionsEditor::rebuild() {
     pages_->addWidget(scroll);
   }
   for (auto& [k, ui] : lists_) {
-    const int r = selected_rows.count(k) ? selected_rows[k] : -1;
+    const int r = selected_rows.contains(k) ? selected_rows[k] : -1;
     ui.list->setCurrentRow(r >= 0 && r < ui.list->count() ? r : (ui.list->count() > 0 ? 0 : -1));
   }
   set_current_section(section_shown >= 0 && section_shown < pages_->count() ? section_shown : 0);
@@ -443,13 +493,13 @@ void OptionsEditor::build_row_form(const QString& lkey) {
   const int row = ui.list->currentRow();
   const std::string key = lkey.toStdString();
   const auto all = options_.rows(key);
-  if (row >= 0 && row < static_cast<int>(all.size())) {
+  if (row >= 0 && std::cmp_less(row, all.size())) {
     const pp::Options& r = all[row];
     for (const auto& f : r.schema()->fields) {
       const std::string fkey = f.key;
       QWidget* e = make_editor(f, r, [this, key, row, fkey, lkey](pp::OptionValue value) -> Result<void> {
         auto rows = options_.rows(key);
-        if (row >= static_cast<int>(rows.size())) return fail(ErrorKind::Config, "row is gone");
+        if (std::cmp_greater_equal(row, rows.size())) return fail(ErrorKind::Config, "row is gone");
         auto ok = rows[row].set(fkey, std::move(value));
         if (!ok) return ok;
         if (auto s = options_.set_rows(key, rows); !s) return s;
@@ -470,7 +520,7 @@ void OptionsEditor::refresh_enabled() {
   for (const auto& [lkey, ui] : lists_) {
     const int row = ui.list->currentRow();
     const auto rows = options_.rows(lkey.toStdString());
-    if (row < 0 || row >= static_cast<int>(rows.size())) continue;
+    if (row < 0 || std::cmp_greater_equal(row, rows.size())) continue;
     for (const auto& [key, w] : ui.editors)
       w->setEnabled(condition_holds(w->property("enabled_when").toString().toStdString(), rows[row]));
   }

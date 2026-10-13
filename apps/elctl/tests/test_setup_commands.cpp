@@ -53,15 +53,17 @@ TEST_F(ElctlSetupTest, AnInstrumentInstallsChecksAndRunsByName) {
   // --install supplies the line, the lab and simulation; the queue is found in the install.
   o = run_raw({"--install", "lab", "exp", "validate", "experiment.toml"});
   EXPECT_EQ(o.code, 0) << o.out << o.err;
-  EXPECT_TRUE(contains(o.out, "queue first-queue: 3 run(s)")) << o.out;
+  EXPECT_TRUE(contains(o.out, "queue first-queue: 5 run(s)")) << o.out;
 }
 
 TEST_F(ElctlSetupTest, QuestionsAreAskedWithDefaultsInBrackets) {
   const auto root = path("ngx-lab");
   // Simulation, then the connection, then the detectors: simulation: no;
   // host: Enter (default); port: 1091; user, reference isotope, baseline
-  // mass, peak window, reference detector, extraction line: Enter; then confirm.
-  auto o = run_raw({"init", "ngx", "--root", root.string()}, "no\n\n1091\n\n\n\n\n\n\ny\n");
+  // mass, peak window, reference detector, ion counter, extraction line,
+  // where the database is: Enter; then confirm.
+  auto o = run_raw({"init", "ngx", "--root", root.string()}, "no\n\n1091\n\n\n\n\n\n\n\n\ny\n");
+  EXPECT_TRUE(contains(o.out, "Where is the data? (local/server) [local]")) << o.out;
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "Address of the NGX controller [192.168.0.20]")) << o.out;
   std::ifstream in(root / "spectrometer.toml");
@@ -102,6 +104,87 @@ TEST_F(ElctlSetupTest, DataReductionIsTwoAnswersAndADatabase) {
   EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out;
 #endif
 }
+
+#ifdef PYCHRON_ELCTL_HAS_STORE
+// Install defaults: the instrument's database is made and given the
+// references project, its samples and the Triga production.
+TEST_F(ElctlSetupTest, AnInstrumentInstallMakesAndSeedsItsDatabase) {
+  const auto root = path("argus-seeded");
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "data" / "pychron.db"));
+  EXPECT_TRUE(contains(o.out, "seeded 1 project, 3 materials, 8 samples, 8 identifiers, 1 mass spectrometer, 1 reactor")) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out;
+  const std::string db = "sqlite:" + (root / "data" / "pychron.db").generic_string();
+  auto listed = run_raw({"entry", "samples", "list", "--db", db, "--project", "references"});
+  ASSERT_EQ(listed.code, 0) << listed.err;
+  for (const char* name : {"blank_unknown", "blank_air", "blank_cocktail", "blank_extractionline", "background", "air",
+                           "cocktail", "detector_ic"})
+    EXPECT_TRUE(contains(listed.out, std::string(name) + "\treferences")) << name << "\n" << listed.out;
+
+  o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "seed: nothing to add (22 already there)")) << o.out;
+}
+
+// Review focus 4: a seed file the lab edited into something unreadable.
+TEST_F(ElctlSetupTest, ASeedFileThatDoesNotParseDoesNotStopTheInstall) {
+  const auto root = path("helix-bad-seed");
+  ASSERT_EQ(run_raw({"init", "helix", "--root", root.string(), "--yes"}).code, 0);
+  { std::ofstream(root / "seed.toml") << "project = \n"; }
+  auto o = run_raw({"init", "--reconfigure", "--set", "simulation=no", "--yes"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "seed skipped: ")) << o.err;
+  EXPECT_TRUE(contains(o.err, "seed.toml")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl entry seed ")) << o.err;
+  EXPECT_FALSE(site().find("helix")->simulation) << "the reconfigure went through";
+}
+
+// A seed file that was there before the install and does not parse: the
+// database is made all the same (doctor finds it), and the command that is
+// printed can be pasted even though the folder's name has a space in it.
+TEST_F(ElctlSetupTest, ABadSeedFileStillLeavesADatabaseAndACommandThatCanBePasted) {
+  const auto root = path("my argus");
+  fs::create_directories(root);
+  { std::ofstream(root / "seed.toml") << "project = \n"; }
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "data" / "pychron.db"));
+  EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "seed skipped: ")) << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl entry seed \"" + (root / "seed.toml").string() + "\" --db \"sqlite:")) << o.err;
+}
+
+// Review focus 5: a server that is not there.
+TEST_F(ElctlSetupTest, ADatabaseServerThatCannotBeReachedSkipsTheSeed) {
+  const auto root = path("argus-server");
+  auto o = run_raw({"init", "argus", "--root", root.string(), "--yes", "--set", "data_source=server", "--set",
+                    "db_host=127.0.0.1", "--set", "db_port=1", "--set", "db_password=s3cret-Zq9"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "seed.toml"));
+  EXPECT_TRUE(contains(o.err, "seed skipped: the database could not be opened")) << o.err;
+  // The command that has the password: entry seed would need it in its url.
+  EXPECT_TRUE(contains(o.err, "elctl init --reconfigure --install argus")) << o.err;
+  EXPECT_FALSE(contains(o.err, "entry seed")) << o.err;
+  EXPECT_FALSE(contains(o.err, "s3cret-Zq9")) << "the password is not printed";
+  EXPECT_FALSE(contains(o.out, "s3cret-Zq9")) << "the password is not printed";
+  EXPECT_EQ(site().find("argus")->database, "postgresql://pychron@127.0.0.1:1/pychron");
+}
+
+TEST_F(ElctlSetupTest, ADataReductionInstallIsNotSeeded) {
+  const auto root = path("dr-plain");
+  auto o = run_raw({"init", "data-reduction", "--root", root.string(), "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_FALSE(contains(o.out, "seed")) << o.out;
+  EXPECT_FALSE(contains(o.err, "seed")) << o.err;
+}
+#else
+TEST_F(ElctlSetupTest, WithoutTheStoreTheSeedIsSkippedAndSaid) {
+  auto o = run_raw({"init", "argus", "--root", path("argus-no-store").string(), "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "skip  seed: built without the DVC store")) << o.out;
+}
+#endif
 
 TEST_F(ElctlSetupTest, MistakesAreReportedPlainly) {
   EXPECT_EQ(run_raw({"init"}).code, 2);

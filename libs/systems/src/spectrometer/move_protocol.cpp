@@ -1,10 +1,11 @@
 #include "pychron/systems/spectrometer/move_protocol.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <condition_variable>
-#include <mutex>
+#include <cstdint>
 #include <numbers>
+#include <ranges>
 
 namespace pychron::spectrometer {
 
@@ -26,14 +27,7 @@ std::vector<double> af_demag_trajectory(double from, double target, const AfDema
   return out;
 }
 
-void sleep_on(const Clock& clock, Duration d) {
-  if (d <= Duration::zero()) return;
-  std::mutex m;
-  std::condition_variable cv;
-  std::unique_lock lock(m);
-  const TimePoint deadline = clock.now() + d;
-  while (clock.now() < deadline) clock.wait_until(cv, lock, deadline);
-}
+void sleep_on(const Clock& clock, Duration d) { clock.sleep_for(d); }
 
 namespace {
 
@@ -129,10 +123,10 @@ Result<MoveOutcome> execute_move(const MovePlan& plan, const MoveDeps& deps) {
 
   // 4. cleanup in reverse order, always.
   if (blank_attempted) keep_first(first, deps.beam_blank->blank(false));
-  for (auto it = attempted.rbegin(); it != attempted.rend(); ++it) {
-    auto r = deps.control->protect(*it, false);
+  for (auto& it : std::views::reverse(attempted)) {
+    auto r = deps.control->protect(it, false);
     keep_first(first, r);
-    if (r && deps.on_protect) deps.on_protect(*it, false);
+    if (r && deps.on_protect) deps.on_protect(it, false);
   }
 
   out.elapsed = deps.clock.now() - start;

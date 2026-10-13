@@ -209,8 +209,8 @@ class GitFixture {
           "core.precomposeUnicode=false", "commit.gpgsign=false", "tag.gpgsign=false", "tag.forceSignAnnotated=false",
           "init.defaultBranch=main", "merge.ff=false", "gc.auto=0", "advice.detachedHead=false",
           "protocol.file.allow=always"}) {
-      spec.argv.push_back("-c");
-      spec.argv.push_back(option);
+      spec.argv.emplace_back("-c");
+      spec.argv.emplace_back(option);
     }
     for (auto& arg : args) spec.argv.push_back(std::move(arg));
     spec.env = {

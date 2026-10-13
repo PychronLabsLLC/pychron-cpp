@@ -1,9 +1,18 @@
-// ExperimentWindow end to end on the sim lab (pumped 400x): open the example
+// ExperimentWindow end to end on the sim lab (simulated time paced at 400x): open the example
 // queue, run it, follow it; confirmations, saving, and View > Experiment.
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <QAction>
 #include <QComboBox>
@@ -11,6 +20,8 @@
 #include <QMenuBar>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QDockWidget>
+#include <QToolBar>
 #include <QtTest/QtTest>
 
 #include "conditionals_editor_window.hpp"
@@ -18,11 +29,15 @@
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
 #include "main_window.hpp"
+#include "shortcuts.hpp"
 #include "menu_hub.hpp"
 #include "preferences_dialog.hpp"
 #include "script_editor_window.hpp"
+#include "settings_guard.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/model/queue_toml.hpp"
+#include "pychron/sim/gas.hpp"
+#include "pychron/sim/sim_system.hpp"
 
 using pychron::experiment::run::RunState;
 using pychron::ui::ExperimentBridge;
@@ -30,10 +45,43 @@ using pychron::ui::ExperimentWindow;
 using pychron::ui::QueueTableModel;
 namespace fs = std::filesystem;
 
+
+// An identifier source that answers at once, with one package.
+struct OnePackageSource : pychron::ui::IdentifierSource {
+  void packages(QObject*, std::function<void(pychron::Result<std::vector<pychron::ui::PackageChoice>>)> done) override {
+    done(std::vector<pychron::ui::PackageChoice>{{"p1", "NM-293"}});
+  }
+  void contents(QObject*, const std::string&,
+                std::function<void(pychron::Result<pychron::ui::PackageContents>)> done) override {
+    done(pychron::ui::PackageContents{});
+  }
+};
+
+// A database that will not take the queue: check_queue says why, in two lines.
+struct RefusingPersister : pychron::experiment::persist::IAnalysisPersister {
+  pychron::Result<int> next_aliquot(const std::string&) override { return 1; }
+  pychron::Result<void> begin_run(const pychron::experiment::RunIdentity&,
+                                  const pychron::experiment::QueueSpec&) override {
+    return {};
+  }
+  pychron::Result<void> save_extraction(const pychron::experiment::record::AnalysisRecord&) override { return {}; }
+  pychron::Result<void> save_analysis(const pychron::experiment::record::AnalysisRecord&) override { return {}; }
+  pychron::Result<void> save_artifact(const std::string&, const std::string&,
+                                      const std::vector<std::uint8_t>&) override {
+    return {};
+  }
+  pychron::Result<void> flush() override { return {}; }
+  pychron::Result<std::vector<std::string>> check_queue(const pychron::experiment::QueueSpec&) override {
+    return std::vector<std::string>{"the database cannot be reached: no such file",
+                                    "Run: elctl db migrate --db sqlite:/lab/data/pychron.db"};
+  }
+};
+
 class TestExperimentWindow : public QObject {
   Q_OBJECT
 
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
 
   std::unique_ptr<QSettings> settings() const {
     return std::make_unique<QSettings>(tmp_.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
@@ -51,6 +99,81 @@ class TestExperimentWindow : public QObject {
   }
 
  private slots:
+  // ---- the panel layout -------------------------------------------------------
+
+  void resetPutsTheDocksAndTheToolbarBack() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* executor = window.findChild<QDockWidget*>(QStringLiteral("ExperimentExecutorDock"));
+    auto* evolutions = window.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"));
+    auto* factory = window.findChild<QDockWidget*>(QStringLiteral("ExperimentFactoryDock"));
+    auto* measurement = window.findChild<QDockWidget*>(QStringLiteral("ExperimentMeasurementDock"));
+    auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("ExperimentToolBar"));
+    QVERIFY(executor != nullptr && evolutions != nullptr && factory != nullptr && measurement != nullptr);
+    QVERIFY(toolbar != nullptr);
+    evolutions->close();
+    measurement->setFloating(true);
+    toolbar->hide();
+    window.addToolBar(Qt::BottomToolBarArea, toolbar);
+    window.addDockWidget(Qt::TopDockWidgetArea, executor);
+
+    QVERIFY(window.dock_layouts() != nullptr);
+    window.dock_layouts()->reset();
+    for (const QDockWidget* dock : {executor, evolutions, factory, measurement}) {
+      QVERIFY2(!dock->isHidden(), qPrintable(dock->objectName()));
+      QVERIFY2(!dock->isFloating(), qPrintable(dock->objectName()));
+    }
+    QCOMPARE(window.dockWidgetArea(executor), Qt::BottomDockWidgetArea);
+    QCOMPARE(window.dockWidgetArea(evolutions), Qt::RightDockWidgetArea);
+    QCOMPARE(window.dockWidgetArea(factory), Qt::LeftDockWidgetArea);
+    QVERIFY(window.tabifiedDockWidgets(factory).contains(measurement));
+    QVERIFY(factory->isVisible());  // in front of Measurement
+    QVERIFY(toolbar->isVisible());
+    QCOMPARE(window.toolBarArea(toolbar), Qt::TopToolBarArea);
+  }
+
+  void panelsLeaveOutTheExecutor() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    const ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.dock_layouts() != nullptr);
+    QStringList panels;
+    for (const QAction* action : window.dock_layouts()->panel_actions()) panels.append(action->text());
+    QCOMPARE(panels, QStringList({QStringLiteral("Evolutions"), QStringLiteral("Measurement"), QStringLiteral("Run Factory")}));
+  }
+
+  void theLayoutIsStillKeptUnderItsOldKeys() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->close();
+      QVERIFY(window.close());
+    }
+    {
+      const QSettings saved(file, QSettings::IniFormat);
+      QVERIFY(saved.contains(QStringLiteral("experiment_window/state")));
+      QVERIFY(saved.contains(QStringLiteral("experiment_window/geometry")));
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(!again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+    QVERIFY(again.dock_layouts() != nullptr);
+    QVERIFY(again.dock_layouts()->save_as(QStringLiteral("quiet")));
+    again.dock_layouts()->reset();
+    QVERIFY(again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+    QVERIFY(again.dock_layouts()->apply(QStringLiteral("quiet")));
+    QVERIFY(!again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+  }
+
   void runsTheExampleQueue() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());
@@ -69,6 +192,14 @@ class TestExperimentWindow : public QObject {
     int counts_max = 0;
     connect(&bridge, &ExperimentBridge::countsProgress, this,
             [&] { counts_max = std::max(counts_max, pane->counts_maximum()); });
+    // The beam measures what the line's source holds, and the example's
+    // extraction script lets a pipette of the tank's air into the line for
+    // each run that is not a blank (sim_extract.py).
+    QVERIFY(sim.line->sim() != nullptr);
+    const auto wall_ms = [&sim] {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(sim.clock.wall_now().time_since_epoch()).count();
+    };
+    const qint64 started_ms = wall_ms();
     pane->request_start();
     QVERIFY(pane->running());
     QVERIFY(window.model().live());  // editable after the rows the executor reached
@@ -83,6 +214,20 @@ class TestExperimentWindow : public QObject {
     QVERIFY(contains(pane->events(), QStringLiteral("queue completed")));
     QVERIFY(contains(pane->events(), QStringLiteral("run 1 66001")));
     QVERIFY(contains(pane->events(), QStringLiteral("peak center Ar40 on H1")));
+    // Each event has the time it was seen at, on the line's clock: here a
+    // simulated one, so the queue's events span its simulated minutes.
+    const auto times = pane->event_times();
+    const QStringList shown = pane->event_time_texts();
+    QCOMPARE(times.size(), pane->events().size());
+    QCOMPARE(shown.size(), times.size());
+    for (qsizetype i = 0; i < times.size(); ++i) {
+      QVERIFY(times[i].isValid());
+      QCOMPARE(shown[i], times[i].toString(QStringLiteral("HH:mm:ss")));
+      if (i > 0) QVERIFY(times[i - 1] <= times[i]);
+    }
+    QVERIFY(times.first().toMSecsSinceEpoch() >= started_ms);
+    QVERIFY(times.last().toMSecsSinceEpoch() <= wall_ms());
+    QVERIFY2(times.first().msecsTo(times.last()) > 60000, qPrintable(shown.join(QLatin1Char(' '))));
     QCOMPARE(pane->state_text(), QStringLiteral("idle"));
     QVERIFY(pane->spool_text().isEmpty());
     QVERIFY(counts_max > 1);
@@ -94,10 +239,29 @@ class TestExperimentWindow : public QObject {
     QVERIFY(evo->title_text().startsWith(QStringLiteral("66001")));
     // The live fits: a curve per signal series and its intercept listed.
     QVERIFY(evo->fit_curve_count() > 0);
-    QVERIFY(!evo->intercept_lines().isEmpty());
+    QVERIFY(!evo->intercept_rows().isEmpty());
     const auto ar40 = evo->fit_of({"Ar40", "H1", pychron::experiment::collect::SeriesKind::Signal});
     QVERIFY(ar40.has_value());
-    QVERIFY(ar40->value > 1e5);  // the sim's Ar40 beam is ~1e6
+    // The run measured one pipette of the tank's air, and nothing left of
+    // the run before it: within 2 % of a shot worked out from the lab's
+    // numbers. The shot is the second (this is the third run, the second
+    // after the blank to take one): the tank's Ar40 less the first pipette
+    // of it, one pipette of that let into prep, and prep's share of it
+    // through the inlet into the source (canvas.toml sizes none of the four,
+    // so each is its kind's default). The first shot is 0.2 % larger: 2 %
+    // does not tell the two apart, and is not meant to (LabSim's
+    // SuccessiveShotsDeclineWithTheTank does); it tells a shot from a source
+    // that was not pumped out or took no gas.
+    const auto& lab = sim.line->sim()->settings();
+    QVERIFY(lab.compositions.contains("air_tank"));
+    const double tank = lab.default_volume_cc, prep = lab.default_volume_cc, source = lab.default_volume_cc;
+    const double pipette = lab.pipette_cc;
+    const double filled = lab.compositions.at("air_tank")[pychron::sim::index(pychron::sim::Species::Ar40)] *
+                          tank / (tank + pipette);
+    const double shot = filled * pipette / (pipette + prep) * prep / (prep + source) * lab.source.sensitivity;
+    const double second = shot * tank / (tank + pipette);
+    QVERIFY(second > 1e4);
+    QVERIFY2(std::abs(ar40->value - second) < 0.02 * second, qPrintable(QString::number(ar40->value)));
     QCOMPARE(evo->peak_centers().size(), 1);
     QVERIFY(evo->peak_centers().front().contains(QStringLiteral("table updated")));
     evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);
@@ -140,6 +304,62 @@ class TestExperimentWindow : public QObject {
 
   // What a run says (here: that its hole was centered) is a line of the
   // pane's events, under the run that said it.
+  // Wherever the timeline was left, a queue's start puts it back on now.
+  void theTimelineFollowsWhenAQueueStarts() {
+    using pychron::ui::TimelineView;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    auto* pane = window.executor();
+    QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
+    pane->timeline_view()->set_mode(TimelineView::Mode::WholeQueue);
+    pane->request_start();
+    QVERIFY(pane->running());
+    QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    QCOMPARE(pane->timeline_view()->mode(), TimelineView::Mode::Follow);
+    QCOMPARE(pane->timeline().run_starts().size(), std::size_t{3});
+    QCOMPARE(pane->timeline_view()->time_window().first, 0.0);  // fewer runs than it follows: all of them
+  }
+
+  void theRunsFollowedAreRemembered() {
+    using pychron::ui::TimelineView;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    {
+      ExperimentWindow window(bridge, true, settings());
+      QCOMPARE(window.executor()->timeline_view()->follow_runs(), 6);  // nothing stored yet
+      window.executor()->timeline_view()->context_actions()[2]->trigger();  // Follow last 12 runs
+      QCOMPARE(window.executor()->timeline_view()->follow_runs(), 12);
+    }
+    ExperimentWindow again(bridge, true, settings());
+    QCOMPARE(again.executor()->timeline_view()->follow_runs(), 12);
+    QCOMPARE(again.executor()->timeline_view()->mode(), TimelineView::Mode::Follow);
+  }
+
+  // A long queue says more than the list should hold: the oldest lines go.
+  void theEventsListKeepsItsNewestLines() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    auto* pane = window.executor();
+    QCOMPARE(pychron::ui::ExecutorPane::kEventLimit, 5000);
+    pane->set_event_limit(4);
+    pane->request_start();
+    QVERIFY(pane->running());
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    const QStringList events = pane->events();
+    QCOMPARE(events.size(), 4);
+    QVERIFY2(events.last().contains(QStringLiteral("queue completed")), qPrintable(events.join(QLatin1Char('\n'))));
+    QVERIFY(!events.join(QLatin1Char('\n')).contains(QStringLiteral("run 0 ")));
+    pane->set_event_limit(2);
+    QCOMPARE(pane->events().size(), 2);
+  }
+
   void aRunsLogShowsInTheExecutorPane() {
     if (!pychron::scripting::make_script_host()->available()) QSKIP("needs embedded Python to run laser_extract.py");
     pychron::ui::test::SimLab sim;
@@ -176,6 +396,38 @@ class TestExperimentWindow : public QObject {
     ExperimentWindow window(bridge, true, settings());
     QVERIFY(contains(window.executor()->events(), problem));
     QVERIFY(window.executor()->error_text().contains(problem));
+  }
+
+  // A queue the database will not take does not start, and every line of the
+  // reason is on show.
+  void aQueueThatCannotBeSavedSaysWhyInFull() {
+    RefusingPersister persister;
+    pychron::ui::test::SimLab sim({}, {}, {}, &persister);
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    window.start();
+    QVERIFY(!bridge.running());
+    QCOMPARE(window.executor()->error_text(),
+             QStringLiteral("the queue cannot be saved:\nthe database cannot be reached: no such file\n"
+                            "Run: elctl db migrate --db sqlite:/lab/data/pychron.db"));
+  }
+
+  // What is still to be saved is named for where it goes.
+  void pendingSavesAreNamedForWhereTheyGo() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QCOMPARE(window.executor()->pending_text(2), QStringLiteral("2 record(s) in the spool"));
+    bridge.set_saves_to_database(true);
+    QCOMPARE(window.executor()->pending_text(2), QStringLiteral("2 run(s) waiting to be saved to the database"));
+    // With the reason the last one was refused, on one line.
+    QCOMPARE(window.executor()->pending_text(2, std::string("7f3a: identifier 'zz' is unknown\n  SQL: insert")),
+             QStringLiteral("2 run(s) waiting to be saved to the database: 7f3a: identifier 'zz' is unknown SQL: insert"));
+    bridge.set_saves_to_database(false);
+    QCOMPARE(window.executor()->pending_text(1, std::string("7f3a: disk full")),
+             QStringLiteral("1 record(s) in the spool: 7f3a: disk full"));
   }
 
   void withoutNotificationsATestSaysSo() {
@@ -337,6 +589,169 @@ class TestExperimentWindow : public QObject {
     QVERIFY(!window->model().queue().runs[0].skip);
     QVERIFY(!window->modified());
     window.reset();
+  }
+
+  // File > New: an empty queue with no file, after the usual question.
+  void aNewQueueIsEmptyAndHasNoFile() {
+    using pychron::ui::MenuHub;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    const std::size_t rows = window.model().queue().runs.size();
+    QVERIFY(rows > 0);
+    QString error;
+    QVERIFY2(window.new_queue(&error), qPrintable(error));
+    QVERIFY(window.model().queue().runs.empty());
+    QVERIFY(!window.path());
+    QVERIFY(!window.modified());
+    QVERIFY(!window.save(&error));  // no file to save to
+
+    // Unsaved edits: Cancel keeps the queue and its file, Discard lets go.
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.model().toggle_skip({0}));
+    int asked = 0;
+    auto answer = ExperimentWindow::Unsaved::Cancel;
+    window.set_ask_unsaved([&] {
+      ++asked;
+      return answer;
+    });
+    QVERIFY(!window.new_queue(&error));
+    QCOMPARE(error, QStringLiteral("cancelled"));
+    QCOMPARE(asked, 1);
+    QCOMPARE(window.model().queue().runs.size(), rows);
+    QVERIFY(window.path().has_value());
+    QVERIFY(window.modified());
+    answer = ExperimentWindow::Unsaved::Discard;
+    QVERIFY(window.new_queue(&error));
+    QVERIFY(window.model().queue().runs.empty());
+    QVERIFY(!window.path());
+
+  }
+
+  void aQueueCannotBeReplacedByANewOneWhileItRuns() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    const std::size_t rows = window.model().queue().runs.size();
+    window.executor()->request_start();
+    QVERIFY(window.executor()->running());
+    QString error;
+    QVERIFY(!window.new_queue(&error));
+    QCOMPARE(error, QStringLiteral("a queue is running"));
+    QCOMPARE(window.model().queue().runs.size(), rows);
+    QVERIFY(window.path().has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+  }
+
+  // The identifier source reaches the run factory whichever of the two comes first.
+  void theMainWindowHandsTheSourceToTheFactory() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    OnePackageSource source;
+    main.set_identifier_source(&source);
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    main.experiment_action()->trigger();
+    QVERIFY(main.experiment_window() != nullptr);
+    QCOMPARE(main.experiment_window()->factory()->package_choices().size(), 2);
+    main.set_experiment(nullptr, false);
+  }
+
+  void aSourceSetLaterReachesAnOpenWindow() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    main.experiment_action()->trigger();
+    QVERIFY(main.experiment_window() != nullptr);
+    QCOMPARE(main.experiment_window()->factory()->package_choices().size(), 1);
+    OnePackageSource source;
+    main.set_identifier_source(&source);
+    QCOMPARE(main.experiment_window()->factory()->package_choices().size(), 2);
+    main.set_experiment(nullptr, false);
+  }
+
+  // File > New and File > Open are the main window's, from any window: each
+  // brings up the window it acts in, and has the key while that one is in front.
+  void fileNewAndOpenBringUpTheWindowTheyActIn() {
+    using pychron::ui::MenuHub;
+    using pychron::ui::Shortcut;
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    main.show();
+    const QList<QAction*>& entries = main.file_entries();
+    QStringList texts;
+    for (const QAction* a : entries) texts << a->text();
+    QCOMPARE(texts, (QStringList{QStringLiteral("New &Queue"), QStringLiteral("New &Script…"),
+                                 QStringLiteral("New &Conditionals…"), QStringLiteral("Open &Queue…"),
+                                 QStringLiteral("Open &Script…"), QStringLiteral("Open &Conditionals…")}));
+    MenuHub& hub = MenuHub::instance();
+    QCOMPARE(hub.file_entries(MenuHub::FileList::New), entries.mid(0, 3));
+    QCOMPARE(hub.file_entries(MenuHub::FileList::Open), entries.mid(3, 3));
+    for (const QAction* a : entries) QVERIFY2(!a->isEnabled(), qPrintable(a->text()));  // no session yet
+    entries.at(0)->trigger();  // and nothing to bring up
+    QVERIFY(main.experiment_window() == nullptr);
+
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    for (const QAction* a : entries) QVERIFY2(a->isEnabled(), qPrintable(a->text()));
+
+    // Open Script…: the script editor alone, made with the experiment window, which stays down.
+    // (the picker is a dialog until the editor is there to be told otherwise: dismissed)
+    QTimer::singleShot(0, this, [] {
+      if (QWidget* dialog = QApplication::activeModalWidget()) dialog->close();
+    });
+    entries.at(4)->trigger();
+    ExperimentWindow* experiment = main.experiment_window();
+    QVERIFY(experiment != nullptr);
+    QVERIFY(!experiment->isVisible());
+    QVERIFY(experiment->model().rowCount() > 0);  // with the queue it was to start with
+    auto* scripts = experiment->script_editor();
+    QVERIFY(scripts != nullptr);
+    QVERIFY(scripts->isVisible());
+    QCOMPARE(scripts->document_count(), 0);
+    scripts->set_pick_script([](const QStringList& names) { return std::optional<QString>(names.first()); });
+    entries.at(4)->trigger();
+    QCOMPARE(scripts->document_count(), 1);
+
+    // Open Conditionals…: its editor.
+    auto* conditionals = experiment->open_conditionals_editor();
+    conditionals->hide();
+    conditionals->set_pick_file([](const QStringList& names) { return std::optional<QString>(names.last()); });
+    entries.at(5)->trigger();
+    QVERIFY(conditionals->isVisible());
+    QCOMPARE(conditionals->current_name(), conditionals->file_names().last());
+
+    // New Queue: the experiment window, emptied.
+    entries.at(0)->trigger();
+    QVERIFY(experiment->isVisible());
+    QVERIFY(experiment->model().queue().runs.empty());
+    QVERIFY(!experiment->path());
+
+    // The keys follow the window in front.
+    experiment->activateWindow();
+    if (!QTest::qWaitForWindowActive(experiment)) QSKIP("this platform does not activate windows");
+    QCOMPARE(entries.at(0)->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QCOMPARE(entries.at(3)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    QVERIFY(entries.at(4)->shortcut().isEmpty());
+    QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Queue"));
+    scripts->activateWindow();
+    QTRY_COMPARE(QApplication::activeWindow(), static_cast<QWidget*>(scripts));
+    QCOMPARE(entries.at(1)->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QCOMPARE(entries.at(4)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    QVERIFY(entries.at(3)->shortcut().isEmpty());
+    conditionals->activateWindow();
+    QTRY_COMPARE(QApplication::activeWindow(), static_cast<QWidget*>(conditionals));
+    QCOMPARE(entries.at(2)->shortcut(), pychron::ui::key(Shortcut::FileNew));
+    QCOMPARE(entries.at(5)->shortcut(), pychron::ui::key(Shortcut::FileOpen));
+    main.activateWindow();
+    QTRY_COMPARE(QApplication::activeWindow(), static_cast<QWidget*>(&main));
+    for (const QAction* a : entries) QVERIFY2(a->shortcut().isEmpty(), qPrintable(a->text()));
+
+    main.set_experiment(nullptr, false);
+    for (const QAction* a : entries) QVERIFY2(!a->isEnabled(), qPrintable(a->text()));
   }
 
   void rowsOpenTheirScriptsInTheEditor() {
@@ -631,6 +1046,9 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(editor->findChildren<pychron::ui::PreferencesDialog*>().size(), 1);
     main.set_experiment(nullptr, false);
   }
+
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestExperimentWindow)

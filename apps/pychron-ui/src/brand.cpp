@@ -114,7 +114,10 @@ void paint_peaks(QPainter& p, const QRectF& area, const QColor& color, bool labe
   QPainterPath trace;
   const double dx = std::max(0.5, area.width() / 400.0);
   trace.moveTo(area.left(), level(area.left()));
-  for (double x = area.left() + dx; x <= area.right(); x += dx) trace.lineTo(x, level(x));
+  for (int i = 1; area.left() + i * dx <= area.right(); ++i) {
+    const double x = area.left() + i * dx;
+    trace.lineTo(x, level(x));
+  }
   trace.lineTo(area.right(), level(area.right()));
 
   QPainterPath fill = trace;
@@ -162,8 +165,8 @@ QPixmap banner(QSize size, qreal dpr, bool simulation, bool compact) {
 
   // Chart paper.
   p.setPen(QPen(faded(t.on_chrome, 12), 1));
-  for (double y = 22; y < h; y += 22) p.drawLine(QPointF(0, y), QPointF(w, y));
-  for (double x = 22; x < w; x += 44) p.drawLine(QPointF(x, 0), QPointF(x, h));
+  for (int i = 1; i * 22.0 < h; ++i) p.drawLine(QPointF(0, i * 22.0), QPointF(w, i * 22.0));
+  for (int i = 0; 22.0 + i * 44.0 < w; ++i) p.drawLine(QPointF(22.0 + i * 44.0, 0), QPointF(22.0 + i * 44.0, h));
 
   const double margin = compact ? 24 : 32;
   const QRectF peaks(w * 0.5, h * (compact ? 0.12 : 0.14), w * 0.5 - margin, h * (compact ? 0.74 : 0.64));

@@ -80,7 +80,7 @@ void HolderView::paint_holder(QPainter& p, const QRectF& rect, const ps::HolderV
     const auto filled = projects.find(position);
     p.setBrush(filled != projects.end() && !filled->second.empty() ? QBrush(colours.at(filled->second))
                                                                     : QBrush(Qt::NoBrush));
-    p.setPen(QPen(selected.count(position) ? theme().accent : theme().strong_border, selected.count(position) ? 3 : 1));
+    p.setPen(QPen(selected.contains(position) ? theme().accent : theme().strong_border, selected.contains(position) ? 3 : 1));
     p.drawEllipse(c, r, r);
     font.setPixelSize(std::max(6, static_cast<int>(r * 0.9)));
     p.setFont(font);

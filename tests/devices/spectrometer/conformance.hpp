@@ -28,6 +28,7 @@
 #include <cmath>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "pychron/devices/spectrometer/roles.hpp"
 
@@ -149,7 +150,7 @@ class AcquirerConformance : public ::testing::Test {
     using namespace pychron::spectrometer::conformance;
     auto& a = harness.acquirer();
     std::vector<pychron::spectrometer::Frame> frames;
-    for (int i = 0; i < kPollLimit && static_cast<int>(frames.size()) < n; ++i) {
+    for (int i = 0; i < kPollLimit && std::cmp_less(frames.size(), n); ++i) {
       EXPECT_TRUE(a.trigger().has_value());
       advance(harness);
       auto f = a.next(timeout(harness));

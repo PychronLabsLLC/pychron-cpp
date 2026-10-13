@@ -1,12 +1,14 @@
 // CoreBridge: bus events reach the main thread and the snapshot; actuate()
 // never blocks the caller and reports its Result back on the main thread.
 
+#include <cmath>
 #include <optional>
 #include <thread>
 
 #include <QtTest/QtTest>
 
 #include "core_bridge.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -38,6 +40,13 @@ class TestCoreBridge : public QObject {
     QVERIFY(state.valves.count("A") == 1);
     QVERIFY(state.pressures.count("IG1") == 1);
     QVERIFY(state.switches.count("A") == 1);
+    // The fixture's own numbers, not the example sim.toml's: prep starts at
+    // 1e-8 mbar (the file's 1e-10 is a hundred times less).
+    QVERIFY(line_->sim() != nullptr);
+    QVERIFY(line_->sim()->settings().file.empty());
+    const auto prep = line_->sim()->pressure("prep");
+    QVERIFY(prep.has_value());
+    QVERIFY2(std::abs(*prep - 1e-8) < 1e-10, qPrintable(QString::number(*prep)));
   }
 
   void eventsFromOtherThreadsArriveOnMainThread() {

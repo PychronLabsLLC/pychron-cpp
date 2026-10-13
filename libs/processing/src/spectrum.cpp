@@ -136,7 +136,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
     g.x.max = 100.0;
 
     struct GroupData {
-      int group;
+      int group{};
       GroupStyle style;
       GroupItems items;
       std::vector<Step> steps;   // step order
@@ -154,6 +154,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
       gd.style = group_style(d, graph, group, group_rows, MarkerShape::Circle);
       gd.items = items;
       std::vector<const DatasetItem*> ordered = items;
+      // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by increment and time, not by address
       std::stable_sort(ordered.begin(), ordered.end(), [](const auto* a, const auto* b) {
         const auto& x = *a->analysis->analysis;
         const auto& y = *b->analysis->analysis;
@@ -354,7 +355,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
     }
     scene.graphs.push_back(std::move(g));
   }
-  if (scene.graphs.empty()) scene.warnings.push_back("no analyses");
+  if (scene.graphs.empty()) scene.warnings.emplace_back("no analyses");
   return scene;
 }
 

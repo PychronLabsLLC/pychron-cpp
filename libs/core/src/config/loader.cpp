@@ -218,8 +218,42 @@ constexpr std::array kLevels{
 };
 
 // Expands a leading "~/" (or a bare "~") using $HOME, or %USERPROFILE% on Windows.
+// Whether `s` is written as an IPv4 or IPv6 address. The loader links no
+// socket library, so this checks the spelling only; whether the address is
+// this machine's is found out when something binds it.
+bool ip_address_spelled(std::string_view s) {
+  if (s.find(':') == std::string_view::npos) {
+    int parts = 0;
+    std::size_t at = 0;
+    while (at <= s.size()) {
+      const std::size_t dot = std::min(s.find('.', at), s.size());
+      const std::string_view part = s.substr(at, dot - at);
+      if (part.empty() || part.size() > 3) return false;
+      int value = 0;
+      for (const char c : part) {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+      }
+      if (value > 255) return false;
+      ++parts;
+      at = dot + 1;
+    }
+    return parts == 4;
+  }
+  std::size_t colons = 0;
+  for (const char c : s) {
+    const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    if (c == ':') {
+      ++colons;
+    } else if (!hex && c != '.') {  // a dot: an IPv4 tail, "::ffff:1.2.3.4"
+      return false;
+    }
+  }
+  return colons >= 2 && colons <= 7;
+}
+
 std::string expand_home(const std::string& s) {
-  if (s != "~" && s.rfind("~/", 0) != 0) return s;
+  if (s != "~" && !s.starts_with("~/")) return s;
 #ifdef _WIN32
   const auto home = env_var("USERPROFILE");
 #else
@@ -244,7 +278,7 @@ class ConfigBuilder {
     p_.reject_unknown(root,
                       root_loc,
                       Keys{"system", "transports", "drivers", "valves", "manual_valves", "switches", "gauges",
-                           "pipettes", "cryo", "heaters", "logging", "aliases"});
+                           "pipettes", "cryo", "heaters", "logging", "metrics", "aliases", "sim"});
 
     if (const auto* s = root.get("system")) {
       if (const auto* t = p_.as_table(*s, "system")) parse_system(*t, c.system);
@@ -256,7 +290,21 @@ class ConfigBuilder {
       if (const auto* t = p_.as_table(*l, "logging")) parse_logging(*t, c.logging);
     }
 
+    if (const auto* m = root.get("metrics")) {
+      if (const auto* t = p_.as_table(*m, "metrics")) parse_metrics(*t, c.metrics);
+    }
+
     const toml::table* local_transports = local ? check_local(*local, root) : nullptr;
+    // This computer's logging and its metrics endpoint (File > Preferences
+    // writes them): a key given in the local file wins, the rest stand.
+    if (local != nullptr) {
+      if (const auto* l = local->get("logging")) {
+        if (const auto* t = p_.as_table(*l, "logging")) parse_logging(*t, c.logging);
+      }
+      if (const auto* m = local->get("metrics")) {
+        if (const auto* t = p_.as_table(*m, "metrics")) parse_metrics(*t, c.metrics);
+      }
+    }
     for_each_named(root, "transports", [&](const std::string& name, const toml::table& t) {
       const toml::table* ovr = nullptr;
       if (local_transports != nullptr) {
@@ -290,6 +338,9 @@ class ConfigBuilder {
     }
     if (const auto* n = root.get("cryo")) {
       if (const auto* t = p_.as_table(*n, "cryo")) c.cryo = parse_cryo(*t);
+    }
+    if (const auto* n = root.get("sim")) {
+      if (const auto* t = p_.as_table(*n, "sim")) parse_sim(*t, c.sim);
     }
     return c;
   }
@@ -327,8 +378,10 @@ class ConfigBuilder {
     const toml::table* transports = nullptr;
     const auto* main_transports = root.get_as<toml::table>("transports");
     for (auto&& [k, v] : local) {
+      if (k.str() == "logging" || k.str() == "metrics") continue;  // read by build(), as in the main file
       if (k.str() != "transports") {
-        p_.error(p_.loc(v), std::string(k.str()), "local override may only set [transports.<name>] keys");
+        p_.error(p_.loc(v), std::string(k.str()),
+                 "local override may only set [transports.<name>] keys, [logging] and [metrics]");
         continue;
       }
       transports = p_.as_table(v, "transports");
@@ -389,12 +442,38 @@ class ConfigBuilder {
     p_.read(get, s, "scan_interval_ms", s.scan_interval_ms, false, 1);
   }
 
+  void parse_sim(const toml::table& t, SimSection& s) {
+    p_.begin(s, t, "sim");
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, s, Keys{"file"});
+    p_.read(get, s, "file", s.file, true);
+  }
+
+  void parse_metrics(const toml::table& t, MetricsConfig& m) {
+    p_.begin(m, t, "metrics");
+    const auto get = lookup_in(t);
+    p_.reject_unknown(t, m, Keys{"enabled", "bind", "port"});
+    p_.read(get, m, "enabled", m.enabled);
+    p_.read(get, m, "port", m.port, false, 1, 65535);
+    std::string bind;
+    if (const auto* n = get("bind"); n != nullptr && p_.read(get, m, "bind", bind, false)) {
+      if (ip_address_spelled(bind)) {
+        m.bind = std::move(bind);
+      } else {
+        p_.error(p_.loc(*n), "metrics.bind",
+                 "\"" + bind + R"(" is not an IP address (use an interface's address, e.g. "0.0.0.0" or "127.0.0.1"))");
+      }
+    }
+  }
+
   void parse_logging(const toml::table& t, LoggingConfig& l) {
     p_.begin(l, t, "logging");
     const auto get = lookup_in(t);
     p_.reject_unknown(t, l, Keys{"dir", "max_size_mb", "max_files", "default_level", "levels", "echo_stderr"});
     std::string dir;
-    if (p_.read(get, l, "dir", dir, false)) l.dir = expand_home(dir);
+    // Only when the key is there: read over a table the local file gave, a
+    // missing `dir` must leave the shared file's alone.
+    if (get("dir") != nullptr && p_.read(get, l, "dir", dir, false)) l.dir = expand_home(dir);
     p_.read(get, l, "max_size_mb", l.max_size_mb, false, 1);
     p_.read(get, l, "max_files", l.max_files, false, 1);
     p_.read_enum(get, l, "default_level", l.default_level, false, kLevels);
@@ -404,6 +483,9 @@ class ConfigBuilder {
     if (n == nullptr) return;
     const auto* lv = p_.as_table(*n, "logging.levels");
     if (lv == nullptr) return;
+    // A levels table is the whole list. In the local file that lets one of
+    // the shared file's levels be dropped, which adding to them could not.
+    l.levels.clear();
     for (auto&& [glob, node] : *lv) {
       const auto key = std::string(glob.str());
       const auto field = "logging.levels." + key;
@@ -713,6 +795,8 @@ bool is_overridable_transport_key(std::string_view key) noexcept {
   }
   return false;
 }
+
+bool is_ip_address(std::string_view text) noexcept { return ip_address_spelled(text); }
 
 std::filesystem::path local_override_path(const std::filesystem::path& main_file) {
   auto out = main_file;

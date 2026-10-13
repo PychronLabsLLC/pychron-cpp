@@ -11,8 +11,17 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   get_filename_component(name ${src} NAME_WE)
   set(target pychron_ui_${name})
   add_executable(${target} ${src} ui_fixture.hpp)
-  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  # tests/processing: flux_seed.hpp, the seeded level of the flux tests;
+  # tests/support: temp_path.hpp, the fixtures' scratch names
+  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing
+    ${PROJECT_SOURCE_DIR}/tests/support)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
+  # the EarthBank suites talk to the service in memory (tests/earthbank)
+  if(name MATCHES "^test_earthbank")
+    target_link_libraries(${target} PRIVATE pychron::earthbank_fake)
+    # tests/earthbank/analyses.hpp builds on "processing/fixtures.hpp"
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+  endif()
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_UI_SOURCE_DIR="${PROJECT_SOURCE_DIR}/apps/pychron-ui/src")
@@ -20,10 +29,11 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   pychron_link_drivers(${target} pychron_sim)
   pychron_set_warnings(${target})
   add_test(NAME ui.${name} COMMAND ${target})
-  # The longest (the experiment window's) takes 12 s here and five times that
-  # on the macOS runners, where a millisecond's sleep is nine: simulated time
-  # (ClockPump) runs that much slower there.
+  # The longest (the experiment window's) runs its queues in simulated time
+  # paced at 400x (VirtualClock), which holds whatever a sleep costs on the
+  # runner; the rest is real waiting for the UI, slower on a loaded one. It
+  # takes 155 to 170 s on CI's macOS runner, and more on a slow day.
   set_tests_properties(ui.${name} PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    TIMEOUT 180)
+    TIMEOUT 300)
 endforeach()

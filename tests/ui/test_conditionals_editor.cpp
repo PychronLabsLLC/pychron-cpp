@@ -18,6 +18,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <optional>
+
 #ifndef Q_OS_WIN
 #include <unistd.h>
 #endif
@@ -25,7 +27,9 @@
 #include "conditional_form.hpp"
 #include "conditional_table_model.hpp"
 #include "conditionals_editor_window.hpp"
+#include "menu_hub.hpp"
 #include "experiment_fixture.hpp"
+#include "settings_guard.hpp"
 
 using pychron::experiment::ActionSpec;
 using pychron::experiment::Conditional;
@@ -104,6 +108,7 @@ class TestConditionalsEditor : public QObject {
 
   // The window tests: a fresh scratch lab per test; the lab outlives the window.
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   fs::path dir_;
   std::unique_ptr<lab::Lab> lab_;
   int settings_n_ = 0;
@@ -557,6 +562,52 @@ class TestConditionalsEditor : public QObject {
     QVERIFY(w->close());
   }
 
+  // File > Open: one of the lab's files, with the question open() asks.
+  void windowFileOpenPicksOneOfTheLabsFiles() {
+    using pychron::ui::MenuHub;
+    auto w = window();
+    QStringList offered;
+    std::optional<QString> answer;
+    w->set_pick_file([&](const QStringList& names) {
+      offered = names;
+      return answer;
+    });
+    QCOMPARE(w->current_name(), QStringLiteral("system"));
+    QVERIFY(!w->open_picked());  // cancelled
+    QCOMPARE(offered, w->file_names());
+    QCOMPARE(w->current_name(), QStringLiteral("system"));
+    answer = QStringLiteral("default_unknown");
+    QVERIFY(w->open_picked());
+    QCOMPARE(w->current_name(), QStringLiteral("default_unknown"));
+    answer = QStringLiteral("no_such_file");
+    QVERIFY(!w->open_picked());
+    QCOMPARE(w->current_name(), QStringLiteral("default_unknown"));
+
+    add_truncation(*w, QStringLiteral("Ar40 > 8e5"));
+    int asked = 0;
+    w->set_ask_unsaved([&](const QString&) {
+      ++asked;
+      return ConditionalsEditorWindow::Unsaved::Cancel;
+    });
+    answer = QStringLiteral("system");
+    QVERIFY(!w->open_picked());
+    QCOMPARE(asked, 1);
+    QCOMPARE(w->current_name(), QStringLiteral("default_unknown"));
+    QVERIFY(w->modified());
+    w->set_ask_unsaved([](const QString&) { return ConditionalsEditorWindow::Unsaved::Discard; });
+
+    // In front, File > Save is this window's.
+    w->show();
+    w->activateWindow();
+    if (!QTest::qWaitForWindowActive(w.get())) QSKIP("this platform does not activate windows");
+    MenuHub& hub = MenuHub::instance();
+    QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Conditionals"));
+    QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
+    QVERIFY(!hub.file_action(MenuHub::FileRole::SaveAs)->isEnabled());
+    QVERIFY(w->open_picked());
+    QCOMPARE(w->current_name(), QStringLiteral("system"));
+  }
+
   void windowNewAndDelete() {
     auto w = window();
     QSignalSpy files_changed(w.get(), &ConditionalsEditorWindow::filesChanged);
@@ -736,11 +787,20 @@ class TestConditionalsEditor : public QObject {
     QVERIFY(w->current_name().isEmpty());
     QVERIFY(!w->editable());
     QVERIFY(!w->save());
+    bool asked = false;  // nothing to choose from: File > Open asks nothing
+    w->set_pick_file([&](const QStringList&) {
+      asked = true;
+      return std::optional<QString>();
+    });
+    QVERIFY(!w->open_picked());
+    QVERIFY(!asked);
     QVERIFY(w->new_file(QStringLiteral("system")));
     add_truncation(*w, QStringLiteral("Ar40 > 8e5"));
     QVERIFY(w->save());  // creates the directory
     QVERIFY(fs::exists(file("system")));
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestConditionalsEditor)

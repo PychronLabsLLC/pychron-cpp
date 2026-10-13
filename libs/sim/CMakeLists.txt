@@ -11,6 +11,7 @@ target_include_directories(pychron_sim PUBLIC
 )
 
 target_compile_features(pychron_sim PUBLIC cxx_std_20)
+# sim_config.cpp reads sim.toml with toml++, which pychron::core links PUBLIC.
 target_link_libraries(pychron_sim PUBLIC pychron::devices pychron::transport pychron::core)
 
 pychron_set_warnings(pychron_sim)

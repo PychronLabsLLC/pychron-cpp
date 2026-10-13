@@ -300,7 +300,7 @@ Result<void> run(const Nodes& nodes, Scope& scope, std::string& out, const std::
         } else {
           return where(Error{ErrorKind::Config, "'" + n->path + "' is not a list", {}});
         }
-        const auto saved = scope.locals.find(n->var) != scope.locals.end()
+        const auto saved = scope.locals.contains(n->var)
                                ? std::optional<Value>(scope.locals[n->var])
                                : std::nullopt;
         for (auto& item : items) {

@@ -2,7 +2,7 @@ name = "ngx"
 title = "Isotopx NGX"
 kind = "instrument"
 summary = "NGX over its controller's ASCII protocol: nine Faradays and an ion counter"
-version = 1
+version = 2
 includes = ["instrument-common"]
 
 [values]
@@ -50,6 +50,14 @@ default = "H4"
 group = "Detectors"
 
 [[questions]]
+id = "hop_detector"
+prompt = "Ion counter for peak hopping"
+type = "string"
+default = "L4"
+group = "Detectors"
+help = "The detector Ar39 is hopped onto in the multicollect_hop_ar39 plan."
+
+[[questions]]
 id = "detectors"
 prompt = "Detectors in pychron order (name, kind faraday or cdd, isotope)"
 type = "table"
@@ -79,7 +87,7 @@ when = "ngx_user != \"\""
 secret = true
 
 [[files]]
-copy = "@examples/tables/ngx_argon/"
+copy = "tables/ngx_argon/"
 to = "tables/ngx_argon"
 
 [[files]]

@@ -2,6 +2,10 @@
 
 Date: 2026-10-02
 Status: Implemented (v1)
+Superseded in part: simulated time is no longer a `ClockPump` over a
+`ManualClock` (sections 2, 3, 4.4, 5, 7 and 8 below describe it as first
+built). `--sim-speed` now runs on a `VirtualClock` and the line's scheduler
+keeps its own threads; see `2026-10-06-virtual-clock-design.md`, section 4.6.
 Owner: Jake Ross
 Depends on: `2026-09-29-experiment-system-design.md` (section 10.4, stage E7),
 `2026-10-01-spectrometer-window-design.md` (bridge pattern, QCustomPlot,
@@ -151,6 +155,9 @@ lab; queue-level fields are not editable while running.
 
 ### 4.4 `ClockPump` (`libs/core`, `pychron/core/clock_pump.hpp`)
 
+Removed: replaced by `VirtualClock` (`2026-10-06-virtual-clock-design.md`).
+What follows is the first design, kept for the record.
+
 ```cpp
 class ClockPump {
  public:
@@ -274,8 +281,11 @@ A widget, docked at the bottom of the experiment window:
   Stop and Truncate do not.
 - Conditionals list: each `ConditionalTripped` as `time  run  name: check
   -> action`.
-- Event list: one line per run start/finish, queue edit, peak-center result
-  and queue end (newest last).
+- Events table, columns Time and Event: one row per run start/finish, thing
+  a run said, queue edit, notification, peak-center result and queue end
+  (newest last, newest 5000 kept). Time is when the pane saw the event, read
+  from the line's wall clock (`LabSession::wall_now()`, simulated time in a
+  simulated session), shown as `HH:mm:ss` with the date in the tooltip.
 - Pending saves: "n record(s) in spool" when non-zero after the queue ends.
 - Phase timeline (`TimelineModel` / `TimelineView`, `timeline.hpp`): one
   row for executor waits, then one lane per concurrently active run. A run
@@ -310,8 +320,10 @@ with the plan's fit, the same computation as the conditionals' intercept
 (`reduction::Intercept` carries the curve's parameters; `reduction::predict`
 evaluates it). The view draws each fit as a curve in the series' colour from
 time zero to its last point, a diamond at the intercept, grey crosses on
-points the fit excluded as outliers, and lists the intercepts under the plot
-(`Ar40 H1  linear  1000052 ± 379  (0.038%)`). A series selector shows all
+points the fit excluded as outliers, and shows the intercepts in a table
+under the plot, a row per series of the shown kind: Isotope, Detector, Fit,
+Intercept, ± 1σ, %, Points (those the fit used; the tooltip adds how many it
+excluded). A row keeps its place from one reading to the next. A series selector shows all
 series of the kind or one, with the axes scaled to it (isotopes differ by
 orders of magnitude).
 
@@ -340,7 +352,9 @@ A left dock "Run Factory" over `experiment::FactoryForm`
 (`pychron/experiment/factory/form.hpp`, Qt-free and unit-tested):
 
 - Run: type (unknown or a special; picking a special fills its identifier),
-  identifier, aliquot (blank: assigned at run start), step.
+  identifier, aliquot (blank: assigned at run start), step. With a store
+  (`--db`) the identifier can also be picked from a dropdown narrowed by
+  Package and Level selects: `2026-10-09-identifier-select-design.md`.
 - Extraction: device, position (`4`, `1-6`, `1,3,5`; "one run per hole" with
   an optional identifier step per run), value and units, duration, cleanup,
   script (the lab's extraction scripts), step heat (`5, 10, 15` or
@@ -440,7 +454,8 @@ Extraction/Post-Measurement Script for the selected row) over the lab's
 - `--lab` defaults to the extraction line config's directory; `--data`
   defaults to `<lab>/data`. `--queue` opens that queue when the window
   first shows. `--sim-speed` needs `--sim` (usage error otherwise) and puts
-  the whole app on a `ManualClock` driven by a `ClockPump`.
+  the whole app on simulated time (at first a `ManualClock` driven by a
+  `ClockPump`; now a `VirtualClock` paced to the speed given).
 - The session is built after the line starts and before the windows are
   shown; a session that cannot be built (no line, bad lab) is not fatal:
   the error goes to the log dock and the menu item stays disabled.

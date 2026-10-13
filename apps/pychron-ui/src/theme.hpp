@@ -24,6 +24,8 @@
 
 class QApplication;
 class QLabel;
+class QToolButton;
+class QTreeView;
 class QWidget;
 
 namespace pychron::ui {
@@ -81,6 +83,9 @@ struct Theme {
   QColor row_air;
   QColor row_cocktail;
   QColor row_detector_ic;
+  // ... and by anything else they are told apart by (spectrometer, level, tag):
+  // the n-th distinct value takes the n-th, round again past the last.
+  std::array<QColor, 8> row_category;
 
   // Revision diff rows.
   QColor diff_changed;
@@ -125,6 +130,14 @@ void set_invalid(QWidget* widget, bool invalid);
 
 // An error banner: a frame holding labels, or a label on its own.
 void make_banner(QWidget* widget);
+
+// A tool button that stands on a window's own background rather than in a
+// toolbar: it shows its frame at rest, not only under the pointer.
+void make_outlined(QToolButton* button);
+
+// A tree as a sidebar list: no frame or header, chevrons, a highlight across
+// the row.
+void make_sidebar(QTreeView* tree);
 
 enum class Level { Unknown, Ok, Warning, Error };
 QColor level_color(Level level);

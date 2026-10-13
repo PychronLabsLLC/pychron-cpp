@@ -1,6 +1,7 @@
 #include "pychron/core/scheduler.hpp"
 
 #include <algorithm>
+#include <system_error>
 #include <utility>
 
 #include "pychron/core/signal_bus.hpp"
@@ -14,7 +15,10 @@ struct Scheduler::Job {
   Duration period{};
   TimePoint due{};
   std::function<bool()> body;  // returns false on a failed run
-  bool running = false;
+  bool running = false;    // dispatched and not finished
+  bool executing = false;  // its body has begun and not returned
+  bool cancelled = false;  // a dispatched execution that has not begun is dropped
+  std::thread::id runner;  // the thread executing it
   JobStats stats;
 };
 
@@ -24,17 +28,46 @@ Scheduler::Scheduler(const Clock& clock, SignalBus* bus, Options options,
                      std::shared_ptr<LogHub> log_hub)
     : clock_(clock), bus_(bus), options_(options), log_hub_(std::move(log_hub)) {
   if (log_hub_) logger_.emplace(log_hub_->logger("scheduler"));
+  if (options_.threads == 0) return;
   workers_.reserve(options_.threads);
-  for (std::size_t i = 0; i < options_.threads; ++i) workers_.emplace_back([this] { worker_loop(); });
+  // Time does not jump until every worker has entered the clock.
+  auto hold = std::make_shared<Clock::Hold>(clock_);
+  // A worker takes the mutex before anything else it does with the scheduler,
+  // so it sees the count of the threads that exist, and that count is of
+  // threads really started: the wait for them below, or in the destructor,
+  // is then for threads that will answer.
+  std::unique_lock lock(mutex_);
+  try {
+    for (std::size_t i = 0; i < options_.threads; ++i) {
+      workers_.emplace_back([this, hold]() mutable { worker_loop(std::move(hold)); });
+      ++live_workers_;
+    }
+  } catch (...) {
+    // A thread could not be started. The destructor does not run for an
+    // object whose constructor threw, so the workers there are go here.
+    shutting_down_ = true;
+    clock_.notify_all(work_ready_);
+    while (live_workers_ != 0) clock_.wait(exited_, lock);
+    lock.unlock();
+    for (auto& w : workers_) w.join();
+    throw;
+  }
 }
 
+// NOLINTNEXTLINE(bugprone-exception-escape): stop(), as said inside
 Scheduler::~Scheduler() {
+  // stop() throws only when a job destroys its own scheduler, which cannot be
+  // carried out: terminating says so.
+  // cppcheck-suppress throwInNoexceptFunction
   stop();
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_);
     shutting_down_ = true;
+    clock_.notify_all(work_ready_);
+    // A worker finishes what is queued first, which may take clock time, so
+    // the wait for them is in the clock: a join is not, and would stop time.
+    while (live_workers_ != 0) clock_.wait(exited_, lock);
   }
-  work_ready_.notify_all();
   for (auto& w : workers_) w.join();
 }
 
@@ -91,7 +124,7 @@ Result<JobId> Scheduler::add(std::string name, Kind kind, Duration period, std::
     job->due = clock_.now() + period;
     jobs_.emplace(id, std::move(job));
   }
-  wake_.notify_all();
+  clock_.notify_all(wake_);
   return id;
 }
 
@@ -105,13 +138,36 @@ Result<void> Scheduler::heartbeat(JobId id) {
   return {};
 }
 
+std::shared_ptr<Scheduler::Job> Scheduler::cancel_locked(JobId id, bool& removed) {
+  removed = jobs_.erase(id) > 0;
+  const auto it = std::find_if(active_.begin(), active_.end(), [id](const auto& job) { return job->id == id; });
+  if (it == active_.end()) return nullptr;
+  (*it)->cancelled = true;
+  return *it;
+}
+
 bool Scheduler::cancel(JobId id) {
   bool removed = false;
   {
     std::lock_guard lock(mutex_);
-    removed = jobs_.erase(id) > 0;
+    (void)cancel_locked(id, removed);
   }
-  wake_.notify_all();
+  clock_.notify_all(wake_);
+  return removed;
+}
+
+bool Scheduler::cancel_and_wait(JobId id) {
+  bool removed = false;
+  {
+    std::unique_lock lock(mutex_);
+    const auto job = cancel_locked(id, removed);
+    // Only an execution that has begun is waited for: one that has not will
+    // not, and may be queued on this very thread (an inline run_pending()).
+    if (job) {
+      while (job->executing && job->runner != std::this_thread::get_id()) clock_.wait(idle_, lock);
+    }
+  }
+  clock_.notify_all(wake_);
   return removed;
 }
 
@@ -141,6 +197,7 @@ std::vector<std::shared_ptr<Scheduler::Job>> Scheduler::collect_due_locked(TimeP
     if (!overlapping) {
       job->running = true;
       ++in_flight_;
+      active_.push_back(job);
       due.push_back(job);
     }
     if (job->kind == Kind::OneShot && !overlapping) {
@@ -162,27 +219,44 @@ std::size_t Scheduler::run_pending() {
   if (workers_.empty()) {
     for (const auto& job : due) execute(job);
   } else if (!due.empty()) {
-    work_ready_.notify_all();
+    clock_.notify_all(work_ready_);
   }
   return due.size();
 }
 
 void Scheduler::execute(const std::shared_ptr<Job>& job) {
+  bool begun = false;
+  {
+    std::lock_guard lock(mutex_);
+    // Cancelled between its dispatch and now: what its task refers to may be
+    // gone already.
+    if (!job->cancelled) {
+      begun = true;
+      job->executing = true;
+      job->runner = std::this_thread::get_id();
+    }
+  }
   bool ok = false;
-  try {
-    ok = job->body();
-  } catch (...) {
-    publish_log(LogLevel::Error, "job " + job->name + " threw an exception");
+  if (begun) {
+    try {
+      ok = job->body();
+    } catch (...) {
+      publish_log(LogLevel::Error, "job " + job->name + " threw an exception");
+    }
   }
   {
     std::lock_guard lock(mutex_);
     job->running = false;
-    ++job->stats.runs;
-    if (!ok) ++job->stats.failures;
+    job->executing = false;
+    if (begun) {
+      ++job->stats.runs;
+      if (!ok) ++job->stats.failures;
+    }
     --in_flight_;
+    std::erase(active_, job);
   }
-  idle_.notify_all();
-  wake_.notify_all();
+  clock_.notify_all(idle_);
+  clock_.notify_all(wake_);
 }
 
 void Scheduler::publish_log(LogLevel level, std::string message) const {
@@ -195,13 +269,22 @@ void Scheduler::publish_log(LogLevel level, std::string message) const {
   bus_->publish(Log{level, "scheduler", std::move(message), clock_.now()});
 }
 
-void Scheduler::worker_loop() {
+void Scheduler::worker_loop(std::shared_ptr<Clock::Hold> started) {
+  Clock::Participant participant(clock_, "scheduler.worker");
+  started.reset();
   for (;;) {
     std::shared_ptr<Job> job;
     {
       std::unique_lock lock(mutex_);
-      work_ready_.wait(lock, [this] { return shutting_down_ || !queue_.empty(); });
-      if (queue_.empty()) return;  // shutting down with nothing left to drain
+      while (!shutting_down_ && queue_.empty()) clock_.wait(work_ready_, lock);
+      if (queue_.empty()) {  // shutting down with nothing left to drain
+        // Said while this thread is still a participant: the destructor is
+        // runnable again before the clock stops counting the worker.
+        --live_workers_;
+        lock.unlock();
+        clock_.notify_all(exited_);
+        return;
+      }
       job = std::move(queue_.front());
       queue_.pop_front();
     }
@@ -212,17 +295,33 @@ void Scheduler::worker_loop() {
 void Scheduler::start() {
   std::lock_guard lock(mutex_);
   if (dispatching_) return;
+  // Time does not jump until the dispatcher has entered the clock.
+  auto hold = std::make_shared<Clock::Hold>(clock_);
+  dispatcher_ = std::thread([this, hold]() mutable { dispatcher_loop(std::move(hold)); });
+  // Only once the thread exists: if it could not be started, stop() has
+  // nothing to wait for. The dispatcher needs the mutex held here before it
+  // reads either flag.
   dispatching_ = true;
-  dispatcher_ = std::thread([this] { dispatcher_loop(); });
+  dispatcher_done_ = false;
 }
 
 void Scheduler::stop() {
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_);
     if (!dispatching_) return;
+    // A job the dispatcher runs inline would wait here for itself. Refused
+    // before anything is changed, so the scheduler goes on dispatching.
+    if (dispatcher_.get_id() == std::this_thread::get_id()) {
+      throw std::system_error(std::make_error_code(std::errc::resource_deadlock_would_occur),
+                              "Scheduler::stop() called from a job on its own dispatcher thread");
+    }
     dispatching_ = false;
+    clock_.notify_all(wake_);
+    // Waited for in the clock, where the dispatcher says it has finished; the
+    // join below is then of a thread that is on its way out. A join alone
+    // would stop time under a job the dispatcher is running inline.
+    while (!dispatcher_done_) clock_.wait(exited_, lock);
   }
-  wake_.notify_all();
   if (dispatcher_.joinable()) dispatcher_.join();
 }
 
@@ -231,7 +330,9 @@ bool Scheduler::started() const {
   return dispatching_;
 }
 
-void Scheduler::dispatcher_loop() {
+void Scheduler::dispatcher_loop(std::shared_ptr<Clock::Hold> started) {
+  Clock::Participant participant(clock_, "scheduler.dispatch");
+  started.reset();
   std::unique_lock lock(mutex_);
   while (dispatching_) {
     std::optional<TimePoint> next;
@@ -240,7 +341,7 @@ void Scheduler::dispatcher_loop() {
       if (!next || job->due < *next) next = job->due;
     }
     if (!next) {
-      wake_.wait(lock);
+      clock_.wait(wake_, lock);
       continue;
     }
     if (clock_.now() < *next) {
@@ -251,11 +352,16 @@ void Scheduler::dispatcher_loop() {
     run_pending();
     lock.lock();
   }
+  // Said while this thread is still a participant: stop() is runnable again
+  // before the clock stops counting the dispatcher.
+  dispatcher_done_ = true;
+  lock.unlock();
+  clock_.notify_all(exited_);
 }
 
 void Scheduler::wait_idle() {
   std::unique_lock lock(mutex_);
-  idle_.wait(lock, [this] { return in_flight_ == 0; });
+  while (in_flight_ != 0) clock_.wait(idle_, lock);
 }
 
 std::optional<JobStats> Scheduler::stats(JobId id) const {
@@ -263,6 +369,20 @@ std::optional<JobStats> Scheduler::stats(JobId id) const {
   auto it = jobs_.find(id);
   if (it == jobs_.end()) return std::nullopt;
   return it->second->stats;
+}
+
+std::vector<NamedJobStats> Scheduler::job_stats() const {
+  std::vector<NamedJobStats> out;
+  {
+    std::lock_guard lock(mutex_);
+    out.reserve(jobs_.size());
+    for (const auto& [id, job] : jobs_) {
+      if (job->kind != Kind::OneShot) out.push_back(NamedJobStats{job->name, job->stats});
+    }
+  }
+  std::stable_sort(out.begin(), out.end(),
+                   [](const NamedJobStats& a, const NamedJobStats& b) { return a.name < b.name; });
+  return out;
 }
 
 std::size_t Scheduler::job_count() const {

@@ -205,7 +205,7 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
     ux += h.offset_px.x;
     uy += h.offset_px.y;
   }
-  const double n = static_cast<double>(hits.size());
+  const auto n = static_cast<double>(hits.size());
   const Vec2 mean_px = wsum > 0 ? Vec2{wx / wsum, wy / wsum} : Vec2{ux / n, uy / n};
 
   Vec2 corr = map_.to_mm(mean_px);

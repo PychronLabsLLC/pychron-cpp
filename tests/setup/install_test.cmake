@@ -40,4 +40,17 @@ foreach(f data-reduction/profile.toml argus/profile.toml ngx/spectrometer-local.
     message(FATAL_ERROR "missing from the install: ${profiles_real}/${f}")
   endif()
 endforeach()
+# EarthBank's workbook templates lie beside the profiles, where
+# earthbank::default_template_dir() looks from the installed program.
+get_filename_component(resources_real "${profiles_real}" DIRECTORY)
+foreach(f ArArDataPoint_Template2026.xlsx Sample_Template_v2025-04-16.xlsx)
+  if(NOT EXISTS "${resources_real}/earthbank/templates/${f}")
+    message(FATAL_ERROR "missing from the install: ${resources_real}/earthbank/templates/${f}")
+  endif()
+endforeach()
+file(GLOB others "${resources_real}/earthbank/templates/*")
+list(LENGTH others n)
+if(NOT n EQUAL 2)
+  message(FATAL_ERROR "the install has more than the two templates: ${others}")
+endif()
 message(STATUS "installed elctl finds ${profiles_real}")

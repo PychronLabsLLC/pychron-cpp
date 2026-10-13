@@ -10,11 +10,15 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <optional>
+
 #include "code_editor.hpp"
 #include "experiment_fixture.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "menu_hub.hpp"
 #include "script_editor_window.hpp"
 #include "script_highlighter.hpp"
+#include "settings_guard.hpp"
 
 using pychron::scripting::ScriptKind;
 using pychron::ui::CodeEditor;
@@ -38,6 +42,7 @@ class TestScriptEditor : public QObject {
   Q_OBJECT
 
   QTemporaryDir tmp_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   fs::path dir_;
   std::unique_ptr<lab::Lab> lab_;
   bool python_ = false;
@@ -59,6 +64,8 @@ class TestScriptEditor : public QObject {
   void cleanupTestCase() {
     lab_.reset();
     fs::remove_all(dir_);
+    // Every window here was given its settings: none fell back to the application's.
+    QCOMPARE(app_settings_.keys(), QStringList());
   }
 
   void highlighterKnowsTheVocabulary() {
@@ -107,6 +114,7 @@ class TestScriptEditor : public QObject {
     if (python_) {
       QVERIFY2(w.estimate_text().startsWith(QStringLiteral("Estimate ")), qPrintable(w.estimate_text()));
       QVERIFY(w.diagnostic_lines().isEmpty());
+      QCOMPARE(w.problems_title(), QStringLiteral("Problems"));
     } else {
       QVERIFY(w.estimate_text().startsWith(QStringLiteral("Not checked")));
     }
@@ -121,7 +129,10 @@ class TestScriptEditor : public QObject {
     if (python_) {
       QTRY_VERIFY_WITH_TIMEOUT(!w.diagnostic_lines().isEmpty(), 5000);
       QVERIFY(w.diagnostic_lines().front().contains(QStringLiteral("frobnicate")));
-      QVERIFY(w.diagnostic_lines().front().startsWith(QStringLiteral("10: error")));
+      // sim_extract.py is 21 lines: the one typed is the next.
+      QVERIFY(w.diagnostic_lines().front().startsWith(QStringLiteral("22: error")));
+      // The panel's title says what it lists, and how many.
+      QVERIFY2(w.problems_title().startsWith(QStringLiteral("Problems: 1 error")), qPrintable(w.problems_title()));
     // Listed in line order.
     w.current_editor()->moveCursor(QTextCursor::Start);
     w.current_editor()->insertPlainText(QStringLiteral("zap = nope\n"));
@@ -132,7 +143,7 @@ class TestScriptEditor : public QObject {
     w.check_now();
       QVERIFY(w.estimate_text().contains(QStringLiteral("error")));
       QCOMPARE(w.current_editor()->diagnostics().size(), std::size_t{1});
-      QCOMPARE(w.current_editor()->diagnostics().front().line, 10);
+      QCOMPARE(w.current_editor()->diagnostics().front().line, 22);
     }
     QString error;
     QVERIFY2(w.save(&error), qPrintable(error));
@@ -166,6 +177,54 @@ class TestScriptEditor : public QObject {
       QVERIFY2(w.estimate_text().startsWith(QStringLiteral("Estimate 0:00:06")), qPrintable(w.estimate_text()));
     }
     fs::remove_all(dir_ / "scripts" / "extraction" / "co2");
+  }
+
+  // File > Open: one of the lab's scripts, by the name the tree gives it.
+  void fileOpenPicksOneOfTheLabsScripts() {
+    using pychron::ui::MenuHub;
+    ScriptEditorWindow w(*lab_, settings());
+    QStringList offered;
+    std::optional<QString> answer;
+    w.set_pick_script([&](const QStringList& names) {
+      offered = names;
+      return answer;
+    });
+    QVERIFY(!w.open_picked());  // cancelled
+    QCOMPARE(offered, w.script_names());
+    QCOMPARE(w.document_count(), 0);
+
+    answer = QStringLiteral("extraction/with_gosub");
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/with_gosub"));
+    answer = QStringLiteral("lib/pump");  // as the tree has it, not as a gosub names it
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/lib:pump"));
+    QCOMPARE(w.document_count(), 2);
+    answer = QStringLiteral("extraction/with_gosub");  // open already: its tab, not a second
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.document_count(), 2);
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/with_gosub"));
+    answer = QStringLiteral("extraction/no_such_script");
+    QVERIFY(!w.open_picked());
+    QCOMPARE(w.document_count(), 2);
+
+    // In front, File > Save is this window's, and only with a tab.
+    w.set_ask_unsaved([](const QString&) { return ScriptEditorWindow::Unsaved::Discard; });
+    w.show();
+    w.activateWindow();
+    if (!QTest::qWaitForWindowActive(&w)) QSKIP("this platform does not activate windows");
+    MenuHub& hub = MenuHub::instance();
+    QCOMPARE(hub.file_action(MenuHub::FileRole::Save)->text(), QStringLiteral("&Save Script"));
+    QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
+    QVERIFY(!hub.file_action(MenuHub::FileRole::SaveAs)->isEnabled());
+    QVERIFY(w.close_current());
+    QVERIFY(w.close_current());
+    QCOMPARE(w.document_count(), 0);
+    QVERIFY(!hub.file_action(MenuHub::FileRole::Save)->isEnabled());  // nothing to save
+    answer = QStringLiteral("lib/pump");
+    QVERIFY(w.open_picked());
+    QCOMPARE(w.current_name(), QStringLiteral("extraction/lib:pump"));
+    QVERIFY(hub.file_action(MenuHub::FileRole::Save)->isEnabled());
   }
 
   void unsavedEditsAsk() {

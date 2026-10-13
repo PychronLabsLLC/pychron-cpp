@@ -452,7 +452,7 @@ Result<Value> SetupWizard::value_of(const Field& field) const {
       int index = -1;
       if (auto* combo = qobject_cast<QComboBox*>(field.editor)) index = combo->currentIndex();
       else if (auto* group = field.editor->findChild<QButtonGroup*>()) index = group->checkedId();
-      if (index < 0 || index >= static_cast<int>(q.choices.size())) return fail(ErrorKind::Config, "choose one");
+      if (index < 0 || std::cmp_greater_equal(index, q.choices.size())) return fail(ErrorKind::Config, "choose one");
       return Value{q.choices[static_cast<std::size_t>(index)]};
     }
     case QuestionType::Table: {
@@ -544,7 +544,7 @@ int SetupWizard::nextId() const {
   if (id == kReady) return kDone;
   const int from = id == kWelcome ? -1 : id == kLocation ? 0 : id - kFirstGroup + 1;
   if (id == kWelcome) return kLocation;
-  for (int g = std::max(from, 0); g < static_cast<int>(groups_.size()); ++g) {
+  for (int g = std::max(from, 0); std::cmp_less(g, groups_.size()); ++g) {
     if (group_has_questions(g)) return kFirstGroup + g;
   }
   return kReady;
@@ -705,7 +705,7 @@ void SetupWizard::prepare_ready() {
   for (std::size_t g = 0; g < groups_.size(); ++g) {
     bool heading = false;
     for (const auto& f : fields_) {
-      if (f.group != static_cast<int>(g) || !is_asked(f.question, *answers)) continue;
+      if (std::cmp_not_equal(f.group, g) || !is_asked(f.question, *answers)) continue;
       auto it = answers->find(f.question.id);
       if (it == answers->end()) continue;
       if (!heading) {
@@ -774,6 +774,31 @@ bool SetupWizard::install() {
       return show_error("creating " + entry.database + ": " + made.error().what);
     }
   }
+  // An instrument's database is made (a local one; the lab's server is never
+  // migrated from here) and given the install's seed file. The instrument
+  // measures without it: what goes wrong is a warning on the last page.
+  std::optional<Check> seeded;
+  const std::filesystem::path seed_file = entry.root / "seed.toml";
+  std::error_code ec;
+  if (entry.kind == "instrument" && !entry.database.empty() && options_.seed_database &&
+      std::filesystem::exists(seed_file, ec)) {
+    const bool local = entry.database.starts_with("sqlite:");
+    Result<std::string> done = database_url(entry);
+    if (done) {
+      // SQLite makes the file, not the folder it is in.
+      if (local)
+        std::filesystem::create_directories(
+            std::filesystem::path(done->substr(std::string_view("sqlite:").size())).parent_path(), ec);
+      done = options_.seed_database(*done, seed_file, local);
+    }
+    seeded = done ? Check{Check::Status::Ok, "seed", *done, {}}
+                  // A server's password is in the install, not in its url:
+                  // there the install is the one to run again.
+                  : Check{Check::Status::Warn, "seed",
+                          "skipped: " + done.error().what.substr(0, done.error().what.find('\n')),
+                          local ? "elctl entry seed \"" + seed_file.string() + "\" --db \"" + entry.database + "\""
+                                : "elctl init --reconfigure --install " + entry.name};
+  }
   if (auto saved = register_install(entry, options_.site_path); !saved) return show_error(saved.error().what);
   installed_ = entry;
   DoctorOptions doctor_options;
@@ -782,6 +807,7 @@ bool SetupWizard::install() {
     doctor_options.open_database = [open = options_.open_database](const std::string& url) { return open(url, false); };
   }
   checks_ = doctor(entry, doctor_options);
+  if (seeded) checks_.push_back(std::move(*seeded));
   return true;
 }
 

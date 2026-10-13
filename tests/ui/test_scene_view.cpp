@@ -1,5 +1,6 @@
 // SceneView draws what a scene says; here, the layers with nothing else to test them.
 
+#include <cmath>
 #include <memory>
 
 #include <QtTest/QtTest>
@@ -72,6 +73,202 @@ class TestSceneView : public QObject {
     QVERIFY(near(spans[2].left(), panel.left()));
     QVERIFY(near(spans[2].right(), panel.right()));
     QVERIFY(spans[1].height() < spans[0].height());
+  }
+
+  // A click acts on an analysis: a point that names none (a mean, a predicted
+  // value) drawn over one does not hide it, and alone is no target. Its tooltip
+  // is still the one shown there.
+  void aClickReachesTheAnalysisUnderAPointWithoutOne() {
+    pp::Scene scene;
+    pp::Graph g;
+    g.x.min = 0.0;
+    g.x.max = 10.0;
+    pp::Panel p;
+    p.y.min = 0.0;
+    p.y.max = 100.0;
+    pp::PointLayer analyses;
+    analyses.x = {3.0, 7.0};
+    analyses.y = {30.0, 70.0};
+    analyses.refs = {pp::PointRef{"a"}, pp::PointRef{"b"}};
+    analyses.excluded = {false, false};
+    analyses.tooltips = {"analysis a", "analysis b"};
+    pp::PointLayer means;  // drawn after, so on top: one exactly over "a", one alone
+    means.x = {3.0, 5.0};
+    means.y = {30.0, 50.0};
+    means.refs = {pp::PointRef{""}, pp::PointRef{""}};
+    means.excluded = {false, false};
+    means.tooltips = {"mean over a", "mean alone"};
+    p.layers = {analyses, means};
+    g.panels.push_back(p);
+    scene.graphs.push_back(g);
+
+    SceneView view;
+    view.resize(600, 400);
+    view.set_scene(std::make_shared<const pp::Scene>(scene));
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.plot()->replot();
+
+    QStringList clicked;
+    connect(&view, &SceneView::point_clicked, &view, [&](const QString& id) { clicked << id; });
+    QStringList banded;
+    connect(&view, &SceneView::points_toggled, &view, [&](const QStringList& ids) { banded = ids; });
+    const QCPAxisRect* rect = view.plot()->axisRect(0);
+    const auto at = [&](double x, double y) {
+      return QPoint(static_cast<int>(std::lround(rect->axis(QCPAxis::atBottom)->coordToPixel(x))),
+                    static_cast<int>(std::lround(rect->axis(QCPAxis::atLeft)->coordToPixel(y))));
+    };
+    const auto pos = view.point_position("a");
+    QVERIFY(pos);
+    QCOMPARE(view.plot()->mapFrom(&view, *pos), at(3.0, 30.0));
+
+    // Under the mean: the analysis is clicked, and the tooltip is the mean's.
+    QCOMPARE(view.tooltip_at(at(3.0, 30.0)), QStringLiteral("mean over a"));
+    QTest::mouseClick(view.plot(), Qt::LeftButton, Qt::NoModifier, at(3.0, 30.0));
+    QCOMPARE(clicked, QStringList{QStringLiteral("a")});
+
+    // A point that names no analysis, alone: a tooltip, and nothing to click.
+    QCOMPARE(view.tooltip_at(at(5.0, 50.0)), QStringLiteral("mean alone"));
+    QTest::mouseClick(view.plot(), Qt::LeftButton, Qt::NoModifier, at(5.0, 50.0));
+    QCOMPARE(clicked.size(), 1);
+
+    // An analysis with nothing over it, as ever.
+    QTest::mouseClick(view.plot(), Qt::LeftButton, Qt::NoModifier, at(7.0, 70.0));
+    QCOMPARE(clicked, QStringList({QStringLiteral("a"), QStringLiteral("b")}));
+
+    // A rubber band over all of it names the analyses only, each once.
+    QTest::mousePress(view.plot(), Qt::LeftButton, Qt::ShiftModifier, at(1.0, 90.0));
+    QTest::mouseMove(view.plot(), at(9.0, 10.0));
+    QTest::mouseRelease(view.plot(), Qt::LeftButton, Qt::ShiftModifier, at(9.0, 10.0));
+    QCOMPARE(banded, QStringList({QStringLiteral("a"), QStringLiteral("b")}));
+    // And over the lone mean, nothing.
+    banded.clear();
+    QTest::mousePress(view.plot(), Qt::LeftButton, Qt::ShiftModifier, at(4.5, 55.0));
+    QTest::mouseMove(view.plot(), at(5.5, 45.0));
+    QTest::mouseRelease(view.plot(), Qt::LeftButton, Qt::ShiftModifier, at(5.5, 45.0));
+    QVERIFY(banded.isEmpty());
+  }
+
+  // Stacked panels are exactly `panel_spacing` apart, zero included: nothing
+  // of a panel's own lies between it and the next. Graphs are `graph_spacing`
+  // apart.
+  void spacingIsWhatTheSceneSays() {
+    const auto scene_with = [](int panel_spacing, int graph_spacing) {
+      pp::Scene scene;
+      scene.columns = 2;
+      scene.style.panel_spacing = panel_spacing;
+      scene.style.graph_spacing = graph_spacing;
+      for (int gi = 0; gi < 2; ++gi) {
+        pp::Graph g;
+        g.x.title = "Age (Ma)";
+        for (int pi = 0; pi < 3; ++pi) {
+          pp::Panel p;
+          p.y.title = "y";
+          pp::PointLayer pts;
+          pts.x = {1.0, 9.0};
+          pts.y = {10.0, 90.0};
+          pts.refs = {pp::PointRef{"a"}, pp::PointRef{"b"}};
+          pts.excluded = {false, false};
+          p.layers = {pts};
+          g.panels.push_back(p);
+        }
+        scene.graphs.push_back(g);
+      }
+      return std::make_shared<const pp::Scene>(scene);
+    };
+    SceneView view;
+    view.resize(800, 600);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    const auto panel_gap = [&](int upper) {
+      const QRect a = view.plot()->axisRect(upper)->rect(), b = view.plot()->axisRect(upper + 1)->rect();
+      return b.y() - (a.y() + a.height());
+    };
+    const auto graph_gap = [&] {
+      const QRect a = view.plot()->plotLayout()->elementAt(0)->outerRect();
+      const QRect b = view.plot()->plotLayout()->elementAt(1)->outerRect();
+      return b.x() - (a.x() + a.width());
+    };
+    for (const int spacing : {0, 10}) {
+      view.set_scene(scene_with(spacing, 5));
+      view.plot()->replot();
+      QCOMPARE(panel_gap(0), spacing);
+      QCOMPARE(panel_gap(1), spacing);
+      QCOMPARE(panel_gap(3), spacing);  // the second graph
+      QCOMPARE(graph_gap(), 5);
+    }
+    for (const int spacing : {0, 30}) {
+      view.set_scene(scene_with(4, spacing));
+      view.plot()->replot();
+      QCOMPARE(graph_gap(), spacing);
+    }
+  }
+
+  // A y axis pinned at its minimum keeps it under the wheel and under a drag:
+  // the wheel moves the top alone, wherever the pointer is.
+  void aPinnedAxisKeepsItsMinimum() {
+    pp::Scene scene;
+    pp::Graph g;
+    g.x.min = 0.0;
+    g.x.max = 10.0;
+    for (const bool pinned : {false, true}) {
+      pp::Panel p;
+      if (pinned) {
+        p.y.min = 0.0;
+        p.y.pin_min = true;
+      }
+      pp::LineLayer curve;
+      curve.x = {0.0, 5.0, 10.0};
+      curve.y = {0.0, 1.0, 0.0};
+      p.layers = {curve};
+      g.panels.push_back(p);
+    }
+    scene.graphs.push_back(g);
+
+    SceneView view;
+    view.resize(600, 600);
+    view.set_scene(std::make_shared<const pp::Scene>(scene));
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.plot()->replot();
+
+    QCPAxisRect* free_rect = view.plot()->axisRect(0);
+    QCPAxisRect* rect = view.plot()->axisRect(1);
+    QCPAxis* y = rect->axis(QCPAxis::atLeft);
+    QCOMPARE(y->range().lower, 0.0);
+    const auto wheel = [&](const QPoint& at, int delta) {
+      QWheelEvent e(at, view.plot()->mapToGlobal(at), QPoint(), QPoint(0, delta), Qt::NoButton, Qt::NoModifier,
+                    Qt::NoScrollPhase, false);
+      QApplication::sendEvent(view.plot(), &e);
+    };
+    double upper = y->range().upper;
+    for (const int delta : {120, 120, -120, -120, -120}) {
+      // Near the top of the panel, where a zoom about the pointer would move the bottom most.
+      wheel(QPoint(rect->center().x(), rect->top() + 5), delta);
+      QCOMPARE(y->range().lower, 0.0);
+      if (delta > 0)
+        QVERIFY(y->range().upper < upper);
+      else
+        QVERIFY(y->range().upper > upper);
+      upper = y->range().upper;
+    }
+    const QPoint from = rect->center(), to = from + QPoint(40, 60);
+    const double x_before = rect->axis(QCPAxis::atBottom)->range().lower;
+    QTest::mousePress(view.plot(), Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(view.plot(), to);
+    QTest::mouseRelease(view.plot(), Qt::LeftButton, Qt::NoModifier, to);
+    QCOMPARE(y->range().lower, 0.0);
+    QCOMPARE(y->range().upper, upper);
+    QVERIFY(rect->axis(QCPAxis::atBottom)->range().lower != x_before);  // x still pans
+
+    // An axis that is not pinned zooms about the pointer, as before.
+    QCPAxis* free_y = free_rect->axis(QCPAxis::atLeft);
+    const double free_lower = free_y->range().lower;
+    wheel(QPoint(free_rect->center().x(), free_rect->top() + 5), 120);
+    QVERIFY(free_y->range().lower > free_lower);
+
+    view.reset_view();
+    QCOMPARE(y->range().lower, 0.0);
   }
 };
 

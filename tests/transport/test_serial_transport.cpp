@@ -9,7 +9,7 @@
 #ifndef _WIN32
 #include <fcntl.h>
 #include <poll.h>
-#include <stdlib.h>
+#include <cstdlib>
 #include <unistd.h>
 #endif
 

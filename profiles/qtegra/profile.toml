@@ -2,7 +2,7 @@ name = "qtegra"
 title = "Thermo Qtegra spectrometer"
 kind = "fragment"
 summary = "A thermo_qtegra spectrometer (Argus, Helix) and its starter tables"
-version = 1
+version = 2
 includes = ["instrument-common"]
 
 [[questions]]
@@ -27,11 +27,11 @@ template = "spectrometer.toml"
 to = "spectrometer.toml"
 
 [[files]]
-copy = "@examples/tables/argon/"
+copy = "tables/argon/"
 to = "tables/argon"
 
 [[files]]
-copy = "@examples/tables/argon_hv/"
+copy = "tables/argon_hv/"
 to = "tables/argon_hv"
 
 [[files]]

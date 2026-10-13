@@ -98,6 +98,9 @@ toml::table to_table(const AnalysisRecord& r) {
   in.insert_or_assign("analyst", r.instrument.analyst);
   in.insert_or_assign("software_version", r.instrument.software_version);
   in.insert_or_assign("software_git_sha", r.instrument.software_git_sha);
+  // Only when true: a record that is not simulated keeps the text, and so the
+  // sha, it had before records could say so (schema version 2 either way).
+  if (r.instrument.simulated) in.insert_or_assign("simulated", true);
   root.insert_or_assign("instrument", std::move(in));
 
   toml::table ex, spec, act;
@@ -461,6 +464,7 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   in.str("analyst", r.instrument.analyst);
   in.str("software_version", r.instrument.software_version);
   in.str("software_git_sha", r.instrument.software_git_sha);
+  in.boolean("simulated", r.instrument.simulated);  // absent: not simulated
 
   const auto ex = top.sub("extraction");
   const auto spec = ex.sub("spec");
@@ -697,8 +701,8 @@ class Json {
           if (ec != std::errc() || p != s_.data() + i_ + 4) return bad("bad \\u escape");
           i_ += 4;
           if (cp < 0x80) out.push_back(static_cast<char>(cp));
-          else if (cp < 0x800) { out.push_back(char(0xC0 | (cp >> 6))); out.push_back(char(0x80 | (cp & 0x3F))); }
-          else { out.push_back(char(0xE0 | (cp >> 12))); out.push_back(char(0x80 | ((cp >> 6) & 0x3F))); out.push_back(char(0x80 | (cp & 0x3F))); }
+          else if (cp < 0x800) { out.push_back(static_cast<char>(0xC0 | (cp >> 6))); out.push_back(static_cast<char>(0x80 | (cp & 0x3F))); }
+          else { out.push_back(static_cast<char>(0xE0 | (cp >> 12))); out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F))); out.push_back(static_cast<char>(0x80 | (cp & 0x3F))); }
           break;
         }
         default: return bad("bad escape");
@@ -726,7 +730,7 @@ class Json {
     do {
       Val v;
       if (!value(v)) return false;
-      std::visit([&](auto&& x) { out.push_back(std::move(x)); }, std::move(v));
+      std::visit([&](auto&& x) { out.push_back(std::forward<decltype(x)>(x)); }, std::move(v));
     } while (eat(','));
     return eat(']') || bad("expected ']'");
   }
@@ -763,7 +767,7 @@ class Json {
   }
 
   static void insert(toml::table& t, const std::string& k, Val v) {
-    std::visit([&](auto&& x) { t.insert_or_assign(k, std::move(x)); }, std::move(v));
+    std::visit([&](auto&& x) { t.insert_or_assign(k, std::forward<decltype(x)>(x)); }, std::move(v));
   }
 
   std::string_view s_;

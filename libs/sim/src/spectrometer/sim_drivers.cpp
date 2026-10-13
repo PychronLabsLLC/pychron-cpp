@@ -13,6 +13,7 @@ double seconds(Duration d) { return std::chrono::duration<double>(d).count(); }
 
 const Clock& clock_of(const DriverArgs& args) {
   static const SteadyClock steady;
+  // cppcheck-suppress returnTempReference ; the caller's clock or a static: neither is a temporary
   return args.clock != nullptr ? *args.clock : steady;
 }
 
@@ -65,11 +66,14 @@ const ConfigKey kBeam{"beam", KeyType::String, false, "name of the shared BeamMo
 namespace detail {
 
 void FramePacer::start(Duration period) {
-  std::scoped_lock lock(mutex_);
-  running_ = true;
-  period_ = period;
-  due_ = clock_.now() + period;
-  seq_ = 0;
+  {
+    std::scoped_lock lock(mutex_);
+    running_ = true;
+    period_ = period;
+    due_ = clock_.now() + period;
+    seq_ = 0;
+  }
+  clock_.notify_all(cv_);  // a waiter asleep until the old due time
 }
 
 void FramePacer::stop() {
@@ -77,7 +81,7 @@ void FramePacer::stop() {
     std::scoped_lock lock(mutex_);
     running_ = false;
   }
-  cv_.notify_all();
+  clock_.notify_all(cv_);
 }
 
 bool FramePacer::running() const {
@@ -93,7 +97,6 @@ Duration FramePacer::period() const {
 std::optional<TimePoint> FramePacer::wait(Duration timeout, std::uint64_t& seq) {
   std::unique_lock lock(mutex_);
   const TimePoint deadline = clock_.now() + timeout;
-  const auto real_deadline = std::chrono::steady_clock::now() + timeout;
   while (running_) {
     TimePoint now = clock_.now();
     if (now >= due_) {
@@ -101,7 +104,7 @@ std::optional<TimePoint> FramePacer::wait(Duration timeout, std::uint64_t& seq) 
       due_ = now + period_;
       return now;
     }
-    if (now >= deadline || std::chrono::steady_clock::now() >= real_deadline) return std::nullopt;
+    if (now >= deadline) return std::nullopt;
     clock_.wait_until(cv_, lock, std::min(due_, deadline));
   }
   return std::nullopt;

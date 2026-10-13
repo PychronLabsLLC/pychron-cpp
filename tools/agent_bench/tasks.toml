@@ -1,0 +1,135 @@
+# The fixed set of tools/agent_bench/run.py: tasks this repository has done,
+# each a real commit. A run starts at the commit's parent (`start`, when it is
+# not that), gives `prompt` to an agent, then copies in the `hidden` files as
+# the real commit left them and runs the checks in order. A check is an argv
+# list run in the run's worktree; {python} is this interpreter, {base} the
+# commit the agent started from (the start commit under the guide being
+# tested). `before_hidden` checks see the agent's work alone. A task passes
+# when every required check exits 0.
+#
+# A task belongs here only if its hidden tests go through an interface that
+# exists at the start commit, or the prompt can name the new one in a line
+# without giving the solution away. The prompt is what the owner would have
+# written, not what the commit did.
+
+[[task]]
+id = "sim-transport-bounded"
+kind = "leak found by measurement"
+smoke = true
+reference = "cd1d31bd"
+prompt = """
+elctl exp run keeps about 49 KB per finished run when the lab is simulated \
+(64 MB at 100 runs, 108 MB at 1000): find what is held and whether it should be.
+
+It is in libs/transport: SimTransport records every frame written to it, and a \
+simulated lab polls its gauges for as long as it runs. Bound that record: \
+written() returns the newest SimTransport::kWrittenLimit frames (a public \
+static constant, 10000) and lets older ones go. Test first. Commit on this \
+branch when the transport tests pass; do not push.
+"""
+hidden = ["tests/transport/test_sim_transport.cpp"]
+
+[[task.check]]
+name = "configure"
+argv = ["cmake", "--preset", "dev"]
+before_hidden = true
+
+[[task.check]]
+name = "static analysis"
+argv = ["{python}", "tools/quality_check.py", "--json", "--base", "{base}"]
+before_hidden = true
+required = false
+findings_json = true
+
+[[task.check]]
+name = "build"
+argv = ["cmake", "--build", "--preset", "dev", "--target", "pychron_transport_tests"]
+
+[[task.check]]
+name = "tests"
+argv = ["build/dev/tests/transport/pychron_transport_tests", "--gtest_filter=SimTransport*"]
+
+[[task]]
+id = "job-runner-destructor"
+kind = "concurrency defect"
+smoke = true
+reference = "9932e462"
+prompt = """
+CI's AddressSanitizer job on Linux reports a stack-use-after-return in \
+SpectrometerPeakCenterSim.CancellingTheRunLeavesAnotherJobOnTheRunnerAlone \
+(tests/integration/test_measurement_sim.cpp): a scheduler thread is in \
+pychron::jobs::JobRunner::finish, called from execute, reading the runner \
+after the test's JobRunner local has been destroyed. The test had called \
+runner.wait_idle() and returned.
+
+Find the cause in libs/systems/src/jobs/job_runner.cpp and fix it in the \
+runner, not in the test. Write a test in tests/systems/test_jobs_runner.cpp \
+that fails before the fix. Commit on this branch when the job runner tests \
+pass; do not push.
+"""
+hidden = ["tests/systems/test_jobs_runner.cpp"]
+
+[[task.check]]
+name = "configure"
+argv = ["cmake", "--preset", "dev"]
+before_hidden = true
+
+[[task.check]]
+name = "static analysis"
+argv = ["{python}", "tools/quality_check.py", "--json", "--base", "{base}"]
+before_hidden = true
+required = false
+findings_json = true
+
+[[task.check]]
+name = "build"
+argv = ["cmake", "--build", "--preset", "dev", "--target", "pychron_systems_tests"]
+
+[[task.check]]
+name = "tests"
+argv = ["build/dev/tests/systems/pychron_systems_tests", "--gtest_filter=JobRunner.*:Jobs*"]
+
+[[task]]
+id = "plan-time-zero"
+kind = "shipped files held together by a test"
+smoke = true
+reference = "267660f9"
+prompt = """
+The measurement plan should include a time zero setting, defined as seconds \
+after inlet open.
+
+The plan format already has it (time_zero under [main]: "on_inlet_close", \
+"on_first_count" or { offset_s = N }), but no shipped plan writes it and the \
+Measurement tab does not show it. Agreed scope: keep "on_inlet_close" as the \
+default; write time_zero = "on_inlet_close" in the four shipped plans \
+(configs/examples/plans/sim_multicollect.toml and the three under \
+profiles/instrument-common/plans) and expose it in each, last in \
+[parameters] expose, as { path = "main.time_zero", label = "Time zero" }. \
+Add tests that hold this, and say it in the user guide. Commit on this \
+branch when the setup and experiment tests pass; do not push.
+"""
+hidden = ["tests/setup/test_profiles.cpp", "tests/experiment/test_plan_parameters.cpp"]
+
+[[task.check]]
+name = "configure"
+argv = ["cmake", "--preset", "dev"]
+before_hidden = true
+
+[[task.check]]
+name = "static analysis"
+argv = ["{python}", "tools/quality_check.py", "--json", "--base", "{base}"]
+before_hidden = true
+required = false
+findings_json = true
+
+[[task.check]]
+name = "build"
+argv = ["cmake", "--build", "--preset", "dev", "--target", "pychron_setup_tests", "pychron_experiment_tests"]
+
+[[task.check]]
+name = "setup tests"
+argv = ["build/dev/tests/setup/pychron_setup_tests", "--gtest_filter=Profiles.*"]
+
+[[task.check]]
+name = "experiment tests"
+argv = ["build/dev/tests/experiment/pychron_experiment_tests", "--gtest_filter=PlanParameters.*"]

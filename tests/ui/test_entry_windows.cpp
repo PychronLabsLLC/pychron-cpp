@@ -19,10 +19,13 @@ class EntryWindowsTest : public QObject {
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QTableView>
 #include <QTableWidget>
+#include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QToolBar>
 #include <QTreeWidget>
 
 #include "entry_actions.hpp"
@@ -31,10 +34,12 @@ class EntryWindowsTest : public QObject {
 #include "level_grid_model.hpp"
 #include "menu_hub.hpp"
 #include "package_dialogs.hpp"
+#include "package_tree_delegate.hpp"
 #include "packages_window.hpp"
 #include "sample_import_dialog.hpp"
 #include "sample_table_model.hpp"
 #include "samples_window.hpp"
+#include "store_identifier_source.hpp"
 
 using namespace pychron;
 namespace ps = pychron::persistence;
@@ -247,6 +252,62 @@ class EntryWindowsTest : public QObject {
       QCOMPARE(after.positions[i].identifier, std::optional<std::string>(std::to_string(planned[i].number)));
   }
 
+  void packages_tree_rows_and_expansion() {
+    namespace pt = pychron::ui::package_tree;
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.resize(900, 500);
+    w.show();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    auto* tree = w.tree();
+    QCOMPARE(tree->topLevelItemCount(), 1);
+    auto* package = tree->topLevelItem(0);
+    // The name is the name alone: the kind is a tag, the count a detail.
+    QCOMPARE(package->text(0), QStringLiteral("P-1"));
+    QCOMPARE(package->data(0, pt::TagRole).toString(), QStringLiteral("package"));
+    QVERIFY(!package->data(0, pt::WarningRole).toBool());  // only an irradiation wants a chronology
+    QVERIFY(package->data(0, pt::DetailRole).toString().isEmpty());  // no positions yet
+    QCOMPARE(package->childCount(), 2);
+    QCOMPARE(package->child(0)->text(0), QStringLiteral("A"));
+    QCOMPARE(package->child(0)->data(0, pt::DetailRole).toString(), QStringLiteral("4-hole"));
+    QVERIFY(tree->visualItemRect(package).height() >= 28);
+
+    // A click on a package opens and closes it.
+    QVERIFY(!package->isExpanded());
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, {}, tree->visualItemRect(package).center());
+    QVERIFY(package->isExpanded());
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, {}, tree->visualItemRect(package).center());
+    QVERIFY(!package->isExpanded());
+
+    // An open package stays open over a reload, with no level open.
+    package->setExpanded(true);
+    w.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCOMPARE(tree->topLevelItemCount(), 1);
+    QVERIFY(tree->topLevelItem(0)->isExpanded());
+
+    // Positions show as analyzed/positions, and an irradiation without a chronology is marked.
+    auto sheet = store_->level_sheet(seeded_.level_a)->value();
+    en::LevelSheetEdit e(sheet, std::nullopt);
+    e.add_row(1);
+    e.assign_sample({1}, (*store_->samples({"bt-1", std::nullopt, std::nullopt, std::nullopt, 10})).front());
+    QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, e.to_batch())));
+    w.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCOMPARE(tree->topLevelItem(0)->data(0, pt::DetailRole).toString(), QStringLiteral("0/1"));
+
+    ps::CatalogEditBatch kind;
+    kind.edits = {ps::CatalogUpdate{ps::CatalogTable::Irradiation, seeded_.package, {{"kind", std::string("package")}},
+                                    {{"kind", std::string("irradiation")}}}};
+    QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, kind)));
+    w.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    package = tree->topLevelItem(0);
+    QVERIFY(package->data(0, pt::WarningRole).toBool());
+    QVERIFY(package->data(0, pt::TagRole).toString().isEmpty());
+    QVERIFY(package->toolTip(0).contains(QStringLiteral("No chronology")));
+  }
+
   void identifiers_replan_when_the_counter_moved() {
     auto b = bridge();
     // Two filled positions in A, one in B.
@@ -291,6 +352,207 @@ class EntryWindowsTest : public QObject {
     QVERIFY(QFileInfo(path).size() > 1000);
   }
 
+  void packages_fit_flux_asks_for_the_level() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    QSignalSpy asked(&w, &pychron::ui::PackagesWindow::flux_requested);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QAction* fit = w.fit_flux_action();
+    QVERIFY(fit != nullptr);
+    QCOMPARE(fit->text(), QStringLiteral("Fit flux…"));
+    QVERIFY(w.findChild<QToolBar*>(QStringLiteral("packages_toolbar"))->actions().contains(fit));
+    // No level open: disabled, and nothing is asked.
+    QVERIFY(!fit->isEnabled());
+    fit->trigger();
+    QCOMPARE(asked.count(), 0);
+
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    QVERIFY(fit->isEnabled());
+    fit->trigger();
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.at(0).at(0).toString(), QStringLiteral("P-1"));
+    QCOMPARE(asked.at(0).at(1).toString(), QStringLiteral("A"));
+  }
+
+  void show_level_selects_and_opens_it() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    int asked = 0;
+    w.set_confirm([&](const QString&) {
+      ++asked;
+      return false;
+    });
+    // Asked for while the tree is still being read: opened once it is.
+    QVERIFY(w.busy());
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("B"));
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    QCOMPARE(w.grid()->edit().loaded().level.uuid, seeded_.level_b);
+    QVERIFY(w.tree()->currentItem() != nullptr);
+    QCOMPARE(w.tree()->currentItem()->text(0), QStringLiteral("B"));
+    QCOMPARE(w.windowTitle(), QStringLiteral("Packages — P-1 B"));
+
+    // With edits pending it asks, as a click on the level does.
+    ps::SampleRow bt1 = (*store_->samples({"bt-1", std::nullopt, std::nullopt, std::nullopt, 10})).front();
+    w.select_positions({1});
+    w.assign(bt1);
+    QVERIFY(w.grid()->edit().dirty());
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("A"));
+    QCOMPARE(asked, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->edit().loaded().level.uuid == seeded_.level_a, kWaitMs);
+    QCOMPARE(w.tree()->currentItem()->text(0), QStringLiteral("A"));
+
+    // The level already open is only selected; one that is not there is said.
+    w.select_positions({1});
+    w.assign(bt1);
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("A"));
+    QCOMPARE(asked, 1);
+    QVERIFY(!w.busy());
+    QVERIFY(w.grid()->edit().dirty());
+    w.show_level(QStringLiteral("P-1"), QStringLiteral("Z"));
+    QCOMPARE(w.message(), QStringLiteral("There is no level P-1 Z"));
+    QCOMPARE(asked, 1);
+    QVERIFY(!w.busy());
+  }
+
+  void a_change_elsewhere_reloads_the_open_level() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.set_confirm([](const QString&) { return false; });
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    const auto sample_at = [&](int row) {
+      return w.grid()->index(row, pychron::ui::LevelGridModel::Sample).data().toString();
+    };
+    QCOMPARE(sample_at(0), QString());
+
+    // Another client fills position 1; the window is told and shows it.
+    {
+      auto sheet = store_->level_sheet(seeded_.level_a)->value();
+      en::LevelSheetEdit e(sheet, std::nullopt);
+      e.add_row(1);
+      ps::SampleRow bt1 = (*store_->samples({"bt-1", std::nullopt, std::nullopt, std::nullopt, 10})).front();
+      e.assign_sample({1}, bt1);
+      QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, e.to_batch())));
+    }
+    b->notify_changed();
+    QVERIFY(w.busy());
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    QCOMPARE(sample_at(0), QStringLiteral("bt-1"));
+
+    // With edits pending the level is left as it is.
+    QVERIFY(w.grid()->setData(w.grid()->index(1, pychron::ui::LevelGridModel::Note), QStringLiteral("mine")));
+    QVERIFY(w.grid()->edit().dirty());
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QVERIFY(w.grid()->edit().dirty());
+    QCOMPARE(w.grid()->index(1, pychron::ui::LevelGridModel::Note).data().toString(), QStringLiteral("mine"));
+  }
+
+  // Another client puts `sample` on position `position` of level A.
+  void fill_elsewhere(int position, const std::string& sample) {
+    auto sheet = store_->level_sheet(seeded_.level_a)->value();
+    en::LevelSheetEdit e(sheet, std::nullopt);
+    e.add_row(position);
+    ps::SampleRow row = (*store_->samples({sample, std::nullopt, std::nullopt, std::nullopt, 10})).front();
+    e.assign_sample({position}, row);
+    QVERIFY(std::holds_alternative<ps::CatalogApplied>(*store_->apply_catalog_edits(seeded_.client, e.to_batch())));
+  }
+
+  void a_change_elsewhere_keeps_unsaved_doses_and_level_fields() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.set_confirm([](const QString&) { return false; });
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    const auto sample_at = [&](int position) {
+      return w.grid()->index(w.grid()->row_of(position), pychron::ui::LevelGridModel::Sample).data().toString();
+    };
+    auto* doses = w.findChild<QTableWidget*>(QStringLiteral("packages_doses"));
+    auto* z = w.findChild<QLineEdit*>(QStringLiteral("packages_z"));
+    auto* note = w.findChild<QLineEdit*>(QStringLiteral("packages_level_note"));
+    QVERIFY(doses && z && note);
+    QCOMPARE(doses->rowCount(), 0);
+    QCOMPARE(z->text(), QString());
+
+    // A dose row added and not saved (as Add Dose makes it): the level is not read again.
+    doses->insertRow(0);
+    doses->setItem(0, 0, new QTableWidgetItem(QStringLiteral("1.0")));
+    doses->setItem(0, 1, new QTableWidgetItem(QStringLiteral("2026-01-02 08:00")));
+    doses->setItem(0, 2, new QTableWidgetItem(QStringLiteral("2026-01-02 17:00")));
+    QVERIFY(!w.grid()->edit().dirty());
+    fill_elsewhere(1, "bt-1");
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);  // the tree alone
+    QCoreApplication::processEvents();
+    QCOMPARE(doses->rowCount(), 1);
+    QCOMPARE(doses->item(0, 1)->text(), QStringLiteral("2026-01-02 08:00"));
+    QCOMPARE(sample_at(1), QString());  // the level was left alone
+
+    // The row taken out again: nothing is unsaved, and the next change shows.
+    doses->removeRow(0);
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && sample_at(1) == QStringLiteral("bt-1"), kWaitMs);
+
+    // z typed and the field not left yet: likewise.
+    z->setText(QStringLiteral("1.5"));
+    QVERIFY(!w.grid()->edit().dirty());
+    fill_elsewhere(2, "FC-2");
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCoreApplication::processEvents();
+    QCOMPARE(z->text(), QStringLiteral("1.5"));
+    QCOMPARE(sample_at(2), QString());
+    // And a note.
+    z->clear();
+    note->setText(QStringLiteral("top of the can"));
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    QCoreApplication::processEvents();
+    QCOMPARE(note->text(), QStringLiteral("top of the can"));
+    QCOMPARE(sample_at(2), QString());
+
+    // Nothing unsaved, positions 2 and 3 selected: read again, the selection kept.
+    note->clear();
+    w.select_positions({2, 3});
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && sample_at(2) == QStringLiteral("FC-2"), kWaitMs);
+    QCOMPARE(w.selected_positions(), (std::vector<int>{2, 3}));
+    QCOMPARE(w.holder_view()->selected(), (std::set<int>{2, 3}));
+  }
+
+  void a_change_elsewhere_keeps_a_grid_cell_being_typed() {
+    auto b = bridge();
+    pychron::ui::PackagesWindow w(*b);
+    w.set_confirm([](const QString&) { return false; });
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    w.open_level(seeded_.level_a);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && w.grid()->has_edit(), kWaitMs);
+    using Grid = pychron::ui::LevelGridModel;
+    const auto sample_at = [&](int position) {
+      return w.grid()->index(w.grid()->row_of(position), Grid::Sample).data().toString();
+    };
+
+    // A note being typed, not yet entered: the grid holds no edit, but the
+    // level is not read again under the cell, and what is typed stays.
+    const QModelIndex cell = w.grid()->index(w.grid()->row_of(3), Grid::Note);
+    QVERIFY(cell.isValid());
+    w.table()->edit(cell);
+    auto* editor = w.table()->viewport()->findChild<QLineEdit*>();
+    QVERIFY(editor != nullptr);
+    editor->setText(QStringLiteral("half typed"));
+    QVERIFY(!w.grid()->edit().dirty());
+    fill_elsewhere(1, "bt-1");
+    b->notify_changed();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);  // the tree alone
+    QCoreApplication::processEvents();
+    QCOMPARE(sample_at(1), QString());
+    QCOMPARE(w.table()->viewport()->findChild<QLineEdit*>(), editor);
+    QCOMPARE(editor->text(), QStringLiteral("half typed"));
+  }
+
   void entry_menu_opens_the_windows() {
     pychron::ui::MenuHub::reset(pychron::ui::MenuHub::Bars::PerWindow);
     QMainWindow main;
@@ -303,6 +565,93 @@ class EntryWindowsTest : public QObject {
     QVERIFY(actions->packages()->isVisible());
     QVERIFY(actions->bridge() != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(!actions->samples()->busy() && !actions->packages()->busy(), kWaitMs);
+  }
+  // ---- the run factory's identifier source (identifier-select design, section 4)
+
+ private:
+  // Level A: 1 and 3 hold an identifier, 2 a sample only. Level B: 2 holds one.
+  void seed_identifiers() {
+    const auto at = [this](ps::Uuid level, int position, ps::Uuid sample, const char* identifier) {
+      const auto p = store_->add_irradiation_position(seeded_.client, {level, position, sample});
+      QVERIFY2(p.has_value(), p ? "" : to_string(p.error()).c_str());
+      if (identifier == nullptr) return;
+      ps::IdentifierSpec spec;
+      spec.identifier = identifier;
+      spec.position = *p;
+      const auto i = store_->add_identifier(seeded_.client, spec);
+      QVERIFY2(i.has_value(), i ? "" : to_string(i.error()).c_str());
+    };
+    at(seeded_.level_b, 2, seeded_.bt1, "70010");
+    at(seeded_.level_a, 3, seeded_.fc2, "70003");
+    at(seeded_.level_a, 2, seeded_.bt1, nullptr);
+    at(seeded_.level_a, 1, seeded_.fc2, "70001");
+  }
+
+ private Q_SLOTS:
+  void identifier_source_lists_packages() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    QVERIFY(actions->bridge() == nullptr);  // opened by the first question, not before
+    std::optional<pychron::Result<std::vector<pychron::ui::PackageChoice>>> got;
+    source.packages(&main, [&](auto r) { got.emplace(std::move(r)); });
+    QVERIFY(!got.has_value());  // never answered before the call returns
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY2(got->has_value(), *got ? "" : to_string(got->error()).c_str());
+    QCOMPARE(**got, (std::vector<pychron::ui::PackageChoice>{{seeded_.package.str(), "P-1"}}));
+  }
+
+  void identifier_source_lists_a_packages_levels_and_identifiers() {
+    seed_identifiers();
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    std::optional<pychron::Result<pychron::ui::PackageContents>> got;
+    source.contents(&main, seeded_.package.str(), [&](auto r) { got.emplace(std::move(r)); });
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY2(got->has_value(), *got ? "" : to_string(got->error()).c_str());
+    const pychron::ui::PackageContents want{
+        {"A", "B"}, {{"70001", "FC-2", "A", 1}, {"70003", "FC-2", "A", 3}, {"70010", "bt-1", "B", 2}}};
+    QVERIFY(**got == want);
+  }
+
+  void identifier_source_refuses_a_bad_package_id() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    std::optional<pychron::Result<pychron::ui::PackageContents>> got;
+    source.contents(&main, "not-a-uuid", [&](auto r) { got.emplace(std::move(r)); });
+    QVERIFY(!got.has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY(!got->has_value());
+  }
+
+  void identifier_source_passes_on_changes() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, url_);
+    pychron::ui::StoreIdentifierSource source(*actions);
+    QSignalSpy changed(&source, &pychron::ui::IdentifierSource::changed);
+    bool answered = false;
+    source.packages(&main, [&](const auto&) { answered = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(answered, kWaitMs);
+    answered = false;
+    source.packages(&main, [&](const auto&) { answered = true; });  // a second question connects nothing twice
+    QTRY_VERIFY_WITH_TIMEOUT(answered, kWaitMs);
+    actions->bridge()->notify_changed();
+    QCOMPARE(changed.count(), 1);
+  }
+
+  void identifier_source_reports_a_store_it_cannot_open() {
+    QMainWindow main;
+    auto* actions = new pychron::ui::EntryActions(&main, "sqlite:/nonexistent-dir/none/x.db");
+    pychron::ui::StoreIdentifierSource source(*actions);
+    std::optional<pychron::Result<std::vector<pychron::ui::PackageChoice>>> got;
+    source.packages(&main, [&](auto r) { got.emplace(std::move(r)); });
+    QVERIFY(QApplication::activeModalWidget() == nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(got.has_value(), kWaitMs);
+    QVERIFY(!got->has_value());
+    QVERIFY(QApplication::activeModalWidget() == nullptr);
+    QVERIFY(actions->bridge() == nullptr);
   }
 };
 

@@ -8,18 +8,23 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::systems;
@@ -87,7 +92,7 @@ class FakeActuator final : public IValveActuator {
   }
   std::size_t commands() {
     std::size_t n = 0;
-    for (const auto& c : calls()) n += c.rfind("read", 0) != 0;
+    for (const auto& c : calls()) n += !c.starts_with("read");
     return n;
   }
   std::vector<TimePoint> read_times() {
@@ -171,7 +176,7 @@ struct Fixture {
   }
 
   ManualClock clock;
-  WallTime wall{1'000'000s};  // SwitchStats times; a test moves it by hand
+  systems::WallTime wall{1'000'000s};  // SwitchStats times; a test moves it by hand
   SignalBus bus;
   FakeActuator act{&clock};
   Recorder rec{bus};
@@ -269,6 +274,107 @@ TEST(SwitchManager, WaitsSettleTimeBeforeReadBack) {
   EXPECT_GE(reads.back() - start, 1000ms);
 }
 
+namespace {
+
+struct SwitchManagerVirtual : pychron::testing::VirtualTimeTest {};
+
+}  // namespace
+
+// The same settle on a VirtualClock: the second passes on the clock and
+// costs no real time.
+TEST_F(SwitchManagerVirtual, ActuationDelayIsClockTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  FakeActuator act{&clock};
+  auto a = valve("A", "1");
+  a.settle = 1000ms;
+  SwitchManager::Options options;
+  options.clock = &clock;
+  options.bus = &bus;
+  auto mgr = SwitchManager::create({a}, [&](const std::string&) -> IValveActuator* { return &act; }, options);
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  const auto start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  ASSERT_TRUE((*mgr)->actuate("A", SwitchOp::Open, "op"));
+
+  auto reads = act.read_times();
+  ASSERT_FALSE(reads.empty());
+  EXPECT_EQ(reads.back() - start, 1000ms);
+  EXPECT_EQ(clock.now() - start, 1000ms);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// An actuation holds the manager through its settle, which is clock time. A
+// refresh that arrives meanwhile waits for it through the clock: blocked any
+// other way it looks runnable, time stands, and the settle never ends.
+TEST_F(SwitchManagerVirtual, ARefreshWaitsForAnActuationWithoutStallingTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  SignalBus bus;
+  FakeActuator act{&clock};
+  auto a = valve("A", "1");
+  a.settle = 3000ms;
+  SwitchManager::Options options;
+  options.clock = &clock;
+  options.bus = &bus;
+  auto mgr = SwitchManager::create({a}, [&](const std::string&) -> IValveActuator* { return &act; }, options);
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  const auto start = clock.now();
+  const auto real_start = std::chrono::steady_clock::now();
+
+  TimePoint actuated{}, refreshed{};
+  bool actuate_ok = false, refresh_ok = false;
+  pychron::testing::Crew crew(clock);
+  crew.start("actuate", [&] {
+    actuate_ok = (*mgr)->actuate("A", SwitchOp::Open, "op").has_value();
+    actuated = clock.now();
+  });
+  ASSERT_TRUE(pychron::testing::await_waiters(clock, 1));  // the actuation, settling
+  ASSERT_EQ(act.commands(), 1u);
+  crew.start("refresh", [&] {
+    refresh_ok = (*mgr)->refresh().has_value();
+    refreshed = clock.now();
+  });
+  crew.join();
+
+  EXPECT_TRUE(actuate_ok);
+  EXPECT_TRUE(refresh_ok);
+  EXPECT_EQ(actuated, start + 3000ms);
+  EXPECT_EQ(refreshed, start + 3000ms);
+  // The read-back after the settle, then the refresh's: none in between.
+  EXPECT_EQ(act.read_times(), (std::vector<TimePoint>{start + 3000ms, start + 3000ms}));
+  EXPECT_EQ(clock.now(), start + 3000ms);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// With no wall function given, the times a switch's history is kept in (when
+// it was last actuated, since when it has been in its state) are the clock's
+// calendar time, to the second: under a simulated clock, simulated time.
+TEST(SwitchManager, LockTimeIsTheClocksWallTime) {
+  const pychron::WallTime epoch = pychron::WallTime{} + 1'700'000'000s + 250ms;
+  ManualClock clock{TimePoint{}, epoch};
+  SignalBus bus;
+  FakeActuator act{&clock};
+  SwitchManager::Options options;
+  options.clock = &clock;
+  options.bus = &bus;
+  auto mgr = SwitchManager::create({valve("A", "1")}, [&](const std::string&) -> IValveActuator* { return &act; },
+                                   options);
+  ASSERT_TRUE(mgr) << mgr.error().what;
+  ASSERT_TRUE((*mgr)->refresh());
+
+  clock.advance(90s + 400ms);
+  ASSERT_TRUE((*mgr)->actuate("A", SwitchOp::Open, "op"));
+
+  // epoch + elapsed is 1 700 000 090.65 s: floored, not rounded.
+  const systems::WallTime expected{1'700'000'090s};
+  const SwitchStats stats = (*mgr)->info("A")->stats;
+  EXPECT_EQ(stats.last_actuation, expected);
+  EXPECT_EQ(stats.since, expected);
+}
+
 TEST(SwitchManager, ReadBackMismatchIsProtocolAndRecordsHardwareState) {
   Fixture f({valve("A", "1")});
   f.act.stick("1");
@@ -282,7 +388,7 @@ TEST(SwitchManager, ReadBackMismatchIsProtocolAndRecordsHardwareState) {
 }
 
 // Commands carried out and commands that failed are counted; a refusal sends
-// nothing and counts as neither.
+// nothing, counts as neither, and is counted on its own.
 TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
   Fixture f({valve("A", "1"), valve("B", "2", {"A"}), manual("M")});
   EXPECT_EQ(f.mgr->info("A")->stats, SwitchStats{});
@@ -300,8 +406,15 @@ TEST(SwitchManager, StatsCountCommandsCarriedOutAndFailures) {
   EXPECT_EQ(a.opens, 2);
   EXPECT_EQ(a.closes, 1);
   EXPECT_EQ(a.failures, 2);
-  EXPECT_EQ(a.last_actuation, WallTime{1'000'000s});  // a failure is not an actuation
-  EXPECT_EQ(f.mgr->info("B")->stats, SwitchStats{});
+  EXPECT_EQ(a.refusals, 0);
+  EXPECT_EQ(a.last_actuation, systems::WallTime{1'000'000s});  // a failure is not an actuation
+  SwitchStats refused;
+  refused.refusals = 1;
+  EXPECT_EQ(f.mgr->info("B")->stats, refused);
+  ASSERT_TRUE(f.mgr->lock("A"));
+  ASSERT_FALSE(f.mgr->actuate("A", SwitchOp::Close, "op"));  // locked: refused
+  EXPECT_EQ(f.mgr->info("A")->stats.refusals, 1);
+  EXPECT_EQ(f.mgr->info("A")->stats.failures, 2);
   EXPECT_EQ(f.mgr->info("M")->stats.opens, 1);
 }
 
@@ -313,14 +426,14 @@ TEST(SwitchManager, StatsTimeTheStateAndAddUpTheTimeOpen) {
   EXPECT_FALSE(f.mgr->info("A")->stats.since);  // first read back closed
   f.wall += 10s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
-  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'010s});
+  EXPECT_EQ(f.mgr->info("A")->stats.since, systems::WallTime{1'000'010s});
   f.wall += 5s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));  // no change: the spell goes on
-  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'010s});
-  EXPECT_EQ(f.mgr->info("A")->stats.last_actuation, WallTime{1'000'015s});
+  EXPECT_EQ(f.mgr->info("A")->stats.since, systems::WallTime{1'000'010s});
+  EXPECT_EQ(f.mgr->info("A")->stats.last_actuation, systems::WallTime{1'000'015s});
   f.wall += 25s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
-  EXPECT_EQ(f.mgr->info("A")->stats.since, WallTime{1'000'040s});
+  EXPECT_EQ(f.mgr->info("A")->stats.since, systems::WallTime{1'000'040s});
   EXPECT_EQ(f.mgr->info("A")->stats.open_time, 30s);
 
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
@@ -341,7 +454,7 @@ TEST(SwitchManager, SeedStatsReplacesTheHistory) {
   SwitchStats kept;
   kept.opens = 1200;
   kept.closes = 1199;
-  kept.since = WallTime{500s};
+  kept.since = systems::WallTime{500s};
   kept.open_time = 3600s;
   f.mgr->seed_stats("A", kept);
   f.mgr->seed_stats("nope", kept);
@@ -349,7 +462,7 @@ TEST(SwitchManager, SeedStatsReplacesTheHistory) {
   f.wall += 10s;
   ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Close, "op"));
   EXPECT_EQ(f.mgr->info("A")->stats.closes, 1200);
-  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 3600s + (WallTime{1'000'010s} - WallTime{500s}));
+  EXPECT_EQ(f.mgr->info("A")->stats.open_time, 3600s + (systems::WallTime{1'000'010s} - systems::WallTime{500s}));
 }
 
 TEST(SwitchManager, CommandFailureLeavesUnknownAndPublishes) {
@@ -428,7 +541,7 @@ TEST(SwitchManager, NegativeInterlockBlocksOpeningEitherSide) {
   auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
-  EXPECT_NE(r.error().what.find("B"), std::string::npos);
+  EXPECT_NE(r.error().what.find('B'), std::string::npos);
   EXPECT_EQ(f.act.commands(), before);
   ASSERT_EQ(f.rec.failed.size(), 1u);
   EXPECT_EQ(f.rec.failed[0].valve, "A");
@@ -439,6 +552,18 @@ TEST(SwitchManager, NegativeInterlockBlocksOpeningEitherSide) {
   auto rb = f.mgr->actuate("B", SwitchOp::Open, "op");
   ASSERT_FALSE(rb);
   EXPECT_EQ(rb.error().kind, ErrorKind::Interlock);
+}
+
+// Which of two open partners is named is the one listed first, every run: not
+// whichever the allocator happened to put at the lower address.
+TEST(SwitchManager, TheInterlockNamedIsTheFirstListed) {
+  Fixture f({valve("A", "1", {"C", "B"}), valve("B", "2"), valve("C", "3")});
+  ASSERT_TRUE(f.mgr->actuate("B", SwitchOp::Open, "op"));
+  ASSERT_TRUE(f.mgr->actuate("C", SwitchOp::Open, "op"));
+  auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
+  EXPECT_NE(r.error().what.find("interlocked with 'C'"), std::string::npos) << r.error().what;
 }
 
 TEST(SwitchManager, UnknownPartnerBlocksOpening) {
@@ -454,7 +579,7 @@ TEST(SwitchManager, PositiveInterlockRequiresPrerequisitesOpen) {
   auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Interlock);
-  EXPECT_NE(r.error().what.find("C"), std::string::npos);
+  EXPECT_NE(r.error().what.find('C'), std::string::npos);
   ASSERT_TRUE(f.mgr->actuate("C", SwitchOp::Open, "op"));
   EXPECT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
 }

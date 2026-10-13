@@ -39,14 +39,19 @@ std::vector<std::string> to_std(const QStringList& l) {
 
 constexpr const char* kFigure = "figure";
 constexpr const char* kEdits = "edits";
+constexpr const char* kGroup = "group";
+// A second group unit, at the graph level: it puts each analysis on a graph.
+constexpr const char* kGraph = "graph";
 
 }  // namespace
 
 QString FigureWindow::default_group_key(const std::string& kind) {
   if (kind == "ideogram") return QStringLiteral("identifier");
-  if (kind == "spectrum" || kind == "inverse_isochron") return QStringLiteral("aliquot");
+  if (kind == "spectrum" || kind == "inverse_isochron" || kind == "spectrum_isochron") return QStringLiteral("aliquot");
   return QStringLiteral("none");
 }
+
+QString FigureWindow::same_as_group() { return QStringLiteral("same as group"); }
 
 FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, QStringList uuids, QWidget* parent)
     : FigureWindow(bridge, presets, "time_series", std::move(uuids), parent) {}
@@ -60,7 +65,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
       schema_(pp::UnitRegistry::builtin().find(kind_)->schema()),
       channel_(bridge.new_channel()) {
   const auto* unit = pp::UnitRegistry::builtin().find(kind_);
-  setWindowTitle(tr("%1 — %n analyses", nullptr, static_cast<int>(uuids.size())).arg(qs(std::string(unit->title()))));
+  setWindowTitle(qs(std::string(unit->title())));  // update_title() adds what is on it
   resize(1200, 800);
   ask_preset_name = [this] {
     bool ok = false;
@@ -73,9 +78,11 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   (void)select.options.set("uuids", to_std(uuids));
   (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
   pipeline_.add(reg, "reduce", "reduce", {"select"});
-  pipeline_.add(reg, "group", "group", {"reduce"});
-  pipeline_.add(reg, kEdits, "edits", {"group"});
-  (void)pipeline_.find("group")->options.set("key", default_group_key(kind_).toStdString());
+  pipeline_.add(reg, kGroup, "group", {"reduce"});
+  auto& graph = pipeline_.add(reg, kGraph, "group", {kGroup});
+  (void)graph.options.set("level", std::string("graph"));
+  pipeline_.add(reg, kEdits, "edits", {kGraph});
+  (void)pipeline_.find(kGroup)->options.set("key", default_group_key(kind_).toStdString());
   auto& fig = pipeline_.add(reg, kFigure, kind_, {kEdits});
   fig.options = store_.defaults(schema_);
   fig.preset = "Default";
@@ -93,6 +100,16 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   group_->setCurrentText(default_group_key(kind_));
   tools->addWidget(group_);
   connect(group_, &QComboBox::currentTextChanged, this, [this](const QString& k) { set_group_key(k); });
+  tools->addWidget(new QLabel(tr("  Graph by ")));
+  graph_ = new QComboBox;
+  graph_->addItem(QStringLiteral("none"));
+  graph_->addItem(same_as_group());
+  for (const auto& c : reg.find("group")->schema()->field("key")->choices)
+    if (c != "none") graph_->addItem(qs(c));
+  graph_->setToolTip(tr("Which groups share a graph: none puts them all on one, \"same as group\" gives each its own, "
+                        "and a key such as sample draws the groups of one sample together"));
+  tools->addWidget(graph_);
+  connect(graph_, &QComboBox::currentTextChanged, this, [this](const QString& k) { set_graph_key(k); });
   tools->addSeparator();
   tools->addAction(tr("Reset view"), view_, &SceneView::reset_view);
   tools->addAction(tr("Export..."), this, [this] {
@@ -178,6 +195,7 @@ void FigureWindow::on_result(const PipelineResult& r) {
   if (r.outputs.size() >= 2 && r.outputs[1]) {
     dataset_ = std::get<pp::DatasetPtr>(r.outputs[1]->at(0));
     fill_analyses();
+    update_title();
     if (!quantities_set_ && dataset_) {
       std::vector<pp::ReducedPtr> v;
       for (const auto& it : dataset_->items()) v.push_back(it.analysis);
@@ -202,6 +220,30 @@ void FigureWindow::on_result(const PipelineResult& r) {
                    (warnings.isEmpty() ? QString() : tr(" · %n warning(s)", nullptr, static_cast<int>(warnings.size()))));
   status_->setToolTip(warnings.join(QLatin1Char('\n')));
   emit figure_updated();
+}
+
+// "<plot type> — <sample> (<identifier>)", and how many more identifiers
+// there are when the figure holds several.
+void FigureWindow::update_title() {
+  const QString kind = qs(std::string(pp::UnitRegistry::builtin().find(kind_)->title()));
+  QStringList names;
+  if (dataset_) {
+    for (const auto& it : dataset_->items()) {
+      const auto& a = *it.analysis->analysis;
+      if (a.identifier.empty() && a.sample.empty()) continue;
+      const QString id = qs(a.identifier);
+      const QString name = a.sample.empty()       ? id
+                           : a.identifier.empty() ? qs(a.sample)
+                                                  : tr("%1 (%2)").arg(qs(a.sample), id);
+      if (!names.contains(name)) names << name;
+    }
+  }
+  if (names.isEmpty()) {
+    setWindowTitle(kind);
+    return;
+  }
+  const int more = static_cast<int>(names.size()) - 1;
+  setWindowTitle(tr("%1 — %2").arg(kind, names.front()) + (more > 0 ? tr(" + %n more", nullptr, more) : QString()));
 }
 
 void FigureWindow::fill_analyses() {
@@ -268,8 +310,24 @@ void FigureWindow::set_group_key(const QString& key) {
     group_->setCurrentText(key);  // re-enters through currentTextChanged
     return;
   }
-  (void)pipeline_.find("group")->options.set("key", key.toStdString());
+  (void)pipeline_.find(kGroup)->options.set("key", key.toStdString());
+  apply_graph_key();
   run();
+}
+
+void FigureWindow::set_graph_key(const QString& key) {
+  if (graph_->currentText() != key) {
+    if (graph_->findText(key) < 0) return;
+    graph_->setCurrentText(key);  // re-enters through currentTextChanged
+    return;
+  }
+  apply_graph_key();
+  run();
+}
+
+void FigureWindow::apply_graph_key() {
+  const QString key = graph_->currentText() == same_as_group() ? group_->currentText() : graph_->currentText();
+  (void)pipeline_.find(kGraph)->options.set("key", key.toStdString());
 }
 
 QComboBox* FigureWindow::preset_combo() const noexcept { return presets_->combo(); }
@@ -284,17 +342,20 @@ bool FigureWindow::export_figure(const QString& path) {
 bool FigureWindow::export_report(const QString& path) {
   if (!dataset_) return false;
   pp::ReportOptions options;
-  if (kind_ == "spectrum") {
+  if (kind_ == "spectrum" || kind_ == "spectrum_isochron") {
     namespace r = pychron::reduction;
     const pp::Options& o = pipeline_.find(kFigure)->options;
-    options.plateau.method = o.get_string("plateau.method") == "mahon" ? r::PlateauMethod::Mahon : r::PlateauMethod::Fleck;
-    options.plateau.nsteps = static_cast<int>(o.get_int("plateau.nsteps"));
-    options.plateau.gas_fraction = o.get_double("plateau.gas_fraction");
-    options.plateau.overlap_sigma = o.get_double("plateau.overlap_sigma");
-    options.plateau_weighting = o.get_string("plateau.weighting") == "volume_fraction" ? r::PlateauWeighting::VolumeFraction
-                                                                                         : r::PlateauWeighting::InverseVariance;
-    options.mean_error = r::parse_mean_error_kind(o.get_string("plateau.error_kind")).value_or(r::MeanErrorKind::Msem);
-    options.integrated_includes_excluded = o.get_bool("integrated.include_excluded");
+    // The pair keeps the spectrum's settings under "spectrum.".
+    const std::string in = kind_ == "spectrum" ? "" : "spectrum.";
+    options.plateau.method = o.get_string(in + "plateau.method") == "mahon" ? r::PlateauMethod::Mahon : r::PlateauMethod::Fleck;
+    options.plateau.nsteps = static_cast<int>(o.get_int(in + "plateau.nsteps"));
+    options.plateau.gas_fraction = o.get_double(in + "plateau.gas_fraction");
+    options.plateau.overlap_sigma = o.get_double(in + "plateau.overlap_sigma");
+    options.plateau_weighting = o.get_string(in + "plateau.weighting") == "volume_fraction"
+                                    ? r::PlateauWeighting::VolumeFraction
+                                    : r::PlateauWeighting::InverseVariance;
+    options.mean_error = r::parse_mean_error_kind(o.get_string(in + "plateau.error_kind")).value_or(r::MeanErrorKind::Msem);
+    options.integrated_includes_excluded = o.get_bool(in + "integrated.include_excluded");
   }
   const auto report = pp::make_report(*dataset_, options);
   auto saved = pp::save_report(report, std::filesystem::path(path.toStdString()));

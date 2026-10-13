@@ -227,6 +227,48 @@ TEST(LogHub, UnwritableDirDegrades) {
   EXPECT_FALSE(fs::exists(bad));
 }
 
+// A subscriber of the bus that throws says so in the log: once, then at the
+// 10th failure, the 100th...
+TEST(LogHub, ABusHandlerThatThrowsIsLoggedAndNotAtEveryFailure) {
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto hub = LogHub::create(config::LoggingConfig{}, clock, &bus);
+  ASSERT_TRUE(hub.has_value());
+
+  auto bad = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("no such valve"); });
+  for (int i = 0; i < 12; ++i) bus.publish(ValveChanged{});
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].level, LogLevel::Error);
+  EXPECT_EQ(got[0].logger, "bus");
+  EXPECT_EQ(got[0].message, "a handler of pychron::ValveChanged threw: no such valve");
+  EXPECT_EQ(got[1].message, "a handler of pychron::ValveChanged threw: no such valve (10 times so far)");
+
+  // The hub is gone: the bus goes on, and nothing is written.
+  hub->reset();
+  bus.publish(ValveChanged{});
+  EXPECT_EQ(got.size(), 2u);
+}
+
+// The record of a failure is a Log on the same bus: a Log handler that
+// throws does not make the two feed each other.
+TEST(LogHub, AThrowingLogHandlerDoesNotLoop) {
+  SteadyClock clock;
+  SignalBus bus;
+  int logs = 0;
+  auto sub = bus.subscribe<Log>([&](const Log&) {
+    ++logs;
+    throw std::runtime_error("log handler");
+  });
+  auto hub = LogHub::create(config::LoggingConfig{}, clock, &bus);
+  ASSERT_TRUE(hub.has_value());
+  (*hub)->write(LogLevel::Info, "core", "hello");
+  // "hello", then the one record of its handler's first failure.
+  EXPECT_EQ(logs, 2);
+  EXPECT_EQ(bus.handler_failures(), 2u);
+}
+
 TEST(LogHub, EmptyDirMeansNoFileSink) {
   SteadyClock clock;
   SignalBus bus;
@@ -354,6 +396,27 @@ TEST(LogHub, SetLevelReresolvesLiveLoggers) {
   EXPECT_TRUE(hub->logger("core").enabled(LogLevel::Trace));
   EXPECT_TRUE(hub->logger("core.sub").enabled(LogLevel::Trace));
   EXPECT_FALSE(hub->logger("other").enabled(LogLevel::Trace));
+}
+
+// What File > Preferences applies: the whole table at once, so a rule taken
+// out of it stops applying.
+TEST(LogHub, SetLevelsReplacesEveryRuleAndTheDefault) {
+  SteadyClock clock;
+  auto hub = make_hub(rules_config({{"core", LogLevel::Trace}, {"scheduler", LogLevel::Debug}}, LogLevel::Warn), clock);
+  ASSERT_TRUE(hub);
+  Logger core = hub->logger("core");
+  Logger scheduler = hub->logger("scheduler");
+  Logger other = hub->logger("other");
+  EXPECT_TRUE(core.enabled(LogLevel::Trace));
+  EXPECT_FALSE(other.enabled(LogLevel::Info));
+
+  hub->set_levels(LogLevel::Info, {{"scheduler", LogLevel::Error}});
+  EXPECT_FALSE(core.enabled(LogLevel::Trace)) << "the rule for core was taken out";
+  EXPECT_TRUE(core.enabled(LogLevel::Info));
+  EXPECT_TRUE(other.enabled(LogLevel::Info)) << "the default changed";
+  EXPECT_FALSE(scheduler.enabled(LogLevel::Warn));
+  EXPECT_TRUE(scheduler.enabled(LogLevel::Error));
+  EXPECT_TRUE(hub->logger("later").enabled(LogLevel::Info));
 }
 
 TEST(LogHub, ChildResolvesItsOwnLevel) {

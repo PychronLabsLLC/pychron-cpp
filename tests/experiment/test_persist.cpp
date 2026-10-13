@@ -1,13 +1,14 @@
 #include <gtest/gtest.h>
 
-#include <random>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <thread>
 
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -41,6 +42,7 @@ class FlakyPersister final : public IAnalysisPersister {
     return {};
   }
   Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
   bool down = false;
   std::vector<std::string> saved;
 };
@@ -48,9 +50,7 @@ class FlakyPersister final : public IAnalysisPersister {
 class PersistTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    dir_ = fs::temp_directory_path() /
-           ("persist_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("persist_");
     fs::create_directories(dir_);
   }
   void TearDown() override {
@@ -84,6 +84,19 @@ TEST_F(PersistTest, FilePersisterWritesRecordsAndCountsAliquots) {
   ASSERT_TRUE(fresh.save_artifact("u1", "snap.png", {1, 2, 3}));
   EXPECT_EQ(fs::file_size(dir_ / "records" / "artifacts" / "u1" / "snap.png"), 3u);
   EXPECT_FALSE(fresh.save_artifact("u1", "../x", {}));
+}
+
+TEST_F(PersistTest, FilePersisterChecksNothing) {
+  FilePersister files(dir_ / "records");
+  QueueSpec queue;
+  queue.runs.emplace_back();
+  queue.runs.back().id.identifier = "zz";
+  auto problems = files.check_queue(queue);
+  ASSERT_TRUE(problems) << problems.error().what;
+  EXPECT_TRUE(problems->empty());
+  auto none = files.check_queue(QueueSpec{});
+  ASSERT_TRUE(none);
+  EXPECT_TRUE(none->empty());
 }
 
 TEST_F(PersistTest, SpoolRoundTripsAndListsOldestFirst) {
@@ -121,6 +134,77 @@ TEST_F(PersistTest, SavePipelineSpoolsFirstAndRetries) {
   EXPECT_EQ(*n, 1u);
   EXPECT_EQ(db.saved, (std::vector<std::string>{"a", "b"}));
   EXPECT_EQ(pipe.pending(), 0u);
+}
+
+// The caller of save() is told when the record got no further than the spool,
+// and why; the pipeline keeps the reason until that record has been sent.
+TEST_F(PersistTest, AHandOffThatFailsIsReportedAndClearedOnceTheRecordIsSent) {
+  Spool spool(dir_ / "spool");
+  FlakyPersister db;
+  SavePipeline pipe(spool, db);
+  auto sent = pipe.save(rec("a"));
+  ASSERT_TRUE(sent);
+  EXPECT_FALSE(sent->pending.has_value());
+  EXPECT_FALSE(pipe.last_error().has_value());
+
+  db.down = true;
+  auto kept = pipe.save(rec("b"));
+  ASSERT_TRUE(kept);  // spooled: not lost
+  ASSERT_TRUE(kept->pending.has_value());
+  EXPECT_EQ(kept->pending->kind, ErrorKind::Io);
+  EXPECT_EQ(kept->pending->what, "database down");
+  EXPECT_EQ(pipe.pending(), 1u);
+  ASSERT_TRUE(pipe.last_error().has_value());
+  EXPECT_EQ(*pipe.last_error(), "b: database down");
+
+  db.down = false;
+  auto n = pipe.recover();
+  ASSERT_TRUE(n);
+  EXPECT_EQ(*n, 1u);
+  EXPECT_EQ(pipe.pending(), 0u);
+  EXPECT_FALSE(pipe.last_error().has_value());  // nothing is waiting: nothing to explain
+}
+
+// A record that cannot be spooled is the one failure of save().
+TEST_F(PersistTest, ARecordThatCannotBeSpooledFailsTheSave) {
+  Spool spool(dir_ / "spool");
+  FlakyPersister db;
+  SavePipeline pipe(spool, db);
+  EXPECT_FALSE(pipe.save(rec("")));
+  EXPECT_TRUE(db.saved.empty());
+}
+
+// With a post function the hand-off happens later: save() cannot say how it went.
+TEST_F(PersistTest, APostedHandOffIsNotReportedBySave) {
+  Spool spool(dir_ / "spool");
+  FlakyPersister db;
+  db.down = true;
+  std::vector<std::function<void()>> posted;
+  SavePipeline pipe(spool, db, [&](std::function<void()> f) { posted.push_back(std::move(f)); });
+  auto r = pipe.save(rec("a"));
+  ASSERT_TRUE(r);
+  EXPECT_FALSE(r->pending.has_value());
+  ASSERT_EQ(posted.size(), 1u);
+  posted.front()();
+  ASSERT_TRUE(pipe.last_error().has_value());
+  EXPECT_EQ(pipe.pending(), 1u);
+}
+
+// What is in the spool folder and is not a record file is not a pending
+// record, and does not stop the listing: a folder, and a name whose file has
+// gone (here a link to nothing, which is what a file removed between the
+// listing and the look at its time is to the second call).
+TEST_F(PersistTest, TheSpoolListsRecordFilesOnlyAndSurvivesOneThatVanished) {
+  Spool spool(dir_ / "spool");
+  ASSERT_TRUE(spool.put(rec("a")));
+  fs::create_directories(dir_ / "spool" / "folder.json");
+  std::error_code ec;
+  fs::create_symlink(dir_ / "spool" / "nowhere", dir_ / "spool" / "gone.json", ec);
+  const bool linked = !ec;  // not every file system or account may make one
+  auto listed = spool.pending();
+  ASSERT_TRUE(listed) << listed.error().what;
+  EXPECT_EQ(*listed, std::vector<std::string>{"a"});
+  SUCCEED() << (linked ? "with a dangling link" : "without a link");
 }
 
 TEST_F(PersistTest, RecoverResendsAnEarlierSessionsSpool) {

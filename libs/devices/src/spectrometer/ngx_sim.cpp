@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 
 #include <cstdio>
+#include <ranges>
 #include <sstream>
 
 #include "pychron/codecs/isotopx_ngx.hpp"
@@ -34,7 +35,7 @@ std::string clock_text(TimePoint t) {
 
 std::string event_line(const NgxSimModel& m, bool baseline, TimePoint at) {
   std::string line = std::string("#EVENT:") + (baseline ? "ACQ.B," : "ACQ,") + m.run->rcs_id + ",SIM,SIM," + clock_text(at);
-  for (auto it = m.values.rbegin(); it != m.values.rend(); ++it) line += "," + ngx::format_float(*it);
+  for (double value : std::views::reverse(m.values)) line += "," + ngx::format_float(value);
   return line + "#\r\n";
 }
 
@@ -61,6 +62,7 @@ std::string reply_for(NgxSimModel& m, const std::string& cmd) {
     if (m.start_acq_reply != "E00") return m.start_acq_reply;
     if (m.run && !m.run->done) return "E43";  // already acquiring (pychron's duplicate StartAcq)
     NgxSimModel::Run run;
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the simulator: what is not a number is 0
     run.seconds = std::max(1, std::atoi(args.c_str()));
     run.rcs_id = args.substr(args.find(',') + 1);
     run.start = clock.now();
@@ -79,17 +81,19 @@ std::string reply_for(NgxSimModel& m, const std::string& cmd) {
   }
   if (verb == "GETMASS") return ngx::format_float(m.mass);
   if (verb == "SetMass") {
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the simulator: what is not a number is 0
     m.mass = std::atof(args.c_str());
     return "E00";
   }
   if (verb == "SSO") {
     const auto comma = args.find(',');
     if (comma == std::string::npos) return "E05";
+    // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): the simulator: what is not a number is 0
     m.params[args.substr(0, comma)] = std::atof(args.substr(comma + 1).c_str());
     return "E00";
   }
   if (verb == "GSO") {
-    const double v = m.params.count(args) ? m.params[args] : 0.0;
+    const double v = m.params.contains(args) ? m.params[args] : 0.0;
     return ngx::format_float(v) + "," + ngx::format_float(v);
   }
   if (verb == "OpenValve" || verb == "CloseValve") {

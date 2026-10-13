@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/qtegra_gauges.hpp"
 
 #include <set>
+#include <utility>
 
 #include "pychron/codecs/thermo_qtegra.hpp"
 
@@ -66,7 +67,7 @@ Result<std::unique_ptr<QtegraGauges>> QtegraGauges::create(const DriverArgs& arg
 
 std::vector<int> QtegraGauges::pressure_channels() const {
   std::vector<int> out;
-  for (int i = 1; i <= static_cast<int>(parameters_.size()); ++i) out.push_back(i);
+  for (int i = 1; std::cmp_less_equal(i, parameters_.size()); ++i) out.push_back(i);
   return out;
 }
 
@@ -74,7 +75,7 @@ Result<double> QtegraGauges::read_pressure() { return read_pressure(1); }
 
 Result<double> QtegraGauges::read_pressure(int channel) {
   auto value = [&]() -> Result<double> {
-    if (channel < 1 || channel > static_cast<int>(parameters_.size())) {
+    if (channel < 1 || std::cmp_greater(channel, parameters_.size())) {
       return fail(ErrorKind::Config, "channel " + std::to_string(channel) + " has no parameter (parameters has " +
                                          std::to_string(parameters_.size()) + ")");
     }

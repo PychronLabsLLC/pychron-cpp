@@ -39,6 +39,7 @@ if(TARGET pychron_persistence)
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/store/include>
     $<INSTALL_INTERFACE:include>
   )
-  target_link_libraries(pychron_processing_store PUBLIC pychron::processing pychron::persistence)
+  target_link_libraries(pychron_processing_store PUBLIC pychron::processing pychron::persistence
+    PRIVATE nlohmann_json::nlohmann_json)
   pychron_set_warnings(pychron_processing_store)
 endif()

@@ -1,0 +1,1 @@
+@../../libs/setup/AGENTS.md

@@ -12,7 +12,8 @@ FlowLayout::FlowLayout(QWidget* parent, int h_spacing, int v_spacing)
 }
 
 FlowLayout::~FlowLayout() {
-  while (QLayoutItem* item = takeAt(0)) delete item;
+  // Named in full: a destructor does not dispatch to a derived class.
+  while (QLayoutItem* item = FlowLayout::takeAt(0)) delete item;
 }
 
 void FlowLayout::addItem(QLayoutItem* item) { items_.append(item); }

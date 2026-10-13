@@ -1,0 +1,8 @@
+# Qt code. Off here, each for what Qt does that the check cannot see:
+#   owning-memory, NewDeleteLeaks   a new'd child belongs to its parent (the
+#       check wants gsl::owner on every `new QLabel(this)`)
+#   pro-type-static-cast-downcast   static_cast<QMouseEvent*>(event) after
+#       event->type() says so is Qt's own idiom
+#   misleading-capture-default-by-value   `[=, this]` names both on purpose
+InheritParentConfig: true
+Checks: '-cppcoreguidelines-owning-memory,-clang-analyzer-cplusplus.NewDeleteLeaks,-cppcoreguidelines-pro-type-static-cast-downcast,-cppcoreguidelines-misleading-capture-default-by-value'

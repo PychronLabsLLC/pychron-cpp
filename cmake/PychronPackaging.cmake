@@ -1,6 +1,6 @@
 # Packages from the "pychron" install component (cmake/PychronInstall.cmake):
 #   Linux    .deb (dependencies from dpkg-shlibdeps) and .tar.gz
-#   macOS    .dmg: drag Pychron to Applications
+#   macOS    .dmg: drag Pychron to Applications (signed: packaging/macos/sign_app.sh)
 #   Windows  NSIS installer (Start menu, uninstaller, elctl on PATH) and .zip
 
 set(CPACK_PACKAGE_NAME "pychron")
@@ -22,6 +22,12 @@ if(APPLE)
   set(CPACK_DMG_VOLUME_NAME "Pychron")
   set(CPACK_PACKAGE_ICON "${PROJECT_SOURCE_DIR}/packaging/icons/pychron.icns")  # the mounted volume
   set(CPACK_PACKAGE_FILE_NAME "Pychron-${PROJECT_VERSION}-macOS-${CMAKE_SYSTEM_PROCESSOR}")
+  # Pychron.app is signed in the staging directory before the image is made,
+  # with the identity in PYCHRON_CODESIGN_IDENTITY (none set: left unsigned).
+  # The release workflow signs, notarizes and staples the image itself.
+  set(CPACK_PRE_BUILD_SCRIPTS "${PROJECT_SOURCE_DIR}/packaging/macos/cpack_sign.cmake")
+  set(CPACK_PYCHRON_SIGN_SCRIPT "${PROJECT_SOURCE_DIR}/packaging/macos/sign_app.sh")
+  set(CPACK_PYCHRON_ENTITLEMENTS "${PROJECT_SOURCE_DIR}/packaging/macos/entitlements.plist")
 elseif(WIN32)
   set(CPACK_GENERATOR "NSIS;ZIP")
   set(CPACK_PACKAGE_FILE_NAME "Pychron-${PROJECT_VERSION}-windows-x64")

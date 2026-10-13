@@ -149,4 +149,40 @@ TEST_F(EntryCmd, PositionsImportErrorsWriteNothing) {
   EXPECT_TRUE(contains(o.out, "line 3: no level 'Z'")) << o.out;
 }
 
+TEST_F(EntryCmd, SeedAppliesAFileAndDryRunWritesNothing) {
+  const auto file = path("seed.toml");
+  {
+    std::ofstream out(file);
+    out << "project = \"references\"\n[[samples]]\nidentifier = \"a\"\nanalysis_type = \"air\"\n"
+           "sample = \"air\"\nmaterial = \"air\"\n[reactors.Triga]\nK4039 = [0.00873, 0.00017]\n";
+  }
+  auto o = entry({"seed", file.string(), "--dry-run"});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(contains(o.out, "would be seeded 1 project, 1 material, 1 sample, 1 identifier, 1 reactor")) << o.out;
+  EXPECT_EQ(entry({"samples", "list", "--project", "references"}).out, "");
+
+  o = entry({"seed", file.string()});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(contains(o.out, "seeded 1 project, 1 material, 1 sample, 1 identifier, 1 reactor")) << o.out;
+  EXPECT_TRUE(contains(entry({"samples", "list", "--project", "references"}).out, "air\treferences"));
+
+  o = entry({"seed", file.string()});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(contains(o.out, "seed: nothing to add (5 already there)")) << o.out;
+
+  // entry seed never makes or migrates a schema: a database without one is refused.
+  const std::string bare = "sqlite:" + path("bare.db").string();
+  auto refused = run_raw({"entry", "seed", file.string(), "--db", bare, "--user", "tester"});
+  EXPECT_EQ(refused.code, 2);
+  EXPECT_TRUE(contains(refused.err, "the database could not be opened")) << refused.err;
+
+  EXPECT_EQ(entry({"seed", path("missing.toml").string()}).code, 2);
+  EXPECT_EQ(entry({"seed"}).code, 2);
+  EXPECT_EQ(entry({"seed", file.string(), "extra"}).code, 2);
+  { std::ofstream(file) << "project = \n"; }
+  o = entry({"seed", file.string()});
+  EXPECT_EQ(o.code, 2);
+  EXPECT_TRUE(contains(o.err, "seed.toml")) << o.err;
+}
+
 #endif

@@ -12,11 +12,13 @@
 #include <future>
 #include <limits>
 #include <mutex>
+#include <ranges>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "pychron/core/env.hpp"
+#include "pychron/core/host_name.hpp"
 #include "pychron/core/sha256.hpp"
 
 namespace pychron::processing {
@@ -188,6 +190,7 @@ struct JsonScan {
         ++i;
         return true;
       }
+      // NOLINTNEXTLINE(bugprone-inc-dec-in-conditions): past the backslash, and it must not be the last character
       if (s[i] == '\\' && ++i >= s.size()) return false;
       if (into) into->push_back(s[i]);
     }
@@ -382,7 +385,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
       const auto colon = ir.isotope.find(':');
       iso.isotope = colon == std::string::npos ? ir.isotope : ir.isotope.substr(colon + 1);
       iso.detector = !ir.detector.empty() ? ir.detector
-                     : detector_of.count(ir.isotope) ? detector_of[ir.isotope]
+                     : detector_of.contains(ir.isotope) ? detector_of[ir.isotope]
                                                      : (colon == std::string::npos ? "" : ir.isotope.substr(0, colon));
       iso.intercept = value_of(ir.value, ir.error, ir.manual);
       iso.fit = fit_spec(ir.fit, ir.error_type, ir.filter_outliers_json);
@@ -585,6 +588,7 @@ struct StoreSource::Impl {
     {
       std::lock_guard lock(queue_mutex);
       if (stopping) return fail(ErrorKind::Cancelled, "store source is closing");
+      // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks): std::function's own storage, freed with the queue
       queue.push_back([promise, fn = std::move(fn)](ps::IStore& s) { promise->set_value(fn(s)); });
     }
     queue_cv.notify_one();
@@ -599,7 +603,7 @@ Result<std::unique_ptr<StoreSource>> StoreSource::open(ps::StoreConfig config, S
   auto impl = std::make_unique<Impl>();
   impl->config = std::move(config);
   impl->user = !options.user.empty() ? options.user : env_var("USER").value_or("pychron");
-  impl->hostname = !options.hostname.empty() ? options.hostname : env_var("HOSTNAME").value_or("localhost");
+  impl->hostname = !options.hostname.empty() ? options.hostname : host_name();
   const int n = std::max(1, options.connections);
   // The first connection opens alone, so only it applies migrations.
   for (int i = 0; i < n; ++i) {
@@ -698,20 +702,17 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
       if (*payload)
         if (const auto* r = std::get_if<ps::RefPayload>(&**payload)) p.refs.push_back(*r);
     }
-    // The sample's catalog row, by name; the one of the analysis's project
-    // when several projects have a sample of that name.
-    if (!p.detail.row.sample.empty()) {
+    // The sample's catalog row. By its uuid, and the row alone: the name
+    // is no key (a monitor's is one sample per project, and inside hundreds
+    // of other names), and the listing's counts are not wanted here.
+    if (p.detail.row.sample_uuid) {
       ps::SampleQuery query;
-      query.text = p.detail.row.sample;
+      query.uuid = p.detail.row.sample_uuid;
+      query.counts = false;
+      query.limit = 1;
       auto samples = s.samples(query);
       if (!samples) return fail(samples.error());
-      const ps::SampleRow* chosen = nullptr;
-      for (const auto& row : *samples) {
-        if (row.name != p.detail.row.sample) continue;
-        if (chosen == nullptr || row.project_name == p.detail.row.project) chosen = &row;
-        if (row.project_name == p.detail.row.project) break;
-      }
-      if (chosen != nullptr) p.sample = *chosen;
+      if (!samples->empty()) p.sample = std::move(samples->front());
     }
     return p;
   });
@@ -770,7 +771,7 @@ std::string references(const std::vector<ps::ReferenceRow>& refs) {
   std::string out;
   for (const auto& r : refs) {
     if (!out.empty()) out += ", ";
-    if (r.exclude) out += "!";
+    if (r.exclude) out += '!';
     out += r.record_id ? *r.record_id : r.ref_analysis ? r.ref_analysis->str().substr(0, 8) : "?";
   }
   return out;
@@ -842,7 +843,7 @@ std::string describe_conflict(const ps::Conflict& c) {
   if (c.actual_by) {
     out += " (" + c.actual_by->created.iso().substr(0, 19) + "Z";
     if (!c.actual_by->message.empty()) out += ": " + c.actual_by->message;
-    out += ")";
+    out += ')';
   }
   return out + "; reload to see their change";
 }
@@ -927,18 +928,18 @@ Result<std::vector<RevisionSummary>> StoreSource::history(const std::string& ana
         auto head = s.head(id, k);
         if (!head) return fail(head.error());
         std::vector<RevisionSummary> out;
-        for (auto it = revs->rbegin(); it != revs->rend(); ++it) {
+        for (auto& it : std::views::reverse(*revs)) {
           RevisionSummary r;
-          r.id = it->uuid.str();
-          if (it->parent) r.parent = it->parent->str();
+          r.id = it.uuid.str();
+          if (it.parent) r.parent = it.parent->str();
           r.kind = kind;
-          r.changeset_kind = std::string(ps::to_string(it->changeset.kind));
-          r.author = it->author_name;
-          r.host = it->client_hostname;
-          r.message = it->changeset.message;
-          r.created = seconds(it->changeset.created);
-          r.seq = it->change_seq;
-          r.head = *head && **head == it->uuid;
+          r.changeset_kind = std::string(ps::to_string(it.changeset.kind));
+          r.author = it.author_name;
+          r.host = it.client_hostname;
+          r.message = it.changeset.message;
+          r.created = seconds(it.changeset.created);
+          r.seq = it.change_seq;
+          r.head = *head && **head == it.uuid;
           out.push_back(std::move(r));
         }
         return out;

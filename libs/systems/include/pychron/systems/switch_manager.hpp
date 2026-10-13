@@ -59,12 +59,12 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
@@ -112,6 +112,7 @@ struct SwitchStats {
   std::int64_t opens = 0;     // commands carried out (a manual valve: reports taken)
   std::int64_t closes = 0;
   std::int64_t failures = 0;  // commands sent that failed or read back wrong; a refusal sends nothing and is not one
+  std::int64_t refusals = 0;  // commands not sent: the switch was locked, another's, or interlocked
   std::optional<WallTime> last_actuation;  // the last command carried out
   // When the recorded state last changed. Unset when that is not known: the
   // state is a first reading, or came out of Unknown.
@@ -140,7 +141,7 @@ using ActuatorLookup = std::function<IValveActuator*(const std::string& name)>;
 struct SwitchManagerOptions {
   const Clock* clock = nullptr;  // settle waits and event stamps; SteadyClock if null
   SignalBus* bus = nullptr;      // events are dropped if null
-  std::function<WallTime()> wall = {};  // stamps SwitchStats; the system clock if empty
+  std::function<WallTime()> wall = {};  // stamps SwitchStats; the clock's wall_now() if empty
 };
 
 class SwitchManager {
@@ -217,8 +218,10 @@ class SwitchManager {
   std::function<WallTime()> wall_;
   std::vector<std::unique_ptr<Entry>> entries_;
   std::map<std::string, Entry*, std::less<>> by_name_;
-  std::mutex actuation_;      // one actuation (or refresh) at a time
-  mutable std::mutex state_;  // guards recorded state, locks and owners
+  // One actuation (or refresh) at a time. Held across the command, the settle
+  // time and the read-back, all of which wait in clock time: a ClockMutex.
+  ClockMutex actuation_;
+  mutable std::mutex state_;  // guards recorded state, locks and owners; never held across a wait
 };
 
 }  // namespace pychron::systems

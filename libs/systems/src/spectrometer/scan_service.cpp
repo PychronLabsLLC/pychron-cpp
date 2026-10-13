@@ -29,7 +29,7 @@ struct ScanService::State {
 };
 
 ScanService::ScanService(Spectrometer& spectrometer, SignalBus& bus, const Clock& clock)
-    : spectrometer_(spectrometer), bus_(bus), clock_(clock), state_(std::make_shared<State>()) {
+    : spectrometer_(spectrometer), bus_(bus), clock_(clock), op_mutex_(clock), state_(std::make_shared<State>()) {
   state_->name = spectrometer.name();
   state_->clock = &clock;
   SignalBus* b = &bus;

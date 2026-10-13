@@ -44,7 +44,7 @@ std::string json_created(const std::vector<std::pair<std::string, std::optional<
     if (i) out += ", ";
     out += json_string(fields[i].first) + ": [null, ";
     out += fields[i].second ? json_string(*fields[i].second) : std::string("null");
-    out += "]";
+    out += ']';
   }
   return out + "}";
 }

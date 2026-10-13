@@ -89,6 +89,7 @@ class Walk {
       const bool deleted = entry.status == 'D';
       if (deleted && !versions_.contains(entry.path)) continue;
       auto& had = versions_[entry.path];
+      // cppcheck-suppress containerOutOfBounds ; a path in versions_ has a version: one is pushed when it is added
       if (deleted ? had.back().empty() : (!had.empty() && had.back() == entry.blob_sha)) continue;
       had.push_back(deleted ? std::string() : entry.blob_sha);
       places_[entry.path].push_back(index);
@@ -253,7 +254,7 @@ class Mapper {
   // ---------------------------------------------------------------- items
 
   void irradiation(const std::string& name, Output& out) {
-    if (out.sent.insert("irradiation\n" + name).second) out.batch.catalog.push_back(ingest::IrradiationItem{name});
+    if (out.sent.insert("irradiation\n" + name).second) out.batch.catalog.emplace_back(ingest::IrradiationItem{name});
   }
 
   // The level, before anything scoped to it. Its z is not sent: the
@@ -261,12 +262,12 @@ class Mapper {
   void level(const std::string& irradiation_name, const std::string& name, Output& out) {
     irradiation(irradiation_name, out);
     if (out.sent.insert("level\n" + irradiation_name + "\n" + name).second)
-      out.batch.catalog.push_back(ingest::LevelItem{irradiation_name, name, std::nullopt, std::nullopt, std::nullopt});
+      out.batch.catalog.emplace_back(ingest::LevelItem{irradiation_name, name, std::nullopt, std::nullopt, std::nullopt});
   }
 
   void object(ingest::RefObjectItem item, Output& out) {
     if (out.sent.insert("ref_object\n" + std::string(ps::to_string(item.type)) + "\n" + item.key).second)
-      out.batch.catalog.push_back(std::move(item));
+      out.batch.catalog.emplace_back(std::move(item));
   }
 
   ingest::ChangesetItem& changeset_of(const Seen& seen, Output& out) {
@@ -587,7 +588,7 @@ class Mapper {
 class MetaRepoAdapter::Impl {
  public:
   Impl(MetaAdapterConfig config, GitReader reader) : config_(std::move(config)), reader_(std::move(reader)) {
-    if (config_.batch_commits < 1) config_.batch_commits = 1;
+    config_.batch_commits = std::max(config_.batch_commits, 1);
   }
 
   Result<ingest::SourceDescription> describe() const {

@@ -37,6 +37,9 @@ integration_s = 1
 [main]
 cycles = 2
 integration_s = 1
+# where the fits' time axis starts: "on_inlet_close" (when equilibration ends),
+# "on_first_count", or { offset_s = N }: N seconds after the inlet opens
+time_zero = "on_inlet_close"
 
 [[main.hops]]
 counts = 15
@@ -57,4 +60,4 @@ baseline = { default = "average" }
 include = ["@conditionals.default_unknown"]
 
 [parameters]
-expose = ["main.cycles", "main.hops[0].counts", "baseline.counts"]
+expose = ["main.cycles", "main.hops[0].counts", "baseline.counts", { path = "main.time_zero", label = "Time zero" }]

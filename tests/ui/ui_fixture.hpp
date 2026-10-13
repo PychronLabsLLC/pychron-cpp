@@ -7,30 +7,38 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <string>
 
 #include <QtTest/QtTest>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::ui::test {
 
 // `canvas`: another drawing of the example line (default: the example's own).
-inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {}) {
+// `clock`: the line's clock, which must outlive it (default: real time).
+inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {},
+                                                                  const Clock* clock = nullptr) {
   using namespace std::chrono_literals;
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   systems::ExtractionLine::Options options;
   options.force_sim = true;
   options.run_scheduler = false;
+  options.clock = clock;
   options.sim.default_pressure = 1e-8;
   options.sim.initial_pressures = {{"bone", 1e-3}};
   options.sim.pumps = {{"turbo", {1e-9, 5s}}};
   options.sim.noise = 0.0;
+  // These numbers and no others: named and empty, there is no sim file, so
+  // the example's tuned sim.toml beside the line is not read.
+  options.sim_file = std::filesystem::path{};
   // Locks persist beside the config by default; keep tests out of the repo
   // and independent of each other.
-  options.state_file = std::filesystem::temp_directory_path() /
-                       ("pychron-ui-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                        ".state.toml");
+  options.state_file = pychron::testing::unique_temp_path("pychron-ui-test-", ".state.toml");
   auto line =
       systems::ExtractionLine::load(dir / "extraction_line.toml", canvas.empty() ? dir / "canvas.toml" : canvas, options);
   if (!line) {

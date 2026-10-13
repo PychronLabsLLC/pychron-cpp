@@ -26,8 +26,8 @@ Sha256::Sha256()
 void Sha256::compress(const std::uint8_t* p) {
   std::uint32_t w[64];
   for (int i = 0; i < 16; ++i)
-    w[i] = (std::uint32_t(p[4 * i]) << 24) | (std::uint32_t(p[4 * i + 1]) << 16) | (std::uint32_t(p[4 * i + 2]) << 8) |
-           std::uint32_t(p[4 * i + 3]);
+    w[i] = (static_cast<std::uint32_t>(p[4 * i]) << 24) | (static_cast<std::uint32_t>(p[4 * i + 1]) << 16) | (static_cast<std::uint32_t>(p[4 * i + 2]) << 8) |
+           static_cast<std::uint32_t>(p[4 * i + 3]);
   for (int i = 16; i < 64; ++i) {
     const auto s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
     const auto s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
@@ -75,6 +75,7 @@ void Sha256::update(std::span<const std::uint8_t> bytes) {
 }
 
 void Sha256::update(std::string_view bytes) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the text's bytes
   update(std::span(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
 }
 

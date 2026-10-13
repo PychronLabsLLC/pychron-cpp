@@ -7,6 +7,7 @@ namespace pychron::canvas {
 int default_precedence(SourceKind kind) noexcept {
   switch (kind) {
     case SourceKind::Pump: return 120;
+    // NOLINTNEXTLINE(bugprone-branch-clone): a table: two kinds may share a precedence
     case SourceKind::Pipette: return 100;
     case SourceKind::Laser: return 100;
     case SourceKind::Tank: return 110;

@@ -17,6 +17,8 @@ namespace pychron::experiment::record {
 
 // Bump when the serialized layout changes; parse rejects other versions.
 // v2: typed conditionals provenance (conditionals spec 6.3), whiff result string.
+// Still v2 with instrument.simulated, an optional key written only when true:
+// every earlier v2 record reads as it did, with the sha it had.
 inline constexpr int kRecordSchemaVersion = 2;
 
 struct Identity {
@@ -36,6 +38,12 @@ struct SampleMeta {
 struct InstrumentMeta {
   std::string mass_spectrometer, extract_device, laboratory, analyst;
   std::string software_version, software_git_sha;
+  // The run was made by a simulator, not an instrument. Part of the record
+  // (and of its sha), so that whoever sends the record on, in whatever
+  // session, sends it as what it is. Serialized only when true: a record
+  // that is not simulated is, byte for byte, what it was before records
+  // could say so.
+  bool simulated = false;
   friend bool operator==(const InstrumentMeta&, const InstrumentMeta&) = default;
 };
 
@@ -142,7 +150,9 @@ struct BaselineResult {
 };
 
 struct Results {
-  std::map<std::string, InterceptResult> intercepts;  // by isotope
+  // By isotope; by "<isotope>:<detector>" for an isotope whose signal was
+  // measured on several detectors (record/names.hpp).
+  std::map<std::string, InterceptResult> intercepts;
   std::map<std::string, BaselineResult> baselines;    // by detector
   std::string blanks_ref;
   std::map<std::string, double> icfactors;  // by detector; 1.0 when absent

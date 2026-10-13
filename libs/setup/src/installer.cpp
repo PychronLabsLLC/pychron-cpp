@@ -72,7 +72,7 @@ bool is_asked(const Question& q, const Answers& so_far) {
 bool keep_unanswered_secrets(const ResolvedProfile& profile, Answers& given) {
   bool any = false;
   for (const auto& q : profile.questions) {
-    if (q.type == QuestionType::Secret && !given.count(q.id)) {
+    if (q.type == QuestionType::Secret && !given.contains(q.id)) {
       given[q.id] = Value{std::string{}};
       any = true;
     }

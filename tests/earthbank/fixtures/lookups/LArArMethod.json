@@ -1,0 +1,14 @@
+[
+  {"id": 1301, "name": "Step-heating - undefined"},
+  {"id": 1302, "name": "Step-heating - furnace"},
+  {"id": 1303, "name": "Step-heating - laser"},
+  {"id": 1304, "name": "Spot-heating - laser traverse"},
+  {"id": 1305, "name": "Spot-heating - laser spot"},
+  {"id": 1306, "name": "Total Fusion - undefined"},
+  {"id": 1307, "name": "Total fusion - furnace"},
+  {"id": 1308, "name": "Total fusion - laser"},
+  {"id": 1309, "name": "Crushing (manual)"},
+  {"id": 1310, "name": "Crushing (automated)"},
+  {"id": 1311, "name": "Other"},
+  {"id": 1312, "name": "Unknown"}
+]

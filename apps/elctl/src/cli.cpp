@@ -1,6 +1,7 @@
 #include "cli.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <fstream>
 #include <iomanip>
 #include <istream>
@@ -12,14 +13,20 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
+#include <system_error>
 #include <thread>
 
 #include "duration.hpp"
+#include "earthbank.hpp"
 #include "entry.hpp"
 #include "exp.hpp"
+#include "db.hpp"
 #include "export.hpp"
+#include "flux.hpp"
 #include "laser.hpp"
 #include "import.hpp"
+#include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
 #include "setup.hpp"
 #include "line.hpp"
@@ -61,7 +68,7 @@ constexpr const char* kUsageText =
     "  exp validate <experiment.toml> [--lab <dir>] [--spectrometer <file>]\n"
     "                              check a queue against the lab's plans, scripts and conditionals\n"
     "  exp run <experiment.toml> [--lab <dir>] [--data <dir>] [--spectrometer <file>]\n"
-    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>]\n"
+    "          [--from <row> | --resume] [--dry-run] [--sim-speed <x>|max] [--db <url>]\n"
     "                              run a queue; Ctrl-C stops after the run, again cancels, again aborts\n"
     "  exp notify [--lab <dir>]    send a test message on each channel in <lab>/notifications.toml\n"
     "  laser trays                 tray maps and their stage calibrations\n"
@@ -92,10 +99,32 @@ constexpr const char* kUsageText =
     "  import status|conflicts|verify --db <url>\n"
     "                              progress, what could not be imported, and whether to trust it\n"
     "\n"
+    "The store's schema:\n"
+    "  db status --db <url>        is the store's schema the one this build needs?\n"
+    "  db migrate --db <url>       bring an existing store up to date after an update of pychron\n"
+    "\n"
     "Publication data (elctl export help lists every option):\n"
     "  export --db <url> --out <file.csv|file.json> [--sample S]... [--identifier I]... [--project P]...\n"
     "                              write a 40Ar/39Ar data report after Schaen et al. (2021): metadata,\n"
     "                              constants, one row per analysis, and plateau, mean and isochron ages\n"
+    "  earthbank export-xlsx --db <url> --out <dir> [selection as export] [--overrides <file.toml>]\n"
+    "                              fill EarthBank's (AusGeochem) import workbooks, one data point per\n"
+    "                              sample, to import by hand on its website (elctl earthbank help)\n"
+    "  earthbank login|account|packages|preflight|upload|import-profiles\n"
+    "                              the EarthBank account: sign in, list or make a data package, ask\n"
+    "                              whether the service knows every term of the selected analyses, and\n"
+    "                              upload them (only with --yes; records there cannot be taken back)\n"
+    "\n"
+    "Flux (J) of an irradiation level:\n"
+    "  flux fit <irradiation> [<level>] --db <url> [--model M] [--save] [--csv FILE] ...\n"
+    "                              fit a level's J from its flux monitors and print the monitor and\n"
+    "                              unknown tables; --save writes the fit, --csv a table of every position\n"
+    "  flux show <irradiation> <level> --db <url>\n"
+    "                              the saved J of every position of a level, its model and who saved it\n"
+    "  flux history <irradiation> <level> [<hole>] --db <url>\n"
+    "                              the saves of a level, newest first; with a hole, that position's revisions\n"
+    "  flux monitors [list | show NAME | set FILE | default NAME] --db <url> [--user NAME]\n"
+    "                              the lab's flux monitor sets and which one is the default\n"
     "\n"
     "Sample and package entry (elctl entry help lists every option):\n"
     "  entry samples import <file.csv> --db <url> [--dry-run]\n"
@@ -106,6 +135,8 @@ constexpr const char* kUsageText =
     "                              put samples in a package's positions\n"
     "  entry identifiers generate <package> --db <url> [--dry-run]\n"
     "                              number the positions with the next identifiers\n"
+    "  entry seed <seed.toml> --db <url> [--dry-run]\n"
+    "                              add the reference project, samples and reactors of a seed file\n"
     "\n"
     "Hardware (or simulation, for kind = \"sim\" transports or --sim):\n"
     "  probe                       open every transport, ping every driver, print health\n"
@@ -218,6 +249,9 @@ class Session {
     if (cmd == "import") return import_command(args, io_);
     if (cmd == "entry") return entry_command(args, io_);
     if (cmd == "export") return export_command(args, io_);
+    if (cmd == "db") return db_command(args, io_);
+    if (cmd == "flux") return flux_command(args, io_);
+    if (cmd == "earthbank") return earthbank_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
     if (cmd == "probe") return probe();
@@ -306,7 +340,7 @@ class Session {
     for (std::size_t i = 0; i < args.size(); ++i) {
       if (args[i] == "--spectrometer" && i + 1 < args.size()) {
         spectrometer = args[++i];
-      } else if (!file && !args[i].starts_with("-")) {
+      } else if (!file && !args[i].starts_with('-')) {
         file = args[i];
       } else {
         return usage("conditionals-check <file> [--spectrometer <spectrometer.toml>]");
@@ -748,6 +782,21 @@ int run(const std::vector<std::string>& args, Io io) {
       globals.exp.spectrometer = install->path(install->spectrometer);
       globals.exp.canvas = install->path(install->canvas);
       globals.exp.data = install->path(install->data.empty() ? "data" : install->data);
+#ifdef PYCHRON_ELCTL_HAS_STORE
+      // An instrument's runs go to its database; a server's password is read
+      // from the install here. A failure to read it is kept for `exp run`,
+      // which refuses to start (rather than write files) without --db.
+      if (install->kind == "instrument" && !install->database.empty()) {
+        if (auto url = pychron::setup::database_url(*install)) {
+          globals.exp.database = *url;
+        } else {
+          globals.exp.database_error = url.error().what;
+        }
+      }
+#else
+      // The install has a database and this build cannot write to one: `exp run` says where its runs go.
+      globals.exp.database_not_built = install->kind == "instrument" && !install->database.empty();
+#endif
     } else if (globals.install) {
       io.err << "error: " << install.error().what << "\n";
       return kFailed;

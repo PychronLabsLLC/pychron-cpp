@@ -2,6 +2,7 @@
 
 #include <set>
 
+#include "pychron/experiment/record/names.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 
 namespace pychron::experiment::record {
@@ -86,12 +87,14 @@ std::vector<std::string> RecordBuilder::problems(Phase phase) const {
         need(trace_ok(s.trace), "data.series " + s.iso + "/" + s.det + "/" + s.kind + " empty or length mismatch");
       break;
     case Phase::Results: {
-      std::set<std::string> signal_isos, baseline_dets;
+      std::set<std::string> baseline_dets;
       for (const auto& s : r.data.series) {
-        if (s.kind == "signal") signal_isos.insert(s.iso);
         if (s.kind == "baseline") baseline_dets.insert(s.det);
       }
-      for (const auto& iso : signal_isos) need(r.results.intercepts.count(iso) == 1, "results.intercepts." + iso + " missing");
+      // One intercept an isotope; one a detector, under the acquisition's
+      // name, for an isotope whose signal is on several (names.hpp).
+      for (const auto& key : intercept_keys(r.data))
+        need(r.results.intercepts.count(key) == 1, "results.intercepts." + key + " missing");
       for (const auto& det : baseline_dets) need(r.results.baselines.count(det) == 1, "results.baselines." + det + " missing");
       break;
     }

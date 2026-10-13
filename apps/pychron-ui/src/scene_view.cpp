@@ -20,6 +20,7 @@
 #include <QRubberBand>
 #include <QToolTip>
 #include <QVBoxLayout>
+#include <utility>
 
 #include <qcustomplot.h>
 
@@ -191,6 +192,8 @@ void SceneView::rebuild() {
   const pp::Scene& s = *scene_;
   plot_->setBackground(QBrush(qcolor(s.style.background)));
   const int columns = std::max(1, s.columns);
+  plot_->plotLayout()->setRowSpacing(s.style.graph_spacing);
+  plot_->plotLayout()->setColumnSpacing(s.style.graph_spacing);
   int index = 0;
   for (const auto& g : s.graphs) {
     const int row = index / columns, col = index % columns;
@@ -213,6 +216,13 @@ void SceneView::rebuild() {
       sub->setRowStretchFactor(sub_row, std::max(0.05, panel.height));
       ++sub_row;
       rect->setMarginGroup(QCP::msLeft | QCP::msRight, margins);
+      // Between two panels there is the panel spacing and nothing else: the
+      // sides that face another panel have no margin of their own.
+      QCP::MarginSides outer = QCP::msLeft | QCP::msRight;
+      if (pi == 0) outer |= QCP::msTop;
+      if (pi + 1 == g.panels.size()) outer |= QCP::msBottom;
+      rect->setAutoMargins(outer);
+      rect->setMargins(QMargins(0, 0, 0, 0));
       rect->setBackground(QBrush(qcolor(s.style.plot_background)));
       QCPAxis* x = rect->axis(QCPAxis::atBottom);
       QCPAxis* y = rect->axis(QCPAxis::atLeft);
@@ -241,6 +251,14 @@ void SceneView::rebuild() {
       info.x_max = g.x.max;
       info.y_min = panel.y.min;
       info.y_max = panel.y.max;
+      if (panel.y.pin_min && panel.y.min) {
+        // The wheel and a drag move the top alone: whatever range is asked
+        // for, its size is kept and laid from the pinned minimum.
+        const double pin = *panel.y.min;
+        connect(y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), y, [y, pin](const QCPRange& r) {
+          if (r.lower != pin) y->setRange(pin, pin + r.size());
+        });
+      }
       if (panel.y.scale == pp::AxisScale::Log) {
         info.log = true;
         y->setScaleType(QCPAxis::stLogarithmic);
@@ -488,7 +506,7 @@ bool SceneView::save_pdf(const QString& path) {
   return true;
 }
 
-const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** where) const {
+const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** where, bool analyses_only) const {
   const HitPoint* best = nullptr;
   double best_d = kHitPixels * kHitPixels;
   for (const auto& info : rects_) {
@@ -496,6 +514,7 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
     QCPAxis* x = info.rect->axis(QCPAxis::atBottom);
     QCPAxis* y = info.rect->axis(QCPAxis::atLeft);
     for (const auto& p : info.points) {
+      if (analyses_only && p.uuid.empty()) continue;
       const double dx = x->coordToPixel(p.x) - pos.x(), dy = y->coordToPixel(p.y) - pos.y();
       const double d = dx * dx + dy * dy;
       if (d <= best_d) {
@@ -508,6 +527,7 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
     // Steps: inside the box (at least a few pixels tall, so a tiny error still hits).
     const double px = x->pixelToCoord(pos.x());
     for (const auto& b : info.boxes) {
+      if (analyses_only && b.point.uuid.empty()) continue;
       if (px < b.x0 || px > b.x1) continue;
       const double top = std::min(y->coordToPixel(b.y1), y->coordToPixel(b.point.y) - 3);
       const double bottom = std::max(y->coordToPixel(b.y0), y->coordToPixel(b.point.y) + 3);
@@ -522,7 +542,7 @@ const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** wh
 }
 
 std::optional<QPoint> SceneView::point_position(const std::string& uuid, int panel) const {
-  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return std::nullopt;
+  if (panel < 0 || std::cmp_greater_equal(panel, rects_.size())) return std::nullopt;
   const auto& info = rects_[panel];
   std::vector<HitPoint> candidates = info.points;
   for (const auto& b : info.boxes) candidates.push_back(b.point);
@@ -562,14 +582,14 @@ QString SceneView::tooltip_at(const QPoint& pos) const {
 
 QStringList SceneView::texts(int panel) const {
   QStringList out;
-  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return out;
+  if (panel < 0 || std::cmp_greater_equal(panel, rects_.size())) return out;
   for (const auto& t : rects_[panel].texts) out << t;
   return out;
 }
 
 QList<QRectF> SceneView::span_rects(int panel) const {
   QList<QRectF> out;
-  if (panel < 0 || panel >= static_cast<int>(rects_.size())) return out;
+  if (panel < 0 || std::cmp_greater_equal(panel, rects_.size())) return out;
   for (const QCPItemRect* box : rects_[panel].spans)
     out << QRectF(box->topLeft->pixelPosition(), box->bottomRight->pixelPosition()).normalized();
   return out;
@@ -620,7 +640,7 @@ bool SceneView::eventFilter(QObject* watched, QEvent* event) {
         return true;
       }
       if ((e->pos() - press_pos_).manhattanLength() <= 3) {
-        if (const HitPoint* p = hit(e->pos()); p && !p->uuid.empty()) emit point_clicked(QString::fromStdString(p->uuid));
+        if (const HitPoint* p = hit(e->pos(), nullptr, true)) emit point_clicked(QString::fromStdString(p->uuid));
       }
       break;
     }
@@ -638,8 +658,7 @@ bool SceneView::eventFilter(QObject* watched, QEvent* event) {
 
 void SceneView::show_context_menu(const QPoint& pos) {
   QMenu menu(this);
-  const HitPoint* p = hit(pos);
-  if (p && !p->uuid.empty()) {
+  if (const HitPoint* p = hit(pos, nullptr, true)) {
     const QString id = QString::fromStdString(p->uuid);
     menu.addAction(tr("Include / exclude"), this, [this, id] { emit point_clicked(id); });
     menu.addAction(tr("Recall"), this, [this, id] { emit recall_requested(id); });

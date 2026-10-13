@@ -108,7 +108,7 @@ std::optional<T> take(Json& object, std::string_view key, Convert convert) {
 }  // namespace
 
 Result<Json> parse_legacy(std::string_view text, std::vector<NonFinite>* nonfinite) {
-  if (text.substr(0, 3) == "\xEF\xBB\xBF") text.remove_prefix(3);
+  if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
   std::string tagged;
   const std::size_t count = tag_nonfinite(text, tagged);
   try {
@@ -210,7 +210,7 @@ Json nonfinite_under(const std::vector<NonFinite>& nonfinite, std::string_view p
   Json out;
   for (const auto& n : nonfinite) {
     const std::string_view p = n.pointer;
-    if (p.substr(0, prefix.size()) != prefix) continue;
+    if (!p.starts_with(prefix)) continue;
     if (!prefix.empty() && p.size() > prefix.size() && p[prefix.size()] != '/') continue;  // "/Ar4" vs "/Ar40"
     out[std::string(p.substr(prefix.size()))] = n.token;
   }

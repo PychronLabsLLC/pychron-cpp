@@ -4,7 +4,7 @@
 //
 //   [extraction_line.toml [canvas.toml] | --install <name> | --setup | --examples]
 //   [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>] [--queue <file>]
-//   [--sim-speed <x>] [--db <url>]
+//   [--sim-speed <x>] [--db <url>] [--sim-save]
 //   [--laser [--device <name>]]
 //   --version | --self-test | --write-icons <dir>
 
@@ -26,8 +26,9 @@ struct CommandLine {
   std::optional<std::filesystem::path> lab;    // default: the line config's directory
   std::optional<std::filesystem::path> data;   // default: <lab>/data
   std::optional<std::filesystem::path> queue;  // opened in the experiment window
-  double sim_speed = 0;                        // 0: real time
+  double sim_speed = 0;                        // 0: real time; else simulated, this many times faster
   std::optional<std::string> db;  // DVC store url: View > Data browses it instead of the records
+  bool sim_save = false;  // a simulated session may save its runs to the database (database_choice.hpp)
   std::optional<std::string> install;  // an install from the site config
   bool setup = false;                  // run the setup wizard first
   bool examples = false;               // the shipped example configs (development)
@@ -40,9 +41,11 @@ struct CommandLine {
 
 // A Config error is a usage error: an unknown option, an option without a
 // value (which includes one followed by another option, "--spectrometer
-// --sim"), a --sim-speed that is not a positive number, --sim-speed without
-// --sim, more than one of config files, --install, --setup, --examples,
-// --device without --laser, or --laser with --queue or --spectrometer.
+// --sim"), a --sim-speed that is not a positive number (elctl's "max",
+// unlimited speed, is refused by name), more than one of config files,
+// --install, --setup, --examples, --device without --laser, or --laser with
+// --queue or --spectrometer. --sim-speed without --sim is not refused here: an
+// install can be one set up for simulation, which main() knows and this does not.
 Result<CommandLine> parse_command_line(const QStringList& args);
 
 }  // namespace pychron::ui

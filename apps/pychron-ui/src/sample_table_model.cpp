@@ -85,7 +85,7 @@ void SampleTableModel::mark_stale(const std::vector<ps::StaleRow>& stale) {
 
 bool SampleTableModel::is_stale(int row) const {
   const ps::SampleRow* r = stored(row);
-  return r && stale_.count(r->uuid);
+  return r && stale_.contains(r->uuid);
 }
 
 const char* SampleTableModel::column_name(int column) {
@@ -169,7 +169,7 @@ QVariant SampleTableModel::data(const QModelIndex& index, int role) const {
     return {};
   }
   const ps::SampleRow& r = rows_[static_cast<std::size_t>(row)];
-  const bool deleted = deletes_.count(r.uuid) > 0;
+  const bool deleted = deletes_.contains(r.uuid);
   if (role == Qt::DisplayRole || role == Qt::EditRole) {
     switch (column) {
       case Project: return QString::fromStdString(r.project_name);
@@ -187,15 +187,15 @@ QVariant SampleTableModel::data(const QModelIndex& index, int role) const {
     return f;
   }
   if (role == Qt::BackgroundRole) {
-    if (stale_.count(r.uuid)) return QBrush(theme().warning_bg);
+    if (stale_.contains(r.uuid)) return QBrush(theme().warning_bg);
     if (deleted) return QBrush(theme().diff_removed);
     if (const char* name = column_name(column)) {
       auto e = edits_.find(r.uuid);
-      if (e != edits_.end() && e->second.count(name)) return QBrush(theme().diff_changed);
+      if (e != edits_.end() && e->second.contains(name)) return QBrush(theme().diff_changed);
     }
     return {};
   }
-  if (role == Qt::ToolTipRole && stale_.count(r.uuid)) {
+  if (role == Qt::ToolTipRole && stale_.contains(r.uuid)) {
     QString tip = tr("Changed by another client since it was loaded:");
     for (const auto& [k, v] : stale_.at(r.uuid)) tip += QStringLiteral("\n%1 = %2").arg(QString::fromStdString(k), text(v));
     return tip;
@@ -244,8 +244,8 @@ Result<ps::CatalogEditBatch> SampleTableModel::to_batch(const entry::CatalogSnap
   batch.message = "samples";
   // Stored rows.
   for (const auto& r : rows_) {
-    if (deletes_.count(r.uuid)) {
-      batch.edits.push_back(ps::CatalogDelete{ps::CatalogTable::Sample, r.uuid, {{"name", r.name}}});
+    if (deletes_.contains(r.uuid)) {
+      batch.edits.emplace_back(ps::CatalogDelete{ps::CatalogTable::Sample, r.uuid, {{"name", r.name}}});
       continue;
     }
     auto e = edits_.find(r.uuid);
@@ -255,15 +255,15 @@ Result<ps::CatalogEditBatch> SampleTableModel::to_batch(const entry::CatalogSnap
       for (int c = 0; c < ColumnCount; ++c)
         if (const char* n = column_name(c); n && k == n) u.expected[k] = stored_value(r, c);
     }
-    const auto lat = u.values.count("lat") ? u.values.at("lat") : opt_num(r.fields.lat);
-    const auto lon = u.values.count("lon") ? u.values.at("lon") : opt_num(r.fields.lon);
+    const auto lat = u.values.contains("lat") ? u.values.at("lat") : opt_num(r.fields.lat);
+    const auto lon = u.values.contains("lon") ? u.values.at("lon") : opt_num(r.fields.lon);
     const auto as_opt = [](const ps::CatalogValue& v) -> std::optional<double> {
       if (const auto* d = std::get_if<double>(&v)) return *d;
       return std::nullopt;
     };
     if (auto ok = entry::check_lat_lon(as_opt(lat), as_opt(lon)); !ok)
       return fail(ErrorKind::Config, r.name + ": " + ok.error().what);
-    batch.edits.push_back(std::move(u));
+    batch.edits.emplace_back(std::move(u));
   }
   // New samples, with what they name that does not exist yet.
   std::vector<ps::CatalogEdit> pis, projects, materials, samples;
@@ -285,21 +285,20 @@ Result<ps::CatalogEditBatch> SampleTableModel::to_batch(const entry::CatalogSnap
     if (p == pi_ids.end()) {
       const ps::Uuid id = ps::Uuid::v7();
       p = pi_ids.emplace(std::make_pair(pi->last_name, pi->first_initial), id).first;
-      pis.push_back(ps::CatalogInsert{ps::CatalogTable::PrincipalInvestigator, id,
+      pis.emplace_back(ps::CatalogInsert{ps::CatalogTable::PrincipalInvestigator, id,
                                       {{"last_name", pi->last_name}, {"first_initial", pi->first_initial}}});
     }
     auto j = project_ids.find({n.project, p->second});
     if (j == project_ids.end()) {
       const ps::Uuid id = ps::Uuid::v7();
       j = project_ids.emplace(std::make_pair(n.project, p->second), id).first;
-      projects.push_back(ps::CatalogInsert{ps::CatalogTable::Project, id, {{"name", n.project}, {"pi_uuid", p->second}}});
+      projects.emplace_back(ps::CatalogInsert{ps::CatalogTable::Project, id, {{"name", n.project}, {"pi_uuid", p->second}}});
     }
     auto m = material_ids.find({n.material, n.grainsize});
     if (m == material_ids.end()) {
       const ps::Uuid id = ps::Uuid::v7();
       m = material_ids.emplace(std::make_pair(n.material, n.grainsize), id).first;
-      materials.push_back(
-          ps::CatalogInsert{ps::CatalogTable::Material, id, {{"name", n.material}, {"grainsize", n.grainsize}}});
+      materials.emplace_back(ps::CatalogInsert{ps::CatalogTable::Material, id, {{"name", n.material}, {"grainsize", n.grainsize}}});
     }
     ps::CatalogFields values = entry::sample_columns(n.fields);
     for (auto it = values.begin(); it != values.end();)
@@ -307,7 +306,7 @@ Result<ps::CatalogEditBatch> SampleTableModel::to_batch(const entry::CatalogSnap
     values["name"] = n.name;
     values["project_uuid"] = j->second;
     values["material_uuid"] = m->second;
-    samples.push_back(ps::CatalogInsert{ps::CatalogTable::Sample, ps::Uuid::v7(), std::move(values)});
+    samples.emplace_back(ps::CatalogInsert{ps::CatalogTable::Sample, ps::Uuid::v7(), std::move(values)});
   }
   for (auto* part : {&pis, &projects, &materials, &samples})
     for (auto& e : *part) batch.edits.push_back(std::move(e));

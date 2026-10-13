@@ -109,7 +109,7 @@ TEST(GoldenReader, RejectsMalformed) {
       "[01]",               // leading zero
       "[1.]",               // no fraction digits
       "[\"a\tb\"]",         // raw control character in string
-      "[\"\\x\"]",          // bad escape
+      R"(["\x"])",          // bad escape
       "",                   // empty
   };
   for (const std::string& bad : bad_cases) {

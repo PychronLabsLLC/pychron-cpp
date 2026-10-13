@@ -1,0 +1,41 @@
+# SIMULATION PLACEHOLDER: a DAC field table
+# Replace with the instrument's calibration before any magnet move.
+# Laid out for this profile's detectors: the H1 column is the curve of
+# position against mass, and every other collector sits where H1 would be
+# if its mass were shifted by that collector's spacing from H1 (H2 one mass
+# unit below, AX, L1, L2 and CDD the Ar40 - Ar39, Ar38, Ar37 and Ar36 mass
+# differences above). A hop with Ar40 on H1 then has Ar39 on AX, Ar38 on L1,
+# Ar37 on L2 and Ar36 on CDD at the same magnet value, whatever the
+# isotope is that the table interpolates.
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831237
+H2 = 4.8738
+H1 = 5.001
+AX = 5.1301
+L1 = 5.2616
+L2 = 5.3945
+CDD = 5.5299
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+H2 = 4.7488
+H1 = 4.874
+AX = 5.0010
+L1 = 5.1305
+L2 = 5.2613
+CDD = 5.3947
+
+[[points]]
+isotope = "Ar36"
+mass = 35.967545105
+H2 = 4.3860
+H1 = 4.505
+AX = 4.6258
+L1 = 4.7492
+L2 = 4.8739
+CDD = 5.0010

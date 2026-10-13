@@ -177,6 +177,7 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   }
   // A labelled manual valve keeps its label clear of the wheel in the corner.
   const bool under_wheel = kind_ == canvas::ValveKind::Manual && !label_.isEmpty();
+  // NOLINTNEXTLINE(bugprone-narrowing-conversions): Qt's alignment flags, which drawText takes as an int
   painter->drawText(body.adjusted(0, 0, 0, -1), under_wheel ? Qt::AlignHCenter | Qt::AlignBottom : Qt::AlignCenter,
                     shown_name(QFontMetricsF(painter->font())));
 
@@ -424,11 +425,12 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->save();
     QFont font = painter->font();
     // Font sizes round, so step down until the name fits; elided past that.
+    // NOLINTNEXTLINE(bugprone-float-loop-counter): a ratio shrunk until the name fits, not a count
     for (double shrink = room.width() / label.width(); shrink < 1 && shrink > 0.3; shrink *= 0.95) {
       if (painter->font().pointSizeF() > 0) {
         font.setPointSizeF(painter->font().pointSizeF() * shrink);
       } else {
-        font.setPixelSize(std::max(1, int(painter->font().pixelSize() * shrink)));
+        font.setPixelSize(std::max(1, static_cast<int>(painter->font().pixelSize() * shrink)));
       }
       if (QFontMetricsF(font).horizontalAdvance(label_) <= room.width()) {
         break;
@@ -436,7 +438,7 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     }
     painter->setFont(font);
     painter->drawText(room, Qt::AlignCenter,
-                      painter->fontMetrics().elidedText(label_, Qt::ElideRight, int(std::ceil(room.width()))));
+                      painter->fontMetrics().elidedText(label_, Qt::ElideRight, static_cast<int>(std::ceil(room.width()))));
     painter->restore();
   }
   paint_symbol(*painter, symbol_, glyph, region_);

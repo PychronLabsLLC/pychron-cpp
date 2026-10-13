@@ -1,0 +1,53 @@
+# Air shots and blanks on the simulated lab: blank, air, air, air, blank.
+#   elctl -c extraction_line.toml --sim exp run experiment.sim-air.toml \
+#         --spectrometer spectrometer.sim-integrated.toml --sim-speed max
+#
+# What the lab is like (the tank, the pipette, the inlet, the walls) is in
+# sim.toml. An air run reads about 9.5e4 fA of Ar40 with the 40/36 of air,
+# each a five-hundredth less than the one before (the tank is 50 cc and the
+# pipette 0.1); a blank reads about 10 fA.
+#
+# The measurement is the example plan with more of it: five cycles, each ten
+# readings of Ar40 and 66 of Ar36. Ar36 is some 310 counts a second on the
+# ion counter, and 330 s of it puts its time-zero intercept within 0.7 %;
+# fifty readings of Ar40 over seven minutes show the slope at which the
+# source uses the gas up. `duration` is how long the gas sits in prep.
+
+[queue]
+name = "sim-air"
+mass_spectrometer = "sim"
+username = "example"
+
+[queue.delays]
+before_analyses = 5
+between_analyses = 10
+
+[[runs]]
+identifier = "ba"
+extraction = { script = "sim_blank", duration = 30 }
+measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 5, "main.hops[0].counts" = 10, "main.hops[1].counts" = 66 } }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "a"
+extraction = { script = "sim_air", duration = 30 }
+measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 5, "main.hops[0].counts" = 10, "main.hops[1].counts" = 66 } }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "a"
+extraction = { script = "sim_air", duration = 30 }
+measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 5, "main.hops[0].counts" = 10, "main.hops[1].counts" = 66 } }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "a"
+extraction = { script = "sim_air", duration = 30 }
+measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 5, "main.hops[0].counts" = 10, "main.hops[1].counts" = 66 } }
+post_measurement = "sim_pump"
+
+[[runs]]
+identifier = "ba"
+extraction = { script = "sim_blank", duration = 30 }
+measurement = { plan = "sim_multicollect", overrides = { "main.cycles" = 5, "main.hops[0].counts" = 10, "main.hops[1].counts" = 66 } }
+post_measurement = "sim_pump"

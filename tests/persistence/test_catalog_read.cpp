@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+
 #include <algorithm>
 
 #include "catalog_fixture.hpp"
@@ -91,6 +93,129 @@ TEST_P(CatalogReadTest, SamplesFilterAndCount) {
   EXPECT_EQ(r.principal_investigator_name, "Ross, J");
   EXPECT_EQ(r.material_name, "sanidine");
   EXPECT_EQ(r.principal_investigator, cat_.ross);
+}
+
+// One sample by its uuid: what a loaded analysis asks for. The text filter is
+// a search (any name containing it), and a name alone is one sample per
+// project that has it.
+TEST_P(CatalogReadTest, SampleByUuid) {
+  ASSERT_TRUE(store_->add_sample(client(), {"FC-2b", cat_.p_ross1, cat_.sanidine}));
+  ASSERT_TRUE(store_->add_sample(client(), {"AFC-2", cat_.p_ross1, cat_.sanidine}));
+  const auto twin = store_->add_sample(client(), {"FC-2", cat_.p_ross2, cat_.sanidine});  // the same name in another project
+  ASSERT_TRUE(twin);
+
+  SampleQuery search;
+  search.text = "FC-2";
+  auto family = store_->samples(search);
+  ASSERT_TRUE(family);
+  EXPECT_EQ(family->size(), 4u);
+
+  SampleQuery one;
+  one.uuid = cat_.fc2;
+  auto first = store_->samples(one);
+  ASSERT_TRUE(first);
+  ASSERT_EQ(first->size(), 1u);
+  EXPECT_EQ(first->front().uuid, cat_.fc2);
+  EXPECT_EQ(first->front().project, cat_.p_ross1);
+
+  one.uuid = *twin;
+  auto second = store_->samples(one);
+  ASSERT_TRUE(second);
+  ASSERT_EQ(second->size(), 1u);
+  EXPECT_EQ(second->front().project, cat_.p_ross2);
+
+  one.uuid = cat_.p_ross1;  // a uuid that is no sample's
+  auto none = store_->samples(one);
+  ASSERT_TRUE(none);
+  EXPECT_TRUE(none->empty());
+}
+
+// An analysis says which sample is its own: the identifier's, else the one
+// at the identifier's position.
+TEST_P(CatalogReadTest, AnAnalysisNamesItsSample) {
+  ASSERT_TRUE(store_->add_identifier(client(), {"70001", "unknown", std::nullopt, std::nullopt, cat_.pos_a1, std::nullopt, std::nullopt}));
+  const Uuid by_position = analyze("70001");
+  ASSERT_TRUE(store_->add_identifier(client(), {"70002", "unknown", std::nullopt, std::nullopt, std::nullopt, cat_.s1, std::nullopt}));
+  const Uuid by_identifier = analyze("70002");
+
+  auto a = store_->load_analysis_detail(by_position);
+  ASSERT_TRUE(a);
+  ASSERT_TRUE(a->has_value());
+  EXPECT_EQ((*a)->row.sample, "FC-2");
+  EXPECT_EQ((*a)->row.sample_uuid, cat_.fc2);
+
+  auto b = store_->load_analysis_detail(by_identifier);
+  ASSERT_TRUE(b);
+  ASSERT_TRUE(b->has_value());
+  EXPECT_EQ((*b)->row.sample, "bt-1");
+  EXPECT_EQ((*b)->row.sample_uuid, cat_.s1);
+}
+
+// The counts cost a pass over the analyses; a caller that wants the row only
+// says so.
+TEST_P(CatalogReadTest, SamplesWithoutCounts) {
+  ASSERT_TRUE(store_->add_identifier(client(), {"70001", "unknown", std::nullopt, std::nullopt, cat_.pos_a1, std::nullopt, std::nullopt}));
+  analyze("70001");
+  SampleQuery q;
+  q.uuid = cat_.fc2;
+  auto counted = store_->samples(q);
+  ASSERT_TRUE(counted);
+  ASSERT_EQ(counted->size(), 1u);
+  EXPECT_EQ(counted->front().n_analyses, 1);
+  EXPECT_EQ(counted->front().n_positions, 1);
+
+  q.counts = false;
+  auto plain = store_->samples(q);
+  ASSERT_TRUE(plain);
+  ASSERT_EQ(plain->size(), 1u);
+  EXPECT_EQ(plain->front().n_analyses, 0);
+  EXPECT_EQ(plain->front().n_positions, 0);
+  EXPECT_EQ(plain->front().project_name, "Alpha");  // the rest of the row is there
+  EXPECT_EQ(plain->front().material_name, "sanidine");
+}
+
+// An analysis belongs to a sample through its identifier's position or
+// through the identifier itself; one that does both is still one analysis.
+TEST_P(CatalogReadTest, SampleAnalysesAreCountedOnceByEitherRoute) {
+  // by position: FC-2 sits at A1
+  ASSERT_TRUE(store_->add_identifier(client(), {"70001", "unknown", std::nullopt, std::nullopt, cat_.pos_a1, std::nullopt, std::nullopt}));
+  analyze("70001", 1);
+  analyze("70001", 2);
+  // by the identifier's own sample
+  ASSERT_TRUE(store_->add_identifier(client(), {"70002", "unknown", std::nullopt, std::nullopt, std::nullopt, cat_.fc2, std::nullopt}));
+  analyze("70002", 1);
+  // another sample's, which must not leak in
+  ASSERT_TRUE(store_->add_identifier(client(), {"70003", "unknown", std::nullopt, std::nullopt, std::nullopt, cat_.s1, std::nullopt}));
+  analyze("70003", 1);
+
+  auto all = store_->samples({});
+  ASSERT_TRUE(all);
+  std::map<std::string, int> analyses;
+  for (const SampleRow& r : *all) analyses[r.name] = r.n_analyses;
+  EXPECT_EQ(analyses["FC-2"], 3);
+  EXPECT_EQ(analyses["bt-1"], 1);
+  EXPECT_EQ(analyses["bt-2"], 0);
+  EXPECT_EQ(analyses["Other"], 0);
+}
+
+// Text is text. A note or a name that happens to read like a date or a time
+// comes back as it was written, not as a date put back into words.
+TEST_P(CatalogReadTest, TextThatLooksLikeADateStaysText) {
+  for (const char* text : {"2024-05-01 12:30:45", "2024-05-01", "2024-05-01T12:30:45Z", "12:30:45", "2024-5-1"}) {
+    SampleSpec spec{std::string("s ") + text, cat_.p_ross1, cat_.sanidine};
+    spec.note = text;
+    spec.location = text;
+    const auto id = store_->add_sample(client(), spec);
+    ASSERT_TRUE(id) << text;
+    SampleQuery q;
+    q.uuid = *id;
+    auto rows = store_->samples(q);
+    ASSERT_TRUE(rows);
+    ASSERT_EQ(rows->size(), 1u);
+    EXPECT_EQ(rows->front().name, std::string("s ") + text);
+    EXPECT_EQ(rows->front().fields.note, text);
+    EXPECT_EQ(rows->front().fields.location, text);
+  }
 }
 
 TEST_P(CatalogReadTest, LevelsByName) {

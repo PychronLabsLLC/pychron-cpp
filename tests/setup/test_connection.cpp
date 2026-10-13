@@ -9,7 +9,6 @@
 
 #include <asio.hpp>
 
-#include <random>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -23,6 +22,7 @@
 #include "pychron/setup/install.hpp"
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::setup;
@@ -92,9 +92,7 @@ class NgxServer {
 };
 
 struct Tmp {
-  fs::path dir = fs::temp_directory_path() /
-                 ("pychron-conn-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+  fs::path dir = pychron::testing::unique_temp_path("pychron-conn-");
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
 };

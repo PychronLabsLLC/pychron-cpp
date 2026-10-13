@@ -3,5 +3,7 @@
 # Windows CI runner's git would otherwise convert them.
 * text=auto eol=lf
 *.pgm binary
+# The vendor workbook templates (libs/earthbank/templates) are copied byte for byte.
+*.xlsx binary
 # Legacy fixtures are read byte for byte (hashes, git blob shas): never convert line endings.
 tests/dvc/fixtures/** -text

@@ -2,7 +2,8 @@
 # controllers, furnace, two bones, pipettes), converted from its legacy Pychron
 # setupfiles with `elctl import-line`. Every controller is simulated, so it runs
 # with no hardware: `pychron-ui extraction_line.toml canvas.toml` from this directory.
-# Drawn by canvas.toml in this directory.
+# Drawn by canvas.toml in this directory. A simulated cryostat and bakeout
+# heater are added by hand (see below): the legacy setup had neither here.
 #
 # Converted from a legacy Pychron setup (setupfiles) by pychron setup.
 # Read: extractionline/valves.xml, canvas2D/canvas.xml, canvas2D/canvas_config.xml, devices/furnace_switch_controller.cfg, devices/NMGRLFurnaceActuator.cfg, devices/switch_controller.cfg, devices/AgilentGPActuator.cfg, devices/arduino_valve_controller.cfg, devices/ArduinoGPActuator.cfg, devices/felix_helix_valve_controller.cfg, devices/ObamaQtegraGPActuator.cfg, devices/jan_argus_valve_controller.cfg, devices/JanQtegraGPActuator.cfg
@@ -59,6 +60,40 @@ timeout_ms = 2000
 [drivers."jan_argus_valve_controller"]
 kind = "qtegra_valves"
 transport = "jan_argus_valve_controller"
+
+# Not from the legacy setup: a cryostat and a bakeout heater, added by hand so
+# the Cryo and Heaters docks have something to show. Both are simulated: a
+# Lake Shore 335 whose inputs follow its setpoints, and a PLC heater.
+[transports."cryostat"]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers."cryostat"]
+kind = "lakeshore"
+transport = "cryostat"
+model = "335"
+inputs = ["A", "B"]
+# The heater range each setpoint needs, per output; range 0 is the heater off.
+ranges = [
+  { output = 1, range = 0, min = 0.0, max = 1.0 },
+  { output = 1, range = 1, min = 1.0, max = 30.0 },
+  { output = 1, range = 3, min = 30.0, max = 325.0 },
+  { output = 2, range = 0, min = 0.0, max = 1.0 },
+  { output = 2, range = 2, min = 1.0, max = 325.0 },
+]
+
+[transports."bakeout_plc"]
+kind = "sim"
+timeout_ms = 2000
+
+# 1-based coils and registers, as in a legacy PLC2000Heater device file.
+[drivers."bakeout_plc"]
+kind = "plc2000_heater"
+transport = "bakeout_plc"
+enable = 1
+use_pid = 2
+setpoint = 11
+readback = 21
 
 [[valves]]
 name = "FD"
@@ -292,6 +327,25 @@ outer = "Y"
 name = "Cocktail"
 inner = "X"
 outer = "W"
+
+# The line's cryostat: `set_cryo` in a script, and the Cryo dock.
+[cryo]
+driver = "cryostat"
+tolerance_k = 1.0
+timeout_s = 600
+
+# Named setpoints, in kelvin: value i goes to output i (legacy cryotemps.yaml).
+[cryo.setpoints]
+He_freeze = [14.0, 0.0]
+He_release = [35.0, 0.0]
+Ar_freeze = [70.0, 0.0]
+Ar_release = [300.0, 0.0]
+
+[[heaters]]
+name = "Bakeout"
+driver = "bakeout_plc"
+description = "Bone bakeout tape"
+units = "C"
 
 # Notes from the conversion:
 #   check_actuation_delay not carried over (8 valves: FD, FA, FB, FC, FH, FG, FE, FF)

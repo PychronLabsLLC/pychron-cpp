@@ -1,6 +1,8 @@
 // LogDock, AlarmDock, HealthBar and the assembled MainWindow wiring.
 
 #include <chrono>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -15,7 +17,9 @@
 #include <QtTest/QtTest>
 
 #include "main_window.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "spectrometer_fixture.hpp"
+#include "settings_guard.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -29,6 +33,16 @@ using pychron::ui::LogRecord;
 
 class TestDocks : public QObject {
   Q_OBJECT
+
+ private:
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
+  // Log, Alarms, then the cryostat's and the heaters' when the line has them.
+  static QList<QDockWidget*> main_docks(const ui::MainWindow& window) {
+    QList<QDockWidget*> docks{window.log_dock(), window.alarm_dock()};
+    if (window.cryo_dock() != nullptr) docks.append(window.cryo_dock());
+    if (window.heater_dock() != nullptr) docks.append(window.heater_dock());
+    return docks;
+  }
 
  private slots:
   void logDockAppendsFormattedLines() {
@@ -284,6 +298,55 @@ class TestDocks : public QObject {
     QCOMPARE(dock.active_count(), 0);
   }
 
+  // An alarm's row carries the time the dock is given: real time unless told.
+  void alarmDockStampsARowWithItsOwnTimeSource() {
+    AlarmDock dock(nullptr, [] { return QDateTime(QDate(2001, 2, 3), QTime(4, 5, 6)); });
+    dock.add_alarm(Alarm{"IG1", AlarmSeverity::Critical, "high", {}});
+    QCOMPARE(dock.tree()->topLevelItem(0)->text(3), QStringLiteral("04:05:06"));
+
+    AlarmDock real;
+    const QTime before = QTime::currentTime();
+    real.add_alarm(Alarm{"IG1", AlarmSeverity::Critical, "high", {}});
+    const QTime shown = QTime::fromString(real.tree()->topLevelItem(0)->text(3), QStringLiteral("HH:mm:ss"));
+    QVERIFY(shown.isValid());
+    const int late = (before.secsTo(shown) + 86400) % 86400;  // across midnight too
+    QVERIFY2(late <= 5, qPrintable(real.tree()->topLevelItem(0)->text(3)));
+  }
+
+  // On a simulated line the window tells the time by the line's clock: an
+  // alarm's row has that clock's time of day, and a transport's "ok ... ago"
+  // is counted on it. Here it is six hours from the real time of day and its
+  // monotonic time ten hours behind the real one.
+  void mainWindowTellsTheTimeByTheLinesClock() {
+    VirtualClock::Options at;
+    at.epoch = std::chrono::system_clock::now() + 6h;
+    at.start = std::chrono::steady_clock::now() - 10h;
+    VirtualClock clock(at);  // outlives the line
+    auto line = ui::test::make_example_line({}, &clock);
+    {
+      ui::MainWindow window(*line);
+      QVERIFY(line->start().has_value());
+
+      line->bus().publish(Alarm{"IG1", AlarmSeverity::Critical, "high", clock.now()});
+      QTRY_VERIFY(window.alarm_dock()->is_active("IG1"));
+      const QTime shown = QTime::fromString(window.alarm_dock()->tree()->topLevelItem(0)->text(3), QStringLiteral("HH:mm:ss"));
+      const QTime simulated =
+          QDateTime::fromMSecsSinceEpoch(
+                  std::chrono::duration_cast<std::chrono::milliseconds>(clock.wall_now().time_since_epoch()).count())
+              .time();
+      const int off = (shown.secsTo(simulated) + 86400) % 86400;  // across midnight too
+      QVERIFY2(off <= 60, qPrintable(window.alarm_dock()->tree()->topLevelItem(0)->text(3)));
+
+      line->bus().publish(TransportHealth{"valve_bus", true, 0, "", clock.now()});
+      QTRY_COMPARE(*window.health_bar()->status("valve_bus"), HealthBar::Status::Ok);
+      clock.sleep_for(5s);
+      window.health_bar()->refresh();
+      QVERIFY2(window.health_bar()->chip("valve_bus")->text().endsWith(QStringLiteral(" 5s")),
+               qPrintable(window.health_bar()->chip("valve_bus")->text()));
+      line->stop();
+    }
+  }
+
   void healthBarChipsTrackStatusAndAge() {
     TimePoint now{};
     HealthBar bar(nullptr, [&now] { return now; });
@@ -326,6 +389,134 @@ class TestDocks : public QObject {
       QTRY_VERIFY(window.log_dock()->text().contains(QStringLiteral("A rejected")));
       line->stop();
     }
+  }
+
+  // ---- the main window's panel layout ---------------------------------------
+
+  void mainWindowResetShowsClosedPanelsAgain() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const QList<QDockWidget*> docks = main_docks(window);
+    QVERIFY(docks.size() >= 2);
+    window.log_dock()->close();
+    window.alarm_dock()->setFloating(true);
+    for (QDockWidget* dock : docks.mid(2)) dock->close();
+
+    window.dock_layouts()->reset();
+    for (const QDockWidget* dock : docks) {
+      QVERIFY2(dock->isVisible(), qPrintable(dock->objectName()));
+      QVERIFY2(!dock->isFloating(), qPrintable(dock->objectName()));
+    }
+    QCOMPARE(window.dockWidgetArea(window.log_dock()), Qt::BottomDockWidgetArea);
+    for (QDockWidget* dock : docks.mid(1)) QCOMPARE(window.dockWidgetArea(dock), Qt::RightDockWidgetArea);
+  }
+
+  void mainWindowKeepsItsLayoutAcrossInstances() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    auto line = ui::test::make_example_line();
+    const QString group = QStringLiteral("main_window/%1").arg(QString::fromStdString(line->config().system.name));
+    {
+      ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.log_dock()->close();
+      window.close();
+    }
+    {
+      const QSettings settings(file, QSettings::IniFormat);
+      QVERIFY(settings.contains(group + QStringLiteral("/state")));
+      QVERIFY(settings.contains(group + QStringLiteral("/geometry")));
+    }
+    ui::MainWindow again(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(!again.log_dock()->isVisible());
+    QVERIFY(again.alarm_dock()->isVisible());
+  }
+
+  void mainWindowResetGivesThePanelsTheirSizesBack() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(window.log_dock()->height() > 0);
+    const int log_height = window.log_dock()->height();
+    const int side_width = window.alarm_dock()->width();
+    window.resizeDocks({window.log_dock()}, {log_height + 200}, Qt::Vertical);
+    window.resizeDocks({window.alarm_dock()}, {side_width + 250}, Qt::Horizontal);
+    QTRY_VERIFY(window.log_dock()->height() > log_height + 100);
+    QTRY_VERIFY(window.alarm_dock()->width() > side_width + 100);
+
+    window.dock_layouts()->reset();
+    constexpr int kSlackPx = 6;
+    QTRY_VERIFY2(qAbs(window.log_dock()->height() - log_height) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(window.log_dock()->height()).arg(log_height)));
+    QTRY_VERIFY2(qAbs(window.alarm_dock()->width() - side_width) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(window.alarm_dock()->width()).arg(side_width)));
+  }
+
+  void mainWindowHasItsSizeAndKeepsTheOneItWasClosedWith() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    auto line = ui::test::make_example_line();
+    {
+      ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      QCOMPARE(window.size(), QSize(1200, 850));  // as installed
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.resize(760, 640);  // within the offscreen screen, which restoreGeometry keeps a window on
+      QTRY_COMPARE(window.size(), QSize(760, 640));
+      window.close();
+    }
+    ui::MainWindow again(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QTRY_COMPARE(again.size(), QSize(760, 640));
+  }
+
+  void mainWindowWithoutSettingsKeepsNothing() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    QVERIFY(!window.dock_layouts()->can_save());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    window.log_dock()->close();
+    window.close();
+    ui::MainWindow again(*line);
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(again.log_dock()->isVisible());
+  }
+
+  void mainWindowLogsAnArrangementThatCannotBeApplied() {
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    auto line = ui::test::make_example_line();
+    {
+      QSettings settings(file, QSettings::IniFormat);
+      settings.setValue(QStringLiteral("main_window/%1/arrangements/bad/state")
+                            .arg(QString::fromStdString(line->config().system.name)),
+                        QByteArray("zz"));
+    }
+    ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    QVERIFY(!window.dock_layouts()->apply(QStringLiteral("bad")));
+    window.log_dock()->set_min_level(LogLevel::Warn);
+    QTRY_VERIFY(window.log_dock()->text().contains(QString::fromUtf8("arrangement “bad” not applied")));
+  }
+
+  void mainWindowPanelsListItsClosableDocks() {
+    auto line = ui::test::make_example_line();
+    const ui::MainWindow window(*line);
+    QStringList want;
+    for (const QDockWidget* dock : main_docks(window)) want.append(dock->windowTitle());
+    want.sort(Qt::CaseInsensitive);  // by title
+    QStringList got;
+    for (const QAction* action : window.dock_layouts()->panel_actions()) got.append(action->text());
+    QCOMPARE(got, want);
+    QVERIFY(got.size() >= 2);
   }
 
   void spectrometerActionDisabledWithoutSpectrometer() {
@@ -432,6 +623,8 @@ class TestDocks : public QObject {
       QVERIFY(!sim->scan->running());
     }
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestDocks)

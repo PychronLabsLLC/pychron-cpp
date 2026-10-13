@@ -34,6 +34,7 @@ enum class FieldType {
   Color,       // "#rrggbb" or "#rrggbbaa"
   Quantity,    // a quantity expression (quantity.hpp)
   StringList,  // array of strings
+  Font,        // a font family name; empty is the default font
 };
 
 std::string_view to_string(FieldType type) noexcept;
@@ -48,7 +49,7 @@ struct FieldSpec {
   double min = -1e300, max = 1e300, step = 0;
   std::vector<std::string> choices;  // Enum
   std::string help;
-  std::string enabled_when;  // "<key> == <value>" or "<key> != <value>" or "<key>" (a bool), for the UI
+  std::string enabled_when;  // "<key> == <value>", "<key> != <value>", "<key> in <v1>|<v2>|..." or "<key>" (a bool), for the UI
 };
 
 class Options;

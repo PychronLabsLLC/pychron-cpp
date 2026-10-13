@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstddef>
+#include <optional>
 
 #include <QMessageBox>
 
@@ -39,6 +42,11 @@ QPointF project(QPointF p, QPointF a, QPointF b) {
 }  // namespace
 
 QColor CanvasView::isolated_color() { return theme().neutral_fill; }
+
+std::optional<QColor> CanvasView::background_color(const canvas::Canvas& c) {
+  const QColor found = color_or(c, "background", QColor());
+  return found.isValid() ? std::optional<QColor>(found) : std::nullopt;
+}
 
 QColor CanvasView::source_color(canvas::SourceKind kind, int ordinal) {
   const auto& c = theme().sources;
@@ -86,6 +94,8 @@ void CanvasView::build(const canvas::Canvas& c) {
   sources_ = canvas::sources(c);
   const QPointF origin = to_qpoint(c.canvas.origin);
   scene_.setSceneRect(origin.x(), origin.y(), c.canvas.size.width, c.canvas.size.height);
+  // Behind the drawing and around it: the view shows the scene's background wherever it is.
+  if (const auto background = background_color(c)) scene_.setBackgroundBrush(*background);
 
   for (const auto& v : c.valves) {
     auto* item = new ValveItem(v.name, v.kind);
@@ -94,7 +104,7 @@ void CanvasView::build(const canvas::Canvas& c) {
     item->set_on_click([this](const std::string& name) { on_click(name); });
     item->set_on_lock_request([this](const std::string& name, bool locked) { request_lock(name, locked); });
     item->set_on_hover([this, item, name = v.name] {
-      item->set_details(valve_details(bridge_.state(), name, QDateTime::currentDateTime()));
+      item->set_details(valve_details(bridge_.state(), name, bridge_.wall_now()));
     });
     scene_.addItem(item);
     valves_[v.name] = item;
@@ -349,9 +359,9 @@ QStringList CanvasView::valve_details(const CoreBridge::State& state, const std:
   if (!info->second.owner.empty()) line += tr(", owned by %1").arg(QString::fromStdString(info->second.owner));
   lines += line;
 
-  if (h.opens == 0 && h.closes == 0 && h.failures == 0) return lines << tr("Never actuated");
+  if (h.opens == 0 && h.closes == 0 && h.failures == 0 && h.refusals == 0) return lines << tr("Never actuated");
   if (h.last_actuation) lines += tr("Last actuated %1").arg(moment(*h.last_actuation, now));
-  lines += tr("Opened %L1, closed %L2, failed %L3").arg(h.opens).arg(h.closes).arg(h.failures);
+  lines += tr("Opened %L1, closed %L2, failed %L3, refused %L4").arg(h.opens).arg(h.closes).arg(h.failures).arg(h.refusals);
   // A spell still running counts up to now.
   std::chrono::seconds open = h.open_time;
   if (valve == ValveState::Open && h.since && wall > *h.since) open += wall - *h.since;
@@ -369,7 +379,7 @@ void CanvasView::apply_state() {
       item->set_locked(it->second.locked);
     }
     item->set_pending(bridge_.pending(name));
-    item->set_details(valve_details(state, name, QDateTime::currentDateTime()));
+    item->set_details(valve_details(state, name, bridge_.wall_now()));
   }
   for (auto& [name, item] : gauges_) {
     if (auto it = state.pressures.find(name); it != state.pressures.end()) {

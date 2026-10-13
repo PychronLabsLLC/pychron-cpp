@@ -25,7 +25,7 @@ Result<toml::table> parse_toml(std::string_view text, std::string_view source) {
 bool is_exposed(std::string_view path, const std::vector<ExposeEntry>& expose) {
   for (const auto& e : expose) {
     if (path == e.path) return true;
-    if (path.size() > e.path.size() && path.substr(0, e.path.size()) == e.path &&
+    if (path.size() > e.path.size() && path.starts_with(e.path) &&
         (path[e.path.size()] == '.' || path[e.path.size()] == '['))
       return true;
   }

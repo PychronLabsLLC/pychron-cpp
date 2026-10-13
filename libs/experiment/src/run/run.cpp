@@ -1,9 +1,14 @@
 #include "pychron/experiment/run/run.hpp"
 
 #include <chrono>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <memory>
 #include <random>
+#include <string_view>
 #include <thread>
 
 #include "pychron/experiment/measurement/results.hpp"
@@ -31,8 +36,8 @@ std::string random_uuid() {
   return buf;
 }
 
-std::string utc_now() {
-  const auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+std::string utc(WallTime now) {
+  const auto t = std::chrono::system_clock::to_time_t(now);
   std::tm tm{};
 #if defined(_WIN32)
   gmtime_s(&tm, &t);
@@ -107,7 +112,7 @@ RunResult Run::execute(RunControl& control) {
   auto& token = control.token();
   auto fail_with = [&](RunEvent e, const Error& error) {
     result_.error = error;
-    (void)sm_.advance(e, error.what);
+    advance(e, error.what);
   };
   auto stopped = [&]() -> std::optional<RunEvent> {
     if (token.mode() == scripting::CancelMode::Abort) return RunEvent::Abort;
@@ -115,30 +120,30 @@ RunResult Run::execute(RunControl& control) {
     return std::nullopt;
   };
 
-  (void)sm_.advance(RunEvent::Start);
+  advance(RunEvent::Start);
   if (auto r = prepare(); !r) {
     fail_with(RunEvent::Fail, r.error());
   } else if (auto early = stopped()) {
-    (void)sm_.advance(*early, "before extraction");
+    advance(*early, "before extraction");
   } else {
-    (void)sm_.advance(RunEvent::Prepared);
+    advance(RunEvent::Prepared);
     auto ex = extract(control);
     if (auto s = stopped(); s == RunEvent::Abort) {
-      (void)sm_.advance(RunEvent::Abort, "during extraction");
+      advance(RunEvent::Abort, "during extraction");
     } else if (s == RunEvent::Cancel) {
       (void)post_measure(control);  // cancel still runs post-measurement
-      (void)sm_.advance(RunEvent::Cancel, "during extraction");
+      advance(RunEvent::Cancel, "during extraction");
     } else if (!ex) {
       fail_with(RunEvent::Fail, ex.error());
     } else {
-      (void)sm_.advance(RunEvent::Extracted);
+      advance(RunEvent::Extracted);
       auto me = measure(control);
       const auto outcome = result_.measurement.outcome;
       if (stopped() == RunEvent::Abort || outcome == measurement::MeasurementOutcome::Aborted) {
-        (void)sm_.advance(RunEvent::Abort, "during measurement");
+        advance(RunEvent::Abort, "during measurement");
       } else if (stopped() == RunEvent::Cancel || outcome == measurement::MeasurementOutcome::Cancelled) {
         (void)post_measure(control);
-        (void)sm_.advance(RunEvent::Cancel, "during measurement");
+        advance(RunEvent::Cancel, "during measurement");
       } else if (!me) {
         fail_with(RunEvent::Fail, me.error());
       } else if (outcome == measurement::MeasurementOutcome::Failed) {
@@ -146,20 +151,20 @@ RunResult Run::execute(RunControl& control) {
       } else {
         if (outcome == measurement::MeasurementOutcome::Truncated) {
           result_.truncated = true;
-          if (sm_.state() == RunState::Measuring) (void)sm_.advance(RunEvent::Truncate);
+          if (sm_.state() == RunState::Measuring) advance(RunEvent::Truncate);
         }
-        (void)sm_.advance(RunEvent::Measured, std::string(measurement::to_string(outcome)));
+        advance(RunEvent::Measured, std::string(measurement::to_string(outcome)));
         if (auto pm = post_measure(control); !pm)
           note("post-measurement failed: " + pm.error().what);  // still saves
         if (stopped() == RunEvent::Abort) {
-          (void)sm_.advance(RunEvent::Abort, "during post-measurement");
+          advance(RunEvent::Abort, "during post-measurement");
         } else {
-          (void)sm_.advance(RunEvent::PostMeasured);
+          advance(RunEvent::PostMeasured);
           if (auto sv = save(); !sv) {
             result_.save_error = true;
             fail_with(RunEvent::Fail, sv.error());
           } else {
-            (void)sm_.advance(RunEvent::Saved);
+            advance(RunEvent::Saved);
           }
         }
       }
@@ -176,7 +181,7 @@ Result<scripting::Script> Run::resolve(const std::string& name, scripting::Scrip
 }
 
 Result<void> Run::prepare() {
-  timestamp_ = s_.timestamp ? s_.timestamp() : utc_now();
+  timestamp_ = s_.timestamp ? s_.timestamp() : utc(s_.clock->wall_now());
   // This run's extraction device: the one set directly, else the lab's by
   // name. Its stage is told the queue's tray before any script runs, so a
   // hole name means a hole on that tray and no other.
@@ -292,6 +297,11 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
   return {};
 }
 
+void Run::advance(RunEvent e, std::string reason) {
+  // Never expected: said, so that a run whose states are out of step shows it.
+  if (auto r = sm_.advance(e, std::move(reason)); !r) note(r.error().what);
+}
+
 void Run::note(std::string message) {
   RunNote said{run_id_, row_, std::move(message), s_.clock->now()};
   {
@@ -366,34 +376,51 @@ Result<void> Run::measure(RunControl& control) {
   in.icfactors = s_.icfactors;
   in.arar = s_.arar;
 
+  // The post-equilibration script runs beside the measurement, on a thread
+  // that says when it is done (under post_eq_mutex, through the clock).
   std::thread post_eq;
+  std::mutex post_eq_mutex;
+  std::condition_variable post_eq_cv;
+  bool post_eq_done = false;
   measurement::EngineOptions options = s_.engine;
-  options.on_inlet_closed = [this, &control, &post_eq] {
+  options.on_inlet_closed = [&, this] {
     if (post_eq_ && !control.requested() && !post_eq.joinable()) {
-      post_eq = std::thread([this, &control] {
+      // Time does not move on between the thread's start and its Participant.
+      auto hold = std::make_shared<Clock::Hold>(*s_.clock);
+      post_eq = std::thread([&, this, hold]() mutable {
+        Clock::Participant participant(*s_.clock, "run.post_eq");
+        hold.reset();
         if (auto r = run_script(*post_eq_, scripting::ScriptKind::PostEquilibration, control); !r)
           note("post-equilibration failed: " + r.error().what);
+        // Said while this thread is still a participant.
+        std::lock_guard lock(post_eq_mutex);
+        post_eq_done = true;
+        s_.clock->notify_all(post_eq_cv);
       });
     }
     if (hooks_.on_overlap_ready) hooks_.on_overlap_ready();
   };
-  SignalBus::Subscription started;
-  if (s_.bus != nullptr) {
-    started = s_.bus->subscribe<measurement::BlockStarted>([this](const measurement::BlockStarted& e) {
-      if (e.run_id == run_id_ && e.block == measurement::Block::Main && sm_.state() == RunState::Equilibrating)
-        (void)sm_.advance(RunEvent::Equilibrated);
-    });
-  }
+  // Told by the engine itself, not through the bus: the bus is for those who
+  // watch the run, and the run is measuring whether or not anyone does.
+  options.on_block_started = [this](measurement::Block b) {
+    if (b == measurement::Block::Main && sm_.state() == RunState::Equilibrating) advance(RunEvent::Equilibrated);
+  };
   measurement::MeasurementEngine engine(ctx, std::move(in), std::move(options));
   control.attach(&engine);
   result_.measurement = engine.run(control.token());
   control.attach(nullptr);
-  if (post_eq.joinable()) post_eq.join();
-  started.reset();
-  // Without a bus (or before main started) the state still moves on.
+  if (post_eq.joinable()) {
+    {
+      // The script may still have to wait in the clock: joined once it has said it is done.
+      std::unique_lock lock(post_eq_mutex);
+      while (!post_eq_done) s_.clock->wait(post_eq_cv, lock);
+    }
+    post_eq.join();
+  }
+  // A measurement with no main block still moves on.
   if (sm_.state() == RunState::Equilibrating && !result_.measurement.data.series.empty() &&
       result_.measurement.outcome != measurement::MeasurementOutcome::Failed)
-    (void)sm_.advance(RunEvent::Equilibrated);
+    advance(RunEvent::Equilibrated);
   if (hooks_.release_spectrometer) hooks_.release_spectrometer();
   return {};
 }
@@ -516,7 +543,15 @@ Result<void> Run::save() {
   result_.record = finalized ? *finalized : b.draft();
   if (s_.save != nullptr) {
     // Spooled even when incomplete, so nothing measured is lost.
-    if (auto r = s_.save->save(*result_.record); !r) return r;
+    auto saved = s_.save->save(*result_.record);
+    if (!saved) return fail(saved.error());
+    if (saved->pending) {
+      // In the spool, and not where finished runs go: the run is what it
+      // was, flagged, and says why. The queue goes on; the record is sent
+      // again when a queue next starts.
+      result_.save_error = true;
+      note(std::string(kNotSavedNote) + saved->pending->what);
+    }
   }
   if (!finalized) return fail(finalized.error());
   return {};

@@ -3,17 +3,27 @@
 // gauge values and alarm colouring.
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include <QGraphicsScene>
+#include <QGraphicsSceneHoverEvent>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "theme.hpp"
 #include "ui_fixture.hpp"
 
@@ -52,6 +62,35 @@ class TestCanvasView : public QObject {
     view_->resize(1100, 800);
     QVERIFY(line_->start().has_value());
     QTRY_VERIFY(bridge_->state().pressures.count("IG1") == 1);
+  }
+
+  // The canvas file may say what is behind the drawing; without that the
+  // view has the application's own background.
+  void theBackgroundIsTheCanvasFilesWhenItNamesOne() {
+    QCOMPARE(view_->scene()->backgroundBrush().style(), Qt::NoBrush);  // the example names none
+
+    canvas::Canvas c = *bridge_->canvas();
+    QVERIFY(!CanvasView::background_color(c).has_value());
+    c.colors["background"] = "#102030";
+    QCOMPARE(CanvasView::background_color(c), std::optional<QColor>(QColor(0x10, 0x20, 0x30)));
+    c.colors["background"] = "not a colour";
+    QVERIFY(!CanvasView::background_color(c).has_value());
+
+    // A view of a line whose canvas names one is drawn on it: the example's
+    // canvas, with the line it leaves commented out switched on.
+    std::ifstream in(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "canvas.toml");
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string off = "# background = \"#f4f6f8\"";
+    const auto at = text.find(off);
+    QVERIFY(at != std::string::npos);
+    text.replace(at, off.size(), "background = \"#102030\"");
+    QTemporaryDir dir;
+    const auto file = std::filesystem::path(dir.path().toStdString()) / "canvas.toml";
+    { std::ofstream(file) << text; }
+    auto line = ui::test::make_example_line(file);
+    CoreBridge bridge(*line);
+    const CanvasView view(bridge);
+    QCOMPARE(view.scene()->backgroundBrush(), QBrush(QColor(0x10, 0x20, 0x30)));
   }
 
   void cleanup() {
@@ -101,6 +140,10 @@ class TestCanvasView : public QObject {
     QVERIFY(a->toolTip().contains(QStringLiteral("Last failure: ")));
     QVERIFY(a->toolTip().contains(QStringLiteral("interlocked")));
     QCOMPARE(a->state(), ValveState::Closed);
+    // A refusal is in the valve's history, apart from the commands that failed.
+    QTRY_VERIFY2(a->toolTip().contains(QStringLiteral("Opened 0, closed 0, failed 0, refused 1")), qPrintable(a->toolTip()));
+    bridge_->actuate("A", SwitchOp::Open);
+    QTRY_VERIFY2(a->toolTip().contains(QStringLiteral("refused 2")), qPrintable(a->toolTip()));
   }
 
   // The tooltip says what the valve is, its state and since when, and what
@@ -128,6 +171,45 @@ class TestCanvasView : public QObject {
     QVERIFY(b->toolTip().contains(QStringLiteral("Time open ")));
   }
 
+  // "Since" is counted on the line's clock, which stamped the actuation: on a
+  // simulated line that is simulated time, here a quarter of a century from
+  // the real time of day.
+  void valveDetailsAreAsOfTheLinesClock() {
+    using namespace std::chrono_literals;
+    VirtualClock::Options at;
+    at.epoch = WallTime{} + std::chrono::hours(24 * 365 * 31);
+    VirtualClock clock(at);  // outlives the line
+    auto line = ui::test::make_example_line({}, &clock);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    QVERIFY(line->start().has_value());
+    ui::ValveItem* c = view.valve("C");
+    QVERIFY(c != nullptr);
+    bridge.actuate("C", SwitchOp::Open);
+    QTRY_VERIFY(c->toolTip().contains(QStringLiteral("Open since ")));
+    QTRY_VERIFY(!c->is_pending());
+    // Stamped a moment ago, at the clock's time of day.
+    const auto since = QRegularExpression(QStringLiteral("Open since (\\d\\d:\\d\\d:\\d\\d) \\(\\d s\\)")).match(c->toolTip());
+    QVERIFY2(since.hasMatch(), qPrintable(c->toolTip()));
+    const QString opened = since.captured(1);
+    const QTime simulated =
+        QDateTime::fromSecsSinceEpoch(std::chrono::duration_cast<std::chrono::seconds>(clock.wall_now().time_since_epoch()).count())
+            .time();
+    QVERIFY2((QTime::fromString(opened, QStringLiteral("HH:mm:ss")).secsTo(simulated) + 86400) % 86400 < 10, qPrintable(opened));
+
+    // Hovering brings the tooltip up to date.
+    clock.sleep_for(90s);
+    QGraphicsSceneHoverEvent hover(QEvent::GraphicsSceneHoverEnter);
+    view.scene()->sendEvent(c, &hover);
+    QVERIFY2(c->toolTip().contains(QStringLiteral("Open since %1 (1 min)").arg(opened)), qPrintable(c->toolTip()));
+
+    // So does anything the line reports: every valve is redrawn.
+    clock.sleep_for(60s);
+    QVERIFY(bridge.set_locked("C", true).has_value());
+    QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("Open since %1 (2 min), locked").arg(opened)), qPrintable(c->toolTip()));
+    line->stop();
+  }
+
   // The lines under a valve's name, from its history and as of a given moment.
   void valveDetailsSayStateHistoryAndTimeOpen() {
     using std::chrono::seconds;
@@ -147,6 +229,7 @@ class TestCanvasView : public QObject {
     h.opens = 1204;
     h.closes = 1203;
     h.failures = 3;
+    h.refusals = 12;
     h.since = ago(2 * 3600 + 13 * 60);
     h.last_actuation = ago(3 * 86400);
     h.open_time = seconds(40 * 3600);
@@ -156,9 +239,21 @@ class TestCanvasView : public QObject {
     QCOMPARE(ui::CanvasView::valve_details(state, "V", now),
              (QStringList{QStringLiteral("Bone to turbo"), QStringLiteral("Open since 12:47:00 (2 h 13 min)"),
                           QStringLiteral("Last actuated %1").arg(locale.toString(now.addDays(-3), QStringLiteral("d MMM yyyy HH:mm"))),
-                          QStringLiteral("Opened %1, closed %2, failed 3").arg(locale.toString(1204), locale.toString(1203)),
+                          QStringLiteral("Opened %1, closed %2, failed 3, refused 12").arg(locale.toString(1204), locale.toString(1203)),
                           QStringLiteral("Time open 1 d 18 h")}));  // 40 h ended, 2 h 13 min running
     QCOMPARE(ui::CanvasView::valve_details(state, "nope", now), QStringList{QStringLiteral("State unknown")});
+  }
+
+  // A command that was sent and failed is in the valve's history at once.
+  void failedCommandIsCountedInTheTooltip() {
+    ui::ValveItem* c = view_->valve("C");
+    QVERIFY(line_->transport("valve_bus") != nullptr);
+    line_->transport("valve_bus")->close();
+    bridge_->actuate("C", SwitchOp::Open);
+    QTRY_VERIFY(c->is_flashing());
+    QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("failed 1, refused 0")), qPrintable(c->toolTip()));
+    bridge_->actuate("C", SwitchOp::Open);
+    QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("failed 2, refused 0")), qPrintable(c->toolTip()));
   }
 
   void lockedValveDrawsBlueBorderAndUnlockClearsIt() {
@@ -548,8 +643,8 @@ class TestCanvasView : public QObject {
       painter.end();
       int dark = 0;
       // the upper part only: a plain box centers its name lower down
-      for (int y = int(area.top()) + 2; y < int(area.center().y()) - 8; ++y)
-        for (int x = int(area.left()) + 2; x < int(area.right()) - 2; ++x) dark += image.pixelColor(x, y).lightness() < 100;
+      for (int y = static_cast<int>(area.top()) + 2; y < static_cast<int>(area.center().y()) - 8; ++y)
+        for (int x = static_cast<int>(area.left()) + 2; x < static_cast<int>(area.right()) - 2; ++x) dark += image.pixelColor(x, y).lightness() < 100;
       return dark;
     };
     ui::StageItem plain("Jan", "Jan", {58, 83}, Qt::white);

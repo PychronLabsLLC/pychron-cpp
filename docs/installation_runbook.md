@@ -44,18 +44,28 @@ the example configs.
 
 Packages are built by the `release` workflow on a `v*` tag and attached to the
 GitHub release (<https://github.com/PychronLabsLLC/pychron-cpp/releases>).
-Each carries its own Python for extraction scripts. They are not code-signed,
-so macOS and Windows warn on first launch.
+Each carries its own Python for extraction scripts. The macOS `.dmg` is signed
+with Pychron Labs' Developer ID and notarized by Apple once the repository has
+the signing secrets (section 1.4); the Windows packages are not code-signed,
+so Windows warns on first launch.
 
-On macOS the warning is Gatekeeper's: open the application once with a
-right-click > Open (or allow it under System Settings > Privacy & Security).
-Until the application is notarized, macOS also marks files that a downloaded
-application writes as quarantined; Pychron clears that mark from the files it
-writes for you (data reports, figures, CSV templates, level sheets), so they
-open without "Apple could not verify ... is free of malware". A file written
-by an older release that still shows it can be cleared by hand:
-`xattr -d com.apple.quarantine <file>`. The lasting fix is a Developer ID
-signature and notarization in the release workflow.
+A macOS package from before that (v0.3.0 and earlier), or one built without
+the secrets, is stopped by Gatekeeper on first launch. With "Apple could not
+verify ..." open it once, dismiss the warning, then click Open Anyway under
+System Settings > Privacy & Security (right-click > Open no longer does it
+on macOS 15 and later). With "Pychron is damaged and can't be opened" (v0.3.0,
+whose signatures do not hold together) there is no Open Anyway: copy the
+application to Applications and clear its quarantine mark once, then open it:
+
+```
+xattr -dr com.apple.quarantine /Applications/Pychron.app
+```
+
+Such a build also leaves the files it writes quarantined; Pychron
+clears that mark from the files it writes for you (data reports, figures, CSV
+templates, level sheets), so they open without "Apple could not verify ... is
+free of malware". A file written by an older release that still shows it can
+be cleared by hand: `xattr -d com.apple.quarantine <file>`.
 
 | Platform | Package | Install | Where `elctl` is |
 |---|---|---|---|
@@ -121,6 +131,57 @@ Checks the profiles, the setup wizard and the database plugin, and prints one
 display, prefix it with `QT_QPA_PLATFORM=offscreen`; the macOS and Windows
 packages carry only their native platform plugin, so leave it unset there.
 
+### 1.4 Signing and notarizing the macOS package
+
+The `release` workflow signs `Pychron.app` from the inside out with the
+hardened runtime (`packaging/macos/sign_app.sh`, called by CPack before the
+disk image is made), then signs the `.dmg`, submits it to Apple's notary
+service and staples the ticket to it. The smoke test checks the signatures,
+runs the installed programs (Python included) under the hardened runtime and,
+for a notarized image, asks Gatekeeper (`spctl`) what it would decide.
+
+It needs five repository secrets (Settings > Secrets and variables >
+Actions). Without the first two the app is signed ad hoc: everything is still
+signed and run under the hardened runtime, but the package is not fit to hand
+out, and a release says so in a warning.
+
+| Secret | What it is |
+|---|---|
+| `MACOS_CERTIFICATE_P12_BASE64` | The Developer ID Application certificate and its private key, exported as a `.p12` and base64-encoded |
+| `MACOS_CERTIFICATE_PASSWORD` | The password the `.p12` was exported with |
+| `APPLE_API_KEY_P8_BASE64` | An App Store Connect API key (`AuthKey_<id>.p8`), base64-encoded |
+| `APPLE_API_KEY_ID` | That key's ID |
+| `APPLE_API_ISSUER_ID` | The issuer ID shown above the keys list |
+
+To make them (an Apple Developer Program membership, as an Account Holder or
+Admin):
+
+1. In Xcode > Settings > Accounts > Manage Certificates, add a "Developer ID
+   Application" certificate (or create one under Certificates at
+   developer.apple.com from a certificate signing request made in Keychain
+   Access).
+2. In Keychain Access, find "Developer ID Application: <team> (<team ID>)"
+   under My Certificates, select it together with its private key, and export
+   them as a `.p12` with a password. Then:
+   `base64 -i Certificates.p12 | pbcopy` and paste it into
+   `MACOS_CERTIFICATE_P12_BASE64`.
+3. In App Store Connect > Users and Access > Integrations > App Store Connect
+   API, generate a team key with the Developer role. Download the `.p8` (it
+   can be downloaded once), then `base64 -i AuthKey_<id>.p8 | pbcopy` into
+   `APPLE_API_KEY_P8_BASE64`; the key ID and the issuer ID go into the other
+   two.
+
+To check them before a release, run the `release` workflow by hand (Actions >
+release > Run workflow, no tag): the macOS job signs, notarizes and assesses
+the image and keeps it as a workflow artifact. A rejected submission fails the
+job with Apple's log, which names each file and why.
+
+The programs' entitlements are in `packaging/macos/entitlements.plist`: the
+camera (a laser's live camera, which the hardened runtime otherwise refuses),
+loading libraries not signed by Pychron's team (Python's extension modules, a
+vendor's camera SDK) and Python's `ctypes`. A new need, such as another device
+class, goes there.
+
 ## Part 2. Configure
 
 ### 2.1 How configuration is laid out
@@ -176,7 +237,9 @@ Setup asks for the password and keeps it in
 
 Setup and the application never create or migrate a **server** database. Its
 schema is made by the importer (part 3.3: `elctl import add` and
-`elctl import run` are the only commands that migrate). A server database that
+`elctl import run` make it). After an update of pychron that needs a newer
+schema, `elctl db migrate --db <url>` brings an existing database up to date;
+`elctl db status --db <url>` says whether it is. A server database that
 has had no import run against it has no schema, and `doctor` fails it with
 "ask your administrator about the schema".
 
@@ -196,8 +259,17 @@ elctl init argus --root ~/Pychron/argus
 ```
 
 Press Enter to accept each default. The install starts in simulation. It
-writes the extraction line and canvas, `spectrometer.toml`, field tables, a
-measurement plan, scripts, conditionals, an example queue and `CALIBRATE.md`.
+writes the extraction line and canvas, `spectrometer.toml`, field tables,
+three measurement plans, scripts, conditionals, the special identifiers
+(`identifiers.toml`), run defaults, an example queue and `CALIBRATE.md`. It
+also makes the install's database and puts the reference samples in it (see
+"The database and what setup puts in it" below).
+
+| Plan | What it measures |
+|---|---|
+| `multicollect` | every detector collects its isotope, one hop |
+| `detector_ic` | the reference isotope (Ar40) hopped onto each Faraday in turn, for the detector intercalibration factors |
+| `multicollect_hop_ar39` | every isotope but Ar39 together, then Ar39 hopped onto the ion counter (the `hop_detector` answer) |
 
 Choose the extraction line with the `line_source` question:
 
@@ -206,6 +278,64 @@ Choose the extraction line with the `line_source` question:
 | `starter` (default) | The five-valve example line on simulated controllers |
 | `import` | Your own `extraction_line.toml` and `canvas.toml` (`line_file`, `canvas_file`), checked before anything is written |
 | `legacy` | A legacy Pychron `setupfiles` folder (`legacy_folder`) converted; see part 3.6 |
+
+#### The database and what setup puts in it
+
+The last question is where the database is: a file on this computer
+(`data/pychron.db`, the default) or the lab's PostgreSQL server
+(`--set data_source=server` and the `db_*` answers, as in part 2.2). It holds
+the catalog (samples, projects, packages) and every run the instrument
+finishes: `pychron-ui` and `elctl exp run` write each one to it, and the data
+window reads it. A run the database cannot take at once waits in
+`<root>/data/spool` and is sent when the next queue starts
+([04 Experiments](user/04-experiments.md#85-what-is-written-run-records)).
+
+Setup then seeds it from `<root>/seed.toml`:
+
+| What | Seeded |
+|---|---|
+| Project | `references` |
+| Samples (and their special identifiers) | `blank_unknown` (`bu`), `blank_air` (`ba`), `blank_cocktail` (`bc`), `blank_extractionline` (`be`), `background` (`bg`), `air` (`a`), `cocktail` (`c`), `detector_ic` (`ic`) |
+| Materials | `blank`, `air`, `cocktail` |
+| Mass spectrometer | the profile's: `argus`, `helix` or `ngx`, the name the shipped queue gives as `mass_spectrometer` |
+| Extract devices | none (`extract_devices = []`) |
+| Reactor | `Triga`, with nine production ratios, for `elctl entry package add --reactor Triga` |
+
+`defaults.toml` names the same samples, so a new blank, air or cocktail run
+is recorded with its sample and the `references` project.
+
+A queue is started only if the database has its mass spectrometer and every
+identifier and extract device it names; nothing adds them while it runs. So
+before the first queue that uses a laser or furnace, name the device in
+`seed.toml` (`extract_devices = ["co2"]`, the name the queue gives as
+`extract_device`) and run the seed again (last item below); do the same for a
+mass spectrometer under another name. Identifiers of samples come from Entry
+([entry.md](entry.md)).
+
+- The seed only adds. A project, sample, identifier, mass spectrometer,
+  extract device or reactor that is
+  already there is kept exactly as it is, so running setup again, or on a
+  server other instruments share, changes nothing of theirs.
+- A project named `references` that the lab already has is used, whoever its
+  principal investigator is.
+- A special identifier that exists (for example from a legacy import) keeps
+  whatever sample it has or has not.
+- Setup makes and migrates a local database. It never migrates the lab's
+  server: there the seed runs only when the schema is current (part 2.2).
+- To change what is seeded, edit `seed.toml` and run
+  `elctl entry seed <root>/seed.toml --db <url>` (`--dry-run` says what it
+  would add).
+
+If the seed cannot run, setup prints `seed skipped: <reason>` and the command
+to run once that is put right, and the install is otherwise complete (a local
+database is made all the same): the instrument measures without it. For a
+local database the command is `elctl entry seed "<file>" --db "<url>"`; for
+the lab's server it is `elctl init --reconfigure --install <name>`, since the
+install has the password and a url does not.
+
+An instrument install made before pychron had this is told by `doctor` that
+its profile is newer; `elctl init --reconfigure --install <name>` brings the
+new files, the database and the seed.
 
 Check, then run the example queue in simulation:
 
@@ -217,8 +347,17 @@ elctl doctor --install argus
 elctl --install argus exp run experiment.toml --sim-speed 50
 ```
 
-Expect every `doctor` line `[OK]` and the queue to finish. Records go to
-`<root>/data`.
+Expect every `doctor` line `[OK]` and the queue (three air shots between two
+blanks) to finish with a line that names the database:
+
+```
+queue completed
+5/5 run(s) succeeded; in sqlite:/home/you/Pychron/argus/data/pychron.db
+```
+
+The five runs are in the database, and `pychron-ui --install argus` shows
+them under View > Data. Run only one program at a time against an install's
+database.
 
 Notifications are optional: copy `notifications.toml.example` to
 `notifications.toml`, fill in a channel, and send a test with
@@ -257,10 +396,53 @@ CDD unprotected.
    `--strict` fails on warnings, so it fails while a placeholder or a
    fully simulated line remains. `--probe` opens each TCP transport and runs
    the drivers' connect step.
-4. For a Thermo instrument, follow "Running against a Thermo instrument" in
+4. Start the instrument on a new database. The runs made in simulation are
+   in the install's database, as airs and blanks under the same identifiers
+   the instrument will use (`a-01`, `ba-01`, ... as the data window shows
+   them). Each is marked as simulated, but the next real air would continue
+   their numbering and they would sit in the same lists as the instrument's.
+   With pychron closed, delete `<root>/data/pychron.db` (and its `-wal` and
+   `-shm` files, and anything left in `<root>/data/spool`) and run
+   `elctl init --reconfigure --install argus`, which makes and seeds a new
+   one. An install whose database is on a shared server never had simulated
+   runs written to it (a simulated session writes record files there unless
+   it is started with `--sim-save`), so there is nothing to remove.
+5. For a Thermo instrument, follow "Running against a Thermo instrument" in
    [dev_setup.md](dev_setup.md) and the bring-up checklist in section 8 of
    [the Qtegra driver spec](superpowers/specs/2026-10-01-qtegra-driver-design.md).
    Turn on the wire trace for first contact.
+
+#### Upgrading an existing instrument install
+
+An install made by a version that wrote record files only now reads and
+writes its database. Three things follow:
+
+- **The database must know the instrument.** A queue is refused at its start
+  with `mass spectrometer '<name>' is not in the database` until it does.
+  Either run the install's seed, which adds the mass spectrometer, the
+  reference identifiers and what else `seed.toml` names, and changes nothing
+  that is already there:
+
+  ```bash
+  elctl entry seed <root>/seed.toml --db sqlite:<root>/data/pychron.db
+  ```
+
+  or reconfigure the install, which brings its files up to the current
+  profile (an install from before the seed has no `seed.toml` until then) and
+  seeds the database:
+
+  ```bash
+  elctl init --reconfigure --install argus
+  ```
+
+- **Earlier record files are not shown.** Once the data window reads the
+  database it no longer lists `<root>/data/records`. The files stay where
+  they are, and nothing copies them into the database in this version.
+- **Numbering starts from what the database holds.** The next aliquot of an
+  identifier is one more than the database's last, not the records folder's:
+  on a new database the next air is `a-01` whatever files exist. Fix the
+  aliquot in the queue (`aliquot = 12`) for the first run of each identifier
+  if the numbering has to go on from the files.
 
 ### 2.5 Day-to-day configuration
 
@@ -464,6 +646,10 @@ repository or database, so falling back is a matter of continuing to use it.
 | `several installs and no default` | Pass `--install NAME`, or set the default in File > Installations |
 | `doctor`: `database ... not checked: built without the database library` | Built without Qt Sql. Use a release package, or rebuild with Qt 6 found |
 | `doctor` fails a PostgreSQL database | Server, user or password wrong, the QPSQL plugin is missing (`libqt6sql6-psql`), or the schema was never created (part 2.2) |
+| `seed skipped: the database could not be opened` | An instrument install's database was not reachable or its schema is not current. Fix that (part 2.2), then run the command printed under it |
+| `seed skipped: ...seed.toml: ...` | The install's `seed.toml` was edited into something that does not parse. Fix the line named, then run the printed command |
+| `doctor` warns about an instrument's `database` | The database does not open. The line can still be worked, but no queue starts until it does: `elctl exp run` stops with the reason, and Pychron shows it in the data window. `elctl init --reconfigure` makes a missing local one; a schema that is behind needs `elctl db migrate --db <url>` |
+| `error: the queue cannot be saved:` and `... is not in the database` | The queue names an identifier, mass spectrometer or extract device the install's database lacks. Add it (Entry, or `seed.toml` and `elctl entry seed`; part 2.3) and start the queue again |
 | `doctor` warns `every transport is simulated` | Simulation is off but the line is still the starter. Describe the real controllers in `extraction_line.toml` |
 | `import add` refuses a time zone or flag | The source is already registered with another `--tz` or `--catalog-from-repos`; these cannot change |
 | `import run` or `verify`: `history was rewritten` | The legacy repository's history changed (for example a force-push) after it was imported. `run` and `verify` refuse it; see [legacy_import.md](legacy_import.md) section 3 |
@@ -483,7 +669,8 @@ Single-developer project. Open an issue at
 - A server database gets its schema only from the importer; there is no
   stand-alone "create schema" command for a lab starting with no legacy data.
 - The importer is not built or tested on Windows in CI.
-- Packages are unsigned.
+- Windows packages are unsigned. The macOS package is signed and notarized
+  only once the repository has the signing secrets (section 1.4).
 - A macOS package built with Homebrew's Qt carries the SQLite database driver
   only: it cannot open a PostgreSQL store unless Qt's QPSQL plugin was
   installed when it was built.

@@ -340,7 +340,7 @@ TEST_F(ChromiumTest, MoveOutsideLimitsIsConfigAndSendsNothing) {
   EXPECT_EQ(laser.set_axis(IStage::Axis::Z, -50.5).error().kind, ErrorKind::Config);
   EXPECT_EQ(laser.set_xy(std::nan(""), 0).error().kind, ErrorKind::Config);
   EXPECT_EQ(sim.log().size(), before);
-  EXPECT_NE(laser.set_xy(50.001, 0).error().what.find("x"), std::string::npos);
+  EXPECT_NE(laser.set_xy(50.001, 0).error().what.find('x'), std::string::npos);
   ASSERT_TRUE(laser.set_xy(50, -50));  // the limits themselves are in range
 }
 
@@ -362,7 +362,7 @@ TEST_F(ChromiumTest, LimitSwitchWhileMovingIsAnError) {
   auto r = laser.moving();
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Io);
-  EXPECT_NE(r.error().what.find("x"), std::string::npos);
+  EXPECT_NE(r.error().what.find('x'), std::string::npos);
   EXPECT_NE(r.error().what.find("positive"), std::string::npos);
   EXPECT_FALSE(*laser.moving());  // target cleared
 }

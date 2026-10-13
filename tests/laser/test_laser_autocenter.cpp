@@ -2,9 +2,12 @@
 // autocenter design, sections 5 and 6). The laser system on the Chromium
 // simulator, with the simulated camera seeing the tray where it really is.
 
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,7 +20,6 @@ using namespace pychron::extraction;
 using namespace pychron::laser;
 using namespace pychron::laser::harness;
 using namespace std::chrono_literals;
-namespace fs = std::filesystem;
 using vision::AutocenterReason;
 using Outcome = AutocenterOutcome::Result;
 
@@ -122,6 +124,8 @@ TEST(Autocenter, ConvergesOnTheTrueHoleAndSaves) {
   EXPECT_NEAR(on_disk.at("3").y, kTrueY, 0.03);
   EXPECT_LT(on_disk.at("3").residual_mm, 0.03);
   EXPECT_EQ(on_disk.at("3").found.size(), 20u);  // 2026-10-04T16:20:11Z
+  // The clock's calendar time: the harness's ManualClock starts in 1970.
+  EXPECT_TRUE(on_disk.at("3").found.starts_with("1970-01-01T00:")) << on_disk.at("3").found;
   EXPECT_EQ(h.system.corrections().size(), 1u);
 }
 

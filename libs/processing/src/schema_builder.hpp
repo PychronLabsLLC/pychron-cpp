@@ -72,6 +72,13 @@ inline FieldSpec text(std::string key, std::string label, std::string section, s
   return f;
 }
 
+inline FieldSpec font(std::string key, std::string label, std::string section, std::string def = {},
+                      std::string help = {}) {
+  FieldSpec f = text(std::move(key), std::move(label), std::move(section), std::move(def), std::move(help));
+  f.type = FieldType::Font;
+  return f;
+}
+
 inline FieldSpec choice(std::string key, std::string label, std::string section, std::vector<std::string> choices,
                         std::string def = {}) {
   FieldSpec f;

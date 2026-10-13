@@ -79,7 +79,7 @@ struct LaserHarness {
   TrayLibrary trays = TrayLibrary::load(lab.dir / "tray_maps");
   CalibrationStore store{lab.dir / "stage_calibrations"};
   PatternLibrary patterns = PatternLibrary::load(lab.dir / "patterns");
-  LaserSystem system{"co2", driver, trays, store, &patterns};
+  LaserSystem system{"co2", driver, trays, store, &patterns, &clock};
 
   explicit LaserHarness(ChromiumOptions o = options()) : driver("co2", *wire, o) {
     EXPECT_TRUE(wire->open());
@@ -135,6 +135,8 @@ struct CameraHarness : LaserHarness {
     EXPECT_TRUE(system.attach_camera(seen, std::move(frames), clock));
     EXPECT_TRUE(system.set_tray("small"));
   }
+  // cppcheck-suppress duplInheritedMember ; on purpose: a camera frame is 100 ms
+  // NOLINTNEXTLINE(bugprone-derived-method-shadowing-base-method): on purpose, as said above
   void advance() { clock.advance(100ms); }
   // Polls moving() until it says false or fails; the last answer.
   Result<bool> drive(int limit = 3000) {
@@ -158,6 +160,8 @@ struct CameraHarness : LaserHarness {
     }
     return out;
   }
+  // cppcheck-suppress duplInheritedMember ; on purpose: this harness's own system
+  // NOLINTNEXTLINE(bugprone-derived-method-shadowing-base-method): on purpose, as said above
   IExtractionDevice& device() { return system; }
 };
 

@@ -33,10 +33,10 @@ constexpr laser::PatternKind kKinds[] = {
 
 QString kind_name(laser::PatternKind kind) { return QString::fromStdString(std::string(to_string(kind))); }
 
-QString field_name(std::string_view key) { return QStringLiteral("field_") + QString::fromUtf8(key.data(), qsizetype(key.size())); }
+QString field_name(std::string_view key) { return QStringLiteral("field_") + QString::fromUtf8(key.data(), static_cast<qsizetype>(key.size())); }
 
 QString label_of(std::string_view key) {
-  QString text = QString::fromUtf8(key.data(), qsizetype(key.size()));
+  QString text = QString::fromUtf8(key.data(), static_cast<qsizetype>(key.size()));
   text.replace(QLatin1Char('_'), QLatin1Char(' '));
   text[0] = text[0].toUpper();
   return text;

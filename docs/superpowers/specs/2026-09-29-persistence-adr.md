@@ -283,6 +283,13 @@ B. **Topology: PostgreSQL server plus a local durable outbox on the
    status, never a prompt. Aliquots are reserved per instrument in advance
    (leases), with a flagged provisional fallback for runs added while
    offline.
+
+   Note 2026-10-10: outbox and uploader not built yet. Acquisition writes
+   to store directly (`2026-10-10-e2e-sim-experiment-design.md`, section 5); experiment's spool covers
+   outage (failed save kept, re-sent at next queue start); ids derived from
+   record uuid (UUIDv5), not UUIDv7; no leases, one acquisition program per
+   database. Instrument install's default database is a local SQLite file,
+   which C below does not yet allow for: accepted until outbox exists.
 C. **SQLite's role is limited** to the acquisition outbox/spool, the
    portable offline export, and the test engine. It is never the shared lab
    database. PostgreSQL is the only production shared engine. The DDL stays

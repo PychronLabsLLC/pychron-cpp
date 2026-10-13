@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <random>
+#include <ranges>
 #include <tuple>
 
 namespace pychron::experiment {
@@ -14,7 +15,7 @@ Unexpected<Error> bad(std::string what) { return fail(ErrorKind::Config, std::mo
 std::size_t uniform_below(std::mt19937_64& rng, std::size_t n) {
   const std::uint64_t range = n;
   const std::uint64_t limit = std::mt19937_64::max() - std::mt19937_64::max() % range;
-  std::uint64_t x;
+  std::uint64_t x = 0;
   do x = rng();
   while (x >= limit);
   return static_cast<std::size_t>(x % range);
@@ -41,8 +42,8 @@ Result<void> ExperimentQueue::insert(std::size_t at, RunSpec run) {
 Result<void> ExperimentQueue::remove(std::vector<std::size_t> rows) {
   auto sel = check_rows(std::move(rows));
   if (!sel) return fail(sel.error());
-  for (auto it = sel->rbegin(); it != sel->rend(); ++it)
-    spec_.runs.erase(spec_.runs.begin() + static_cast<std::ptrdiff_t>(*it));
+  for (auto& it : std::views::reverse(*sel))
+    spec_.runs.erase(spec_.runs.begin() + static_cast<std::ptrdiff_t>(it));
   return {};
 }
 
@@ -159,7 +160,7 @@ Result<std::size_t> ExperimentQueue::add_frequency_runs(const FrequencySpec& f) 
   std::vector<std::size_t> counted;
   for (std::size_t i = f.first; i < last; ++i) {
     const auto& r = spec_.runs[i];
-    if (!r.skip && f.counted.count(r.id.type)) counted.push_back(i);
+    if (!r.skip && f.counted.contains(r.id.type)) counted.push_back(i);
   }
   if (counted.empty()) return std::size_t{0};
 
@@ -171,8 +172,8 @@ Result<std::size_t> ExperimentQueue::add_frequency_runs(const FrequencySpec& f) 
       if ((j + 1) % static_cast<std::size_t>(f.every) == 0) slots.insert(counted[j] + 1);
   if (f.after) slots.insert(counted.back() + 1);
 
-  for (auto it = slots.rbegin(); it != slots.rend(); ++it)
-    spec_.runs.insert(spec_.runs.begin() + static_cast<std::ptrdiff_t>(*it), f.run);
+  for (const auto slot : std::views::reverse(slots))
+    spec_.runs.insert(spec_.runs.begin() + static_cast<std::ptrdiff_t>(slot), f.run);
   return slots.size();
 }
 

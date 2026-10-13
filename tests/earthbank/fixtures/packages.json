@@ -1,0 +1,62 @@
+[
+  {
+    "dataPackageDTO": {
+      "id": 610001,
+      "name": "Example Lab Ar-Ar 2026",
+      "description": "An invented package the fixture account made.",
+      "distribution": "PRIVATE",
+      "workflowState": "IN_PROGRESS",
+      "licenseText": "Creative Commons",
+      "institutionId": 9301,
+      "institutionName": "Example University",
+      "createdById": 880123
+    },
+    "countEditors": 0,
+    "countSupervisors": 1
+  },
+  {
+    "dataPackageDTO": {
+      "id": 610002,
+      "name": "Example Lab archive",
+      "description": "Somebody else's, at the same institution.",
+      "distribution": "PRIVATE",
+      "workflowState": "IN_PROGRESS",
+      "licenseText": "Creative Commons",
+      "institutionId": 9301,
+      "institutionName": "Example University",
+      "createdById": 880456
+    },
+    "countEditors": 2,
+    "countSupervisors": 1
+  },
+  {
+    "dataPackageDTO": {
+      "id": 610003,
+      "name": "Other Institute results",
+      "description": null,
+      "distribution": "PRIVATE",
+      "workflowState": "IN_PROGRESS",
+      "licenseText": "Creative Commons",
+      "institutionId": 9302,
+      "institutionName": "Other Institute",
+      "createdById": 880789
+    },
+    "countEditors": 0,
+    "countSupervisors": 1
+  },
+  {
+    "dataPackageDTO": {
+      "id": 610004,
+      "name": "Example Lab shared",
+      "description": "Somebody else's; the fixture account is one of its editors.",
+      "distribution": "PRIVATE",
+      "workflowState": "IN_PROGRESS",
+      "licenseText": "Creative Commons",
+      "institutionId": 9301,
+      "institutionName": "Example University",
+      "createdById": 880456
+    },
+    "countEditors": 3,
+    "countSupervisors": 1
+  }
+]

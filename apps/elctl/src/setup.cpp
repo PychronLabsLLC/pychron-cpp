@@ -13,6 +13,7 @@
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
 #include "pychron/persistence/store.hpp"
+#include "entry.hpp"
 #endif
 
 namespace elctl {
@@ -48,7 +49,7 @@ std::string shown(const Question& q, const Value& v) {
     std::string out;
     for (const auto& r : *rows) {
       std::string row;
-      for (const auto& c : q.columns) row += (row.empty() ? "" : " ") + (r.count(c) && !r.at(c).empty() ? r.at(c) : "-");
+      for (const auto& c : q.columns) row += (row.empty() ? "" : " ") + (r.contains(c) && !r.at(c).empty() ? r.at(c) : "-");
       out += "\n      " + row;
     }
     return out;
@@ -69,7 +70,7 @@ Result<void> ask(const ResolvedProfile& profile, Answers& given, const Answers& 
   for (const Question* qp : ordered) {
     const Question& q = *qp;
     if (!is_asked(q, so_far)) continue;
-    if (given.count(q.id)) continue;
+    if (given.contains(q.id)) continue;
     if (q.group != group) {
       group = q.group;
       io.out << "\n" << group << "\n";
@@ -135,6 +136,39 @@ Result<std::string> open_store(const std::string& url, bool migrate) {
 }
 #endif
 
+// An instrument install's database is made (a local one) and given what
+// <root>/seed.toml names: the references project, its samples and special
+// identifiers, the reactors. The instrument measures without any of it, so
+// whatever goes wrong here is said and the install goes on. An install from
+// before there was a seed file has none, and nothing is said.
+void seed_instrument_database(const SiteInstall& entry, Io io) {
+  if (entry.kind != "instrument" || entry.database.empty()) return;
+  const fs::path seed = entry.root / "seed.toml";
+  std::error_code ec;
+  if (!fs::exists(seed, ec)) return;
+#ifdef PYCHRON_ELCTL_HAS_STORE
+  // Only a database on this computer is made or migrated from here: the
+  // lab's server is brought up to date by whoever looks after it.
+  const bool local = entry.database.starts_with("sqlite:");
+  // What to run once it is put right. A server's password is in the
+  // install, not in its url: there the install is the one to run again.
+  auto skipped = [&](const std::string& why) {
+    io.err << "seed skipped: " << why.substr(0, why.find('\n')) << "\n  Run: ";
+    if (local) io.err << "elctl entry seed \"" << seed.string() << "\" --db \"" << entry.database << "\"\n";
+    else io.err << "elctl init --reconfigure --install " << entry.name << "\n";
+  };
+  auto url = database_url(entry);
+  if (!url) return skipped(url.error().what);
+  // SQLite makes the file, not the folder it is in.
+  if (local) fs::create_directories(fs::path(url->substr(std::string_view("sqlite:").size())).parent_path(), ec);
+  auto done = seed_database(*url, seed, local, false);
+  if (!done) return skipped(done.error().what);
+  io.out << "database " << entry.database << ": " << *done << "\n";
+#else
+  io.out << "skip  seed: built without the DVC store\n";
+#endif
+}
+
 int report_doctor(const SiteInstall& install, const ProfileLibrary* library, bool strict, bool probe, Io io) {
   DoctorOptions options;
   options.library = library;
@@ -188,7 +222,7 @@ int init_command(const std::vector<std::string>& args, Io io) {
       else if (a == "--answers") answers_file = *v;
       else if (a == "--install") install = *v;
       else sets.push_back(*v);
-    } else if (!a.starts_with("-") && !profile_name) {
+    } else if (!a.starts_with('-') && !profile_name) {
       profile_name = a;
     } else {
       return usage("unexpected '" + a + "'");
@@ -309,6 +343,7 @@ int init_command(const std::vector<std::string>& args, Io io) {
     io.out << "database " << entry.database << " ready (" << *made << ")\n";
   }
 #endif
+  seed_instrument_database(entry, io);
   const auto site_path = default_site_path();
   if (auto saved = register_install(entry, site_path); !saved) {
     io.err << "error: " << saved.error().what << "\n";
@@ -353,7 +388,7 @@ int import_line_command(const std::vector<std::string>& args, Io io) {
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] == "--out" && i + 1 < args.size()) out = args[++i];
     else if (args[i] == "--force") force = true;
-    else if (!args[i].starts_with("-") && !folder) folder = args[i];
+    else if (!args[i].starts_with('-') && !folder) folder = args[i];
     else {
       io.err << "elctl import-line: unexpected '" << args[i]
              << "'\nusage: elctl import-line <setupfiles folder> [--out DIR] [--force]\n";

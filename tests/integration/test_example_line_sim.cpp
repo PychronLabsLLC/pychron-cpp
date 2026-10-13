@@ -12,20 +12,26 @@
 //                      IG1         PG1
 // A and C interlock each other; IG1 has alarm_high = 1e-4.
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <ranges>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/virtual_clock.hpp"
+#include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "virtual_time.hpp"
 
 namespace {
 
@@ -41,7 +47,27 @@ sim::SimSettings lab() {
   s.initial_pressures = {{"bone", 1e-3}};  // gas released into the furnace
   s.pumps = {{"turbo", {1e-9, 5s}}};
   s.noise = 0.0;
+  // These tests are about valves, interlocks, scans and alarms, and state
+  // what the gas does in round numbers: walls that give nothing off, and
+  // valves wide enough that gas is across one before a pump has taken any.
+  s.outgassing = 0.0;
+  s.outgassing_active = 0.0;
+  s.valve_conductance = 1e6;
+  // And every stage the canvas gives no size is 1 cc.
+  s.default_volume_cc = 1.0;
   return s;
+}
+
+// lab()'s numbers are the ones in force, not the example sim.toml's (1e-10
+// mbar to start with, walls that give gas off): the pipette, between P1 and
+// P2, which no test that asks this opens, is at lab()'s pressure and has
+// held it exactly however long the line has run.
+void expect_labs_own_numbers(ExtractionLine& line) {
+  ASSERT_NE(line.sim(), nullptr);
+  EXPECT_TRUE(line.sim()->settings().file.empty()) << line.sim()->settings().file;
+  const auto pipette = line.sim()->pressure("air");
+  ASSERT_TRUE(pipette) << pipette.error().what;
+  EXPECT_DOUBLE_EQ(*pipette, lab().default_pressure);
 }
 
 // Every captured event, in order, across bus threads.
@@ -58,7 +84,6 @@ struct Recorder {
   void add(std::vector<E>& into, const E& e) {
     std::lock_guard lock(mutex);
     into.push_back(e);
-    changed.notify_all();
   }
 
   std::size_t samples_of(const std::string& gauge) {
@@ -69,7 +94,6 @@ struct Recorder {
   }
 
   std::mutex mutex;
-  std::condition_variable changed;
   std::vector<ValveChanged> valves;
   std::vector<ActuationFailed> failures;
   std::vector<PressureSample> samples;
@@ -113,8 +137,8 @@ class ExampleLineSim : public ::testing::Test {
 
   double latest(const std::string& gauge) {
     std::lock_guard lock(events->mutex);
-    for (auto it = events->samples.rbegin(); it != events->samples.rend(); ++it) {
-      if (it->gauge == gauge) return it->value;
+    for (auto& sample : std::views::reverse(events->samples)) {
+      if (sample.gauge == gauge) return sample.value;
     }
     ADD_FAILURE() << "no sample for " << gauge;
     return -1;
@@ -143,6 +167,7 @@ TEST_F(ExampleLineSim, StartsClosedAndQuiet) {
 TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
   // Expand furnace gas into prep: bone (12.5 cc) + prep (1 cc).
   ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "test"));
+  clock.advance(100us);  // long for the valve, nothing to the pump
   const double expanded = (12.5 * 1e-3 + 1e-8) / 13.5;
   EXPECT_NEAR(*line->sim()->pressure("prep"), expanded, expanded * 1e-9);
   EXPECT_TRUE(line->sim()->valve_open("A"));
@@ -154,24 +179,30 @@ TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
   ASSERT_EQ(events->failures.size(), 1u);
   EXPECT_EQ(events->failures[0].valve, "C");
   EXPECT_FALSE(line->sim()->valve_open("C"));
+  // Long enough for an open C to have shown on IG1; the pump has taken a
+  // tenth of the tolerance.
+  clock.advance(100us);
   EXPECT_NEAR(*line->read_gauge("IG1"), 1e-8, 1e-12);
 
   // Isolate the furnace, then pump prep through C. The turbo region
   // (prep, turbo, IG1, PG1: 1 cc each) spikes above IG1's alarm_high.
   ASSERT_TRUE(line->actuate("A", SwitchOp::Close, "test"));
   ASSERT_TRUE(line->actuate("C", SwitchOp::Open, "test"));
+  clock.advance(100us);
   const double spike = (expanded + 3e-8) / 4;
   // The MaxiGauge wire format carries five significant digits.
   EXPECT_NEAR(*line->read_gauge("IG1"), spike, spike * 1e-4);
   EXPECT_NEAR(*line->read_gauge("PG1"), spike, spike * 1e-4);
 
-  scan_after(1s);  // a fifth of the pump time constant: still above alarm_high
+  // The pump's 5 s is for turbo's own 1 cc; it has the region's 4 cc to
+  // empty, at a time constant of 20 s.
+  scan_after(4s);  // a fifth of the pump time constant: still above alarm_high
   const double after_1s = 1e-9 + (spike - 1e-9) * std::exp(-0.2);
   EXPECT_NEAR(latest("IG1"), after_1s, after_1s * 1e-4);
   ASSERT_EQ(events->alarms.size(), 1u);
   EXPECT_EQ(events->alarms[0].source, "IG1");
 
-  scan_after(60s);
+  scan_after(240s);
   EXPECT_LT(latest("IG1"), 1e-8);
   // Isolated behind A at the expanded pressure.
   EXPECT_NEAR(*line->sim()->pressure("bone"), expanded, expanded * 1e-9);
@@ -198,11 +229,18 @@ TEST_F(ExampleLineSim, PipetteValvesNeverOpenTogether) {
   EXPECT_FALSE(line->sim()->valve_open("P2"));
 }
 
-// Real time, real scheduler threads, the example files exactly as committed
-// (including A's 500 ms settle).
-TEST(ExampleLineSimRealTime, ScansAndActuatesOnSchedulerThreads) {
+// The scheduler's own threads and the example files exactly as committed
+// (including A's 500 ms settle), in simulated time: the test's thread takes
+// part in a VirtualClock, and time moves only while it waits there.
+using ExampleLineSimThreaded = pychron::testing::VirtualTimeTest;
+
+TEST_F(ExampleLineSimThreaded, ScansAndActuatesOnSchedulerThreads) {
+  VirtualClock clock;
+  Clock::Participant test(clock, "test");
   ExtractionLine::Options options;
+  options.clock = &clock;
   options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, not the example sim.toml's
   // Valve states and locks persist beside the config by default: keep the
   // test out of the repo and independent of earlier runs.
   options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line.state.toml";
@@ -214,24 +252,102 @@ TEST(ExampleLineSimRealTime, ScansAndActuatesOnSchedulerThreads) {
   ASSERT_TRUE(line.start());
   ASSERT_EQ(events.snapshots.size(), 1u);
 
+  const TimePoint before = clock.now();
   ASSERT_TRUE(line.actuate("A", SwitchOp::Open, "test"));
   EXPECT_EQ(line.snapshot().valves.at("A"), ValveState::Open);
+  EXPECT_GE(clock.now() - before, 500ms) << "A's settle is waited for";
 
-  {
-    std::unique_lock lock(events.mutex);
-    const bool scanned = events.changed.wait_for(lock, 5s, [&] {
-      std::size_t n = 0;
-      for (const auto& s : events.samples) n += s.gauge == "IG1" ? 1 : 0;
-      return n >= 1;
-    });
-    EXPECT_TRUE(scanned) << "no IG1 scan within 5 s";
-  }
+  // The gauges are scanned once a second (scan_interval_ms), on a worker.
+  const auto scanned = events.samples_of("IG1");
+  clock.sleep_for(3s);
+  EXPECT_GE(events.samples_of("IG1"), scanned + 2) << "IG1 was not scanned in 3 s";
+  EXPECT_LE(events.samples_of("IG1"), scanned + 4);
 
   line.stop();
   EXPECT_FALSE(line.running());
   const auto n = events.samples_of("IG1");
-  std::this_thread::sleep_for(1200ms);
+  clock.sleep_for(1200ms);
   EXPECT_EQ(events.samples_of("IG1"), n);
+  expect_labs_own_numbers(line);
+}
+
+// stop() keeps the line's start-and-stop mutex while it waits for a job under
+// way, and the job takes clock time. Another thread that asks whether the
+// line is running waits for that mutex through the clock: blocked any other
+// way it looks runnable, time stands, and the job never ends.
+TEST_F(ExampleLineSimThreaded, AskingWhetherItRunsDuringAStopDoesNotStallTime) {
+  VirtualClock clock;
+  Clock::Participant test(clock, "test");
+  std::atomic<int> slow_runs{0};  // the line's job counts here: declared before the line, so it outlives it
+  ExtractionLine::Options options;
+  options.clock = &clock;
+  options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, not the example sim.toml's
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-stop.state.toml";
+  std::filesystem::remove(options.state_file);
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  ASSERT_TRUE(line.start());
+
+  // A job that takes ten seconds of the clock's time, once.
+  const TimePoint start = clock.now();
+  ASSERT_TRUE(line.scheduler().every("slow", 1s, [&] {
+    if (slow_runs.fetch_add(1) == 0) clock.sleep_for(10s);
+  }));
+  clock.sleep_for(1500ms);
+  ASSERT_EQ(slow_runs.load(), 1) << "the job is under way, asleep until start + 11 s";
+
+  TimePoint stopped{};
+  pychron::testing::Crew crew(clock);
+  crew.start("stopper", [&] {
+    line.stop();
+    stopped = clock.now();
+  });
+  // stop() has the mutex by the time it has stopped the dispatcher, and keeps
+  // it while it waits for the job. This thread is runnable, so time stands.
+  ASSERT_TRUE(pychron::testing::eventually_real([&] { return !line.scheduler().started(); }));
+  EXPECT_FALSE(line.running());
+  EXPECT_EQ(clock.now(), start + 11s) << "the asker waited, in the clock, for the stop to finish";
+  crew.join();
+  EXPECT_EQ(stopped, start + 11s);
+  expect_labs_own_numbers(line);
+}
+
+// On hardware the clock is a SteadyClock and nobody is a participant: the
+// same files, the scheduler's own threads, real time.
+TEST(ExampleLineSteady, ActuatesAndScansInRealTime) {
+  ExtractionLine::Options options;  // no clock given: the line's own SteadyClock
+  options.sim = lab();
+  options.sim_file = std::filesystem::path{};  // lab()'s numbers, not the example sim.toml's
+  options.state_file = std::filesystem::temp_directory_path() / "pychron-test-example-line-steady.state.toml";
+  std::filesystem::remove(options.state_file);
+  auto made = ExtractionLine::load(kDir / "extraction_line.toml", kDir / "canvas.toml", options);
+  ASSERT_TRUE(made) << made.error().what;
+  auto& line = **made;
+  Recorder events(line.bus());
+  ASSERT_TRUE(line.start());
+  EXPECT_TRUE(line.running());
+
+  const auto before = std::chrono::steady_clock::now();
+  ASSERT_TRUE(line.actuate("A", SwitchOp::Open, "test"));
+  EXPECT_EQ(line.snapshot().valves.at("A"), ValveState::Open);
+  EXPECT_GE(std::chrono::steady_clock::now() - before, 500ms) << "A's settle is waited for, in real time";
+
+  // The gauges are scanned once a second, on a worker.
+  const auto scanned = events.samples_of("IG1");
+  EXPECT_TRUE(pychron::testing::eventually_real([&] { return events.samples_of("IG1") > scanned; }, 10s))
+      << "IG1 was not scanned in 10 s";
+  const auto pressure = line.read_gauge("IG1");
+  ASSERT_TRUE(pressure) << pressure.error().what;
+  EXPECT_GT(*pressure, 0.0);
+
+  line.stop();
+  EXPECT_FALSE(line.running());
+  const auto n = events.samples_of("IG1");
+  std::this_thread::sleep_for(1200ms);  // more than a scan interval: nothing scans a stopped line
+  EXPECT_EQ(events.samples_of("IG1"), n);
+  expect_labs_own_numbers(line);
 }
 
 }  // namespace

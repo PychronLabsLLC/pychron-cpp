@@ -1,6 +1,7 @@
 #include "pychron/devices/spectrometer/legacy/polled_acquirer.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <set>
 
 namespace pychron::spectrometer {
@@ -37,9 +38,12 @@ Duration PolledAcquirer::integration() const {
 
 Result<void> PolledAcquirer::start() {
   if (auto primed = prime(); !primed) return observe(std::move(primed));
-  std::lock_guard lock(mutex_);
-  running_ = true;
-  due_ = clock_.now();
+  {
+    std::lock_guard lock(mutex_);
+    running_ = true;
+    due_ = clock_.now();
+  }
+  clock_.notify_all(cv_);  // a next() asleep until the old due time
   return {};
 }
 
@@ -48,7 +52,7 @@ Result<void> PolledAcquirer::stop() {
     std::lock_guard lock(mutex_);
     running_ = false;
   }
-  cv_.notify_all();
+  clock_.notify_all(cv_);
   return {};
 }
 
@@ -57,14 +61,10 @@ Result<std::optional<Frame>> PolledAcquirer::next(Duration timeout) {
   {
     std::unique_lock lock(mutex_);
     if (!running_) return observe(Result<std::optional<Frame>>(fail(ErrorKind::Config, "acquirer not started")));
-    // Bounded by clock time and by real time, so a ManualClock nobody
-    // advances cannot hang the caller.
+    // Bounded by the clock's time alone; stop() notifies.
     const TimePoint deadline = clock_.now() + timeout;
-    const auto real_deadline = std::chrono::steady_clock::now() + timeout;
     while (running_ && clock_.now() < due_) {
-      if (clock_.now() >= deadline || std::chrono::steady_clock::now() >= real_deadline) {
-        return std::optional<Frame>{};
-      }
+      if (clock_.now() >= deadline) return std::optional<Frame>{};
       clock_.wait_until(cv_, lock, std::min(due_, deadline));
     }
     if (!running_) return std::optional<Frame>{};

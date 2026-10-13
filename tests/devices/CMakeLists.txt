@@ -46,6 +46,8 @@ add_executable(pychron_devices_tests
 )
 # spectrometer/ and extraction/ conformance.hpp and fakes
 target_include_directories(pychron_devices_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# virtual_time.hpp
+target_include_directories(pychron_devices_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 
 # test_pychron_valves runs a loopback TCP server.
 target_link_libraries(pychron_devices_tests PRIVATE pychron::devices asio::asio GTest::gtest_main)

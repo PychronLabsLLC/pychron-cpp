@@ -10,14 +10,29 @@
 //           An overlapped run starts while the previous one still measures,
 //           so it takes the next free lane: overlap shows as two lanes.
 //
+// The view shows a window of the queue's time, not all of it: a queue of a
+// thousand runs drawn whole is a pixel a run. It follows the last few runs
+// until the operator moves the window, and can show the whole queue.
+// Ctrl+wheel zooms about the cursor (a plain wheel is left to the pane),
+// dragging pans, and a double-click or the Follow button goes back to now.
+//
 // Times are the line's clock (simulated time under --sim-speed), in seconds
 // since the first event. Open segments grow with advance(now).
+//
+// The model keeps every segment of the queue. Neither an event nor a paint
+// walks them all: open segments are indexed, and visible() gives the ones a
+// time window shows (docs/superpowers/specs/2026-10-11-timeline-window-design.md).
+
+#include <cstddef>
 
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include <QList>
+#include <QPointF>
 #include <QString>
 #include <QTimer>
 #include <QWidget>
@@ -25,6 +40,9 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/run/state.hpp"
+
+class QAction;
+class QToolButton;
 
 namespace pychron::ui {
 
@@ -54,9 +72,19 @@ class TimelineModel {
   double drawn_end(const TimelineSegment& s) const;
   std::optional<int> lane_of(const std::string& run_id) const;
 
+  // Indices, ascending, of the segments that show in [t0, t1].
+  [[nodiscard]] std::vector<std::size_t> visible(double t0, double t1) const;
+  // When each run started, in the order they did.
+  const std::vector<double>& run_starts() const noexcept { return run_starts_; }
+  std::size_t open_count() const noexcept { return open_.size(); }
+
  private:
   double seconds(TimePoint ts);
   void close_run(const std::string& run_id, double at);  // its open state and waits
+  void add(TimelineSegment s);                           // open, and indexed as such
+  // Closes the open segments `which` picks, each at the time it gives.
+  template <typename Pick>
+  void close_open(Pick which);
 
   std::optional<TimePoint> origin_;
   double now_ = 0;
@@ -64,28 +92,73 @@ class TimelineModel {
   std::map<std::string, int> lanes_;        // run id -> lane
   std::map<std::string, QString> names_;    // run id -> identifier
   std::vector<bool> busy_;                  // run lane i + 1 in use
+  std::vector<std::size_t> open_;           // segments without an end, ascending
+  std::vector<double> run_starts_;
+  double longest_ = 0;                      // the longest closed segment
+  bool ordered_ = true;                     // starts never went backwards
 };
 
 class TimelineView : public QWidget {
   Q_OBJECT
 
  public:
+  // Follow: from the start of the follow_runs()-th most recent run to now.
+  // Free: where the operator put it. WholeQueue: the first event to now.
+  enum class Mode { Follow, Free, WholeQueue };
+  static constexpr int kFollowRuns = 6;
+  static constexpr double kMinSpan = 10;  // seconds; a window is never narrower
+
   explicit TimelineView(const TimelineModel& model, QWidget* parent = nullptr);
+  Mode mode() const noexcept { return mode_; }
+  void set_mode(Mode mode);
+  int follow_runs() const noexcept { return follow_runs_; }
+  void set_follow_runs(int runs);
+  // The time shown, in the model's seconds.
+  std::pair<double, double> time_window() const;
+  // Shows [t0, t1], kept inside the queue's time and no narrower than
+  // kMinSpan; the view is then Free.
+  void set_time_window(double t0, double t1);
+  // How many segments the last paint drew.
+  int drawn_count() const noexcept { return drawn_; }
+  // The context menu: follow the last 3, 6 or 12 runs, or the whole queue.
+  const QList<QAction*>& context_actions() const noexcept { return actions_; }
+  // Shown while the view is not following.
+  QToolButton* follow_button() const noexcept { return follow_; }
   QSize sizeHint() const override;
   QSize minimumSizeHint() const override;
   // The segment under a point, for tooltips and tests.
   const TimelineSegment* segment_at(QPoint p) const;
   QRectF segment_rect(const TimelineSegment& s) const;
 
+ signals:
+  // The operator chose how many runs to follow.
+  void follow_runs_changed(int runs);
+
  protected:
   void paintEvent(QPaintEvent* event) override;
   bool event(QEvent* event) override;
+  void wheelEvent(QWheelEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
+  void mouseDoubleClickEvent(QMouseEvent* event) override;
+  void contextMenuEvent(QContextMenuEvent* event) override;
+  void resizeEvent(QResizeEvent* event) override;
 
  private:
   QRectF plot_area() const;
-  double span() const;
+  double full_end() const;  // the end of the whole queue's window
+  void apply_mode(Mode mode);
 
   const TimelineModel& model_;
+  Mode mode_ = Mode::Follow;
+  int follow_runs_ = kFollowRuns;
+  double t0_ = 0, t1_ = kMinSpan;  // the Free window
+  int drawn_ = 0;
+  QToolButton* follow_;
+  QList<QAction*> actions_;
+  std::optional<QPointF> drag_from_;  // where a pan began, and the window then
+  double drag_t0_ = 0, drag_t1_ = 0;
 };
 
 }  // namespace pychron::ui

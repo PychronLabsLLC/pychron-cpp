@@ -29,11 +29,11 @@ struct Frame {
 
 // Non-owning window onto pixels (possibly a sub-rectangle: stride may exceed width).
 struct FrameView {
-  const std::uint16_t* data;
-  int width, height, stride;
-  std::uint16_t pixel_depth;
+  const std::uint16_t* data = nullptr;
+  int width{}, height{}, stride{};
+  std::uint16_t pixel_depth{};
   TimePoint timestamp;
-  std::uint64_t seq;
+  std::uint64_t seq{};
 
   std::uint16_t at(int x, int y) const {
     return data[static_cast<std::size_t>(y) * static_cast<std::size_t>(stride) + static_cast<std::size_t>(x)];

@@ -10,8 +10,11 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "pychron/devices/extraction/interfaces.hpp"
@@ -20,6 +23,7 @@
 #include "pychron/experiment/plan/plan_library.hpp"
 #include "pychron/experiment/run/run.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment::fakes {
 
@@ -29,7 +33,10 @@ inline double secs(pychron::Duration d) { return std::chrono::duration<double>(d
 
 class FakeSpectrometer final : public measurement::ISpectrometerPort {
  public:
-  explicit FakeSpectrometer(ManualClock& clock) : clock_(clock) {}
+  explicit FakeSpectrometer(ManualClock& clock) : clock_(clock), manual_(&clock) {}
+  // On a clock nobody advances by hand a reading takes its integration time
+  // on that clock.
+  explicit FakeSpectrometer(const Clock& clock) : clock_(clock) {}
 
   Result<void> position(const plan::HopTarget& target) override {
     std::lock_guard lock(mutex_);
@@ -51,7 +58,8 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
       std::lock_guard lock(mutex_);
       n = ++readings;
     }
-    clock_.advance(integration_);
+    if (manual_ != nullptr) manual_->advance(integration_);
+    else clock_.sleep_for(integration_);
     spectrometer::Reading r;
     r.ts = clock_.now();
     r.integration = integration_;
@@ -69,7 +77,8 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   std::atomic<bool> acquiring{false};
 
  private:
-  ManualClock& clock_;
+  const Clock& clock_;
+  ManualClock* manual_ = nullptr;
   std::mutex mutex_;
   std::optional<plan::HopTarget> at_;
   pychron::Duration integration_ = 1s;
@@ -295,13 +304,13 @@ inline RunSpec unknown_run(const std::string& identifier, const std::string& pla
   return r;
 }
 
-// A temporary lab: records, spool, pipeline, aliquots.
+// A temporary lab: records, spool, pipeline, aliquots. Its directory is no
+// other test's (temp_path.hpp): ctest runs each case in a process of its own,
+// several at once, and two under one name would share a spool.
 class Lab {
  public:
   Lab()
-      : dir_(std::filesystem::temp_directory_path() /
-             ("lab_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" +
-              std::to_string(counter()++))),
+      : dir_(pychron::testing::unique_temp_path("lab_")),
         files(dir_ / "records"),
         spool(dir_ / "spool"),
         save(spool, files),
@@ -316,10 +325,6 @@ class Lab {
   const std::filesystem::path& dir() const { return dir_; }
 
  private:
-  static std::atomic<int>& counter() {
-    static std::atomic<int> n{0};
-    return n;
-  }
   std::filesystem::path dir_;
 
  public:

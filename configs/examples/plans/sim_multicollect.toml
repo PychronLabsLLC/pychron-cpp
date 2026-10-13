@@ -6,7 +6,7 @@
 name = "sim_multicollect"
 instrument_family = "sim"
 description = "Example two-hop measurement for the simulated lab"
-analysis_types = ["unknown", "blank_unknown", "air"]
+analysis_types = ["unknown", "blank_unknown", "air", "blank_air"]
 
 [detectors]
 reference = "H1"
@@ -38,6 +38,9 @@ integration_s = 1
 [main]
 cycles = 2
 integration_s = 1
+# where the fits' time axis starts: "on_inlet_close" (when equilibration ends),
+# "on_first_count", or { offset_s = N }: N seconds after the inlet opens
+time_zero = "on_inlet_close"
 
 [[main.hops]]
 positions = { Ar40 = "H1", Ar39 = "H2" }
@@ -58,4 +61,4 @@ baseline = { default = "average" }
 include = ["@conditionals.default_unknown"]
 
 [parameters]
-expose = ["main.cycles", "main.hops[0].counts", "main.hops[1].counts", "baseline.counts"]
+expose = ["main.cycles", "main.hops[0].counts", "main.hops[1].counts", "baseline.counts", { path = "main.time_zero", label = "Time zero" }]

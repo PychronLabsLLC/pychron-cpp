@@ -17,6 +17,7 @@ inline std::optional<std::string> env_var(const char* name) {
   std::free(raw);
   return value;
 #else
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): the one place the environment is read; only tests and start-up set it
   const char* raw = std::getenv(name);
   if (raw == nullptr) return std::nullopt;
   return std::string(raw);

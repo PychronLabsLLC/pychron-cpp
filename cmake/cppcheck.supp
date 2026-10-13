@@ -1,0 +1,39 @@
+// cppcheck suppressions, applied by tools/quality_check.py.
+// One id per line; say why.
+
+// Headers are found through -I for first-party code only; the system's and
+// the fetched dependencies' are left unread on purpose (speed).
+missingInclude
+missingIncludeSystem
+
+// Fires on every aggregate with a std::string or a span member. The members
+// that really are indeterminate are reported by clang-tidy
+// (cppcoreguidelines-pro-type-member-init).
+uninitMemberVarNoCtor
+
+// An unread dependency leaves a macro or a type unknown; that is not a
+// finding about this code.
+unknownMacro
+checkersReport
+
+// A mutex that exists only so a condition variable can be waited on
+// (Clock::sleep_for, and the tests of wait_until): nothing else is meant to
+// lock it.
+localMutex
+
+// `&tokens[i]` then `fields[1]`: a pointer into a vector's elements, which
+// cppcheck takes for the address of one object.
+objectIndex
+
+// In tests: `ASSERT_TRUE(v.empty()) << v.front()` builds its message only
+// when the assertion fails, and QCOMPARE and QVERIFY return when they fail.
+// cppcheck sees neither, and reports what follows as reached regardless.
+containerOutOfBounds:tests/*
+nullPointer:tests/ui/*
+
+// Valid C++ that cppcheck 2.22 cannot parse (a reverse iterator in a for
+// statement; pointers to members in an initializer). It checks NOTHING in
+// these two files past that line: they are clang-tidy's alone. Try again
+// with each new cppcheck and take the line out when it parses.
+syntaxError:libs/experiment/src/model/experiment_queue.cpp
+syntaxError:libs/ingest/src/writer.cpp

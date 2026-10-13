@@ -70,6 +70,8 @@ std::string_view to_string(FieldType type) noexcept {
       return "quantity";
     case FieldType::StringList:
       return "string_list";
+    case FieldType::Font:
+      return "font";
   }
   return "string";
 }
@@ -132,6 +134,10 @@ Result<OptionValue> validate(const FieldSpec& f, const OptionValue& v) {
     case FieldType::String:
       if (std::holds_alternative<std::string>(v)) return v;
       return opt_fail(where + "expected text");
+    case FieldType::Font:
+      // Any name: which families are installed is the display's business.
+      if (std::holds_alternative<std::string>(v)) return v;
+      return opt_fail(where + "expected a font family");
     case FieldType::Enum: {
       const auto* s = std::get_if<std::string>(&v);
       if (!s) return opt_fail(where + "expected one of the choices");
@@ -171,7 +177,7 @@ OptionValue Options::get(std::string_view key) const {
   return f->default_value;
 }
 
-bool Options::is_set(std::string_view key) const { return values_.count(std::string(key)) != 0; }
+bool Options::is_set(std::string_view key) const { return values_.contains(std::string(key)); }
 
 bool Options::get_bool(std::string_view key) const {
   const auto v = get(key);
@@ -363,6 +369,7 @@ void validate_all(Options& o, std::vector<std::string>& warnings) {
     for (auto& r : rows) validate_all(r, warnings);
 }
 
+// NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved): what it holds is moved out, by kind, below
 void put(toml::table& root, const std::string& dotted, toml::node&& node_value) {
   toml::table* t = &root;
   std::size_t start = 0;
@@ -528,7 +535,7 @@ std::vector<PresetInfo> PresetStore::list(const SchemaPtr& schema) const {
     for (const auto& e : fs::directory_iterator(d, ec)) {
       if (!e.is_regular_file() || e.path().extension() != ".toml") continue;
       const std::string stem = e.path().stem().string();
-      const bool shadows = by_stem.count(stem) != 0;
+      const bool shadows = by_stem.contains(stem);
       by_stem[stem] = PresetInfo{name_in_file(e.path()), origin, e.path(), shadows};
     }
   };

@@ -30,6 +30,10 @@ class InstallationsDialog : public QDialog {
   InstallationsDialog(std::filesystem::path site_path, const setup::ProfileLibrary* library,
                       SetupWizard::OpenDatabase open_database, std::string current, QWidget* parent = nullptr);
 
+  // What the setup wizard seeds an instrument install's database with
+  // (SetupWizard::Options::seed_database); none: nothing is seeded.
+  void set_seed_database(SetupWizard::SeedDatabase seed) { seed_database_ = std::move(seed); }
+
   // After accept(): the install to open.
   const std::optional<std::string>& to_open() const noexcept { return to_open_; }
 
@@ -53,6 +57,7 @@ class InstallationsDialog : public QDialog {
   std::filesystem::path site_path_;
   const setup::ProfileLibrary* library_;
   SetupWizard::OpenDatabase open_database_;
+  SetupWizard::SeedDatabase seed_database_;
   std::string current_;
   std::optional<std::string> to_open_;
   QListWidget* list_;

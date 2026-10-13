@@ -1,6 +1,7 @@
 #include "pychron/devices/varian_xgs600.hpp"
 
 #include <set>
+#include <utility>
 
 namespace pychron {
 
@@ -28,7 +29,7 @@ DriverSchema VarianXgs600::schema() {
           "Varian/Agilent XGS-600 gauge controller (legacy XGS600GaugeController); gauge channel n reads "
           "labels[n-1]",
           {{"labels", KeyType::StringArray, true,
-            "the sensors' user labels, e.g. [\"CNV1\", \"IMG1\"]; channel 1 is the first"},
+            R"(the sensors' user labels, e.g. ["CNV1", "IMG1"]; channel 1 is the first)"},
            {"address", KeyType::String, false, "two hex digits; default \"00\" (RS-232)"}}};
 }
 
@@ -51,14 +52,14 @@ Result<std::unique_ptr<VarianXgs600>> VarianXgs600::create(const DriverArgs& arg
 
 std::vector<int> VarianXgs600::pressure_channels() const {
   std::vector<int> out;
-  for (int i = 1; i <= static_cast<int>(labels_.size()); ++i) out.push_back(i);
+  for (int i = 1; std::cmp_less_equal(i, labels_.size()); ++i) out.push_back(i);
   return out;
 }
 
 Result<double> VarianXgs600::read_pressure() { return read_pressure(1); }
 
 Result<double> VarianXgs600::read_pressure(int channel) {
-  if (channel < 1 || channel > static_cast<int>(labels_.size())) {
+  if (channel < 1 || std::cmp_greater(channel, labels_.size())) {
     return observe(Result<double>(fail(ErrorKind::Config, "channel " + std::to_string(channel) +
                                                               " has no label (labels has " +
                                                               std::to_string(labels_.size()) + ")")));

@@ -22,6 +22,11 @@ struct LoadReport {
 // Keys an `*.local.toml` override may set on an existing [transports.<name>].
 bool is_overridable_transport_key(std::string_view key) noexcept;
 
+// Whether `text` is written as an IPv4 or IPv6 address: what `[metrics] bind`
+// must be. The spelling only; whether the address is this machine's is found
+// out when something binds it.
+bool is_ip_address(std::string_view text) noexcept;
+
 // `extraction_line.toml` -> `extraction_line.local.toml` (same directory).
 std::filesystem::path local_override_path(const std::filesystem::path& main_file);
 

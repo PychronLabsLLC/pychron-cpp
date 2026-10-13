@@ -524,6 +524,15 @@ This is the experiment spec's spool (section 8.4 there). The outbox *is*
 the spool, and the uploader is "the configured persister on the
 Scheduler". `FilePersister` remains an optional export sink.
 
+Note 2026-10-10: outbox and uploader not built; still the design for
+instrument that must keep running while server is away. Direct path came
+first (`2026-10-10-e2e-sim-experiment-design.md`, section 5): `StorePersister` calls `IStore::ingest`
+inline, and until outbox exists experiment's spool (`<data>/spool`) covers
+the gap: failed save stays there, re-sent at next queue start. Ids there
+are `Uuid::v5(<record uuid>, label)`, not UUIDv7: same record re-sent is
+same item. That conversion (`record_ingest.hpp`) is what an uploader will
+send. No leases: one acquisition program per database.
+
 ### 8.2 Outbox schema (SQLite only)
 
 | Table | Columns |

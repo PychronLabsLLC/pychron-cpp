@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 
 #include "catalog_impl.hpp"
 #include "migrate.hpp"
@@ -379,6 +380,14 @@ class TinyStore final : public IStore {
     return std::optional<Uuid>{to_uuid((*row)->value("uuid"))};
   }
 
+  Result<std::optional<LastAnalysis>> last_analysis(const std::string& identifier) override {
+    auto row = db_->select_one(sql::kLastAnalysis, {qv(identifier)});
+    if (!row) return fail(row.error());
+    if (!*row) return std::optional<LastAnalysis>{};
+    return std::optional<LastAnalysis>{
+        LastAnalysis{(*row)->value("aliquot").toInt(), (*row)->value("increment").toInt()}};
+  }
+
   Result<std::optional<std::string>> identifier_at(const std::string& irradiation, const std::string& level,
                                                    int position) override {
     auto row = db_->select_one(sql::kIdentifierAtPosition, {qv(irradiation), qv(level), position});
@@ -645,7 +654,7 @@ class TinyStore final : public IStore {
     if (!rows) return fail(rows.error());
     ChangePage page;
     page.cursor = cursor;
-    page.more = static_cast<int>(rows->size()) > limit;
+    page.more = std::cmp_greater(rows->size(), limit);
     if (page.more) rows->pop_back();
     for (const auto& r : *rows) {
       ChangeEntry e;
@@ -798,6 +807,7 @@ Result<void> check_sqlite(Db& db, bool file_backed) {
   auto version = db.select_one(sql::kSqliteVersion);
   if (!version) return fail(version.error());
   int major = 0, minor = 0;
+  // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion): a version that does not parse stays 0.0, refused below
   std::sscanf(to_std((*version)->value("v")).c_str(), "%d.%d", &major, &minor);
   if (major < 3 || (major == 3 && minor < 37))
     return fail(ErrorKind::Config, "SQLite >= 3.37 is required (STRICT tables); found " + to_std((*version)->value("v")));

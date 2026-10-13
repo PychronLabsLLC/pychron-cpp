@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <utility>
 
 #include "sql/browse.hpp"
 #include "store_impl.hpp"
@@ -128,6 +129,7 @@ BrowseRow row_from(const Row& r) {
   s.mass_spectrometer = to_std(r.value("mass_spectrometer"));
   s.signals_state = to_std(r.value("signals_state"));
   b.sample = to_std(r.value("sample"));
+  b.sample_uuid = opt_uuid(r.value("sample_uuid"));
   b.project = to_std(r.value("project"));
   b.material = to_std(r.value("material"));
   b.principal_investigator = to_std(r.value("principal_investigator"));
@@ -166,7 +168,7 @@ Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& req) {
                             paged.sql() + sql::kBrowseOrder,
                         b);
   if (!rows) return fail(rows.error());
-  const bool more = static_cast<int>(rows->size()) > req.limit;
+  const bool more = std::cmp_greater(rows->size(), req.limit);
   if (more) rows->pop_back();
   for (const auto& r : *rows) out.rows.push_back(row_from(r));
   if (more && !out.rows.empty())
@@ -265,8 +267,9 @@ Result<std::optional<BlobData>> load_blob(Db& db, const Sha256Digest& sha) {
   b.codec = to_std((*row)->value("codec"));
   b.n_points = opt_int((*row)->value("n_points"));
   const QByteArray bytes = (*row)->value("bytes").toByteArray();
-  b.bytes.assign(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + bytes.size());
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the column's bytes
+  const auto* first = reinterpret_cast<const std::uint8_t*>(bytes.constData());
+  b.bytes.assign(first, first + bytes.size());
   return std::optional<BlobData>{std::move(b)};
 }
 

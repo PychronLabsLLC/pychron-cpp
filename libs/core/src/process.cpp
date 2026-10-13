@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <system_error>
 #include <thread>
 
 #if defined(__APPLE__)
@@ -66,7 +67,8 @@ std::string path_text(const std::filesystem::path& p) noexcept {
 
 namespace {
 
-std::string errno_text(int e) { return std::strerror(e); }
+// Not strerror: it may answer from one buffer shared by every thread.
+std::string errno_text(int e) { return std::generic_category().message(e); }
 
 // The input as an unlinked temporary file: the child reads it as stdin, so
 // no pipe can raise SIGPIPE in this process if the child exits early.
@@ -133,12 +135,14 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
   for (auto& a : args) argv.push_back(a.data());
   argv.push_back(nullptr);
 
+  // NOLINTNEXTLINE(cppcoreguidelines-init-variables): opaque (a pointer here, a struct on Linux); its _init fills it
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, *in, 0);
   posix_spawn_file_actions_adddup2(&actions, file_out >= 0 ? file_out : out[1], 1);
   posix_spawn_file_actions_adddup2(&actions, out[1], 2);
   // Its own process group, so a timeout kills whatever it started too.
+  // NOLINTNEXTLINE(cppcoreguidelines-init-variables): opaque (a pointer here, a struct on Linux); its _init fills it
   posix_spawnattr_t attr;
   posix_spawnattr_init(&attr);
   posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);

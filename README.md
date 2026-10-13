@@ -33,6 +33,11 @@ spectrometers, runs automated experiment queues, and stores the results.
 The core libraries are Qt-free. Qt is used only by `apps/pychron-ui` and, for
 its SQL layer, `libs/persistence`.
 
+## Using it
+
+The user guide is in [docs/user](docs/user/README.md): getting started,
+each window, configuration, the command line, scripting and troubleshooting.
+
 ## Build and test
 
 Requires a C++20 compiler and CMake 3.25 or newer. asio, toml++, spdlog,
@@ -61,6 +66,38 @@ across, follow [docs/installation_runbook.md](docs/installation_runbook.md).
 
 ## Try it in simulation
 
+From nothing to measured runs in a database, in three commands (where a
+development build puts the two programs: [docs/dev_setup.md](docs/dev_setup.md)):
+
+```bash
+elctl init argus --yes
+```
+
+makes an instrument install in `~/Pychron/argus`, set up for simulation, with
+a SQLite database of its own that already holds what its first queue names.
+
+```bash
+pychron-ui --install argus --sim-speed 20
+```
+
+opens it. In the experiment window (View > Experiment) open the install's
+`experiment.toml` and start it: three air shots between two blanks, about 19
+minutes of simulated time. In the data window (View > Data) each run appears
+when it ends.
+
+```bash
+elctl --install argus --sim exp run experiment.toml --sim-speed max
+```
+
+runs the same queue without a window and ends with
+`5/5 run(s) succeeded; in sqlite:<home>/Pychron/argus/data/pychron.db`.
+
+The queue is airs and blanks only, so nothing in it has an age; dated unknowns
+on the simulator come later.
+
+The rest of this section uses the example lab in `configs/examples`, which
+needs no install, has no database and writes each run as a record file.
+
 Open the extraction-line window and the spectrometer strip chart
 (View > Spectrometer):
 
@@ -68,7 +105,11 @@ Open the extraction-line window and the spectrometer strip chart
 build/dev-ui/apps/pychron-ui/pychron-ui --sim
 ```
 
-Run the example experiment queue in the experiment window (Window >
+(On macOS the program is inside the application bundle:
+`build/dev-ui/apps/pychron-ui/Pychron.app/Contents/MacOS/Pychron`, here and
+below.)
+
+Run the example experiment queue in the experiment window (View >
 Experiment, then Start or F5); `--sim-speed` runs simulated time faster:
 
 ```bash
@@ -76,12 +117,20 @@ build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/exa
 ```
 
 Browse and plot the records a queue wrote (View > Data): filter, double-click
-to recall an analysis, or select runs and choose a figure from "Plot" (time
-series, ideogram, age spectrum, inverse isochron). Figure
+to recall an analysis, or select runs and choose a figure from the toolbar (time
+series, ideogram, age spectrum, inverse isochron, or the last two as a pair). Figure
 options are edited in the dock and saved as named presets. "Export" in the
 browser (or "Export table..." in a figure, or `elctl export`) writes the
 analyses as a 40Ar/39Ar data report after Schaen et al. (2021), CSV or JSON;
-see [docs/export.md](docs/export.md).
+see [docs/export.md](docs/export.md). To publish them to EarthBank
+(AusGeochem), by upload or as its import workbooks, see
+[docs/earthbank.md](docs/earthbank.md).
+
+A lab's monitoring box (Prometheus and Grafana) can follow an instrument:
+`[metrics]` in `extraction_line.toml` publishes pressures, valve states, run
+and queue progress and the application's own health, and
+`packaging/observability` holds the dashboards and the alert for the box;
+see [docs/observability.md](docs/observability.md).
 
 Run the example experiment queue from the command line:
 
@@ -90,6 +139,12 @@ cd configs/examples
 ../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
+
+`experiment.sim-air.toml` there is a queue of air shots and blanks: the
+simulated line carries gas by species from the tank through the valves into
+the spectrometer's source, so the signals follow what the scripts did. What
+is modelled, how to give the simulated lab your own numbers (`sim.toml`) and
+what the example reads are in [docs/simulator.md](docs/simulator.md).
 
 `elctl help` lists every command.
 

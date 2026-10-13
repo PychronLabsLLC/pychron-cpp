@@ -49,6 +49,12 @@ class SetupWizard : public QWizard {
   // ("schema version 3"). Empty: databases are neither created nor checked.
   using OpenDatabase = std::function<Result<std::string>(const std::string& url, bool create)>;
 
+  // Puts a seed file (install defaults: the references project, its samples,
+  // the reactors) into the database at `url`, made or migrated first when
+  // `migrate`; the result says what was done. Empty: nothing is seeded.
+  using SeedDatabase =
+      std::function<Result<std::string>(const std::string& url, const std::filesystem::path& seed_file, bool migrate)>;
+
   struct Options {
     std::filesystem::path site_path;  // default: setup::default_site_path()
     OpenDatabase open_database;
@@ -59,6 +65,7 @@ class SetupWizard : public QWizard {
     std::function<Result<std::string>(const setup::ProfileLibrary&, const setup::ResolvedProfile&,
                                       const setup::Answers&)>
         test_instrument;
+    SeedDatabase seed_database = {};  // last, with a default: the sites that give four still compile
   };
 
   enum Page { kWelcome = 0, kLocation = 1, kFirstGroup = 10, kReady = 900, kDone = 901 };

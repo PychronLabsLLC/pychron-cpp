@@ -5,6 +5,11 @@
 #         --spectrometer spectrometer.sim-integrated.toml
 # The tray map is tray_maps/example-9.txt; where it sits on the stage is
 # stage_calibrations/co2.example-9.toml (see `elctl laser`).
+#
+# The simulated grain gives no gas off under the laser, so the extraction
+# script (laser_extract.py) lets in one pipette of the air tank's air in its
+# place. The unknowns here therefore read like air shots: about 9.5e4 fA of
+# Ar40 at the 40/36 of air.
 
 [queue]
 name = "sim-laser-example"

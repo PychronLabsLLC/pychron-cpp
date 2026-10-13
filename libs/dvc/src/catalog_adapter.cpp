@@ -185,7 +185,7 @@ std::optional<std::string> base64_decode(std::string_view text) {
   return out;
 }
 
-bool is_zero_date(std::string_view text) { return text.substr(0, 10) == "0000-00-00"; }
+bool is_zero_date(std::string_view text) { return text.starts_with("0000-00-00"); }
 
 // A uuid with dashes or, as the legacy String(32) column holds it, without.
 std::optional<P::Uuid> parse_uuid(std::string_view text) {
@@ -545,7 +545,7 @@ class Reader {
 
       auto parsed = parse_legacy(line);
       if (!parsed || !parsed->is_object()) {
-        problems.push_back("the line is not a JSON object");
+        problems.emplace_back("the line is not a JSON object");
         detail["text"] = line.substr(0, 2000);
       } else {
         const Json& row = *parsed;

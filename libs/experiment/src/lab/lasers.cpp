@@ -1,5 +1,6 @@
 #include "pychron/experiment/lab/lasers.hpp"
 
+#include <optional>
 #include <utility>
 
 #include "pychron/devices/extraction/interfaces.hpp"
@@ -26,7 +27,8 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
   for (const auto& [name, driver] : line.config().drivers) {
     auto* device = dynamic_cast<extraction::IExtractionDevice*>(line.device(name));
     if (device == nullptr) continue;
-    auto system = std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations, &lab.patterns);
+    auto system = std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations, &lab.patterns,
+                                                       &line.clock());
     // Where holes were found before, and (if the lab gives the device a
     // camera) the means to find them again.
     system->set_corrections(*lab.corrections);

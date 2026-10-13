@@ -32,6 +32,8 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--db needs a database url");
       cli.db = v->toStdString();
+    } else if (arg == QStringLiteral("--sim-save")) {
+      cli.sim_save = true;
     } else if (arg == QStringLiteral("--install")) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--install needs an installation name");
@@ -56,6 +58,11 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       cli.write_icons = std::filesystem::path(v->toStdString());
     } else if (arg == QStringLiteral("--sim-speed")) {
       auto v = value();
+      // Unlimited speed is elctl's: a window would finish a queue before it painted.
+      if (v && *v == QStringLiteral("max")) {
+        return fail(ErrorKind::Config, "--sim-speed max is for tests; give a number");
+      }
+      // QString::toDouble reads "inf" and "nan".
       bool ok = false;
       const double speed = v ? v->toDouble(&ok) : 0.0;
       if (!ok || !std::isfinite(speed) || speed <= 0) {
@@ -68,7 +75,6 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       cli.files.emplace_back(arg.toStdString());
     }
   }
-  if (cli.sim_speed > 0 && !cli.sim) return fail(ErrorKind::Config, "--sim-speed needs --sim");
   if (cli.device && !cli.laser) return fail(ErrorKind::Config, "--device needs --laser");
   if (cli.laser && (cli.queue || cli.spectrometer_file)) {
     return fail(ErrorKind::Config, std::string("--laser opens only the laser window: it takes no ") +

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace pychron::systems {
 
@@ -59,7 +60,7 @@ Result<double> LineCryoService::get_cryo_temp(int channel) {
   auto tc = controller();
   if (!tc) return fail(std::move(tc).error());
   const auto inputs = (*tc)->inputs();
-  if (channel < 1 || channel > static_cast<int>(inputs.size()))
+  if (channel < 1 || std::cmp_greater(channel, inputs.size()))
     return fail(ErrorKind::Config, "cryo channel " + std::to_string(channel) + " is not 1.." +
                                        std::to_string(inputs.size()));
   return (*tc)->read_temperature(inputs[static_cast<std::size_t>(channel - 1)]);
@@ -92,7 +93,7 @@ Result<bool> LineCryoService::cryo_settling() {
   const auto inputs = (*tc)->inputs();
   std::string waiting;
   for (const auto& [output, target] : targets) {
-    if (output > static_cast<int>(inputs.size())) continue;  // no input to wait on
+    if (std::cmp_greater(output, inputs.size())) continue;  // no input to wait on
     const auto& input = inputs[static_cast<std::size_t>(output - 1)];
     auto t = (*tc)->read_temperature(input);
     if (!t) return fail(std::move(t).error());

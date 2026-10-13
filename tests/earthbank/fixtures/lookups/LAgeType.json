@@ -1,0 +1,10 @@
+[
+  {"id": 1401, "name": "Plateau Age"},
+  {"id": 1402, "name": "Inverse Isochron Age"},
+  {"id": 1403, "name": "Weighted Mean Age"},
+  {"id": 1404, "name": "Isochron Age"},
+  {"id": 1405, "name": "Bayesian Estimate"},
+  {"id": 1406, "name": "K-Ar Age"},
+  {"id": 1407, "name": "Total Gas Age"},
+  {"id": 1408, "name": "Total Fusion Age"}
+]

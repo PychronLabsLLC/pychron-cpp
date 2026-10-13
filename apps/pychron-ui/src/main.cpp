@@ -2,7 +2,7 @@
 //
 //   pychron-ui [--install <name> | --setup | --examples | extraction_line.toml [canvas.toml]]
 //              [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>]
-//              [--queue <file>] [--sim-speed <x>] [--db <url>]
+//              [--queue <file>] [--sim-speed <x>] [--db <url>] [--sim-save]
 //
 // With no config files it opens an install from the site config: --install
 // names one, else the default (or the only) one; with several and no default
@@ -21,15 +21,23 @@
 //
 // View > Experiment runs queues against the lab directory (--lab, default
 // the install folder or the line config's directory; records under --data,
-// default <lab>/data). --queue opens a queue there. --sim-speed (with --sim)
-// puts the whole app on simulated time running that many times faster than
-// real time.
+// default <lab>/data). --queue opens a queue there. --sim-speed (with --sim,
+// or an install set up for simulation) puts the whole app on simulated time
+// running that many times faster than real time, from the real time of day.
+// It takes a number: unlimited speed (elctl's --sim-speed max) would finish a
+// queue before the window painted.
 //
 // View > Data browses the records under the data directory
-// (<data>/records) and plots them; with --db it browses that DVC store
-// instead ("postgresql://user:pw@host/db" or "sqlite:/path/to/file.db"; the
-// schema must be current, it is never migrated from here). Figure presets
-// live in the user's config directory, with lab presets under <lab>/figures.
+// (<data>/records) and plots them; with --db, or on an install that has a
+// database, it browses that DVC store instead ("postgresql://user:pw@host/db"
+// or "sqlite:/path/to/file.db"; the schema must be current, it is never
+// migrated from here), a queue's runs are saved to it, and the data window
+// shows each run when it ends. A simulated session's runs are saved to it
+// only when it is the install's own file on this computer, or with
+// --sim-save; otherwise they are record files, and the log says so once. An install's database that cannot be opened
+// does not stop the program: the data window says why, and no queue starts.
+// Figure presets live in the user's config directory, with lab presets under
+// <lab>/figures.
 //
 // File > Preferences… sets the font sizes, the data browser page size and the
 // spectrometer's large-move threshold; they are kept in the user's settings.
@@ -65,11 +73,13 @@
 #include "brand.hpp"
 #include "command_line.hpp"
 #include "data_main_window.hpp"
+#include "database_choice.hpp"
 #include "experiment_bridge.hpp"
 #include "installations_dialog.hpp"
 #include "laser_bridge.hpp"
 #include "laser_window.hpp"
 #include "main_window.hpp"
+#include "no_database_persister.hpp"
 #include "pattern_maker_window.hpp"
 #include "preferences.hpp"
 #include "pychron/setup/doctor.hpp"
@@ -77,19 +87,25 @@
 #include "pychron/setup/site.hpp"
 #include "setup_support.hpp"
 #include "setup_wizard.hpp"
-#include "pychron/core/clock_pump.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/experiment/lab/session.hpp"
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+#include "pychron/experiment/metrics/service.hpp"
+#endif
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/processing/record_source.hpp"
 #ifdef PYCHRON_UI_HAS_STORE
 // Qt's `signals` keyword macro would rewrite CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
+#include "pychron/experiment/store/store_persister.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 #include "entry_actions.hpp"
+#include "fit_actions.hpp"
+#include "store_identifier_source.hpp"
 #endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/extraction_line.hpp"
@@ -133,11 +149,13 @@ Choice choose_install(const pychron::ui::CommandLine& cli, const setup::Resource
   auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
   if (cli.setup || site->installs.empty()) {
     if (!library) return {std::nullopt, fatal(library.error().what)};
-    pychron::ui::SetupWizard wizard(*library, {site_path, pychron::ui::database_opener(), {}, {}});
+    pychron::ui::SetupWizard wizard(*library,
+                                    {site_path, pychron::ui::database_opener(), {}, {}, pychron::ui::database_seeder()});
     if (wizard.exec() != QDialog::Accepted || !wizard.open_now()) return {std::nullopt, 0};
     return {wizard.installed(), 0};
   }
   pychron::ui::InstallationsDialog dialog(site_path, library ? &*library : nullptr, pychron::ui::database_opener(), {});
+  dialog.set_seed_database(pychron::ui::database_seeder());
   if (dialog.exec() != QDialog::Accepted || !dialog.to_open()) return {std::nullopt, 0};
   auto again = setup::load_site(site_path);
   const auto* i = again ? again->find(*dialog.to_open()) : nullptr;
@@ -152,6 +170,7 @@ std::function<void()> installations_handler(QWidget* window, const setup::Resour
     auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
     pychron::ui::InstallationsDialog dialog(setup::default_site_path(), library ? &*library : nullptr,
                                             pychron::ui::database_opener(), current, window);
+    dialog.set_seed_database(pychron::ui::database_seeder());
     if (dialog.exec() != QDialog::Accepted || !dialog.to_open() || *dialog.to_open() == current) return;
     if (!window->close()) return;  // e.g. unsaved queue edits, and the user chose Cancel
     if (!pychron::ui::start_install(*dialog.to_open())) {
@@ -166,12 +185,9 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   pychron::processing::RecordDirectorySource records(install.path(install.data.empty() ? "data" : install.data) /
                                                      "records");
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
-  std::string url = cli.db.value_or(std::string{});
-  if (url.empty() && !install.database.empty()) {
-    auto with_password = setup::database_url(install);
-    if (!with_password) return fatal(with_password.error().what);
-    url = *with_password;
-  }
+  const auto chosen = pychron::ui::choose_database(cli, &install);
+  if (!chosen) return fatal(chosen.error().what);
+  const std::string url = chosen->value_or(std::string{});
   if (!url.empty()) {
 #ifdef PYCHRON_UI_HAS_STORE
     auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{url, false});
@@ -193,8 +209,13 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
   window.set_installations_handler(installations_handler(&window, resources, install.name));
 #ifdef PYCHRON_UI_HAS_STORE
-  // Entry: samples and packages in the install's database (parented to the window).
-  if (!url.empty()) new pychron::ui::EntryActions(&window, url);
+  // Entry: samples and packages in the install's database; Fit: the flux of a
+  // level. Both parented to the window, Entry made first (fit_actions.hpp).
+  if (!url.empty()) {
+    auto* entry = new pychron::ui::EntryActions(&window, url);
+    new pychron::ui::FitActions(&window, url, *entry, presets,
+                                [&window](const QString& uuid) { window.workspace()->open_recall(uuid); });
+  }
 #endif
   window.apply_preferences(pychron::ui::load_preferences(QSettings()));
   window.resize(1200, 800);
@@ -271,7 +292,9 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const std::string_view a(argv[i]);
     if ((a == "--version" || a == "--self-test" || a == "--write-icons") && AttachConsole(ATTACH_PARENT_PROCESS)) {
+      // cppcheck-suppress ignoredReturnValue ; no console after all: nowhere to say so
       std::freopen("CONOUT$", "w", stdout);
+      // cppcheck-suppress ignoredReturnValue ; as above
       std::freopen("CONOUT$", "w", stderr);
     }
   }
@@ -305,10 +328,15 @@ int main(int argc, char** argv) {
     if (!choice.install && choice.rc >= 0) return choice.rc;
     install = std::move(choice.install);
   }
-  if (install && install->kind == "data_reduction") return run_data_reduction(*install, *cli, resources);
-
   // An instrument install fills in what the command line leaves out.
   const bool sim = cli->sim || (install && install->simulation);
+  // Not a usage error until here: only now is it known whether the install simulates.
+  if (cli->sim_speed > 0 && !sim) {
+    std::fprintf(stderr, "pychron-ui: --sim-speed needs --sim\n");
+    return 2;
+  }
+  if (install && install->kind == "data_reduction") return run_data_reduction(*install, *cli, resources);
+
   std::optional<fs::path> spectrometer_file = cli->spectrometer_file;
   if (install && !spectrometer_file && !install->spectrometer.empty() &&
       fs::exists(install->path(install->spectrometer))) {
@@ -324,16 +352,19 @@ int main(int argc, char** argv) {
 
   pychron::systems::ExtractionLine::Options options;
   options.force_sim = sim;
-  // Simulated time: the pump advances the clock and runs the line's scheduler
-  // inline (no dispatcher), so polling keeps pace however fast time runs.
-  std::unique_ptr<pychron::ManualClock> sim_clock;
-  std::unique_ptr<pychron::ClockPump> pump;
+  // Simulated time: a VirtualClock paced to the speed asked for, starting at
+  // the real time of day. The line's threads take part in it; this one (the
+  // UI's) does not, so time never waits for the event loop. Declared before
+  // the line and everything else that is given it, so it is the last to go.
+  std::unique_ptr<pychron::VirtualClock> sim_clock;
   if (cli->sim_speed > 0) {
-    sim_clock = std::make_unique<pychron::ManualClock>(pychron::TimePoint{} + std::chrono::hours(1));
-    pump = std::make_unique<pychron::ClockPump>(*sim_clock, cli->sim_speed);
+    pychron::VirtualClock::Options clock_options;
+    clock_options.speed = cli->sim_speed;
+    clock_options.epoch = std::chrono::system_clock::now();
+    // The line's log hub does not exist yet and goes before this clock does.
+    clock_options.on_stall = [](std::string report) { std::fprintf(stderr, "pychron-ui: %s\n", report.c_str()); };
+    sim_clock = std::make_unique<pychron::VirtualClock>(std::move(clock_options));
     options.clock = sim_clock.get();
-    options.scheduler.threads = 0;
-    options.run_scheduler = false;
   }
   const std::vector<fs::path>& files = cli->files;
 
@@ -359,8 +390,6 @@ int main(int argc, char** argv) {
     return fatal(what);
   }
 
-  if (pump) pump->drive(&(*line)->scheduler());
-
   // The spectrometer shares the line's clock, scheduler and bus. None of these
   // is left to declaration order: the teardown after the event loop resets
   // each one explicitly, and that order is the one that matters.
@@ -375,9 +404,7 @@ int main(int argc, char** argv) {
   const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
   if (cli->laser) {
     const int laser_rc = run_laser(**line, *cli, lab_dir, system_file, splash);
-    if (pump) pump->drive(nullptr);  // waits for a step in progress
     (*line)->stop();
-    if (pump) pump->stop();
     return laser_rc;
   }
 
@@ -386,6 +413,8 @@ int main(int argc, char** argv) {
   if (!spectrometer_config.empty()) {
     const fs::path& file = spectrometer_config;
     splash.status(QStringLiteral("Bringing up the spectrometer: %1").arg(QString::fromStdString(file.filename().string())));
+    // Written only when a simulated beam was fed from a simulated line.
+    auto fed = pychron::spectrometer::BeamFeed::LineGas;
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
       auto data = pychron::spectrometer::cfg::load_spectrometer(file);
       if (!data) return pychron::fail(data.error());
@@ -393,8 +422,15 @@ int main(int argc, char** argv) {
       return pychron::spectrometer::load_spectrometer_for_app(
           std::move(*data),
           pychron::spectrometer::SpectrometerContext{(*line)->clock(), (*line)->scheduler(), (*line)->bus()},
-          pychron::spectrometer::SpectrometerBringup{.sim_beam_from_table = simulation, .require_sim = sim});
+          // A simulated spectrometer measures the simulated line's gas.
+          pychron::spectrometer::SpectrometerBringup{
+              .sim_beam_from_table = simulation, .require_sim = sim, .line_sim = (*line)->sim(), .fed = &fed});
     }();
+    if (loaded && fed == pychron::spectrometer::BeamFeed::FixedGas) {
+      std::fprintf(stderr, "pychron-ui: the simulated spectrometer is not joined to the line: %s\n",
+                   (*line)->canvas() != nullptr ? "the canvas has no spectrometer stage"
+                                                : "the line was loaded without its canvas");
+    }
     if (loaded) {
       spectrometer = std::move(*loaded);
       scan = std::make_unique<pychron::spectrometer::ScanService>(*spectrometer, (*line)->bus(), (*line)->clock());
@@ -404,10 +440,24 @@ int main(int argc, char** argv) {
     }
   }
 
+  // Whose runs are a simulator's: marked in their records, and kept out of
+  // shared databases (one rule for every program).
+  const bool simulated_session = pychron::spectrometer::simulated_session(
+      sim, spectrometer ? std::optional<bool>(simulation) : std::nullopt, (*line)->config());
+
   std::unique_ptr<pychron::experiment::lab::Lab> lab;
   // The lab's lasers are shared by the session (queues) and the laser
   // windows (an operator): one drives at a time.
   std::unique_ptr<pychron::experiment::lab::Lasers> lasers;
+#ifdef PYCHRON_UI_HAS_STORE
+  // Where a queue's runs go when there is a database: the acquisition's own
+  // store, or, when the database could not be opened, a persister that refuses
+  // every queue with the reason. The session saves through one of them, so
+  // they are declared before it and go after it: the teardown below resets
+  // the session by hand (joining a running queue), these on return.
+  std::unique_ptr<pychron::experiment::store::Acquisition> acquisition;
+  std::unique_ptr<pychron::ui::NoDatabasePersister> no_database;
+#endif
   std::unique_ptr<pychron::experiment::lab::LabSession> session;
   std::unique_ptr<pychron::ui::ExperimentBridge> experiment_bridge;
   std::vector<std::unique_ptr<pychron::ui::LaserBridge>> laser_bridges;
@@ -418,33 +468,88 @@ int main(int argc, char** argv) {
                                                                 : lab_dir / "data";
   pychron::processing::RecordDirectorySource records(data_dir / "records");
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
-  if (cli->db) {
 #ifdef PYCHRON_UI_HAS_STORE
+  // One database for the data window, Entry, Fit, the run factory and the
+  // runs a queue saves: --db, else the install's. `database` is its url once
+  // the data window's source has opened it; `database_error` is why there is
+  // none to use although one was named. --db that does not open is a usage
+  // error; an install's is not, since the line can still be worked.
+  std::string database;
+  std::optional<std::string> database_error;
+  if (const auto chosen = pychron::ui::choose_database(*cli, install ? &*install : nullptr); !chosen) {
+    database_error = chosen.error().what;
+  } else if (chosen->has_value()) {
     splash.status(QStringLiteral("Opening the DVC store"));
-    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{*cli->db, false});
-    if (!opened) {
+    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{**chosen, false});
+    if (opened) {
+      store_source = std::move(*opened);
+      database = **chosen;
+    } else if (cli->db) {
       std::fprintf(stderr, "pychron-ui: --db: %s\n", pychron::to_string(opened.error()).c_str());
       return 2;
+    } else {
+      database_error = opened.error().what;
     }
-    store_source = std::move(*opened);
+  }
+  if (cli->sim_save && database.empty() && !database_error) {
+    std::fprintf(stderr, "pychron-ui: --sim-save: there is no database to save to (--db, or an install that has one)\n");
+    return 2;
+  }
+  // Said in the log once the window is up: a simulated session that does not
+  // save to the database (it goes on reading it) writes record files.
+  std::string run_saving_note;
+  if (!database.empty()) {
+    const auto saving = pychron::ui::choose_run_saving(*cli, database, simulated_session, data_dir);
+    if (!saving.to_database) {
+      run_saving_note = saving.note;
+    } else if (auto opened = pychron::experiment::store::open_acquisition(database, data_dir, PYCHRON_VERSION)) {
+      acquisition = std::move(*opened);
+    } else {
+      no_database = std::make_unique<pychron::ui::NoDatabasePersister>(opened.error().what);
+    }
+  } else if (database_error) {
+    no_database = std::make_unique<pychron::ui::NoDatabasePersister>(*database_error);
+  }
 #else
+  if (cli->db) {
     std::fprintf(stderr, "pychron-ui: --db: built without the DVC store (PYCHRON_PERSISTENCE=OFF or no Qt Sql)\n");
     return 2;
-#endif
   }
+  if (cli->sim_save) {
+    std::fprintf(stderr, "pychron-ui: --sim-save: there is no database to save to (built without the DVC store)\n");
+    return 2;
+  }
+  // The install has a database and this build cannot write to one: said here
+  // and in the log, not left for the operator to find out.
+  std::string no_store_warning;
+  if (install && install->kind == "instrument" && !install->database.empty()) {
+    no_store_warning = "built without the DVC store: runs are written to " + (data_dir / "records").string() +
+                       ", not to the installation's database";
+    std::fprintf(stderr, "pychron-ui: warning: %s\n", no_store_warning.c_str());
+  }
+#endif
   pychron::processing::IAnalysisSource& data_source =
       store_source ? *store_source : static_cast<pychron::processing::IAnalysisSource&>(records);
   pychron::processing::PresetStore presets(
       std::filesystem::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
       lab_dir / "figures");
 
+  // `[metrics]`: the endpoint the lab's Prometheus scrapes (docs/observability.md).
+  // Built before the line starts, so the start-up Snapshot reaches it too.
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+  std::unique_ptr<pychron::experiment::metrics::MetricsService> metrics;
+#endif
+
   int rc = 0;
   {
     // The window (and its CoreBridge) subscribes before start() so the
     // start-up Snapshot paints the canvas before the first scan.
-    pychron::ui::MainWindow window(**line);
-    window.resize(1200, 850);
+    pychron::ui::MainWindow window(**line, std::make_unique<QSettings>());
     window.apply_preferences(pychron::ui::load_preferences(QSettings()));
+    // Preferences keeps the line's logging and metrics beside this file. Not
+    // for the examples that come with the application: they are part of it
+    // (inside the bundle on macOS), and nothing is written there.
+    if (install || !files.empty()) window.set_line_config_file(system_file);
     window.set_installations_handler(installations_handler(&window, resources, install ? install->name : std::string{}));
 
     // Runtime level changes go to the line's LogHub; without one (creation
@@ -461,13 +566,62 @@ int main(int argc, char** argv) {
     }
     window.set_data(&data_source, &presets);
 #ifdef PYCHRON_UI_HAS_STORE
-    if (cli->db) new pychron::ui::EntryActions(&window, *cli->db);  // the Entry menu, parented to the window
+    // The Entry and Fit menus, parented to the window, Entry made first (fit_actions.hpp).
+    if (!database.empty()) {
+      auto* entry = new pychron::ui::EntryActions(&window, database);
+      // The run factory picks identifiers from the same store, through Entry's bridge.
+      window.set_identifier_source(new pychron::ui::StoreIdentifierSource(*entry));
+      new pychron::ui::FitActions(&window, database, *entry, presets,
+                                  [&window](const QString& uuid) { window.open_recall(uuid); });
+    }
+    if (database_error) {
+      // The data window shows the records folder, and says so and what is missing.
+      const QString why =
+          QStringLiteral("The database could not be opened: ") + QString::fromStdString(*database_error);
+      window.set_data_unavailable(why + QStringLiteral("\nShowing the records folder %1.")
+                                            .arg(QString::fromStdString((data_dir / "records").string())));
+      window.log_dock()->append_line(QStringLiteral("ERROR [ui] ") + why);
+    } else if (no_database) {
+      // It can be read, and not written to: said here, and again to whoever starts a queue.
+      window.log_dock()->append_line(QStringLiteral("ERROR [ui] ") + QString::fromStdString(no_database->why()));
+    }
+    if (!run_saving_note.empty()) {
+      window.log_dock()->append_line(QStringLiteral("INFO [ui] ") + QString::fromStdString(run_saving_note));
+    }
+#else
+    if (!no_store_warning.empty()) {
+      window.log_dock()->append_line(QStringLiteral("WARN [ui] ") + QString::fromStdString(no_store_warning));
+    }
 #endif
     window.show();
     if (spectrometer_error) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
                                      QString::fromStdString(*spectrometer_error));
     }
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+    metrics = pychron::experiment::metrics::MetricsService::start(
+        (*line)->config().metrics, (*line)->bus(), (*line)->scheduler(), (*line)->clock(), (*line)->log_hub(),
+        PYCHRON_VERSION);
+    // For the Metrics page of File > Preferences.
+    if (!metrics) {
+      window.set_metrics_status(QStringLiteral("Off"));
+    } else if (metrics->listening()) {
+      window.set_metrics_status(QStringLiteral("Listening on %1:%2")
+                                    .arg(QString::fromStdString((*line)->config().metrics.bind))
+                                    .arg(metrics->port()));
+    } else {
+      // The error names its subject for the log ("metrics: cannot bind..."); here the page already does.
+      QString why = QString::fromStdString(metrics->error());
+      if (why.startsWith(QStringLiteral("metrics: "))) why.remove(0, 9);
+      window.set_metrics_status(QStringLiteral("Not listening: %1").arg(why));
+    }
+#else
+    window.set_metrics_status(QStringLiteral("This build has no metrics"));
+    if ((*line)->config().metrics.enabled) {
+      window.log_dock()->append_line(
+          QStringLiteral("WARN [ui] metrics: this build has no metrics (PYCHRON_METRICS=OFF)"));
+    }
+#endif
     splash.status(QStringLiteral("Starting the extraction line"));
     const auto started = (*line)->start();
     if (!started) {
@@ -493,9 +647,20 @@ int main(int argc, char** argv) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] lab: ") + QString::fromStdString(problem));
       }
       lasers = std::make_unique<pychron::experiment::lab::Lasers>(*lab, **line);
+      pychron::experiment::lab::SessionOptions session_options{data_dir, {}, {}};
+#ifdef PYCHRON_UI_HAS_STORE
+      if (acquisition) {
+        session_options.persister = &acquisition->persister();
+      } else if (no_database) {
+        session_options.persister = no_database.get();
+      }
+#endif
+      const bool saves_to_database = session_options.persister != nullptr;
       session = std::make_unique<pychron::experiment::lab::LabSession>(
-          *lab, pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}, lasers.get()},
-          pychron::experiment::lab::SessionOptions{data_dir, {}, {}});
+          *lab,
+          pychron::experiment::lab::SessionHardware{**line, spectrometer.get(), scan.get(), {}, lasers.get(),
+                                                    simulated_session},
+          std::move(session_options));
       for (const auto& note : lasers->notes()) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] laser: ") + QString::fromStdString(note));
       }
@@ -503,6 +668,7 @@ int main(int argc, char** argv) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] experiment: ") + QString::fromStdString(problem));
       }
       experiment_bridge = std::make_unique<pychron::ui::ExperimentBridge>(*session, (*line)->bus());
+      experiment_bridge->set_saves_to_database(saves_to_database);
       window.set_experiment(experiment_bridge.get(), sim, cli->queue);
       // A laser window per extraction device; its emergency stop aborts the queue.
       std::vector<pychron::ui::LaserBridge*> bridges;
@@ -529,7 +695,8 @@ int main(int argc, char** argv) {
   //   0. the laser windows (above) and their bridges (a motion being waited
   //      for is stopped); the experiment window (above), its bridge, then the
   //      session, which aborts and joins a running queue before anything it
-  //      uses goes; then the lasers the two shared;
+  //      uses goes (its persister among them: the acquisition store, declared
+  //      before the session, goes on return); then the lasers the two shared;
   //   1. the spectrometer window, then the main window (the block above);
   //   2. the bridge, whose executor finishes the command in flight; the scan
   //      stop the closing window asked for happens even if it was queued
@@ -538,7 +705,8 @@ int main(int argc, char** argv) {
   //   4. the line: stop() halts the shared scheduler and waits for a poll
   //      already on a worker, so nothing is still using the spectrometer;
   //   5. the spectrometer;
-  //   6. the beam registry, whose models refer to the line's clock, before
+  //   6. the beam registry, whose models refer to the line's clock (and read
+  //      the line's simulated gas, through a handle that outlives it), before
   //      the line itself is destroyed on return.
   // When the line never started, step 4 does nothing: the scheduler never ran
   // and the spectrometer was never offered, so no poll or command has touched
@@ -549,10 +717,11 @@ int main(int argc, char** argv) {
   lasers.reset();
   spectrometer_bridge.reset();
   scan.reset();
-  if (pump) pump->drive(nullptr);  // waits for a step in progress
   (*line)->stop();
+#ifdef PYCHRON_EXPERIMENT_HAS_METRICS
+  metrics.reset();  // its heartbeat is a job of the line's scheduler: before the line goes
+#endif
   spectrometer.reset();
   pychron::sim::BeamModelRegistry::global().clear();
-  if (pump) pump->stop();
   return rc;
 }

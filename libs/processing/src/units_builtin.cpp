@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <utility>
 
 #include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
@@ -354,7 +355,7 @@ class EditsUnit final : public Unit {
       if (eq == std::string::npos) continue;
       try {
         groups[g.substr(0, eq)] = std::stoi(g.substr(eq + 1));
-      } catch (...) {
+      } catch (...) {  // NOLINT(bugprone-empty-catch): a group that is not a number is skipped, like one with no '='
       }
     }
     Dataset d = *dataset_in(in);
@@ -369,7 +370,7 @@ class EditsUnit final : public Unit {
         max_group = std::max(max_group, g->second);
       }
     }
-    while (static_cast<int>(d.group_names.size()) <= max_group && !groups.empty())
+    while (std::cmp_less_equal(d.group_names.size(), max_group) && !groups.empty())
       d.group_names.push_back("Group " + std::to_string(d.group_names.size() + 1));
     return one(make_dataset(std::move(d)));
   }
@@ -449,6 +450,7 @@ const UnitRegistry& UnitRegistry::builtin() {
     r.add(make_ideogram_unit());
     r.add(make_spectrum_unit());
     r.add(make_isochron_unit());
+    r.add(make_spectrum_isochron_unit());
     r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
     r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
     r.add(make_isotope_evolution_fit_unit());

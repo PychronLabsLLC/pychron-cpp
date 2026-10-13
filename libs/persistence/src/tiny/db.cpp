@@ -11,6 +11,7 @@
 #include <QSqlRecord>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QUuid>
 
 #include <atomic>
 #include <cstring>
@@ -45,6 +46,7 @@ void ensure_qt_application() {
     static char name[] = "pychron";
     static char* argv[] = {name, nullptr};
     new QCoreApplication(argc, argv);
+  // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks): the application object lives as long as the process
   });
 }
 
@@ -76,7 +78,7 @@ auto guarded(Dialect dialect, Fn&& fn) -> Result<decltype(fn())> {
 Result<QVariantHash> parse_config(const StoreConfig& config, Dialect& dialect) {
   const std::string& url = config.url;
   QVariantHash c;
-  if (url.rfind("sqlite:", 0) == 0) {
+  if (url.starts_with("sqlite:")) {
     dialect = Dialect::Sqlite;
     const std::string path = url.substr(std::strlen("sqlite:"));
     if (path.empty()) return fail(ErrorKind::Config, "store url: empty sqlite path");
@@ -85,9 +87,16 @@ Result<QVariantHash> parse_config(const StoreConfig& config, Dialect& dialect) {
     c["foreign_key_constraints"] = true;
     c["check_database_exists"] = false;
     c["options"] = "QSQLITE_BUSY_TIMEOUT=10000";
+    // TinyORM's default for SQLite is to try every text value it reads as a
+    // date and hand back a QDateTime when one parses. The store reads its
+    // times as text itself (sql::ts), so that bought nothing and cost twice:
+    // a name or a note that reads like a date came back reworded, and the
+    // attempt (a local-time conversion per value, uuids and all) was most of
+    // the time of loading an analysis.
+    c["return_qdatetime"] = false;
     return c;
   }
-  if (url.rfind("postgresql://", 0) == 0 || url.rfind("postgres://", 0) == 0) {
+  if (url.starts_with("postgresql://") || url.starts_with("postgres://")) {
     dialect = Dialect::PostgreSql;
     const QUrl u(qs(url));
     if (!u.isValid() || u.host().isEmpty()) return fail(ErrorKind::Config, "store url: invalid postgresql url");
@@ -116,7 +125,7 @@ Db::Db(QString connection_name, Dialect dialect) : name_(std::move(connection_na
 Db::~Db() {
   try {
     manager()->removeConnection(name_);
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): a destructor has no one to tell
   }
 }
 
@@ -224,18 +233,30 @@ void Db::rollback() noexcept {
       else if (conn().inTransaction())
         (void)run([&] { conn().rollBack(); });
     }
-  } catch (...) {
+  } catch (...) {  // NOLINT(bugprone-empty-catch): best effort: the connection may be what failed
   }
   in_tx_ = false;
 }
 
 // ---------------------------------------------------------------- conversions
 
-std::string to_std(const QVariant& v) { return v.toString().toStdString(); }
+namespace {
+
+// A column's value as text. QPSQL hands a uuid column over as its text on
+// Qt 6.4 and as a QUuid on a later Qt (6.11), and a QUuid's own toString() is
+// braced, which Uuid::parse refuses: a uuid is its canonical text on either.
+std::string text_of(const QVariant& v) {
+  if (v.typeId() == QMetaType::QUuid) return v.toUuid().toString(QUuid::WithoutBraces).toStdString();
+  return v.toString().toStdString();
+}
+
+}  // namespace
+
+std::string to_std(const QVariant& v) { return text_of(v); }
 
 std::optional<std::string> opt_str(const QVariant& v) {
   if (v.isNull()) return std::nullopt;
-  return v.toString().toStdString();
+  return text_of(v);
 }
 
 std::optional<double> opt_double(const QVariant& v) {
@@ -253,11 +274,11 @@ std::optional<bool> opt_bool(const QVariant& v) {
   return v.toBool();
 }
 
-Uuid to_uuid(const QVariant& v) { return Uuid::parse(v.toString().toStdString()).value_or(Uuid{}); }
+Uuid to_uuid(const QVariant& v) { return Uuid::parse(text_of(v)).value_or(Uuid{}); }
 
 std::optional<Uuid> opt_uuid(const QVariant& v) {
   if (v.isNull()) return std::nullopt;
-  return Uuid::parse(v.toString().toStdString());
+  return Uuid::parse(text_of(v));
 }
 
 UtcTime to_time(const QVariant& v) { return UtcTime::parse(v.toString().toStdString()).value_or(UtcTime{}); }
@@ -270,3 +291,9 @@ Sha256Digest to_digest(const QVariant& v) {
 }
 
 }  // namespace pychron::persistence::detail
+
+namespace pychron::persistence {
+
+void ensure_host_application() { detail::ensure_qt_application(); }
+
+}  // namespace pychron::persistence

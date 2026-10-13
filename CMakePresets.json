@@ -89,7 +89,8 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
-      }
+      },
+      "generator": "Ninja"
     },
     {
       "name": "dev-ui",
@@ -164,17 +165,29 @@
       "name": "dev",
       "configurePreset": "dev",
       "environment": {
-        "LSAN_OPTIONS": "suppressions=${sourceDir}/cmake/lsan.supp:print_suppressions=0"
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/cmake/lsan.supp:print_suppressions=0",
+        "CTEST_PARALLEL_LEVEL": ""
       },
       "output": {
         "outputOnFailure": true
       }
     },
     {
+      "name": "dev-quick",
+      "displayName": "dev without the slow importer suites (inner loop; run dev before merging)",
+      "inherits": "dev",
+      "filter": {
+        "exclude": {
+          "name": "^(Engines/(Project|Meta)ImportTest\\.|ImportCmd)"
+        }
+      }
+    },
+    {
       "name": "dev-ui",
       "configurePreset": "dev-ui",
       "environment": {
-        "LSAN_OPTIONS": "suppressions=${sourceDir}/cmake/lsan.supp:print_suppressions=0"
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/cmake/lsan.supp:print_suppressions=0",
+        "CTEST_PARALLEL_LEVEL": "2"
       },
       "output": {
         "outputOnFailure": true

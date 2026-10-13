@@ -14,10 +14,12 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
+#include <QDockWidget>
 #include <QtTest/QtTest>
 
 #include "spectrometer_bridge.hpp"
 #include "spectrometer_fixture.hpp"
+#include "settings_guard.hpp"
 #include "spectrometer_window.hpp"
 
 using namespace pychron;
@@ -83,6 +85,7 @@ class TestSpectrometerWindow : public QObject {
   }
 
   QTemporaryDir dir_;
+  pychron::ui::test::ApplicationSettingsGuard app_settings_;
   QString path_;
   int file_ = 0;
   std::unique_ptr<ui::test::SimSpectrometer> sim_;
@@ -414,6 +417,80 @@ class TestSpectrometerWindow : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(window_->banner_text().isEmpty(), kWaitMs);
   }
 
+  // ---- the panel layout -------------------------------------------------------
+
+  void resetPutsTheDocksBack() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    auto* controls = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerControlsDock"));
+    auto* intensities = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerIntensitiesDock"));
+    QVERIFY(controls != nullptr && intensities != nullptr);
+    intensities->close();
+    controls->setFloating(true);
+
+    QVERIFY(window_->dock_layouts() != nullptr);
+    window_->dock_layouts()->reset();
+    for (const QDockWidget* dock : {controls, intensities}) {
+      QVERIFY2(dock->isVisible(), qPrintable(dock->objectName()));
+      QVERIFY2(!dock->isFloating(), qPrintable(dock->objectName()));
+    }
+    QCOMPARE(window_->dockWidgetArea(controls), Qt::LeftDockWidgetArea);
+    QCOMPARE(window_->dockWidgetArea(intensities), Qt::RightDockWidgetArea);
+  }
+
+  void resetGivesThePanelsTheirSizesBack() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    auto* controls = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerControlsDock"));
+    auto* intensities = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerIntensitiesDock"));
+    QTRY_VERIFY(intensities->width() > 0);
+    const int controls_width = controls->width();
+    const int intensities_width = intensities->width();
+    window_->resizeDocks({intensities}, {intensities_width + 200}, Qt::Horizontal);
+    QTRY_VERIFY(intensities->width() > intensities_width + 100);
+
+    window_->dock_layouts()->reset();
+    constexpr int kSlackPx = 6;
+    QTRY_VERIFY2(qAbs(intensities->width() - intensities_width) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(intensities->width()).arg(intensities_width)));
+    QTRY_VERIFY2(qAbs(controls->width() - controls_width) <= kSlackPx,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(controls->width()).arg(controls_width)));
+  }
+
+  void panelsLeaveOutTheControls() {
+    open();
+    QVERIFY(window_->dock_layouts() != nullptr);
+    QStringList panels;
+    for (const QAction* action : window_->dock_layouts()->panel_actions()) panels.append(action->text());
+    QCOMPARE(panels, QStringList{QStringLiteral("Intensities")});
+  }
+
+  void anArrangementIsKeptUnderTheSpectrometersName() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QVERIFY(window_->dock_layouts() != nullptr);
+    QVERIFY(window_->dock_layouts()->save_as(QStringLiteral("scan")));
+    QVERIFY(settings()->contains(QStringLiteral("spectrometer_window/sim-integrated/arrangements/scan/state")));
+  }
+
+  void theDockLayoutComesBackUnderItsOldKey() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerIntensitiesDock"))->close();
+    QVERIFY(window_->close());
+    QVERIFY(!saved("dock_state").toByteArray().isEmpty());
+    QVERIFY(!saved("geometry").toByteArray().isEmpty());
+    window_.reset();
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QVERIFY(!window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerIntensitiesDock"))->isVisible());
+  }
+
   void closingStopsScanAndSavesSettings() {
     open();
     window_->show();
@@ -525,6 +602,8 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(!sim_->scan->running());
     QCOMPARE(moves_, 1);
   }
+  // Every window here was given its settings: none fell back to the application's.
+  void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };
 
 QTEST_MAIN(TestSpectrometerWindow)

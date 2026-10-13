@@ -24,6 +24,29 @@ How to enter samples and packages (irradiations) in the DVC store, from
 | position | A hole of a level's holder, numbered from 1. |
 | identifier | The labnumber of a position, given out in sequence. |
 
+## Reference samples
+
+An instrument install's database starts with a project `references` and one
+sample for each kind of reference run: `blank_unknown`, `blank_air`,
+`blank_cocktail`, `blank_extractionline`, `background`, `air`, `cocktail`
+and `detector_ic`, each with its special identifier (`bu`, `ba`, `bc`, `be`,
+`bg`, `a`, `c`, `ic`). It also starts with the reactor `Triga` and its
+production ratios, and with the install's mass spectrometer (`argus`, `helix`
+or `ngx`). Setup puts them there from the install's `seed.toml`
+(`installation_runbook.md`, part 2.3), and `elctl entry seed` does the same
+by hand.
+
+- They are ordinary rows: edit them here like any other sample.
+- The seed never changes a row that exists. A special identifier that was
+  already in the store (from a legacy import) keeps the sample it has, or
+  none.
+- `seed.toml` has two lists: `mass_spectrometers` (shipped with the
+  install's own) and `extract_devices` (shipped empty). A queue's runs are saved to the database only under a
+  mass spectrometer and an extract device the database has, and a queue that
+  names one it lacks is not started. To add one, put its name in the list
+  and run `elctl entry seed <root>/seed.toml --db <url>`; it prints, for
+  example, `seeded 1 extract device`. A name may not be empty or repeated.
+
 ## Samples
 
 Entry > Samples… lists the samples (filter by PI, project, material, or
@@ -149,6 +172,8 @@ elctl entry identifiers generate NM-301 --dry-run --db ...
 elctl entry identifiers generate NM-301 --db ...
 elctl entry package show NM-301 --csv --db ...
 elctl entry settings set pi_names_allowed '["NMGRL Lab"]' --db ...
+elctl entry seed ~/Pychron/argus/seed.toml --dry-run --db ...
+elctl entry seed ~/Pychron/argus/seed.toml --db ...
 ```
 
 Exit codes:

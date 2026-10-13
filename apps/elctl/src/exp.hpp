@@ -12,12 +12,16 @@
 //   --spectrometer <file>   spectrometer.toml (default: <lab>/spectrometer.toml if present)
 //   --canvas <file>         canvas.toml (default: next to the -c config, if present)
 //   --sim-speed <x>         with --sim: run simulated time x times faster than real time
+//   --db <url>              write the runs to this database (default: the install's; none: records are files)
+//   --sim-save              a simulated session may write to the database; without it its runs go to a
+//                           database only when that is the install's own file on this computer
 //
 // Interrupts while running: the first stops after the current run, the
 // second cancels it, the third aborts.
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -30,11 +34,30 @@ struct ExpGlobals {
   bool sim = false;
   // From --install: used where the corresponding exp option is not given.
   std::filesystem::path lab, spectrometer, canvas, data;
+  // The install's database url, password included (empty: none, or built without the store).
+  std::string database;
+  // Why the install's database url could not be made (database is then empty); `exp run` refuses to start.
+  std::string database_error;
+  // The install names a database and this build has no store to write it with: `exp run` says so.
+  bool database_not_built = false;
 };
 
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);
 
 // Incremented by main()'s SIGINT handler; `exp run` escalates on each.
 std::atomic<int>& interrupt_count();
+
+// What an interrupt asks of the running queue, weakest first.
+struct QueueRequests {
+  std::function<void()> stop, cancel, abort;
+};
+
+// Answers the interrupts numbered from `handled` up to `count`, and leaves
+// `handled` at `count`. Each is said; only the strongest is asked of the
+// queue. Two that arrive together are one request to cancel: a stop asked
+// for first is honoured at once by a queue between runs, which has then
+// ended as stopped before the cancel reaches it.
+void answer_interrupts(int& handled, int count, const std::function<void(const std::string&)>& say,
+                       const QueueRequests& queue);
 
 }  // namespace elctl

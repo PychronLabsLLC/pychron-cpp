@@ -27,7 +27,7 @@ pp::Dataset steps(int n = 8, std::map<int, double> f_of_step = {}) {
   const double ar36[] = {0.5, 0.3, 0.2, 0.1, 0.08, 0.06, 0.1, 0.2, 0.3, 0.4};
   for (int i = 0; i < n; ++i) {
     pp::DatasetItem item;
-    const double f = f_of_step.count(i) ? f_of_step[i] : 10.0;
+    const double f = f_of_step.contains(i) ? f_of_step[i] : 10.0;
     auto a = make_step(i, ar39[i], ar36[i], f);
     a->material = "sanidine";
     a->project = "Fish Canyon";
@@ -342,7 +342,7 @@ TEST(Report, CsvIsWellFormedAndQuotesSpecialText) {
   std::vector<std::string> order;
   bool saw_sample = false;
   while (std::getline(in, line)) {
-    if (line.rfind("# ", 0) == 0) {
+    if (line.starts_with("# ")) {
       ++header_lines;
       continue;
     }
@@ -365,6 +365,18 @@ TEST(Report, CsvIsWellFormedAndQuotesSpecialText) {
   EXPECT_EQ(order, (std::vector<std::string>{"[metadata]", "[constants]", "[irradiation]", "[analyses]", "[summary]"}));
   EXPECT_TRUE(saw_sample);
   EXPECT_TRUE(csv.find("\"FC-2, \"\"split\"\" B\"") != std::string::npos);
+}
+
+TEST(Report, CsvQuoteQuotesOnlyWhatNeedsIt) {
+  EXPECT_EQ(pp::csv_quote("plain"), "plain");
+  EXPECT_EQ(pp::csv_quote("a,b"), "\"a,b\"");
+  EXPECT_EQ(pp::csv_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+  EXPECT_EQ(pp::csv_quote("two\nlines"), "\"two\nlines\"");
+  EXPECT_EQ(pp::csv_quote("cr\rlf"), "\"cr\rlf\"");
+  EXPECT_EQ(pp::csv_quote(" padded"), "\" padded\"");
+  EXPECT_EQ(pp::csv_quote("padded "), "\"padded \"");
+  EXPECT_EQ(pp::csv_quote("in side"), "in side");
+  EXPECT_EQ(pp::csv_quote(""), "");
 }
 
 TEST(Report, JsonCarriesEveryTableAndEscapes) {

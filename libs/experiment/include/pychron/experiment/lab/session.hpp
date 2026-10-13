@@ -17,6 +17,7 @@
 // Notifier: a failed run as it finishes, the queue's end after QueueEnded.
 // Each delivery is published as NotificationSent.
 
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -27,6 +28,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <cstddef>
 
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/executor/executor.hpp"
@@ -56,12 +59,24 @@ struct SessionHardware {
   // window); it must outlive the session, and `simulated` is then its own.
   // Null: the session builds its own.
   Lasers* lasers = nullptr;
+  // The hardware is a simulator's (spectrometer::simulated_session says when):
+  // every record the session makes says so (record::InstrumentMeta::simulated).
+  bool simulation = false;
 };
 
 struct SessionOptions {
   std::filesystem::path data;            // records/, spool/, executor_state.json
   executor::ExecutorOptions executor;    // state_file defaults to <data>/executor_state.json
   ProcessRunner notify;                  // runs the notification programs; empty: run_process
+  persist::IAnalysisPersister* persister = nullptr;  // not owned; nullptr: files under <data>/records
+};
+
+// Published on the line's bus when a session starts a queue, before the
+// executor runs. An unedited queue publishes no QueueEdited, so this is how a
+// subscriber learns how much there is to do.
+struct QueueStarted {
+  std::size_t rows = 0;      // QueueSpec::runs.size()
+  std::size_t from_row = 0;  // the row the queue starts at
 };
 
 // Published on the line's bus when a queue started by a session ends, after
@@ -79,7 +94,9 @@ class LabSession {
   LabSession& operator=(const LabSession&) = delete;
 
   // Config error if a queue is running or `queue` does not check against the
-  // lab (the message names the first error and how many there are); also
+  // lab (the message names the first error and how many there are); if the
+  // persister would not save a row from `from_row` on ("the queue cannot be
+  // saved:" and its lines; earlier rows are not asked about); also
   // while a laser is being driven by hand, while a laser's emergency stop
   // has not been reset, and while a laser's beam is on.
   Result<void> start(QueueSpec queue, std::size_t from_row = 0);
@@ -90,7 +107,9 @@ class LabSession {
   void truncate(bool quick = false);
   // Replaces the running queue's runs with `queue.runs` (Executor::edit:
   // rows the executor has reached must be unchanged, `base` is the version
-  // the edit was made against). The whole queue must check against the lab.
+  // the edit was made against). The whole queue must check against the lab,
+  // and the rows the executor has not reached must be ones the persister
+  // would save, as at start().
   // Queue-level fields are not editable while running and are ignored.
   Result<std::uint64_t> edit(std::uint64_t base, const QueueSpec& queue);
 
@@ -100,7 +119,12 @@ class LabSession {
   // start() and wait() are called from one thread (the owner's).
   std::optional<executor::QueueResult> wait();
   std::size_t pending_saves() const;  // records still in the spool
+  // Why the last record that was not taken is still in the spool
+  // ("<record uuid>: <the persister's text>"); empty when none was refused
+  // or that record has since been sent.
+  std::optional<std::string> last_save_error() const;
   TimePoint now() const;              // the line's clock (simulated or not)
+  WallTime wall_now() const;          // the same clock's date and time
   // Sends a test message on every configured channel (non-blocking).
   void notify_test();
   Notifier& notifier() noexcept { return *notifier_; }
@@ -121,7 +145,11 @@ class LabSession {
   struct Services;
 
   void run(QueueSpec queue, std::size_t from_row);
+  void join();  // the queue thread, once it is done; the owner's thread only
   Result<void> check(const QueueSpec& queue) const;  // against the lab; names the first error
+  // Asks the persister about a queue as it will run (persist::rows_from);
+  // what it would not save refuses the queue, one line each.
+  Result<void> check_saves(const QueueSpec& will_run);
 
   const Lab& lab_;
   SessionHardware hardware_;
@@ -137,10 +165,15 @@ class LabSession {
   std::shared_ptr<executor::Executor> executor_;
   std::shared_ptr<executor::Executor> active() const;  // executor_ while running
   std::optional<executor::QueueResult> result_;
+  QueueSpec started_;  // the current or last queue without its rows: what an edit cannot change; under mutex_
   bool running_ = false;
   struct QueueLease;
   std::unique_ptr<QueueLease> lease_;  // the lasers are the queue's while it runs; under mutex_
   std::thread thread_;
+  // The queue thread's last word, under mutex_; waited on and notified
+  // through the line's clock.
+  bool thread_done_ = false;
+  std::condition_variable thread_done_cv_;
 };
 
 }  // namespace pychron::experiment::lab

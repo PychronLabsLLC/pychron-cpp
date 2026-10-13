@@ -37,7 +37,8 @@ class SimTransport final : public QueuedTransport {
   using Hook = std::function<Bytes(const Bytes& tx)>;
   // Input nobody asked for (an instrument's event stream): polled by each
   // read; returns the bytes due now, empty for none. With one, a read with
-  // nothing to frame waits in real time up to its timeout, as a socket does.
+  // nothing to frame waits up to its timeout, as a socket does, in the time
+  // of TransportOptions::clock (real time when that is null).
   using Unsolicited = std::function<Bytes()>;
 
   static std::unique_ptr<SimTransport> scripted(std::vector<SimStep> steps, TransportOptions options = {});
@@ -59,7 +60,10 @@ class SimTransport final : public QueuedTransport {
   // Append steps to a scripted/replay transport.
   void expect(SimStep step);
 
-  // Every tx written, in order (including unexpected ones).
+  // The tx written, in order (including unexpected ones): the newest
+  // kWrittenLimit of them. A simulated lab polls its gauges for as long as it
+  // runs, and a record without an end was most of what a long session held.
+  static constexpr std::size_t kWrittenLimit = 10000;
   std::vector<Bytes> written() const;
   // Ok if every step was consumed and no unexpected tx occurred; otherwise
   // a Protocol error describing the first problem(s).

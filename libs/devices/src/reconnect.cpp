@@ -1,9 +1,11 @@
 #include "pychron/devices/reconnect.hpp"
 
+#include <mutex>
+
 namespace pychron {
 
 Reconnector::Reconnector(Transport& transport, const Clock& clock, Duration min_interval)
-    : transport_(transport), clock_(clock), min_interval_(min_interval) {}
+    : transport_(transport), clock_(clock), min_interval_(min_interval), mutex_(clock) {}
 
 Result<bool> Reconnector::reconnect_since(std::uint64_t seen, const std::function<Result<void>()>& on_connect) {
   std::lock_guard lock(mutex_);

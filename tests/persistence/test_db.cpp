@@ -3,6 +3,14 @@
 
 #include <gtest/gtest.h>
 
+#include <QMetaType>
+#include <QString>
+#include <QUuid>
+#include <QVariant>
+
+#include <optional>
+#include <string>
+
 #include "store_fixture.hpp"
 
 using namespace pychron;
@@ -91,4 +99,25 @@ TEST(Db, ConnectionLostInsideATransactionNeverCommitsHalfOfIt) {
   ASSERT_TRUE(tx.begin());
   ASSERT_TRUE(db->affecting("INSERT INTO t VALUES (4)"));
   EXPECT_TRUE(tx.commit());
+}
+
+// What a uuid column comes back as depends on the Qt: QPSQL of Qt 6.4 hands
+// over its text, a later one (6.11 here) a QUuid, whose own text is braced.
+TEST(DbConversions, AUuidIsReadFromTextAndFromAQUuid) {
+  const std::string text = "123e4567-e89b-12d3-a456-426614174000";
+  const Uuid want = *Uuid::parse(text);
+  const QUuid quuid = QUuid::fromString(QString::fromStdString(text));
+  ASSERT_FALSE(quuid.isNull());
+
+  EXPECT_EQ(pd::to_uuid(QVariant(QString::fromStdString(text))), want);
+  EXPECT_EQ(pd::to_uuid(QVariant(quuid)), want);
+  EXPECT_EQ(pd::opt_uuid(QVariant(QString::fromStdString(text))), want);
+  EXPECT_EQ(pd::opt_uuid(QVariant(quuid)), want);
+  EXPECT_EQ(pd::opt_uuid(QVariant()), std::nullopt);
+  EXPECT_EQ(pd::opt_uuid(QVariant(QMetaType::fromType<QUuid>())), std::nullopt);
+
+  // Read as text (a test's "SELECT uuid AS v"), it is the canonical form too.
+  EXPECT_EQ(pd::to_std(QVariant(quuid)), text);
+  EXPECT_EQ(pd::opt_str(QVariant(quuid)), text);
+  EXPECT_EQ(pd::to_std(QVariant(QStringLiteral("{braces in a note}"))), "{braces in a note}");
 }

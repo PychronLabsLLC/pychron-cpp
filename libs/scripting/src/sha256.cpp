@@ -60,6 +60,7 @@ std::string sha256_hex(std::string_view text) {
   while (msg.size() % 64 != 56) msg.push_back('\0');
   for (int i = 7; i >= 0; --i) msg.push_back(static_cast<char>((bits >> (8 * i)) & 0xff));
   for (std::size_t off = 0; off < msg.size(); off += 64)
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the text's bytes
     compress(h, reinterpret_cast<const unsigned char*>(msg.data() + off));
   static constexpr char kHex[] = "0123456789abcdef";
   std::string out;

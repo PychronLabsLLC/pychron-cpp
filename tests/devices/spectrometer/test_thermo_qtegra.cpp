@@ -138,14 +138,14 @@ TEST(Qtegra, InvertedLimitsRejected) {
 TEST(Qtegra, EmptyOrDuplicateChannelsRejected) {
   auto sim = open_scripted({});
   expect_config(create_from(*sim, "channels = []"));
-  expect_config(create_from(*sim, "channels = [\"H1\", \"H1\"]"));
+  expect_config(create_from(*sim, R"(channels = ["H1", "H1"])"));
   expect_config(create_from(*sim, "channels = [\"\"]"));
 }
 
 TEST(Qtegra, ChannelNameTheCodecCannotEncodeRejected) {
   auto sim = open_scripted({});
   expect_config(create_from(*sim, "channels = [\"H1,AX\"]"));
-  expect_config(create_from(*sim, "channels = [\"H1\\r\"]"));
+  expect_config(create_from(*sim, R"(channels = ["H1\r"])"));
   EXPECT_TRUE(sim->written().empty());
 }
 

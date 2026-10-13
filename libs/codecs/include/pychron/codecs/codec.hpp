@@ -70,6 +70,7 @@ inline bool is_decimal_number(std::string_view s) noexcept {
   };
   if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
   std::size_t mantissa = digits();
+  // cppcheck-suppress containerOutOfBounds ; i < s.size() is tested first (digits() moves i)
   if (i < s.size() && s[i] == '.') {
     ++i;
     mantissa += digits();

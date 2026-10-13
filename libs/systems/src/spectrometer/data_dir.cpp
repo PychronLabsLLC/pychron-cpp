@@ -187,6 +187,7 @@ WeightsLoadReport load_molecular_weights_from_string(std::string_view toml, std:
 
 namespace {
 
+// NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved): its elements are moved out
 void append(std::vector<config::Diagnostic>& out, std::vector<config::Diagnostic>&& more) {
   out.insert(out.end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
 }

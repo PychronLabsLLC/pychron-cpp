@@ -146,6 +146,10 @@ struct EngineOptions {
   pychron::Duration timeout_slack = std::chrono::seconds(5);
   // Called on the engine thread right after the inlet closes.
   std::function<void()> on_inlet_closed;
+  // Called on the engine thread as a block begins, before its BlockStarted
+  // is published: for the engine's owner, whose own state must not depend on
+  // there being a bus.
+  std::function<void(Block)> on_block_started;
 };
 
 struct MeasurementInputs {

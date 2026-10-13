@@ -1,0 +1,13 @@
+[
+  {"id": 2201, "name": "Cuttings"},
+  {"id": 2202, "name": "Core"},
+  {"id": 2203, "name": "Dredge"},
+  {"id": 2204, "name": "Unknown"},
+  {"id": 2205, "name": "Auger"},
+  {"id": 2206, "name": "Other"},
+  {"id": 2207, "name": "Hand Sample"},
+  {"id": 2208, "name": "Grab"},
+  {"id": 2209, "name": "vial"},
+  {"id": 2210, "name": "thin section"},
+  {"id": 2211, "name": "other (add comment)"}
+]

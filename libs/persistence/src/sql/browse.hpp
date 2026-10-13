@@ -13,7 +13,7 @@ namespace pychron::persistence::detail::sql {
 inline const QString kBrowseSelect = QStringLiteral(
     "SELECT a.uuid, a.runid_text, i.identifier, a.aliquot, a.increment, a.provisional, a.analysis_type, "
     "%1 AS ts, m.name AS mass_spectrometer, a.signals_state, "
-    "s.name AS sample, p.name AS project, mt.name AS material, pi.display_name AS principal_investigator, "
+    "s.name AS sample, s.uuid AS sample_uuid, p.name AS project, mt.name AS material, pi.display_name AS principal_investigator, "
     "ed.name AS extract_device, ld.name AS load_name, ir.name AS irradiation, lv.name AS level, "
     "ip.position AS position, a.extract_value, a.extract_units, tv.name AS tag, "
     "(SELECT MIN(r.name) FROM repository_member rm JOIN repository r ON r.uuid = rm.repository_uuid "

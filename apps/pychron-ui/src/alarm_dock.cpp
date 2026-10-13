@@ -1,8 +1,9 @@
 #include "alarm_dock.hpp"
 #include "theme.hpp"
 
+#include <utility>
+
 #include <QHBoxLayout>
-#include <QTime>
 #include <QVBoxLayout>
 
 namespace pychron::ui {
@@ -25,11 +26,15 @@ QString severity_name(AlarmSeverity severity) {
 
 }  // namespace
 
-AlarmDock::AlarmDock(QWidget* parent)
+AlarmDock::AlarmDock(QWidget* parent, std::function<QDateTime()> now)
     : QDockWidget(tr("Alarms"), parent),
+      now_(std::move(now)),
       tree_(new QTreeWidget),
       ack_(new QPushButton(tr("Acknowledge"))),
       ack_all_(new QPushButton(tr("Acknowledge all"))) {
+  if (!now_) {
+    now_ = [] { return QDateTime::currentDateTime(); };
+  }
   setObjectName(QStringLiteral("AlarmDock"));
   tree_->setHeaderLabels({tr("Source"), tr("Severity"), tr("Message"), tr("Time")});
   tree_->setRootIsDecorated(false);
@@ -60,7 +65,7 @@ void AlarmDock::add_alarm(const Alarm& alarm) {
   }
   row->setText(kSeverity, severity_name(alarm.severity));
   row->setText(kMessage, QString::fromStdString(alarm.message));
-  row->setText(kTime, QTime::currentTime().toString(QStringLiteral("HH:mm:ss")));
+  row->setText(kTime, now_().time().toString(QStringLiteral("HH:mm:ss")));
   const QColor color = alarm.severity == AlarmSeverity::Critical ? theme().error_text : theme().warning_text;
   row->setForeground(kSeverity, color);
 }

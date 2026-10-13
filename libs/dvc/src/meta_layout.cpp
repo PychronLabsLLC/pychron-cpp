@@ -38,7 +38,7 @@ std::vector<std::string_view> split(std::string_view text, char separator) {
 // The lines of a text file, without their line ends; a BOM is skipped. A
 // final line end does not start another line.
 std::vector<std::string_view> lines_of(std::string_view text) {
-  if (text.substr(0, 3) == "\xEF\xBB\xBF") text.remove_prefix(3);
+  if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
   std::vector<std::string_view> lines = split(text, '\n');
   if (!lines.empty() && lines.back().empty()) lines.pop_back();
   for (auto& line : lines)

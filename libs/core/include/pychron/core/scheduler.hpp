@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -30,6 +31,12 @@ struct JobStats {
   std::uint64_t skipped_overlaps = 0;  // due while the previous run was still going
 };
 
+// One job's statistics under the name it was registered with (job_stats()).
+struct NamedJobStats {
+  std::string name;
+  JobStats stats;
+};
+
 // Owns all periodic work in the process. Drivers and managers own no threads.
 //
 // Job kinds:
@@ -45,6 +52,16 @@ struct JobStats {
 // Time comes from the injected Clock. Due jobs are dispatched either by the
 // background dispatcher (start()) or explicitly via run_pending(), which is
 // what deterministic tests with a ManualClock use.
+//
+// Every wait and every notify of the scheduler goes through that clock, and
+// its threads are participants in it ("scheduler.dispatch", "scheduler.worker"):
+// on a VirtualClock time stands still while a job runs and jumps to the next
+// due time when the dispatcher, the workers and every other participant are
+// waiting. A thread that calls run_pending() with no worker pool runs the jobs
+// itself and is a participant only if its caller made it one. stop() and the
+// destructor wait in the clock for their threads to say they have finished
+// and only then join them: a job still running may use up clock time
+// meanwhile, and time does not move on account of the wait itself.
 class Scheduler {
  public:
   struct Options {
@@ -77,13 +94,24 @@ class Scheduler {
   // Re-arms a watchdog. Cancelled if the job no longer exists; Config if not a watchdog.
   Result<void> heartbeat(JobId id);
 
-  // Removes a job. An execution already in progress finishes normally.
+  // Removes a job. An execution already in progress finishes normally; one
+  // dispatched and not yet begun (queued behind a busy worker, or next in an
+  // inline run_pending()) does not begin. True if the job was still registered.
   bool cancel(JobId id);
+  // cancel(), and then waits in the clock until an execution in progress has
+  // finished: when it returns the job's task is not running and will not run
+  // again, so what the task refers to may be destroyed. Called from the job's
+  // own task it does not wait for that execution, which is its caller.
+  bool cancel_and_wait(JobId id);
 
   // Dispatches every job due at clock.now(); returns how many were dispatched.
   std::size_t run_pending();
 
   // Background dispatcher thread that calls run_pending() as jobs fall due.
+  // stop() waits for that thread, so a job running on it (no worker pool)
+  // cannot call it: it throws std::system_error with
+  // resource_deadlock_would_occur, which makes the job a failed one, and the
+  // scheduler goes on dispatching.
   void start();
   void stop();
   bool started() const;
@@ -92,6 +120,10 @@ class Scheduler {
   void wait_idle();
 
   std::optional<JobStats> stats(JobId id) const;
+  // Every periodic job, scan and watchdog, in name order: a snapshot for
+  // whoever reports on the scheduler as a whole. One-shot jobs are left out
+  // (they come and go, and their names are not a fixed set).
+  std::vector<NamedJobStats> job_stats() const;
   std::size_t job_count() const;
 
  private:
@@ -100,10 +132,14 @@ class Scheduler {
 
   Result<JobId> add(std::string name, Kind kind, Duration period, std::function<bool()> body);
   std::vector<std::shared_ptr<Job>> collect_due_locked(TimePoint now);
+  // Caller holds mutex_. The job if it is dispatched and not finished.
+  std::shared_ptr<Job> cancel_locked(JobId id, bool& removed);
   void execute(const std::shared_ptr<Job>& job);
   void publish_log(LogLevel level, std::string message) const;
-  void worker_loop();
-  void dispatcher_loop();
+  // `started` is the starter's Clock::Hold, dropped once the thread has
+  // entered the clock.
+  void worker_loop(std::shared_ptr<Clock::Hold> started);
+  void dispatcher_loop(std::shared_ptr<Clock::Hold> started);
 
   const Clock& clock_;
   SignalBus* bus_;
@@ -114,12 +150,17 @@ class Scheduler {
   mutable std::mutex mutex_;
   std::condition_variable wake_;       // dispatcher: jobs changed or stop requested
   std::condition_variable work_ready_;  // workers: queue non-empty or shutdown
-  std::condition_variable idle_;       // wait_idle(): in_flight_ reached zero
+  std::condition_variable idle_;       // wait_idle(), cancel_and_wait(): an execution ended
+  std::condition_variable exited_;     // stop(), destructor: a thread has finished
   std::map<JobId, std::shared_ptr<Job>> jobs_;
   std::deque<std::shared_ptr<Job>> queue_;
+  // Dispatched and not finished: a one-shot is no longer in jobs_ by then.
+  std::vector<std::shared_ptr<Job>> active_;
   std::size_t in_flight_ = 0;
   JobId next_id_ = 1;
   bool dispatching_ = false;
+  bool dispatcher_done_ = true;   // the dispatcher thread has left its loop
+  std::size_t live_workers_ = 0;  // worker threads that have not left theirs
   bool shutting_down_ = false;
   std::vector<std::thread> workers_;
   std::thread dispatcher_;

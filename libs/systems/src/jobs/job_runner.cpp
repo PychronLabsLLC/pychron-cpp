@@ -1,5 +1,6 @@
 #include "pychron/systems/jobs/job_runner.hpp"
 
+#include <ranges>
 #include <string>
 
 namespace pychron::jobs {
@@ -24,18 +25,23 @@ JobRunner::~JobRunner() {
     std::lock_guard lock(mutex_);
     slot = current_;
   }
-  if (!slot) return;
-  slot->token.cancel();
-  bool dropped = false;
-  {
-    std::lock_guard lock(mutex_);
-    if (current_ == slot && slot->job.state == JobState::Queued && slot->scheduled != 0 &&
-        scheduler_.cancel(slot->scheduled)) {
-      current_.reset();
-      dropped = true;
+  if (slot) {
+    slot->token.cancel();
+    bool dropped = false;
+    {
+      std::lock_guard lock(mutex_);
+      if (current_ == slot && slot->job.state == JobState::Queued && slot->scheduled != 0 &&
+          scheduler_.cancel(slot->scheduled)) {
+        current_.reset();
+        dropped = true;
+      }
     }
+    if (!dropped) wait_idle();
   }
-  if (!dropped) wait_idle();
+  // Idle is not gone: the thread that ran a job tells its end (JobFinished)
+  // after the runner is idle again, and is in the runner until it has.
+  std::unique_lock lock(mutex_);
+  while (executing_ != 0) clock_.wait(idle_, lock);
 }
 
 Result<std::shared_ptr<JobRunner::Slot>> JobRunner::reserve(JobSpec spec) {
@@ -88,6 +94,23 @@ Result<Job> JobRunner::run(JobSpec spec) {
 }
 
 void JobRunner::execute(const std::shared_ptr<Slot>& slot) {
+  // Counted in before the job can be seen to end, and out as this thread's
+  // last touch of the runner.
+  struct Inside {
+    JobRunner& runner;
+    explicit Inside(JobRunner& r) : runner(r) {
+      const std::lock_guard lock(runner.mutex_);
+      ++runner.executing_;
+    }
+    ~Inside() {
+      const std::lock_guard lock(runner.mutex_);
+      --runner.executing_;
+      runner.clock_.notify_all(runner.idle_);
+    }
+    Inside(const Inside&) = delete;
+    Inside& operator=(const Inside&) = delete;
+  };
+  const Inside inside(*this);
   {
     std::lock_guard lock(mutex_);
     if (slot->job.state != JobState::Queued) return;  // cancelled while queued
@@ -141,8 +164,8 @@ void JobRunner::finish(const std::shared_ptr<Slot>& slot) {
       while (history_.size() > options_.history) history_.pop_front();
     }
     if (current_ == slot) current_.reset();
+    clock_.notify_all(idle_);
   }
-  idle_.notify_all();
   bus_.publish(JobFinished{std::move(record)});
 }
 
@@ -181,15 +204,15 @@ std::optional<JobId> JobRunner::current() const {
 std::optional<Job> JobRunner::job(JobId id) const {
   std::lock_guard lock(mutex_);
   if (current_ && current_->job.id == id) return current_->job;
-  for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
-    if (it->id == id) return *it;
+  for (const auto& it : std::views::reverse(history_)) {
+    if (it.id == id) return it;
   }
   return std::nullopt;
 }
 
 void JobRunner::wait_idle() const {
   std::unique_lock lock(mutex_);
-  idle_.wait(lock, [this] { return current_ == nullptr; });
+  while (current_ != nullptr) clock_.wait(idle_, lock);
 }
 
 }  // namespace pychron::jobs

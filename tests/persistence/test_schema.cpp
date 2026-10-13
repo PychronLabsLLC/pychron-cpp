@@ -7,6 +7,7 @@
 #include <set>
 
 #include "migrate.hpp"
+#include "sql/statements.hpp"
 #include "store_fixture.hpp"
 
 using namespace pychron;
@@ -133,7 +134,7 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     ASSERT_TRUE(store);
     auto status = store->schema_status();
     ASSERT_TRUE(status) << to_string(status.error());
-    ASSERT_EQ(status->size(), 4u);
+    ASSERT_EQ(status->size(), 5u);
     EXPECT_EQ((*status)[0].version, 1);
     EXPECT_EQ((*status)[0].description, "init");
     EXPECT_EQ((*status)[0].checksum_hex.size(), 64u);
@@ -143,6 +144,8 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     EXPECT_EQ((*status)[2].description, "entry");
     EXPECT_EQ((*status)[3].version, 4);
     EXPECT_EQ((*status)[3].description, "sample_geometry");
+    EXPECT_EQ((*status)[4].version, 5);
+    EXPECT_EQ((*status)[4].description, "ref_scope_indexes");
   }
   // Reopen: nothing pending, so migrate = false opens fine.
   auto again = open_store(StoreConfig{tdb.url(), false});
@@ -154,6 +157,50 @@ TEST_P(SchemaTest, RefusesAnOutdatedSchemaWithoutMigrate) {
   auto store = open_store(StoreConfig{tdb.url(), false});
   ASSERT_FALSE(store);
   EXPECT_EQ(store.error().kind, ErrorKind::Config);
+  // Whoever reads this is at a window that will not open their data: it says what to run.
+  EXPECT_NE(store.error().what.find("elctl db migrate"), std::string::npos) << store.error().what;
+}
+
+// The reference values of an analysis (its flux, its level's production, its
+// irradiation's chronology, its spectrometer's gains) are found by what they
+// belong to. Without an index on each of those columns every reference
+// object of the type was read for every analysis loaded: 21 000 of them, on
+// a real store, 2.6 ms an analysis.
+TEST(SchemaIndexes, AnAnalysissReferencesAreFoundByScope) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const pd::Bindings scope{QStringLiteral("p"), QStringLiteral("l"), QStringLiteral("i"), QStringLiteral("m")};
+  const std::vector<std::string> plan =
+      column(*db, QStringLiteral("EXPLAIN QUERY PLAN ") + pd::sql::kRefCandidates, "detail", scope);
+  ASSERT_FALSE(plan.empty());
+  std::string all;
+  for (const auto& step : plan) all += step + "\n";
+  for (const char* index : {"ref_object_position_ix", "ref_object_level_ix", "ref_object_irradiation_ix",
+                            "ref_object_mass_spectrometer_ix"}) {
+    EXPECT_NE(all.find(index), std::string::npos) << index << " is not used:\n" << all;
+  }
+  EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
+  EXPECT_EQ(all.find("(ref_type=?)"), std::string::npos) << "found by type alone:\n" << all;
+}
+
+// The next aliquot of an identifier is read from the end of its unique index
+// on (identifier_uuid, aliquot, increment): one seek, however many analyses.
+TEST(SchemaIndexes, TheLastAnalysisOfAnIdentifierIsASeek) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const std::vector<std::string> plan =
+      column(*db, QStringLiteral("EXPLAIN QUERY PLAN ") + pd::sql::kLastAnalysis, "detail", {QStringLiteral("66573")});
+  ASSERT_FALSE(plan.empty());
+  std::string all;
+  for (const auto& step : plan) all += step + "\n";
+  EXPECT_NE(all.find("sqlite_autoindex_analysis"), std::string::npos) << all;
+  EXPECT_NE(all.find("identifier_uuid=?"), std::string::npos) << all;
+  EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
+  EXPECT_EQ(all.find("TEMP B-TREE"), std::string::npos) << all;
 }
 
 TEST_P(SchemaTest, ChecksumMismatchIsFatal) {
@@ -238,9 +285,9 @@ TEST(SchemaParity, PostgresAndSqliteHaveTheSameTablesColumnsAndKeys) {
   const auto b = introspect(*lite_db);
   EXPECT_GT(a.size(), 500u);
   for (const auto& x : a)
-    if (!b.count(x)) ADD_FAILURE() << "only in PostgreSQL: " << x;
+    if (!b.contains(x)) ADD_FAILURE() << "only in PostgreSQL: " << x;
   for (const auto& x : b)
-    if (!a.count(x)) ADD_FAILURE() << "only in SQLite: " << x;
+    if (!a.contains(x)) ADD_FAILURE() << "only in SQLite: " << x;
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, SchemaTest, ::testing::ValuesIn(engines()),

@@ -41,7 +41,7 @@ Result<PiName> parse_pi(std::string_view text, const std::vector<std::string>& a
   static const std::regex pattern(R"(^([A-Z][A-Za-z'\-]+)(?:, ?([A-Z]))?$)");
   std::smatch m;
   if (!std::regex_match(t, m, pattern))
-    return fail(ErrorKind::Config, "principal investigator '" + t + "': write \"Last\" or \"Last, F\"");
+    return fail(ErrorKind::Config, "principal investigator '" + t + R"(': write "Last" or "Last, F")");
   return PiName{m[1].str(), m[2].matched ? m[2].str() : std::string()};
 }
 
@@ -62,7 +62,7 @@ bool valid_package_name(std::string_view name) {
 std::string next_package_name(const std::vector<std::string>& existing, std::string_view prefix) {
   std::string best;  // digits of the largest number, as written
   for (const auto& name : existing) {
-    if (name.size() <= prefix.size() || name.compare(0, prefix.size(), prefix) != 0) continue;
+    if (name.size() <= prefix.size() || !name.starts_with(prefix)) continue;
     const std::string digits = name.substr(prefix.size());
     if (!std::all_of(digits.begin(), digits.end(), is_digit)) continue;
     const auto value = [](const std::string& d) {

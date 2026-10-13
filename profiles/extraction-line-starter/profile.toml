@@ -1,8 +1,8 @@
 name = "extraction-line-starter"
 title = "Extraction line"
 kind = "fragment"
-summary = "The extraction line: the example line (five valves, two gauges, a pipette) on simulated transports, or the line files a lab already has"
-version = 3
+summary = "The extraction line: the example line (five valves, two gauges, a pipette, a laser) on simulated transports, or the line files a lab already has; with tray maps and laser patterns"
+version = 5
 
 [[questions]]
 id = "line_source"
@@ -48,6 +48,32 @@ copy = "@examples/canvas.toml"
 to = "canvas.toml"
 when = "line_source == \"starter\""
 check = "canvas"
+
+[[files]]
+copy = "@examples/sim.toml"
+to = "sim.toml"
+when = "line_source == \"starter\""
+
+# The example line's laser (co2): its camera and where the example tray sits
+# on its stage. Both are that device's, so they come only with that line.
+[[files]]
+copy = "@examples/cameras.toml"
+to = "cameras.toml"
+when = "line_source == \"starter\""
+
+[[files]]
+copy = "@examples/stage_calibrations/"
+to = "stage_calibrations"
+when = "line_source == \"starter\""
+
+# Tray maps and patterns belong to no device: every line gets them.
+[[files]]
+copy = "@examples/tray_maps/"
+to = "tray_maps"
+
+[[files]]
+copy = "@examples/patterns/"
+to = "patterns"
 
 [[files]]
 copy = "{{ line_file }}"

@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+
 #include "laser_harness.hpp"
 #include "pychron/vision/pgm.hpp"
 
@@ -54,6 +56,15 @@ TEST_F(Snapshots, WithNoNameItIsTheTime) {
   EXPECT_TRUE(is_png(*saved));
 }
 
+// The time is the clock's calendar time (here a ManualClock whose epoch is
+// 1970), so a simulated session names its pictures in simulated time.
+TEST_F(Snapshots, TheTimeIsTheClocks) {
+  clock.advance(1h + 2min + 3s);
+  const auto saved = imaging().snapshot("");
+  ASSERT_TRUE(saved) << saved.error().what;
+  EXPECT_EQ(fs::path(*saved).stem().string(), "19700101-010203");
+}
+
 TEST_F(Snapshots, ANameMayNotLeaveTheDirectory) {
   for (const char* name : {"../out", "a/b", "..", ".hidden", "c:\\x"}) {
     const auto saved = imaging().snapshot(name);
@@ -75,6 +86,18 @@ TEST(SnapshotsWithout, NoCameraNoImaging) {
   LaserHarness h;
   h.system.set_snapshot_dir(h.lab.dir / "snapshots");
   EXPECT_EQ(h.system.imaging(), nullptr);
+}
+
+// Asked for the time as a name, a system with no camera says so: it has no
+// clock of a camera's to read it from, and nothing to take a picture with.
+TEST(SnapshotsWithout, ANamelessSnapshotWithNoCameraSaysSo) {
+  LaserHarness h;
+  h.system.set_snapshot_dir(h.lab.dir / "snapshots");
+  const auto saved = static_cast<extraction::IImaging&>(h.system).snapshot("");
+  ASSERT_FALSE(saved);
+  EXPECT_EQ(saved.error().kind, ErrorKind::Config);
+  EXPECT_NE(saved.error().what.find("no camera"), std::string::npos) << saved.error().what;
+  EXPECT_FALSE(fs::exists(h.lab.dir / "snapshots"));
 }
 
 TEST(SnapshotsWithout, NoDirectoryIsSaid) {

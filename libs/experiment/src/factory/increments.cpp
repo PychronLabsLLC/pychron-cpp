@@ -65,6 +65,7 @@ Result<RunIdentity> parse_runid(std::string_view runid) {
   std::size_t i = 0;
   while (i < tail.size() && is_digit(tail[i])) ++i;
   int aliquot = 0;
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage): from_chars is given the end
   auto [p, ec] = std::from_chars(tail.data(), tail.data() + i, aliquot);
   if (i == 0 || ec != std::errc{}) return fail(ErrorKind::Config, "runid '" + std::string(runid) + "' has no aliquot");
   const std::string_view step = tail.substr(i);

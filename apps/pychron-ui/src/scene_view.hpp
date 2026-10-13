@@ -75,7 +75,7 @@ class SceneView : public QWidget {
     std::string tooltip;
   };
   struct HitBox {  // a spectrum step: a click anywhere inside selects it
-    double x0, x1, y0, y1;
+    double x0 = 0, x1 = 0, y0 = 0, y1 = 0;
     HitPoint point;  // the box center
   };
   struct RectInfo {
@@ -89,7 +89,10 @@ class SceneView : public QWidget {
   };
 
   void rebuild();
-  const HitPoint* hit(const QPoint& pos, const RectInfo** where = nullptr) const;
+  // The point drawn nearest `pos`, the topmost of several at one place. With
+  // `analyses_only`, of the points that name an analysis: what a click or the
+  // context menu acts on, so a mean drawn over an analysis does not hide it.
+  const HitPoint* hit(const QPoint& pos, const RectInfo** where = nullptr, bool analyses_only = false) const;
   void show_context_menu(const QPoint& pos);
 
   processing::ScenePtr scene_;

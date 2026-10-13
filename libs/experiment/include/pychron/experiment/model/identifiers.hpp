@@ -20,7 +20,7 @@ std::optional<AnalysisType> parse_analysis_type(std::string_view name);
 
 // Driven by identifiers.toml:
 //   [prefixes]            # analysis type name -> special identifier (case-insensitive)
-//   blank_unknown = "bu"
+//   blank_unknown = "bu"  # or several: ["bu", "b"]; a new run gets the longest
 //   [patterns]            # optional
 //   unknown = "^[A-Za-z0-9][A-Za-z0-9_-]*$"
 //   step = "^[A-Za-z]{0,2}$"

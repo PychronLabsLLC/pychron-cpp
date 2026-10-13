@@ -59,12 +59,12 @@ inline std::optional<std::uint64_t> hex(std::string_view text) {
 
 // 'POINT(x y)' or 'SRID=n;POINT(x y)'.
 inline std::optional<GeoPoint> ewkt(std::string_view text) {
-  if (text.rfind("SRID=", 0) == 0) {
+  if (text.starts_with("SRID=")) {
     const auto semi = text.find(';');
     if (semi == std::string_view::npos) return std::nullopt;
     text.remove_prefix(semi + 1);
   }
-  if (text.rfind("POINT", 0) != 0) return std::nullopt;
+  if (!text.starts_with("POINT")) return std::nullopt;
   text.remove_prefix(5);
   while (!text.empty() && text.front() == ' ') text.remove_prefix(1);
   if (text.empty() || text.front() != '(' || text.back() != ')') return std::nullopt;
@@ -88,7 +88,7 @@ inline std::optional<GeoPoint> ewkb(std::string_view text) {
   auto word = [&](std::size_t at) -> std::optional<std::uint64_t> {
     const auto raw = hex(text.substr(at, 8));
     if (!raw) return std::nullopt;
-    std::uint32_t v = static_cast<std::uint32_t>(*raw);
+    auto v = static_cast<std::uint32_t>(*raw);
     if (little) v = ((v & 0xffu) << 24) | ((v & 0xff00u) << 8) | ((v >> 8) & 0xff00u) | (v >> 24);
     return v;
   };

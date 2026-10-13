@@ -64,6 +64,16 @@ namespace pychron::experiment::executor {
 
 enum class ExecutorState { Idle, Preparing, Running, StoppingAtBoundary, Cancelling, Aborting, Finalizing };
 std::string_view to_string(ExecutorState s) noexcept;
+// Whether the executor may go from `from` to `to`:
+//
+//   Idle -> Preparing -> Running -> Finalizing -> Idle
+//   Preparing | Running -> StoppingAtBoundary -> Cancelling -> Aborting -> Finalizing
+//
+// A request only ever strengthens (a stop does not replace a cancel, nor a
+// cancel an abort), none is taken back, and none moves an idle executor.
+// Preparing may also go straight to Finalizing (the queue's conditionals did
+// not load), and Idle is reached only from there.
+bool can_transition(ExecutorState from, ExecutorState to) noexcept;
 
 // A pluggable check before every run (managers healthy, disk space, ...).
 class IPreRunCheck {
@@ -155,7 +165,9 @@ class Executor {
   // Runs `queue` from `from_row` on the calling thread until it ends.
   QueueResult execute(ExperimentQueue& queue, std::size_t from_row = 0);
 
-  // Thread-safe controls.
+  // Thread-safe controls. One made while no queue is running is kept for the
+  // next execute(), which ends before its first run: the thread that is to
+  // call execute() may not have got there yet. A queue's end clears them.
   void stop();                       // finish the current run(s), start no more
   void cancel();                     // cancel the active run(s) and end the queue
   void abort();                      // abort the active run(s) and end the queue
@@ -178,7 +190,11 @@ class Executor {
   struct Slot;
   class Resource;
 
+  // Moves to `to` and publishes ExecutorStateChanged; an illegal move
+  // (can_transition) is left out, and so is one to the present state.
   void set_state(ExecutorState to, std::string reason = {});
+  // The state the request already made asks for (under mutex_).
+  std::optional<ExecutorState> requested_locked() const;
   bool wait(Duration d, const std::string& reason, const std::string& run_id = {});  // false when cancelled/aborted
   bool ending() const;
   bool overlaps(const ExperimentQueue& queue, std::size_t row) const;
@@ -186,6 +202,10 @@ class Executor {
   void freeze(std::size_t rows);  // caller holds queue_mutex_
   void finish(ExperimentQueue& queue, Slot& slot, QueueResult& out);
   void write_state(const ExperimentQueue& queue, std::size_t next_row, const QueueResult& out);
+  // The queue is over: its end is read into `out` (when `read`) and the
+  // requests that ended it are cleared, in one step under mutex_, so a
+  // request is either this queue's or the next one's.
+  void ended(QueueResult& out, bool read);
 
   ExecutorContext ctx_;
   ExecutorOptions options_;
@@ -197,11 +217,14 @@ class Executor {
   bool stop_ = false;
   std::optional<QueueEnd> end_;  // why the queue is ending early
   std::string end_reason_;
-  scripting::CancelToken queue_token_;  // cuts executor waits short
+  scripting::CancelToken queue_token_;  // cuts executor waits short; changed under mutex_
   std::vector<Slot*> active_;
 
   std::unique_ptr<Resource> extraction_, spectrometer_;
   std::optional<TimePoint> pump_started_;
+  // The run that has let the spectrometer go and not yet said when it began
+  // to pump. Under mutex_, notified on cv_ through the clock.
+  Slot* pump_owed_ = nullptr;
   std::optional<RunChecks> run_checks_;
   std::size_t last_started_row_ = 0;
   std::optional<RunSpec> previous_spec_;  // last run that ran (for the delay policy)

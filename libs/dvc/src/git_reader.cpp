@@ -685,7 +685,7 @@ Result<void> GitReader::fetch_blobs(std::span<const std::string> blob_shas) {
                                        std::to_string(size) + " bytes)");
       }
       in.read(item.bytes.data(), static_cast<std::streamsize>(size));
-      if (static_cast<std::size_t>(in.gcount()) != size || in.get() != '\n')
+      if (std::cmp_not_equal(in.gcount(), size) || in.get() != '\n')
         return fail(ErrorKind::Protocol, describe(site) + ": git cat-file output is cut short in blob " + sha);
       fetched.push_back(std::move(item));
     }

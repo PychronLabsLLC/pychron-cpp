@@ -6,8 +6,11 @@
 // hands "#EVENT" lines to the event sink and every other line to the one
 // command in flight. Clients never touch the transport.
 //
-// Commands are serialised by a short mutex that is never held across an
-// integration, so valves, magnet and source work while an integration runs.
+// Commands are serialised by a mutex that is held for one command and never
+// across an integration, so valves, magnet and source work while an
+// integration runs. It, the connect mutex and the valve mutex are held while
+// their holder waits in clock time, so they are ClockMutex: a thread waiting
+// for one is asleep in the clock, not in the kernel.
 // A command that timed out still owes its reply: the next command waits (up
 // to late_reply_window) until that late reply has arrived and been dropped,
 // so a reply is never handed to the wrong command.
@@ -15,6 +18,10 @@
 // connect() opens the session: one banner line (content not checked), then
 // "Login user,password" when credentials are set. The reader repeats it after
 // a dropped connection before any queued command runs, and bumps session().
+//
+// Every timeout, window and backoff is time on the link's clock, and the
+// reader is a participant in it (Clock::Participant): the transport should
+// keep the same clock.
 
 #include <atomic>
 #include <chrono>
@@ -26,10 +33,12 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #include "pychron/codecs/isotopx_ngx.hpp"
 #include "pychron/core/clock.hpp"
+#include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/devices/link_registry.hpp"
 #include "pychron/transport/transport.hpp"
@@ -78,7 +87,7 @@ class NgxLink {
   void set_event_sink(EventSink sink);
   bool has_event_sink() const;
   // Held by a valve actuation (SAB 1 .. SAB 0) so actuations never overlap.
-  std::mutex& valve_mutex() noexcept { return valve_mutex_; }
+  ClockMutex& valve_mutex() noexcept { return valve_mutex_; }
 
   struct Stats {
     std::uint64_t replies_dropped = 0;  // no command waiting for them
@@ -96,7 +105,7 @@ class NgxLink {
   Result<void> handshake();
   Result<std::string> read_line(Duration timeout);
   Result<void> send(std::string_view command);
-  void reader();
+  void reader(std::shared_ptr<Clock::Hold> started);
   void route(std::string line);
   void went_down(const Error& why);
 
@@ -104,18 +113,21 @@ class NgxLink {
   const NgxLinkOptions options_;
   const Clock& clock_;
 
-  std::mutex connect_mutex_;  // connect() vs connect()
-  std::mutex command_mutex_;  // one command in flight
-  std::mutex valve_mutex_;
+  // Each is held across waits in clock time (a handshake, a reply, a whole
+  // actuation). Order: valve, then connect or command, then mutex_.
+  ClockMutex connect_mutex_;  // connect() vs connect()
+  ClockMutex command_mutex_;  // one command in flight
+  ClockMutex valve_mutex_;
 
-  mutable std::mutex mutex_;  // everything below
-  std::condition_variable cv_;
+  mutable std::mutex mutex_;    // everything below
+  std::condition_variable cv_;  // waited on and notified through clock_
   bool started_ = false, up_ = false, stop_ = false;
+  bool reader_done_ = false;  // the reader has left its loop
   std::optional<Error> down_reason_;
   std::uint64_t session_ = 0;
   std::uint64_t armed_ = 0, next_command_ = 0;  // armed_: the command awaiting a reply, 0 none
   std::optional<std::string> reply_;
-  std::optional<std::chrono::steady_clock::time_point> owed_until_;  // a timed-out command's reply
+  std::optional<TimePoint> owed_until_;  // a timed-out command's reply
   EventSink sink_;
   int sink_calls_ = 0;  // deliveries in progress (outside mutex_)
   Stats stats_;

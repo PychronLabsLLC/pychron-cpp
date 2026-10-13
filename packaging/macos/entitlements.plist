@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What Pychron's programs need under the hardened runtime, which notarization
+  requires (packaging/macos/sign_app.sh signs Pychron and elctl with these).
+
+  device.camera: a laser's live camera; without it the hardened runtime
+    refuses the camera even with NSCameraUsageDescription in Info.plist.
+  cs.disable-library-validation: the embedded Python loads its extension
+    modules at run time, and a camera backend (Basler pylon) is a third-party
+    library signed by its own vendor, not by Pychron's team.
+  cs.allow-unsigned-executable-memory: Python's ctypes (libffi) writes the
+    closures it calls into memory.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

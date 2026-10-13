@@ -229,7 +229,7 @@ TEST(Layout, FitAndErrorTypeAreWrittenInTheStoreSpelling) {
     } else {
       EXPECT_FALSE(x.is_object() && x.contains("legacy_fit")) << c.fit;
     }
-    if (std::string(c.error_type) != c.want_error_type && std::string(c.error_type) != "") {
+    if (std::string(c.error_type) != c.want_error_type && !std::string(c.error_type).empty()) {
       EXPECT_EQ(x["legacy_error_type"], c.error_type);
     } else {
       EXPECT_FALSE(x.is_object() && x.contains("legacy_error_type")) << c.error_type;

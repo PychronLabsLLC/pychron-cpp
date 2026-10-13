@@ -176,7 +176,7 @@ TEST(QtegraLink, CommandsFromOwnerAndBorrowerNeverTakeEachOthersReplies) {
   std::thread valve_thread([&] {
     for (int i = 0; i < 200; ++i) {
       auto reply = (*link)->ask("GetParameter Valve 1");
-      if (!reply || to_string(*reply).find('7') != 0) ++wrong;
+      if (!reply || !to_string(*reply).starts_with('7')) ++wrong;
     }
   });
   spectrometer_thread.join();

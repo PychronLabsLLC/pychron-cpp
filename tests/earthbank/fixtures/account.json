@@ -1,0 +1,11 @@
+{
+  "id": 4107,
+  "login": "robin.example",
+  "firstName": "Robin",
+  "lastName": "Example",
+  "email": "robin.example@lab.test",
+  "imageUrl": null,
+  "activated": true,
+  "langKey": "en",
+  "authorities": ["ROLE_USER"]
+}

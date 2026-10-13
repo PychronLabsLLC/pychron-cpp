@@ -20,6 +20,7 @@ Result<std::int64_t> ValveAddress::as_index() const {
 
   std::int64_t index = 0;
   const char* end = s.data() + s.size();
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage): from_chars is given the end
   auto [ptr, ec] = std::from_chars(s.data(), end, index);
   if (s.empty() || ec != std::errc{} || ptr != end || index < 0) {
     return fail(ErrorKind::Config, "valve address '" + value + "' is not a non-negative integer");

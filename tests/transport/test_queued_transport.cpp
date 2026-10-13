@@ -2,14 +2,22 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <future>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "pychron/core/events.hpp"
 #include "pychron/core/signal_bus.hpp"
+#include "pychron/core/virtual_clock.hpp"
+#include "pychron/transport/sim_transport.hpp"
 #include "pychron/transport/transport.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -67,6 +75,13 @@ TransportOptions opts(int retries = 0, std::uint64_t down_after = 3) {
 
 const ReadSpec kCr = ReadSpec::until("\r");
 
+using pychron::testing::await_waiters;
+
+// A transport that waits past the clock leaves time standing and the test
+// asleep in it. Each test on a VirtualClock runs under a real-time bound: when
+// it is exceeded the process says so and aborts, well inside the ctest timeout.
+class QueuedTransportVirtual : public pychron::testing::VirtualTimeTest {};
+
 }  // namespace
 
 TEST(QueuedTransport, ExchangeBeforeOpenIsNotConnected) {
@@ -86,7 +101,7 @@ TEST(QueuedTransport, ExchangeDiscardsWritesThenReads) {
   o.clock = &clock;
   FakeChannel t(o);
   ASSERT_TRUE(t.open());
-  t.reads.push_back(to_bytes("OK\r"));
+  t.reads.emplace_back(to_bytes("OK\r"));
   auto r = t.exchange(to_bytes("PR1\r"), kCr);
   ASSERT_TRUE(r) << to_string(r.error());
   EXPECT_EQ(to_string(*r), "OK\r");
@@ -101,10 +116,10 @@ TEST(QueuedTransport, ExchangeDiscardsWritesThenReads) {
 TEST(QueuedTransport, ZeroTimeoutUsesConfiguredDefault) {
   FakeChannel t(opts());
   ASSERT_TRUE(t.open());
-  t.reads.push_back(Bytes{});
+  t.reads.emplace_back(Bytes{});
   ASSERT_TRUE(t.exchange(to_bytes("a"), kCr));
   EXPECT_EQ(t.last_timeout, Duration(250ms));
-  t.reads.push_back(Bytes{});
+  t.reads.emplace_back(Bytes{});
   ASSERT_TRUE(t.exchange(to_bytes("a"), kCr, 40ms));
   EXPECT_EQ(t.last_timeout, Duration(40ms));
 }
@@ -112,9 +127,9 @@ TEST(QueuedTransport, ZeroTimeoutUsesConfiguredDefault) {
 TEST(QueuedTransport, RetriesTimeoutThenSucceeds) {
   FakeChannel t(opts(/*retries=*/2));
   ASSERT_TRUE(t.open());
-  t.reads.push_back(fail(ErrorKind::Timeout, "t1"));
-  t.reads.push_back(fail(ErrorKind::Io, "glitch"));
-  t.reads.push_back(to_bytes("OK\r"));
+  t.reads.emplace_back(fail(ErrorKind::Timeout, "t1"));
+  t.reads.emplace_back(fail(ErrorKind::Io, "glitch"));
+  t.reads.emplace_back(to_bytes("OK\r"));
   auto r = t.exchange(to_bytes("q"), kCr);
   ASSERT_TRUE(r);
   EXPECT_EQ(t.write_calls, 3);
@@ -139,7 +154,7 @@ TEST(QueuedTransport, RetriesExhaustedReportsLastErrorOnce) {
 TEST(QueuedTransport, ProtocolErrorsAreNotRetried) {
   FakeChannel t(opts(/*retries=*/3));
   ASSERT_TRUE(t.open());
-  t.writes.push_back(fail(ErrorKind::Protocol, "rejected"));
+  t.writes.emplace_back(fail(ErrorKind::Protocol, "rejected"));
   auto r = t.exchange(to_bytes("q"), kCr);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
@@ -150,7 +165,7 @@ TEST(QueuedTransport, ProtocolErrorsAreNotRetried) {
 TEST(QueuedTransport, WriteIsRetriedOnIo) {
   FakeChannel t(opts(/*retries=*/1));
   ASSERT_TRUE(t.open());
-  t.writes.push_back(fail(ErrorKind::Io, "EAGAIN"));
+  t.writes.emplace_back(fail(ErrorKind::Io, "EAGAIN"));
   EXPECT_TRUE(t.write(to_bytes("w")));
   EXPECT_EQ(t.write_calls, 2);
 }
@@ -163,7 +178,7 @@ TEST(QueuedTransport, GoesDownAfterThresholdAndRecovers) {
   EXPECT_FALSE(t.exchange(to_bytes("q"), kCr));
   EXPECT_EQ(t.health().state, HealthState::Down);
   EXPECT_EQ(t.health().consecutive_failures, 2u);
-  t.reads.push_back(to_bytes("OK\r"));
+  t.reads.emplace_back(to_bytes("OK\r"));
   EXPECT_TRUE(t.exchange(to_bytes("q"), kCr));
   EXPECT_EQ(t.health().state, HealthState::Connected);
   EXPECT_EQ(t.health().consecutive_failures, 0u);
@@ -218,7 +233,7 @@ TEST(QueuedTransport, ConcurrentExchangesAreSerialized) {
   FakeChannel t(opts());
   ASSERT_TRUE(t.open());
   constexpr int kThreads = 8, kEach = 50;
-  for (int i = 0; i < kThreads * kEach; ++i) t.reads.push_back(to_bytes("OK\r"));
+  for (int i = 0; i < kThreads * kEach; ++i) t.reads.emplace_back(to_bytes("OK\r"));
   t.on_read = [] { std::this_thread::yield(); };
   std::atomic<int> ok{0};
   std::vector<std::thread> threads;
@@ -244,7 +259,7 @@ TEST(QueuedTransport, ShutdownCancelsQueuedAndLaterCalls) {
     entered.set_value();
     release_f.wait();
   };
-  t.reads.push_back(to_bytes("first\r"));
+  t.reads.emplace_back(to_bytes("first\r"));
 
   auto first = std::async(std::launch::async, [&] { return t.exchange(to_bytes("1"), kCr); });
   entered.get_future().wait();  // worker is now busy with the first call
@@ -262,4 +277,69 @@ TEST(QueuedTransport, ShutdownCancelsQueuedAndLaterCalls) {
   EXPECT_EQ(r2.error().kind, ErrorKind::Cancelled);
   EXPECT_EQ(t.exchange(to_bytes("3"), kCr).error().kind, ErrorKind::Cancelled);
   EXPECT_EQ(t.close_calls, 1);
+}
+
+TEST_F(QueuedTransportVirtual, CallerWaitsForTheWorkerInClockTime) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  const TimePoint kStart = clock.now();
+  auto o = opts();
+  o.clock = &clock;
+  auto t = SimTransport::hooked(
+      [&](const Bytes&) {
+        clock.sleep_for(2s);  // the instrument takes its time, on the worker
+        return to_bytes("OK\r");
+      },
+      o);
+  ASSERT_TRUE(t->open());
+
+  const auto real_start = std::chrono::steady_clock::now();
+  auto r = t->exchange(to_bytes("Q\r"), kCr);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(to_string(*r), "OK\r");
+  EXPECT_EQ(clock.now(), kStart + 2s);
+  EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+// The call the worker is busy with is finished, as on any clock; the one
+// queued behind it is the pending call, and it is woken with Cancelled at
+// once, without the clock moving.
+TEST_F(QueuedTransportVirtual, ShutdownCancelsAPendingCall) {
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");  // runnable until it sleeps: time stands
+  const TimePoint kStart = clock.now();
+  auto o = opts();
+  o.clock = &clock;
+  auto t = SimTransport::hooked(
+      [&](const Bytes&) {
+        clock.sleep_for(2s);
+        return to_bytes("OK\r");
+      },
+      o);
+  ASSERT_TRUE(t->open());
+  SimTransport* const raw = t.get();
+
+  auto first = std::async(std::launch::async, [&clock, raw] {
+    Clock::Participant caller(clock, "first");
+    return raw->exchange(to_bytes("1\r"), kCr);
+  });
+  ASSERT_TRUE(await_waiters(clock, 2));  // the worker in the hook, and its caller
+  auto second = std::async(std::launch::async, [&clock, raw] {
+    Clock::Participant caller(clock, "second");
+    return raw->exchange(to_bytes("2\r"), kCr);
+  });
+  ASSERT_TRUE(await_waiters(clock, 3));  // and the caller queued behind it
+
+  std::thread destroyer([&t] { t.reset(); });  // not a participant
+  auto r2 = second.get();
+  ASSERT_FALSE(r2);
+  EXPECT_EQ(r2.error().kind, ErrorKind::Cancelled);
+  EXPECT_EQ(clock.now(), kStart);
+
+  clock.sleep_for(2s);  // lets the worker out of the hook
+  auto r1 = first.get();
+  ASSERT_TRUE(r1) << r1.error().what;
+  EXPECT_EQ(to_string(*r1), "OK\r");
+  destroyer.join();
+  EXPECT_EQ(clock.now(), kStart + 2s);
 }

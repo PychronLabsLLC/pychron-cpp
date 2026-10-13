@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -104,15 +105,32 @@ QWidget* RunFactoryPanel::build_run() {
   auto* form = new QFormLayout(box);
   type_ = new QComboBox;
   for (auto t : kTypes) type_->addItem(q(experiment::to_string(t)), static_cast<int>(t));
-  identifier_ = new QLineEdit;
+  package_ = new QComboBox;
+  package_->setObjectName(QStringLiteral("package"));
+  package_->addItem(tr("(none)"));
+  level_ = new QComboBox;
+  level_->setObjectName(QStringLiteral("level"));
+  level_->addItem(tr("(all)"));
+  level_->setEnabled(false);
+  identifier_select_ = new QComboBox;
+  identifier_select_->setObjectName(QStringLiteral("identifier_select"));
+  identifier_select_->setEditable(true);
+  identifier_select_->setInsertPolicy(QComboBox::NoInsert);
+  identifier_select_->setCompleter(nullptr);
+  // The form scrolls: a wheel passing over must not walk the identifier.
+  identifier_select_->installEventFilter(this);
+  identifier_ = identifier_select_->lineEdit();
   identifier_->setObjectName(QStringLiteral("identifier"));
   identifier_->setPlaceholderText(tr("e.g. 66001, or a special such as bu"));
   aliquot_ = new QLineEdit;
   aliquot_->setPlaceholderText(tr("auto"));
   aliquot_->setValidator(new QIntValidator(1, 1'000'000, aliquot_));
   step_ = new QLineEdit;
+  run_form_ = form;
   form->addRow(tr("Type"), type_);
-  form->addRow(tr("Identifier"), identifier_);
+  form->addRow(tr("Package"), package_);
+  form->addRow(tr("Level"), level_);
+  form->addRow(tr("Identifier"), identifier_select_);
   form->addRow(tr("Aliquot"), aliquot_);
   form->addRow(tr("Step"), step_);
 
@@ -127,6 +145,10 @@ QWidget* RunFactoryPanel::build_run() {
     on_identifier_changed();
   });
   connect(identifier_, &QLineEdit::textEdited, this, [this] { on_identifier_changed(); });
+  connect(package_, &QComboBox::activated, this, [this](int) { load_contents(); });
+  connect(level_, &QComboBox::activated, this, [this](int) { fill_identifiers(); });
+  connect(identifier_select_, &QComboBox::activated, this, [this](int index) { choose_identifier(index); });
+  show_selects(false);
   for (auto* e : {aliquot_, step_}) connect(e, &QLineEdit::textEdited, this, [this] { refresh(); });
   return box;
 }
@@ -538,6 +560,189 @@ void RunFactoryPanel::set_locked(bool locked) {
   for (QWidget* g : groups_) g->setEnabled(!locked && !(g == block_box_ && lab_.blocks.empty()));
   refresh();
 }
+
+void RunFactoryPanel::set_identifier_source(IdentifierSource* source) {
+  if (source_) disconnect(source_, nullptr, this, nullptr);
+  source_ = source;
+  // Whatever the old source still owes is no longer wanted.
+  ++packages_serial_;
+  packages_.clear();
+  {
+    const QSignalBlocker block(package_);
+    package_->clear();
+    package_->addItem(tr("(none)"));
+  }
+  package_->setToolTip(QString());
+  packages_failed_ = false;
+  clear_contents();
+  level_->setEnabled(false);
+  show_selects(false);
+  if (!source_) return;
+  connect(source_, &IdentifierSource::changed, this, [this] { load_packages(); });
+  connect(source_, &QObject::destroyed, this, [this] { set_identifier_source(nullptr); });
+  load_packages();
+}
+
+bool RunFactoryPanel::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == identifier_select_ && event->type() == QEvent::Wheel) {
+    event->ignore();  // on to the scroll area
+    return true;
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void RunFactoryPanel::showEvent(QShowEvent* event) {
+  QWidget::showEvent(event);
+  if (packages_failed_) load_packages();
+}
+
+void RunFactoryPanel::show_selects(bool on) {
+  run_form_->setRowVisible(package_, on);
+  run_form_->setRowVisible(level_, on);
+}
+
+// The first load shows the selects; a later one (the catalog changed) keeps
+// the chosen package and level when they are still there.
+void RunFactoryPanel::load_packages() {
+  if (!source_) return;
+  const std::uint64_t serial = ++packages_serial_;
+  source_->packages(this, [this, serial](Result<std::vector<PackageChoice>> answer) {
+    if (serial != packages_serial_) return;
+    if (!answer) {
+      const QString why = QString::fromStdString(to_string(answer.error()));
+      package_->setToolTip(why);
+      // Before the first list the Package row is hidden: the reason goes on
+      // the field that is there, and the next showing of the panel asks again.
+      if (!selects_visible()) {
+        packages_failed_ = true;
+        identifier_select_->setToolTip(tr("No identifiers to pick from: %1").arg(why));
+      }
+      return;
+    }
+    package_->setToolTip(QString());
+    if (packages_failed_) identifier_select_->setToolTip(QString());
+    packages_failed_ = false;
+    const QString chosen = package_->currentIndex() > 0 ? package_->currentData().toString() : QString();
+    packages_ = std::move(*answer);
+    int index = 0;
+    {
+      const QSignalBlocker block(package_);
+      package_->clear();
+      package_->addItem(tr("(none)"));
+      for (const auto& p : packages_) {
+        package_->addItem(q(p.name), q(p.id));
+        if (!chosen.isEmpty() && q(p.id) == chosen) index = package_->count() - 1;
+      }
+      package_->setCurrentIndex(index);
+    }
+    show_selects(true);
+    if (chosen.isEmpty()) return;
+    if (index == 0) {
+      load_contents();  // the package is gone
+      return;
+    }
+    request_contents(level_->currentIndex() > 0 ? std::optional(level_->currentText().toStdString()) : std::nullopt);
+  });
+}
+
+void RunFactoryPanel::clear_contents() {
+  ++contents_serial_;
+  contents_ = {};
+  fill_levels();
+  fill_identifiers();
+  identifier_select_->setToolTip(QString());
+}
+
+// The chosen package's levels and identifiers; nothing for "(none)".
+void RunFactoryPanel::load_contents() {
+  clear_contents();
+  const bool chosen = package_->currentIndex() > 0;
+  level_->setEnabled(chosen);
+  if (chosen) request_contents(std::nullopt);
+}
+
+void RunFactoryPanel::request_contents(std::optional<std::string> keep_level) {
+  if (!source_) return;
+  const std::uint64_t serial = ++contents_serial_;
+  source_->contents(this, package_->currentData().toString().toStdString(),
+                    [this, serial, keep = std::move(keep_level)](Result<PackageContents> answer) {
+                      if (serial != contents_serial_) return;
+                      if (!answer) {
+                        clear_contents();
+                        identifier_select_->setToolTip(QString::fromStdString(to_string(answer.error())));
+                        return;
+                      }
+                      identifier_select_->setToolTip(QString());
+                      contents_ = std::move(*answer);
+                      fill_levels();
+                      if (keep) {
+                        const auto it = std::find(contents_.levels.begin(), contents_.levels.end(), *keep);
+                        if (it != contents_.levels.end()) {
+                          const QSignalBlocker block(level_);
+                          level_->setCurrentIndex(static_cast<int>(it - contents_.levels.begin()) + 1);
+                        }
+                      }
+                      fill_identifiers();
+                    });
+}
+
+void RunFactoryPanel::fill_levels() {
+  const QSignalBlocker block(level_);
+  level_->clear();
+  level_->addItem(tr("(all)"));
+  for (const auto& name : contents_.levels) level_->addItem(q(name));
+}
+
+void RunFactoryPanel::fill_identifiers() {
+  const QString typed = identifier_->text();
+  const bool all = level_->currentIndex() <= 0;
+  const std::string level = level_->currentText().toStdString();
+  const QSignalBlocker block(identifier_select_);
+  identifier_select_->clear();
+  for (const auto& c : contents_.choices) {
+    if (!all && c.level != level) continue;
+    const QString where = QStringLiteral("(%1 %2)").arg(q(c.level)).arg(c.position);
+    QStringList parts{q(c.identifier)};
+    if (!c.sample.empty()) parts.append(q(c.sample));
+    parts.append(where);
+    identifier_select_->addItem(parts.join(QStringLiteral("  ")), q(c.identifier));
+  }
+  identifier_select_->setCurrentIndex(-1);
+  identifier_->setText(typed);
+}
+
+void RunFactoryPanel::choose_package(int index) {
+  package_->setCurrentIndex(index);
+  load_contents();
+}
+
+void RunFactoryPanel::choose_level(int index) {
+  level_->setCurrentIndex(index);
+  fill_identifiers();
+}
+
+void RunFactoryPanel::choose_identifier(int index) {
+  if (index < 0 || index >= identifier_select_->count()) return;
+  identifier_select_->setCurrentIndex(index);
+  // The item says more than the identifier; the field holds the identifier.
+  identifier_->setText(identifier_select_->itemData(index).toString());
+  on_identifier_changed();
+}
+
+namespace {
+QStringList item_texts(const QComboBox* c) {
+  QStringList out;
+  for (int i = 0; i < c->count(); ++i) out.append(c->itemText(i));
+  return out;
+}
+}  // namespace
+
+QStringList RunFactoryPanel::package_choices() const { return item_texts(package_); }
+QStringList RunFactoryPanel::level_choices() const { return item_texts(level_); }
+QStringList RunFactoryPanel::identifier_choices() const { return item_texts(identifier_select_); }
+bool RunFactoryPanel::selects_visible() const { return run_form_->isRowVisible(package_); }
+QString RunFactoryPanel::identifier_tooltip() const { return identifier_select_->toolTip(); }
+QString RunFactoryPanel::package_tooltip() const { return package_->toolTip(); }
 
 QString RunFactoryPanel::preview_text() const { return preview_->text(); }
 bool RunFactoryPanel::add_enabled() const { return add_->isEnabled(); }

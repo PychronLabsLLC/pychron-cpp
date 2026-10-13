@@ -15,6 +15,10 @@ namespace pychron::ui {
 // empty when built without the store.
 SetupWizard::OpenDatabase database_opener();
 
+// Puts a seed file into a DVC store (migrate: made or brought up to date
+// first), as `elctl entry seed` does; empty when built without the store.
+SetupWizard::SeedDatabase database_seeder();
+
 // Starts pychron-ui again on install `name` (detached). False when it could
 // not be started.
 bool start_install(const std::string& name);

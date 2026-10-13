@@ -49,7 +49,7 @@ int IntensitiesModel::columnCount(const QModelIndex& parent) const {
 }
 
 double IntensitiesModel::sigma(const Row& row) {
-  const double n = static_cast<double>(row.window.size());
+  const auto n = static_cast<double>(row.window.size());
   double mean = 0.0;
   for (double v : row.window) mean += v;
   mean /= n;

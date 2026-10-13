@@ -98,6 +98,7 @@ Result<void> write_png(const std::filesystem::path& file, const FrameView& view)
   std::error_code ec;
   {
     std::ofstream stream(tmp, std::ios::binary | std::ios::trunc);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes for the stream
     if (stream) stream.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
     stream.flush();
     if (!stream) {

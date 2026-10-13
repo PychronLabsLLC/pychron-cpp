@@ -244,6 +244,7 @@ void ReferenceFitWindow::fill_table() {
     // Newest first, as found.
     std::vector<const pp::DatasetItem*> items;
     for (const auto& it : references_->items()) items.push_back(&it);
+    // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by time, not by address
     std::stable_sort(items.begin(), items.end(), [](const pp::DatasetItem* a, const pp::DatasetItem* b) {
       return a->analysis->analysis->timestamp > b->analysis->analysis->timestamp;
     });

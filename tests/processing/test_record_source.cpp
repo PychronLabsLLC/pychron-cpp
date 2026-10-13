@@ -40,7 +40,7 @@ rec::AnalysisRecord record(const std::string& uuid, const std::string& identifie
   r.spectrometer.gains = {{"H1", 1.002}};
   r.spectrometer.deflections = {{"H1", 10.0}};
   auto add = [&](const char* iso, const char* det, double v, double e) {
-    rec::DataSeries s{iso, det, "signal", {{0.f, 1.f, 2.f}, {float(v), float(v), float(v)}, {}}};
+    rec::DataSeries s{iso, det, "signal", {{0.f, 1.f, 2.f}, {static_cast<float>(v), static_cast<float>(v), static_cast<float>(v)}, {}}};
     r.data.series.push_back(s);
     rec::InterceptResult ir;
     ir.intercept.value = v;
@@ -98,6 +98,71 @@ TEST(RecordSource, MapsARecord) {
   ASSERT_NE(raw.find(pp::SeriesKind::Signal, "Ar40"), nullptr);
   ASSERT_NE(raw.find(pp::SeriesKind::Baseline, "H1"), nullptr);
   EXPECT_EQ(raw.find(pp::SeriesKind::Signal, "Ar40")->t.size(), 3u);
+}
+
+// A detector intercalibration: Ar40 hopped onto H1 and AX. The record keeps
+// the acquisition's names ("Ar40:H1"); the analysis has the isotope under its
+// detector, as every other analysis of the kind is read ("H1:Ar40").
+TEST(RecordSource, AnIsotopeOnSeveralDetectorsIsOneIsotopeADetector) {
+  auto r = record("u-ic", "ic", 1, "", "detector_ic", "2026-01-01T00:00:00Z");
+  r.data.series.clear();
+  r.results.intercepts.clear();
+  auto add = [&](const char* det, const char* key, float v) {
+    r.data.series.push_back({"Ar40", det, "signal", {{0.f, 1.f, 2.f}, {v, v, v}, {}}});
+    rec::InterceptResult ir;
+    ir.intercept.value = v;
+    ir.intercept.error = 0.5;
+    ir.intercept.n_used = 3;
+    r.results.intercepts[key] = ir;
+  };
+  add("AX", "Ar40:AX", 2990.f);
+  add("H1", "Ar40:H1", 3000.f);
+  r.data.series.push_back({"Ar40", "H1", "sniff", {{0.f}, {3000.f}, {}}});
+  r.data.series.push_back({"", "H1", "baseline", {{9.f}, {0.01f}, {}}});
+  r.data.series.push_back({"", "AX", "baseline", {{9.f}, {0.02f}, {}}});
+  r.results.baselines["H1"] = rec::BaselineResult{0.01, 0.001, {}};
+  r.results.baselines["AX"] = rec::BaselineResult{0.02, 0.002, {}};
+  r.results.icfactors = {{"AX", 1.01}};
+
+  const auto a = pp::analysis_from_record(r);
+  ASSERT_EQ(a.isotopes.size(), 2u);
+  EXPECT_EQ(a.isotopes[0].key, "AX:Ar40");
+  EXPECT_EQ(a.isotopes[0].isotope, "Ar40");
+  EXPECT_EQ(a.isotopes[0].detector, "AX");
+  EXPECT_DOUBLE_EQ(a.isotopes[0].intercept.value, 2990.0);
+  EXPECT_DOUBLE_EQ(a.isotopes[0].baseline.value, 0.02);
+  EXPECT_DOUBLE_EQ(a.isotopes[0].ic_factor.value, 1.01);
+  EXPECT_EQ(a.isotopes[1].key, "H1:Ar40");
+  EXPECT_EQ(a.isotopes[1].isotope, "Ar40");
+  EXPECT_EQ(a.isotopes[1].detector, "H1");
+  EXPECT_DOUBLE_EQ(a.isotopes[1].baseline.value, 0.01);
+  ASSERT_NE(a.find_isotope("H1:Ar40"), nullptr);
+  EXPECT_EQ(a.find_isotope("H1:Ar40")->detector, "H1");
+
+  const auto raw = pp::raw_from_record(r);
+  ASSERT_NE(raw.find(pp::SeriesKind::Signal, "H1:Ar40"), nullptr);
+  EXPECT_EQ(raw.find(pp::SeriesKind::Signal, "H1:Ar40")->detector, "H1");
+  ASSERT_NE(raw.find(pp::SeriesKind::Signal, "AX:Ar40"), nullptr);
+  EXPECT_EQ(raw.find(pp::SeriesKind::Signal, "AX:Ar40")->v.front(), 2990.0);
+  EXPECT_EQ(raw.find(pp::SeriesKind::Signal, "Ar40"), nullptr);
+  // The sniff of an isotope is found by the isotope's key.
+  ASSERT_NE(raw.find(pp::SeriesKind::Sniff, "H1:Ar40"), nullptr);
+}
+
+// A baseline block and a baseline hop on one detector are that detector's one
+// raw baseline, in the order the acquisition fitted them.
+TEST(RecordSource, ADetectorsBaselineSeriesAreOneRawSeries) {
+  auto r = record("u-bh", "66001", 1, "", "unknown", "2026-01-01T00:00:00Z");
+  r.data.series.push_back({"Ar36", "H1", "baseline", {{3.f, 4.f}, {0.03f, 0.04f}, {}}});
+  const auto raw = pp::raw_from_record(r);
+  int baselines = 0;
+  for (const auto& s : raw.series) baselines += s.kind == pp::SeriesKind::Baseline ? 1 : 0;
+  EXPECT_EQ(baselines, 1);
+  const auto* h1 = raw.find(pp::SeriesKind::Baseline, "H1");
+  ASSERT_NE(h1, nullptr);
+  EXPECT_EQ(h1->t, (std::vector<double>{0.0, 1.0, 3.0, 4.0}));
+  ASSERT_EQ(h1->v.size(), 4u);
+  EXPECT_FLOAT_EQ(static_cast<float>(h1->v[3]), 0.04f);
 }
 
 TEST(RecordSource, BrowsesNewestFirstWithPaging) {

@@ -14,9 +14,18 @@ xcode-select --install                              # Apple clang
 curl -LsSf https://astral.sh/uv/install.sh | sh     # uv (Python tooling)
 uv tool install cmake
 uv tool install ninja
+brew install ccache
 ```
 
-Homebrew `cmake`/`ninja` work equally well.
+Homebrew `cmake`/`ninja` work equally well. The `dev` presets use Ninja, and
+compile through ccache when it is installed (`cmake/PychronCcache.cmake`;
+`-DPYCHRON_CCACHE=OFF` turns it off). The cache is keyed relative to the
+source tree, so a fresh build directory or a new git worktree reuses objects
+any checkout on the machine already compiled.
+
+A `build/dev` or `build/dev-ui` configured before the switch to Ninja was
+made with Unix Makefiles, and CMake refuses to change the generator of an
+existing build directory: delete it once and configure again.
 
 ### Python >= 3.12 (embedded scripting host)
 
@@ -98,6 +107,15 @@ cmake --build --preset dev --parallel
 ctest --preset dev
 ```
 
+`ctest --preset dev` runs on every core. While working, `ctest --preset
+dev-quick` skips the slow importer suites, and a single suite is quickest run
+from its binary directly:
+
+```bash
+cmake --build --preset dev --target pychron_core_tests
+build/dev/tests/core/pychron_core_tests --gtest_filter='Clock*'
+```
+
 With the UI:
 
 ```bash
@@ -121,20 +139,21 @@ error goes to the log dock). Window layout and graph settings are saved per
 spectrometer under the `PychronLabs` organization in `QSettings`.
 
 View > Experiment (Ctrl+Shift+E) runs experiment queues against a lab
-directory, as `elctl exp run` does: open a queue (Queue > Open, or
+directory, as `elctl exp run` does: open a queue (File > Open > Open Queue, or
 `--queue <file>`), edit it (rows revalidate as you type; red rows have
 errors, see their tooltips), then Start (F5) from the selected row. The lab
 is `--lab <dir>` (default: the extraction line config's directory) and
-records go to `--data <dir>` (default: `<lab>/data`). The Run Factory dock
+records go to `--data <dir>` (default: `<lab>/data`), or to the database when
+there is one (`--db`, or an instrument install's own). The Run Factory dock
 adds runs: fill in an identifier and position (a range such as `1-4` gives one
 run per hole), check the preview, then Add (Ctrl+Return); new runs start from
 the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. The
 Measurement tab beside it edits the selected row's plan and its exposed
 parameters (overridden values are bold with a ● badge; Advanced allows any
-value of the plan). Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
+value of the plan). Experiment > Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
 scripts with highlighting, completion, the static check and estimate as you
-type, and Ctrl+click on a gosub to open it. With `--sim`,
-`--sim-speed <x>` runs the whole app on simulated time x times faster than
+type, and Ctrl+click on a gosub to open it. With `--sim` (or an install set
+up for simulation), `--sim-speed <x>` runs the whole app on simulated time x times faster than
 real time:
 
 ```bash
@@ -142,15 +161,20 @@ build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/exa
 ```
 
 View > Data browses the records under `<data>/records`. With
-`--db <url>` it browses a DVC store instead (`sqlite:/path/to/file.db` or
+`--db <url>`, or on an instrument install that has a database, it browses
+that DVC store instead (`sqlite:/path/to/file.db` or
 `postgresql://user:pw@host/db`; the schema must already be current, since
-the UI never migrates it). Rescan picks up new analyses and revisions from
+the UI never migrates it: `elctl db migrate --db <url>` does). The same
+database is where a queue's runs are saved, so `--db` no longer only browses:
+a queue started under it is checked against that database's catalog and its
+runs are written there. The data window shows each run when it ends; Rescan
+picks up new analyses and revisions from
 the store's change log. With a database, recall windows show each
 analysis' revision history (History tab) and can save fit edits made in the
 Evolutions tab (signal and baseline fits) as new revisions, or restore an
-older revision from History, Plot > Isotope evolutions... refits many
+older revision from History, Isotope evolutions... in the toolbar refits many
 analyses at once (Good / Bad under its preview train the isotope
-classifier, kept in the app config directory), and Plot > Blanks... / IC factors... fits and
+classifier, kept in the app config directory), and Blanks... / IC factors... beside it fits and
 saves blanks and IC factors from reference analyses; saves are recorded under
 `$USER` on this host's client:
 
@@ -162,6 +186,90 @@ On Ubuntu 24.04, `apt install qt6-base-dev libqt6sql6-sqlite` is enough for
 the UI (Qt 6.4). If qcustomplot.com is unreachable, point
 `FETCHCONTENT_SOURCE_DIR_QCUSTOMPLOT` at an unpacked QCustomPlot 2.1.1 source
 (Debian's `qcustomplot_2.1.1+dfsg1.orig.tar.xz` has the same two files).
+
+### Static analysis
+
+`tools/quality_check.py` runs cppcheck and then clang-tidy on the C++ a branch
+changes, and reports only findings on the lines that differ from
+`origin/develop` (a new file is checked whole). It is the check to run on
+generated or freshly written code before the tests: the compilers' warnings
+find what is wrong in one expression, these find what is wrong along a path
+(a leak, a use after a move, an index past the end, an unchecked optional).
+
+```bash
+brew install llvm cppcheck          # macOS; llvm is keg-only, the script finds it
+sudo apt install clang-tidy cppcheck    # Ubuntu
+```
+
+```bash
+cmake --preset dev-ui               # writes build/dev-ui/compile_commands.json
+python3 tools/quality_check.py
+git config core.hooksPath tools/githooks   # once per clone: the check runs before every push
+```
+
+With the hook on, `git push` is refused while the C++ the branch changes has
+findings, or while the check cannot run (a tool or the build directory is
+missing). A push that changes no C++ is not slowed. CI does not run on
+`develop`, so the hook is what holds work landing there to the checks.
+
+- Exit status 0 is clean, 1 is findings, 2 means the check could not run, or
+  not on every file (a tool or the compile database is missing, or a source
+  did not parse; what it did find is still printed). `--json` prints one
+  object (`ok`, `files`, `notes`, `errors`, `findings`) for a program or an
+  agent to read.
+- clang-tidy reads every `build/*/compile_commands.json`, the newest first
+  (or only `--build-dir`). A file added since the last configure is in none:
+  configure again. The UI and its tests include moc files, so they need a
+  build as well, or only its moc step:
+  `cmake --build build/dev-ui --target $(cmake --build build/dev-ui --target help | grep -oE '[A-Za-z0-9_-]+_autogen$')`.
+- The `*_stub.cpp` files are compiled only when persistence or scripting is
+  off. To have them analysed too, configure such a build beside the other:
+  `cmake -S . -B build/dev-min -DCMAKE_BUILD_TYPE=Debug -DPYCHRON_PERSISTENCE=OFF -DPYCHRON_SCRIPTING=OFF`.
+- A changed header is analysed through up to two sources that include it,
+  directly or through one other header.
+- `python3 tools/quality_check.py <files or directories>` checks those on
+  every line (`libs/core`, or `libs apps tests` for the whole tree, about a
+  quarter of an hour). Old code has findings
+  (`docs/superpowers/plans/2026-10-08-static-analysis-backlog.md`); until
+  that plan is done this is a way to look at them, not a gate.
+- `--fix` applies clang-tidy's fix-its to the changed lines and reports what
+  is left. Read the diff: a fix-it is a suggestion that compiles, not a proof.
+- The checks are listed in `.clang-tidy`, each one that is off with its
+  reason, and cppcheck's suppressions in `cmake/cppcheck.supp`. A directory
+  whose code makes one check meaningless has its own `.clang-tidy` that
+  inherits the rest (`apps/pychron-ui` and `tests/ui`: Qt's parents own what
+  is `new`'d; `tests`: a test may dereference an optional unguarded). One finding
+  that is wrong is silenced on its line, with the reason:
+  `// NOLINT(<check>): <why>` or `// cppcheck-suppress <id>`.
+- `CLANG_TIDY` and `CPPCHECK` name the programs when they are not on `PATH`.
+
+Static analysis does not replace the sanitizers. `dev` and `dev-ui` build
+without them; add `-DPYCHRON_SANITIZE=address,undefined` to the configure (CI
+does, on clang) and run the tests of what you changed under them. A sanitizer
+build also turns on the standard library's own checks (`_GLIBCXX_ASSERTIONS`,
+libc++'s hardening): an empty `std::optional` dereferenced or a container
+indexed past its end stops the test there. That is why clang-tidy's
+`bugprone-unchecked-optional-access` is off (its reason is in `.clang-tidy`).
+
+### The other compilers' warnings
+
+CI builds with gcc 14, clang 18 and MSVC, and each job stops at its first
+error. Apple clang does not give all of their warnings, so a Mac build that is
+clean can still fail there. `tools/compiler_sweep.py` runs every source of a
+configured build directory through a second compiler with `-fsyntax-only` (no
+objects, nothing linked, a minute or two) and lists every warning the
+project's `-Werror` would stop on:
+
+```bash
+brew install gcc
+python3 tools/compiler_sweep.py                 # Homebrew's newest g++
+python3 tools/compiler_sweep.py --build-dir build/dev-ui
+```
+
+It is not CI: Homebrew's gcc is newer than CI's and has let a gcc 14 warning
+through, and it says nothing of MSVC. `AGENTS.md` lists what CI has caught
+that a Mac did not.
+
 
 ### Importing legacy data
 
@@ -306,7 +414,9 @@ cd configs/examples
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
-`--sim-speed` runs simulated time faster than real time. Records, the spool
+`--sim-speed` runs simulated time faster than real time (`--sim-speed max`:
+as fast as the machine goes, without waiting at all). The example lab has no
+database, so each finished run is a record file: records, the spool
 and `executor_state.json` go to `./data` (ignored by git); `--resume` continues
 after the last started run. Ctrl-C stops after the current run, a second
 Ctrl-C cancels it, a third aborts.
@@ -317,7 +427,7 @@ message when a run fails and when the queue ends. Email and webhooks need the
 `curl` program; an SMTP password comes from the environment variable named by
 `password_env`, a mail service's key (`provider = "brevo"`, `"resend"` or
 `"postmark"`) from the one named by `api_key_env`. `elctl exp notify --lab .`
-sends a test message on each channel (the experiment window: Executor > Send
+sends a test message on each channel (the experiment window: Experiment > Executor > Send
 Test Notification). The setup guide is `notifications.md`.
 
 ### A Chromium laser
@@ -737,7 +847,7 @@ PYCHRON_TEST_CAMERA=0 ctest --test-dir build/dev -R RealCamera
 elctl init --list
 elctl init argus --root ~/Pychron/argus     # asks; Enter accepts [defaults]
 elctl doctor                                # checks the default install
-elctl --install argus exp run experiment.toml --sim-speed 50
+elctl --install argus exp run experiment.toml --sim-speed 50   # runs go to the install's database
 elctl init --reconfigure --set simulation=no --set qtegra_host=10.0.0.5
 elctl doctor --probe                        # connects: the drivers' connect step
 elctl init helix --root ~/Pychron/helix --set line_source=import \
@@ -754,6 +864,20 @@ pychron-cpp driver yet are simulated (`sim_valves`), and the report lists
 what was not carried over (legacy extraction-line survey,
 `docs/superpowers/specs/2026-10-03-legacy-extraction-line-survey.md`).
 
+An instrument install has a database (`data/pychron.db` unless the lab's
+server was named), seeded from the install's `seed.toml` with the reference
+samples and their identifiers, the mass spectrometer and a reactor. Its
+shipped `experiment.toml` is three air shots between two blanks (`ba`, `a`,
+`a`, `a`, `ba`; about 19 minutes of simulated time, though `exp run`'s `ETA`
+line, an estimate, reads `0:08:50`), and names only what the
+seed made. `exp run` and `pychron-ui` write each finished run to that
+database, and refuse a queue that names an identifier, mass spectrometer or
+extract device it lacks; with no database (the example lab of section 5) runs
+are record files as before. `--db <url>` names another database. An install
+on the example line also gets the example lab's `sim.toml`. The end-to-end
+test of this path is `pychron_install_e2e_tests`
+(`tests/integration/test_install_e2e.cpp`).
+
 Instrument installs start in simulation; `CALIBRATE.md` in the install lists
 what is still a placeholder. `--yes` takes every default, `--answers file.toml`
 and `--set id=value` answer without prompts. A re-run never overwrites a file;
@@ -765,7 +889,10 @@ installed, it opens the wizard: pick data reduction or an instrument, a
 folder, and answer one page per question group; Install writes the files,
 creates a local database, records the install and shows the doctor's checks.
 After that `pychron-ui` opens the default install (`--install NAME` another;
-File > Installations switches, sets the default or forgets one). A
+File > Installations switches, sets the default or forgets one). An
+instrument install's data window reads its database and shows each run when
+it ends; `--sim-speed N` needs no `--sim` beside it when the install is set
+up for simulation. A
 data-reduction install opens the data browser alone. `pychron-ui --setup`
 runs the wizard again; `--examples` (or `--sim` with nothing installed) opens
 the example line in `configs/examples` as before.

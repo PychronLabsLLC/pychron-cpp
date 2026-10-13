@@ -262,7 +262,7 @@ Result<std::vector<PortValue>> Runner::run(const Pipeline& pipeline, std::string
   std::map<std::string, Error> errors;
 
   for (const auto& id : *ord) {
-    if (!needed.count(id)) continue;
+    if (!needed.contains(id)) continue;
     const NodeSpec& n = *pipeline.find(id);
     const Unit& u = *registry_.find(n.kind);
     NodeRun nr{id, false, std::nullopt};

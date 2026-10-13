@@ -1,5 +1,6 @@
 #include "pychron/experiment/lab/session.hpp"
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <utility>
@@ -27,7 +28,8 @@ struct LabSession::QueueLease {
 
 // Declaration order is construction order; members refer only to earlier ones.
 struct LabSession::Services {
-  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, Lasers& lasers)
+  Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, Lasers& lasers,
+           persist::IAnalysisPersister* given)
       : host(scripting::make_script_host()),
         script_valves(hw.line.switches(), "script"),
         script_pressure(hw.line),
@@ -36,8 +38,8 @@ struct LabSession::Services {
         instrument(hw.spectrometer, &hw.line),
         files(data / "records"),
         spool(data / "spool"),
-        save(spool, files),
-        aliquots(files) {
+        save(spool, given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)),
+        aliquots(given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)) {
     if (hw.spectrometer != nullptr) {
       port.emplace(*hw.spectrometer);
       jobs::PeakCenterOptions pc;
@@ -67,7 +69,7 @@ struct LabSession::Services {
     s.plans = lab.plans.get();
     s.conditionals = lab.conditionals.get();
     s.aliquots = &aliquots;
-    s.persister = &files;
+    s.persister = given != nullptr ? given : &files;
     s.save = &save;
     ctx.pre_run_metrics = &instrument;
     ctx.blank = default_blank_factory(lab.ids);
@@ -93,13 +95,25 @@ LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions 
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
   if (hardware_.lasers == nullptr) own_lasers_ = std::make_unique<Lasers>(lab_, hardware_.line, hardware_.simulated);
   lasers_ = hardware_.lasers != nullptr ? hardware_.lasers : own_lasers_.get();
-  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_);
+  services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_, options_.persister);
   notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
 }
 
 LabSession::~LabSession() {
   abort();
-  if (thread_.joinable()) thread_.join();
+  join();
+}
+
+// The queue thread may still have to wait in the line's clock, so it is not
+// joined until it has said it is done; that is waited for through the clock,
+// with mutex_ released, so a subscriber may call back in meanwhile.
+void LabSession::join() {
+  if (!thread_.joinable()) return;
+  {
+    std::unique_lock lock(mutex_);
+    while (!thread_done_) hardware_.line.clock().wait(thread_done_cv_, lock);
+  }
+  thread_.join();
 }
 
 std::vector<std::string> LabSession::problems() const { return lasers_->problems(); }
@@ -109,6 +123,9 @@ bool LabSession::has_spectrometer() const noexcept { return hardware_.spectromet
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
   if (auto ok = check(queue); !ok) return ok;
+  // Of what will run: the rows before `from_row` are not, and what the
+  // persister already holds of them is no reason to refuse the rest.
+  if (auto ok = check_saves(persist::rows_from(queue, from_row)); !ok) return ok;
   // A device whose camera cannot be used as the lab asks is not run without
   // it: the queue waits for the lab to be put right.
   for (const auto& r : queue.runs) {
@@ -137,19 +154,34 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   // The previous queue has ended but its thread may still be publishing
   // QueueEnded; joined without mutex_ so a subscriber may call back in.
   // Only the owner's thread touches thread_ (start and wait).
-  if (thread_.joinable()) thread_.join();
+  join();
   auto ctx = services_->ctx;
   ctx.services.instrument.mass_spectrometer = queue.mass_spectrometer;
   ctx.services.instrument.analyst = queue.username;
+  ctx.services.instrument.simulated = hardware_.simulation;  // travels with each record
   {
     std::lock_guard lock(mutex_);
     executor_ = std::make_shared<executor::Executor>(std::move(ctx), options_.executor);
+    started_ = queue;
+    started_.runs.clear();
     running_ = true;
+    thread_done_ = false;
     result_.reset();
     lease_ = std::make_unique<QueueLease>(QueueLease{std::move(*lease)});
   }
   notifier_->set_queue(queue.name, queue.email);
-  thread_ = std::thread([this, queue = std::move(queue), from_row]() mutable { run(std::move(queue), from_row); });
+  // Time does not move on between the thread's start and its Participant.
+  const Clock& clock = hardware_.line.clock();
+  auto hold = std::make_shared<Clock::Hold>(clock);
+  thread_ = std::thread([this, &clock, hold, queue = std::move(queue), from_row]() mutable {
+    Clock::Participant participant(clock, "lab.session");
+    hold.reset();
+    run(std::move(queue), from_row);
+    // Said while this thread is still a participant.
+    std::lock_guard lock(mutex_);
+    thread_done_ = true;
+    clock.notify_all(thread_done_cv_);
+  });
   return {};
 }
 
@@ -166,10 +198,32 @@ Result<void> LabSession::check(const QueueSpec& queue) const {
               "experiment");
 }
 
+Result<void> LabSession::check_saves(const QueueSpec& will_run) {
+  persist::IAnalysisPersister& persister =
+      options_.persister != nullptr ? *options_.persister : static_cast<persist::IAnalysisPersister&>(services_->files);
+  const auto problems = persister.check_queue(will_run);
+  if (!problems) return fail(ErrorKind::Config, "the queue cannot be saved: " + problems.error().what, "experiment");
+  if (problems->empty()) return {};
+  std::string what = "the queue cannot be saved:";
+  for (const auto& line : *problems) what += "\n" + line;
+  return fail(ErrorKind::Config, what, "experiment");
+}
+
 Result<std::uint64_t> LabSession::edit(std::uint64_t base, const QueueSpec& queue) {
   auto ex = active();
   if (!ex) return fail(ErrorKind::Config, "no queue is running", "experiment");
   if (auto ok = check(queue); !ok) return fail(ok.error());
+  // The rows still to run must be savable, as at the start: the running
+  // queue's own fields (an edit's are ignored) with the edit's rows, those
+  // the executor has reached left out. A row it reaches meanwhile was
+  // checked when the queue started or by an earlier edit.
+  QueueSpec will_run;
+  {
+    std::lock_guard lock(mutex_);
+    will_run = started_;
+  }
+  will_run.runs = queue.runs;
+  if (auto ok = check_saves(persist::rows_from(std::move(will_run), ex->frozen_rows())); !ok) return fail(ok.error());
   return ex->edit(base, queue.runs, "edited by the operator");
 }
 
@@ -178,6 +232,7 @@ void LabSession::run(QueueSpec spec, std::size_t from_row) {
   const bool paused_here = scan != nullptr && scan->running() && !scan->paused();
   if (paused_here) scan->pause();
 
+  hardware_.line.bus().publish(QueueStarted{spec.runs.size(), from_row});
   ExperimentQueue queue(std::move(spec));
   std::shared_ptr<executor::Executor> ex;
   {
@@ -241,14 +296,17 @@ executor::ExecutorState LabSession::state() const {
 }
 
 std::optional<executor::QueueResult> LabSession::wait() {
-  if (thread_.joinable()) thread_.join();
+  join();
   std::lock_guard lock(mutex_);
   return result_;
 }
 
 std::size_t LabSession::pending_saves() const { return services_->save.pending(); }
 
+std::optional<std::string> LabSession::last_save_error() const { return services_->save.last_error(); }
+
 TimePoint LabSession::now() const { return hardware_.line.clock().now(); }
+WallTime LabSession::wall_now() const { return hardware_.line.clock().wall_now(); }
 
 Result<std::size_t> LabSession::resume_row(const fs::path& data) {
   return executor::Executor::resume_row(data / "executor_state.json");

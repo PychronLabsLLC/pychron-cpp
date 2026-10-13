@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <limits>
 #include <set>
+#include <utility>
 
 #include "pychron/processing/units.hpp"
 #include "schema_builder.hpp"
@@ -244,7 +245,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
   if (specs.empty()) return fail(ErrorKind::Config, "no isotopes to fit");
   const bool keep_excluded = o.get_bool("keep_user_excluded");
   const bool skip_reviewed = o.get_bool("skip_reviewed");
-  const double nsigma = static_cast<double>(o.get_int("nsigma"));
+  const auto nsigma = static_cast<double>(o.get_int("nsigma"));
   std::optional<IsotopeClassifier> classifier;
   const bool show_current = o.get_bool("show_current");
 
@@ -255,7 +256,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     if (!loaded) {
       fig.fits.warnings.push_back("classifier: " + loaded.error().what);
     } else if (loaded->empty()) {
-      fig.fits.warnings.push_back("classifier: no training samples yet");
+      fig.fits.warnings.emplace_back("classifier: no training samples yet");
     } else {
       classifier = std::move(*loaded);
     }
@@ -333,7 +334,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
       }
       r::FitSpec resolved = spec.fit;
       if (spec.auto_n)
-        resolved.kind = static_cast<std::int64_t>(series->t.size()) >= spec.n_threshold ? spec.n_true : spec.n_false;
+        resolved.kind = std::cmp_greater_equal(series->t.size(), spec.n_threshold) ? spec.n_true : spec.n_false;
       FitEdit edit{target.kind, target.key, resolved, keep_excluded ? target.excluded : std::vector<std::size_t>{}};
       auto shape = fit_series(*series, resolved, edit.user_excluded);
       auto one = apply_fit_edits(a, *raw, {edit});
@@ -439,7 +440,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
         stored.x.push_back(pt.t);
         stored.y.push_back(pt.stored.value);
         stored.y_err.push_back(pt.stored.error * nsigma);
-        stored.refs.push_back(PointRef{});
+        stored.refs.emplace_back();
         stored.tooltips.push_back(pt.label + " current");
       }
     }
@@ -452,7 +453,7 @@ Result<IsotopeEvolutionFigure> build_isotope_evolution_fits(const Dataset& analy
     std::snprintf(buf, sizeof buf, "%s %s%s  %zu refitted, %d flagged", fit_name.c_str(),
                   spec.fit.error == r::ErrorType::Sd ? "SD" : "SEM", spec.fit.outliers.enabled ? " (outliers)" : "",
                   pts.size(), nflagged);
-    t.lines.push_back(buf);
+    t.lines.emplace_back(buf);
     p.layers.emplace_back(std::move(t));
     for (auto* layer : {&stored, &refit, &flagged}) {
       if (layer->x.empty()) continue;

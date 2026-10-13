@@ -6,16 +6,14 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
-#include <limits>
 #include <map>
-#include <memory>
 #include <set>
-#include <span>
 #include <utility>
 
 #include "figure_common.hpp"
 #include "pychron/core/user_file.hpp"
 #include "pychron/processing/arar_groups.hpp"
+#include "pychron/processing/group_ages.hpp"
 #include "pychron/reduction/arar_reduction.hpp"
 
 namespace pychron::processing {
@@ -107,36 +105,12 @@ double now_utc_seconds() {
   return static_cast<double>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
 }
 
-// Step order within a group: increment, then time (as the spectrum).
-GroupItems ordered(GroupItems items) {
-  std::stable_sort(items.begin(), items.end(), [](const DatasetItem* a, const DatasetItem* b) {
-    const auto& x = *a->analysis->analysis;
-    const auto& y = *b->analysis->analysis;
-    if (x.increment != y.increment) return x.increment < y.increment;
-    return x.timestamp < y.timestamp;
-  });
-  return items;
-}
-
 // The dataset's group name ("Group N" when the grouping named none), under
 // the graph's when there are several graphs.
 std::string group_label(const Dataset& d, int graph, int group) {
   const std::string name = d.group_name(group);
   if (d.graphs().size() > 1) return d.graph_name(graph) + " / " + name;
   return name;
-}
-
-bool has_ages(const DatasetItem& it) { return it.analysis->arar && it.analysis->arar->ages; }
-
-// The analytical age of an item (no J error), when it has one.
-std::optional<r::UFloat> analytical_age(const DatasetItem& it) {
-  if (!has_ages(it)) return std::nullopt;
-  return it.analysis->arar->ages->age;
-}
-
-double k39_of(const DatasetItem& it) {
-  if (!it.analysis->arar) return std::numeric_limits<double>::quiet_NaN();
-  return it.analysis->arar->f.interference.k39.nominal();
 }
 
 // ---------------------------------------------------------------- metadata
@@ -257,11 +231,11 @@ void constants_table(const ReportOptions& o, const Inventory& inv, Report& rep) 
   t.title = "Decay constants and atmospheric ratios used";
   t.columns = {"item", "value", pm_name("value", o.nsigma), "units"};
   if (inv.reference == nullptr) {
-    rep.warnings.push_back("no analysis reduced: the constants are unknown");
+    rep.warnings.emplace_back("no analysis reduced: the constants are unknown");
     return;
   }
   if (inv.constants_differ)
-    rep.warnings.push_back("the analyses were reduced with different constants; those of the first are listed");
+    rep.warnings.emplace_back("the analyses were reduced with different constants; those of the first are listed");
   const auto& c = *inv.reference->constants;
   auto row = [&](std::string name, const r::Measured& m, const char* units) {
     t.rows.push_back({Cell{std::move(name)}, num(m.value), num(m.error * o.nsigma), Cell{std::string(units)}});
@@ -397,7 +371,7 @@ std::vector<GroupRef> groups_of(const Dataset& d) {
   std::vector<GroupRef> out;
   for (int graph : d.graphs())
     for (const auto& [group, items] : d.groups_of_graph(graph))
-      out.push_back({graph, group, group_label(d, graph, group), ordered(items)});
+      out.push_back({graph, group, group_label(d, graph, group), step_ordered(items)});
   return out;
 }
 
@@ -596,44 +570,21 @@ void summary_table(const std::vector<GroupRef>& groups, const r::AgeUnits units,
 
     // Plateau, over the steps with an age and gas, excluded ones flagged.
     if (step_heated && !reduced.empty()) {
-      std::vector<double> vs, es, ws;
-      std::vector<const DatasetItem*> steps;
-      for (const auto* it : reduced) {
-        const double k = k39_of(*it);
-        if (!(k > 0)) continue;
-        const auto age = analytical_age(*it);
-        vs.push_back(age->nominal());
-        es.push_back(age->std_dev());
-        ws.push_back(k);
-        steps.push_back(it);
-      }
-      const std::size_t n = steps.size();
-      std::unique_ptr<bool[]> ex(new bool[std::max<std::size_t>(1, n)]);
-      for (std::size_t i = 0; i < n; ++i) ex[i] = steps[i]->exclusion.excluded();
-      const std::span<const bool> excluded(ex.get(), n);
-      if (auto range = r::find_plateau(vs, es, ws, excluded, o.plateau)) {
-        if (auto pm = r::plateau_mean(vs, es, ws, excluded, *range, o.plateau_weighting, o.mean_error)) {
-          row[plateau_steps] = Cell{steps[range->first]->analysis->analysis->step() + "-" +
-                                    steps[range->last]->analysis->analysis->step()};
-          row[plateau_n] = Cell{static_cast<double>(pm->nsteps)};
-          row[plateau_gas] = num(pm->gas_fraction);
-          set_age(row, plateau, pm->mean.value, pm->mean.error,
-                  with_external_error(pm->mean.value, pm->mean.error, j_rel));
-          row[plateau_mswd] = num(pm->mean.mswd);
-          row[plateau_p] = num(r::mswd_probability(pm->mean.mswd, static_cast<int>(pm->nsteps) - 1));
-        }
+      if (const auto found = group_plateau(reduced, o.plateau, o.plateau_weighting, o.mean_error)) {
+        const r::PlateauMean& pm = found->mean;
+        row[plateau_steps] = Cell{found->steps[found->range.first]->analysis->analysis->step() + "-" +
+                                  found->steps[found->range.last]->analysis->analysis->step()};
+        row[plateau_n] = Cell{static_cast<double>(pm.nsteps)};
+        row[plateau_gas] = num(pm.gas_fraction);
+        set_age(row, plateau, pm.mean.value, pm.mean.error, with_external_error(pm.mean.value, pm.mean.error, j_rel));
+        row[plateau_mswd] = num(pm.mean.mswd);
+        row[plateau_p] = num(r::mswd_probability(pm.mean.mswd, static_cast<int>(pm.nsteps) - 1));
       }
     }
 
     // Weighted mean of the included ages.
     if (!included.empty()) {
-      std::vector<double> vs, es;
-      for (const auto* it : included) {
-        const auto age = analytical_age(*it);
-        vs.push_back(age->nominal());
-        es.push_back(age->std_dev());
-      }
-      if (auto m = r::weighted_mean(vs, es, o.mean_error)) {
+      if (auto m = group_weighted_mean(included, o.mean_error)) {
         row[mean_n] = Cell{static_cast<double>(m->n)};
         set_age(row, mean, m->value, m->error, with_external_error(m->value, m->error, j_rel));
         row[mean_mswd] = num(m->mswd);
@@ -674,16 +625,7 @@ std::string format_number(double v) {
 std::string csv_field(const Cell& cell) {
   if (const auto* d = std::get_if<double>(&cell)) return format_number(*d);
   const auto* s = std::get_if<std::string>(&cell);
-  if (s == nullptr) return {};
-  const bool quote = s->find_first_of(",\"\r\n") != std::string::npos || (!s->empty() && (s->front() == ' ' || s->back() == ' '));
-  if (!quote) return *s;
-  std::string out = "\"";
-  for (const char ch : *s) {
-    if (ch == '"') out += '"';
-    out += ch;
-  }
-  out += '"';
-  return out;
+  return s ? csv_quote(*s) : std::string();
 }
 
 void csv_table(std::string& out, const ReportTable& t) {
@@ -746,7 +688,7 @@ void json_cell(std::string& out, const Cell& cell) {
 }
 
 void json_rows(std::string& out, const ReportTable& t) {
-  out += "[";
+  out += '[';
   for (std::size_t r = 0; r < t.rows.size(); ++r) {
     out += r ? ",\n    {" : "\n    {";
     for (std::size_t i = 0; i < t.columns.size() && i < t.rows[r].size(); ++i) {
@@ -755,18 +697,18 @@ void json_rows(std::string& out, const ReportTable& t) {
       out += ": ";
       json_cell(out, t.rows[r][i]);
     }
-    out += "}";
+    out += '}';
   }
   out += t.rows.empty() ? "]" : "\n  ]";
 }
 
 void json_strings(std::string& out, const std::vector<std::string>& items) {
-  out += "[";
+  out += '[';
   for (std::size_t i = 0; i < items.size(); ++i) {
     if (i) out += ", ";
     json_string(out, items[i]);
   }
-  out += "]";
+  out += ']';
 }
 
 }  // namespace
@@ -780,7 +722,7 @@ const ReportTable* Report::table(std::string_view name) const {
 Report make_report(const Dataset& dataset, const ReportOptions& options) {
   Report rep;
   ReportOptions o = options;
-  if (o.nsigma < 1) o.nsigma = 1;
+  o.nsigma = std::max(o.nsigma, 1);
   const Inventory inv = take_inventory(dataset, o.nsigma);
   rep.header.push_back("40Ar/39Ar data report after " + std::string(kStandard));
   rep.header.push_back("Generated by " + (o.software.empty() ? std::string("pychron-cpp") : o.software) + " on " +
@@ -794,8 +736,21 @@ Report make_report(const Dataset& dataset, const ReportOptions& options) {
   const auto groups = groups_of(dataset);
   analyses_table(groups, units, o, rep);
   summary_table(groups, units, o, rep);
-  if (dataset.empty()) rep.warnings.push_back("the dataset is empty");
+  if (dataset.empty()) rep.warnings.emplace_back("the dataset is empty");
   return rep;
+}
+
+std::string csv_quote(std::string_view text) {
+  const bool quote = text.find_first_of(",\"\r\n") != std::string_view::npos ||
+                     (!text.empty() && (text.front() == ' ' || text.back() == ' '));
+  if (!quote) return std::string(text);
+  std::string out = "\"";
+  for (const char ch : text) {
+    if (ch == '"') out += '"';
+    out += ch;
+  }
+  out += '"';
+  return out;
 }
 
 std::string report_csv(const Report& report) {

@@ -52,7 +52,7 @@ Result<void> NetworkGraph::connect(std::string_view a, std::string_view b) {
   return {};
 }
 
-bool NetworkGraph::contains(std::string_view name) const { return nodes_.find(name) != nodes_.end(); }
+bool NetworkGraph::contains(std::string_view name) const { return nodes_.contains(name); }
 
 bool NetworkGraph::is_valve(std::string_view name) const {
   auto it = nodes_.find(name);
@@ -120,7 +120,7 @@ std::set<std::string> NetworkGraph::connected_to(std::string_view volume, const 
 
 const NetworkGraph::Region* NetworkGraph::region_of(std::string_view volume, const std::vector<Region>& regions) {
   for (const auto& r : regions) {
-    if (r.volumes.find(std::string(volume)) != r.volumes.end()) return &r;
+    if (r.volumes.contains(std::string(volume))) return &r;
   }
   return nullptr;
 }

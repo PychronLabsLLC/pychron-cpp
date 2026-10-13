@@ -1,0 +1,17 @@
+# The special identifiers of this lab (written by pychron setup): the
+# identifier that makes a run a blank, an air, a pause, ... These are the
+# ones pychron uses when this file is not there. A type may have several
+# (a new run gets the longest); anything else is a sample's identifier.
+
+[prefixes]
+unknown = "u"
+blank_unknown = ["bu", "b"]
+blank_air = "ba"
+blank_cocktail = "bc"
+blank_extractionline = "be"
+background = "bg"
+air = "a"
+cocktail = "c"
+pause = "pa"
+degas = "dg"
+detector_ic = "ic"

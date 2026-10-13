@@ -308,7 +308,7 @@ void read_hop(const Section& s, const DetectorsSpec& dets, Hop& hop) {
     ps.get("isotope", hp.isotope);
     ps.get("detector", hp.detector);
     if (hp.detector.empty()) p.add(ps.at("detector"), "required");
-    if (!hp.isotope.empty() && !hop.positions.count(hp.isotope))
+    if (!hp.isotope.empty() && !hop.positions.contains(hp.isotope))
       p.add(ps.at("isotope"), "'" + hp.isotope + "' not in hop positions");
     if (hp.isotope.empty() && !(hop.baseline && hop.mass))
       p.add(ps.path(), "needs 'isotope' unless the hop is a baseline hop at 'mass'");

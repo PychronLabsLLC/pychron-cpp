@@ -1,6 +1,6 @@
 # Example queue (written by pychron setup):
 #   elctl --install {{ install_name }} exp run experiment.toml
-# A blank and two steps of a sanidine standard.
+# Three air shots between two blanks.
 
 [queue]
 name = "first-queue"
@@ -13,21 +13,36 @@ between_analyses = 10
 after_blank = 10
 
 [[runs]]
-identifier = "bu"
-extraction = { script = "sim_extract", duration = 2 }
+identifier = "ba"
+extraction = { script = "sim_blank", duration = 30 }
 measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
+sample = { sample = "blank_air", material = "blank", project = "references" }
 
 [[runs]]
-identifier = "66001"
-extraction = { script = "sim_extract", value = 5, units = "w", duration = 10 }
+identifier = "a"
+extraction = { script = "sim_air", duration = 30 }
 measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
-sample = { sample = "FC-2", material = "sanidine", project = "examples" }
+sample = { sample = "air", material = "air", project = "references" }
 
 [[runs]]
-identifier = "66001"
-extraction = { script = "sim_extract", value = 8, units = "w", duration = 10 }
-measurement = { plan = "multicollect", overrides = { "main.cycles" = 1 } }
+identifier = "a"
+extraction = { script = "sim_air", duration = 30 }
+measurement = { plan = "multicollect" }
 post_measurement = "sim_pump"
-sample = { sample = "FC-2", material = "sanidine", project = "examples" }
+sample = { sample = "air", material = "air", project = "references" }
+
+[[runs]]
+identifier = "a"
+extraction = { script = "sim_air", duration = 30 }
+measurement = { plan = "multicollect" }
+post_measurement = "sim_pump"
+sample = { sample = "air", material = "air", project = "references" }
+
+[[runs]]
+identifier = "ba"
+extraction = { script = "sim_blank", duration = 30 }
+measurement = { plan = "multicollect" }
+post_measurement = "sim_pump"
+sample = { sample = "blank_air", material = "blank", project = "references" }

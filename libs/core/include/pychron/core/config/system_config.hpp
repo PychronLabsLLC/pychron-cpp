@@ -13,12 +13,20 @@
 
 #include "pychron/core/config/located.hpp"
 #include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/config/metrics_config.hpp"
 
 namespace pychron::config {
 
 struct SystemSection : Located {
   std::string name;
   std::int64_t scan_interval_ms = 1000;
+};
+
+// `[sim]`: for a line with simulated transports.
+struct SimSection : Located {
+  // The simulator's numbers (sim.toml), relative to this file. Empty: a
+  // `sim.toml` beside this file, if there is one.
+  std::string file;
 };
 
 enum class TransportKind { Serial, Tcp, Udp, ModbusRtu, ModbusTcp, Sim, Link };
@@ -191,7 +199,9 @@ struct SystemConfig {
   std::optional<CryoConfig> cryo;
   std::vector<HeaterConfig> heaters;
   LoggingConfig logging;
+  MetricsConfig metrics;
   std::map<std::string, AliasConfig> aliases;  // by key
+  SimSection sim;
 };
 
 }  // namespace pychron::config

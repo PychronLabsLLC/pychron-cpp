@@ -1,9 +1,21 @@
 #include "pychron/sim/sim_system.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <deque>
-#include <limits>
+#include <cstddef>
+#include <functional>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "pychron/sim/gas.hpp"
+#include "pychron/sim/gas_network.hpp"
+#include "pychron/sim/keyed_noise.hpp"
 
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
@@ -27,88 +39,228 @@ bool is_plc_kind(std::string_view kind) {
   return kind == "plc2000_valves" || kind == "plc2000_gauges" || kind == "plc2000_heater";
 }
 
-}  // namespace
-
-SimSystem::SimSystem(const Clock& clock, Topology topology, Settings settings)
-    : clock_(clock), settings_(std::move(settings)), last_(clock.now()), rng_(settings_.seed) {
-  for (const auto& v : topology.volumes) add_volume_locked(v.name, v.cc);
-  for (const auto& v : topology.valves) {
-    nodes_[v].valve = true;
-    valve_open_[v] = false;
-  }
-  for (const auto& [a, b] : topology.edges) {
-    auto ia = nodes_.find(a);
-    auto ib = nodes_.find(b);
-    if (ia == nodes_.end() || ib == nodes_.end() || a == b) continue;
-    ia->second.edges.insert(b);
-    ib->second.edges.insert(a);
-  }
-  advance_locked();
-}
-
-SimSystem::~SimSystem() = default;
-
-void SimSystem::add_volume_locked(const std::string& name, double cc) {
-  if (nodes_.contains(name)) return;
-  nodes_[name];
-  cc_[name] = cc > 0 ? cc : 1.0;
-  auto init = settings_.initial_pressures.find(name);
-  pressure_[name] = init == settings_.initial_pressures.end() ? settings_.default_pressure : init->second;
-}
-
-std::vector<std::vector<std::string>> SimSystem::regions_locked() const {
-  std::vector<std::vector<std::string>> out;
-  std::set<std::string> seen;
-  for (const auto& [start, node] : nodes_) {
-    if (node.valve || seen.contains(start)) continue;
-    std::vector<std::string> region;
-    std::deque<std::string> frontier{start};
-    std::set<std::string> visited{start};
-    while (!frontier.empty()) {
-      std::string name = std::move(frontier.front());
-      frontier.pop_front();
-      const Node& n = nodes_.find(name)->second;
-      if (n.valve) {
-        auto open = valve_open_.find(name);
-        if (open == valve_open_.end() || !open->second) continue;
-      } else {
-        region.push_back(name);
-        seen.insert(name);
-      }
-      for (const auto& next : n.edges) {
-        if (visited.insert(next).second) frontier.push_back(next);
-      }
+// The canvas gives cc and the network holds litres: the one place they meet.
+// A size the settings give goes first, then the topology's, then the role's.
+double litres_of(const std::string& name, double cc, SimRole role, const SimSettings& settings) {
+  if (auto own = settings.sizes.find(name); own != settings.sizes.end()) cc = own->second;
+  if (!(cc > 0)) {
+    switch (role) {
+      case SimRole::Pipette: cc = settings.pipette_cc; break;
+      case SimRole::Gauge: cc = settings.gauge_cc; break;
+      case SimRole::Pipe: cc = settings.pipe_cc; break;
+      // Each of the rest by name: a new role is then sized on purpose.
+      case SimRole::Plain:
+      case SimRole::Pump:
+      case SimRole::Getter:
+      case SimRole::Tank:
+      case SimRole::Spectrometer: cc = settings.default_volume_cc; break;
     }
-    out.push_back(std::move(region));
+  }
+  return cc / 1000.0;
+}
+
+// `mbar` of air.
+Composition air_at(double mbar) { return scaled(air_ratios(), mbar / total(air_ratios())); }
+
+// What a volume holds at the start: its composition, else its pressure as
+// air, else a tank's air, else the default pressure as air.
+Composition initial_of(const std::string& name, SimRole role, const SimSettings& settings) {
+  if (auto given = settings.compositions.find(name); given != settings.compositions.end()) return given->second;
+  if (auto init = settings.initial_pressures.find(name); init != settings.initial_pressures.end()) {
+    return air_at(init->second);
+  }
+  if (role == SimRole::Tank) return with_ar40(air_ratios(), settings.tank_argon40);
+  return air_at(settings.default_pressure);
+}
+
+// One volume as the network has it. `walls`: it is part of the line and its
+// walls give gas off; a gauge off the canvas is not.
+GasVolume volume_of(const std::string& name, double cc, SimRole role, bool walls, const SimSettings& settings) {
+  GasVolume volume;
+  volume.name = name;
+  volume.litres = litres_of(name, cc, role, settings);
+  volume.initial = initial_of(name, role, settings);
+  if (walls) {
+    // Per litre, argon as in air and active gas at its own rate.
+    volume.source_per_s = scaled(with_ar40(air_ratios(), settings.outgassing), volume.litres);
+    volume.source_per_s[index(Species::Active)] = settings.outgassing_active * volume.litres;
+  }
+  if (auto leak = settings.leaks.find(name); leak != settings.leaks.end()) {
+    const Composition air = with_ar40(air_ratios(), leak->second);
+    for (std::size_t s = 0; s < kSpeciesCount; ++s) volume.source_per_s[s] += air[s];
+  }
+  if (role == SimRole::Spectrometer) {
+    // The ion source uses each argon at the same rate, and its memory comes
+    // back as Ar40: fA/s over fA/mbar is mbar/s, of this volume.
+    for (const Species s : {Species::Ar36, Species::Ar37, Species::Ar38, Species::Ar39, Species::Ar40}) {
+      volume.loss_per_s[index(s)] = settings.source.consumption;
+    }
+    volume.source_per_s[index(Species::Ar40)] +=
+        settings.source.memory_fa_per_s / settings.source.sensitivity * volume.litres;
+  }
+  return volume;
+}
+
+// The pumps on a volume of `litres`: the settings' own for the name, else a
+// pump stage's; and a getter's, where the stage or the settings make it one.
+std::vector<GasPump> pumps_of(const std::string& name, SimRole role, double litres, const SimSettings& settings) {
+  std::vector<GasPump> out;
+  if (auto own = settings.pumps.find(name); own != settings.pumps.end()) {
+    const SimPump& pump = own->second;
+    // speed = V / tau with V the pump's own volume as described: what that
+    // volume is merged with, or opened to, is not the pump's. A pump with no
+    // time constant is as fast as the clock can tell. A speed given outright
+    // goes first.
+    const double tau = std::max(seconds(pump.tau), seconds(Duration{1}));
+    const auto speed = settings.pump_speeds.find(name);
+    out.push_back({name, speed == settings.pump_speeds.end() ? litres / tau : speed->second, pump.base, true, true});
+  } else if (role == SimRole::Pump) {
+    out.push_back({name, settings.pump_speed, settings.pump_base, true, true});
+  }
+  const auto listed = settings.getters.find(name);
+  if (listed == settings.getters.end() ? role == SimRole::Getter : listed->second) {
+    out.push_back({name, settings.getter_speed, 0.0, false, true});
   }
   return out;
 }
 
-void SimSystem::advance_locked() const {
-  const TimePoint now = clock_.now();
-  const double dt = now > last_ ? seconds(now - last_) : 0.0;
-  last_ = std::max(now, last_);
-
-  for (const auto& region : regions_locked()) {
-    double total_cc = 0;
-    double amount = 0;
-    double base = std::numeric_limits<double>::infinity();
-    double tau = std::numeric_limits<double>::infinity();
-    for (const auto& v : region) {
-      const double cc = cc_.find(v)->second;
-      total_cc += cc;
-      amount += cc * pressure_.find(v)->second;
-      if (auto pump = settings_.pumps.find(v); pump != settings_.pumps.end()) {
-        base = std::min(base, pump->second.base);
-        tau = std::min(tau, seconds(pump->second.tau));
-      }
-    }
-    double p = total_cc > 0 ? amount / total_cc : 0.0;
-    if (std::isfinite(base) && dt > 0) {
-      p = tau > 0 ? base + (p - base) * std::exp(-dt / tau) : base;
-    }
-    for (const auto& v : region) pressure_.find(v)->second = p;
+// The network's description of a line. What a SimTopology may say loosely
+// (a name twice, a valve with the name of a volume, settings for names that
+// are not there) is settled here, so that the network refuses only numbers
+// that cannot be: a negative or non-finite pressure, size, conductance, rate
+// or pump base.
+GasTopology describe(const SimTopology& topology, const SimSettings& settings) {
+  GasTopology out;
+  std::set<std::string, std::less<>> volumes;
+  for (const auto& v : topology.volumes) {
+    if (v.name.empty() || !volumes.insert(v.name).second) continue;
+    GasVolume volume = volume_of(v.name, v.cc, v.role, true, settings);
+    for (auto& pump : pumps_of(v.name, v.role, volume.litres, settings)) out.pumps.push_back(std::move(pump));
+    out.volumes.push_back(std::move(volume));
   }
+
+  std::set<std::string, std::less<>> valves;
+  for (const auto& name : topology.valves) {
+    if (name.empty() || volumes.contains(name) || !valves.insert(name).second) continue;
+    auto own = settings.conductances.find(name);
+    out.valves.push_back({name, own == settings.conductances.end() ? settings.valve_conductance : own->second});
+  }
+
+  out.edges = topology.edges;
+  return out;
+}
+
+// The first spectrometer volume by name order, as the network will have it.
+std::optional<std::string> spectrometer_of(const SimTopology& topology) {
+  std::optional<std::string> first;
+  std::set<std::string, std::less<>> seen;
+  for (const auto& v : topology.volumes) {
+    if (v.name.empty() || !seen.insert(v.name).second) continue;  // the first of a name is the volume
+    if (v.role == SimRole::Spectrometer && (!first || v.name < *first)) first = v.name;
+  }
+  return first;
+}
+
+// The network of a line; an empty one, and why, if it is refused.
+GasNetwork build(const SimTopology& topology, const SimSettings& settings, std::optional<Error>& error) {
+  auto network = GasNetwork::make(describe(topology, settings));
+  if (network) return std::move(*network);
+  error = network.error();
+  return std::move(*GasNetwork::make({}));  // nothing in it to refuse
+}
+
+Unexpected<Error> unknown_volume(std::string_view volume) {
+  return fail(ErrorKind::Config, "unknown sim volume '" + std::string(volume) + "'");
+}
+
+}  // namespace
+
+SimSystem::SimSystem(const Clock& clock, Topology topology, Settings settings)
+    : clock_(clock),
+      settings_(std::move(settings)),
+      spectrometer_(spectrometer_of(topology)),
+      network_(build(topology, settings_, build_error_)),
+      start_(clock.now()),
+      last_(start_) {
+  for (const auto& v : topology.valves) valve_open_[v] = false;
+  beam_link_->system = this;
+}
+
+SimSystem::~SimSystem() {
+  // After this no beam_gas() function is inside this system, and none
+  // comes in again.
+  std::lock_guard held(beam_link_->mutex);
+  beam_link_->system = nullptr;
+}
+
+std::optional<Error> SimSystem::build_error() const {
+  std::lock_guard lock(mutex_);
+  return build_error_;
+}
+
+std::optional<std::string> SimSystem::spectrometer_volume() const {
+  std::lock_guard lock(mutex_);
+  return spectrometer_ && network_.has_volume(*spectrometer_) ? spectrometer_ : std::nullopt;
+}
+
+std::function<std::vector<BeamGas>(TimePoint)> SimSystem::beam_gas() {
+  if (!spectrometer_volume()) return {};
+  return [link = std::weak_ptr<BeamLink>(beam_link_)](TimePoint t) -> std::vector<BeamGas> {
+    const auto held = link.lock();
+    if (!held) return {};
+    std::lock_guard lock(held->mutex);
+    return held->system != nullptr ? held->system->beam_gas_at(t) : std::vector<BeamGas>{};
+  };
+}
+
+std::vector<BeamGas> SimSystem::beam_gas_at(TimePoint t) const {
+  std::lock_guard lock(mutex_);
+  // To the instant of the reading: not past the clock, which is as far as
+  // anything else has moved this line, and not back.
+  const TimePoint to = std::min(t, clock_.now());
+  if (to > last_) {
+    network_.advance(seconds(to - last_));
+    last_ = to;
+  }
+  const auto held = network_.partial_pressures(*spectrometer_);
+  if (!held) return {};
+  // The beam's own argon, for its masses: a peak is where it was.
+  std::vector<BeamGas> gas = default_argon_gas();
+  for (auto& g : gas) {
+    g.abundance = 0.0;
+    g.rate_per_s = 0.0;
+    for (std::size_t s = 0; s < kSpeciesCount; ++s) {
+      if (kSpeciesName[s] == g.isotope) g.abundance = (*held)[s] * settings_.source.sensitivity;
+    }
+  }
+  return gas;
+}
+
+std::vector<std::pair<std::string, std::string>> SimSystem::valves_without_physics() const {
+  std::lock_guard lock(mutex_);
+  return network_.valves_without_physics();
+}
+
+void SimSystem::add_gauge_volume_locked(const std::string& name) {
+  if (network_.has_volume(name)) return;
+  // No part of the line, so no walls of it either: it holds what it is
+  // given, and has the leak and the pumps the settings give its name.
+  // Refused (the name of a valve, a pressure that cannot be), the gauge has
+  // no volume and reads nothing, and the line says why.
+  GasVolume volume = volume_of(name, 0.0, SimRole::Gauge, false, settings_);
+  const std::vector<GasPump> pumps = pumps_of(name, SimRole::Gauge, volume.litres, settings_);
+  if (auto added = network_.add_volume(std::move(volume), pumps); !added && !build_error_) {
+    build_error_ = added.error();
+  }
+}
+
+TimePoint SimSystem::advance_locked() const {
+  const TimePoint now = clock_.now();
+  if (now > last_) {
+    network_.advance(seconds(now - last_));
+    last_ = now;
+  }
+  return now;
 }
 
 void SimSystem::set_valve(std::string_view name, bool open) {
@@ -120,7 +272,7 @@ void SimSystem::set_valve(std::string_view name, bool open) {
   } else {
     it->second = open;
   }
-  advance_locked();
+  network_.set_valve(name, open);  // a name it does not have: no physics
 }
 
 bool SimSystem::valve_open(std::string_view name) const {
@@ -131,32 +283,58 @@ bool SimSystem::valve_open(std::string_view name) const {
 
 bool SimSystem::has_volume(std::string_view name) const {
   std::lock_guard lock(mutex_);
-  return pressure_.contains(name);
+  return network_.has_volume(name);
 }
 
 Result<double> SimSystem::pressure(std::string_view volume) const {
   std::lock_guard lock(mutex_);
-  auto it = pressure_.find(volume);
-  if (it == pressure_.end()) return fail(ErrorKind::Config, "unknown sim volume '" + std::string(volume) + "'");
+  if (!network_.has_volume(volume)) return unknown_volume(volume);
   advance_locked();
-  return it->second;
+  return network_.pressure(volume);
+}
+
+Result<Composition> SimSystem::partial_pressures(std::string_view volume) const {
+  std::lock_guard lock(mutex_);
+  if (!network_.has_volume(volume)) return unknown_volume(volume);
+  advance_locked();
+  return network_.partial_pressures(volume);
 }
 
 Result<void> SimSystem::set_pressure(std::string_view volume, double value) {
   std::lock_guard lock(mutex_);
-  auto it = pressure_.find(volume);
-  if (it == pressure_.end()) return fail(ErrorKind::Config, "unknown sim volume '" + std::string(volume) + "'");
+  if (!network_.has_volume(volume)) return unknown_volume(volume);
   advance_locked();
-  it->second = value;
-  return {};
+  const auto held = network_.partial_pressures(volume);
+  if (!held) return fail(held.error());
+  const double sum = total(*held);
+  return network_.set_partial_pressures(volume, sum > 0 ? scaled(*held, value / sum) : air_at(value));
+}
+
+Result<void> SimSystem::set_composition(std::string_view volume, const Composition& mbar) {
+  std::lock_guard lock(mutex_);
+  if (!network_.has_volume(volume)) return unknown_volume(volume);
+  advance_locked();
+  return network_.set_partial_pressures(volume, mbar);
+}
+
+Result<void> SimSystem::inject(std::string_view volume, const Composition& mbar_litres) {
+  std::lock_guard lock(mutex_);
+  if (!network_.has_volume(volume)) return unknown_volume(volume);
+  advance_locked();
+  return network_.inject(volume, mbar_litres);
 }
 
 Result<double> SimSystem::gauge_reading(std::string_view volume) const {
-  auto p = pressure(volume);
-  if (!p || settings_.noise <= 0) return p;
   std::lock_guard lock(mutex_);
-  std::normal_distribution<double> gauss(0.0, settings_.noise);
-  return std::max(0.0, *p * (1.0 + gauss(rng_)));
+  if (!network_.has_volume(volume)) return unknown_volume(volume);
+  const TimePoint now = advance_locked();
+  const auto p = network_.pressure(volume);
+  // A noise that is negative or no number is no noise (sim.toml refuses one
+  // before it gets here).
+  if (!p || !(settings_.noise > 0) || !std::isfinite(settings_.noise)) return p;
+  // Keyed by the volume and by the clock's time since this system was built.
+  const auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(now - start_).count();
+  return std::max(0.0, *p * (1.0 + settings_.noise * keyed_gauss(settings_.seed, volume, tick)));
 }
 
 std::optional<ModbusDeviceSim> SimSystem::plc_device(const config::DriverConfig& driver,
@@ -223,7 +401,7 @@ std::optional<ModbusDeviceSim> SimSystem::plc_device(const config::DriverConfig&
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name) continue;
         by_register[static_cast<int>(g.channel) + offset] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     ModbusDeviceSim plc;
@@ -341,10 +519,10 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       std::lock_guard lock(mutex_);
       advance_locked();
       for (const auto& g : system.gauges) {
-        if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(parameters.size()))
+        if (g.driver != driver.name || g.channel < 1 || std::cmp_greater(g.channel, parameters.size()))
           continue;
         by_parameter[parameters[static_cast<std::size_t>(g.channel - 1)]] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     auto model = std::make_shared<spectrometer::QtegraSimModel>();
@@ -415,7 +593,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name) continue;
         by_channel[static_cast<int>(g.channel)] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     MaxiGaugeSimModel model;
@@ -455,9 +633,9 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       std::lock_guard lock(mutex_);
       advance_locked();
       for (const auto& g : system.gauges) {
-        if (g.driver != driver.name || g.channel < 1 || g.channel > static_cast<std::int64_t>(labels.size())) continue;
+        if (g.driver != driver.name || g.channel < 1 || std::cmp_greater(g.channel, labels.size())) continue;
         by_label[labels[static_cast<std::size_t>(g.channel - 1)]] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     Xgs600SimModel model;
@@ -479,7 +657,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
       for (const auto& g : system.gauges) {
         if (g.driver != driver.name) continue;
         by_channel[static_cast<int>(g.channel)] = g.name;
-        add_volume_locked(g.name, 1.0);
+        add_gauge_volume_locked(g.name);
       }
     }
     MicroIonSimModel model;

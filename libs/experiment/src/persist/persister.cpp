@@ -52,6 +52,12 @@ std::string run_name(const record::Identity& id) {
 
 }  // namespace
 
+QueueSpec rows_from(QueueSpec queue, std::size_t from_row) {
+  const std::size_t n = std::min(from_row, queue.runs.size());
+  for (std::size_t i = 0; i < n; ++i) queue.runs[i].skip = true;
+  return queue;
+}
+
 // ---- FilePersister ------------------------------------------------------------
 
 int FilePersister::highest_on_disk(const std::string& identifier) const {
@@ -126,9 +132,19 @@ Result<std::vector<std::string>> Spool::pending() const {
   std::error_code ec;
   if (!fs::is_directory(dir_, ec)) return std::vector<std::string>{};
   std::vector<std::pair<fs::file_time_type, std::string>> files;
-  for (const auto& e : fs::directory_iterator(dir_, ec)) {
-    if (e.path().extension() != ".json") continue;
-    files.emplace_back(fs::last_write_time(e.path(), ec), e.path().stem().string());
+  // `ec` is the listing's alone. Each file is looked at with a code of its
+  // own: one that has gone since it was listed (sent and removed by another
+  // call), or that is not a file, is not a pending record, and is no reason
+  // to say the spool cannot be listed.
+  fs::directory_iterator it(dir_, ec);
+  for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+    const fs::path& path = it->path();
+    if (path.extension() != ".json") continue;
+    std::error_code file_ec;
+    if (!fs::is_regular_file(path, file_ec) || file_ec) continue;
+    const auto written = fs::last_write_time(path, file_ec);
+    if (file_ec) continue;
+    files.emplace_back(written, path.stem().string());
   }
   if (ec) return io("cannot list " + dir_.string() + ": " + ec.message());
   std::sort(files.begin(), files.end());
@@ -150,19 +166,24 @@ Result<void> SavePipeline::hand_off(const std::string& uuid) {
   Result<void> r = rec ? persister_.save_analysis(*rec) : Result<void>(fail(rec.error()));
   if (r) r = spool_.remove(uuid);
   std::lock_guard lock(mutex_);
-  if (!r) last_error_ = uuid + ": " + r.error().what;
+  if (!r) {
+    last_error_ = std::make_pair(uuid, r.error().what);
+  } else if (last_error_ && last_error_->first == uuid) {
+    last_error_.reset();  // the record it spoke of has been sent
+  }
   return r;
 }
 
-Result<void> SavePipeline::save(const record::AnalysisRecord& record) {
-  if (auto r = spool_.put(record); !r) return r;
+Result<Saved> SavePipeline::save(const record::AnalysisRecord& record) {
+  if (auto r = spool_.put(record); !r) return fail(r.error());
   const std::string uuid = record.identity.uuid;
+  Saved saved;
   if (post_) {
-    post_([this, uuid] { (void)hand_off(uuid); });
-  } else {
-    (void)hand_off(uuid);  // a failure stays pending
+    post_([this, uuid] { (void)hand_off(uuid); });  // its outcome: pending() and last_error()
+  } else if (auto r = hand_off(uuid); !r) {
+    saved.pending = r.error();  // the record stays in the spool
   }
-  return {};
+  return saved;
 }
 
 Result<std::size_t> SavePipeline::flush() {
@@ -189,7 +210,8 @@ std::size_t SavePipeline::pending() const {
 
 std::optional<std::string> SavePipeline::last_error() const {
   std::lock_guard lock(mutex_);
-  return last_error_;
+  if (!last_error_) return std::nullopt;
+  return last_error_->first + ": " + last_error_->second;
 }
 
 // ---- AliquotAllocator -----------------------------------------------------------

@@ -32,6 +32,7 @@
 #include "holder_view.hpp"
 #include "level_sheet_pdf.hpp"
 #include "package_dialogs.hpp"
+#include "package_tree_delegate.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -40,8 +41,8 @@ namespace ps = persistence;
 
 namespace {
 
-constexpr int kUuidRole = Qt::UserRole;
-constexpr int kIsLevelRole = Qt::UserRole + 1;
+constexpr int kUuidRole = package_tree::UuidRole;
+constexpr int kIsLevelRole = package_tree::IsLevelRole;
 
 QString local_text(const ps::UtcTime& t) {
   const QDateTime dt = QDateTime::fromString(QString::fromStdString(t.iso()), Qt::ISODateWithMs);
@@ -54,6 +55,24 @@ std::optional<ps::UtcTime> utc_of(const QString& local) {
   dt.setTimeZone(QTimeZone::systemTimeZone());
   return ps::UtcTime::parse(dt.toUTC().toString(Qt::ISODate).toStdString());
 }
+
+// The dose table, which can say whether one of its cells is being typed in
+// (whether or not the window has the focus).
+class DoseTable : public QTableWidget {
+ public:
+  using QTableWidget::QTableWidget;
+  bool editing() const { return state() == QAbstractItemView::EditingState; }
+};
+
+// The positions grid, likewise.
+class GridTable : public QTableView {
+ public:
+  using QTableView::QTableView;
+  bool editing() const { return state() == QAbstractItemView::EditingState; }
+};
+
+// A level's z as its field shows it.
+QString z_text(const std::optional<double>& z) { return z ? QString::number(*z, 'g', 10) : QString(); }
 
 }  // namespace
 
@@ -77,11 +96,19 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
 
   auto* split = new QSplitter(Qt::Horizontal, this);
   tree_ = new QTreeWidget(split);
-  tree_->setHeaderLabels({tr("Package"), tr("Positions")});
-  tree_->setMinimumWidth(180);
+  // A sidebar list: the delegate draws the rows, their chevrons and indentation.
+  tree_->setObjectName(QStringLiteral("PackageTree"));
+  tree_->setHeaderHidden(true);
+  tree_->setIndentation(0);
+  tree_->setRootIsDecorated(false);
+  tree_->setUniformRowHeights(true);
+  tree_->setExpandsOnDoubleClick(false);
+  tree_->setItemDelegate(new PackageTreeDelegate(tree_));
+  tree_->viewport()->setAttribute(Qt::WA_Hover);
+  tree_->setMinimumWidth(200);
   auto* center = new QWidget(split);
   auto* layout = new QVBoxLayout(center);
-  table_ = new QTableView(center);
+  table_ = new GridTable(center);
   table_->setModel(grid_);
   table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -96,8 +123,8 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
   setCentralWidget(split);
 
   connect(tree_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
-    if (item->data(0, kIsLevelRole).toBool())
-      if (auto id = ps::Uuid::parse(item->data(0, kUuidRole).toString().toStdString())) open_level(*id);
+    if (!item->data(0, kIsLevelRole).toBool()) return item->setExpanded(!item->isExpanded());
+    if (auto id = ps::Uuid::parse(item->data(0, kUuidRole).toString().toStdString())) open_level(*id);
   });
   connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
     if (syncing_) return;
@@ -153,7 +180,27 @@ PackagesWindow::PackagesWindow(EntryBridge& bridge, QWidget* parent)
     if (auto r = save_pdf(path); !r) show_message(QString::fromStdString(r.error().what), true);
   });
 
-  connect(&bridge_, &EntryBridge::changed, this, [this] { reload(); });
+  bar->addSeparator();
+  fit_flux_ = bar->addAction(tr("Fit flux…"), this, [this] {
+    const auto pkg = current_package();
+    if (pkg && level_) Q_EMIT flux_requested(QString::fromStdString(pkg->name), level_name_);
+  });
+  fit_flux_->setToolTip(tr("Fit the flux of this level's monitors"));
+  fit_flux_->setEnabled(false);  // until a level is open
+
+  connect(&bridge_, &EntryBridge::changed, this, [this] {
+    reload();
+    // Someone else's change (a flux saved, a sample renamed): the level is
+    // read again only when nothing here is unsaved, in the grid, the Level
+    // tab or the dose table (reading it refills all three), and with the
+    // selection kept. After this window's own change it reads the level
+    // itself; nor while a level is being read: that read is later than the
+    // change.
+    if (notifying_ || level_jobs_ > 0 || !level_ || unsaved()) return;
+    const auto positions = selected_positions();
+    reselect_ = std::set<int>(positions.begin(), positions.end());
+    open_level(*level_);
+  });
   resize(1400, 800);
   reload();
 }
@@ -195,7 +242,9 @@ void PackagesWindow::build_docks() {
   holder_ = new QComboBox(level);
   production_ = new QComboBox(level);
   z_ = new QLineEdit(level);
+  z_->setObjectName(QStringLiteral("packages_z"));
   level_note_ = new QLineEdit(level);
+  level_note_->setObjectName(QStringLiteral("packages_level_note"));
   form->addRow(tr("Package kind"), kind_);
   form->addRow(tr("Holder"), holder_);
   form->addRow(tr("z"), z_);
@@ -232,7 +281,7 @@ void PackagesWindow::build_docks() {
     if (!pkg) return;
     ProductionDialog dialog(bridge_, *pkg, productions_, production_->currentData().toString(), this);
     if (dialog.exec() == QDialog::Accepted) {
-      bridge_.notify_changed();
+      notify_changed();
       if (level_) open_level(*level_);
     }
   });
@@ -240,7 +289,8 @@ void PackagesWindow::build_docks() {
   // Chronology.
   chronology_page_ = new QWidget(this);
   auto* cl = new QVBoxLayout(chronology_page_);
-  doses_ = new QTableWidget(0, 3, chronology_page_);
+  doses_ = new DoseTable(0, 3, chronology_page_);
+  doses_->setObjectName(QStringLiteral("packages_doses"));
   doses_->setHorizontalHeaderLabels({tr("Power"), tr("Start (local)"), tr("End (local)")});
   doses_->horizontalHeader()->setStretchLastSection(true);
   hours_ = new QLabel(chronology_page_);
@@ -288,17 +338,22 @@ void PackagesWindow::build_docks() {
     if (auto problems = entry::validate(check, {}); !problems.empty())
       return show_message(QString::fromStdString(problems.front()), true);
     ++busy_;
-    bridge_.run<bool>(
+    bridge_.run<entry::PackageChronology>(
         this,
-        [pkg = *pkg, doses, loaded = chronology_](ps::IStore& s, const ps::Actor& a) -> Result<bool> {
+        [pkg = *pkg, doses, loaded = chronology_](ps::IStore& s, const ps::Actor& a) -> Result<entry::PackageChronology> {
           if (auto r = entry::save_chronology(s, a, pkg, doses, loaded); !r) return fail(r.error());
-          return true;
+          // What the table is compared with from now on, and the head the next save starts from.
+          return entry::package_chronology(s, pkg.uuid, pkg.name);
         },
-        [this](Result<bool> r) {
+        [this, package = pkg->uuid](Result<entry::PackageChronology> r) {
           --busy_;
           if (!r) return show_message(QString::fromStdString(r.error().what), true);
+          if (package_ && *package_ == package) {  // still the package on show
+            chronology_ = std::move(*r);
+            fill_chronology();
+          }
           show_message(tr("Chronology saved"));
-          bridge_.notify_changed();
+          notify_changed();
         });
   });
 
@@ -341,8 +396,45 @@ std::optional<ps::HolderValue> PackagesWindow::holder_value(std::optional<ps::Uu
   return it->second;
 }
 
+void PackagesWindow::notify_changed() {
+  notifying_ = true;
+  bridge_.notify_changed();
+  notifying_ = false;
+}
+
+void PackagesWindow::show_level(const QString& irradiation, const QString& level) {
+  wanted_ = std::make_pair(irradiation, level);
+  if (tree_jobs_ > 0) return;  // looked for in the tree being read
+  if (!show_wanted()) show_message(tr("There is no level %1 %2").arg(irradiation, level), true);
+  wanted_.reset();
+}
+
+bool PackagesWindow::show_wanted() {
+  if (!wanted_) return true;
+  for (const auto& p : packages_) {
+    if (QString::fromStdString(p.name) != wanted_->first) continue;
+    const QString package = QString::fromStdString(p.uuid.str());
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+      auto* top = tree_->topLevelItem(i);
+      if (top->data(0, kUuidRole).toString() != package) continue;
+      for (int c = 0; c < top->childCount(); ++c) {
+        auto* child = top->child(c);
+        if (child->text(0) != wanted_->second) continue;
+        const auto id = ps::Uuid::parse(child->data(0, kUuidRole).toString().toStdString());
+        if (!id) return false;
+        top->setExpanded(true);
+        tree_->setCurrentItem(child);
+        if (!level_ || *level_ != *id) open_level(*id);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void PackagesWindow::reload() {
   ++busy_;
+  ++tree_jobs_;
   bridge_.run<std::pair<std::vector<ps::IrradiationRow>, std::map<ps::Uuid, std::vector<ps::LevelRow>>>>(
       this,
       [](ps::IStore& s, const ps::Actor&)
@@ -359,30 +451,53 @@ void PackagesWindow::reload() {
       },
       [this](auto r) {
         --busy_;
-        if (!r) return show_message(QString::fromStdString(to_string(r.error())), true);
+        --tree_jobs_;
+        if (!r) {
+          if (tree_jobs_ == 0) wanted_.reset();
+          return show_message(QString::fromStdString(to_string(r.error())), true);
+        }
         packages_ = std::move(r->first);
+        // The packages that were open stay open.
+        std::set<QString> expanded;
+        for (int i = 0; i < tree_->topLevelItemCount(); ++i)
+          if (const auto* item = tree_->topLevelItem(i); item->isExpanded())
+            expanded.insert(item->data(0, kUuidRole).toString());
         tree_->clear();
         QTreeWidgetItem* current = nullptr;
         for (const auto& p : packages_) {
           auto* item = new QTreeWidgetItem(tree_);
-          item->setText(0, p.kind == "package" ? QStringLiteral("%1 (package)").arg(QString::fromStdString(p.name))
-                                               : QString::fromStdString(p.name));
-          item->setText(1, QString::number(p.n_positions));
+          const bool irradiation = p.kind == "irradiation";
+          const bool no_chronology = irradiation && !p.has_chronology;
+          item->setText(0, QString::fromStdString(p.name));
           item->setData(0, kUuidRole, QString::fromStdString(p.uuid.str()));
           item->setData(0, kIsLevelRole, false);
+          if (p.n_positions > 0)
+            item->setData(0, package_tree::DetailRole, QStringLiteral("%1/%2").arg(p.n_analyzed).arg(p.n_positions));
+          if (!irradiation) item->setData(0, package_tree::TagRole, QString::fromStdString(p.kind));
+          item->setData(0, package_tree::WarningRole, no_chronology);
+          QString tip = tr("%1 of %2 positions analyzed").arg(p.n_analyzed).arg(p.n_positions);
+          if (no_chronology) tip += QLatin1Char('\n') + tr("No chronology");
+          item->setToolTip(0, tip);
           for (const auto& l : r->second[p.uuid]) {
             auto* child = new QTreeWidgetItem(item);
             child->setText(0, QString::fromStdString(l.name));
             child->setData(0, kUuidRole, QString::fromStdString(l.uuid.str()));
             child->setData(0, kIsLevelRole, true);
+            if (l.holder_name) child->setData(0, package_tree::DetailRole, QString::fromStdString(*l.holder_name));
+            if (l.note) child->setToolTip(0, QString::fromStdString(*l.note));
             if (level_ && l.uuid == *level_) current = child;
           }
+          if (expanded.contains(item->data(0, kUuidRole).toString())) item->setExpanded(true);
         }
         if (current) {
           tree_->setCurrentItem(current);
           current->parent()->setExpanded(true);
         }
         show_message(tr("%1 packages").arg(packages_.size()));
+        if (tree_jobs_ > 0 || !wanted_) return;  // a newer tree is on its way
+        const auto wanted = *wanted_;
+        if (!show_wanted()) show_message(tr("There is no level %1 %2").arg(wanted.first, wanted.second), true);
+        wanted_.reset();
       });
 }
 
@@ -396,6 +511,7 @@ bool PackagesWindow::settle_edits() {
 void PackagesWindow::open_level(ps::Uuid level) {
   if (!settle_edits()) return;
   ++busy_;
+  ++level_jobs_;
   bridge_.run<LevelData>(
       this,
       [level](ps::IStore& s, const ps::Actor&) -> Result<LevelData> {
@@ -432,14 +548,19 @@ void PackagesWindow::open_level(ps::Uuid level) {
       },
       [this](Result<LevelData> r) {
         --busy_;
+        --level_jobs_;
+        const auto reselect = std::exchange(reselect_, std::nullopt);  // of the read a change elsewhere started
         if (!r) return show_message(QString::fromStdString(to_string(r.error())), true);
         apply_level(std::move(*r));
+        if (reselect) select_positions(*reselect);
       });
 }
 
 void PackagesWindow::apply_level(LevelData d) {
   package_ = d.package.uuid;
   level_ = d.sheet->level.uuid;
+  level_name_ = QString::fromStdString(d.sheet->level.name);
+  fit_flux_->setEnabled(true);
   for (auto& p : packages_)
     if (p.uuid == d.package.uuid) p = d.package;
   holders_ = std::move(d.holders);
@@ -478,11 +599,59 @@ void PackagesWindow::fill_level_dock() {
   };
   holder_->setCurrentIndex(index_of(holder_, e.holder()));
   production_->setCurrentIndex(index_of(production_, e.production()));
-  z_->setText(e.z() ? QString::number(*e.z(), 'g', 10) : QString());
+  z_->setText(z_text(e.z()));
   level_note_->setText(e.level_note() ? QString::fromStdString(*e.level_note()) : QString());
   const bool irradiation = !pkg || pkg->kind == "irradiation";
   production_->setEnabled(irradiation);
   chronology_page_->setEnabled(irradiation);
+}
+
+QStringList PackagesWindow::dose_texts(const ps::Dose& d) {
+  return {QString::number(d.power), local_text(d.start), local_text(d.end)};
+}
+
+bool PackagesWindow::chronology_edited() const {
+  // A cell being typed in is an edit too.
+  if (static_cast<const DoseTable*>(doses_)->editing()) return true;
+  const auto& doses = chronology_.value.doses;
+  if (doses_->rowCount() != static_cast<int>(doses.size())) return true;
+  // By value, as far as the table shows one (a time to the minute): "1.0" is
+  // the power the store gives back as "1". A cell that is no value is an edit.
+  const auto cell = [this](int row, int column) {
+    const auto* item = doses_->item(row, column);
+    return item ? item->text().trimmed() : QString();
+  };
+  for (int row = 0; row < doses_->rowCount(); ++row) {
+    const ps::Dose& stored = doses[static_cast<std::size_t>(row)];
+    bool ok = false;
+    if (cell(row, 0).toDouble(&ok) != stored.power || !ok) return true;
+    const auto start = utc_of(cell(row, 1)), end = utc_of(cell(row, 2));
+    if (!start || !end) return true;
+    if (local_text(*start) != local_text(stored.start) || local_text(*end) != local_text(stored.end)) return true;
+  }
+  return false;
+}
+
+bool PackagesWindow::level_fields_edited() const {
+  if (!grid_->has_edit()) return false;
+  const auto& e = grid_->edit();
+  // The holder and the production go to the grid's edit when picked; z and
+  // the note only when their field is left.
+  // A field showing what the edit's z renders to is untouched, whatever the
+  // digits beyond those shown; otherwise it is an edit unless it is the same
+  // number written another way.
+  if (const QString z = z_->text().trimmed(); z != z_text(e.z())) {
+    bool ok = false;
+    const double value = z.toDouble(&ok);
+    if (z.isEmpty() || !ok || !e.z() || value != *e.z()) return true;
+  }
+  return level_note_->text().trimmed() != (e.level_note() ? QString::fromStdString(*e.level_note()) : QString());
+}
+
+bool PackagesWindow::unsaved() const {
+  // A grid cell being typed in is an edit too, as a dose cell is.
+  return !grid_->has_edit() || grid_->edit().dirty() || static_cast<const GridTable*>(table_)->editing() ||
+         level_fields_edited() || chronology_edited();
 }
 
 void PackagesWindow::fill_chronology() {
@@ -490,9 +659,8 @@ void PackagesWindow::fill_chronology() {
   for (const auto& d : chronology_.value.doses) {
     const int at = doses_->rowCount();
     doses_->insertRow(at);
-    doses_->setItem(at, 0, new QTableWidgetItem(QString::number(d.power)));
-    doses_->setItem(at, 1, new QTableWidgetItem(local_text(d.start)));
-    doses_->setItem(at, 2, new QTableWidgetItem(local_text(d.end)));
+    const QStringList texts = dose_texts(d);
+    for (int column = 0; column < 3; ++column) doses_->setItem(at, column, new QTableWidgetItem(texts.at(column)));
   }
   const double hours = entry::dose_hours(chronology_.value.doses);
   hours_->setText(tr("%1 h, estimated J %2")
@@ -613,7 +781,7 @@ void PackagesWindow::save() {
         if (std::holds_alternative<ps::CatalogApplied>(*r)) {
           show_message(tr("Saved"));
           grid_->set_edit(std::nullopt);
-          bridge_.notify_changed();
+          notify_changed();
           if (level_) open_level(*level_);
           return;
         }
@@ -672,7 +840,7 @@ Result<int> PackagesWindow::save_pdf(const QString& path) {
     if (!levels) return fail(levels.error());
     out.levels = std::move(*levels);
     for (const auto& l : out.levels)
-      if (l.level.holder && !out.holders.count(*l.level.holder)) {
+      if (l.level.holder && !out.holders.contains(*l.level.holder)) {
         auto h = entry::load_holder(s, *l.level.holder);
         if (!h) return fail(h.error());
         if (*h) out.holders.emplace(*l.level.holder, **h);
@@ -712,7 +880,7 @@ void PackagesWindow::set_kind(const QString& kind) {
         for (auto& p : packages_)
           if (package_ && p.uuid == *package_) p.kind = kind.toStdString();
         fill_level_dock();
-        bridge_.notify_changed();
+        notify_changed();
       });
 }
 
@@ -723,7 +891,7 @@ void PackagesWindow::open_identifiers() {
   auto* dialog = new IdentifierDialog(bridge_, *pkg, this);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &IdentifierDialog::allocated, this, [this] {
-    bridge_.notify_changed();
+    notify_changed();
     if (level_) open_level(*level_);
   });
   dialog->show();
@@ -732,7 +900,7 @@ void PackagesWindow::open_identifiers() {
 void PackagesWindow::new_package() {
   NewPackageDialog dialog(bridge_, this);
   if (dialog.exec() == QDialog::Accepted) {
-    bridge_.notify_changed();
+    notify_changed();
     if (dialog.first_level()) open_level(*dialog.first_level());
   }
 }
@@ -756,7 +924,7 @@ void PackagesWindow::new_level() {
   }
   NewLevelDialog dialog(bridge_, *pkg, defaults, production, holders_, productions_, this);
   if (dialog.exec() == QDialog::Accepted) {
-    bridge_.notify_changed();
+    notify_changed();
     if (dialog.level()) open_level(*dialog.level());
   }
 }
