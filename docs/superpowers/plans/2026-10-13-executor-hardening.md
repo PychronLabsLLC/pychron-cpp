@@ -228,8 +228,8 @@ struct Provenance { /* ... */ RecordStatus status = RecordStatus::Complete; std:
   - `AnalysisRecord.ARecordWrittenBeforeStatusStillReadsWithItsSha`: `tests/data/records/v2.json` and `v2.toml` read, `verify_sha` holds, `status == Complete`.
   - `AnalysisRecord.StatusRoundTrips` and `...AnUnknownStatusIsRejected` (`Config`).
   - `kRecordSchemaVersion` stays 2; `SchemaVersionBumpIsRejected` untouched.
-- [ ] `libs/experiment/AGENTS.md:24-26`: a field added to `AnalysisRecord` needs a row in `test_record_ingest.cpp` or a line in the not-stored list. Decide here: `RecordIngest` refuses a `failed` record unless asked (spec: "importers and reduction skip `failed` unless asked") and stores `truncated` as it stores any run today. Test both; `AnOrdinaryRunConvertsAsItAlwaysDid` unchanged.
-- [ ] `libs/processing/adapters/records/src/record_source.cpp` (`:294`): a `failed` record is listed in `problems_` as skipped, with its `failure` text. Test in `tests/processing/test_record_source.cpp`.
+- [ ] `libs/experiment/AGENTS.md:24-26`: a field added to `AnalysisRecord` needs a row in `test_record_ingest.cpp` or a line in the not-stored list. Owner, 2026-10-13: `RecordIngest` stores a `failed` record like any other and gives it the tag `invalid` (its tags revision), with the `failure` text as the tag's note where the tag has one; so the browser and every figure leave it out by default, as they do any invalid analysis, and the recall window can still open it. `truncated` is stored as any run is today, tag `ok`. Test both; `AnOrdinaryRunConvertsAsItAlwaysDid` unchanged.
+- [ ] `libs/processing/adapters/records/src/record_source.cpp` (`:294`): a `failed` record is read as an analysis whose tag is `invalid`, the same as the store gives it. Test in `tests/processing/test_record_source.cpp`.
 - [ ] Add the key to `libs/experiment/AGENTS.md` beside the `simulated` rule (`:64-69`).
 - [ ] Commit: `feat(experiment): a record says whether its run was complete, truncated or failed`.
 
@@ -452,10 +452,8 @@ Read `libs/metrics/AGENTS.md` first: a label is a configured name, a counter is 
 - Store-backed aliquot allocation offline: a constraint recorded in Task 19, built with the database persister.
 - Keepalive on Windows and Linux is compiled only by CI: the first pull request into `main` after Task 3 is its test.
 
-## Open for the owner
+## Decided by the owner, 2026-10-13
 
-None blocks the plan. Two choices made here that the owner may want otherwise:
-
-1. A run truncated by the operator or by a conditional is also written `status = truncated` from Task 10 on (`Run.ATruncatedRunIsMarkedTruncated` is that case; truncation for a link is Task 13's). So the record of such a run, made with no fault, gains a key and a new sha; only a complete record keeps its bytes (spec section 5, as reworded). The other way is to write the key for `failed` and for link truncation only. Records truncated before Task 10 carry no key and read as `complete`.
-3. The per-transport table is `recovery`, not `link` as the spec had it: `link` is taken (Task 7).
-2. `RecordIngest` refuses a `failed` record unless asked, so the store never holds one by default (Task 9). The record stays in the data directory either way.
+1. The per-transport table is `recovery` (Task 7): `link` is taken.
+2. Every truncated run is written `status = truncated`, whoever cut it short: the operator, a conditional or a link (Tasks 10 and 13). The record of such a run gains a key, and so a sha other than it would have had; a complete record keeps its bytes. Records truncated before Task 10 carry no key and read as `complete`.
+3. A `failed` record is ingested and tagged `invalid` (Task 9).

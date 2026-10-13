@@ -177,8 +177,10 @@ window); plan lists functions.
 `Failed` run that passed point of no return calls `save()`: record with
 whatever exists (extraction actuals, series, notes, gaps), through spool, as
 `b.draft()` path already allows. Record carries `status`: `complete`,
-`truncated`, `failed`, and `failure` text. Importers and reduction skip
-`failed` unless asked. Additive keys in `record/types.hpp` and
+`truncated`, `failed`, and `failure` text. `truncated` whoever cut the run
+short (operator, conditional, link). A `failed` record is ingested and
+tagged `invalid`: left out of browser and figures by default as any invalid
+analysis, still open to recall (owner, 2026-10-13). Additive keys in `record/types.hpp` and
 `serialize.cpp` (`provenance.status`, `provenance.failure`), schema version
 stays 2 (section 9): `status` is written only when it is not `complete`,
 `failure` only when not empty, so a complete record keeps its bytes and its
