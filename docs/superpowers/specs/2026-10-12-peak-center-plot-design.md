@@ -134,7 +134,11 @@ and swaps the kind plot, focus box and intercepts table for the view.
 - Tab selected when a try starts (decision 2).
 - Existing text list stays under graph; click on a row shows that peak
   center again. Results kept for this: newest 20, in memory.
-- Queue start clears view, as `EvolutionsView::clear`.
+- Queue start clears view and its kept results (`queueStarted`).
+  `EvolutionsView::clear` is per run and does not: a run starting returns
+  the dock to Signal and leaves the last graph in its tab (plan, question 2).
+- Job cancelled or failed in hardware: no `PeakCenterDone`. Points stay,
+  title says not finished, nothing kept.
 - Drawing: `QCustomPlot` directly, as `EvolutionsView` (decision 1). No
   `processing::Scene`. View is fed plain data and tested without a session.
 
@@ -145,7 +149,9 @@ config in the lab's `peak_center.toml`, which the runner already reads and
 fits. Shipped `configs/examples/peak_center.toml` gains
 `additional_detectors` naming the example spectrometer's other detectors
 that carry a peak at the reference position, so the example shows the
-scaling; user guide says how to choose them.
+scaling; user guide says how to choose them. Found when planning: shipped
+simulator puts no other detector's peak inside the example's sweep window.
+Example left without the key until owner chooses (plan, question 1).
 
 ## 5. Rules
 

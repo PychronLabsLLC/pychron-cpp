@@ -21,7 +21,10 @@ Read from `develop` `4098d1e5`.
 - `EvolutionsView`'s tab bar is one tab per series kind, mapped by index (`evolutions_view.cpp:31`, `:52-56`, `:95-97`, `:217`). A fourth tab needs that mapping guarded; the spec's "a tab beside the kind tabs" stands, and 4.4 now says how.
 - A peak center skipped for low signal (`engine.cpp:259-275`) publishes nothing: the view does not change, and the log line is all there is. Unchanged here.
 - `tests/ui/CMakeLists.txt:8` globs `test_*.cpp`: a new test file is a new ctest `ui.<name>` with no CMake edit. `apps/pychron-ui/CMakeLists.txt` lists sources and headers by hand (`:12` onward).
-- The UI fixture's spectrometer (`configs/examples/spectrometer.sim-integrated.toml`): reference `H1`; detectors `H2`, `H1`, `AX`, `L1`, `L2`, `CDD`.
+- The UI fixture's spectrometer (`configs/examples/spectrometer.sim-integrated.toml`): reference `H1`; detectors `H2`, `H1`, `AX`, `L1`, `L2`, `CDD`. In the simulator none of the others has a peak inside the example's sweep window when `Ar40` is centred on `H1` (window 4.941 to 5.061; `Ar40` falls at 5.123 on `H2` and 4.874 on `AX`, further off on the rest; `H2` sees `Ar39` at 4.995, which air does not hold). Task 6 and the first question at the end are about that.
+- `EvolutionsView::clear()` runs at every run start (`on_run_started`, `evolutions_view.cpp:115-118`), not at queue start, and the peak center list is per run (`test_experiment_window.cpp:265` expects one line after three runs). The graph's kept results are cleared at queue start, as the spec says (4.4), through `ExperimentBridge::queueStarted`.
+- When the job is cancelled or its hardware fails, `Runner::run` returns before `PeakCenterDone` (`peak_center.cpp:284`, `:292`): the view is left with a try and no outcome.
+- An additional detector whose fit fails is kept as `DetectorPeak{d, nullopt, error}` (`conclude()`, `peak_center.cpp:390-393`) and does not fail the peak center.
 
 ## Global Constraints
 
@@ -98,7 +101,7 @@ TEST_F(PeakCenterRun, PublishesEachTryAndEachPointInOrder) {
 }
 ```
 
-  Also `TryStartedNamesTheAdditionalDetectors` (config with `additional_detectors`; the event lists them in config order), `WithoutABusNothingIsPublished` (subscribe to all three on `rig_.bus`, leave `options.bus` null: nothing arrives and the result equals a run with the bus), and `TheJobsOwnProgressIsUnchanged` (`progress_.last()` after the run, and the count of updates through a sink, equal with and without the bus). Match the fixture's own way of reading `run()`'s result; the excerpt above assumes a `Result<PeakCenterResult>`.
+  Also `TryStartedNamesTheAdditionalDetectors` (config with `additional_detectors`; the event lists them in config order), `WithoutABusNothingIsPublished` (subscribe to all three on `rig_.bus`, leave `options.bus` null: nothing arrives), `TheJobsOwnProgressIsUnchanged` and `AnAdditionalDetectorWithoutAPeakDoesNotFailThePeakCenter` (pins `conclude()`: `ok`, with that detector's `DetectorPeak::error` set). The two that compare a run with the bus against one without set `cfg.update_table = false` (the first run would otherwise move the field table under the second) and compare fields, since `PeakCenterResult` has no `operator==`. The fixture's `run()` always passes its own sinkless `progress_`: the progress case calls `run_peak_center` itself with a `Progress` whose sink counts, and compares the count and the last update.
 
 - [ ] **Step 2:** `cmake --build --preset dev --target pychron_systems_tests && build/dev/tests/systems/pychron_systems_tests --gtest_filter='PeakCenterRun.*'`: the new cases do not compile (no such types).
 
@@ -133,7 +136,7 @@ auto points = runner.run(spec_, sweep, stepped, cancel_);
 - [ ] **Step 1: failing tests** (QtTest, `QTEST_APPLESS_MAIN`):
   - `mapsTheOthersRangeOntoTheReferences`: reference `{10, 110, 60}`, other `{1, 3, 2}` gives `{10, 110, 60}`.
   - `handNumbers`: reference `{2, 12}`, other `{100, 150, 200}` gives `{2, 7, 12}`.
-  - `theScaledMaximumIsTheReferencesMaximum` and the same for the minimum, on uneven data.
+  - `theScaledMaximumIsTheReferencesMaximum` and the same for the minimum, on uneven data (`qFuzzyCompare`: the arithmetic is not exact).
   - `aFlatOtherIsNotScaled`, `aFlatReferenceIsNotScaled`, `anEmptyInputIsNotScaled`: `std::nullopt`.
   - `theInputsMayDifferInLength`: an additional detector with a missing step has fewer values; the ranges are taken over what each has.
 - [ ] **Step 2: implement** the signature of spec 4.3, legacy's formula:
@@ -171,7 +174,8 @@ class PeakCenterView : public QWidget {
   void on_point(const jobs::PeakCenterPoint& e);
   void on_done(const jobs::PeakCenterDone& e);   // keeps the result; draws it whole
   void show_result(int index);                    // 0 = oldest kept
-  void clear();                                   // queue start
+  void clear();                                   // queue start: graph and kept results
+  void abandon();                                 // a run started with a try still open
 
   [[nodiscard]] int kept() const;                 // at most 20
   [[nodiscard]] QString title() const;
@@ -186,6 +190,8 @@ class PeakCenterView : public QWidget {
   };
   [[nodiscard]] std::vector<Series> series() const;
   [[nodiscard]] QVector<double> marker_x() const;  // low, centre, high, maximum; empty when none
+  [[nodiscard]] QVector<double> marker_y() const;
+  [[nodiscard]] QString tooltip_at(int series, int point) const;  // detector, x, raw intensity
   [[nodiscard]] QVector<double> rule_x() const;    // initial centre, fitted centre, centre without offset
 
  signals:
@@ -213,6 +219,11 @@ class PeakCenterView : public QWidget {
   - `showResultRestoresAnEarlierOne`, and `aNewTryAfterShowingAnOldResultShowsTheNewOne`.
   - `clearEmptiesTheGraphAndTheKeptResults`.
   - `tryStartedIsEmittedOnce` per `on_try_started` (`QSignalSpy`).
+  - `theTooltipGivesTheRawIntensity`: for a scaled series, `tooltip_at` has the raw value, not the scaled one.
+  - `theInitialCentreIsRuledFromTheTrysStart`: after `on_try_started` and before any point, `rule_x()` is `{initial_center}`.
+  - `theReferenceIsHeavierAndInTheLegend`: its graph's pen is wider than an additional detector's; the legend has `*H1` and each additional detector, and no faint try.
+  - `markersSitOnTheReferencesValues`: `marker_y()` is the `PeakShape`'s low, centre, high and maximum y.
+  - `aTryLeftWithoutAnOutcomeSaysSo`: `on_try_started`, two points, then `abandon()`: the points stay, the title is `Ar40 on H1, try 1 of 2: not finished`, nothing is added to the kept results.
 - [ ] **Step 2: implement.** Plot set up as `EvolutionsView`'s is (`evolutions_view.cpp:47`, `:80-85`: minimum height 200, `theme().plot_bg`, `phFastPolylines`), with the legend on, upper left. Axis labels: x the magnet value in native units (take the wording the spectrometer window uses for the same quantity), y `Intensity`. Reference pen width 2.5, additional 1.5, faint 1.0 with alpha 70. Markers are a graph with no line and a scatter style (low, centre and high one colour, maximum another), their y the reference's value from `PeakShape`. Rules are `QCPItemStraightLine` or `QCPItemLine` across the axis rect: clear them with `plot_->clearItems()` in `redraw()`. A detector with no colour given takes `StripChartModel::palette_color(index)`, as `EvolutionsView` does. Tooltip: nearest point of the current try under the cursor, giving detector, x and raw intensity; if `EvolutionsView` has no tooltip to follow, a `QCPItemText` or `QToolTip` from `mouseMove` is enough, and its text comes from a function the test can call (`tooltip_at(series, index)`).
 - [ ] **Step 3:** build `pychron_ui_test_peak_center_view`; `ctest --preset dev-ui -R '^ui\.test_peak_center_view$'`; `python3 tools/quality_check.py`.
 - [ ] **Step 4:** commit `feat(ui): a view of a peak center's sweep, scaled, marked and titled`.
@@ -227,30 +238,32 @@ class PeakCenterView : public QWidget {
   - `aTryStartingSelectsTheTab` (decision 2), and `aSeriesArrivingDoesNotLeaveIt` (the spec keeps "no jump back to Signal"): `on_series` while on the peak center tab leaves the tab where it is, and the kind tabs still draw when selected.
   - `aPeakCenterStillAddsItsLine`: `peak_centers()` as before.
   - `clickingALineShowsThatPeakCenter`: two `on_peak_center`; clicking the first row selects the tab and the view's title is the first's.
-  - `clearClearsTheGraphToo`.
+  - `aRunStartingKeepsTheGraphAndItsKeptResults` (the list empties per run, as today; the graph of the last peak center stays until the next one starts) and `aRunStartingAbandonsAnOpenTry`.
+  - `aRunStartingReturnsToTheSignalTab`: see the second question at the end; built this way unless the owner says otherwise.
   - `theListOutlivesTheTwentyKept`: after 22, the two oldest rows are still in the list and clicking one changes nothing (and does not crash).
-- [ ] **Step 2: implement.** A `QStackedWidget` where `plot_` is in the layout, holding the kind page (title, plot, intercepts) and the `PeakCenterView`. `tabs_->addTab(tr("Peak center"))` after the kind loop (`:52-56`). The handler at `:95-97` already guards with `std::cmp_less(i, std::size(kKinds))`: add the other branch (show the view, hide `focus_box_`). The sync at `:217` (tab follows kind) must not pull the bar off the peak center tab: do it only when the current index is a kind's. New public members: `on_peak_center_try(const jobs::PeakCenterTryStarted&)`, `on_peak_center_point(const jobs::PeakCenterPoint&)`, `PeakCenterView* peak_center_view() const`; `on_peak_center` also calls the view's `on_done`; `clear()` (`:106-113`) the view's `clear()`. Each list item carries its index among the kept results in `Qt::UserRole` (decremented as old ones fall out, or held as a running count: the test of 22 decides). The colours map goes to the view's constructor.
-- [ ] **Step 3: wiring** in `experiment_window.cpp` after `:164`: `peakCenterTryStarted` and `peakCenterPoint` to the two new slots.
+- [ ] **Step 2: implement.** A `QStackedWidget` where `plot_` is in the layout, holding the kind page (title, plot, the "Intercepts" label and its table) and the `PeakCenterView`. The tab handler shows the right page and the focus box before it calls `set_kind`, which returns early when the kind has not changed (`evolutions_view.cpp:213`). Tests read the tab bar with `findChild<QTabBar*>()`. `tabs_->addTab(tr("Peak center"))` after the kind loop (`:52-56`). The handler at `:95-97` already guards with `std::cmp_less(i, std::size(kKinds))`: add the other branch (show the view, hide `focus_box_`). The sync at `:217` (tab follows kind) must not pull the bar off the peak center tab: do it only when the current index is a kind's. New public members: `on_peak_center_try(const jobs::PeakCenterTryStarted&)`, `on_peak_center_point(const jobs::PeakCenterPoint&)`, `PeakCenterView* peak_center_view() const`; `on_peak_center` also calls the view's `on_done`; `on_run_started` calls the view's `abandon()` and selects the Signal tab; `clear()` (`:106-113`) does not touch the view. New `clear_peak_centers()` calls the view's `clear()`. Each list item carries its index among the kept results in `Qt::UserRole` (decremented as old ones fall out, or held as a running count: the test of 22 decides). The colours map goes to the view's constructor.
+- [ ] **Step 3: wiring** in `experiment_window.cpp` after `:164`: `peakCenterTryStarted` and `peakCenterPoint` to the two new slots, and `ExperimentBridge::queueStarted` to `clear_peak_centers()` (test: a second queue in the same window starts with `kept() == 0`).
 - [ ] **Step 4: failing test, then green,** in `test_experiment_window.cpp`'s `runsTheExampleQueue` (`:177`), beside the checks at `:235-266`: after the queue, `evo->peak_center_view()->series()` is not empty, its first name is `*H1`, its `marker_x()` has four values, and the tab bar has a `Peak center` tab. The shipped plan already runs a peak center after the run (`configs/examples/plans/sim_multicollect.toml:25-31`).
 - [ ] **Step 5:** `ctest --preset dev-ui -R '^ui\.test_(evolutions_view|experiment_window)$'`; `python3 tools/quality_check.py`.
 - [ ] **Step 6:** commit `feat(ui): the Evolutions dock has a Peak center tab that opens when one starts`.
 
-### Task 6: The example names its additional detectors
+### Task 6: The example names its additional detectors (waits for the owner)
 
-**Files:** `configs/examples/peak_center.toml`, `tests/ui/test_experiment_window.cpp`, `tests/integration` or `tests/experiment` if a test there reads the example's result, `docs/user/03-spectrometer.md`
+**Files:** `configs/examples/peak_center.toml`, `tests/ui/test_experiment_window.cpp`, `docs/user/03-spectrometer.md`
 
-- [ ] **Step 1:** find which of the example's other detectors carry a peak when `Ar40` is on `H1` in the simulator (`spectrometer.sim-integrated.toml`: `AX` is on `Ar39`; read the sim's beam model for `L1`, `L2`, `CDD` and `H2`), and what the runner does with an additional detector whose fit fails (`DetectorPeak::error`, `peak_center.cpp:306`): it must not fail the peak center. Name only detectors that carry a peak.
-- [ ] **Step 2: failing test:** in `runsTheExampleQueue`, the view has one series per detector named, each with as many points as the reference and a maximum equal to the reference's maximum.
-- [ ] **Step 3:** add `additional_detectors = [...]` to `[default]` with a comment saying what it does to the graph and that the fit of the reference does not depend on it. `profiles/instrument-common/peak_center.toml` is not changed: a new lab chooses its own (and `tests/setup/test_profiles.cpp:127`, `:276` stay as they are).
-- [ ] **Step 4:** every suite that reads the example lab still passes: `ctest --preset dev-ui` in full here, since `configs/examples` is read by `tests/experiment`, `tests/integration`, `tests/setup` and `tests/ui`. If a peak center's duration or a record changes because more detectors are fitted, that is a finding to report, not to absorb: check `InstallE2E` and the record fixtures.
-- [ ] **Step 5:** `docs/user/03-spectrometer.md`, "Peak centring" (`:294`): the `additional_detectors` key and how to choose (detectors that sit on a peak at the reference position).
-- [ ] **Step 6:** commit `feat(setup): the example peak center sweeps its other detectors too`.
+Spec 4.5 wants the example to name "the example spectrometer's other detectors that carry a peak at the reference position". In the shipped simulator none does (see "What the code says"). A detector named anyway would read baseline and noise, and the scaling would stretch that noise over the reference's whole range: a peak drawn where there is none. So this task is not built until the first question at the end is answered. Tasks 1 to 5 and 7 do not depend on it: the view and its scaling are tested with data fed by hand, and the example shows the reference alone.
+
+Whatever the answer:
+
+- [ ] `docs/user/03-spectrometer.md`, "Peak centring" (`:294`): the `additional_detectors` key, how to choose (detectors that sit on a peak when the reference is centred), and that a detector with no peak there is drawn as its noise scaled up.
+- [ ] `profiles/instrument-common/peak_center.toml` is not changed: a new lab chooses its own (`tests/setup/test_profiles.cpp:127`, `:276` stay as they are).
+- [ ] If the example changes: `ctest --preset dev-ui` in full, since `configs/examples` is read by `tests/experiment`, `tests/integration`, `tests/setup` and `tests/ui`; a record or a duration that changes because more detectors are fitted is reported, not absorbed.
 
 ### Task 7: The user guide, and the branch as a whole
 
 **Files:** `docs/user/04-experiments.md` (`:215`, the Evolutions row; `:699`, step 5 of "What a run does"), `docs/user/03-spectrometer.md`, the spec's status line
 
-- [ ] The Evolutions row and a short paragraph: what the Peak center tab draws (the reference heavy and starred, the others scaled onto it so that their shapes can be compared, not their sizes; the markers; the rules; earlier tries faint), that it opens by itself when a peak center starts, that a line of the list brings an earlier one back, and that the last 20 are kept until the next queue starts. A peak center skipped for low signal draws nothing.
+- [ ] The Evolutions row and a short paragraph: what the Peak center tab draws (the reference heavy and starred, the others scaled onto it so that their shapes can be compared, not their sizes; the markers; the rules; earlier tries faint), that it opens by itself when a peak center starts, that the dock returns to Signal when the next run starts, that a line of the list brings that run's peak center back, and that the last 20 of the queue are kept in memory. A peak center skipped for low signal draws nothing; one that was cancelled keeps its points and says it did not finish.
 - [ ] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`. Report the counts.
 - [ ] Spec status: built, with what section 6 leaves out.
 - [ ] Commit `docs: the peak center graph in the experiment window`.
@@ -258,3 +271,9 @@ class PeakCenterView : public QWidget {
 ## Not in this plan
 
 Spec section 6: sweep points in the run record and in recall; a peak center from the spectrometer window; an interpolated curve; mass on the x axis. Zoom and save for live plots are T048's.
+
+## Questions for the owner
+
+1. The example has no second detector with a peak in the sweep (Task 6). Choose one: (a) leave `additional_detectors` out of the example and show the scaling in the user guide only; (b) change the example's field table or detector spacing so that neighbouring detectors sit on `Ar39`, `Ar38`, `Ar36` when `Ar40` is on `H1`, and give the simulated air those peaks, which touches `sim.toml`, the shipped field table and every test that reads the example's intensities; (c) name `H2` and put `Ar39` in the example's gas. This plan assumes (a) until told otherwise.
+2. Decision 2 jumps to the Peak center tab when one starts, and the spec keeps "no jump back to Signal when measurement begins". With the shipped plan the peak center is after the run, so without any jump back the dock would sit on the last peak center through the whole of the next run. Task 5 returns to Signal when the next run starts. Say if it should stay instead.
+3. Should a detector whose range is within its noise be drawn unscaled (or not at all) instead of stretched onto the reference? Legacy stretched it. Not in this plan.
