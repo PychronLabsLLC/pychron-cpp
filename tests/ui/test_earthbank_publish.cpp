@@ -541,6 +541,44 @@ class EarthbankPublishTest : public QObject {
     QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: left out")));
   }
 
+  // An emptied Flux monitor cell names no other monitor: the analyses' own is
+  // sent, nothing is kept for the sample, and the cell shows it again.
+  void an_emptied_flux_monitor_is_the_analyses_own() {
+    World w;
+    QString found;
+    {
+      auto d = w.dialog();
+      QTRY_VERIFY(d->ready());
+      const int step = row_of(*d, QStringLiteral("S-STEP"));
+      found = cell(*d, step, Column::FluxMonitor);
+      QVERIFY(!found.isEmpty());
+      d->table()->item(step, static_cast<int>(Column::FluxMonitor))->setText(QStringLiteral("  "));
+      set_action(*d, Action::ExportXlsx);
+      d->folder()->setText(w.dir.filePath(QStringLiteral("out")));
+      run(*d);
+    }
+    QVERIFY(w.settings()()->allKeys().filter(QStringLiteral("flux_monitor")).isEmpty());
+    {
+      auto d = w.dialog();
+      QTRY_VERIFY(d->ready());
+      QCOMPARE(cell(*d, row_of(*d, QStringLiteral("S-STEP")), Column::FluxMonitor), found);
+    }
+    // What an earlier build kept for an emptied cell is read as nothing kept.
+    {
+      const auto kept = w.settings()();
+      kept->setValue(QStringLiteral("earthbank/setup"), QStringLiteral("x"));
+      for (const QString& key : kept->allKeys()) {
+        if (key.endsWith(QStringLiteral("/interpretation"))) {
+          kept->setValue(key.left(key.size() - 14) + QStringLiteral("flux_monitor"), QString());
+        }
+      }
+      QVERIFY(!kept->allKeys().filter(QStringLiteral("flux_monitor")).isEmpty());
+    }
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    QCOMPARE(cell(*d, row_of(*d, QStringLiteral("S-STEP")), Column::FluxMonitor), found);
+  }
+
   void choices_are_remembered_per_sample() {
     World w;
     {

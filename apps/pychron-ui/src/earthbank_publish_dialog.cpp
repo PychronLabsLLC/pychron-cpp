@@ -437,8 +437,9 @@ void EarthbankPublishDialog::fill(const std::vector<EarthbankSampleRow>& rows) {
     table_->setItem(row, index(Column::Sample), fixed(found.sample));
     table_->setItem(row, index(Column::Analyses), fixed(QString::number(found.analyses)));
     table_->setItem(row, index(Column::Interpretation), editable(kept->value(QStringLiteral("interpretation")).toString()));
-    table_->setItem(row, index(Column::FluxMonitor),
-                    editable(kept->value(QStringLiteral("flux_monitor"), found.flux_monitor).toString()));
+    // Nothing kept, or an empty value an earlier build kept: the monitor found.
+    const QString monitor = kept->value(QStringLiteral("flux_monitor")).toString().trimmed();
+    table_->setItem(row, index(Column::FluxMonitor), editable(monitor.isEmpty() ? found.flux_monitor : monitor));
 
     // The rule first, with the age it gives; then each kind with its own.
     auto* ages = new QComboBox;
@@ -503,6 +504,13 @@ eb::PublishOptions EarthbankPublishDialog::base_options() const {
   return options;
 }
 
+// The monitor only when it names one and it is not the one found: found, or
+// the cell emptied, it is the analyses' own and nothing replaces it.
+QString EarthbankPublishDialog::flux_monitor_override(int row) const {
+  const QString monitor = table_->item(row, index(Column::FluxMonitor))->text().trimmed();
+  return monitor == rows_[static_cast<std::size_t>(row)].found.flux_monitor ? QString() : monitor;
+}
+
 EarthbankPublication EarthbankPublishDialog::publication() const {
   EarthbankPublication out;
   out.options = base_options();
@@ -514,9 +522,7 @@ EarthbankPublication EarthbankPublishDialog::publication() const {
     said.interpretation = table_->item(row, index(Column::Interpretation))->text().trimmed().toStdString();
     const int age = preferred_age(row)->currentIndex();
     if (age > 0) said.preferred_age = kAgeKinds[static_cast<std::size_t>(age - 1)];
-    // The monitor only when it is not the one found: found, it is the analyses' own.
-    const QString monitor = table_->item(row, index(Column::FluxMonitor))->text().trimmed();
-    if (monitor != r.found.flux_monitor) said.flux_monitor = monitor.toStdString();
+    said.flux_monitor = flux_monitor_override(row).toStdString();
     const std::string sample = r.found.sample.toStdString();
     out.options.samples[sample] = std::move(said);
     taking_part.insert(sample);
@@ -535,8 +541,7 @@ void EarthbankPublishDialog::remember() const {
     kept->beginGroup(sample_group(r.found.sample));
     kept->setValue(QStringLiteral("interpretation"), table_->item(row, index(Column::Interpretation))->text().trimmed());
     kept->setValue(QStringLiteral("preferred_age"), preferred_age(row)->currentData().toString());
-    const QString monitor = table_->item(row, index(Column::FluxMonitor))->text().trimmed();
-    if (monitor != r.found.flux_monitor) {
+    if (const QString monitor = flux_monitor_override(row); !monitor.isEmpty()) {
       kept->setValue(QStringLiteral("flux_monitor"), monitor);
     } else {
       kept->remove(QStringLiteral("flux_monitor"));

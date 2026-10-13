@@ -125,6 +125,9 @@ class EarthbankPublishDialog : public QDialog {
   bool included(int row, QString* why = nullptr) const;
   // The analyses of the rows taking part and what the fields say of them.
   EarthbankPublication publication() const;
+  // What row `row` says replaces the monitor found on its analyses; empty
+  // when its cell holds that monitor or nothing.
+  QString flux_monitor_override(int row) const;
   earthbank::PublishOptions base_options() const;
   void fill(const std::vector<EarthbankSampleRow>& rows);
   void remember() const;
