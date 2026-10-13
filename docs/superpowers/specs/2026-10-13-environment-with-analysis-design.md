@@ -1,7 +1,7 @@
 # Environmental readings kept with each analysis
 
-Status: draft 2026-10-13, not agreed. Written by an unattended run; questions
-for owner in section 9. Nothing built. Task T032 (`pychron usage notes.md`):
+Status: agreed in outline 2026-10-13 (owner: the line's own devices, one
+sample a run; section 9). Drafted by an unattended run. Nothing built. Task T032 (`pychron usage notes.md`):
 "collect environmental data along with analysis".
 
 ## 1. Problem
@@ -37,8 +37,9 @@ carries none of them. The place for them exists and is empty:
 
 ## 3. Goal
 
-Each analysis saved by pychron-cpp carries the lab's environmental readings
-taken during that run, each with its time, name and units, from devices the
+Each analysis saved by pychron-cpp carries one reading of each of the lab's
+environmental quantities taken during that run, with its time, name and
+units, from devices the
 lab already has configured; visible in recall and usable as a quantity in a
 time series.
 
@@ -68,31 +69,31 @@ Sampled by the run, through the line's existing polling (no extra request
 when the device is already polled; the last polled value and its time are
 taken):
 
-- at run start, at time zero, at the end of the measurement.
+- once a run (owner, 2026-10-13), at time zero: the moment the intercepts
+  refer to. A run that never reaches time zero has no sample.
 - A reading older than `max_age_s` (per entry, default 300) at the moment
   it is taken is recorded as missing, not as a stale number.
 
 ### 4.3 Where
 
-- Record: one event per sample, kind `environment`, detail
+- Record: one event per reading, kind `environment`, detail
   `<name> <value> <units>`, at the sample's time on the line's wall clock
   (`clock.wall_now()`). No change of record version (events exist).
 - Store: the store adapter writes `analysis_meta.environmental` as
 
   ```json
-  {"lab_temperature": {"units": "C", "samples": [{"t": "...Z", "at": "start", "value": 21.4}, ...]}}
+  {"lab_temperature": {"units": "C", "t": "...Z", "value": 21.4}}
   ```
 
-  and the reader gives, per name, the value at time zero (else the nearest
-  sample) as `Analysis::environmentals[name]`.
+  and the reader gives, per name, that value as
+  `Analysis::environmentals[name]`.
 - Legacy-imported analyses keep their JSON as imported; the reader already
-  flattens it. The two shapes are told apart by the `samples` key.
+  flattens it. The two shapes are told apart by the `value` key under a name.
 - No migration: the column exists.
 
 ### 4.4 Seen
 
-- Recall: a section "Environment" listing each name, value at time zero,
-  units, and the range over the run.
+- Recall: a section "Environment" listing each name, its value and units.
 - Quantity `env.<name>` for time-series panels (`quantity.hpp`), so blanks
   can be plotted over lab temperature.
 
@@ -117,7 +118,7 @@ taken):
 - Line config parse and validation (`libs/systems` or where
   `extraction_line.toml` is read), `libs/setup` shipped example (one
   commented `[[environment]]`).
-- `libs/experiment`: run samples at three points, record events, store
+- `libs/experiment`: run samples at time zero, record events, store
   adapter writes the JSON.
 - `libs/processing`: store source reads the new shape; `env.<name>`
   quantity; recall section.
@@ -130,21 +131,25 @@ Read first: `libs/experiment/AGENTS.md`, `libs/setup/AGENTS.md`,
 
 - Config: unknown device, unknown channel, duplicate name each refused by
   name.
-- Run, simulated lab with a simulated sensor: three samples per entry with
-  the right `at`; a stale reading recorded as missing; a failing device
+- Run, simulated lab with a simulated sensor: one sample per entry, stamped
+  at time zero; a stale reading recorded as missing; a failing device
   leaves the run successful with one note.
 - Store round trip: saved JSON has the shape of 4.3; `Analysis::environmentals`
   gives the time-zero value; a legacy-shaped JSON still reads as before.
 - Time series: `env.lab_temperature` plots one point per analysis.
 
-## 9. Questions for owner
+## 9. Owner, 2026-10-13, and what is still open
 
-1. Source: devices of the line (drafted), or a service like legacy's LabSpy
-   that several instruments share? A shared sensor read by two lines needs
-   either two connections or a small server.
-2. Three samples a run (drafted), one, or a series at the polling rate for
-   the whole run?
-3. Which readings matter first at NMGRL (lab temperature, humidity, air
-   pressure as legacy), and through which device do they arrive today?
-4. Should a run be flagged (not failed) when an environmental reading is out
-   of a configured range, or is that a later conditional?
+Decided:
+
+- Readings come from devices the line already has (4.1). No shared service.
+- One sample a run. Taken at time zero: chosen here, not by the owner; the
+  other candidate is the end of the run, where legacy took its one.
+
+Open, for the plan:
+
+1. Which readings matter first at NMGRL (legacy: lab temperature, humidity,
+   air pressure), and through which device of the line do they arrive?
+   Decides the shipped example and whether a driver is missing.
+2. A run flagged (not failed) when a reading is out of a configured range:
+   here, or a later conditional? Draft: later.
