@@ -319,11 +319,52 @@ class TestSpectrometerWindow : public QObject {
     // And clearing the chart takes its own: their place was in the chart's time.
     window_->clear_chart();
     QCOMPARE(window_->chart_view()->mark_count(), 0);
-    // The run itself goes on over a cleared chart; its stop is marked on the new one.
+    // The run itself goes on over a cleared chart. Its start is not on the
+    // new chart, so its stop is not drawn alone.
     QTRY_VERIFY_WITH_TIMEOUT(rise->live_text().contains(QStringLiteral("readings")), kWaitMs);
     rise->toggle();
     QCOMPARE(rise->results()->rowCount(), 2);
-    QCOMPARE(window_->chart_view()->mark_count(), 1);
+    QCOMPARE(window_->chart_view()->mark_count(), 0);
+  }
+
+  // The chart begins again by itself when a reading is earlier than the last:
+  // marks of a finished run would be left at places that mean nothing.
+  void marksGoWhenTheChartResetsItself() {
+    open();  // not shown: fed by hand
+    ui::RiseRatePanel* rise = window_->rise_rate();
+    rise->set_detector(QStringLiteral("H1"));
+    rise->toggle();
+    emit bridge_->readings({row(100.0, 1.0), row(160.0, 2.0), row(220.0, 3.0)});
+    rise->toggle();
+    QCOMPARE(rise->results()->rowCount(), 1);
+    QCOMPARE(window_->chart_view()->mark_count(), 2);
+    emit bridge_->readings({row(5.0, 1.0)});
+    QCOMPARE(window_->chart_view()->mark_count(), 0);
+  }
+
+  void closingTheWindowAbandonsARun() {
+    open();
+    window_->show();
+    ui::RiseRatePanel* rise = window_->rise_rate();
+    rise->toggle();
+    QTRY_VERIFY_WITH_TIMEOUT(rise->live_text().contains(QStringLiteral("readings")), kWaitMs);
+    QVERIFY(window_->close());
+    QVERIFY(!rise->running());
+    QCOMPARE(rise->results()->rowCount(), 0);
+    QCOMPARE(window_->chart_view()->mark_count(), 0);
+    QVERIFY(rise->status_text().contains(QStringLiteral("closed")));
+  }
+
+  void restartingTheScanAbandonsARun() {
+    open();
+    window_->show();
+    ui::RiseRatePanel* rise = window_->rise_rate();
+    rise->toggle();
+    QTRY_VERIFY_WITH_TIMEOUT(rise->live_text().contains(QStringLiteral("readings")), kWaitMs);
+    window_->restart_scan();
+    QVERIFY(!rise->running());
+    QCOMPARE(rise->results()->rowCount(), 0);
+    QVERIFY(rise->status_text().contains(QStringLiteral("restarted")));
   }
 
   void aResultIsStampedWithTheTimeTheWindowIsGiven() {

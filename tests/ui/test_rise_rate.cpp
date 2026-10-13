@@ -52,7 +52,7 @@ IntensityReading row(double t_s, std::initializer_list<Cell> cells, bool saturat
   return r;
 }
 
-bool near(double a, double b, double tolerance = 1e-9) { return std::abs(a - b) <= tolerance; }
+bool close_to(double a, double b, double tolerance = 1e-9) { return std::abs(a - b) <= tolerance; }
 
 std::vector<DetectorSeries> two() {
   DetectorSeries a;
@@ -86,12 +86,12 @@ class TestRiseRate : public QObject {
     const auto r = rise_rate(points);
     QVERIFY(r);
     QCOMPARE(r->n, 3);
-    QVERIFY(near(r->duration_min, 2.0));
-    QVERIFY(near(r->rise, 4.0));
-    QVERIFY(near(r->endpoints, 2.0));
-    QVERIFY(near(r->linear, 2.0));
+    QVERIFY(close_to(r->duration_min, 2.0));
+    QVERIFY(close_to(r->rise, 4.0));
+    QVERIFY(close_to(r->endpoints, 2.0));
+    QVERIFY(close_to(r->linear, 2.0));
     QVERIFY(r->linear_se);
-    QVERIFY(near(*r->linear_se, 0.0));
+    QVERIFY(close_to(*r->linear_se, 0.0));
   }
 
   // x 0, 1, 2, 3 min; y 0, 1.1, 1.9, 3.1: Sxx 5, Sxy 5.05, slope 1.01,
@@ -100,10 +100,10 @@ class TestRiseRate : public QObject {
     const std::vector<RisePoint> points{{0, 0}, {60, 1.1}, {120, 1.9}, {180, 3.1}};
     const auto r = rise_rate(points);
     QVERIFY(r);
-    QVERIFY(near(r->linear, 1.01));
+    QVERIFY(close_to(r->linear, 1.01));
     QVERIFY(r->linear_se);
-    QVERIFY(near(*r->linear_se, std::sqrt(0.0027)));
-    QVERIFY(near(r->endpoints, 3.1 / 3.0));
+    QVERIFY(close_to(*r->linear_se, std::sqrt(0.0027)));
+    QVERIFY(close_to(r->endpoints, 3.1 / 3.0));
   }
 
   // A reading that comes late. A fit that took the samples as evenly spaced
@@ -113,8 +113,8 @@ class TestRiseRate : public QObject {
     for (const double t : {0.0, 10.0, 20.0, 300.0}) points.push_back({t, 2.0 * t / 60.0});
     const auto r = rise_rate(points);
     QVERIFY(r);
-    QVERIFY(near(r->linear, 2.0));
-    QVERIFY(near(r->endpoints, 2.0));
+    QVERIFY(close_to(r->linear, 2.0));
+    QVERIFY(close_to(r->endpoints, 2.0));
   }
 
   void nonFiniteValuesAreLeftOut() {
@@ -123,9 +123,9 @@ class TestRiseRate : public QObject {
     const auto r = rise_rate(points);
     QVERIFY(r);
     QCOMPARE(r->n, 3);
-    QVERIFY(near(r->duration_min, 2.0));
-    QVERIFY(near(r->rise, 4.0));
-    QVERIFY(near(r->linear, 2.0));
+    QVERIFY(close_to(r->duration_min, 2.0));
+    QVERIFY(close_to(r->rise, 4.0));
+    QVERIFY(close_to(r->linear, 2.0));
   }
 
   void onePointIsNoRate() {
@@ -135,14 +135,23 @@ class TestRiseRate : public QObject {
     QVERIFY(!rise_rate(std::vector<RisePoint>{{5, 1}, {6, nan}}));
   }
 
+  // Hours into a session: the times are large, their differences are not.
+  void lateTimesAreNoTrouble() {
+    const double t0 = 1.0e9;
+    const auto r = rise_rate(std::vector<RisePoint>{{t0, 1}, {t0 + 60, 3}, {t0 + 120, 5}});
+    QVERIFY(r);
+    QVERIFY(close_to(r->linear, 2.0));
+    QVERIFY(close_to(*r->linear_se, 0.0, 1e-6));
+  }
+
   void zeroDurationIsNoRate() { QVERIFY(!rise_rate(std::vector<RisePoint>{{5, 1}, {5, 2}})); }
 
   void twoPointsHaveNoStandardError() {
     const auto r = rise_rate(std::vector<RisePoint>{{0, 1}, {30, 2}});
     QVERIFY(r);
     QCOMPARE(r->n, 2);
-    QVERIFY(near(r->linear, 2.0));
-    QVERIFY(near(r->endpoints, 2.0));
+    QVERIFY(close_to(r->linear, 2.0));
+    QVERIFY(close_to(r->endpoints, 2.0));
     QVERIFY(!r->linear_se);
   }
 
@@ -159,7 +168,7 @@ class TestRiseRate : public QObject {
     const auto r = run.current();
     QVERIFY(r);
     QCOMPARE(r->n, 2);
-    QVERIFY(near(r->endpoints, 2.0));
+    QVERIFY(close_to(r->endpoints, 2.0));
     QCOMPARE(*run.first(), at(0));
     QCOMPARE(*run.last(), at(60));
   }
@@ -173,6 +182,18 @@ class TestRiseRate : public QObject {
     QCOMPARE(run.current()->n, 2);
     QVERIFY(!run.saturated());
     QVERIFY(!run.restarted());
+    // Nor does a value that is no number count, first, last or between: the
+    // run's times are those of the readings its rate is made of.
+    RiseRun nan;
+    nan.start("H1");
+    nan.add(row(0, {{"H1", std::numeric_limits<double>::quiet_NaN()}}));
+    QVERIFY(!nan.first());
+    nan.add(row(10, {{"H1", 1.0}}));
+    nan.add(row(70, {{"H1", 3.0}}));
+    nan.add(row(90, {{"H1", std::numeric_limits<double>::quiet_NaN()}}));
+    QCOMPARE(*nan.first(), at(10));
+    QCOMPARE(*nan.last(), at(70));
+    QCOMPARE(nan.current()->n, 2);
   }
 
   void aRunMarksASaturatedReading() {
@@ -209,9 +230,9 @@ class TestRiseRate : public QObject {
     run.start("H1");
     run.add(row(0, {{"H1", 0.0}}));
     run.add(row(60, {{"H1", 1.0}}));
-    QVERIFY(near(run.current()->linear, 1.0));
+    QVERIFY(close_to(run.current()->linear, 1.0));
     run.add(row(120, {{"H1", 4.0}}));
-    QVERIFY(near(run.current()->endpoints, 2.0));
+    QVERIFY(close_to(run.current()->endpoints, 2.0));
     QCOMPARE(run.current()->n, 3);
   }
 
@@ -379,6 +400,35 @@ class TestRiseRate : public QObject {
     feed_noisy(panel);
     panel.toggle();
     QCOMPARE(cell(panel, 0, RiseRatePanel::ColTime), QStringLiteral("2026-10-13 08:30:05"));
+  }
+
+  void anAbandonedRunGivesNoResult() {
+    RiseRatePanel panel(two());
+    QSignalSpy stopped(&panel, &RiseRatePanel::stopped);
+    QSignalSpy cleared(&panel, &RiseRatePanel::cleared);
+    panel.abandon(QStringLiteral("nothing was running"));  // no run: nothing
+    QVERIFY(panel.status_text().isEmpty());
+    QCOMPARE(cleared.count(), 0);
+    panel.toggle();
+    feed_noisy(panel);
+    panel.abandon(QStringLiteral("the window was closed while it ran"));
+    QVERIFY(!panel.running());
+    QCOMPARE(panel.results()->rowCount(), 0);
+    QCOMPARE(stopped.count(), 0);
+    QCOMPARE(cleared.count(), 2);
+    QCOMPARE(panel.toggle_button()->text(), QStringLiteral("Start"));
+    QVERIFY(panel.detector_box()->isEnabled());
+    QVERIFY(panel.live_text().isEmpty());
+    QVERIFY2(panel.status_text().contains(QStringLiteral("window was closed")), qPrintable(panel.status_text()));
+    panel.on_reading(row(400, {{"H1", 9.0}}));  // and what comes after is no part of it
+    QVERIFY(panel.live_text().isEmpty());
+  }
+
+  void aPanelWithNoDetectorsDoesNothing() {
+    RiseRatePanel panel({});
+    QVERIFY(!panel.toggle_button()->isEnabled());
+    panel.toggle();
+    QVERIFY(!panel.running());
   }
 
   void aSaturatedRunSaysSo() {

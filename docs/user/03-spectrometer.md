@@ -125,8 +125,8 @@ a filament change. The calculator only listens to the readings the window
 already shows. It moves nothing and closes no valve: isolate the
 spectrometer yourself first.
 
-1. Choose the **detector**. The box follows the Magnet group's detector
-   until you change it.
+1. Choose the **detector**. The box is set to the Magnet group's detector
+   whenever that changes and no run is on; choose another here if you want.
 2. Press **Start**. A dark vertical line marks the start on the chart.
 3. Watch the line under the button: the number of readings, the minutes
    elapsed and the two rates so far. Let it run until the rates stop
@@ -152,10 +152,12 @@ start again once it has settled.
 spreadsheet or a notebook. **Clear results** empties the table. The results
 are kept while the window is open; they are not written to a file.
 
-A run of fewer than two readings gives no result. Neither does one during
-which the scan was restarted: the window says so, and you start again.
+A run of fewer than two readings gives no result. Neither does one that was
+running when the window was closed, when **Restart** was pressed, or when
+the readings' time began again: the panel says why, and you start again.
 Changing the integration time or moving the magnet during a run is not
-prevented, and makes the result meaningless.
+prevented, and makes the result meaningless. **Clear** (the chart) during a
+run does not stop it; that run's lines are not drawn.
 
 ### When the banner appears
 

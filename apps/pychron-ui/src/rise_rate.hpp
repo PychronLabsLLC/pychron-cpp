@@ -42,8 +42,9 @@ class RiseRun {
   void start(std::string detector);
   void stop();  // keeps what was measured until the next start()
   // Takes the detector's value at the reading's time while running. A
-  // reading without the detector, or with no value for it, is skipped. One
-  // that is not later than the last kept voids the run: the scan began again.
+  // reading without the detector, or with no finite value for it, is skipped.
+  // One that is not later than the last kept voids the run: the scan began
+  // again.
   void add(const spectrometer::IntensityReading& reading);
 
   [[nodiscard]] bool running() const noexcept { return running_; }

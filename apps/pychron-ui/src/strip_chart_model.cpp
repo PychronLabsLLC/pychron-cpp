@@ -59,6 +59,7 @@ std::optional<double> StripChartModel::x_of(TimePoint ts) const {
 }
 
 void StripChartModel::clear() {
+  ++epoch_;
   for (auto& ring : rings_) ring.clear();
   origin_.reset();
   latest_x_ = 0.0;

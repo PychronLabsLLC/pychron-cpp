@@ -53,6 +53,9 @@ class StripChartModel {
   // names the model does not know are ignored; a row with none is dropped.
   void append(const spectrometer::IntensityReading& r);
   void clear();
+  // Counts the times the chart's time began again (clear(), or a reading
+  // earlier than the last): an x taken before means nothing after.
+  unsigned epoch() const noexcept { return epoch_; }
   double latest_x() const { return latest_x_; }  // 0 when empty
   // The x a reading of that time has, or would have, on this chart; nullopt
   // while the chart is empty (it has no origin).
@@ -91,6 +94,7 @@ class StripChartModel {
   std::optional<TimePoint> last_auto_;
   std::optional<TimePoint> origin_;
   TimePoint last_ts_{};
+  unsigned epoch_ = 0;
   double latest_x_ = 0.0;
 };
 

@@ -118,6 +118,7 @@ class SpectrometerWindow : public QMainWindow {
   void update_magnet_labels();
   void update_actual_integration();
   void update_rise_marks();  // the rise rate run's start and stop on the chart
+  void forget_rise_marks();
   void on_readings(const std::vector<spectrometer::IntensityReading>& batch);
   void on_command_finished(const QString& what, const Result<void>& result);
 

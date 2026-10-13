@@ -114,7 +114,8 @@ chart is empty). `StripChartView::set_marks(std::vector<ChartMark>)`:
 vertical rules at chart x, drawn across the plot; black-ish (theme text)
 at start, theme error at stop, as legacy. Marks follow the last run only;
 Start clears the previous run's marks; Clear chart or a chart reset clears
-them (their x means nothing after).
+them (their x means nothing after). Chart cleared under a run: run goes
+on, its stop is not drawn alone.
 
 ### 4.5 Wall time
 
@@ -130,7 +131,8 @@ alone): Time column blank. No `QDateTime::currentDateTime()`.
   listens to readings the window already gets.
 - No clock read in panel or run; durations from reading timestamps.
 - Hidden detector (line not drawn) can still be measured.
-- Closing the window abandons a run; no result.
+- Closing the window, or the banner's Restart, abandons a run; no result,
+  status says why.
 - Changing integration time, magnet position or scan restart during a run
   is not prevented: operator's business. A restart that sends time back
   voids the run (4.2).

@@ -123,6 +123,16 @@ void RiseRatePanel::toggle() {
   live_->clear();
 }
 
+void RiseRatePanel::abandon(const QString& why) {
+  if (!run_.running()) return;
+  run_.stop();
+  detector_->setEnabled(true);
+  toggle_->setText(tr("Start"));
+  live_->clear();
+  status_->setText(tr("No result: %1.").arg(why));
+  emit cleared();
+}
+
 void RiseRatePanel::on_reading(const spectrometer::IntensityReading& reading) {
   if (!run_.running()) return;
   run_.add(reading);

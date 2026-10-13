@@ -265,7 +265,9 @@ QWidget* SpectrometerWindow::build_controls() {
     update_rise_marks();
   });
   connect(rise_, &RiseRatePanel::stopped, this, [this](TimePoint at) {
-    rise_stop_ = at;
+    // A stop with no start on this chart (it was cleared under the run)
+    // would be a line alone: the result is in the table, the chart has none.
+    if (rise_start_) rise_stop_ = at;
     update_rise_marks();
   });
   connect(rise_, &RiseRatePanel::cleared, this, [this] {
@@ -396,6 +398,7 @@ void SpectrometerWindow::showEvent(QShowEvent* event) {
 }
 
 void SpectrometerWindow::closeEvent(QCloseEvent* event) {
+  rise_->abandon(tr("the window was closed while it ran"));
   bridge_.stop_scan();
   save_settings();
   QMainWindow::closeEvent(event);
@@ -517,11 +520,15 @@ void SpectrometerWindow::sync_y_fields() {
 
 void SpectrometerWindow::clear_chart() {
   model_.clear();
-  // A mark's place is in the chart's time, which has just begun again.
+  forget_rise_marks();
+  dirty_ = true;
+}
+
+// A mark's place is in the chart's time: when that begins again, they go.
+void SpectrometerWindow::forget_rise_marks() {
   rise_start_.reset();
   rise_stop_.reset();
   update_rise_marks();
-  dirty_ = true;
 }
 
 void SpectrometerWindow::set_wall_clock(std::function<QDateTime()> now) { rise_->set_wall_clock(std::move(now)); }
@@ -538,6 +545,7 @@ void SpectrometerWindow::update_rise_marks() {
 QString SpectrometerWindow::banner_text() const { return banner_->isHidden() ? QString() : banner_label_->text(); }
 
 void SpectrometerWindow::restart_scan() {
+  rise_->abandon(tr("the scan was restarted while it ran"));
   bridge_.stop_scan();
   bridge_.start_scan(integration_s());
 }
@@ -570,11 +578,13 @@ void SpectrometerWindow::update_actual_integration() {
 }
 
 void SpectrometerWindow::on_readings(const std::vector<spectrometer::IntensityReading>& batch) {
+  const unsigned epoch = model_.epoch();
   for (const auto& reading : batch) {
     model_.append(reading);
     intensities_->update(reading);
     rise_->on_reading(reading);
   }
+  if (model_.epoch() != epoch) forget_rise_marks();  // the chart reset itself
   dirty_ = true;
 }
 

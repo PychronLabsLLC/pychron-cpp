@@ -67,7 +67,7 @@ void RiseRun::stop() { running_ = false; }
 void RiseRun::add(const spectrometer::IntensityReading& reading) {
   if (!running_ || restarted_) return;
   const auto it = reading.reading.values.find(detector_);
-  if (it == reading.reading.values.end() || !it->second) return;
+  if (it == reading.reading.values.end() || !it->second || !std::isfinite(it->second->mean)) return;
   const TimePoint ts = reading.reading.ts;
   if (last_ && ts <= *last_) {
     restarted_ = true;

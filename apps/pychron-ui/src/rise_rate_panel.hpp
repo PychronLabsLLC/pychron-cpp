@@ -41,6 +41,10 @@ class RiseRatePanel : public QWidget {
   void set_isotope(const std::string& detector, const QString& isotope);
   void set_wall_clock(std::function<QDateTime()> now);
   void toggle();  // the Start / Stop button
+  // Ends a run with no result and says why (the window was closed, the scan
+  // was restarted): readings either side of a break are not one rise.
+  // Nothing when no run is on.
+  void abandon(const QString& why);
   [[nodiscard]] bool running() const noexcept { return run_.running(); }
 
   // For tests.
