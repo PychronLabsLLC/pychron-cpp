@@ -1,7 +1,7 @@
 # Reference series in the experiment window
 
-Status: draft 2026-10-13, not agreed. Written by an unattended run; questions
-for owner in section 9. Nothing built. Task T028 (`pychron usage notes.md`):
+Status: agreed in outline 2026-10-13 (owner: blanks and airs as a live time
+series pane; section 9). Drafted by an unattended run. Nothing built. Task T028 (`pychron usage notes.md`):
 "implement legacy's auto time series plotter in the experiment".
 
 ## 1. Problem
@@ -38,9 +38,9 @@ This spec is the first. The second is out of scope (section 7).
 
 ## 3. Goal
 
-A dock in the experiment window that always shows the recent references of
-this spectrometer as time series, one tab per analysis type, and redraws
-itself when a run is saved.
+A dock in the experiment window that always shows the recent blanks and airs
+of this spectrometer as time series, a tab for each, and redraws itself when
+a run is saved.
 
 ## 4. What exists to build on
 
@@ -62,11 +62,11 @@ New dock "References" in `ExperimentWindow`, tabbed with Evolutions by
 default (`default_layout`). Hidden when the session has no store (a queue
 saved to files only): nothing to read.
 
-- Tab bar: one tab per analysis type that has at least one analysis in the
-  window (5.2): Air, Cocktail, Blank (one tab per blank kind the store
-  holds: `blank_unknown`, `blank_air`, `blank_cocktail`). Types come from
-  the data, not a list in code; order fixed: blanks, air, cocktail, others
-  by name.
+- Tab bar: two tabs, Blanks and Airs (owner, 2026-10-13). Blanks holds every
+  blank kind the store has (`blank_unknown`, `blank_air`, `blank_cocktail`),
+  each kind a group of the figure with its own colour and legend entry.
+  Airs holds `air`. Other reference types (cocktail, detector_ic) are not
+  shown: out of scope, section 7.
 - Each tab: one `SceneView` drawing `build_time_series` of that type's
   analyses.
 - Header: "Last N" spin box (default 50, 5 to 500), Reset button ("from
@@ -76,8 +76,8 @@ saved to files only): nothing to read.
 ### 5.2 What is read
 
 One query when the dock is first shown, after each `runFinished` whose save
-succeeded, and on Refresh: the newest N analyses whose type is not
-`unknown`, of the session's spectrometer, with run time at or after the
+succeeded, and on Refresh: the newest N analyses whose type is a blank kind
+or `air`, of the session's spectrometer, with run time at or after the
 reset point (none: no lower bound). Then loaded and reduced as a figure
 window loads its selection.
 
@@ -97,8 +97,7 @@ window loads its selection.
 - Each tab is a time-series figure with options and presets like any other:
   a small options button on the tab opens the generated editor for
   `figure.time_series`; `PresetBar` as in figure windows.
-- Starting preset by type: blanks "Blanks", air "Air monitor", cocktail and
-  others "Default". Operator's choice per type is kept in the window's
+- Starting preset: Blanks tab "Blanks", Airs tab "Air monitor". Operator's choice per type is kept in the window's
   settings (`experiment_window/reference_series/<type>/preset`).
 - N and the reset point: N kept in settings; reset point is the session's
   (gone when the window closes).
@@ -124,18 +123,19 @@ simulated time (AGENTS.md, Time).
 - Legacy's autoplot (a figure of the current sample after each run).
   Nearest thing here would be a figure window that follows a selection;
   separate task.
-- Unknowns in the dock (an "Unknowns" tab of ages against time).
+- Unknowns in the dock (an "Unknowns" tab of ages against time), and
+  cocktails or other reference types.
 - Making every figure window follow the store.
 - Alarms on a reference drifting (conditionals on a series).
 
 ## 8. Tests
 
 - `libs/processing` or the workspace, no UI: the reference query returns
-  the newest N non-unknowns of one spectrometer after a reset point, newest
-  first; another spectrometer's are left out.
+  the newest N blanks and airs of one spectrometer after a reset point,
+  newest first; unknowns, cocktails and another spectrometer's are left out.
 - UI (`tests/ui/test_experiment_window.cpp`, simulated lab with a store):
-  after a queue of blank, air, unknown, blank: tabs Blank and Air, two
-  points and one; no tab for unknowns; a further blank adds a point without
+  after a queue of blank, air, unknown, blank: Blanks has two points and
+  Airs one; the unknown is in neither; a further blank adds a point without
   touching the dock; Reset empties the tabs and the next reference returns
   one; N = 1 shows the newest only; a session without a store has no dock.
 - Preset kept per type across two windows.
@@ -143,16 +143,13 @@ simulated time (AGENTS.md, Time).
   from `StoreLoadTiming`-style timing on a lab's store copy in the commit
   message.
 
-## 9. Questions for owner
+## 9. Owner, 2026-10-13, and what is kept as drafted
 
-1. Is the time series pane (section 2, first) what the task means, or the
-   dead autoplot (a figure of the current sample after each run)?
-2. One tab per blank kind (legacy), or one Blank tab with the kinds as
-   groups?
-3. Which spectrometer when the store holds several: the session's only
-   (drafted), with no chooser?
-4. Default N 50 and "since the queue started" as the starting reset point,
-   or no lower bound until Reset is pressed (legacy, drafted)?
-5. Dock in the experiment window (drafted), or a data window that follows
-   (a figure window with "follow the store" switched on), which would also
-   give T028's out-of-scope items?
+Decided: the live time series pane, not the dead autoplot; blanks and airs.
+
+Kept as drafted, not asked again (say if wrong):
+
+- Blank kinds share one Blanks tab, as groups.
+- Spectrometer: the session's only, no chooser.
+- N defaults to 50; no lower bound in time until Reset is pressed.
+- A dock in the experiment window, not a data window that follows.
