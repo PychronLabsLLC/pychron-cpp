@@ -1,8 +1,10 @@
 # Executor hardening: unreliable links to instruments and services
 
-Status: agreed 2026-10-13 (owner), as written. Section 9's two points are
-settled from code before the plan. Tests that need sim serve's real sockets
-are deferred until it lands (section 6). Nothing implemented.
+Status: agreed 2026-10-13 (owner), as written. Section 9's two points
+settled from code 2026-10-13 (answers there; 4.4 and 4.5 changed to match).
+Tests that need sim serve's real sockets are deferred until it lands
+(section 6). Plan: `docs/superpowers/plans/2026-10-13-executor-hardening.md`.
+Nothing implemented.
 
 Date: 2026-10-09. Builds on `2026-09-29-experiment-system-design.md`
 (sections 3.1 to 3.3, 8.4), `2026-10-06-virtual-clock-design.md`. Tested
@@ -160,7 +162,8 @@ spectrometer link that drops moves no valve, protects no detector and starts
 no safe state by itself. Resumed: `MeasurementGap{block, from, to}` recorded
 (event in record, `RunNote`), block continues to its planned end time, not
 planned count: time zero and block end do not move. Not resumed, or
-`Unsafe` acquisition start lost (`outcome_unknown`): acquisition restarted
+`Unsafe` acquisition start lost (`outcome_unknown`; NGX `StartAcq` only:
+Qtegra has no wire start, section 9): acquisition restarted
 once if link is back, else block ends; run is `Failed` if main block has
 fewer than `min_counts` (default 20% of planned, at least fit's minimum),
 else `Success` with `truncated = true`, reason `link`. Conditionals are not
@@ -174,9 +177,13 @@ window); plan lists functions.
 whatever exists (extraction actuals, series, notes, gaps), through spool, as
 `b.draft()` path already allows. Record carries `status`: `complete`,
 `truncated`, `failed`, and `failure` text. Importers and reduction skip
-`failed` unless asked; schema change to `record/types.hpp` and
-`serialize.cpp`, version bumped; readers of old records read missing
-`status` as `complete` or `truncated` from existing flag.
+`failed` unless asked. Additive keys in `record/types.hpp` and
+`serialize.cpp` (`provenance.status`, `provenance.failure`), schema version
+stays 2 (section 9): `status` is written only when it is not `complete`,
+`failure` only when not empty, so a complete record keeps its bytes and its
+sha. A record without `status` reads as `complete`: a record truncated
+before this spec carries no flag (truncation shows only in its state
+events) and is not reclassified.
 
 Aliquot of such run is spent, never reused.
 
@@ -320,8 +327,8 @@ default; test holds example and defaults together (as `sim.toml`).
 - Every wait added here is a clock wait; every mutex held across one a
   `ClockMutex`. `--sim-speed` queue with injected outages gives same result
   every time.
-- With no fault, behaviour and records are as before this spec, except
-  `status` field.
+- With no fault, behaviour and records are as before this spec: a complete
+  record is byte for byte what it was (`status` not written).
 - Outage shorter than `call_window` on any one link, at any instant of a
   run, changes nothing in queue's result but notes and counters. (Property
   test, section 6.)
@@ -394,10 +401,43 @@ return, safe-state idempotence).
 Decided 2026-10-09: `max_gap` 120 s; no action on spectrometer link drop;
 failed run flagged only, no rerun.
 
-## 9. Open
+## 9. Settled from code (2026-10-13)
 
-- Qtegra and Chromium: which commands report completion separately from
-  acceptance; decides `Safe`/`Unsafe` for moves and acquisitions. Read from
-  drivers in plan.
-- `status` field: new record version, or additive field old readers ignore?
-  Depends on `serialize.cpp` version rules; check before plan.
+Was open; read from `develop` `4098d1e5`.
+
+Completion apart from acceptance, and `Repeat`:
+
+- Qtegra (`thermo_qtegra.cpp`, `qtegra_valves.cpp`, `qtegra_gauges.cpp`):
+  every command sent is a read or sets an absolute target: all `Safe`. No
+  acquisition start or stop on the wire: `start()` / `stop()` are local
+  flags and `next()` polls `GetData`. Two commands are accepted before they
+  are complete: `SetMagnetDAC` (done when `GetMagnetMoving` says so, polled
+  by `moving()`) and `SetIntegrationTime` (local settle timer). Repeating
+  either restarts nothing that matters: same target.
+- Chromium (`extraction/chromium.cpp`): an action is written, then a
+  confirming query is written and read, in one transport transaction
+  (`act()`); that transaction is the unit repeated. `Laser.Fire` is the one
+  `Unsafe` command (starts output; its confirm, `Laser.Status?`, does not
+  say whether it fired). `Laser.Enable 0|1`, `Laser.Output <p>`,
+  `Stage.MoveTo`, `Scans.MoveTo <n>`, `Laser.Stop`, `Stage.Stop`,
+  `Scans.Stop`, `Scans.Status_Verbosity 1` and every query are `Safe`.
+  `Stage.MoveTo` and `Scans.MoveTo` are accepted at once and complete when
+  `moving()` (polls `Stage.Pos?`, `Stage.Status?`, `Scans.InPos?`) says so.
+  `Laser.Fire` lost (`outcome_unknown`): `fire_laser()` sends `Laser.Stop`
+  (as its recovery does today) and returns the error; nothing is fired
+  twice.
+- A repeat is sent inside the call that failed, before it returns, so a
+  repeated `Stop` or `MoveTo` cannot arrive after a later command of the
+  same caller.
+- NGX: `StartAcq` is `Unsafe` (the only wire acquisition start in the tree);
+  4.4's restart-once rule is about it.
+
+`status`: additive, version stays 2. `serialize.cpp` rejects any
+`schema_version` other than `kRecordSchemaVersion` (2) and ignores unknown
+keys; `instrument.simulated` (`79c0332f`) and the cryo fields (`03614a36`)
+were added without a bump, the first written only when true so that old
+records keep their sha (`tests/data/records/v2.*`,
+`libs/experiment/AGENTS.md`). A bump would make every record already
+written unreadable without a migration. 4.5 changed to say so. The record
+has no `truncated` flag (`RunResult::truncated` and `RunSummary::truncated`
+only), so nothing old is read as `truncated`.
