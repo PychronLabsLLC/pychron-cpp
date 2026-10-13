@@ -4,6 +4,11 @@
 # that differ from origin/develop). CI does not run on develop, so this is the
 # only place the check is made for work that lands there.
 #
+# Then, when the branch changes C++ and this machine has a g++-NN (Homebrew's
+# gcc) and a configured build/dev, refuses it while tools/compiler_sweep.py
+# finds a warning CI's gcc would stop on: every source of the tree, about a
+# minute. Without that compiler or that build directory the sweep is left out.
+#
 # Installed once per clone:  git config core.hooksPath tools/githooks
 # A push that changes no C++ passes at once. `git push --no-verify` skips it;
 # say why in the commit when you do.
@@ -14,13 +19,36 @@ root=$(git rev-parse --show-toplevel) || exit 0
 
 python3 "$root/tools/quality_check.py"
 status=$?
+if [ "$status" -ne 0 ]; then
+  if [ "$status" -eq 1 ]; then
+    echo "pre-push: findings on lines this branch changes (above). Fix them, or silence one" >&2
+    echo "pre-push: on its line with the reason: // NOLINT(<check>): <why>" >&2
+  else
+    echo "pre-push: the static analysis could not run (above). docs/dev_setup.md, 'Static analysis'," >&2
+    echo "pre-push: has the setup: clang-tidy, cppcheck and a configured build directory." >&2
+  fi
+  exit 1
+fi
+
+# The other compiler's warnings, for a branch that changes C++.
+[ -f "$root/tools/compiler_sweep.py" ] || exit 0
+[ -f "$root/build/dev/compile_commands.json" ] || exit 0
+have_gxx=no
+for version in 20 19 18 17 16 15 14 13; do
+  command -v "g++-$version" >/dev/null 2>&1 && have_gxx=yes && break
+done
+[ "$have_gxx" = yes ] || exit 0
+changed=$(git -C "$root" diff --name-only origin/develop...HEAD -- '*.cpp' '*.hpp' '*.h' 2>/dev/null)
+[ -n "$changed" ] || exit 0
+
+python3 "$root/tools/compiler_sweep.py" --build-dir "$root/build/dev"
+status=$?
 [ "$status" -eq 0 ] && exit 0
 
 if [ "$status" -eq 1 ]; then
-  echo "pre-push: findings on lines this branch changes (above). Fix them, or silence one" >&2
-  echo "pre-push: on its line with the reason: // NOLINT(<check>): <why>" >&2
+  echo "pre-push: warnings CI's gcc would stop on (above). Fix them." >&2
 else
-  echo "pre-push: the static analysis could not run (above). docs/dev_setup.md, 'Static analysis'," >&2
-  echo "pre-push: has the setup: clang-tidy, cppcheck and a configured build directory." >&2
+  echo "pre-push: the compiler sweep could not run (above). docs/dev_setup.md," >&2
+  echo "pre-push: 'The other compilers' warnings', has the setup." >&2
 fi
 exit 1

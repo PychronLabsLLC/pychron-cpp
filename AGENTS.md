@@ -134,7 +134,9 @@ Inner loop (keep waits short):
   at its first error. After changing C++, with the static analysis:
   `python3 tools/compiler_sweep.py` (every source through Homebrew's `g++`,
   `-fsyntax-only`, all warnings at once; needs `brew install gcc` and a
-  configured build directory). Nearest thing to CI a Mac has, not CI: gcc 16
+  configured build directory; the pre-push hook runs it on `build/dev`, so a
+  change under `apps/pychron-ui` or `tests/ui` is swept by hand with
+  `--build-dir build/dev-ui`). Nearest thing to CI a Mac has, not CI: gcc 16
   does not give every gcc 14 warning. Met in CI and not locally, October
   2026:
   - gcc: `EXPECT_*` under an unbraced `if` (`-Wdangling-else`); a local or a
@@ -228,10 +230,14 @@ configured build directory; setup in `docs/dev_setup.md`, "Static analysis".
   change through.
 - `--fix` applies clang-tidy's fix-its; read the diff it makes and rebuild.
 - A push is refused while it reports anything: `tools/githooks/pre-push` runs
-  it. Hook is switched on once per clone with
+  it, then `tools/compiler_sweep.py` on `build/dev` when the branch changes
+  C++ and the machine has Homebrew's `g++-NN` and that build directory
+  (about a minute; left out without either). Hook is switched on once per
+  clone with
   `git config core.hooksPath tools/githooks` (every worktree of the clone then
   has it); check `git config --get core.hooksPath` in a fresh clone and set it
-  if empty. Do not push with `--no-verify` to get past a finding.
+  if empty. Do not push with `--no-verify` to get past a finding or a
+  warning.
 - Not in CI, and does not replace building with
   `-DPYCHRON_SANITIZE=address,undefined` and running the tests.
 - Tree is not at zero: about 670 findings of the performance and C-array

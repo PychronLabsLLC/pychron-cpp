@@ -266,6 +266,13 @@ python3 tools/compiler_sweep.py                 # Homebrew's newest g++
 python3 tools/compiler_sweep.py --build-dir build/dev-ui
 ```
 
+The pre-push hook (`tools/githooks/pre-push`) runs it on `build/dev` after
+the static analysis, when the branch changes C++ and both a `g++-NN` and a
+configured `build/dev` are there, and refuses the push while it reports a
+warning. Without the compiler or the build directory the hook leaves the
+sweep out and says nothing. It does not sweep `build/dev-ui`: run that by
+hand after changing `apps/pychron-ui` or `tests/ui`.
+
 It is not CI: Homebrew's gcc is newer than CI's and has let a gcc 14 warning
 through, and it says nothing of MSVC. `AGENTS.md` lists what CI has caught
 that a Mac did not.
