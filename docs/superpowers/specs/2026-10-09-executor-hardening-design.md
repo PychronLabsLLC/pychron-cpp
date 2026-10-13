@@ -1,6 +1,8 @@
 # Executor hardening: unreliable links to instruments and services
 
-Status: draft, not agreed. Nothing implemented.
+Status: agreed 2026-10-13 (owner), as written. Section 9's two points are
+settled from code before the plan. Tests that need sim serve's real sockets
+are deferred until it lands (section 6). Nothing implemented.
 
 Date: 2026-10-09. Builds on `2026-09-29-experiment-system-design.md`
 (sections 3.1 to 3.3, 8.4), `2026-10-06-virtual-clock-design.md`. Tested
@@ -355,7 +357,9 @@ Simulated time (`VirtualTimeTest`, `Crew`), faults from `set_down` /
 - `MetricsPackaging`: new metrics have panels.
 - Real sockets: `ExampleLineSteady`-style test killing listener of
   `WireServer` (sim serve spec) once that lands; until then TCP loopback
-  server in test.
+  server in test. Owner, 2026-10-13: hardening is built first and does not
+  wait for sim serve; this one test is deferred, written when `WireServer`
+  exists.
 - TSan run of the above before landing (new waits, shared state).
 
 ## 7. Order of work

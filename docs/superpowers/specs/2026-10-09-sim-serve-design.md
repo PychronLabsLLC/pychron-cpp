@@ -1,6 +1,8 @@
 # Sim serve: the simulated lab on the wire
 
-Status: draft, not agreed. Nothing implemented.
+Status: agreed 2026-10-13 (owner), as written; section 10's points are
+settled in the plan or measured in phase A / B. Built after executor
+hardening. Nothing implemented.
 
 Date: 2026-10-09. Builds on `2026-10-06-lab-simulator-design.md` (gas model),
 `2026-10-06-virtual-clock-design.md` (time), `2026-10-03-installation-wizard-design.md`
