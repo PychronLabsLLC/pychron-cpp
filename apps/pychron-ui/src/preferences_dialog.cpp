@@ -27,6 +27,13 @@ namespace pychron::ui {
 
 namespace {
 
+// The dialog as it opens, and the space kept clear inside its edge and
+// between its parts (px).
+constexpr int kWidth = 880;
+constexpr int kHeight = 660;
+constexpr int kMargin = 24;
+constexpr int kGutter = 16;
+
 // A font size field whose step below the smallest size reads "Default" (0).
 QSpinBox* font_field() {
   auto* spin = new QSpinBox;
@@ -99,7 +106,6 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
                                     QDialogButtonBox::RestoreDefaults)) {
   setWindowTitle(tr("Preferences"));
   pages_->setObjectName(QStringLiteral("PreferencesPages"));  // the style sheet's selection bar and inset
-  resize(560, 340);
 
   auto* appearance = new QWidget;
   auto* appearance_form = new QFormLayout(appearance);
@@ -145,7 +151,6 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
     for (const auto& [type_class, field] : type_colors_) field->set_color(*defaults.find(type_class));
   });
   add_page(tr("Data"), data_page);
-  resize(560, 520);
 
   if (current.confirm_move_amu) {
     confirm_move_ = new QDoubleSpinBox;
@@ -172,7 +177,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
   // password store), so a dialog opened for something else touches neither.
   earthbank_ = new EarthbankPreferencesPage(EarthbankSetup::system());
   add_page(tr("EarthBank"), earthbank_);
-  resize(680, 520);  // the logger and profile tables need the room
+  resize(kWidth, kHeight);  // the logger and profile tables need the room
 
   problem_->setWordWrap(true);
   style::set_tone(problem_, style::Tone::Error);
@@ -185,7 +190,10 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
   auto* body = new QHBoxLayout;
   body->addWidget(pages_);
   body->addWidget(stack_, 1);
+  body->setSpacing(kGutter);
   auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(kMargin, kMargin, kMargin, kMargin);
+  layout->setSpacing(kGutter);
   layout->addLayout(body, 1);
   layout->addWidget(problem_);
   layout->addWidget(buttons_);

@@ -16,6 +16,7 @@
 #include <memory>
 #include <sstream>
 
+#include <QLayout>
 #include <QApplication>
 #include <QFontMetrics>
 #include <QCheckBox>
@@ -176,6 +177,16 @@ class TestPreferences : public QObject {
       s->setValue(QStringLiteral("preferences/browser_type_colors/nonsense"), QStringLiteral("#000000"));
     }
     QCOMPARE(ui::load_preferences(*settings()), Preferences{});
+  }
+
+  void dialog_opens_with_room_and_a_margin() {
+    PreferencesDialog d({Preferences{}, std::nullopt}, {});
+    QVERIFY2(d.width() >= 860 && d.height() >= 640,
+             qPrintable(QStringLiteral("%1 x %2").arg(d.width()).arg(d.height())));
+    const QMargins m = d.layout()->contentsMargins();
+    for (const int edge : {m.left(), m.top(), m.right(), m.bottom()}) QVERIFY2(edge >= 20, qPrintable(QString::number(edge)));
+    // And the pages keep clear of the list beside them.
+    QVERIFY(d.layout()->itemAt(0)->layout()->spacing() >= 16);
   }
 
   void dialog_shows_the_values_and_restores_defaults() {
