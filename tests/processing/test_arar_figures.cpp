@@ -654,6 +654,38 @@ TEST(ArArFigures, UnitsRegisteredAndFactoryPresetsClean) {
   }
 }
 
+// Every figure has the ideogram's "Presentation": the same large fonts, so
+// figures put on one slide read as one set.
+TEST(ArArFigures, EveryFigureHasAPresentationPreset) {
+  pp::PresetStore store("/nonexistent");
+  for (const char* kind : {"ideogram", "spectrum", "inverse_isochron", "spectrum_isochron", "time_series"}) {
+    const auto* u = pp::UnitRegistry::builtin().find(kind);
+    ASSERT_NE(u, nullptr) << kind;
+    auto f = store.factory(u->schema(), "Presentation");
+    ASSERT_TRUE(f) << kind;
+    EXPECT_TRUE(f->warnings.empty()) << kind;
+    const pp::Options& o = f->options;
+    EXPECT_EQ(o.get_double("font.title"), 18.0) << kind;
+    EXPECT_EQ(o.get_double("font.axis"), 16.0) << kind;
+    EXPECT_EQ(o.get_double("font.tick"), 14.0) << kind;
+    EXPECT_EQ(o.get_double("font.annotation"), 14.0) << kind;
+  }
+  // Heavier marks where the figure has a size for them.
+  const auto get = [&](const char* kind) {
+    return store.factory(pp::UnitRegistry::builtin().find(kind)->schema(), "Presentation")->options;
+  };
+  EXPECT_EQ(get("inverse_isochron").get_double("marker_size"), 7.0);
+  EXPECT_EQ(get("spectrum_isochron").get_double("isochron.marker_size"), 7.0);
+  const auto series = get("time_series");
+  ASSERT_FALSE(series.rows("panels").empty());
+  for (const auto& row : series.rows("panels")) EXPECT_EQ(row.get_double("marker_size"), 7.0);
+  // The time series keeps the panels its Default has.
+  const auto plain = store.factory(pp::UnitRegistry::builtin().find("time_series")->schema(), "Default")->options;
+  ASSERT_EQ(series.rows("panels").size(), plain.rows("panels").size());
+  for (std::size_t i = 0; i < plain.rows("panels").size(); ++i)
+    EXPECT_EQ(series.rows("panels")[i].get_string("quantity"), plain.rows("panels")[i].get_string("quantity"));
+}
+
 TEST(ArArFigures, PipelineRunsEachFigure) {
   pp::MemorySource src;
   for (int i = 0; i < 6; ++i) src.add(make_step(i, 10.0 + 5 * i, 0.1));

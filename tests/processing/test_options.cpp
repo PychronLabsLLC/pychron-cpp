@@ -206,7 +206,7 @@ TEST(Options, PresetStoreLayers) {
     for (const auto& p : store.list(ts())) out.push_back(p.name);
     return out;
   };
-  EXPECT_EQ(names(), (std::vector<std::string>{"Air monitor", "Blanks", "Default", "Spectrometer", "Unknowns"}));
+  EXPECT_EQ(names(), (std::vector<std::string>{"Air monitor", "Blanks", "Default", "Presentation", "Spectrometer", "Unknowns"}));
 
   // A lab preset, then a user preset that shadows a factory one.
   {
@@ -220,7 +220,7 @@ TEST(Options, PresetStoreLayers) {
   ASSERT_TRUE(store.save("Default", mine));
   ASSERT_TRUE(store.save("My Blanks", mine));
   const auto list = store.list(ts());
-  ASSERT_EQ(list.size(), 7u);
+  ASSERT_EQ(list.size(), 8u);
   for (const auto& p : list) {
     if (p.name == "Default") {
       EXPECT_EQ(p.origin, pp::PresetOrigin::User);

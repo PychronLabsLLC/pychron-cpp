@@ -90,6 +90,10 @@ SchemaPtr build_schema() {
       {"Spectrometer",
        "[[panels]]\nquantity = \"Ar40.baseline\"\n[[panels]]\nquantity = \"Ar40.intercept\"\n"
        "[[panels]]\nquantity = \"extract_value\"\nshow_errors = false\n"},
+      {"Presentation",
+       "font.title = 18\nfont.axis = 16\nfont.tick = 14\nfont.annotation = 14\n"
+       "[[panels]]\nquantity = \"Ar40\"\nmarker_size = 7\n"
+       "[[panels]]\nquantity = \"Ar40/Ar36\"\nfit = \"weighted_mean\"\nmarker_size = 7\n"},
   };
   return s;
 }

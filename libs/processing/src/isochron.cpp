@@ -49,6 +49,7 @@ SchemaPtr build_schema() {
       {"Default", ""},
       {"Filled 95%", "ellipse = \"95%\"\nfill_ellipses = true\nshow_points = false\n"},
       {"Plateau steps", "exclude_non_plateau = true\n"},
+      {"Presentation", "font.title = 18\nfont.axis = 16\nfont.tick = 14\nfont.annotation = 14\nmarker_size = 7\n"},
   };
   return s;
 }

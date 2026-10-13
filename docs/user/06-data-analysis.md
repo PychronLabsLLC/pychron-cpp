@@ -419,7 +419,8 @@ Axes: `x.kind` is `time` (with `x.time_format`, `auto` or a strftime string),
 Factory presets: **Default** (Ar40 and Ar40/Ar36), **Air monitor**,
 **Blanks** (baseline-corrected intensities of each isotope, averaged),
 **Unknowns** (age, K/Ca on a log axis, %40Ar\*), **Spectrometer** (baseline,
-intercept and extract value of Ar40).
+intercept and extract value of Ar40), **Presentation** (the Default's panels
+with large fonts and markers).
 
 ### Ideogram
 
@@ -468,7 +469,7 @@ the plateau by hand instead of searching.
 
 Panels (up to 6): `age_spectrum`, or `value` (such as `kca`,
 `radiogenic_yield`). Factory presets: **Default**, **With K/Ca**, **With
-%40Ar\***, **Mahon**.
+%40Ar\***, **Mahon**, **Presentation** (large fonts).
 
 ### Inverse isochron
 
@@ -508,10 +509,12 @@ legend and statistics settings are set once for both.
 | `isochron.exclude_non_plateau` | fit the isochron to the steps of the plateau **the spectrum shows**: the same criterion, the same minimum steps and gas, and the fixed steps of the groups table when they are set. (In the inverse isochron figure alone this setting always uses a Fleck plateau of 3 steps, 50% gas, 2 sigma.) With no plateau there are no steps to fit. | off |
 
 Factory presets: **Default**, **Plateau steps** (the isochron of the plateau
-steps, the others dimmed on the spectrum), **With K/Ca**. **Export table...**
+steps, the others dimmed on the spectrum), **With K/Ca**, **Presentation**
+(large fonts, larger isochron markers). **Export table...**
 writes the same report as the age spectrum's, with these plateau settings.
 
-Factory presets: **Default**, **Filled 95%**, **Plateau steps**.
+Factory presets: **Default**, **Filled 95%**, **Plateau steps**,
+**Presentation** (large fonts and markers).
 
 ### Settings every figure shares
 

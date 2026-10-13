@@ -78,6 +78,7 @@ SchemaPtr build_schema() {
        "[[panels]]\nkind = \"value\"\nquantity = \"radiogenic_yield\"\n"
        "[[panels]]\nkind = \"age_spectrum\"\nheight = 2.5\n"},
       {"Mahon", "plateau.method = \"mahon\"\n"},
+      {"Presentation", "font.title = 18\nfont.axis = 16\nfont.tick = 14\nfont.annotation = 14\n"},
   };
   return s;
 }

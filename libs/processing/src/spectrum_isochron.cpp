@@ -71,6 +71,7 @@ SchemaPtr build_schema() {
       {"With K/Ca",
        "[[spectrum.panels]]\nkind = \"value\"\nquantity = \"kca\"\nscale = \"log\"\n"
        "[[spectrum.panels]]\nkind = \"age_spectrum\"\nheight = 2.5\n"},
+      {"Presentation", "font.title = 18\nfont.axis = 16\nfont.tick = 14\nfont.annotation = 14\n[isochron]\nmarker_size = 7\n"},
   };
   return s;
 }
