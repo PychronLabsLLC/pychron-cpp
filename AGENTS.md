@@ -33,6 +33,12 @@ Day to day:
 - Branch landed: remove its worktree (`git worktree remove <path>`), then the
   branch. Each worktree holds its own build tree, 2 to 16 GB (October 2026:
   33 landed worktrees, 181 GB). Never one this session did not make.
+  Exception (owner, 2026-10-13): the nightly run names its worktrees
+  `.claude/worktrees/nightly-<topic>` and never lands them itself, so a
+  later nightly run removes one, and its branch, when every commit of the
+  branch is on `origin/develop` and the worktree has no uncommitted change;
+  never with `--force` or `-D`. A nightly run deletes the build trees of its
+  own worktrees when it ends.
 - Never skip or disable failing test; find root cause.
 - Never push to `main`. Do not open a pull request into `main` or merge one
   unless asked to release.
