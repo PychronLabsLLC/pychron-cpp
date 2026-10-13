@@ -1,6 +1,8 @@
 # Agentic toolchain benchmark: design
 
-Status: draft for owner. Nothing built. Task T055.
+Status: agreed 2026-10-12 (owner: "implement the agentic benchmark"). Built:
+ledger, runner, report, three smoke tasks (T061). Section 10 says what is
+built, what departs from the draft and what is left.
 
 ## 1. Problem
 
@@ -27,17 +29,20 @@ than the spread between repeats of the unchanged toolchain.
 
 ### 3.1 Ledger (passive, free)
 
-One line per finished task, from records that already exist. No extra runs.
+One line per session, from records that already exist. No extra runs. (Draft
+said per task: a session log does not say where one task ends and the next
+begins. Points per task stay in the task file's Usage log.)
 
 | Field | Source |
 |---|---|
-| task id, size, points | task file Usage log (`pychron usage notes.md`) |
 | tokens in / out / cache read / cache write, model, turns, tool calls by name, wall time | session log, `~/.claude/projects/<project>/<session>.jsonl` (`message.usage`, `tool_use` blocks, timestamps) |
-| commits, files, lines | `git log --numstat` on task's branch |
-| findings on changed lines | `python3 tools/quality_check.py --json` |
-| CI result of first push containing it | `gh run list` |
-| rework | later `fix` commit touching same lines within 14 days |
-| toolchain version | `git rev-parse HEAD:AGENTS.md`, skill file hashes, plugin versions, model id |
+| what shell was used for (builds, ctest, test binaries, static analysis, commits, pushes) | `Bash` commands of the log, by pattern; command text not kept |
+| rules kept (section 5) | order of edits and commands in the log |
+| agents it started: count, turns, tokens | `<session>/subagents/*.jsonl` |
+
+Not built: commits and lines from git, CI result of first push, rework, and
+toolchain version per line. They need a session tied to a branch, which the
+log gives only as the directory it ran in.
 
 Limits: task mix changes week to week, so ledger shows trend, not cause. Its
 use: (a) points per session by size, which the budget already needs;
@@ -113,13 +118,24 @@ not a saving.
 
 ## 6. Interfaces
 
-    tools/agent_bench/tasks.toml      # id, start commit, prompt, hidden test paths, target, check command
-    tools/agent_bench/run.py          # run <task|smoke|full> --variant <dir> --model <m> --repeats <n>
-    tools/agent_bench/ledger.py       # session log + git + task file -> one ledger line
-    tools/agent_bench/report.py       # ledger or runs -> table: baseline vs variant, median and range
+    tools/agent_bench/tasks.toml      # id, reference commit, prompt, hidden test paths, checks (argv lists)
+    tools/agent_bench/run.py          # run <task|smoke|full> --label <l> --variant <commit|dir> --model <m> --repeats <n>
+    tools/agent_bench/session_log.py  # one session log -> counts, shell use, rules kept
+    tools/agent_bench/ledger.py       # every session of this checkout and its worktrees -> a line each, or a table
+    tools/agent_bench/report.py       # one label, or variant against baseline: median, range, verdict
 
-Results: `build/agent_bench/<date>-<variant>/<task>-<n>.json`, never
-committed. `tasks.toml` and answer keys are committed.
+Results: `build/agent_bench/<label>/<task>-<n>.json`, never committed.
+`tasks.toml` is committed.
+
+`run.py --agent reference` applies the real commit in place of an agent and
+`--agent none` applies nothing. A task is sound only if the first passes
+its checks and the second fails them; both cost build time and no usage.
+A check marked `before_hidden` runs before the real commit's tests are
+copied in (static analysis of the agent's own lines).
+
+Variant is laid over the start commit and committed before the agent
+starts: every `AGENTS.md` and `CLAUDE.md` of a commit (default `HEAD`) or of
+a directory. Agent's diff is counted from that commit.
 
 ## 7. Out of scope
 
@@ -137,9 +153,43 @@ committed. `tasks.toml` and answer keys are committed.
 3. Remaining tasks, `report.py`, baseline x 3.
 4. First use: T054's `AGENTS.md` changes as the variant.
 
-## 9. Questions for owner
+## 9. Questions for owner, and what was built in their place
 
-- Weekly points that may go to benchmark runs?
-- Headless runs acceptable unattended (they build and test, do not push)?
-- Ledger beside task file, outside git: agreed?
-- Smoke model: same as daily work, or cheapest that passes?
+Not answered; each is an option, so no answer was needed to build.
+
+- Weekly points for benchmark runs: nothing runs by itself. A person, or a
+  scheduled task the owner writes, starts `run.py`.
+- Headless runs unattended: `run.py` starts an agent with
+  `--permission-mode acceptEdits` and tools `Bash Read Edit Write Glob Grep`
+  in its own worktree. No agent run has been made yet: first one is the
+  owner's to start or to allow.
+- Ledger outside git: `ledger.py --out <file>` writes where it is told;
+  default prints.
+- Smoke model: `--model`; left out, the session's default.
+
+## 10. As built (T061), and left
+
+Built: section 3.1 as amended, 3.2 for three code tasks
+(`sim-transport-bounded`, `job-runner-destructor`, `plan-time-zero`, all
+`smoke`), section 6. Tests `tools/tests/test_agent_bench.py` (ctest
+`tools.agent_bench`): no agent started, a repository made in a temporary
+directory and a stand-in for `claude`.
+
+Left:
+
+- First baseline: `run.py smoke --label baseline`, then section 4 rewritten
+  from what a run really costs.
+- Points of weekly limit per run (usage tool before and after): runner
+  records cost in dollars and tokens from the agent's own answer, not points.
+- Three UI tasks of section 3.2 (`7a7e5352`, `b30f9ddb`, `c336269d`): their
+  hidden tests name new interfaces; each needs its one-line hint and a
+  `dev-ui` build, which is slow in a fresh worktree.
+- Investigation and spec-draft tasks: need a grader (answer key, checklist).
+- Section 5's rules read from a run's own session log are in each result
+  (`session.rules`) but not in `report.py`'s table or verdict.
+- Ledger fields listed as not built in 3.1.
+- Rules are read from `Edit` and `Write` calls and from `Bash` command
+  patterns. A file changed through the shell (a script, `sed`) is not seen as
+  an edit, so "static analysis after last C++ edit" and "test before source"
+  undercount: of 56 sessions only 8 show a C++ edit at all. Treat those two as
+  a floor until edits made through the shell are recognised.
