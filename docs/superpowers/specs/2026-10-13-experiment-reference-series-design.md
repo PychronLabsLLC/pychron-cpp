@@ -67,8 +67,8 @@ a run is saved.
 ### 5.1 Dock
 
 New dock "References" in `ExperimentWindow`, tabbed behind Evolutions by
-default (`default_layout`; Evolutions sits alone on the right today). Hidden when the session has no store (a queue
-saved to files only): nothing to read.
+default (`default_layout`; Evolutions sits alone on the right today). Absent unless the data source is the store the session saves to
+(files only, or a database that could not be opened: nothing to read).
 
 - Tab bar: two tabs, Blanks and Airs (owner, 2026-10-13). Blanks holds every
   blank kind the store has (`blank_unknown`, `blank_air`, `blank_cocktail`,
@@ -95,6 +95,9 @@ window loads its selection.
   `ProcessingBridge`, own channel a tab. Bridge calls source's `refresh()`
   on its worker before such a job. A read still running when the next run finishes is
   followed by one more read, not a queue of them.
+- `runFinished` can come before the store has the run (save pipeline may
+  post the hand-off): a read that found nothing new is repeated 2 s and
+  10 s later, session time.
 - Query is by spectrometer and time, ordered by time descending with a
   limit: must use an index in that order (persistence rules, "Queries":
   `ORDER BY ... LIMIT` over `analysis`). Plan test in `SchemaIndexes` if a
@@ -144,7 +147,9 @@ simulated time (AGENTS.md, Time).
 - `libs/processing` or the workspace, no UI: the reference query returns
   the newest N blanks and airs of one spectrometer after a reset point,
   newest first; unknowns, cocktails and another spectrometer's are left out.
-- UI (`tests/ui/test_experiment_window.cpp`, simulated lab with a store):
+- UI (`tests/ui/test_reference_series.cpp`; simulated lab whose record
+  files are the source, no UI fixture having a store; the store's part is
+  the plan test and `tests/processing`):
   after a queue of blank, air, unknown, blank: Blanks has two points and
   Airs one; the unknown is in neither; a further blank adds a point without
   touching the dock; Reset empties the tabs and the next reference returns
