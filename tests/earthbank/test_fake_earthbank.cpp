@@ -522,10 +522,11 @@ TEST(FakeEarthBank, PackageFlatBodyIgnoresTheName) {
   const auto id = dto.at("id").get<std::int64_t>();
   EXPECT_TRUE(bank.can_write(id));
   EXPECT_TRUE(bank.can_write(flat_dto.at("id").get<std::int64_t>()));
-  EXPECT_EQ(new_sample(client, id, "S-NEW"), parsed(client.get(with_query("/api/core/sample-with-locations",
-                                                                            {{"name.equals", "S-NEW"}})))[0]
-                                                 .at("sampleDTO")
-                                                 .at("id"));
+  // Made first, on a line of its own: the order of an assertion's arguments is the compiler's.
+  const std::int64_t made = new_sample(client, id, "S-NEW");
+  const json found = parsed(client.get(with_query("/api/core/sample-with-locations", {{"name.equals", "S-NEW"}})));
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].at("sampleDTO").at("id"), made);
   const json listed = parsed(client.get(with_query("/api/management/data-packages", {{"name.equals", "My new package"}})));
   ASSERT_EQ(listed.size(), 1u);
   EXPECT_EQ(listed[0].at("countSamples"), 1);
