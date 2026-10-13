@@ -13,6 +13,7 @@
 // options and reruns; only edits and the figure recompute.
 
 #include <functional>
+#include <optional>
 #include <set>
 
 #include <QMainWindow>
@@ -95,6 +96,7 @@ class FigureWindow : public QMainWindow {
   void fill_analyses();
   void update_title();
   void apply_graph_key();  // the graph unit's key from the two combos
+  static QString limits_of(const processing::Options& options);
 
   ProcessingBridge& bridge_;
   processing::PresetStore& store_;
@@ -112,6 +114,7 @@ class FigureWindow : public QMainWindow {
   QLabel* status_;
   QTimer debounce_;
   int runs_ = 0;
+  std::optional<QString> shown_limits_;  // of the scene in the view; nullopt before the first
   bool quantities_set_ = false;
   bool filling_ = false;
 };

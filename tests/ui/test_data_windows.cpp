@@ -1806,6 +1806,77 @@ class TestDataWindows : public QObject {
     QCOMPARE(groups_on(), (QList<QList<int>>{{0, 1, 2, 3}}));
   }
 
+  // The view is kept across a rerun (so that leaving a point out does not
+  // undo a zoom), but a limit typed in the options is a new view.
+  void a_typed_limit_shows_in_a_zoomed_figure() {
+    QTemporaryDir dir;
+    auto src = make_aliquots();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
+    FigureWindow w(bridge, presets, "ideogram", ids);
+    w.resize(1200, 900);
+    w.show();
+    int runs = 0;
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    const auto x_axis = [&w] { return w.view()->plot()->axisRects().at(0)->axis(QCPAxis::atBottom); };
+    const auto y_axis = [&w] { return w.view()->plot()->axisRects().at(0)->axis(QCPAxis::atLeft); };
+    const QCPRange whole = x_axis()->range();
+    const QCPRange zoomed(whole.lower + whole.size() * 0.4, whole.lower + whole.size() * 0.6);
+    const auto same = [](const QCPRange& a, const QCPRange& b) {
+      return qAbs(a.lower - b.lower) <= 1e-9 * qMax(1.0, qAbs(b.lower)) &&
+             qAbs(a.upper - b.upper) <= 1e-9 * qMax(1.0, qAbs(b.upper));
+    };
+
+    // Leaving an analysis out keeps the zoom.
+    x_axis()->setRange(zoomed);
+    w.toggle_exclusion({QStringLiteral("al-3")});
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(same(x_axis()->range(), zoomed));
+
+    // So does an option that is not a limit.
+    auto opts = w.pipeline().find("figure")->options;
+    QVERIFY(opts.set("show_grid", false).has_value());
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(same(x_axis()->range(), zoomed));
+
+    // A typed limit wins over the zoom.
+    const QCPRange typed(whole.lower - whole.size(), whole.upper + whole.size());
+    QVERIFY(opts.set("x.min", typed.lower).has_value());
+    QVERIFY(opts.set("x.max", typed.upper).has_value());
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY2(same(x_axis()->range(), typed),
+             qPrintable(QStringLiteral("%1 .. %2").arg(x_axis()->range().lower).arg(x_axis()->range().upper)));
+
+    // And the zoom made after it is kept again.
+    x_axis()->setRange(zoomed);
+    w.toggle_exclusion({QStringLiteral("al-4")});
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(same(x_axis()->range(), zoomed));
+
+    // A panel's limit, in the rows: the same.
+    const QCPRange y_zoomed(y_axis()->range().lower, y_axis()->range().lower + y_axis()->range().size() * 0.5);
+    y_axis()->setRange(y_zoomed);
+    auto panels = opts.rows("panels");
+    QVERIFY(!panels.empty());
+    QVERIFY(panels[0].set("y_max", y_zoomed.upper * 3.0).has_value());
+    QVERIFY(opts.set_rows("panels", panels).has_value());
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QCOMPARE(y_axis()->range().upper, y_zoomed.upper * 3.0);
+
+    // Taking a limit away is a change too.
+    x_axis()->setRange(zoomed);
+    opts.unset("x.min");
+    opts.unset("x.max");
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(!same(x_axis()->range(), zoomed));
+  }
+
   void spectrum_and_isochron_open_as_one_figure() {
     QTemporaryDir dir;
     auto src = make_steps();

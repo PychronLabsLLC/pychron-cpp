@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QToolBar>
@@ -178,6 +179,24 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   run();
 }
 
+// The axis limits among a figure's options, as text to compare: every `min`,
+// `max`, `y_min` and `y_max` that is set, under its table (`[x]`,
+// `[[panels]]`, `[isochron.x]`, ...), in the order the options are written.
+QString FigureWindow::limits_of(const pp::Options& options) {
+  static const QRegularExpression limit(QStringLiteral("^(min|max|y_min|y_max)\\s*="));
+  QString out;
+  QString table;
+  const QString text = qs(pp::options_to_toml(options));
+  for (const auto& raw : text.split(QLatin1Char('\n'))) {
+    const QString line = raw.trimmed();
+    if (line.startsWith(QLatin1Char('[')))
+      table = line;
+    else if (limit.match(line).hasMatch())
+      out += table + QLatin1Char(' ') + line + QLatin1Char('\n');
+  }
+  return out;
+}
+
 FigureWindow::~FigureWindow() { bridge_.release(channel_); }
 
 void FigureWindow::schedule() { debounce_.start(); }
@@ -215,6 +234,12 @@ void FigureWindow::on_result(const PipelineResult& r) {
   auto scene = std::get<pp::ScenePtr>(r.outputs[0]->at(0));
   for (const auto& w : scene->warnings) warnings << qs(w);
   view_->set_scene(scene);
+  // The view keeps its ranges across a rerun; a limit set, changed or taken
+  // away in the options is a view asked for, and wins.
+  if (QString limits = limits_of(pipeline_.find(kFigure)->options); limits != shown_limits_) {
+    if (shown_limits_) view_->reset_view();
+    shown_limits_ = std::move(limits);
+  }
   const int n = dataset_ ? static_cast<int>(dataset_->size()) : 0;
   status_->setText(tr("%1 analyses · %2 s").arg(n).arg(r.seconds, 0, 'f', 2) +
                    (warnings.isEmpty() ? QString() : tr(" · %n warning(s)", nullptr, static_cast<int>(warnings.size()))));
