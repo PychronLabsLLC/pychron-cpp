@@ -1,7 +1,7 @@
 # Peak center plot in the experiment window
 
-Status: draft 2026-10-12, not agreed. Written by an unattended run; questions
-for owner in section 9. Nothing built. Task T042 (`pychron usage notes.md`);
+Status: agreed 2026-10-13 (owner's decisions, section 9). Drafted by an
+unattended run 2026-10-12. Nothing built. Task T042 (`pychron usage notes.md`);
 related T004 (minimum signal), T018 and T048 (live plots).
 
 ## 1. Problem
@@ -120,20 +120,24 @@ New `PeakCenterView` (`apps/pychron-ui/src/peak_center_view.{hpp,cpp}`), a tab
   at fitted centre when done; third rule at centre without `dac_offset` only
   when `config.dac_offset != 0`.
 - Failed: points stay, no markers, title says why.
-- New try (`PeakCenterTryStarted`, `try_index > 0`): graph cleared, as legacy.
-- Tab selected when a try starts, only if operator has not chosen a tab since
-  run started (question 2).
+- New try (`PeakCenterTryStarted`, `try_index > 0`): earlier tries stay,
+  drawn faint (thin, low opacity, no markers, not in legend); the current
+  try is drawn full (decision 5). Scaling of 4.3 is computed within a try.
+- Tab selected when a try starts (decision 2).
 - Existing text list stays under graph; click on a row shows that peak
   center again. Results kept for this: newest 20, in memory.
 - Queue start clears view, as `EvolutionsView::clear`.
-- Drawing: see question 1. Either way view is fed plain data and tested
-  without a session.
+- Drawing: `QCustomPlot` directly, as `EvolutionsView` (decision 1). No
+  `processing::Scene`. View is fed plain data and tested without a session.
 
 ### 4.5 Which detectors
 
-Reference and `config.additional_detectors`, as runner fits them now. Shipped
-`configs/examples/peak_center.toml` sets none: graph shows reference alone
-until lab adds them (question 3).
+Configurable (decision 3): reference and `additional_detectors` of the named
+config in the lab's `peak_center.toml`, which the runner already reads and
+fits. Shipped `configs/examples/peak_center.toml` gains
+`additional_detectors` naming the example spectrometer's other detectors
+that carry a peak at the reference position, so the example shows the
+scaling; user guide says how to choose them.
 
 ## 5. Rules
 
@@ -167,6 +171,7 @@ until lab adds them (question 3).
 - `apps/pychron-ui/src/peak_center_view.{hpp,cpp}`: view.
 - `apps/pychron-ui/src/evolutions_view.{hpp,cpp}`,
   `experiment_window.cpp`: tab, wiring, list click.
+- `configs/examples/peak_center.toml`: `additional_detectors`.
 - `docs/user/04-experiments.md`: what graph shows.
 
 ## 8. Tests
@@ -178,29 +183,23 @@ until lab adds them (question 3).
   range gives nullopt; scaled maximum equals reference maximum.
 - `tests/ui/test_peak_center_view.cpp`: points fed one by one grow series;
   second detector scaled; done-ok draws markers at `PeakShape` values;
-  done-failed draws none and titles message; new try clears; `Done` alone
-  draws all; row click restores earlier result.
+  done-failed draws none and titles message; second try leaves first try's
+  series faint and unmarked; `Done` alone draws all tries; tab is selected
+  when a try starts; row click restores earlier result.
 - `tests/ui/test_experiment_bridge.cpp`: two new signals relayed.
 - `tests/ui/test_experiment_window.cpp`: simulated queue with
   `peak_center.after`: tab exists, graph has reference series after run.
 
 Changes `apps/pychron-ui`: final run is `dev-ui`.
 
-## 9. Questions for owner
+## 9. Decisions (owner, 2026-10-13)
 
-1. Draw with what? (a) `QCustomPlot` directly, as `EvolutionsView`: quickest,
-   third live widget without zoom, save image, tooltip (T048's complaint).
-   (b) build a `processing::Scene` and draw it in `SceneView`: gets zoom,
-   pan, save, copy, tooltip, context menu; decides T048's direction for live
-   plots. Not checked: whether `Scene` can draw vertical rules and redraw
-   once a second without flicker. Draft assumes (b) if that check passes.
-2. Jump to Peak center tab when one starts, as legacy did, and back to
-   Signal when measurement begins? Draft: jump unless operator picked a tab
-   during this run; no jump back.
-3. Additional detectors: only those named in `peak_center.toml`, or every
-   detector collecting in plan when none named (legacy's automated run passed
-   all)? Draft: only named; shipped example gets none added.
-4. "Scale all intensities to the reference detector": legacy's range mapping
-   (min and max of each onto reference's), as drafted, or a plain ratio of
-   maxima (keeps each baseline's offset visible)?
-5. Retries replace graph (legacy, drafted) or stay as faint lines behind?
+1. Draw with `QCustomPlot` directly. (Zoom, save and tooltip for live plots
+   stay T048's question.)
+2. Jump to the Peak center tab when a peak center starts.
+3. Additional detectors are configurable: `additional_detectors` of the
+   config in `peak_center.toml` (4.5).
+4. Scaling is legacy's range mapping (4.3).
+5. Retries stay, faint, behind the current try.
+
+Not asked, kept as drafted: no jump back to Signal when measurement begins.
