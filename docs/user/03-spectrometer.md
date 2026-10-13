@@ -74,7 +74,7 @@ read and still shows in the table; nothing is sent to the hardware.
 
 ### Intensities table
 
-Columns: Colour, Name, Isotope, Intensity, ±1σ, Units.
+Columns: Color, Name, Isotope, Intensity, ±1σ, Units.
 
 - **Intensity** is the latest integrated value (5 decimals).
 - **±1σ** is the standard deviation of that detector's recent readings (a

@@ -91,7 +91,7 @@ QVariant IntensitiesModel::data(const QModelIndex& index, int role) const {
 QVariant IntensitiesModel::headerData(int section, Qt::Orientation orientation, int role) const {
   if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
   switch (section) {
-    case ColColour: return QStringLiteral("Colour");
+    case ColColour: return QStringLiteral("Color");
     case ColName: return QStringLiteral("Name");
     case ColIsotope: return QStringLiteral("Isotope");
     case ColIntensity: return QStringLiteral("Intensity");

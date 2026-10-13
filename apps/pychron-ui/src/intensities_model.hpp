@@ -1,7 +1,7 @@
 #pragma once
 
 // IntensitiesModel: the table beside the strip chart, one row per detector,
-// columns Colour, Name, Isotope, Intensity, ±1σ, Units. The sigma is the
+// columns Color, Name, Isotope, Intensity, ±1σ, Units. The sigma is the
 // population standard deviation of the previous kWindow means plus the current
 // one; a row with no value shows an em dash and does not enter the window.
 // Values are already gain-corrected.

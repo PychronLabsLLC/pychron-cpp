@@ -267,6 +267,12 @@ class TestStripChartModel : public QObject {
     QCOMPARE(m.data(m.index(0, IntensitiesModel::ColSigma)).toString(), QStringLiteral("0.00000"));
   }
 
+  void theSwatchColumnIsHeadedColor() {
+    const IntensitiesModel m(two());
+    QCOMPARE(m.headerData(IntensitiesModel::ColColour, Qt::Horizontal, Qt::DisplayRole).toString(),
+             QStringLiteral("Color"));
+  }
+
   void saturatedCellRedWithTooltip() {
     IntensitiesModel m(two());
     m.update(row(0.0, {{"H1", 4.0}}, true));
