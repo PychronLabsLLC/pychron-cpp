@@ -1,4 +1,5 @@
-// The rise rate calculation and a run of readings: pure data, no widgets.
+// The rise rate calculation and a run of readings (pure data), and the panel
+// that shows them.
 
 #include <chrono>
 #include <cmath>
@@ -9,15 +10,22 @@
 #include <utility>
 #include <vector>
 
+#include <QComboBox>
+#include <QPushButton>
+#include <QSignalSpy>
+#include <QTableWidget>
 #include <QtTest/QtTest>
 
 #include "rise_rate.hpp"
+#include "rise_rate_panel.hpp"
 
 using namespace pychron;
 using pychron::spectrometer::IntensityReading;
 using pychron::spectrometer::Value;
 using pychron::ui::rise_rate;
 using pychron::ui::RisePoint;
+using pychron::ui::DetectorSeries;
+using pychron::ui::RiseRatePanel;
 using pychron::ui::RiseRun;
 
 namespace {
@@ -45,6 +53,27 @@ IntensityReading row(double t_s, std::initializer_list<Cell> cells, bool saturat
 }
 
 bool near(double a, double b, double tolerance = 1e-9) { return std::abs(a - b) <= tolerance; }
+
+std::vector<DetectorSeries> two() {
+  DetectorSeries a;
+  a.name = "H1";
+  a.units = QStringLiteral("fA");
+  a.isotope = QStringLiteral("Ar40");
+  DetectorSeries b;
+  b.name = "AX";
+  b.units = QStringLiteral("cps");
+  return {a, b};
+}
+
+QString cell(const RiseRatePanel& panel, int row, int column) { return panel.results()->item(row, column)->text(); }
+
+// The noisy line of aNoisyLineHasAStandardError on H1.
+void feed_noisy(RiseRatePanel& panel) {
+  panel.on_reading(row(100, {{"H1", 0.0}, {"AX", 5.0}}));
+  panel.on_reading(row(160, {{"H1", 1.1}, {"AX", 5.0}}));
+  panel.on_reading(row(220, {{"H1", 1.9}, {"AX", 5.0}}));
+  panel.on_reading(row(280, {{"H1", 3.1}, {"AX", 5.0}}));
+}
 
 }  // namespace
 
@@ -202,7 +231,160 @@ class TestRiseRate : public QObject {
     QVERIFY(!run.first());
     QCOMPARE(run.detector(), std::string("AX"));
   }
+
+  void aRunMakesARowOfItsNumbers() {
+    RiseRatePanel panel(two());
+    QSignalSpy started(&panel, &RiseRatePanel::started);
+    QSignalSpy stopped(&panel, &RiseRatePanel::stopped);
+    QSignalSpy cleared(&panel, &RiseRatePanel::cleared);
+    QCOMPARE(panel.toggle_button()->text(), QStringLiteral("Start"));
+    panel.on_reading(row(50, {{"H1", 9.0}}));  // before Start: nothing
+    QVERIFY(!panel.running());
+
+    panel.toggle();
+    QVERIFY(panel.running());
+    QCOMPARE(panel.toggle_button()->text(), QStringLiteral("Stop"));
+    QVERIFY(!panel.detector_box()->isEnabled());
+    QCOMPARE(cleared.count(), 1);  // the last run's marks go
+    QCOMPARE(started.count(), 0);  // no reading yet
+    feed_noisy(panel);
+    QCOMPARE(started.count(), 1);
+    QCOMPARE(started.at(0).at(0).value<TimePoint>(), at(100));
+    panel.toggle();
+    QVERIFY(!panel.running());
+    QVERIFY(panel.detector_box()->isEnabled());
+    QCOMPARE(stopped.count(), 1);
+    QCOMPARE(stopped.at(0).at(0).value<TimePoint>(), at(280));
+    QCOMPARE(cleared.count(), 1);
+
+    QCOMPARE(panel.results()->rowCount(), 1);
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColNumber), QStringLiteral("1"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColDetector), QStringLiteral("H1 (Ar40)"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColEndpoints), QStringLiteral("1.033"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColLinear), QStringLiteral("1.01"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColError), QStringLiteral("0.052"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColUnits), QStringLiteral("fA/min"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColMinutes), QStringLiteral("3"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColReadings), QStringLiteral("4"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColTime), QString());  // no clock given
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColNote), QString());
+    QVERIFY(panel.status_text().isEmpty());
+  }
+
+  void theRateShowsWhileItRuns() {
+    RiseRatePanel panel(two());
+    panel.toggle();
+    QVERIFY(panel.live_text().contains(QStringLiteral("Waiting")));
+    panel.on_reading(row(100, {{"H1", 0.0}}));
+    QVERIFY(panel.live_text().contains(QStringLiteral("1 reading")));
+    panel.on_reading(row(160, {{"H1", 1.0}}));
+    const QString two_readings = panel.live_text();
+    QVERIFY2(two_readings.contains(QStringLiteral("2 readings")) && two_readings.contains(QStringLiteral("fA/min")),
+             qPrintable(two_readings));
+    panel.on_reading(row(220, {{"H1", 4.0}}));
+    QVERIFY(panel.live_text() != two_readings);
+    QVERIFY(panel.live_text().contains(QStringLiteral("±")));
+    panel.toggle();
+    QVERIFY(panel.live_text().isEmpty());
+  }
+
+  void tooFewReadingsMakeNoRow() {
+    RiseRatePanel panel(two());
+    QSignalSpy stopped(&panel, &RiseRatePanel::stopped);
+    QSignalSpy cleared(&panel, &RiseRatePanel::cleared);
+    panel.toggle();
+    panel.on_reading(row(100, {{"H1", 0.0}}));
+    panel.toggle();
+    QCOMPARE(panel.results()->rowCount(), 0);
+    QVERIFY2(panel.status_text().contains(QStringLiteral("fewer than two")), qPrintable(panel.status_text()));
+    QCOMPARE(stopped.count(), 0);
+    QCOMPARE(cleared.count(), 2);  // at Start, and now: the start mark goes
+    panel.toggle();                // the next Start clears what was said
+    QVERIFY(panel.status_text().isEmpty());
+  }
+
+  void aRunTheScanRestartedUnderMakesNoRow() {
+    RiseRatePanel panel(two());
+    QSignalSpy stopped(&panel, &RiseRatePanel::stopped);
+    panel.toggle();
+    panel.on_reading(row(100, {{"H1", 0.0}}));
+    panel.on_reading(row(160, {{"H1", 1.0}}));
+    panel.on_reading(row(3, {{"H1", 0.0}}));
+    QVERIFY(panel.live_text().contains(QStringLiteral("began again")));
+    panel.toggle();
+    QCOMPARE(panel.results()->rowCount(), 0);
+    QVERIFY(panel.status_text().contains(QStringLiteral("began again")));
+    QCOMPARE(stopped.count(), 0);
+  }
+
+  void copyAndClear() {
+    RiseRatePanel panel(two());
+    QVERIFY(!panel.clear_button()->isEnabled());
+    for (int i = 0; i < 2; ++i) {
+      panel.toggle();
+      feed_noisy(panel);
+      panel.toggle();
+    }
+    QCOMPARE(panel.results()->rowCount(), 2);
+    QCOMPARE(cell(panel, 1, RiseRatePanel::ColNumber), QStringLiteral("2"));
+    const QStringList lines = panel.copy_text().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(lines.size(), 3);
+    QCOMPARE(lines[0].split(QLatin1Char('\t')).size(), static_cast<qsizetype>(RiseRatePanel::ColCount));
+    QVERIFY(lines[0].startsWith(QStringLiteral("#\tDetector\tEndpoints\tLinear")));
+    QVERIFY(lines[2].startsWith(QStringLiteral("2\tH1 (Ar40)\t1.033\t1.01\t0.052\tfA/min\t3\t4")));
+
+    QVERIFY(panel.clear_button()->isEnabled());
+    panel.clear_button()->click();
+    QCOMPARE(panel.results()->rowCount(), 0);
+    panel.toggle();
+    feed_noisy(panel);
+    panel.toggle();
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColNumber), QStringLiteral("1"));  // numbered from 1 again
+  }
+
+  void theDetectorIsChosenBeforeARun() {
+    RiseRatePanel panel(two());
+    panel.set_detector(QStringLiteral("AX"));
+    QCOMPARE(panel.detector_box()->currentText(), QStringLiteral("AX"));
+    panel.set_detector(QStringLiteral("ZZ"));  // unknown: ignored
+    QCOMPARE(panel.detector_box()->currentText(), QStringLiteral("AX"));
+    panel.toggle();
+    panel.set_detector(QStringLiteral("H1"));  // running: ignored
+    QCOMPARE(panel.detector_box()->currentText(), QStringLiteral("AX"));
+    panel.on_reading(row(0, {{"H1", 0.0}, {"AX", 10.0}}));
+    panel.on_reading(row(30, {{"H1", 50.0}, {"AX", 11.0}}));
+    panel.toggle();
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColDetector), QStringLiteral("AX"));  // no isotope known for it
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColEndpoints), QStringLiteral("2"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColUnits), QStringLiteral("cps/min"));
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColError), QString());  // two readings: no error
+
+    panel.set_isotope("AX", QStringLiteral("Ar39"));
+    panel.toggle();
+    panel.on_reading(row(100, {{"AX", 10.0}}));
+    panel.on_reading(row(130, {{"AX", 11.0}}));
+    panel.toggle();
+    QCOMPARE(cell(panel, 1, RiseRatePanel::ColDetector), QStringLiteral("AX (Ar39)"));
+  }
+
+  void aResultTakesTheTimeItIsGiven() {
+    RiseRatePanel panel(two());
+    panel.set_wall_clock([] { return QDateTime(QDate(2026, 10, 13), QTime(8, 30, 5)); });
+    panel.toggle();
+    feed_noisy(panel);
+    panel.toggle();
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColTime), QStringLiteral("2026-10-13 08:30:05"));
+  }
+
+  void aSaturatedRunSaysSo() {
+    RiseRatePanel panel(two());
+    panel.toggle();
+    panel.on_reading(row(0, {{"H1", 1.0}}));
+    panel.on_reading(row(60, {{"H1", 3.0}}, true));
+    panel.toggle();
+    QCOMPARE(cell(panel, 0, RiseRatePanel::ColNote), QStringLiteral("saturated"));
+  }
 };
 
-QTEST_APPLESS_MAIN(TestRiseRate)
+QTEST_MAIN(TestRiseRate)
 #include "test_rise_rate.moc"
