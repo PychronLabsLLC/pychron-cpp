@@ -468,7 +468,10 @@ In the Groups list, **Plateau from step** and **to step** (step letters) fix
 the plateau by hand instead of searching.
 
 Panels (up to 6): `age_spectrum`, or `value` (such as `kca`,
-`radiogenic_yield`). Factory presets: **Default**, **With K/Ca**, **With
+`radiogenic_yield`). Each panel has a `height` (relative, 1), and `y_min` and
+`y_max`: set, they fix that panel's Y range; unset, the range is found from
+the steps (see `y.ignore_gas_percent`). A `value` panel also has a `scale`
+(`linear` or `log`). Factory presets: **Default**, **With K/Ca**, **With
 %40Ar\***, **Mahon**, **Presentation** (large fonts).
 
 ### Inverse isochron
