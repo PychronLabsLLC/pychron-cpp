@@ -144,7 +144,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
     data_form->addRow(tr(label), field);
   }
   data_form->addRow(QString(), reset_colors_);
-  data_form->addRow(preferences_note(tr("Row colours of the data browser under Colour by: Analysis type. A tag other "
+  data_form->addRow(preferences_note(tr("Row colours of the data browser under Color by: Analysis type. A tag other "
                                         "than ok is always the error colour.")));
   connect(reset_colors_, &QPushButton::clicked, this, [this] {
     const TypeColors defaults = default_type_colors(theme());

@@ -50,7 +50,7 @@ class DataWorkspace : public QObject {
   // The browser's page size, time-break threshold and type colours, for the
   // browser open now and any made later.
   void apply_preferences(const Preferences& preferences);
-  // Where the browser's "Colour by" choice is kept (empty: the application's
+  // Where the browser's "Color by" choice is kept (empty: the application's
   // QSettings), under data_browser/color_by.
   void set_settings(std::function<std::unique_ptr<QSettings>()> settings) { settings_ = std::move(settings); }
 

@@ -928,6 +928,9 @@ class TestDataWindows : public QObject {
     };
     QCOMPARE(w.color_by(), ui::ColorBy::AnalysisType);
     QCOMPARE(w.color_by_box()->count(), 5);
+    bool labelled = false;
+    for (const auto* label : w.findChildren<QLabel*>()) labelled = labelled || label->text() == QStringLiteral("Color by");
+    QVERIFY(labelled);
     QCOMPARE(tint(0), ui::theme().row_blank);  // uuid-9, a blank on jan
     QCOMPARE(tint(1), ui::theme().row_air);    // uuid-8, an air on obama
 

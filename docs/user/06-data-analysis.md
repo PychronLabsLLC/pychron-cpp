@@ -125,7 +125,7 @@ The left column filters; the table shows the newest analyses first.
 | Date drop-down | Any date, last 24 hours, last week, last month, last year, or **Range…**. "Last" is counted back from the **newest analysis in the source**, not from today. |
 | **From** / **To** (with Range…) | A low and a high date and time, in UTC like the Date column. Each end counts only while its box is ticked, so you can give one end and leave the other open. To includes the whole of the minute it names. They start as the range of the rows shown. If From is after To the status line says so and nothing changes. |
 | **Hide invalid** | On by default. Hides analyses tagged `invalid`. |
-| **Colour by** | What the rows are tinted by (see below). |
+| **Color by** | What the rows are tinted by (see below). |
 | Analysis type, Spectrometer, Sample, Identifier, Irradiation, Level | Tick values to keep only those. Within one list, ticks are alternatives (or); between lists they all apply (and). Each list shows only values that exist given the other filters, but a value you ticked stays visible even if nothing matches. |
 | **Filter** box and **×** on each list | Typing in the box hides the values that do not contain the text (not case sensitive). It only narrows the list: nothing is filtered until you tick a value, and a ticked value is never hidden. **×** unticks everything in that list. The list's title counts the ticks. |
 | **Rescan** | Asks the source for new analyses (the database change log, or the folder) and reloads. A queue's runs do not need it: see [New runs appear by themselves](#new-runs-appear-by-themselves). |
@@ -140,10 +140,10 @@ a column header to show or hide columns.
 
 ### Row colours
 
-**Colour by** chooses what the tint of a row tells you. The choice is
+**Color by** chooses what the tint of a row tells you. The choice is
 remembered.
 
-| Colour by | Rows |
+| Color by | Rows |
 |---|---|
 | Analysis type | Blanks, air, cocktails and detector-IC runs have their own colours. **Preferences > Data** sets a colour (or none) for unknowns, blanks, air, cocktails, detector-IC runs and everything else; **Reset colours** goes back to the built-in ones. |
 | Tag | `invalid` has the error colour; every other tag that is not `ok` has a colour of its own. |

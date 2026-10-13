@@ -5,7 +5,7 @@
 // source's facets, a search box, a date preset or range, and the analyses
 // table, newest first, paged with "Load more". Search and display design
 // (2026-10-09): the date range, the Irradiation and Level lists, a text
-// filter on every list (FacetBox), the row tint chosen under "Colour by",
+// filter on every list (FacetBox), the row tint chosen under "Color by",
 // and a separator row where a spectrometer ran nothing for longer than the
 // time-break preference.
 //
@@ -78,7 +78,7 @@ class DataBrowserWindow : public QWidget {
   // A separator row where a spectrometer ran nothing for longer than this
   // (File > Preferences…); zero or less: none.
   void set_gap_hours(double hours);
-  // The colours of the analysis types under "Colour by: Analysis type".
+  // The colours of the analysis types under "Color by: Analysis type".
   void set_type_colors(const TypeColors& colors);
   // What the rows are tinted by; color_by_changed() when it changes.
   void set_color_by(ColorBy by);

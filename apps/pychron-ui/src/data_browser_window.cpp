@@ -129,7 +129,7 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   color_by_ = new QComboBox;
   for (const ColorBy by : kColorByChoices) color_by_->addItem(color_by_label(by), to_text(by));
   auto* color_row = new QHBoxLayout;
-  color_row->addWidget(new QLabel(tr("Colour by")));
+  color_row->addWidget(new QLabel(tr("Color by")));
   color_row->addWidget(color_by_, 1);
   fl->addLayout(color_row);
   for (const auto& [facet, label] : kFacets) {
