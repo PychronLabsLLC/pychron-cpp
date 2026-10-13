@@ -1,7 +1,9 @@
 # Peak center plot in the experiment window
 
 Status: agreed 2026-10-13 (owner's decisions, section 9). Drafted by an
-unattended run 2026-10-12. Nothing built. Task T042 (`pychron usage notes.md`);
+unattended run 2026-10-12. Plan:
+`docs/superpowers/plans/2026-10-13-peak-center-plot.md`; sections 1, 4.1 and
+4.4 corrected from code when it was written. Nothing built. Task T042 (`pychron usage notes.md`);
 related T004 (minimum signal), T018 and T048 (live plots).
 
 ## 1. Problem
@@ -16,7 +18,9 @@ Data already there. `PeakCenterResult` (`libs/systems` `jobs/peak_center.hpp:122
 carries every try's `SweepPoint{x, map<DetectorId,double> y, ts}`, reference
 `PeakShape`, `DetectorPeak` per additional detector; `PeakCenterDone` reaches
 UI through `ExperimentBridge::peakCenterDone`. Missing: a view, and points
-while sweep runs (`ProgressUpdate` goes to job's `Progress` only, not to bus).
+while sweep runs. (`JobRunner` does publish each `ProgressUpdate` as
+`JobProgress`, `job_runner.cpp:56-62`, point included, but keyed by job id,
+with no try index, and bridge does not relay it.)
 
 ## 2. Legacy (examined 2026-10-12, `~/Programming/pychron`)
 
@@ -71,8 +75,10 @@ struct PeakCenterPoint {
 
 - `PeakCenterTryStarted` published before first move of a try
   (`Runner::attempt`, `peak_center.cpp:335`).
-- `PeakCenterPoint` published per sweep step, from sink given to sweep's
-  `Progress`; job's own progress reporting unchanged.
+- `PeakCenterPoint` published per sweep step. `Sweep::run` takes a
+  `Progress&` and a `Progress` gets its sink only when constructed: each try
+  gives the sweep its own `Progress`, whose sink publishes the point and then
+  reports to the job's. Job's own progress reporting unchanged.
 - `PeakCenterDone` unchanged; stays the one authority for outcome. View
   replaces what it drew live with `result.tries.back().points`.
 - No new thread, no wait: events published on job's thread, as
@@ -106,7 +112,9 @@ std::optional<std::vector<double>> scale_to_reference(std::span<const double> re
 ### 4.4 View
 
 New `PeakCenterView` (`apps/pychron-ui/src/peak_center_view.{hpp,cpp}`), a tab
-"Peak center" of Evolutions dock beside kind tabs of `EvolutionsView`.
+"Peak center" of Evolutions dock beside kind tabs of `EvolutionsView`. Kind
+tabs map to series kinds by index: the new tab is last, outside that map,
+and swaps the kind plot, focus box and intercepts table for the view.
 
 - x: magnet value applied, native units, as `SweepPoint::x`. y: intensity of
   reference detector (other series scaled onto it).
