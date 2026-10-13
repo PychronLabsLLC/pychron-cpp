@@ -952,6 +952,89 @@ ReducedPtr reduce_parts(const StoreAnalysisParts& parts) {
 
 // A NULL value or error in a stored row is unknown, not 0: it reaches the
 // model as NaN and the analysis does not reduce.
+// Legacy pychron writes no point count with a run's intercepts until the run
+// is refitted, so most imported analyses have neither `n` nor `fn`. The
+// series are in the store all the same, each with its length.
+TEST(StoreSourceMapping, AnInterceptWithoutACountTakesItsSeriesLength) {
+  const auto n_of = [](const StoreAnalysisParts& parts, const std::string& isotope) {
+    const auto a = analysis_from_store(parts);
+    EXPECT_TRUE(a) << (a ? "" : a.error().what);
+    if (!a) return -1;
+    for (const auto& iso : a->isotopes)
+      if (iso.isotope == isotope) return iso.n;
+    return -1;
+  };
+  const auto signal = [](const char* kind, const char* key, const char* detector, std::optional<int> n) {
+    ps::SignalRefRow ref;
+    ref.series_kind = kind;
+    ref.series_key = key;
+    ref.detector = detector;
+    ref.n_points = n;
+    return ref;
+  };
+  auto parts = argon_parts();
+  EXPECT_EQ(n_of(parts, "Ar40"), 0);  // nothing known: no signals head at all
+
+  parts.heads[ps::Kind::Signals] =
+      ps::SignalRefs{signal("sniff", "Ar40", "H1", 12), signal("baseline", "H1", "H1", 90),
+                     signal("signal", "Ar40", "H1", 340), signal("signal", "Ar39", "H1", std::nullopt)};
+  EXPECT_EQ(n_of(parts, "Ar40"), 340);  // the signal series, not the sniff or the baseline
+  EXPECT_EQ(n_of(parts, "Ar39"), 0);    // a series of unknown length
+  EXPECT_EQ(n_of(parts, "Ar36"), 0);    // no series
+
+  // A series that is a window of its blob has the window's length.
+  auto& refs = std::get<ps::SignalRefs>(parts.heads[ps::Kind::Signals]);
+  refs[2].start_index = 40;
+  EXPECT_EQ(n_of(parts, "Ar40"), 300);
+  refs[2].end_index = 140;
+  EXPECT_EQ(n_of(parts, "Ar40"), 100);
+  refs[2].end_index = 1000;  // past the end: as series_from_blob clamps it
+  EXPECT_EQ(n_of(parts, "Ar40"), 300);
+
+  // A stored count is the fit's own and wins: `fn` (after the outlier
+  // filter) before `n`.
+  auto& intercepts = std::get<ps::Intercepts>(parts.heads[ps::Kind::Intercepts]);
+  intercepts[0].n = 330;
+  EXPECT_EQ(n_of(parts, "Ar40"), 330);
+  intercepts[0].fn = 323;
+  EXPECT_EQ(n_of(parts, "Ar40"), 323);
+}
+
+// One isotope on two detectors: each intercept takes its own detector's series.
+TEST(StoreSourceMapping, ASeriesLengthIsTakenFromTheInterceptsOwnDetector) {
+  auto parts = argon_parts();
+  auto& intercepts = std::get<ps::Intercepts>(parts.heads[ps::Kind::Intercepts]);
+  intercepts[0].isotope = "H1:Ar40";
+  ps::InterceptRow second = intercepts[0];
+  second.isotope = "CDD:Ar40";
+  second.detector = "CDD";
+  intercepts.push_back(second);
+  ps::SignalRefRow h1;
+  h1.series_kind = "signal";
+  h1.series_key = "H1:Ar40";
+  h1.detector = "H1";
+  h1.n_points = 200;
+  ps::SignalRefRow cdd = h1;
+  cdd.series_key = "CDD:Ar40";
+  cdd.detector = "CDD";
+  cdd.n_points = 60;
+  parts.heads[ps::Kind::Signals] = ps::SignalRefs{h1, cdd};
+  const auto a = analysis_from_store(parts);
+  ASSERT_TRUE(a) << a.error().what;
+  int seen = 0;
+  for (const auto& iso : a->isotopes) {
+    if (iso.key == "H1:Ar40") {
+      EXPECT_EQ(iso.n, 200);
+      ++seen;
+    }
+    if (iso.key == "CDD:Ar40") {
+      EXPECT_EQ(iso.n, 60);
+      ++seen;
+    }
+  }
+  EXPECT_EQ(seen, 2);
+}
+
 TEST(StoreSourceMapping, MissingStoredNumbersAreUnknownNotZero) {
   {
     const auto reduced = reduce_parts(argon_parts());

@@ -324,6 +324,27 @@ AnalysisSummary summary_from_row(const ps::BrowseRow& r) {
   return s;
 }
 
+namespace {
+
+// The length of an isotope's signal series, for an intercept stored without
+// a count: legacy pychron writes `n` and `fn` only when a run is refitted,
+// so an imported run that never was has neither. The window's length when
+// the series is one (as series_from_blob slices it); 0 when not known.
+int signal_points(const ps::SignalRefs* signals, const std::string& key, const std::string& detector) {
+  if (signals == nullptr) return 0;
+  const auto mine = [&](const ps::SignalRefRow& r) {
+    return r.series_kind == "signal" && r.series_key == key && (r.detector.empty() || r.detector == detector);
+  };
+  const auto it = std::ranges::find_if(*signals, mine);
+  if (it == signals->end() || !it->n_points) return 0;
+  const int n = *it->n_points;
+  const int begin = std::clamp(it->start_index.value_or(0), 0, n);
+  const int end = std::clamp(it->end_index.value_or(n), begin, n);
+  return end - begin;
+}
+
+}  // namespace
+
 Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   const auto& d = parts.detail;
   const auto& row = d.row;
@@ -375,6 +396,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
   std::map<std::string, std::string> detector_of;
   for (const auto& iso : d.isotopes) detector_of.emplace(iso.isotope, iso.detector);
   const auto* intercepts = head_payload<ps::Intercepts>(parts.heads, ps::Kind::Intercepts);
+  const auto* signals = head_payload<ps::SignalRefs>(parts.heads, ps::Kind::Signals);
   const auto* baselines = head_payload<ps::Baselines>(parts.heads, ps::Kind::Baselines);
   const auto* blanks = head_payload<ps::Blanks>(parts.heads, ps::Kind::Blanks);
   const auto* ics = head_payload<ps::IcFactors>(parts.heads, ps::Kind::IcFactors);
@@ -389,7 +411,7 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
                                                      : (colon == std::string::npos ? "" : ir.isotope.substr(0, colon));
       iso.intercept = value_of(ir.value, ir.error, ir.manual);
       iso.fit = fit_spec(ir.fit, ir.error_type, ir.filter_outliers_json);
-      iso.n = ir.fn ? *ir.fn : ir.n.value_or(0);
+      iso.n = ir.fn ? *ir.fn : ir.n ? *ir.n : signal_points(signals, ir.isotope, iso.detector);
       iso.intercept_reviewed = ir.reviewed;
       if (ir.user_excluded_json) iso.user_excluded = parse_index_list(*ir.user_excluded_json);
       iso.include_baseline_error = ir.include_baseline_error.value_or(false);
