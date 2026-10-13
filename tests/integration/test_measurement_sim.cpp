@@ -11,7 +11,6 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -44,6 +43,7 @@
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/config_loader.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -359,9 +359,7 @@ TEST_F(MeasurementSim, ExecutorRunsAQueueOnTheSimLab) {
   plans.add(*tmpl);
   DirectoryConditionalSource source(kDir / "conditionals");
   ConditionalLibrary library(source);
-  const auto scratch = std::filesystem::temp_directory_path() /
-                       ("executor_sim_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+  const auto scratch = pychron::testing::unique_temp_path("executor_sim_");
   persist::FilePersister files(scratch / "records");
   persist::Spool spool(scratch / "spool");
   persist::SavePipeline save(spool, files);

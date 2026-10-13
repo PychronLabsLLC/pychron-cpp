@@ -11,8 +11,10 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   get_filename_component(name ${src} NAME_WE)
   set(target pychron_ui_${name})
   add_executable(${target} ${src} ui_fixture.hpp)
-  # tests/processing: flux_seed.hpp, the seeded level of the flux tests
-  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing)
+  # tests/processing: flux_seed.hpp, the seeded level of the flux tests;
+  # tests/support: temp_path.hpp, the fixtures' scratch names
+  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing
+    ${PROJECT_SOURCE_DIR}/tests/support)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
   # the EarthBank suites talk to the service in memory (tests/earthbank)
   if(name MATCHES "^test_earthbank")

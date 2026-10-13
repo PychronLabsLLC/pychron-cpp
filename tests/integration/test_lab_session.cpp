@@ -6,7 +6,6 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -47,6 +46,7 @@
 #include "metrics_text.hpp"
 #include "pychron/core/config/metrics_config.hpp"
 #include "pychron/experiment/metrics/service.hpp"
+#include "temp_path.hpp"
 #endif
 
 namespace pychron::experiment::lab {
@@ -142,9 +142,7 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
   }
 
   void SetUp() override {
-    dir_ = fs::temp_directory_path() /
-           ("pychron-session-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("pychron-session-");
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
     prepare_lab();

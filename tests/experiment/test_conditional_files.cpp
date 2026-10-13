@@ -2,9 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
 #include <algorithm>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -16,6 +14,7 @@
 
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/lab/lab.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment {
 namespace {
@@ -25,9 +24,7 @@ namespace fs = std::filesystem;
 class ConditionalFilesTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    root_ = fs::temp_directory_path() /
-            ("pychron-condfiles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    root_ = pychron::testing::unique_temp_path("pychron-condfiles-");
     fs::create_directories(root_);
     dir_ = root_ / "conditionals";
   }

@@ -25,7 +25,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,6 +51,7 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "store_fixture.hpp"
 #include "virtual_time.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment {
 namespace {
@@ -149,9 +149,7 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
 
   void SetUp() override {
     if (!scripting::scripting_enabled()) GTEST_SKIP() << "the shipped queue's scripts need PYCHRON_SCRIPTING";
-    dir_ = fs::temp_directory_path() /
-           ("pychron-e2e-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-            std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("pychron-e2e-");
     fs::create_directories(dir_);
     site_config_.emplace("PYCHRON_SITE_CONFIG", (dir_ / "site.toml").string());
     install();

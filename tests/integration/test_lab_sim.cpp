@@ -28,7 +28,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -56,6 +55,7 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
 #include "virtual_time.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment::lab {
 namespace {
@@ -90,10 +90,8 @@ struct Analysis {
 class ScratchLab {
  public:
   // `prepare` changes the copy before anything is loaded from it.
-  explicit ScratchLab(const std::function<void(const fs::path&)>& prepare = {}) {
-    dir_ = fs::temp_directory_path() /
-           ("pychron-labsim-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-            std::to_string(std::random_device{}()));
+  explicit ScratchLab(const std::function<void(const fs::path&)>& prepare = {})
+      : dir_(pychron::testing::unique_temp_path("pychron-labsim-")) {
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
     if (prepare) prepare(dir_);

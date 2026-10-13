@@ -8,11 +8,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <optional>
-#include <random>
 #include <string>
 #include <variant>
 #include <vector>
@@ -20,6 +18,7 @@
 #include "legacy/lite.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/canvas/loader.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::setup;
@@ -28,11 +27,7 @@ namespace fs = std::filesystem;
 namespace {
 
 struct Tmp {
-  // ctest runs each test in its own process, several at once: the clock
-  // alone can name two of them the same directory.
-  fs::path dir = fs::temp_directory_path() /
-                 ("pychron-legacy-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                  std::to_string(std::random_device{}()));
+  fs::path dir = pychron::testing::unique_temp_path("pychron-legacy-");
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
   void write(const fs::path& rel, const std::string& text) const {

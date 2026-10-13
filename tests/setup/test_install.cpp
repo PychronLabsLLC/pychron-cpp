@@ -4,7 +4,6 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +13,7 @@
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
 #include "pychron/setup/site.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::setup;
@@ -22,9 +22,7 @@ namespace fs = std::filesystem;
 namespace {
 
 struct Tmp {
-  fs::path dir = fs::temp_directory_path() /
-                 ("pychron-setup-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+  fs::path dir = pychron::testing::unique_temp_path("pychron-setup-");
   Tmp() { fs::create_directories(dir); }
   ~Tmp() { fs::remove_all(dir); }
   void write(const fs::path& rel, const std::string& text) const {

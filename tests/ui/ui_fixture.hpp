@@ -15,6 +15,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/extraction_line.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::ui::test {
 
@@ -37,9 +38,7 @@ inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::fil
   options.sim_file = std::filesystem::path{};
   // Locks persist beside the config by default; keep tests out of the repo
   // and independent of each other.
-  options.state_file = std::filesystem::temp_directory_path() /
-                       ("pychron-ui-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                        ".state.toml");
+  options.state_file = pychron::testing::unique_temp_path("pychron-ui-test-", ".state.toml");
   auto line =
       systems::ExtractionLine::load(dir / "extraction_line.toml", canvas.empty() ? dir / "canvas.toml" : canvas, options);
   if (!line) {

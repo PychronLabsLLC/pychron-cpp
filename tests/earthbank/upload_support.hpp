@@ -2,7 +2,6 @@
 // directory and a submission whose every term the fake service knows.
 #pragma once
 
-#include <atomic>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -11,29 +10,15 @@
 
 #include "pychron/earthbank/model.hpp"
 #include "pychron/earthbank/vocab.hpp"
-
-#ifdef _WIN32
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
+#include "support/temp_path.hpp"
 
 namespace pychron::earthbank::testing {
 
-// A directory of its own, removed with it. Named for the process and a count,
-// so that two build trees running at once do not meet.
+// A directory of its own, removed with it. No other test has its name
+// (support/temp_path.hpp), so two build trees running at once do not meet.
 class TempDir {
  public:
-  TempDir() {
-    static std::atomic<unsigned> serial{0};
-#ifdef _WIN32
-    const long pid = static_cast<long>(_getpid());
-#else
-    const long pid = static_cast<long>(getpid());
-#endif
-    path_ = std::filesystem::temp_directory_path() /
-            ("pychron_upload_" + std::to_string(pid) + "_" + std::to_string(serial.fetch_add(1)));
-    std::filesystem::remove_all(path_);
+  TempDir() : path_(pychron::testing::unique_temp_path("pychron_upload_")) {
     std::filesystem::create_directories(path_);
   }
   ~TempDir() {

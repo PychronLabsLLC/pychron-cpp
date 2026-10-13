@@ -7,8 +7,6 @@
 // part in the clock: simulated time goes on while a test looks, and a test
 // waits for what it expects in real time (QTRY_*, QSignalSpy::wait).
 
-#include <random>
-#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -26,14 +24,13 @@
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::ui::test {
 
 inline std::filesystem::path scratch_lab() {
   namespace fs = std::filesystem;
-  const fs::path dir = fs::temp_directory_path() /
-                       ("pychron-ui-lab-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+  const fs::path dir = pychron::testing::unique_temp_path("pychron-ui-lab-");
   fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir, fs::copy_options::recursive);
   fs::remove_all(dir / "data");
   return dir;

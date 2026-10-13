@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <random>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +8,7 @@
 
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -50,9 +50,7 @@ class FlakyPersister final : public IAnalysisPersister {
 class PersistTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    dir_ = fs::temp_directory_path() /
-           ("persist_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+    dir_ = pychron::testing::unique_temp_path("persist_");
     fs::create_directories(dir_);
   }
   void TearDown() override {

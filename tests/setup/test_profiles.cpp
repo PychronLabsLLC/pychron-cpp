@@ -5,7 +5,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <random>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -28,6 +27,7 @@
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/profile.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::setup;
@@ -39,9 +39,7 @@ const fs::path kProfiles(PYCHRON_PROFILES_DIR);
 const fs::path kExamples(PYCHRON_EXAMPLE_CONFIGS_DIR);
 
 fs::path scratch(const std::string& tag) {
-  const fs::path dir = fs::temp_directory_path() / ("pychron-setup-" + tag + "-" +
-                                                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-                                                     std::to_string(std::random_device{}()));
+  const fs::path dir = pychron::testing::unique_temp_path("pychron-setup-" + tag + "-");
   fs::remove_all(dir);
   return dir;
 }

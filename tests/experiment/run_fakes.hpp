@@ -11,7 +11,6 @@
 #include <map>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <set>
 #include <string>
 #include <string_view>
@@ -24,6 +23,7 @@
 #include "pychron/experiment/plan/plan_library.hpp"
 #include "pychron/experiment/run/run.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "temp_path.hpp"
 
 namespace pychron::experiment::fakes {
 
@@ -304,15 +304,13 @@ inline RunSpec unknown_run(const std::string& identifier, const std::string& pla
   return r;
 }
 
-// A temporary lab: records, spool, pipeline, aliquots. Its directory is named
-// by chance as well as by the clock: ctest runs each case in a process of its
-// own, several at once, and two that read the same tick would share a spool.
+// A temporary lab: records, spool, pipeline, aliquots. Its directory is no
+// other test's (temp_path.hpp): ctest runs each case in a process of its own,
+// several at once, and two under one name would share a spool.
 class Lab {
  public:
   Lab()
-      : dir_(std::filesystem::temp_directory_path() /
-             ("lab_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" +
-              std::to_string(std::random_device{}()) + "_" + std::to_string(counter()++))),
+      : dir_(pychron::testing::unique_temp_path("lab_")),
         files(dir_ / "records"),
         spool(dir_ / "spool"),
         save(spool, files),
@@ -327,10 +325,6 @@ class Lab {
   const std::filesystem::path& dir() const { return dir_; }
 
  private:
-  static std::atomic<int>& counter() {
-    static std::atomic<int> n{0};
-    return n;
-  }
   std::filesystem::path dir_;
 
  public:
