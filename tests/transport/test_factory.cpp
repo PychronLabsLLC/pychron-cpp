@@ -12,6 +12,7 @@
 #include "pychron/transport/udp_transport.hpp"
 #include "pychron/transport/trace.hpp"
 #include "pychron/transport/trace_recorder.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace std::chrono_literals;
@@ -172,8 +173,8 @@ UntracedRun run_untraced(config::LoggingConfig lc) {
   EXPECT_TRUE(hub);
   if (!hub) return out;
 
-  const auto dir = std::filesystem::temp_directory_path() / "pychron_factory_untraced_test";
-  std::filesystem::remove_all(dir);
+  // Its own directory: two cases use this, and ctest runs them at once.
+  const auto dir = pychron::testing::unique_temp_path("pychron_factory_untraced_");
   std::filesystem::create_directories(dir);
   TransportContext ctx;
   ctx.clock = &clock;
