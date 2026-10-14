@@ -86,6 +86,9 @@ class MainWindow : public QMainWindow {
   void set_spectrometer(SpectrometerBridge* bridge, bool simulation,
                         std::function<std::unique_ptr<QSettings>()> settings = {});
   QAction* spectrometer_action() const noexcept { return spectrometer_action_; }
+  // Where the spectrometer window appends its rise rate results (empty:
+  // nowhere). Set before the window is first opened.
+  void set_rise_rate_file(std::filesystem::path path) { rise_rate_file_ = std::move(path); }
   // Null until the action is first triggered.
   SpectrometerWindow* spectrometer_window() const noexcept { return spectrometer_window_; }
 
@@ -190,6 +193,7 @@ class MainWindow : public QMainWindow {
   bool simulation_ = false;
   std::function<std::unique_ptr<QSettings>()> settings_factory_;
   SpectrometerWindow* spectrometer_window_ = nullptr;
+  std::filesystem::path rise_rate_file_;
   QAction* experiment_action_;
   ExperimentBridge* experiment_ = nullptr;
   std::array<QMetaObject::Connection, 2> experiment_refreshes_;  // the bridge's signals to refresh_data()

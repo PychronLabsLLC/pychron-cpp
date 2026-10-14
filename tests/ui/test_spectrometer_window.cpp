@@ -378,6 +378,24 @@ class TestSpectrometerWindow : public QObject {
     QCOMPARE(rise->results()->item(0, ui::RiseRatePanel::ColTime)->text(), QStringLiteral("2026-10-13 01:02:03"));
   }
 
+  void aResultGoesToTheFileTheWindowIsGiven() {
+    open();
+    const QString path = dir_.filePath(QStringLiteral("rise_rates.csv"));
+    QFile::remove(path);
+    window_->set_rise_rate_file(path.toStdString());
+    window_->show();
+    ui::RiseRatePanel* rise = window_->rise_rate();
+    rise->toggle();
+    QTRY_VERIFY_WITH_TIMEOUT(rise->live_text().contains(QStringLiteral("readings")), kWaitMs);
+    rise->toggle();
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(lines.size(), 2);
+    // This window's spectrometer, and that it is a simulated one.
+    QVERIFY2(lines[1].contains(QStringLiteral(",sim-integrated,yes,")), qPrintable(lines[1]));
+  }
+
   void marksAreDrawnAndReplaced() {
     ui::StripChartModel model(bridge_->detectors());
     ui::StripChartView view(model);

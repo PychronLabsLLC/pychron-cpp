@@ -130,6 +130,8 @@ alone): Time column blank. No `QDateTime::currentDateTime()`.
 - Nothing is sent to the spectrometer; nothing moves; no valve. Panel only
   listens to readings the window already gets.
 - No clock read in panel or run; durations from reading timestamps.
+- Results file is the user's to open elsewhere: `mark_as_user_file` when
+  made.
 - Hidden detector (line not drawn) can still be measured.
 - Closing the window, or the banner's Restart, abandons a run; no result,
   status says why.
@@ -139,9 +141,8 @@ alone): Time column blank. No `QDateTime::currentDateTime()`.
 
 ## 6. Out of scope
 
-- Writing results to a file (legacy's `rise_rates.json`). Copy covers
-  taking them elsewhere; a store for instrument health readings is its own
-  task.
+- Results in the database: a store for instrument health readings is its
+  own task.
 - Rise rate from scripts (`extraction_line_pyscript.py:296-331`, heating
   check by `min_rise_rate`): extraction scripts, not this window.
 - Fits other than a straight line; outlier rejection.
@@ -177,7 +178,11 @@ alone): Time column blank. No `QDateTime::currentDateTime()`.
 
 ## 9. Choices made without the owner
 
-1. Results are not written to a file; Copy instead (6).
+1. (Owner, 2026-10-13: write them.) Each result appended to
+   `<data>/rise_rates.csv`, header when new, one line a result, full
+   precision, with spectrometer and `simulated`; never rewritten (legacy
+   wrote the whole session again at each stop). Write failure: said in
+   status, result stays in table. Copy stays.
 2. Both rates kept, as legacy: endpoints is what a hand calculation gives,
    linear is steadier.
 3. Live numbers while running.

@@ -1,5 +1,7 @@
 #include "rise_rate_panel.hpp"
 
+#include <fstream>
+#include <system_error>
 #include <utility>
 
 #include <QApplication>
@@ -12,11 +14,27 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "pychron/core/user_file.hpp"
+
 namespace pychron::ui {
 
 namespace {
 
 QString number(double v, int figures = 4) { return QString::number(v, 'g', figures); }
+
+// One CSV field (RFC 4180): quoted when it holds a comma, a quote or a line break.
+std::string csv(const QString& text) {
+  QString out = text;
+  if (out.contains(QLatin1Char(',')) || out.contains(QLatin1Char('"')) || out.contains(QLatin1Char('\n')) ||
+      out.contains(QLatin1Char('\r'))) {
+    out.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    out = QLatin1Char('"') + out + QLatin1Char('"');
+  }
+  return out.toStdString();
+}
+
+constexpr const char* kFileHeader =
+    "time,spectrometer,simulated,detector,isotope,endpoints,linear,linear_se,units,minutes,n,note\n";
 
 }  // namespace
 
@@ -87,6 +105,34 @@ void RiseRatePanel::set_detector(const QString& name) {
 void RiseRatePanel::set_isotope(const std::string& detector, const QString& isotope) { isotopes_[detector] = isotope; }
 
 void RiseRatePanel::set_wall_clock(std::function<QDateTime()> now) { wall_now_ = std::move(now); }
+
+void RiseRatePanel::set_results_file(std::filesystem::path path, QString spectrometer, bool simulated) {
+  file_ = std::move(path);
+  spectrometer_ = std::move(spectrometer);
+  simulated_ = simulated;
+}
+
+bool RiseRatePanel::append_to_file(const RiseRate& rate, const QString& time, const QString& note) const {
+  std::error_code ec;
+  if (file_.has_parent_path()) std::filesystem::create_directories(file_.parent_path(), ec);
+  const bool fresh = !std::filesystem::exists(file_, ec) || std::filesystem::file_size(file_, ec) == 0;
+  std::ofstream out(file_, std::ios::app | std::ios::binary);
+  if (!out) return false;
+  if (fresh) out << kFileHeader;
+  const auto isotope = isotopes_.find(run_.detector());
+  // The file keeps the numbers whole; the table rounds them for the eye.
+  out << csv(time) << ',' << csv(spectrometer_) << ',' << (simulated_ ? "yes" : "") << ','
+      << csv(QString::fromStdString(run_.detector())) << ',' << csv(isotope == isotopes_.end() ? QString() : isotope->second)
+      << ',' << number(rate.endpoints, 10).toStdString() << ',' << number(rate.linear, 10).toStdString() << ','
+      << (rate.linear_se ? number(*rate.linear_se, 10).toStdString() : std::string()) << ','
+      << csv(units_of(run_.detector())) << ',' << number(rate.duration_min, 10).toStdString() << ',' << rate.n << ','
+      << csv(note) << '\n';
+  out.flush();
+  if (!out) return false;
+  out.close();
+  if (fresh) pychron::mark_as_user_file(file_);
+  return true;
+}
 
 QString RiseRatePanel::units_of(const std::string& detector) const {
   for (const auto& d : detectors_)
@@ -182,8 +228,13 @@ void RiseRatePanel::add_result(const RiseRate& rate) {
   put(ColUnits, units_of(run_.detector()));
   put(ColMinutes, number(rate.duration_min, 3));
   put(ColReadings, QString::number(rate.n));
-  put(ColTime, wall_now_ ? wall_now_().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString());
-  put(ColNote, run_.saturated() ? tr("saturated") : QString());
+  const QString time = wall_now_ ? wall_now_().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString();
+  const QString note = run_.saturated() ? tr("saturated") : QString();
+  put(ColTime, time);
+  put(ColNote, note);
+  if (!file_.empty() && !append_to_file(rate, time, note))
+    status_->setText(tr("The result is in the table, but could not be written to %1.")
+                         .arg(QString::fromStdString(file_.string())));
   results_->scrollToBottom();
   copy_->setEnabled(true);
   clear_->setEnabled(true);

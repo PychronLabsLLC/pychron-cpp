@@ -8,6 +8,7 @@
 // of two readings' times, and a result's wall time comes from the function it
 // was given, or is blank.
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <string>
@@ -40,6 +41,12 @@ class RiseRatePanel : public QWidget {
   // The isotope on a detector, named in the results beside it.
   void set_isotope(const std::string& detector, const QString& isotope);
   void set_wall_clock(std::function<QDateTime()> now);
+  // Each result is also appended to this CSV file (made with its header when
+  // it is not there), so that rise rates can be looked back at across
+  // sessions. `spectrometer` and `simulated` go in every line. An empty path:
+  // no file. A line that cannot be written is said in the status; the result
+  // stays in the table.
+  void set_results_file(std::filesystem::path path, QString spectrometer, bool simulated);
   void toggle();  // the Start / Stop button
   // Ends a run with no result and says why (the window was closed, the scan
   // was restarted): readings either side of a break are not one rise.
@@ -67,10 +74,14 @@ class RiseRatePanel : public QWidget {
   void show_live();
   void add_result(const RiseRate& rate);
   [[nodiscard]] QString units_of(const std::string& detector) const;
+  [[nodiscard]] bool append_to_file(const RiseRate& rate, const QString& time, const QString& note) const;
 
   std::vector<DetectorSeries> detectors_;
   std::map<std::string, QString> isotopes_;
   std::function<QDateTime()> wall_now_;
+  std::filesystem::path file_;
+  QString spectrometer_;
+  bool simulated_ = false;
   RiseRun run_;
   bool announced_ = false;  // started() sent for this run
   bool void_said_ = false;  // cleared() sent for this run's having gone void

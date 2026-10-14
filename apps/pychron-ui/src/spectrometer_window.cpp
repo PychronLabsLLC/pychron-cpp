@@ -71,6 +71,7 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
                                        QWidget* parent)
     : QMainWindow(parent),
       bridge_(bridge),
+      simulation_(simulation),
       settings_(settings ? std::move(settings) : std::make_unique<QSettings>()),
       model_(bridge.detectors()),
       view_(new StripChartView(model_)),
@@ -532,6 +533,10 @@ void SpectrometerWindow::forget_rise_marks() {
 }
 
 void SpectrometerWindow::set_wall_clock(std::function<QDateTime()> now) { rise_->set_wall_clock(std::move(now)); }
+
+void SpectrometerWindow::set_rise_rate_file(const std::filesystem::path& path) {
+  rise_->set_results_file(path, bridge_.name(), simulation_);
+}
 
 void SpectrometerWindow::update_rise_marks() {
   std::vector<ChartMark> marks;

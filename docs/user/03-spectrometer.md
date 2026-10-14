@@ -149,8 +149,16 @@ rising in a straight line (still equilibrating, or a burst): run longer, or
 start again once it has settled.
 
 **Copy** puts the table on the clipboard, tab separated, to paste into a
-spreadsheet or a notebook. **Clear results** empties the table. The results
-are kept while the window is open; they are not written to a file.
+spreadsheet or a notebook. **Clear results** empties the table, which is
+kept while the window is open.
+
+Every result is also appended to `rise_rates.csv` in the data directory
+(beside `records/`), one line each, so that you can look back over months:
+time, spectrometer, whether it was simulated, detector, isotope, the two
+rates and the standard error in full precision, units, minutes, number of
+readings and the note. The file is made the first time there is a result and
+only ever added to; Clear results does not touch it. If it cannot be written
+the panel says so and the result stays in the table.
 
 A run of fewer than two readings gives no result. Neither does one that was
 running when the window was closed, when **Restart** was pressed, or when

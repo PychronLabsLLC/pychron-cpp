@@ -633,6 +633,7 @@ int main(int argc, char** argv) {
     // produce a reading, so the window is not offered at all.
     if (spectrometer_bridge) {
       if (started) {
+        window.set_rise_rate_file(data_dir / "rise_rates.csv");
         window.set_spectrometer(spectrometer_bridge.get(), simulation);
       } else {
         window.log_dock()->append_line(QStringLiteral(

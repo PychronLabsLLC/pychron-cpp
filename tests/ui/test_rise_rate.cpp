@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <initializer_list>
 #include <limits>
 #include <optional>
@@ -11,9 +12,11 @@
 #include <vector>
 
 #include <QComboBox>
+#include <QFile>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "rise_rate.hpp"
@@ -429,6 +432,68 @@ class TestRiseRate : public QObject {
     QVERIFY(!panel.toggle_button()->isEnabled());
     panel.toggle();
     QVERIFY(!panel.running());
+  }
+
+  void eachResultIsAppendedToTheFile() {
+    QTemporaryDir dir;
+    const std::filesystem::path path = std::filesystem::path(dir.path().toStdString()) / "sub" / "rise_rates.csv";
+    const auto lines = [&] {
+      QFile file(QString::fromStdString(path.string()));
+      if (!file.open(QIODevice::ReadOnly)) return QStringList{};
+      return QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    };
+    {
+      RiseRatePanel panel(two());
+      panel.set_wall_clock([] { return QDateTime(QDate(2026, 10, 13), QTime(8, 30, 5)); });
+      panel.set_results_file(path, QStringLiteral("argus, the old one"), true);
+      QVERIFY(lines().isEmpty());  // nothing until there is a result
+      panel.toggle();
+      feed_noisy(panel);
+      panel.toggle();
+      QVERIFY2(panel.status_text().isEmpty(), qPrintable(panel.status_text()));
+      const QStringList first = lines();
+      QCOMPARE(first.size(), 2);  // made with its folder and its header
+      QCOMPARE(first[0], QStringLiteral("time,spectrometer,simulated,detector,isotope,endpoints,linear,linear_se,units,"
+                                        "minutes,n,note"));
+      // Numbers whole, not rounded as the table has them; a name with a comma quoted.
+      QVERIFY2(first[1].startsWith(QStringLiteral("2026-10-13 08:30:05,\"argus, the old one\",yes,H1,Ar40,1.033333333,1.01,")),
+               qPrintable(first[1]));
+      QVERIFY(first[1].endsWith(QStringLiteral(",fA/min,3,4,")));
+      panel.clear_button()->click();  // the table's, not the file's
+      panel.toggle();
+      panel.on_reading(row(0, {{"H1", 1.0}}));
+      panel.on_reading(row(60, {{"H1", 3.0}}, true));
+      panel.toggle();
+      QCOMPARE(lines().size(), 3);
+      QVERIFY(lines()[2].endsWith(QStringLiteral(",fA/min,1,2,saturated")));
+      QVERIFY(lines()[2].contains(QStringLiteral(",2,2,,fA/min,")));  // two readings: no standard error
+    }
+    // Another session adds to the same file, under the one header.
+    RiseRatePanel later(two());
+    later.set_results_file(path, QStringLiteral("argus"), false);
+    later.set_detector(QStringLiteral("AX"));
+    later.toggle();
+    later.on_reading(row(0, {{"AX", 10.0}}));
+    later.on_reading(row(30, {{"AX", 11.0}}));
+    later.toggle();
+    const QStringList all = lines();
+    QCOMPARE(all.size(), 4);
+    QVERIFY2(all[3].startsWith(QStringLiteral(",argus,,AX,,2,2,,cps/min,0.5,2,")), qPrintable(all[3]));
+    QCOMPARE(all.filter(QStringLiteral("time,spectrometer")).size(), 1);
+  }
+
+  void aFileThatCannotBeWrittenIsSaidAndTheResultKept() {
+    QTemporaryDir dir;
+    // A folder where the file should be: it cannot be opened for writing.
+    const std::filesystem::path path = std::filesystem::path(dir.path().toStdString()) / "rise_rates.csv";
+    std::filesystem::create_directories(path);
+    RiseRatePanel panel(two());
+    panel.set_results_file(path, QStringLiteral("argus"), false);
+    panel.toggle();
+    feed_noisy(panel);
+    panel.toggle();
+    QCOMPARE(panel.results()->rowCount(), 1);
+    QVERIFY2(panel.status_text().contains(QStringLiteral("could not be written")), qPrintable(panel.status_text()));
   }
 
   void aSaturatedRunSaysSo() {

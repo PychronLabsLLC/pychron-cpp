@@ -11,6 +11,7 @@
 // defensively: anything unknown, non-numeric or inverted falls back to the
 // default.
 
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <memory>
@@ -63,6 +64,8 @@ class SpectrometerWindow : public QMainWindow {
   // The wall time a rise rate result is stamped with (the line's clock, so a
   // simulated session is stamped in simulated time). Not given: no stamp.
   void set_wall_clock(std::function<QDateTime()> now);
+  // The CSV file each rise rate result is appended to (empty: none).
+  void set_rise_rate_file(const std::filesystem::path& path);
 
   // Asked before a large move with the mass change on the reference detector
   // (NaN when the current mass is unknown). Default: Yes/No dialog, default No.
@@ -123,6 +126,7 @@ class SpectrometerWindow : public QMainWindow {
   void on_command_finished(const QString& what, const Result<void>& result);
 
   SpectrometerBridge& bridge_;
+  bool simulation_;
   std::unique_ptr<QSettings> settings_;
   DockLayouts* layouts_ = nullptr;
   QDockWidget* controls_dock_ = nullptr;
