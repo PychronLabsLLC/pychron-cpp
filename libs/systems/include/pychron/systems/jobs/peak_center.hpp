@@ -139,6 +139,23 @@ struct PeakCenterDone {
   PeakCenterResult result;
 };
 
+// Published, when a bus is given, before the first move of each try and at
+// each step of its sweep, on the job's thread, so that a view can draw the
+// sweep while it runs. PeakCenterDone stays the one authority for the outcome.
+struct PeakCenterTryStarted {
+  DetectorId detector;                 // reference
+  std::string isotope;
+  std::vector<DetectorId> additional;
+  int try_index = 0;                   // 0-based
+  int n_tries = 0;
+  double start = 0, end = 0, initial_center = 0;  // native units
+};
+
+struct PeakCenterPoint {
+  int try_index = 0;
+  SweepPoint point;
+};
+
 struct PeakCenterOptions {
   Sweep::Options sweep;                // sleep injection for tests
   SignalBus* bus = nullptr;

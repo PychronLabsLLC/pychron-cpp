@@ -321,4 +321,134 @@ TEST_F(PeakCenterRun, AsAJobPublishesTheResult) {
   EXPECT_TRUE(job->before && job->after);
 }
 
+TEST_F(PeakCenterRun, PublishesEachTryAndEachPointInOrder) {
+  true_center_ = initial_ + 0.018;  // two tries, as RetriesAroundTheMaximum...
+  std::vector<std::string> order;
+  std::vector<PeakCenterTryStarted> started;
+  std::vector<std::vector<SweepPoint>> points(2);
+  auto s1 = rig_.bus.subscribe<PeakCenterTryStarted>([&](const PeakCenterTryStarted& e) {
+    order.push_back("try" + std::to_string(e.try_index));
+    started.push_back(e);
+  });
+  auto s2 = rig_.bus.subscribe<PeakCenterPoint>([&](const PeakCenterPoint& e) {
+    if (order.empty() || order.back() != "points") order.emplace_back("points");
+    points.at(static_cast<std::size_t>(e.try_index)).push_back(e.point);
+  });
+  auto s3 = rig_.bus.subscribe<PeakCenterDone>([&](const PeakCenterDone&) { order.emplace_back("done"); });
+  PeakCenterOptions options;
+  options.sweep.sleep = rig_.sweep_sleep();
+  options.bus = &rig_.bus;
+  const auto r = run(config(), options);
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_EQ(r->tries.size(), 2U);
+  EXPECT_EQ(order, (std::vector<std::string>{"try0", "points", "try1", "points", "done"}));
+  ASSERT_EQ(started.size(), 2U);
+  for (std::size_t i = 0; i < 2; ++i) {
+    EXPECT_EQ(started[i].n_tries, 2);
+    EXPECT_EQ(started[i].start, r->tries[i].start);
+    EXPECT_EQ(started[i].end, r->tries[i].end);
+    ASSERT_EQ(points[i].size(), r->tries[i].points.size());
+    for (std::size_t k = 0; k < points[i].size(); ++k) {
+      EXPECT_EQ(points[i][k].x, r->tries[i].points[k].x);
+      EXPECT_EQ(points[i][k].y, r->tries[i].points[k].y);
+    }
+  }
+  EXPECT_EQ(started[0].detector, r->detector);
+  EXPECT_EQ(started[0].isotope, r->isotope);
+  EXPECT_EQ(started[0].initial_center, r->initial_center);
+  EXPECT_TRUE(started[0].additional.empty());
+}
+
+TEST_F(PeakCenterRun, TryStartedNamesTheAdditionalDetectors) {
+  std::vector<PeakCenterTryStarted> started;
+  std::vector<SweepPoint> points;
+  auto s1 = rig_.bus.subscribe<PeakCenterTryStarted>([&](const PeakCenterTryStarted& e) { started.push_back(e); });
+  auto s2 = rig_.bus.subscribe<PeakCenterPoint>([&](const PeakCenterPoint& e) { points.push_back(e.point); });
+  auto cfg = config();
+  cfg.additional_detectors = {"AX", "H2"};
+  PeakCenterOptions options;
+  options.bus = &rig_.bus;
+  const auto r = run(cfg, options);
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_EQ(started.size(), 1U);
+  EXPECT_EQ(started[0].additional, (std::vector<DetectorId>{"AX", "H2"}));
+  ASSERT_FALSE(points.empty());
+  EXPECT_TRUE(points.front().y.contains("H1"));
+  EXPECT_TRUE(points.front().y.contains("AX"));
+  EXPECT_TRUE(points.front().y.contains("H2"));
+}
+
+TEST_F(PeakCenterRun, WithoutABusNothingIsPublished) {
+  int events = 0;
+  auto s1 = rig_.bus.subscribe<PeakCenterTryStarted>([&](const PeakCenterTryStarted&) { ++events; });
+  auto s2 = rig_.bus.subscribe<PeakCenterPoint>([&](const PeakCenterPoint&) { ++events; });
+  auto s3 = rig_.bus.subscribe<PeakCenterDone>([&](const PeakCenterDone&) { ++events; });
+  const auto r = run(config());  // options.bus is null
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(r->ok) << r->message;
+  EXPECT_EQ(events, 0);
+}
+
+// The sweep of a try reports through a Progress of the runner's own, which
+// publishes the point and hands the update on: what the job's Progress is
+// told, and what it is left holding, do not depend on the bus.
+TEST_F(PeakCenterRun, TheJobsOwnProgressIsUnchanged) {
+  auto cfg = config();
+  cfg.update_table = false;  // the first run would move the table under the second
+
+  struct Seen {
+    std::size_t reports = 0;
+    ProgressUpdate last;
+    PeakCenterResult result;
+  };
+  const auto observe = [&](SignalBus* bus) -> std::optional<Seen> {
+    Seen seen;
+    Progress progress([&seen](const ProgressUpdate&) { ++seen.reports; });
+    PeakCenterOptions options;
+    options.sweep.sleep = rig_.sweep_sleep();
+    options.bus = bus;
+    auto fut = std::async(std::launch::async,
+                          [&] { return run_peak_center(*rig_.spec, cfg, progress, cancel_, options); });
+    auto r = rig_.drive(fut);
+    if (!r) {
+      ADD_FAILURE() << r.error().what;
+      return std::nullopt;
+    }
+    seen.last = progress.last();
+    seen.result = *r;
+    return seen;
+  };
+
+  const auto without = observe(nullptr);
+  const auto with = observe(&rig_.bus);
+  ASSERT_TRUE(without && with);
+  EXPECT_GT(without->reports, 61U);  // the try's line and a report a point
+  EXPECT_EQ(with->reports, without->reports);
+  EXPECT_EQ(with->last.done, without->last.done);
+  EXPECT_EQ(with->last.total, without->last.total);
+  EXPECT_EQ(with->last.message, without->last.message);
+  ASSERT_TRUE(with->last.point && without->last.point);
+  EXPECT_EQ(with->last.point->x, without->last.point->x);
+  EXPECT_EQ(with->last.point->y, without->last.point->y);
+  EXPECT_EQ(with->result.ok, without->result.ok);
+  EXPECT_EQ(with->result.center, without->result.center);
+  ASSERT_EQ(with->result.tries.size(), without->result.tries.size());
+  EXPECT_EQ(with->result.tries[0].points.size(), without->result.tries[0].points.size());
+}
+
+TEST_F(PeakCenterRun, AnAdditionalDetectorWithoutAPeakDoesNotFailThePeakCenter) {
+  ax_shift_ = 1.0;  // AX's peak is nowhere near the window: it reads zero throughout
+  auto cfg = config();
+  cfg.additional_detectors = {"AX"};
+  PeakCenterOptions options;
+  options.bus = &rig_.bus;
+  const auto r = run(cfg, options);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_TRUE(r->ok) << r->message;
+  ASSERT_EQ(r->additional.size(), 1U);
+  EXPECT_EQ(r->additional[0].detector, "AX");
+  EXPECT_FALSE(r->additional[0].shape);
+  EXPECT_FALSE(r->additional[0].error.empty());
+}
+
 }  // namespace

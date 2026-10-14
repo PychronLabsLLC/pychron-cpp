@@ -61,7 +61,7 @@ Read from `develop` `4098d1e5`.
 
 **Files:** `libs/systems/include/pychron/systems/jobs/peak_center.hpp`, `libs/systems/src/jobs/peak_center.cpp`, `tests/systems/test_jobs_peak_center.cpp`
 
-- [ ] **Step 1: failing tests** in the `PeakCenterRun` fixture (`:157`), capturing as `AsAJobPublishesTheResult` (`:304`) does, into one `std::vector<std::string>` of tags so that order is asserted:
+- [x] **Step 1: failing tests** in the `PeakCenterRun` fixture (`:157`), capturing as `AsAJobPublishesTheResult` (`:304`) does, into one `std::vector<std::string>` of tags so that order is asserted:
 
 ```cpp
 TEST_F(PeakCenterRun, PublishesEachTryAndEachPointInOrder) {
@@ -103,9 +103,9 @@ TEST_F(PeakCenterRun, PublishesEachTryAndEachPointInOrder) {
 
   Also `TryStartedNamesTheAdditionalDetectors` (config with `additional_detectors`; the event lists them in config order), `WithoutABusNothingIsPublished` (subscribe to all three on `rig_.bus`, leave `options.bus` null: nothing arrives), `TheJobsOwnProgressIsUnchanged` and `AnAdditionalDetectorWithoutAPeakDoesNotFailThePeakCenter` (pins `conclude()`: `ok`, with that detector's `DetectorPeak::error` set). The two that compare a run with the bus against one without set `cfg.update_table = false` (the first run would otherwise move the field table under the second) and compare fields, since `PeakCenterResult` has no `operator==`. The fixture's `run()` always passes its own sinkless `progress_`: the progress case calls `run_peak_center` itself with a `Progress` whose sink counts, and compares the count and the last update.
 
-- [ ] **Step 2:** `cmake --build --preset dev --target pychron_systems_tests && build/dev/tests/systems/pychron_systems_tests --gtest_filter='PeakCenterRun.*'`: the new cases do not compile (no such types).
+- [x] **Step 2:** `cmake --build --preset dev --target pychron_systems_tests && build/dev/tests/systems/pychron_systems_tests --gtest_filter='PeakCenterRun.*'`: the new cases do not compile (no such types).
 
-- [ ] **Step 3: implement.** In `peak_center.hpp`, beside `PeakCenterDone` (`:138`), the two structs exactly as spec 4.1 gives them. In `peak_center.cpp`: `attempt(double start, double end, int try_index)`, called with the loop's `i` (`:283`, `:291`). Before the first move (`:340`), when `options_.bus != nullptr`, publish `PeakCenterTryStarted{r_.detector, r_.isotope, cfg_.additional_detectors, try_index, cfg_.n_tries, start, end, r_.initial_center}`. At the sweep (`:370`):
+- [x] **Step 3: implement.** In `peak_center.hpp`, beside `PeakCenterDone` (`:138`), the two structs exactly as spec 4.1 gives them. In `peak_center.cpp`: `attempt(double start, double end, int try_index)`, called with the loop's `i` (`:283`, `:291`). Before the first move (`:340`), when `options_.bus != nullptr`, publish `PeakCenterTryStarted{r_.detector, r_.isotope, cfg_.additional_detectors, try_index, cfg_.n_tries, start, end, r_.initial_center}`. At the sweep (`:370`):
 
 ```cpp
 Progress stepped([this, try_index](const ProgressUpdate& u) {
@@ -117,8 +117,8 @@ auto points = runner.run(spec_, sweep, stepped, cancel_);
 
   Check what `Progress::report` and `last()` do with a forwarded update (`progress.hpp:42-50`) so that `progress_` ends as it did.
 
-- [ ] **Step 4:** the filter above passes; `ctest --preset dev-quick`.
-- [ ] **Step 5:** `python3 tools/quality_check.py`; commit `feat(systems): a peak center publishes each try's start and each sweep point`.
+- [x] **Step 4:** the filter above passes; `ctest --preset dev-quick`.
+- [x] **Step 5:** `python3 tools/quality_check.py`; commit `feat(systems): a peak center publishes each try's start and each sweep point`.
 
 ### Task 2: The bridge relays them
 

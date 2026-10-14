@@ -288,7 +288,7 @@ class Runner {
       const double end = cfg_.increase ? c + d : c - d;
       progress_.report({0, 0, "peak center try " + std::to_string(i + 1) + ": " + num(std::min(start, end)) +
                                   " - " + num(std::max(start, end)), std::nullopt});
-      auto t = attempt(start, end);
+      auto t = attempt(start, end, i);
       if (!t) return fail(t.error());
       auto outcome = conclude();
       if (outcome == Outcome::Done) break;
@@ -332,10 +332,14 @@ class Runner {
     return it != r.values.end() && it->second ? it->second->mean : 0.0;
   }
 
-  Result<void> attempt(double start, double end) {
+  Result<void> attempt(double start, double end, int try_index) {
     PeakCenterTry t;
     t.start = start;
     t.end = end;
+    if (options_.bus != nullptr) {
+      options_.bus->publish(PeakCenterTryStarted{r_.detector, r_.isotope, cfg_.additional_detectors, try_index,
+                                                 cfg_.n_tries, start, end, r_.initial_center});
+    }
     // Reference intensity on peak, then wait at the start for the baseline.
     if (auto m = spec_.move_native((start + end) / 2); !m) return fail(m.error());
     sleep(2 * integration());
@@ -368,7 +372,13 @@ class Runner {
     sweep.settle = cfg_.settle;
     sweep.record = with_additional();
     Sweep runner(options_.sweep);
-    auto points = runner.run(spec_, sweep, progress_, cancel_);
+    // A Progress takes its sink only when made: the sweep reports to this one,
+    // which publishes the point and hands the update on to the job's.
+    Progress stepped([this, try_index](const ProgressUpdate& u) {
+      if (options_.bus != nullptr && u.point) options_.bus->publish(PeakCenterPoint{try_index, *u.point});
+      progress_.report(u);
+    });
+    auto points = runner.run(spec_, sweep, stepped, cancel_);
     t.points = runner.points();
     r_.tries.push_back(std::move(t));
     if (!points) return fail(points.error());
