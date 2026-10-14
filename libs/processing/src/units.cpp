@@ -240,7 +240,7 @@ std::string pipeline_to_toml(const Pipeline& p) {
 // ---------------------------------------------------------------- runner
 
 Result<std::vector<PortValue>> Runner::run(const Pipeline& pipeline, std::string_view target,
-                                           const std::atomic<bool>* cancel) {
+                                           const std::atomic<bool>* cancel, std::optional<double> now) {
   last_.clear();
   diagnostics_.clear();
   if (auto ok = pipeline.validate(registry_); !ok) return fail(ok.error());
@@ -280,6 +280,7 @@ Result<std::vector<PortValue>> Runner::run(const Pipeline& pipeline, std::string
       inputs.push_back(cache_.at(ref.node).outputs.at(ref.port));
     }
     if (u.reads_source() && source_) text += "source " + source_->name() + " " + std::to_string(source_->generation()) + "\n";
+    if (now && u.uses_time(n.options)) text += "now " + std::to_string(*now) + "\n";
     const std::string fp = pychron::to_hex(sha256(text));
     fingerprints[id] = fp;
 
@@ -296,7 +297,7 @@ Result<std::vector<PortValue>> Runner::run(const Pipeline& pipeline, std::string
       last_.push_back(std::move(nr));
       continue;
     }
-    RunContext ctx{source_, cancel, {}};
+    RunContext ctx{source_, cancel, {}, now};
     auto out = u.execute(inputs, n.options, ctx);
     ++executions_;
     nr.executed = true;

@@ -82,7 +82,7 @@ class SelectUnit final : public Unit {
       q.last_hours = o.get_optional_double("last_hours");
       q.exclude_tags = remove_tags;
       const auto limit = static_cast<std::size_t>(o.get_int("limit"));
-      q.limit = 500;
+      q.limit = static_cast<int>(std::min<std::size_t>(limit, 500));  // a page; no more rows than asked for
       while (uuids.size() < limit) {
         auto page = ctx.source->browse(q);
         if (!page) return fail(page.error());

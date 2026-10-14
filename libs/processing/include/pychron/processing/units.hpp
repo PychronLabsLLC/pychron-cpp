@@ -42,6 +42,10 @@ struct RunContext {
   IAnalysisSource* source = nullptr;
   const std::atomic<bool>* cancel = nullptr;
   std::vector<std::string> diagnostics;  // warnings collected during the run
+  // The time the run is made at (UTC epoch seconds), when the caller says:
+  // a simulated session's clock. Without it a unit that draws against "now"
+  // reads the system clock.
+  std::optional<double> now;
   bool cancelled() const noexcept { return cancel && cancel->load(); }
 };
 
@@ -55,6 +59,9 @@ class Unit {
   virtual std::vector<PortSpec> outputs() const = 0;
   // Reads the analysis source (its results depend on the source generation).
   virtual bool reads_source() const { return false; }
+  // With these options, what it gives depends on the run's time
+  // (RunContext::now): a run at another time runs it again.
+  virtual bool uses_time(const Options&) const { return false; }
   // Pure: no state kept between calls; `inputs` match inputs() in order and type.
   virtual Result<std::vector<PortValue>> execute(const std::vector<PortValue>& inputs, const Options& options,
                                                  RunContext& context) const = 0;
@@ -117,9 +124,12 @@ class Runner {
   Runner(const UnitRegistry& registry, IAnalysisSource* source) : registry_(registry), source_(source) {}
 
   // Evaluates `target` and what it depends on. A failing node's error is
-  // returned for every node depending on it.
+  // returned for every node depending on it. `now` is the time the run is
+  // made at (UTC epoch seconds; RunContext::now): a node whose unit uses the
+  // time is run again when it changes, the others are not.
   Result<std::vector<PortValue>> run(const Pipeline& pipeline, std::string_view target,
-                                     const std::atomic<bool>* cancel = nullptr);
+                                     const std::atomic<bool>* cancel = nullptr,
+                                     std::optional<double> now = std::nullopt);
 
   const std::vector<NodeRun>& last_run() const noexcept { return last_; }
   const std::vector<std::string>& diagnostics() const noexcept { return diagnostics_; }

@@ -2,6 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include "fixtures.hpp"
 #include "pychron/processing/time_series.hpp"
 
@@ -110,6 +114,89 @@ TEST(Units, ChangingAnOptionRecomputesOnlyDownstream) {
   auto out = runner.run(p, "figure");
   ASSERT_TRUE(out);
   EXPECT_EQ(runner.executions(), 13u);
+}
+
+// A pipeline whose figure draws hours from now, beside one on a time axis.
+pp::Pipeline now_pipeline() {
+  auto p = air_pipeline();
+  for (const char* id : {"figure", "absolute"}) {
+    pp::NodeSpec& fig = id == std::string("figure") ? *p.find("figure") : p.add(reg(), id, "time_series", {"edits"});
+    auto row = fig.options.new_row("panels");
+    EXPECT_TRUE(row.set("quantity", std::string("Ar40")));
+    EXPECT_TRUE(fig.options.set_rows("panels", {row}));
+  }
+  EXPECT_TRUE(p.find("figure")->options.set("x.kind", std::string("relative")));
+  EXPECT_TRUE(p.find("figure")->options.set("x.origin", std::string("now")));
+  return p;
+}
+
+double first_x(const std::vector<pp::PortValue>& out) {
+  const auto& scene = *std::get<pp::ScenePtr>(out.at(0));
+  for (const auto& layer : scene.graphs.at(0).panels.at(0).layers)
+    if (const auto* points = std::get_if<pp::PointLayer>(&layer)) return points->x.at(0);
+  ADD_FAILURE() << "no points";
+  return 0;
+}
+
+TEST(Runner, ALaterTimeRunsATimeDependentNodeAgain) {
+  auto src = source();
+  pp::Runner runner(reg(), src.get());
+  const auto p = now_pipeline();
+  constexpr double t0 = 1'700'000'000.0;  // the first air's time
+  auto first = runner.run(p, "figure", nullptr, t0 + 1000 * 3600.0);
+  ASSERT_TRUE(first) << first.error().what;
+  EXPECT_DOUBLE_EQ(first_x(*first), -1000.0);
+  auto second = runner.run(p, "figure", nullptr, t0 + 2000 * 3600.0);
+  ASSERT_TRUE(second) << second.error().what;
+  EXPECT_DOUBLE_EQ(first_x(*second), -2000.0);  // drawn again, not the cached scene
+}
+
+// Loads analyses from a MemorySource and counts them.
+class CountingSource : public pp::MemorySource {
+ public:
+  using MemorySource::MemorySource;
+  pychron::Result<pp::AnalysisPtr> load(const std::string& uuid) override {
+    ++loads;
+    return MemorySource::load(uuid);
+  }
+  pychron::Result<pp::BrowsePage> browse(const pp::BrowseQuery& query) override {
+    queries.push_back(query);
+    return MemorySource::browse(query);
+  }
+  int loads = 0;
+  std::vector<pp::BrowseQuery> queries;
+};
+
+TEST(Runner, ALaterTimeDoesNotRunTheOthersAgain) {
+  CountingSource src;
+  for (int i = 0; i < 6; ++i) src.add(make_air(i, 295.0 + i));
+  pp::Runner runner(reg(), &src);
+  const auto p = now_pipeline();
+  ASSERT_TRUE(runner.run(p, "figure", nullptr, 1000.0));
+  ASSERT_TRUE(runner.run(p, "absolute", nullptr, 1000.0));
+  const int loads = src.loads;
+  EXPECT_EQ(loads, 6);
+  ASSERT_TRUE(runner.run(p, "figure", nullptr, 2000.0));
+  for (const auto& n : runner.last_run()) EXPECT_EQ(n.executed, n.id == "figure") << n.id;
+  ASSERT_TRUE(runner.run(p, "absolute", nullptr, 2000.0));
+  for (const auto& n : runner.last_run()) EXPECT_FALSE(n.executed) << n.id;  // its axis is not now
+  EXPECT_EQ(src.loads, loads);
+}
+
+TEST(SelectUnit, AsksForNoMoreRowsThanItsLimit) {
+  CountingSource src;
+  for (int i = 0; i < 20; ++i) src.add(make_air(i, 295.0));
+  pp::Runner runner(reg(), &src);
+  pp::Pipeline p;
+  auto& sel = p.add(reg(), "select", "select");
+  ASSERT_TRUE(sel.options.set("analysis_types", std::vector<std::string>{"air"}));
+  ASSERT_TRUE(sel.options.set("limit", std::int64_t{5}));
+  auto out = runner.run(p, "select");
+  ASSERT_TRUE(out) << out.error().what;
+  EXPECT_EQ(dataset(*out).size(), 5u);
+  ASSERT_EQ(src.queries.size(), 1u);
+  EXPECT_EQ(src.queries[0].limit, 5);
+  EXPECT_EQ(src.loads, 5);
 }
 
 TEST(Units, StatsHonourExclusions) {

@@ -88,13 +88,15 @@ Nothing shipped changes in this task unless the plan is bad. It comes first beca
 
 By default the dock draws against absolute time and this changes nothing it shows; it is for the operator who chooses `x.kind = relative`, `x.origin = now`, and it removes a read of the system clock from a path a simulated session uses.
 
-- [ ] **Step 1: failing tests:**
+- [x] **Step 1: failing tests:**
   - `TimeSeriesUnit.UsesTheRunsTimeWhenGiven`: `x.kind = relative`, `x.origin = now`, analyses at 400 and 700, the run's time 1000: the points are at the offsets 1000 gives. `...UsesTheSystemClockWhenNot`: with none, the scene equals `build_time_series(d, o, <system now>)` to within a second.
   - `Runner.ALaterTimeRunsATimeDependentNodeAgain`: the same pipeline, source and options run twice with times 1000 and 2000: the second scene is drawn at 2000, not taken from the cache. `Runner.ALaterTimeDoesNotRunTheOthersAgain`: `select` and `reduce` are not run again (a counting source), and neither is a `time_series` node whose options do not use now.
   - `SelectUnit.AsksForNoMoreRowsThanItsLimit`: limit 5 on a source that records each `BrowseQuery`: one page, `limit` 5.
-- [ ] **Step 2:** `std::optional<double> now;` in `RunContext` (UTC epoch seconds). `Runner::run` takes it (a defaulted parameter or a setter, as fits `units.hpp:121`) and puts it in the context (`units.cpp:299`). `Unit` gains `virtual bool uses_time(const Options&) const { return false; }`; the time-series unit answers from its `x.kind` and `x.origin`; the fingerprint (`units.cpp:269-282`) includes `now` for a node whose unit says yes. `time_series.cpp:458`: `ctx.now.value_or(<system clock>)`. `select`: `q.limit = std::min<std::size_t>(limit, 500)`.
-- [ ] **Step 3:** grep the other units for `system_clock::now()`; one that uses it for something drawn gets the same treatment, with a test.
-- [ ] **Step 4:** `build/dev/tests/processing/pychron_processing_tests`; commit `feat(processing): a pipeline run can be given the time it is run at`.
+- [x] **Step 2:** `std::optional<double> now;` in `RunContext` (UTC epoch seconds). `Runner::run` takes it (a defaulted parameter or a setter, as fits `units.hpp:121`) and puts it in the context (`units.cpp:299`). `Unit` gains `virtual bool uses_time(const Options&) const { return false; }`; the time-series unit answers from its `x.kind` and `x.origin`; the fingerprint (`units.cpp:269-282`) includes `now` for a node whose unit says yes. `time_series.cpp:458`: `ctx.now.value_or(<system clock>)`. `select`: `q.limit = std::min<std::size_t>(limit, 500)`.
+- [x] **Step 3:** grep the other units for `system_clock::now()`; one that uses it for something drawn gets the same treatment, with a test.
+- [x] **Step 4:** `build/dev/tests/processing/pychron_processing_tests`; commit `feat(processing): a pipeline run can be given the time it is run at`.
+
+  Built: `Runner::run` takes `now` as a defaulted fourth parameter, after `cancel`. Step 3 found one other read of the system clock, the publication report's "generated (UTC)" stamp (`report.cpp`), which is not a unit and draws nothing: left as it is.
 
 ### Task 3: The bridge refreshes the source on its worker, and carries the time
 

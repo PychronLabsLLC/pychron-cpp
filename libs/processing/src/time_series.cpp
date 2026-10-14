@@ -457,9 +457,14 @@ class TimeSeriesUnit final : public Unit {
   std::vector<PortSpec> inputs() const override { return {{"analyses", PortType::Dataset}}; }
   std::vector<PortSpec> outputs() const override { return {{"figure", PortType::Scene}}; }
 
+  bool uses_time(const Options& o) const override {
+    return o.get_string("x.kind") == "relative" && o.get_string("x.origin") == "now";
+  }
+
   Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& o,
-                                         RunContext&) const override {
-    const double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+                                         RunContext& ctx) const override {
+    const double now = ctx.now.value_or(
+        std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
     auto scene = build_time_series(*std::get<DatasetPtr>(in.at(0)), o, now);
     if (!scene) return fail(scene.error());
     return std::vector<PortValue>{PortValue(std::make_shared<const Scene>(std::move(*scene)))};
