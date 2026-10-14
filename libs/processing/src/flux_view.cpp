@@ -6,6 +6,7 @@
 #include <memory>
 #include <sstream>
 
+#include "figure_common.hpp"
 #include "pychron/processing/report.hpp"
 #include "schema_builder.hpp"
 
@@ -224,9 +225,8 @@ SchemaPtr flux_options_schema() {
       f.help = std::move(text);
       return f;
     };
-    auto s = std::const_pointer_cast<Schema>(make_schema(
-        "flux", "Flux",
-        {help(choice("model.kind", "Model", "Model", models, "plane"),
+    std::vector<FieldSpec> fields{
+        help(choice("model.kind", "Model", "Model", models, "plane"),
               "How the monitors' mean J becomes a J at every position."),
          help(when(boolean("model.weighted", "Weighted fit", "Model", false), "model.kind in plane|bowl|ls1d"),
               "Weight the fit by 1 / j_err^2."),
@@ -245,12 +245,36 @@ SchemaPtr flux_options_schema() {
               "The error of that mean; msem is the SEM scaled by sqrt(MSWD) when the MSWD is above 1."),
          help(when(choice("fit.error", "Error of the fit", "Errors", errors, "msem"),
                    "model.kind in plane|bowl|weighted-mean|ls1d|mean1d"),
-              "The error of the predicted J: sem or msem of a fitted surface, sem, msem or sd of a mean model.")}));
+              "The error of the predicted J: sem or msem of a fitted surface, sem, msem or sd of a mean model.")};
+    // The style of the plot: the preset's, never the fit's (flux_style_key).
+    for (auto& f : fit_figure_fields()) fields.push_back(std::move(f));
+    auto s = std::const_pointer_cast<Schema>(make_schema("flux", "Flux", std::move(fields)));
     s->version = 1;
     s->factory_presets = {{"Default", ""}, {"Weighted plane", "[model]\nweighted = true\n"}};
     return SchemaPtr(s);
   }();
   return schema;
+}
+
+bool flux_style_key(std::string_view key) {
+  static const std::vector<std::string> keys = [] {
+    std::vector<std::string> out;
+    for (const auto& f : detail::fit_figure_fields()) out.push_back(f.key);
+    return out;
+  }();
+  return std::find(keys.begin(), keys.end(), key) != keys.end();
+}
+
+Options with_flux_style(Options fit, const Options& style) {
+  for (const auto& f : flux_options_schema()->fields) {
+    if (!flux_style_key(f.key)) continue;
+    if (style.is_set(f.key)) {
+      fit.raw_values()[f.key] = style.get(f.key);
+    } else {
+      fit.unset(f.key);
+    }
+  }
+  return fit;
 }
 
 Options to_options(const FluxOptions& o) {
@@ -503,6 +527,7 @@ ScenePtr build_flux_scene(const std::vector<FittedPosition>& positions, const Le
 
   graph.panels.push_back(std::move(panel));
   scene.graphs.push_back(std::move(graph));
+  if (so.style) detail::apply_fit_style(*so.style, scene);
   return std::make_shared<const Scene>(std::move(scene));
 }
 

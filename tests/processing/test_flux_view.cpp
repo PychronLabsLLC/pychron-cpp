@@ -308,6 +308,66 @@ TEST(FluxSchema, EnabledWhenNamesOnlyKnownKeysAndValues) {
   EXPECT_GE(checked, 6);
 }
 
+// The fit figures' style fields (figure_common.hpp, fit_figure_fields): in the
+// flux schema too, never in FluxOptions (flux window spec W13, R21).
+const std::vector<std::string> kStyleKeys = {"panel_spacing", "font.family",     "font.title", "font.axis",
+                                             "font.tick",     "font.annotation", "background", "plot_background",
+                                             "show_grid",     "show_legend",     "legend_location"};
+
+TEST(FluxSchema, TheStyleFieldsAreTheFitFiguresOwn) {
+  const auto schema = pp::flux_options_schema();
+  for (const auto& key : kStyleKeys) {
+    const auto* f = schema->field(key);
+    ASSERT_NE(f, nullptr) << key;
+    EXPECT_TRUE(pp::flux_style_key(key)) << key;
+  }
+  for (const auto& f : schema->fields) {
+    if (std::find(kStyleKeys.begin(), kStyleKeys.end(), f.key) == kStyleKeys.end()) {
+      EXPECT_FALSE(pp::flux_style_key(f.key)) << f.key;
+    }
+  }
+  const pp::Options o(schema);
+  EXPECT_TRUE(o.get_bool("show_grid"));
+  EXPECT_EQ(o.get_string("background"), "#ffffff");
+  EXPECT_EQ(o.get_string("legend_location"), "top_right");
+  EXPECT_EQ(o.get_double("font.title"), 12.0);
+}
+
+TEST(FluxSchema, StyleIsNoPartOfTheFit) {
+  pp::Options o = pp::to_options(options_of(r::ModelKind::Bowl));
+  for (const auto& key : kStyleKeys) EXPECT_FALSE(o.is_set(key)) << key;
+  ASSERT_TRUE(o.set("show_grid", false));
+  ASSERT_TRUE(o.set("font.title", 20.0));
+  const auto back = pp::flux_options_from(o);
+  ASSERT_TRUE(back.has_value()) << back.error().what;
+  EXPECT_EQ(*back, options_of(r::ModelKind::Bowl));
+}
+
+TEST(FluxSchema, WithFluxStyleTakesTheModelFromOneAndTheStyleFromTheOther) {
+  pp::Options style = pp::to_options(options_of(r::ModelKind::Plane));
+  ASSERT_TRUE(style.set("show_grid", false));
+  ASSERT_TRUE(style.set("background", std::string("#101010")));
+  pp::Options fit = pp::to_options(options_of(r::ModelKind::NearestNeighbors));
+  ASSERT_TRUE(fit.set("font.title", 20.0));  // the fit side's style is dropped
+  const pp::Options both = pp::with_flux_style(fit, style);
+  const auto model = pp::flux_options_from(both);
+  ASSERT_TRUE(model.has_value()) << model.error().what;
+  EXPECT_EQ(*model, options_of(r::ModelKind::NearestNeighbors));
+  EXPECT_FALSE(both.get_bool("show_grid"));
+  EXPECT_EQ(both.get_string("background"), "#101010");
+  EXPECT_EQ(both.get_double("font.title"), 12.0);
+  EXPECT_FALSE(both.is_set("font.title"));
+}
+
+TEST(FluxSchema, APresetSavedBeforeTheStyleFieldsStillLoads) {
+  auto loaded = pp::options_from_toml(pp::flux_options_schema(), "model.kind = \"bowl\"\n");
+  ASSERT_TRUE(loaded) << loaded.error().what;
+  EXPECT_TRUE(loaded->warnings.empty());
+  EXPECT_EQ(loaded->options.get_string("model.kind"), "bowl");
+  EXPECT_TRUE(loaded->options.get_bool("show_grid"));
+  EXPECT_EQ(loaded->options.get_string("legend_location"), "top_right");
+}
+
 // ---- The scene ---------------------------------------------------------------
 
 namespace {
@@ -539,6 +599,51 @@ TEST(FluxScene, Highlight) {
   ASSERT_EQ(m.x.size(), 1u);
   EXPECT_EQ(m.y[0], *hole_of(fit, 3).mean_j);
   EXPECT_EQ(m.marker.color, pp::palette_color(4));
+}
+
+TEST(FluxScene, TheStyleReachesTheScene) {
+  const auto in = level();
+  const auto fit = fit_or_die(in, options_of(r::ModelKind::Plane));
+  const pp::SceneStyle d;
+  for (const bool with_fit : {true, false}) {
+    const auto draw = [&](const pp::FluxSceneOptions& so) {
+      return with_fit ? pp::flux_scene(in, fit, so) : pp::flux_scene(in, options_of(r::ModelKind::Plane), {}, so);
+    };
+    const auto plain = draw({});
+    EXPECT_EQ(plain->style.background, d.background);
+    EXPECT_EQ(plain->style.grid, d.grid);
+    EXPECT_EQ(plain->style.fonts.title, d.fonts.title);
+    EXPECT_EQ(plain->style.legend_corner, d.legend_corner);
+
+    pp::Options style(pp::flux_options_schema());
+    ASSERT_TRUE(style.set("background", std::string("#101010")));
+    ASSERT_TRUE(style.set("plot_background", std::string("#202020")));
+    ASSERT_TRUE(style.set("show_grid", false));
+    ASSERT_TRUE(style.set("show_legend", false));
+    ASSERT_TRUE(style.set("legend_location", std::string("bottom_left")));
+    ASSERT_TRUE(style.set("font.family", std::string("Courier")));
+    ASSERT_TRUE(style.set("font.title", 20.0));
+    ASSERT_TRUE(style.set("font.axis", 18.0));
+    ASSERT_TRUE(style.set("font.tick", 16.0));
+    ASSERT_TRUE(style.set("font.annotation", 14.0));
+    ASSERT_TRUE(style.set("panel_spacing", std::int64_t{0}));
+    pp::FluxSceneOptions so;
+    so.style = style;
+    const auto styled = draw(so);
+    const auto& s = styled->style;
+    EXPECT_EQ(s.background, (pp::Color{0x10, 0x10, 0x10, 255}));
+    EXPECT_EQ(s.plot_background, (pp::Color{0x20, 0x20, 0x20, 255}));
+    EXPECT_FALSE(s.grid);
+    EXPECT_FALSE(s.legend);
+    EXPECT_EQ(s.legend_corner, pp::Corner::BottomLeft);
+    EXPECT_EQ(s.fonts.family, "Courier");
+    EXPECT_EQ(s.fonts.title, 20.0);
+    EXPECT_EQ(s.fonts.axis_title, 18.0);
+    EXPECT_EQ(s.fonts.tick, 16.0);
+    EXPECT_EQ(s.fonts.annotation, 14.0);
+    EXPECT_EQ(s.panel_spacing, 0);
+    EXPECT_EQ(layers_of(*styled).size(), layers_of(*plain).size());  // the data is the same
+  }
 }
 
 TEST(FluxScene, WithoutAFitTheDataIsStillThere) {

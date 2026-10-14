@@ -66,6 +66,15 @@ Options to_options(const FluxOptions& options);
 // A field the chosen model does not use keeps its value and is converted too.
 // Error (Config): sd as the error of a fitted surface, the math layer's text.
 Result<FluxOptions> flux_options_from(const Options& options);
+// The plot's style fields, after the model and error fields: those of the fit
+// figures (panel_spacing, font.*, background, plot_background, show_grid,
+// show_legend, legend_location), with their keys and defaults. They belong to
+// a preset, never to the fit: to_options sets none and flux_options_from reads
+// none (flux window spec W13).
+bool flux_style_key(std::string_view key);
+// `fit`'s model and error fields with `style`'s style fields (set or not as
+// they are there). Both of flux_options_schema().
+Options with_flux_style(Options fit, const Options& style);
 
 // ---- The scene --------------------------------------------------------------
 // J against the hole angle (or against X or Y for a one-dimensional model): every
@@ -81,6 +90,7 @@ double flux_hole_abscissa(FluxAbscissa kind, double x, double y);
 
 struct FluxSceneOptions {
   std::optional<int> highlight_hole;  // the hole whose analyses, mean or J are drawn on top
+  std::optional<Options> style;       // of flux_options_schema(): its style fields are drawn; none: the defaults
 };
 // The curve exists for the least-squares, weighted-mean and mean1d models, from
 // the monitors used in the fit; none (no band, no line) for matching, nearest,

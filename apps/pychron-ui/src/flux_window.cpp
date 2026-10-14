@@ -121,10 +121,11 @@ bool no_edits(const pp::Edits& e) {
 }
 
 // The same fit options, whether a value was set or is its field's default
-// (Options' own == tells those apart).
+// (Options' own == tells those apart). The style fields are no part of a fit
+// (W13): they are never an edit.
 bool same_values(const pp::Options& a, const pp::Options& b) {
   for (const auto& field : pp::flux_options_schema()->fields)
-    if (a.get(field.key) != b.get(field.key)) return false;
+    if (!pp::flux_style_key(field.key) && a.get(field.key) != b.get(field.key)) return false;
   return true;
 }
 
@@ -348,7 +349,9 @@ void FluxWindow::build_dock() {
     preset_name_ = name;
     set_options(options);
   });
-  connect(preset_bar_, &PresetBar::pinned_chosen, this, [this] { set_options(loaded_values_); });
+  // The saved fit's model and errors; the style stays as it is (W13).
+  connect(preset_bar_, &PresetBar::pinned_chosen, this,
+          [this] { set_options(pp::with_flux_style(loaded_values_, values_)); });
   // After the status, not over it: a fit error and "edited" stay in sight.
   connect(preset_bar_, &PresetBar::message, this, [this](const QString& text, const QString& details) {
     message_ = text;
@@ -357,8 +360,10 @@ void FluxWindow::build_dock() {
     refresh_status();
   });
   connect(editor_, &OptionsEditor::changed, this, [this] {
+    const bool fit_changed = !same_values(editor_->options(), values_);
     values_ = editor_->options();
-    options_changed();
+    if (fit_changed) return options_changed();
+    update_scene();  // the style alone: nothing to fit again
   });
 }
 
@@ -678,16 +683,17 @@ void FluxWindow::apply_loaded(pp::LevelInputs inputs, std::vector<pp::MonitorSet
   clear_level();
   inputs_ = std::move(inputs);
 
-  // W6: the saved fit's options, else the preset in use.
+  // W6: the saved fit's options, else the preset in use; W13: the style as it is.
   if (!preset_bar_->pinned_selected() && !preset_bar_->current_name().isEmpty())
     preset_name_ = preset_bar_->current_name();
   if (inputs_->saved_options) {
     loaded_preset_.clear();
-    values_ = pp::to_options(*inputs_->saved_options);
+    values_ = pp::with_flux_style(pp::to_options(*inputs_->saved_options), values_);
   } else {
     loaded_preset_ = preset_name_;
     auto preset = presets_.load(pp::flux_options_schema(), preset_name_.toStdString());
-    values_ = preset ? std::move(preset->options) : presets_.defaults(pp::flux_options_schema());
+    values_ = pp::with_flux_style(preset ? std::move(preset->options) : presets_.defaults(pp::flux_options_schema()),
+                                  values_);
   }
   loaded_values_ = values_;
   // R19: the options changed before a Reload are still the editor's, and an
@@ -850,7 +856,7 @@ void FluxWindow::show_selected() {
 
 void FluxWindow::update_scene() {
   if (!inputs_) return view_->set_scene(nullptr);
-  const pp::FluxSceneOptions scene{selected_hole_};
+  const pp::FluxSceneOptions scene{selected_hole_, values_};
   if (fit_) return view_->set_scene(pp::flux_scene(*inputs_, *fit_, scene));
   view_->set_scene(pp::flux_scene(*inputs_, options_, edits_, scene));
 }
@@ -1006,7 +1012,7 @@ void FluxWindow::revert() {
   skip_.clear();
   loaded_skip_.clear();
   apply_skip();
-  values_ = loaded_values_;
+  values_ = pp::with_flux_style(loaded_values_, values_);  // W13: the style is no edit
   editor_->set_options(values_);
   if (!loaded_preset_.isEmpty()) preset_name_ = loaded_preset_;
   show_preset();

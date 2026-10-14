@@ -813,7 +813,9 @@ class FluxWindowTest : public QObject {
     QVERIFY(dock);
     QCOMPARE(dock->windowTitle(), QStringLiteral("Fit"));
     QCOMPARE(w.dockWidgetArea(dock), Qt::RightDockWidgetArea);
-    QCOMPARE(w.options_editor()->sections(), QStringList({QStringLiteral("Model"), QStringLiteral("Errors")}));
+    QCOMPARE(w.options_editor()->sections(),
+             QStringList({QStringLiteral("Model"), QStringLiteral("Errors"), QStringLiteral("Layout"),
+                          QStringLiteral("Appearance"), QStringLiteral("Legend")}));
     // No saved fit: the level opens on the preset in use.
     QCOMPARE(w.preset_bar()->current_name(), QStringLiteral("Default"));
     QCOMPARE(w.preset_bar()->combo()->findText(QStringLiteral("(saved fit)")), -1);
@@ -935,6 +937,90 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w.options(), pp::FluxOptions{});
     QVERIFY(settle(w));
     QCOMPARE(w.options(), nearest3());
+  }
+
+  // W13, R21: the plot's style is the preset's. A change of it is no edit and
+  // reaches the plot; the level's reads, (saved fit) and Revert keep it; a
+  // preset brings its own.
+  void the_style_is_the_presets_not_the_fits() {
+    for (int hole = 1; hole <= 8; ++hole) save_fit(hole, nearest3());
+    auto r = rig();
+    auto wp = opened(r);
+    FluxWindow& w = *wp;
+    QVERIFY2(w.fit(), qPrintable(w.status()));
+    QVERIFY(w.preset_bar()->pinned_selected());
+    QVERIFY(w.view()->scene());
+    QVERIFY(w.view()->scene()->style.grid);
+
+    const auto grid_shown = [&w] { return w.view()->scene() && w.view()->scene()->style.grid; };
+    QVERIFY(w.options_editor()->apply(QStringLiteral("show_grid"), false));
+    QVERIFY(!w.options_editor()->options().get_bool("show_grid"));
+    QVERIFY(settle(w));
+    QVERIFY(!grid_shown());
+    QVERIFY(!w.edited());
+    QVERIFY(!w.status().contains(QStringLiteral("edited")));
+    QCOMPARE(w.options(), nearest3());
+
+    // (saved fit) chosen again: the saved model, the style as it is.
+    QVERIFY(w.options_editor()->apply(QStringLiteral("model.neighbors"), std::int64_t{2}));
+    QVERIFY(w.edited());
+    Q_EMIT w.preset_bar()->combo()->activated(0);
+    QCOMPARE(w.options(), nearest3());
+    QVERIFY(!w.edited());
+    QVERIFY(settle(w));
+    QVERIFY(!grid_shown());
+
+    // Revert drops the edits and keeps the style.
+    QVERIFY(w.options_editor()->apply(QStringLiteral("model.neighbors"), std::int64_t{2}));
+    QVERIFY(settle(w));
+    w.revert();
+    QCOMPARE(w.options(), nearest3());
+    QVERIFY(!w.edited());
+    QVERIFY(settle(w));
+    QVERIFY(!grid_shown());
+    QVERIFY(!w.options_editor()->options().get_bool("show_grid"));
+
+    // A Reload reads the level again and keeps the style too.
+    w.reload();
+    QVERIFY(settle(w));
+    QCOMPARE(w.options(), nearest3());
+    QVERIFY(!w.edited());
+    QVERIFY(!grid_shown());
+
+    // A save writes the fit alone, and keeps the style; saved again with
+    // another style there is nothing to write: the style is no part of it.
+    w.save();
+    QVERIFY(settle(w));
+    QVERIFY2(w.status().startsWith(QStringLiteral("Saved")), qPrintable(w.status()));
+    QVERIFY(!grid_shown());
+    QVERIFY(w.options_editor()->apply(QStringLiteral("font.title"), 20.0));
+    QVERIFY(!w.edited());
+    w.save();
+    QVERIFY(settle(w));
+    QVERIFY2(w.status().startsWith(QStringLiteral("Nothing to save")), qPrintable(w.status()));
+    QVERIFY(!grid_shown());
+    QCOMPARE(w.view()->scene()->style.fonts.title, 20.0);
+
+    // A preset chosen brings its own style with its model.
+    QVERIFY(w.preset_bar()->select(QStringLiteral("Default")));
+    QCOMPARE(w.options(), pp::FluxOptions{});
+    QVERIFY(w.options_editor()->options().get_bool("show_grid"));
+    QVERIFY(settle(w));
+    QVERIFY(grid_shown());
+
+    // A preset saved with a style brings it back.
+    QVERIFY(w.options_editor()->apply(QStringLiteral("show_grid"), false));
+    w.preset_bar()->ask_name = [] { return QStringLiteral("No grid"); };
+    QVERIFY(w.preset_bar()->save(true));
+    auto saved = r.presets.load(pp::flux_options_schema(), "No grid");
+    QVERIFY(saved.has_value());
+    QVERIFY(!saved->options.get_bool("show_grid"));
+    QVERIFY(w.preset_bar()->select(QStringLiteral("Default")));
+    QVERIFY(settle(w));
+    QVERIFY(grid_shown());
+    QVERIFY(w.preset_bar()->select(QStringLiteral("No grid")));
+    QVERIFY(settle(w));
+    QVERIFY(!grid_shown());
   }
 
   void a_model_the_monitors_cannot_fit() {

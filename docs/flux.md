@@ -178,6 +178,13 @@ On the right.
   for the models that form it from a fit or a mean. Choosing `sd` for the
   error of the fit of a fitted surface turns the field red; its tooltip is
   the reason, and the status shows it.
+- The plot's style, in the sections Layout, Appearance and Legend: panel
+  spacing, the font and its sizes, the backgrounds, the grid and the legend,
+  as in the blanks and IC factor windows. The style belongs to the preset,
+  not to the fit: a preset brings its own style with its model, but a saved
+  fit holds none. Changing it is no edit (nothing to save, nothing asked), and
+  opening another level, `Reload`, `Revert` and choosing `(saved fit)` leave
+  it as it is. Save a preset to keep one.
 
 ### The status line and the warnings
 
