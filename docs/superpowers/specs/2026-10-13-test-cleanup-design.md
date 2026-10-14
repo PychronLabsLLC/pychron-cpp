@@ -88,6 +88,19 @@ signal). Long tests are not superfluous for being long.
 - Rule: a shared world is never written by a test; a test that writes gets a
   copy. A test that fails only when run with its suite is a bug (root
   `AGENTS.md`).
+- Measured 2026-10-13 (`pychron_dvc_tests`, Debug, SQLite, M-series Mac,
+  one process): `ProjectImportTest` 82 tests 125 s, median 0.49 s, fastest
+  0.17 s; `MetaImportTest` 26 tests 34 s, median 0.28 s, fastest 0.13 s.
+  `SetUp` is at most the fastest test, so at most about 10% of a suite:
+  sharing it per suite is not the first thing. Three bodies hold 52 s of
+  `ProjectImportTest` (`OneHistoryOneResult` 28 s,
+  `ReadableRecordAfterAnUnreadableFirstRecordStartsTheCollection` 18 s,
+  `VerifyAfterImportIsOk` 7 s) and 27 s of `MetaImportTest`
+  (`OneHistoryOneResult` 18 s, `VerifyAfterImportIsOk` 5 s,
+  `UnreadableVersionIsSupersededByAReadableOneOrADeletion` 4 s). So:
+  profile those bodies first; a shared world only where `SetUp` is shown
+  to matter. `OneHistoryOneResult` is kept whole whatever it costs
+  (`libs/ingest/AGENTS.md`): made cheaper, never split or cut.
 - `LabSim`, `LabSessionTest`, `ui.test_experiment_window`: look for real
   waits that a `VirtualClock` would remove before anything else.
 
