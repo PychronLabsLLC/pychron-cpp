@@ -71,13 +71,14 @@ Owner decisions of 2026-10-07 are marked (owner).
 | W3 | (owner) **Options are schema-driven with presets**: a flux options schema, the existing `OptionsEditor` and `PresetBar`, preset kind `flux`. |
 | W4 | (owner) **`Fit ▸ Flux…`**, a new top-level `Fit` menu, and a `Fit flux…` action in the Packages window that opens the flux window on the level being edited. |
 | W5 | **Live refit.** Every edit and every option change refits (debounced 150 ms). `fit_level` is pure and takes well under a millisecond for a level; the slow part, loading and reducing the monitor analyses, happens once per level. There is no Fit button. |
-| W6 | **Where the options of a level come from.** A level with a saved fit opens on the saved options and the preset bar shows `(saved fit)`. A level without one opens on the preset in use (`Default` to begin with). Choosing a preset replaces the model and error options with the preset's (fields it does not set go to their defaults); it does not merge. |
+| W6 | **Where the options of a level come from.** A level with a saved fit opens on the saved options and the preset bar shows `(saved fit)`. A level without one opens on the preset in use (`Default` to begin with). Choosing a preset replaces the model and error options with the preset's (fields it does not set go to their defaults); it does not merge. Style fields (W13) are not the level's: a read of a level leaves them as they are. |
 | W7 | **The monitor selection is not in a preset.** The monitor set, the sample override and "all positions" belong to the level, not to a style of fitting; they sit in their own group above the options and come from the level's saved fit (flux spec R18, R20). |
 | W8 | **The window computes nothing.** The scene, the options schema and the level status are Qt-free functions in `libs/processing`, tested there. The window holds `LevelInputs`, `FluxOptions`, `Edits` and the `LevelFit`, and draws. |
 | W9 | **One edit, three places.** A plot click, an analysis check box and a rubber band are the same change to `Edits`; a monitor's `Fit` box is `Edits::exclude_positions`. Each view is redrawn from the refit, never from the gesture. |
 | W10 | **The store is never called from the GUI thread.** Load, save and the monitor sets run as `EntryBridge` jobs. The fit itself runs on the GUI thread (W5). |
 | W11 | **Saving is `save_level`**, unchanged: one changeset, every position or none, compare-and-swap, the refusal of a J that is not finite and positive. The window adds nothing to its rules. |
 | W12 | **The fit result says why an analysis is out.** `FittedPosition::analyses` gains each analysis's J and the reason it takes no part. The window needs it for the plot and the analyses table; `elctl flux fit` prints it too. |
+| W13 | (owner, 2026-10-13) **Style belongs to the preset, never to the fit.** The plot's style (fonts, backgrounds, grid, legend: the fit figures' shared fields) is in the options schema and in presets, not in `FluxOptions` and never saved with a fit. Choosing a preset applies its style with its model; `(saved fit)` applies the saved model and error options and leaves the style as it is. A style change refits nothing it need not, is not an edit (5.6) and is never a reason to ask or to save. (R21) |
 
 ## 4. Core additions (`libs/processing`, Qt-free)
 
@@ -122,6 +123,21 @@ Result<FluxOptions> flux_options_from(const Options& options);
 | `mean.error` | Errors | enum: `sem`, `msem`, `sd` | `msem` | |
 | `fit.error` | Errors | enum: `sem`, `msem`, `sd` | `msem` | `model.kind in plane\|bowl\|weighted-mean\|ls1d\|mean1d` |
 
+Then the style fields the fit figures share (`fit_figure_fields`,
+`libs/processing/src/figure_common.hpp`), same keys and defaults as theirs:
+`panel_spacing` (Layout); `font.family`, `font.title`, `font.axis`,
+`font.tick`, `font.annotation`, `background`, `plot_background`,
+`show_grid` (Appearance); `show_legend`, `legend_location` (Legend). Their
+defaults draw the scene as it was drawn before they existed, so a `flux`
+preset saved before them loads and draws unchanged; the schema stays
+version 1. `to_options` sets none of them and `flux_options_from` reads none
+of them (W13).
+
+```cpp
+bool flux_style_key(std::string_view key);                       // one of the style fields above
+Options with_flux_style(Options fit, const Options& style);      // fit's model and errors, style's style fields
+```
+
 The choices are the spellings of `elctl flux fit`. Each field's `help` is
 the sentence of `docs/flux.md` for that option. `flux_options_from` returns
 the error of the math layer when `fit.error` is `sd` with a fitted surface
@@ -139,7 +155,10 @@ others are; `OptionsEditor` needs no other change.
 enum class FluxAbscissa { Angle, X, Y };
 FluxAbscissa flux_abscissa(const FluxOptions& options);   // X or Y for the three 1-D kinds, else Angle
 
-struct FluxSceneOptions { std::optional<int> highlight_hole; };
+struct FluxSceneOptions {
+  std::optional<int> highlight_hole;
+  std::optional<Options> style;   // flux_options_schema() options; their style fields drawn (W13); none: the defaults
+};
 ScenePtr flux_scene(const LevelInputs& inputs, const LevelFit& fit, const FluxSceneOptions& options = {});
 ScenePtr flux_scene(const LevelInputs& inputs, const FluxOptions& options, const Edits& edits,
                     const FluxSceneOptions& scene_options = {});   // no fit: analyses and means, the highlight too
@@ -290,7 +309,8 @@ J is printed `%.4e`, percentages and MSWD `%.2f`, an absent value blank.
 - `PresetBar` for kind `flux`. A level with a saved fit has `(saved fit)` as
   the first entry, for as long as it is on show: choosing a preset leaves it
   in the list, and choosing it applies the saved options again (R20).
-- `OptionsEditor` on `flux_options_schema()`, sections `Model` and `Errors`.
+- `OptionsEditor` on `flux_options_schema()`, sections `Model`, `Errors`,
+  `Layout`, `Appearance` and `Legend` (W13).
 
 **Tool bar.** `Save`, `Revert`, `Reload`, `Reset omissions`, `Export CSV…`,
 `Open in Packages`.
@@ -378,8 +398,10 @@ the bridge's; it is never asked for.
 
 ### 5.6 Edits pending
 
-The window has edits pending when `Edits`, the options, the monitor group or
-a `Save` box differ from what the load produced. A monitor-group choice that
+The window has edits pending when `Edits`, the model and error options, the
+monitor group or a `Save` box differ from what the load produced. The style
+fields are never an edit (W13): `Revert` and every read of a level leave
+them as they are. A monitor-group choice that
 differs from the level's as-saved selection is an edit, also after its reload;
 `Revert` then reloads with no selection (R9). Selecting another level, a
 change of the monitor group and closing the window then ask
@@ -444,7 +466,10 @@ Core (GoogleTest):
   saved fit, by edit (and the precedence), not reduced, no J; `omitted` and
   what a save writes are unchanged.
 - The schema: `to_options` then `flux_options_from` is the identity for
-  every model and every option; the defaults are `FluxOptions{}`; `sd` with
+  every model and every option; the style fields are in the schema with the
+  fit figures' defaults, `flux_options_from` ignores them, `with_flux_style`
+  takes each field from the right side, and a scene drawn with a style
+  carries it (and without one, the defaults); the defaults are `FluxOptions{}`; `sd` with
   a surface is the math layer's error; each `enabled_when` is true exactly
   for the models of the table in 4.2; the `in` form with one, several and no
   matching value.
@@ -469,6 +494,9 @@ SQLite store seeded with `flux_seed.hpp`; one `QSKIP` without the store):
 - Choosing the `Weighted plane` preset changes the status to `plane,
   weighted`; a level with a saved fit opens on the saved options and shows
   `(saved fit)`.
+- A style field changed is no edit and reaches the plot; it stays over
+  `(saved fit)` chosen, `Revert` and a Reload; a preset chosen brings its own
+  style; a fit saved after it holds no style (R21).
 - A model the monitors cannot support shows the error, blanks the predicted
   columns, and disables Save with the error as its tooltip.
 - Save writes (the store is read back), says `Saved 12 positions`, and a
@@ -582,6 +610,16 @@ for the commit messages and the review.
   fit, also once a preset was chosen; choosing it applies the saved options.
   The `Save` boxes a save left unticked are kept, as no edit, over every read
   of the same level, and are ticked again by another level and by `Revert`.
+- **R21** (2026-10-13, owner: style belongs to the preset) The style fields
+  are in the flux schema (4.2) and drawn through `FluxSceneOptions::style`.
+  Only a preset chosen, or a field changed in the editor, changes them: a
+  read of a level (another level, Reload, a change elsewhere, after a save),
+  `(saved fit)` chosen and `Revert` set the model and error options and keep
+  the style on show (`with_flux_style`). `pending()` and the Reload carry
+  compare the model and error fields only. A saved fit holds no style
+  (`FluxOptions` has none, and the stored fit is unchanged). `Revert` after
+  a preset was chosen therefore keeps that preset's style while the bar
+  names the preset the level was loaded with.
 
 ### As built
 
