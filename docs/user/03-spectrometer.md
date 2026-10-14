@@ -56,7 +56,7 @@ arrangements" in [the extraction line chapter](02-extraction-line.md).
 ### Strip chart
 
 Time (seconds since the chart started or was cleared) runs along the bottom,
-signal up the side. Each detector is one line in its own colour (the colour
+signal up the side. Each detector is one line in its own color (the color
 from the config, or a default palette). The chart redraws at most every 50 ms.
 
 Under **Graph** in the Controls dock:
@@ -629,7 +629,7 @@ elctl init --reconfigure --install <name> --set simulation=no
 - **Hardware behaviour** of the Qtegra and NGX drivers, source ramping on
   real hardware, and the effect of `af_demag` have not been checked against an
   instrument; this page documents the configuration, not measured behaviour.
-- The window's colour cell for a saturated detector depends on the config
+- The window's color cell for a saturated detector depends on the config
   `saturation` value; a detector without `saturation` never shows it.
 - Spec text says "Window > Spectrometer"; the real menu is **View >
   Spectrometer**.

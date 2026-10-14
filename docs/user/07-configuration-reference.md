@@ -337,9 +337,9 @@ be positive. Top-level sections: `[canvas]`, `[colors]`, `[[valve]]`,
 | `[canvas]` | `origin` | `[x, y]` | `[0, 0]` | |
 | | `size` | `[w, h]` | `[1000, 700]` | |
 | | `connection_width` | whole number >= 1 | 5 | pipe thickness |
-| | `open_valve_color` | `green`, `inherit` | `green` | `inherit`: an open valve takes the colour of the region it joins |
+| | `open_valve_color` | `green`, `inherit` | `green` | `inherit`: an open valve takes the color of the region it joins |
 | `[colors]` | any name = `"#rrggbb"` | text | | e.g. `valve`, `pipette` |
-| | `background` | `"#rrggbb"` or a colour name | the application's own | what is behind the drawing, to the edges of the view; a value that is not a colour is ignored |
+| | `background` | `"#rrggbb"` or a color name | the application's own | what is behind the drawing, to the edges of the view; a value that is not a color is ignored |
 | `[[valve]]`, `[[manual_valve]]`, `[[rough_valve]]`, `[[switch]]` | `name` | text, required | | must match the line |
 | | `pos` | `[x, y]`, required | | |
 | | `display_name` | text | the name (blank on a manual valve) | the label on its face |
@@ -351,7 +351,7 @@ be positive. Top-level sections: `[canvas]`, `[colors]`, `[[valve]]`,
 | | `display_name` | text | the name | `""` for no label |
 | | `use_symbol`, `symbol` | true/false; `spectrometer`, `quadrupole`, `laser`, `turbo`, `getter`, `ion_pump` | false | a glyph in the box |
 | | `kind` | `volume`, `pump`, `pipette`, `laser`, `tank`, `spectrometer`, `getter` | from the symbol | what it is to the gas |
-| | `precedence` | whole number >= 0 | the kind's | which source wins a shared region. 0 colours nothing |
+| | `precedence` | whole number >= 0 | the kind's | which source wins a shared region. 0 colors nothing |
 | | `color` | `"#rrggbb"` | the theme's | |
 | | `tank` | text | | for a pipette: the tank whose gas it holds |
 | `[[pipette]]` | `name`, `pos` | required | | the name must be a pipette in the line |
@@ -367,12 +367,12 @@ be positive. Top-level sections: `[canvas]`, `[colors]`, `[[valve]]`,
 | `[[label]]` | `text`, `pos` | required | | |
 | | `font` | text | | `"Arial 12"` |
 | `[[image]]` | `path`, `pos` | required | | a picture file |
-| `[legend]` | `pos` | `[x, y]`, required | | where the colour key goes |
+| `[legend]` | `pos` | `[x, y]`, required | | where the color key goes |
 
-Gas colours: a region takes the colour of the connected source with the
+Gas colors: a region takes the color of the connected source with the
 highest precedence: a pump (120), then a tank (110), a pipette or laser
-(100), a spectrometer (80), a getter (70). Each tank gets its own colour
-and a pipette wears the colour of the tank across its valve unless `tank`
+(100), a spectrometer (80), a getter (70). Each tank gets its own color
+and a pipette wears the color of the tank across its valve unless `tank`
 says otherwise.
 
 ## spectrometer.toml and its folder

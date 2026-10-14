@@ -41,7 +41,7 @@ Related pages: [getting started](01-getting-started.md),
 | Red valve | Closed. |
 | Grey valve | State unknown (not read yet, or the last command or read-back failed). |
 | Dashed outline around a valve | A command is in flight (waiting on the controller, the settle time and the read-back). |
-| Thick coloured border on a valve | The valve is **locked** in software. |
+| Thick colored border on a valve | The valve is **locked** in software. |
 | Valve flashes yellow | The last command was refused or failed. Hover for the reason. |
 | A rounded chip with a small dial and `IG1: 1.20e-08 torr` | A gauge and its latest reading. The chip text turns red while the reading is outside `alarm_high` / `alarm_low`. Rest the pointer on it for 3 seconds and a small chart of its last 10 minutes appears beside it (it goes when the pointer moves off, the canvas scrolls or a button is pressed). Click it to open the gauge's own window (see [Gauges](#gauges)). |
 | A gauge chip that shows only its name | The canvas draws a gauge that `extraction_line.toml` does not define; it is decoration and never shows a reading. Resting on it or clicking it does nothing. |
@@ -51,25 +51,25 @@ Related pages: [getting started](01-getting-started.md),
 The canvas is a fixed drawing; it does not zoom. Its size and scale come from
 `[canvas] size` in `canvas.toml`.
 
-### Colours show where gas can go
+### Colors show where gas can go
 
-Boxes and pipes are not one fixed colour. Pychron works out which volumes are
+Boxes and pipes are not one fixed color. Pychron works out which volumes are
 connected through open valves and paints each connected region with the
-colour of the most important source attached to it:
+color of the most important source attached to it:
 
 1. a pump (turbo, ion pump, rough pump) wins over
-2. a tank (each tank has its own colour), which wins over
+2. a tank (each tank has its own color), which wins over
 3. a pipette or a laser, which wins over
 4. a spectrometer, which wins over
 5. a getter.
 
 A region with no source stays neutral grey. So opening a valve between the
-prep line and a pumped turbo visibly turns the prep line the pump colour, and
-opening a pipette shows whose gas it holds. A pipette wears the colour of the
-tank across its valve unless the canvas gives it a colour of its own.
+prep line and a pumped turbo visibly turns the prep line the pump color, and
+opening a pipette shows whose gas it holds. A pipette wears the color of the
+tank across its valve unless the canvas gives it a color of its own.
 
 If `open_valve_color = "inherit"` is set in `[canvas]`, open valves take the
-colour of the region they join instead of green. By default they stay green.
+color of the region they join instead of green. By default they stay green.
 
 ## Working a valve
 
@@ -143,7 +143,7 @@ truth.
 
 A manual valve (a handwheel on the line) has no actuator. Clicking it does not
 move anything; it records your report that you opened or closed it, so
-interlocks and the colours know the truth. Click it after you turn the
+interlocks and the colors know the truth. Click it after you turn the
 wheel. Its state is whatever someone last told Pychron.
 
 ### Pipettes
@@ -195,7 +195,7 @@ From a terminal, `elctl read <gauge>` takes one reading and
 Pychron has no "pump" widget. A pump appears in two ways:
 
 - as a **stage** in the canvas with `kind = "pump"` (or a turbo, ion pump
-  glyph): it only colours the region it is connected to, as described above;
+  glyph): it only colors the region it is connected to, as described above;
 - as a **switch** (`[[switches]]` in the line, `[[switch]]` in the canvas),
   such as `pump_power`. Switches are clicked like valves (circle, no
   interlocks of their own).
@@ -535,7 +535,7 @@ is plumbed to what. Positions are pixels in a box of `[canvas] size`.
 origin = [0, 0]
 size = [1000, 700]               # the drawing area
 connection_width = 6             # pipe thickness
-# open_valve_color = "inherit"   # open valves wear the region colour
+# open_valve_color = "inherit"   # open valves wear the region color
 
 [colors]
 # background = "#f4f6f8"        # behind the drawing; left out: the application's own
@@ -560,13 +560,13 @@ size = [60, 40]
 kind = "pump"                    # pump | tank | spectrometer | getter | laser | pipette
 # symbol = "turbo"               # glyph: spectrometer quadrupole laser turbo getter ion_pump
 # display_name = "Turbo"         # label ("" for none)
-# color = "#8fd3ff"              # override region colour
-# precedence = 120               # override who wins a shared region (0: colours nothing)
+# color = "#8fd3ff"              # override region color
+# precedence = 120               # override who wins a shared region (0: colors nothing)
 
 [[pipette]]                      # must match a [[pipettes]] entry in the line
 name = "air"
 pos = [400, 420]
-# tank = "air_tank"              # whose gas it holds (colour); "" = its own colour
+# tank = "air_tank"              # whose gas it holds (color); "" = its own color
 
 [[connection]]                   # a pipe between two named things
 start = "prep"
@@ -635,7 +635,7 @@ elctl doctor                                 # check an installation
   code that draws them in the window. Treat as not working.
 - **`[colors] valve`** and the stage `fill` / `volume` keys are read but not
   used by the window as far as the source shows (`stage`, `pipette` and
-  `background` colours are used). The simulated line does use `volume`: it is the
+  `background` colors are used). The simulated line does use `volume`: it is the
   stage's size in cc.
 - **Claiming valves** (owner semantics) exists in the line software but the
   window never claims or releases; there is no button for it.

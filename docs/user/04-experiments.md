@@ -253,8 +253,8 @@ and **Window > Arrangements** bring them back, restore the installed layout
 and keep layouts under a name: see "Panels and arrangements" in
 [the extraction line chapter](02-extraction-line.md).
 
-Rows that have a problem are coloured, and hovering over them lists the
-problems. A row that is running or finished has a coloured Status
+Rows that have a problem are colored, and hovering over them lists the
+problems. A row that is running or finished has a colored Status
 (success, failed, cancelled or aborted).
 
 Table columns: `#`, Status, Identifier, Aliquot, Step, Type, Position,

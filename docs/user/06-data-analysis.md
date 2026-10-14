@@ -138,23 +138,23 @@ The table has columns Run ID, Type, Sample, Identifier, Spec., Date (UTC),
 Extract, Tag, Irradiation, and (hidden by default) Project, UUID. Right-click
 a column header to show or hide columns.
 
-### Row colours
+### Row colors
 
 **Color by** chooses what the tint of a row tells you. The choice is
 remembered.
 
 | Color by | Rows |
 |---|---|
-| Analysis type | Blanks, air, cocktails and detector-IC runs have their own colours. **Preferences > Data** sets a colour (or none) for unknowns, blanks, air, cocktails, detector-IC runs and everything else; **Reset colors** goes back to the built-in ones. |
-| Tag | `invalid` has the error colour; every other tag that is not `ok` has a colour of its own. |
-| Spectrometer | One colour for each spectrometer shown. |
-| Irradiation level | One colour for each irradiation and level shown; analyses with no irradiation have none. |
+| Analysis type | Blanks, air, cocktails and detector-IC runs have their own colors. **Preferences > Data** sets a color (or none) for unknowns, blanks, air, cocktails, detector-IC runs and everything else; **Reset colors** goes back to the built-in ones. |
+| Tag | `invalid` has the error color; every other tag that is not `ok` has a color of its own. |
+| Spectrometer | One color for each spectrometer shown. |
+| Irradiation level | One color for each irradiation and level shown; analyses with no irradiation have none. |
 | None | No tint. |
 
 Whatever the choice (except Tag), an analysis with a tag other than `ok` has
-the error colour. Under Spectrometer, Irradiation level and Tag the colours
+the error color. Under Spectrometer, Irradiation level and Tag the colors
 only tell neighbours apart: there are eight, they are given out in
-alphabetical order of the values shown, and a value can change colour when
+alphabetical order of the values shown, and a value can change color when
 you filter or load more.
 
 ### Time breaks
@@ -357,7 +357,7 @@ setting), and an **Analyses** dock below listing each analysis with its
 group and an **Included** tick.
 
 Toolbar: **Group by** (how analyses are split into groups, drawn in
-different colours), **Graph by** (which groups share a graph, see below),
+different colors), **Graph by** (which groups share a graph, see below),
 **Reset view**, **Export...** (the picture as PDF or
 PNG), **Export table...** (the data report of exactly these analyses; see
 [export.md](../export.md)).
@@ -382,7 +382,7 @@ it holds:
 | `same as group` | a graph for each group: with **Group by** `identifier` and four identifiers, four ideograms of one group each |
 | a key (`sample`, `identifier`, `irradiation`, ...) | the groups that share that value on one graph: **Group by** `aliquot` and **Graph by** `sample` draws eight aliquots of four samples as four ideograms of two groups each |
 
-A group keeps its colour and its row of the **Groups** table whichever graph
+A group keeps its color and its row of the **Groups** table whichever graph
 it is on. If the graph key is finer than the grouping (group by sample,
 graph by aliquot) a group is drawn on each graph it has analyses on, with
 that part's own statistics. **Graphs per row** (Layout section of the
@@ -417,7 +417,7 @@ watch blanks, air shots, extraction values and spectrometer stability.
 Default grouping: none.
 
 Per panel: `quantity` (default `Ar40`), `enabled`, `title`, `height`,
-`scale` (linear or log), `y_min`, `y_max`, marker shape, size and colour,
+`scale` (linear or log), `y_min`, `y_max`, marker shape, size and color,
 `show_errors`, `fit` (none, average, weighted_mean, linear, parabolic, cubic,
 exponential) with `fit_error` (sem, sd, msem) and `show_envelope`,
 `deviation` (plot as absolute or percent deviation from the fit),
@@ -451,7 +451,7 @@ Panels (up to 8, top to bottom): `probability` (the curve),
 `analysis_number` (points ordered by age, with error bars),
 `analysis_number_nonsorted` (points in run order), and `value` (another
 quantity, such as `kca`, against the age axis). Spans (up to 32) shade a
-range of the age axis with a label, colour and opacity, on every panel or on
+range of the age axis with a label, color and opacity, on every panel or on
 one named panel.
 
 Factory presets: **Default**, **Probability only**, **Ages only**,
@@ -509,12 +509,12 @@ The age spectrum and the inverse isochron of the same analyses in one
 window: the spectrum on the left, the isochron on the right, one such pair
 per graph when the grouping makes several. Default grouping: aliquot. An
 analysis excluded in one is excluded in the other, and the groups table
-(colours, labels, fixed plateau steps) is shared.
+(colors, labels, fixed plateau steps) is shared.
 
 The settings are those of the two figures above. The spectrum's are under
 **Spectrum: ...** sections (`spectrum.plateau.method`, the
 `[[spectrum.panels]]` rows, ...), the isochron's under **Isochron: ...**
-(`isochron.method`, `isochron.ellipse`, ...), and the title, fonts, colours,
+(`isochron.method`, `isochron.ellipse`, ...), and the title, fonts, colors,
 legend and statistics settings are set once for both.
 
 | Setting | Meaning | Default |
@@ -540,7 +540,7 @@ Factory presets: **Default**, **Filled 95%**, **Plateau steps**,
 | Statistics | `statistics_location` (`top_left`), `statistics_sig_figs` (4) | |
 | Groups (list, up to 32) | per group: `color`, `marker` (`auto`, circle, square, diamond, triangle, cross, plus, star), legend `label`, `fill_alpha` (70), and for spectra the plateau steps | |
 
-Colours are `#rrggbb` or `#rrggbbaa`. A value outside its range or the wrong
+Colors are `#rrggbb` or `#rrggbbaa`. A value outside its range or the wrong
 type is dropped when a preset is loaded, with a warning.
 
 The fit windows for blanks, IC factors and isotope evolutions take part of
