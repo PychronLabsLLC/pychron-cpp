@@ -146,3 +146,13 @@ changes.
 ## Out of scope
 
 Queue file format (T041, `2026-10-13-queue-format-survey.md`); any code.
+
+## 6. Owner's decisions (2026-10-13)
+
+1. Option A: one `QueueTableModel`, two views.
+2. A run moves to Executed as soon as it starts.
+3. Executed shows every executed run, and is collapsible.
+4. No `rem` / `ex` files (T041). Crash resume in the window: not answered yet.
+5. Reset, clear executed and repeat last run: wanted, as menu actions.
+
+Next: spec for option A.
