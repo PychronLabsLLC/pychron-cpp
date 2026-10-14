@@ -4,6 +4,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -449,6 +450,44 @@ TEST(PlanLibrary, LoadsAPlanOnceForEachOverrides) {
   auto reloaded = lib.load("argus_multicollect", {});
   ASSERT_TRUE(reloaded);
   EXPECT_EQ(line.calls, before_copy + 2 * once);
+}
+
+// The advanced flag is part of what a load is kept by; overrides holding a
+// NaN load as they did, every time; a library assigned over another forgets
+// what the other kept.
+TEST(PlanLibrary, KeepsLoadsByFlagAndAssignmentForgets) {
+  struct CountingLine : IAliasResolver {
+    mutable int calls = 0;
+    std::optional<ParamValue> resolve_alias(std::string_view key) const override {
+      ++calls;
+      return kLine.resolve_alias(key);
+    }
+  };
+  const CountingLine line;
+  PlanLibrary lib(PlanResolvers{&line, &kSpec});
+  lib.add(fixture_template("multicollect.toml"));
+  ASSERT_TRUE(lib.load("argus_multicollect", {}));
+  const int once = line.calls;
+  ASSERT_TRUE(lib.load("argus_multicollect", {}, LoadOptions{true}));
+  EXPECT_EQ(line.calls, 2 * once);  // advanced is another key
+  ASSERT_TRUE(lib.load("argus_multicollect", {}, LoadOptions{true}));
+  EXPECT_EQ(line.calls, 2 * once);
+
+  const ParamOverrides nan{{"main.hops[0].settle_s", std::numeric_limits<double>::quiet_NaN()}};
+  const auto first = lib.load("argus_multicollect", nan, LoadOptions{true});
+  const auto second = lib.load("argus_multicollect", nan, LoadOptions{true});
+  ASSERT_EQ(first.has_value(), second.has_value());
+  if (!first) {
+    EXPECT_EQ(first.error().what, second.error().what);
+  }
+
+  PlanLibrary other(PlanResolvers{&line, &kSpec});
+  other.add(fixture_template("multicollect.toml"));
+  ASSERT_TRUE(other.load("argus_multicollect", {}));
+  other = lib;
+  const int calls = line.calls;
+  ASSERT_TRUE(other.load("argus_multicollect", {}));
+  EXPECT_EQ(line.calls, calls + once);
 }
 
 // A run loads its plan on the executor's thread while the window checks the

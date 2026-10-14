@@ -5,6 +5,7 @@
 
 // In-memory set of plan templates, exposed to queue validation as an IPlanResolver.
 
+#include <cstddef>
 #include <map>
 #include <mutex>
 #include <tuple>
@@ -26,10 +27,13 @@ class PlanLibrary : public IPlanResolver {
   std::vector<std::string> names() const;  // sorted
 
   // A plan loads the same for the same name, overrides and options while the
-  // library holds the same templates, so each such load is kept and handed
-  // out again (a queue check loads every run's plan, several times). add()
-  // forgets them; a copy of the library starts with none. Safe to call from
-  // several threads.
+  // library holds the same templates and its resolvers answer the same (the
+  // lab's aliases and spectrometer catalog are fixed when it is loaded), so
+  // each such load is kept and handed out again: a queue check loads every
+  // run's plan, several times. add() forgets them, a copy of the library
+  // starts with none, and at kMaxKeptLoads the kept loads are dropped and
+  // kept afresh. load() may be called from several threads at once; add()
+  // is for setting the library up and never runs beside a load().
   Result<LoadedPlan> load(std::string_view name, const ParamOverrides& overrides, const LoadOptions& options = {}) const;
 
   bool has_plan(std::string_view name) const override;
@@ -39,6 +43,7 @@ class PlanLibrary : public IPlanResolver {
 
  private:
   using LoadKey = std::tuple<std::string, ParamOverrides, bool>;
+  static constexpr std::size_t kMaxKeptLoads = 256;
   // Loads already made. Copied or moved, it is empty: what it holds belongs
   // to the templates of the library it was made by.
   class LoadCache {

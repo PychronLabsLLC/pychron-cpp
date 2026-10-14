@@ -68,6 +68,7 @@ std::optional<Result<LoadedPlan>> PlanLibrary::LoadCache::find(const LoadKey& ke
 
 void PlanLibrary::LoadCache::insert(LoadKey key, const Result<LoadedPlan>& loaded) {
   const std::lock_guard lock(mutex_);
+  if (loads_.size() >= kMaxKeptLoads) loads_.clear();
   loads_.insert_or_assign(std::move(key), loaded);
 }
 
