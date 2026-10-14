@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "pychron/experiment/plan/duration.hpp"
 #include "pychron/experiment/plan/plan_library.hpp"
@@ -401,6 +404,75 @@ TEST(PlanLibrary, ResolvesPlansForQueueValidation) {
   EXPECT_TRUE(r.plan_duration("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}, true));    // advanced: any key
   EXPECT_FALSE(r.plan_duration("nope", {}, false));
   EXPECT_FALSE(lib.load("nope", {}));
+}
+
+// A queue check loads every run's plan; runs with the same plan and overrides
+// load it once. What a load gives does not change: a new template of the
+// name, or a copy of the library, loads again.
+TEST(PlanLibrary, LoadsAPlanOnceForEachOverrides) {
+  struct CountingLine : IAliasResolver {
+    mutable int calls = 0;
+    std::optional<ParamValue> resolve_alias(std::string_view key) const override {
+      ++calls;
+      return kLine.resolve_alias(key);
+    }
+  };
+  const CountingLine line;
+  PlanLibrary lib(PlanResolvers{&line, &kSpec});
+  lib.add(fixture_template("multicollect.toml"));
+  const ParamOverrides more{{"main.hops[0].counts", std::int64_t{100}}};
+
+  auto first = lib.load("argus_multicollect", {});
+  ASSERT_TRUE(first) << first.error().what;
+  const int once = line.calls;
+  ASSERT_GT(once, 0);
+  auto again = lib.load("argus_multicollect", {});
+  ASSERT_TRUE(again);
+  EXPECT_EQ(line.calls, once);
+  EXPECT_EQ(again->effective_toml, first->effective_toml);
+
+  auto other = lib.load("argus_multicollect", more);
+  ASSERT_TRUE(other);
+  EXPECT_EQ(line.calls, 2 * once);
+  EXPECT_NE(other->effective_toml, first->effective_toml);
+  EXPECT_FALSE(lib.load("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}));  // an error is the same each time
+  EXPECT_FALSE(lib.load("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}));
+
+  PlanLibrary copy = lib;
+  const int before_copy = line.calls;
+  ASSERT_TRUE(copy.load("argus_multicollect", {}));
+  EXPECT_EQ(line.calls, before_copy + once);
+
+  auto changed = fixture_template("multicollect.toml");
+  changed.text += "\n# a changed template\n";
+  lib.add(changed);
+  auto reloaded = lib.load("argus_multicollect", {});
+  ASSERT_TRUE(reloaded);
+  EXPECT_EQ(line.calls, before_copy + 2 * once);
+}
+
+// A run loads its plan on the executor's thread while the window checks the
+// queue on its own: both may load from one library at once.
+TEST(PlanLibrary, LoadsFromSeveralThreadsAtOnce) {
+  PlanLibrary lib(kResolvers);
+  lib.add(fixture_template("multicollect.toml"));
+  const auto expected = lib.load("argus_multicollect", {});
+  ASSERT_TRUE(expected);
+  std::atomic<int> wrong{0};
+  std::vector<std::thread> threads;
+  threads.reserve(4);
+  for (int t = 0; t < 4; ++t) {
+    threads.emplace_back([&lib, &wrong, &expected, t] {
+      for (int i = 0; i < 50; ++i) {
+        const ParamOverrides o{{"main.hops[0].counts", std::int64_t{10 + ((i + t) % 5)}}};
+        if (!lib.load("argus_multicollect", o)) ++wrong;
+        auto same = lib.load("argus_multicollect", {});
+        if (!same || same->effective_toml != expected->effective_toml) ++wrong;
+      }
+    });
+  }
+  for (auto& th : threads) th.join();
+  EXPECT_EQ(wrong.load(), 0);
 }
 
 TEST(PlanDuration, BaselineAtSamePositionSkipsSettle) {
