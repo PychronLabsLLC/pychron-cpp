@@ -49,14 +49,14 @@ void set_font_value(QSpinBox* spin, int pt) { spin->setValue(pt < Preferences::k
 }  // namespace
 
 ColorField::ColorField(QWidget* parent)
-    : QWidget(parent), button_(new QPushButton), none_(new QCheckBox(tr("No colour"))) {
+    : QWidget(parent), button_(new QPushButton), none_(new QCheckBox(tr("No color"))) {
   button_->setFixedWidth(64);
   auto* layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(button_);
   layout->addWidget(none_);
   layout->addStretch();
-  ask = [this](const QColor& current) { return QColorDialog::getColor(current, this, tr("Row colour")); };
+  ask = [this](const QColor& current) { return QColorDialog::getColor(current, this, tr("Row color")); };
   connect(button_, &QPushButton::clicked, this, [this] {
     const QColor chosen = ask ? ask(color_) : QColor();
     if (chosen.isValid()) set_color(chosen);
@@ -100,7 +100,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
       code_font_(font_field()),
       page_size_(new QSpinBox),
       gap_hours_(new QDoubleSpinBox),
-      reset_colors_(new QPushButton(tr("Reset colours"))),
+      reset_colors_(new QPushButton(tr("Reset colors"))),
       problem_(new QLabel),
       buttons_(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply |
                                     QDialogButtonBox::RestoreDefaults)) {
@@ -144,8 +144,8 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
     data_form->addRow(tr(label), field);
   }
   data_form->addRow(QString(), reset_colors_);
-  data_form->addRow(preferences_note(tr("Row colours of the data browser under Color by: Analysis type. A tag other "
-                                        "than ok is always the error colour.")));
+  data_form->addRow(preferences_note(tr("Row colors of the data browser under Color by: Analysis type. A tag other "
+                                        "than ok is always the error color.")));
   connect(reset_colors_, &QPushButton::clicked, this, [this] {
     const TypeColors defaults = default_type_colors(theme());
     for (const auto& [type_class, field] : type_colors_) field->set_color(*defaults.find(type_class));

@@ -147,7 +147,7 @@ Result<OptionValue> validate(const FieldSpec& f, const OptionValue& v) {
     }
     case FieldType::Color: {
       const auto* s = std::get_if<std::string>(&v);
-      if (!s || !is_color(*s)) return opt_fail(where + "expected a colour (#rrggbb, #rrggbbaa or a name)");
+      if (!s || !is_color(*s)) return opt_fail(where + "expected a color (#rrggbb, #rrggbbaa or a name)");
       return v;
     }
     case FieldType::Quantity: {

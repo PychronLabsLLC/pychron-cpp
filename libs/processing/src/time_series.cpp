@@ -36,7 +36,7 @@ SchemaPtr panel_schema() {
        optional_number("y_max", "Y max", "Panel"),
        choice("marker", "Marker", "Panel", kMarkers),
        number("marker_size", "Marker size", "Panel", 5.0, 1.0, 30.0, 0.5),
-       optional_color("marker_color", "Marker colour", "Panel"),
+       optional_color("marker_color", "Marker color", "Panel"),
        boolean("show_errors", "Error bars", "Panel", true),
        choice("fit", "Fit", "Panel", kFits),
        when(choice("fit_error", "Fit error", "Panel", {"sem", "sd", "msem"}), "fit != none"),

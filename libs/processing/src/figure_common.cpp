@@ -94,7 +94,7 @@ void apply_fit_style(const Options& o, Scene& scene) {
 SchemaPtr group_row_schema(bool fixed_steps) {
   auto fields = [](bool fixed) {
     std::vector<FieldSpec> f{
-        optional_color("color", "Colour", "Group"),
+        optional_color("color", "Color", "Group"),
         choice("marker", "Marker", "Group", {"auto", "circle", "square", "diamond", "triangle", "cross", "plus", "star"}),
         text("label", "Legend label", "Group"), integer("fill_alpha", "Fill opacity (%)", "Group", 70, 0, 100)};
     if (fixed) {

@@ -16,6 +16,7 @@
 #include <memory>
 #include <sstream>
 
+#include <QAbstractButton>
 #include <QLayout>
 #include <QApplication>
 #include <QFontMetrics>
@@ -396,6 +397,29 @@ class TestPreferences : public QObject {
   }
 
   // ---- Logging and Metrics: the line's local override file ----------------------
+
+  // The program writes "color", as the data browser's "Color by" does.
+  void no_text_of_the_dialog_says_colour() {
+    PreferencesDialog d({Preferences{}, std::nullopt, line_settings()}, {});
+    int texts = 0;
+    for (const auto* b : d.findChildren<QAbstractButton*>()) {
+      ++texts;
+      QVERIFY2(!b->text().contains(QStringLiteral("olour")), qPrintable(b->text()));
+    }
+    for (const auto* l : d.findChildren<QLabel*>()) {
+      ++texts;
+      QVERIFY2(!l->text().contains(QStringLiteral("olour")), qPrintable(l->text()));
+    }
+    QVERIFY(texts > 10);
+    bool reset = false;
+    bool none = false;
+    for (const auto* b : d.findChildren<QAbstractButton*>()) {
+      reset = reset || b->text() == QStringLiteral("Reset colors");
+      none = none || b->text() == QStringLiteral("No color");
+    }
+    QVERIFY(reset);
+    QVERIFY(none);
+  }
 
   // The page list is a list of places to go: rows with room around the
   // words, the one in view a bar of the accent from edge to edge.

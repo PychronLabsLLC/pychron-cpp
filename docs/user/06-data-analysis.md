@@ -145,7 +145,7 @@ remembered.
 
 | Color by | Rows |
 |---|---|
-| Analysis type | Blanks, air, cocktails and detector-IC runs have their own colours. **Preferences > Data** sets a colour (or none) for unknowns, blanks, air, cocktails, detector-IC runs and everything else; **Reset colours** goes back to the built-in ones. |
+| Analysis type | Blanks, air, cocktails and detector-IC runs have their own colours. **Preferences > Data** sets a colour (or none) for unknowns, blanks, air, cocktails, detector-IC runs and everything else; **Reset colors** goes back to the built-in ones. |
 | Tag | `invalid` has the error colour; every other tag that is not `ok` has a colour of its own. |
 | Spectrometer | One colour for each spectrometer shown. |
 | Irradiation level | One colour for each irradiation and level shown; analyses with no irradiation have none. |
