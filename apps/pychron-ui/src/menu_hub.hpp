@@ -46,6 +46,8 @@
 // Scripts, which the experiment window fills, are there before it is, each
 // holding one greyed line saying where its commands come from. File, View and Help are
 // hidden only when nothing at all has contributed to them (no main window).
+// Experiment is not there at all in an application launched for a
+// data-reduction install, which runs no experiment (set_experiment_shown).
 
 #include <array>
 #include <functional>
@@ -154,6 +156,12 @@ class MenuHub : public QObject {
 
   static QString title(Menu menu);
 
+  // Whether the application has an Experiment menu, in every bar. False for
+  // an application launched for a data-reduction install (main.cpp), which
+  // runs no experiment; set once at launch. True by default.
+  void set_experiment_shown(bool shown);
+  bool experiment_shown() const noexcept { return experiment_shown_; }
+
   // The greyed line an experiment menu (Queue, Rows, Executor, Scripts) holds
   // while nothing has contributed to it; nullptr for the other menus.
   QAction* placeholder(Menu menu) const { return placeholders_[static_cast<std::size_t>(menu)]; }
@@ -258,6 +266,7 @@ class MenuHub : public QObject {
   };
   std::vector<Entry> windows_;
   std::array<QAction*, kMenus> placeholders_{};
+  bool experiment_shown_ = true;
   QAction* minimize_ = nullptr;
   QAction* zoom_ = nullptr;
   QAction* bring_all_ = nullptr;

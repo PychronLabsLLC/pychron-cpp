@@ -394,6 +394,11 @@ void MenuHub::contribute(QWidget* owner, Menu menu, const QList<QAction*>& actio
   update_gates();
 }
 
+void MenuHub::set_experiment_shown(bool shown) {
+  experiment_shown_ = shown;
+  rebuild();
+}
+
 void MenuHub::set_file_action(QWidget* owner, FileRole role, QAction* action, const QString& noun) {
   std::erase_if(file_targets_, [&](const FileTarget& t) { return t.owner == owner && t.role == role; });
   file_targets_.push_back({owner, role, action, noun});
@@ -646,6 +651,7 @@ void MenuHub::rebuild(Bar& b) {
     sync_menu(m, want);
     m->menuAction()->setVisible(!want.isEmpty());
   }
+  if (b.experiment != nullptr) b.experiment->menuAction()->setVisible(experiment_shown_);
 }
 
 void MenuHub::update_gates() {

@@ -79,6 +79,7 @@
 #include "laser_bridge.hpp"
 #include "laser_window.hpp"
 #include "main_window.hpp"
+#include "menu_hub.hpp"
 #include "no_database_persister.hpp"
 #include "pattern_maker_window.hpp"
 #include "preferences.hpp"
@@ -203,6 +204,7 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   }
   pychron::processing::IAnalysisSource& source =
       store_source ? *store_source : static_cast<pychron::processing::IAnalysisSource&>(records);
+  pychron::ui::MenuHub::instance().set_experiment_shown(false);  // this install runs no experiment
   pychron::processing::PresetStore presets(
       fs::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
       install.root / "figures");

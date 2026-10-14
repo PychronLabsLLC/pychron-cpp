@@ -668,6 +668,26 @@ class TestMenuHub : public QObject {
     for (const MenuHub::Command& c : hub.commands()) QVERIFY(c.action != hub.placeholder(c.menu));
   }
 
+  // An application launched for a data-reduction install runs no
+  // experiment: no Experiment menu in any bar, the ones already up and the
+  // ones made after.
+  void a_data_reduction_launch_has_no_experiment_menu() {
+    MenuHub& hub = MenuHub::instance();
+    QVERIFY(hub.experiment_shown());
+    QMainWindow a;
+    a.show();
+    QVERIFY(shown(a).contains(QStringLiteral("Experiment")));
+    hub.set_experiment_shown(false);
+    QVERIFY(!shown(a).contains(QStringLiteral("Experiment")));
+    QVERIFY(shown(a).contains(QStringLiteral("File")));
+    QMainWindow b;
+    b.show();
+    QVERIFY(!shown(b).contains(QStringLiteral("Experiment")));
+    hub.set_experiment_shown(true);  // the hub outlives the test
+    QVERIFY(shown(a).contains(QStringLiteral("Experiment")));
+    QVERIFY(shown(b).contains(QStringLiteral("Experiment")));
+  }
+
   void groups_are_separated_in_contribution_order() {
     QMainWindow a;
     a.show();
