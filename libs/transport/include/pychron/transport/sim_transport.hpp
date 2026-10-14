@@ -57,6 +57,13 @@ class SimTransport final : public QueuedTransport {
   void garble_next();                     // next reply is corrupted in place
   void fail_open_next();                  // next open() fails with Io
 
+  // An outage: while down, open(), write and read fail Io (and the Io closes
+  // the channel, as a dropped link does), nothing reaches the script or the
+  // hook, and nothing is recorded as written. set_down(false) ends both kinds
+  // of outage; down_for ends on the transport's clock, compared at each call.
+  void set_down(bool down);
+  void down_for(Duration d);
+
   // Append steps to a scripted/replay transport.
   void expect(SimStep step);
 

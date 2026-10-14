@@ -90,6 +90,11 @@ struct SimTransport::State {
   Duration extra_delay{};
   bool garble_next = false;
   bool fail_open = false;
+  bool down = false;
+  std::optional<TimePoint> down_until;  // on `clock`
+
+  // Caller holds `mutex`.
+  bool is_down() const { return down || (down_until && clock->now() < *down_until); }
 };
 
 SimTransport::SimTransport(TransportOptions options, std::shared_ptr<State> state)
@@ -164,6 +169,17 @@ void SimTransport::fail_open_next() {
   state_->fail_open = true;
 }
 
+void SimTransport::set_down(bool down) {
+  std::lock_guard lock(state_->mutex);
+  state_->down = down;
+  if (!down) state_->down_until.reset();
+}
+
+void SimTransport::down_for(Duration d) {
+  std::lock_guard lock(state_->mutex);
+  state_->down_until = state_->clock->now() + d;
+}
+
 void SimTransport::expect(SimStep step) {
   std::lock_guard lock(state_->mutex);
   state_->steps.push_back(std::move(step));
@@ -188,6 +204,7 @@ Result<void> SimTransport::verify() const {
 
 Result<void> SimTransport::do_open() {
   std::lock_guard lock(state_->mutex);
+  if (state_->is_down()) return fail(ErrorKind::Io, "simulated link down");
   if (state_->fail_open) {
     state_->fail_open = false;
     return fail(ErrorKind::Io, "simulated open failure");
@@ -207,6 +224,10 @@ void SimTransport::do_discard_input() {
 
 Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
   auto& s = *state_;
+  {
+    std::lock_guard lock(s.mutex);
+    if (s.is_down()) return fail(ErrorKind::Io, "simulated link down");
+  }
   Bytes reply;
   Duration delay{};
   if (s.mode == State::Mode::Hook) {
@@ -219,6 +240,7 @@ Result<void> SimTransport::do_write(const Bytes& tx, Duration) {
   }
 
   std::lock_guard lock(s.mutex);
+  if (s.is_down()) return fail(ErrorKind::Io, "simulated link down");  // went down while the hook ran
   s.written.push_back(tx);
   if (s.written.size() > kWrittenLimit) s.written.pop_front();
   if (s.mode == State::Mode::Scripted) {
@@ -255,6 +277,7 @@ Result<Bytes> SimTransport::do_read(const ReadSpec& rs, Duration timeout) {
   Bytes buf;
   std::optional<std::size_t> n;
   for (;;) {
+    if (state_->is_down()) return fail(ErrorKind::Io, "simulated link down");
     if (state_->unsolicited) {
       if (Bytes more = state_->unsolicited(); !more.empty()) rx.push_back(Chunk{std::move(more), {}, false});
     }

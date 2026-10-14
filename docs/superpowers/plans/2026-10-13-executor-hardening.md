@@ -91,12 +91,12 @@ Today `open` stays true after the peer closes (`queued_transport.cpp:56`) and `e
 
 **Files:** `libs/transport/include/pychron/transport/sim_transport.hpp`, `libs/transport/src/sim_transport.cpp`, `tests/transport/test_sim_transport.cpp`, `docs/simulator.md`.
 
-- [ ] Failing tests (`VirtualTimeTest`):
+- [x] Failing tests (`VirtualTimeTest`):
   - `SimTransport.WhileDownEveryCallFailsIo`: `set_down(true)`; `exchange`, `write`, `read` fail `Io`; `open()` fails `Io`; `set_down(false)` then `open()` succeeds and a scripted exchange answers.
   - `SimTransport.DownForEndsOnTheTransportsClock`: `down_for(5s)`; at 4.9 s `open()` fails, at 5 s it succeeds. No real sleep.
   - `SimTransport.GoingDownDoesNotConsumeAScriptedStep`: an `expect` step queued before the outage is still there after it.
-- [ ] Implement beside `drop_next` (`sim_transport.cpp:147-162`): a `down_until_` time point and a `down_` flag under the existing mutex, tested in `do_open`, `do_write` and `do_read`. No thread: the deadline is compared with `clock.now()` at each call.
-- [ ] Commit: `feat(transport): a simulated link can be down, for good or for a time`.
+- [x] Implement beside `drop_next` (`sim_transport.cpp:147-162`): a `down_until_` time point and a `down_` flag under the existing mutex, tested in `do_open`, `do_write` and `do_read`. No thread: the deadline is compared with `clock.now()` at each call.
+- [x] Commit: `feat(transport): a simulated link can be down, for good or for a time`.
 
 ### Task 3: TCP keepalive
 

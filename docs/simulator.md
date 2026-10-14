@@ -676,6 +676,20 @@ What does change the numbers:
   between platforms. A count on the ion counter can then differ by one, very
   rarely.
 
+## Links that drop
+
+A test can take a simulated link away. `SimTransport::set_down(true)` makes
+every call on it fail as a vanished peer does (`Io`, which closes the
+channel), and `open()` fail the same way, until `set_down(false)`. The
+link coming back does not reopen the channel: the caller calls `open()`
+again, and input that was waiting when the link went is gone. `down_for(d)`
+is an outage that ends by itself after `d` of the transport's clock: on a
+`VirtualClock` a ten-minute outage costs no real time to the threads that
+wait through it in that clock. While the
+link is down nothing reaches the script or the hook, so a scripted step
+waits for the link to come back. Nothing in the program sets a link down: it
+is for tests of what happens when one goes.
+
 ## Limits and approximations
 
 - Everything under [what is not modelled](#what-is-modelled-and-what-is-not).
