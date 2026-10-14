@@ -169,3 +169,8 @@ Kept as drafted, not asked again (say if wrong):
 - Spectrometer: the session's only, no chooser.
 - N defaults to 50; no lower bound in time until Reset is pressed.
 - A dock in the experiment window, not a data window that follows.
+
+Decided when the plan was read (owner, 2026-10-13): five blank kinds; a run
+not yet in the store is read for again 2 s and 10 s later, until the save
+pipeline can say it landed; no dock unless the data source is the session's
+store; a queue naming no spectrometer shows all.

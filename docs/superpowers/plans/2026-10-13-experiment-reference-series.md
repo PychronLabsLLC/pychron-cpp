@@ -218,14 +218,13 @@ class ReferenceSeriesDock : public QWidget {
 
 Spec section 7: legacy's autoplot; unknowns, cocktails and other reference types in the dock; figure windows that follow the store; alarms on a drifting reference.
 
-## Questions for the owner
+## Decided by the owner, 2026-10-13
 
-None blocks Tasks 1 to 5. Choices made here that the owner may want otherwise:
-
-1. Blanks holds five kinds, not the spec's three: `blank_extractionline` and the bare `blank` of imported data are blanks too. (The blank fit window's own list, `reference_fit.cpp:748`, has four: no `blank_extractionline`.)
-2. The dock is tabbed behind Evolutions (which sits alone on the right today).
-3. The reads share the one worker of the data windows' figures: a long figure job delays the dock's redraw, never the queue. A worker of its own is a second connection to the store; not taken.
+1. Blanks holds five kinds: `blank_unknown`, `blank_air`, `blank_cocktail`, `blank_extractionline` and the bare `blank` of imported data. (The blank fit window's own list, `reference_fit.cpp:748`, has four: no `blank_extractionline`.)
+2. A run saved a moment after its `RunFinished` is caught by reading again 2 s and 10 s later (Task 5). When the executor hardening work lands its `SpoolStatus`, that event replaces the two re-reads, here and for the data browser.
+3. The dock exists only when the data source is the store the session saves to; otherwise there is none (Task 6).
 4. A queue that names no spectrometer shows every spectrometer's references.
-5. The window test reads the simulated queue's record files, not a store: no UI fixture has a store, and building one is larger than this feature. The store's part is tested in `tests/persistence` and `tests/processing`.
-6. A run saved a moment after its `RunFinished` is caught by reading again 2 s and 10 s later (Task 5). The cleaner way is an event from the save pipeline when the store has the run, which the data browser needs too; the executor hardening plan adds `SpoolStatus`, which would serve. Not built here.
-7. After each saved run both tabs load their N analyses again, since a refresh empties the source's cache: the cost is Task 1's numbers. If it is too much at N = 500, the cure is in `StoreSource::refresh` (drop only what changed), not in the dock.
+
+Kept as planned, with no objection: the dock is tabbed behind Evolutions; the reads share the one worker of the data windows' figures; the window test reads the simulated queue's record files, the store's part being tested in `tests/persistence` and `tests/processing`.
+
+Still to watch, not a decision: after each saved run both tabs load their N analyses again, since a refresh empties the source's cache; the cost is Task 1's numbers. If it is too much at N = 500, the cure is in `StoreSource::refresh` (drop only what changed), not in the dock.
