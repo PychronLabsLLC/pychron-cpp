@@ -83,6 +83,8 @@ class ExperimentBridge : public QObject {
   void countsProgress(const pychron::experiment::measurement::CountsProgress& event);
   void conditionalTripped(const pychron::experiment::measurement::ConditionalTripped& event);
   void peakCenterDone(const pychron::jobs::PeakCenterDone& event);
+  void peakCenterTryStarted(const pychron::jobs::PeakCenterTryStarted& event);
+  void peakCenterPoint(const pychron::jobs::PeakCenterPoint& event);
   void seriesUpdated(const std::vector<pychron::experiment::collect::SeriesUpdated>& batch);
   // Live fits, coalesced like seriesUpdated and delivered right after it.
   void fitsUpdated(const std::vector<pychron::experiment::collect::FitsUpdated>& batch);

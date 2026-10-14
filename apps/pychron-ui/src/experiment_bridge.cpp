@@ -51,6 +51,8 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<meas::CountsProgress>(&ExperimentBridge::countsProgress);
   relay<meas::ConditionalTripped>(&ExperimentBridge::conditionalTripped);
   relay<jobs::PeakCenterDone>(&ExperimentBridge::peakCenterDone);
+  relay<jobs::PeakCenterTryStarted>(&ExperimentBridge::peakCenterTryStarted);
+  relay<jobs::PeakCenterPoint>(&ExperimentBridge::peakCenterPoint);
   auto queue = [gate = gate_](auto&& add) {
     std::lock_guard lock(gate->mutex);
     ExperimentBridge* self = gate->target;

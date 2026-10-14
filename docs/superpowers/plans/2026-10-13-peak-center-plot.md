@@ -124,10 +124,10 @@ auto points = runner.run(spec_, sweep, stepped, cancel_);
 
 **Files:** `apps/pychron-ui/src/experiment_bridge.hpp`, `.cpp`, `tests/ui/test_experiment_bridge.cpp`
 
-- [ ] **Step 1: failing test.** In `runsTheExampleQueueAndRelaysEverything` (`:23`), beside the `peakCenterDone` connection (`:47-50`): count `peakCenterTryStarted` and `peakCenterPoint`, each calling `on_gui()`. After the queue: tries started is at least the peak centers done (`:91` has 3), points is greater than tries, and the last `try_index` seen in a point equals the last try started.
-- [ ] **Step 2:** signals `void peakCenterTryStarted(const pychron::jobs::PeakCenterTryStarted& event);` and `void peakCenterPoint(const pychron::jobs::PeakCenterPoint& event);` after `peakCenterDone` (`experiment_bridge.hpp:85`); `relay<jobs::PeakCenterTryStarted>(...)` and `relay<jobs::PeakCenterPoint>(...)` after `experiment_bridge.cpp:53`. The relay is a queued lambda: no metatype needed.
-- [ ] **Step 3:** `cmake --build --preset dev-ui --target pychron_ui_test_experiment_bridge && ctest --preset dev-ui -R '^ui\.test_experiment_bridge$'`.
-- [ ] **Step 4:** commit `feat(ui): the experiment bridge relays a peak center's tries and points`.
+- [x] **Step 1: failing test.** In `runsTheExampleQueueAndRelaysEverything` (`:23`), beside the `peakCenterDone` connection (`:47-50`): count `peakCenterTryStarted` and `peakCenterPoint`, each calling `on_gui()`. After the queue: tries started is at least the peak centers done (`:91` has 3), points is greater than tries, and the last `try_index` seen in a point equals the last try started.
+- [x] **Step 2:** signals `void peakCenterTryStarted(const pychron::jobs::PeakCenterTryStarted& event);` and `void peakCenterPoint(const pychron::jobs::PeakCenterPoint& event);` after `peakCenterDone` (`experiment_bridge.hpp:85`); `relay<jobs::PeakCenterTryStarted>(...)` and `relay<jobs::PeakCenterPoint>(...)` after `experiment_bridge.cpp:53`. The relay is a queued lambda: no metatype needed.
+- [x] **Step 3:** `cmake --build --preset dev-ui --target pychron_ui_test_experiment_bridge && ctest --preset dev-ui -R '^ui\.test_experiment_bridge$'`.
+- [x] **Step 4:** commit `feat(ui): the experiment bridge relays a peak center's tries and points`.
 
 ### Task 3: Scaling onto the reference
 

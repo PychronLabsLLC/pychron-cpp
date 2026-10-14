@@ -48,6 +48,20 @@ class TestExperimentBridge : public QObject {
       on_gui();
       peak_centers += e.result.ok ? 1 : 0;
     });
+    int pc_tries = 0;
+    int pc_points = 0;
+    int last_try_started = -1, last_try_of_point = -1;
+    connect(bridge.get(), &ExperimentBridge::peakCenterTryStarted, this,
+            [&](const pychron::jobs::PeakCenterTryStarted& e) {
+              on_gui();
+              ++pc_tries;
+              last_try_started = e.try_index;
+            });
+    connect(bridge.get(), &ExperimentBridge::peakCenterPoint, this, [&](const pychron::jobs::PeakCenterPoint& e) {
+      on_gui();
+      ++pc_points;
+      last_try_of_point = e.try_index;
+    });
     connect(bridge.get(), &ExperimentBridge::seriesUpdated, this,
             [&](const std::vector<pychron::experiment::collect::SeriesUpdated>& batch) {
               on_gui();
@@ -89,6 +103,9 @@ class TestExperimentBridge : public QObject {
     QVERIFY(blocks > 0);
     QVERIFY(counts > 0);
     QCOMPARE(peak_centers, 3);
+    QVERIFY(pc_tries >= peak_centers);
+    QVERIFY(pc_points > pc_tries);
+    QCOMPARE(last_try_of_point, last_try_started);
     QVERIFY(points > 0);
     QVERIFY(batches > 0);
     QVERIFY(fit_batches > 0);
