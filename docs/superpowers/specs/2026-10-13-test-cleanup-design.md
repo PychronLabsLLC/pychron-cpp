@@ -1,8 +1,8 @@
-# Test cleanup: what counts as superfluous (draft)
+# Test cleanup: what counts as superfluous
 
 Draft for T036 ("cleanup tests. remove superfluous or excessive tests").
-Not agreed. Nothing removed. Sections 3 and 4 are proposals for owner; 7
-lists the decisions needed.
+Agreed with owner 2026-10-13 (section 7). Nothing removed yet. UI suites
+(`tests/ui`) out of scope.
 
 ## 1. Why
 
@@ -118,6 +118,10 @@ signal). Long tests are not superfluous for being long.
 4. Coverage gate (section 2, last rule): wanted, given it needs a local
    coverage build?
 5. UI suites (`tests/ui`) in scope, or library suites only for now?
+
+Owner's answers (2026-10-13): (1) less, no number; (2) S1 to S4 agreed;
+(3) section 4 before any removal: agreed; (4) coverage gate wanted; (5)
+library suites only: `tests/ui` out of scope.
 
 ## 8. Out of scope
 
