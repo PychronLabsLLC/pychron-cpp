@@ -133,13 +133,13 @@ auto points = runner.run(spec_, sweep, stepped, cancel_);
 
 **Files:** `apps/pychron-ui/src/peak_center_scale.hpp`, `.cpp`, `apps/pychron-ui/CMakeLists.txt`, `tests/ui/test_peak_center_scale.cpp`
 
-- [ ] **Step 1: failing tests** (QtTest, `QTEST_APPLESS_MAIN`):
+- [x] **Step 1: failing tests** (QtTest, `QTEST_APPLESS_MAIN`):
   - `mapsTheOthersRangeOntoTheReferences`: reference `{10, 110, 60}`, other `{1, 3, 2}` gives `{10, 110, 60}`.
   - `handNumbers`: reference `{2, 12}`, other `{100, 150, 200}` gives `{2, 7, 12}`.
   - `theScaledMaximumIsTheReferencesMaximum` and the same for the minimum, on uneven data (`qFuzzyCompare`: the arithmetic is not exact).
   - `aFlatOtherIsNotScaled`, `aFlatReferenceIsNotScaled`, `anEmptyInputIsNotScaled`: `std::nullopt`.
   - `theInputsMayDifferInLength`: an additional detector with a missing step has fewer values; the ranges are taken over what each has.
-- [ ] **Step 2: implement** the signature of spec 4.3, legacy's formula:
+- [x] **Step 2: implement** the signature of spec 4.3, legacy's formula:
 
 ```cpp
 std::optional<std::vector<double>> scale_to_reference(std::span<const double> reference,
@@ -157,8 +157,8 @@ std::optional<std::vector<double>> scale_to_reference(std::span<const double> re
 ```
 
   (`minmax` on a range returns values, not references: no dangling. If gcc's `-Wdangling-reference` or clang-tidy objects to the structured binding, take the result into a named variable.)
-- [ ] **Step 3:** add both files to `apps/pychron-ui/CMakeLists.txt`'s list; build `pychron_ui_test_peak_center_scale`; `ctest --preset dev-ui -R '^ui\.test_peak_center_scale$'`.
-- [ ] **Step 4:** commit `feat(ui): an additional detector's sweep is scaled onto the reference's range`.
+- [x] **Step 3:** add both files to `apps/pychron-ui/CMakeLists.txt`'s list; build `pychron_ui_test_peak_center_scale`; `ctest --preset dev-ui -R '^ui\.test_peak_center_scale$'`.
+- [x] **Step 4:** commit `feat(ui): an additional detector's sweep is scaled onto the reference's range`.
 
 ### Task 4: The view
 

@@ -56,6 +56,7 @@ add_library(pychron_ui_lib STATIC
   src/recall_window.cpp
   src/history_chart.cpp
   src/reading_history.cpp
+  src/peak_center_scale.cpp
   src/rise_rate.cpp
   src/rise_rate_panel.cpp
   src/figure_window.cpp
@@ -133,6 +134,7 @@ add_library(pychron_ui_lib STATIC
   src/recall_window.hpp
   src/history_chart.hpp
   src/reading_history.hpp
+  src/peak_center_scale.hpp
   src/rise_rate.hpp
   src/rise_rate_panel.hpp
   src/figure_window.hpp
