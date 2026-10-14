@@ -199,6 +199,18 @@ TEST(SelectUnit, AsksForNoMoreRowsThanItsLimit) {
   EXPECT_EQ(src.loads, 5);
 }
 
+// A source with no sink (a MemorySource): reduce runs as before and puts
+// nothing anywhere.
+TEST(Units, ReduceOverASourceWithNoSinkRunsAsBefore) {
+  auto src = source();
+  ASSERT_EQ(src->derived(), nullptr);
+  pp::Runner runner(reg(), src.get());
+  auto out = runner.run(air_pipeline(), "reduce");
+  ASSERT_TRUE(out) << out.error().what;
+  EXPECT_EQ(dataset(*out).size(), 6u);
+  EXPECT_TRUE(runner.diagnostics().empty());
+}
+
 TEST(Units, StatsHonourExclusions) {
   auto src = source();
   pp::Runner runner(reg(), src.get());

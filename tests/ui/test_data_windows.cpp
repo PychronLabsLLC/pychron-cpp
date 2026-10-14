@@ -174,6 +174,21 @@ struct CountingSource : pp::MemorySource {
   }
 };
 
+// A memory source with an age cache that records what it is given; its
+// analyses carry a fingerprint, as the store's do.
+struct SinkSource : pp::MemorySource, pp::IDerivedSink {
+  explicit SinkSource(int n) {
+    for (int i = 0; i < n; ++i) {
+      auto a = analysis(i);
+      a->input_fingerprint = std::string(64, static_cast<char>('a' + i));
+      add(a, raw_for(*a));
+    }
+  }
+  pp::IDerivedSink* derived() noexcept override { return this; }
+  void put(std::vector<pp::DerivedAge> ages) override { puts.push_back(std::move(ages)); }
+  std::vector<std::vector<pp::DerivedAge>> puts;
+};
+
 // Eight concordant heating steps (Ar40 = 10 Ar39 + 298.56 Ar36) with a J.
 std::unique_ptr<pp::MemorySource> make_steps() {
   auto src = std::make_unique<pp::MemorySource>();
@@ -1155,6 +1170,25 @@ class TestDataWindows : public QObject {
     w.evolution_kind()->setCurrentIndex(1);  // no baselines in this data
     QCOMPARE(w.evolutions()->panel_count(), 0);
     QVERIFY(!w.show_analysis(QStringLiteral("nope")));
+  }
+
+  // A recall puts its analysis's age in the cache once; unsaved fit edits
+  // are not the analysis's age and put nothing.
+  void recall_keeps_the_age_in_the_cache() {
+    SinkSource src(2);
+    RecallWindow w(src);
+    QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
+    QCOMPARE(src.puts.size(), std::size_t{1});
+    QCOMPARE(src.puts[0].size(), std::size_t{1});
+    QCOMPARE(QString::fromStdString(src.puts[0][0].uuid), QStringLiteral("uuid-1"));
+    QCOMPARE(src.puts[0][0].input_fingerprint, std::string(64, 'b'));
+
+    w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("average")));
+    QVERIFY(w.has_pending_edits());
+    QCOMPARE(src.puts.size(), std::size_t{1});
+    w.revert_edits();
+    QVERIFY(!w.has_pending_edits());
+    QCOMPARE(src.puts.size(), std::size_t{2});  // the stored fits again: the sink drops a current age
   }
 
   void recall_fit_edits_are_pending_without_a_revision_source() {

@@ -151,6 +151,12 @@ Spec 4.5, writer 1.
   run and no write).
 - Commit: `feat(processing): reducing an analysis keeps its age in the cache`.
 
+Done 2026-10-14 on `feat/age-cache-writers`. Two points the text left
+open: `RecallWindow::display` puts only while there are no unsaved fit
+edits (an edited analysis keeps the stored fingerprint, so its age would be
+cached as the analysis's), and `AMonitorReducedForFluxIsNotCached` is in
+`tests/processing/test_flux_store.cpp`, where the seeded level is.
+
 ## Task 5: the backfill
 
 Spec 4.5, writer 2.

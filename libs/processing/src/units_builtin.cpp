@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "pychron/processing/arar_figures.hpp"
+#include "pychron/processing/derived.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/reference_fit.hpp"
@@ -156,6 +157,16 @@ class ReduceUnit final : public Unit {
       if (!item.analysis->reduction_error.empty()) ++failed;
     }
     if (failed) ctx.diagnostics.push_back(std::to_string(failed) + " analyses did not reduce");
+    // Every reduction the application makes keeps its ages in the source's
+    // cache, when it has one (age cache spec 4.5); the sink drops the current.
+    // The analyses here carry their stored fits: one with unsaved fit edits
+    // keeps the stored input fingerprint and must never reach this unit.
+    if (IDerivedSink* sink = ctx.source ? ctx.source->derived() : nullptr) {
+      std::vector<DerivedAge> ages;
+      for (const auto& item : d.items())
+        if (auto age = derived_age(*item.analysis, s)) ages.push_back(std::move(*age));
+      if (!ages.empty()) sink->put(std::move(ages));
+    }
     d.reduction_tag = std::string(reduction::kReductionVersion) + "/" + c + "/" + (s.include_decay_error ? "d1" : "d0") +
                       (s.use_irradiation_endtime ? "e1" : "e0");
     return one(make_dataset(std::move(d)));

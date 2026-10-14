@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 #include <utility>
 
+#include "pychron/processing/derived.hpp"
 #include "scene_view.hpp"
 #include "theme.hpp"
 
@@ -298,6 +299,11 @@ bool RecallWindow::show_analysis(const QString& uuid) {
 void RecallWindow::display() {
   const auto reduced = pp::reduce_analysis(shown_, {});
   model_ = pp::make_recall_model(*reduced);
+  // The stored fits' age goes to the source's cache (age cache spec 4.5);
+  // one with unsaved fit edits is not the analysis's and does not.
+  if (pp::IDerivedSink* sink = source_.derived(); sink && edits_.empty()) {
+    if (auto age = pp::derived_age(*reduced, {})) sink->put({std::move(*age)});
+  }
 
   setWindowTitle(tr("Recall — %1").arg(qs(shown_->runid)) + (edits_.empty() ? QString() : QStringLiteral(" *")));
   QStringList header;

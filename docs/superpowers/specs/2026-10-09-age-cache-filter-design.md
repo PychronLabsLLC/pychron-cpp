@@ -143,7 +143,9 @@ filed under the new fingerprint.
 
 1. **Every reduction the application makes.** `ReduceUnit::execute`: after
    reducing its analyses, one `put` with all that are cacheable.
-   `RecallWindow::display`: one `put` for its analysis. Export goes through
+   `RecallWindow::display`: one `put` for its analysis, only while it has no
+   unsaved fit edits (edited analysis keeps stored fingerprint: its age is
+   not the analysis's). Export goes through
    `ReduceUnit`. `flux_store.cpp` `reduce_monitor` reduces without flux on
    purpose: never cached.
    - Not written when nothing changed: `StoreSource::load` cannot know

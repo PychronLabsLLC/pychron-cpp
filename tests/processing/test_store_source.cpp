@@ -18,6 +18,7 @@
 #include "pychron/processing/recall.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
+#include "pychron/processing/units.hpp"
 
 namespace pychron::processing {
 namespace {
@@ -666,6 +667,61 @@ TEST_F(StoreSourceTest, WhatTheSinkCannotWriteIsDroppedAndCounted) {
   // The source still works, and writes are still taken.
   src.derived()->put({derived_of(unknown_)});
   EXPECT_EQ(src.flush_derived().written, 1u);
+}
+
+// ---- Every reduction the application makes writes the cache (spec 4.5) -----
+
+namespace {
+
+Pipeline reduce_pipeline(const std::vector<std::string>& uuids, const std::string& constants = "default") {
+  const auto& reg = UnitRegistry::builtin();
+  Pipeline p;
+  auto& select = p.add(reg, "select", "select");
+  EXPECT_TRUE(select.options.set("uuids", uuids));
+  auto& reduce = p.add(reg, "reduce", "reduce", {"select"});
+  EXPECT_TRUE(reduce.options.set("constants", constants));
+  return p;
+}
+
+}  // namespace
+
+TEST_F(StoreSourceTest, ReducingThroughAUnitFillsTheCache) {
+  auto& src = source();
+  Runner runner(UnitRegistry::builtin(), &src);
+  auto out = runner.run(reduce_pipeline({unknown_.str(), air_.str()}), "reduce");
+  ASSERT_TRUE(out) << to_string(out.error());
+  const auto done = src.flush_derived();
+  EXPECT_EQ(done.written, 2u);
+  EXPECT_EQ(done.failed, 0u) << done.last_error;
+  const DerivedAge d = derived_of(unknown_);
+  const auto rows = cached(unknown_);
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, d.age->nominal());
+  EXPECT_EQ(cached(air_).size(), 1u);  // an air: a null age
+
+  // The same figure again on a fresh runner: one read, no write.
+  Runner again(UnitRegistry::builtin(), &src);
+  ASSERT_TRUE(again.run(reduce_pipeline({unknown_.str(), air_.str()}), "reduce"));
+  const auto second = src.flush_derived();
+  EXPECT_EQ(second.written, 0u);
+  EXPECT_EQ(second.current, 2u);
+}
+
+TEST_F(StoreSourceTest, AUnitWithOtherSettingsWritesNothing) {
+  auto& src = source();
+  const auto other = [&](const char* key, OptionValue value) {
+    auto p = reduce_pipeline({unknown_.str()});
+    EXPECT_TRUE(p.find("reduce")->options.set(key, std::move(value)));
+    return p;
+  };
+  for (const auto& p : {reduce_pipeline({unknown_.str()}, "legacy"), other("include_decay_error", true),
+                        other("use_irradiation_endtime", true)}) {
+    Runner runner(UnitRegistry::builtin(), &src);
+    ASSERT_TRUE(runner.run(p, "reduce"));
+    const auto done = src.flush_derived();
+    EXPECT_EQ(done.written + done.current + done.failed, 0u);
+    EXPECT_TRUE(cached(unknown_).empty());
+  }
 }
 
 // Queued writes are done before the source closes: nothing is lost by

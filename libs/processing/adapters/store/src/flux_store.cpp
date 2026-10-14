@@ -151,7 +151,9 @@ Result<std::vector<AnalysisSummary>> browse_all(IAnalysisSource& source, const s
 
 // F is 40Ar*/39ArK, which needs no J: the analysis is reduced without the
 // position's saved flux, so a level with no flux yet, or one saved with a J
-// that has no error, still gives its monitors' F.
+// that has no error, still gives its monitors' F. That reduction is not the
+// analysis's age, so it never goes to the source's age cache (age cache spec
+// 4.5): reduce_analysis here, not the reduce unit.
 Result<LevelAnalysis> reduce_monitor(IAnalysisSource& source, const AnalysisSummary& row) {
   auto loaded = source.load(row.uuid);
   if (!loaded) return fail(loaded.error());

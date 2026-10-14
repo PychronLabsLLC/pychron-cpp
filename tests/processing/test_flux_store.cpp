@@ -21,6 +21,7 @@
 #include "flux_store_fixture.hpp"
 #include "pychron/processing/flux_store.hpp"
 #include "pychron/processing/reduced.hpp"
+#include "pychron/processing/units.hpp"
 
 namespace pychron::processing {
 namespace {
@@ -492,6 +493,27 @@ TEST_P(FluxLoadLevel, PositionsMonitorsAndGeometry) {
   const auto& golden = flux_golden::kCases[0];  // plane_unweighted_sem
   for (int i = 0; i < 4; ++i)
     EXPECT_NEAR(fit->positions[static_cast<std::size_t>(8 + i)].j, golden.j[i], golden.j[i] * 1e-5) << i;
+}
+
+// A monitor is reduced without its position's flux on purpose (F needs no
+// J): that reduction is not the analysis's age and is never cached.
+TEST_P(FluxLoadLevel, AMonitorReducedForFluxIsNotCached) {
+  auto in = load();
+  ASSERT_TRUE(in) << to_string(in.error());
+  ASSERT_FALSE(hole(*in, 1).analyses.empty());
+  const auto done = source()->flush_derived();
+  EXPECT_EQ(done.written + done.current + done.failed, 0u);
+
+  // The same monitor reduced by the reduce unit is cached: the source would
+  // have taken it.
+  const auto& reg = UnitRegistry::builtin();
+  Pipeline p;
+  auto& select = p.add(reg, "select", "select");
+  ASSERT_TRUE(select.options.set("uuids", std::vector<std::string>{hole(*in, 1).analyses.front().uuid}));
+  p.add(reg, "reduce", "reduce", {"select"});
+  Runner runner(reg, source());
+  ASSERT_TRUE(runner.run(p, "reduce"));
+  EXPECT_EQ(source()->flush_derived().written, 1u);
 }
 
 TEST_P(FluxLoadLevel, GeometryIsByOrdinalNotByHoleId) {
