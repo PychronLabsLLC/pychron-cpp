@@ -143,15 +143,29 @@ struct Allocation {
   std::string step;
 };
 
-// User-fixed aliquots are validated (>= 1) and used as given; otherwise the
-// persister's next_aliquot(). Steps are kept as given.
+// User-fixed aliquots are validated (>= 1) and used as given. Otherwise a
+// step that comes after the last step this allocator gave its identifier
+// (B or C after A) takes that step's aliquot, so the steps of a step heat are
+// one aliquot; a run with no step, step "A", a step not after the last one
+// (a new heating whose A was skipped) or an identifier nothing was given for
+// in this session takes the persister's next_aliquot(). A run with no step
+// leaves what is remembered alone. Steps are kept as given.
+//
+// What is remembered lives as long as the allocator: a queue resumed in a
+// new session gives its remaining steps a fresh aliquot.
 class AliquotAllocator {
  public:
   explicit AliquotAllocator(IAnalysisPersister& persister) : persister_(persister) {}
   Result<Allocation> allocate(const RunIdentity& id);
 
  private:
+  struct Heating {
+    int aliquot = 0;
+    int step = -1;  // step_index of the last step given
+  };
   IAnalysisPersister& persister_;
+  std::mutex mutex_;                     // guards last_ only, never held across the persister
+  std::map<std::string, Heating> last_;  // identifier -> its last stepped allocation
 };
 
 }  // namespace pychron::experiment::persist

@@ -160,6 +160,25 @@ TEST_F(ExecutorTest, RunsTheQueueSeriallyWithTheDelayPolicy) {
   EXPECT_EQ(spec_.overlapping.load(), 0);
 }
 
+// The steps of one heating are one aliquot: a step heat made by the run
+// factory leaves the aliquot to run start, and steps B and C must not each
+// take the next free one.
+TEST_F(ExecutorTest, TheStepsOfAStepHeatShareOneAliquot) {
+  std::vector<RunSpec> runs;
+  for (const char* step : {"A", "B", "C"}) {
+    runs.push_back(unknown_run("12345"));
+    runs.back().id.step = step;
+  }
+  auto q = queue(std::move(runs));
+  Executor ex(context(), options());
+  auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  ASSERT_EQ(r.runs.size(), 3u);
+  EXPECT_EQ(r.runs[0].aliquot, 1);
+  EXPECT_EQ(r.runs[1].aliquot, 1);
+  EXPECT_EQ(r.runs[2].aliquot, 1);
+}
+
 // A run's log reaches whoever follows the queue: in its summary, and so in
 // RunFinished and the queue's result.
 TEST_F(ExecutorTest, ARunsLogIsInItsSummary) {

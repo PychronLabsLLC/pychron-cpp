@@ -132,7 +132,7 @@ Each `[[runs]]` entry is one analysis.
 | Key | Meaning |
 |---|---|
 | `identifier` | The sample or special identifier, for example `66001` or `bu`. Decides the run type (section 4). |
-| `aliquot`, `step` | Normally leave these out: the program assigns the next free aliquot when the run starts, and a step letter only if you give one (`A`, `B`, `AA`: at most two letters). A fixed `aliquot` is allowed for unknowns, and the same identifier, aliquot and step may not appear twice. |
+| `aliquot`, `step` | Normally leave these out: the program assigns the next free aliquot when the run starts (the `B`, `C` ... of a step heat take the aliquot its `A` was given, so the steps of one heating are one aliquot; a queue resumed after the program was restarted gives its remaining steps a new aliquot, so fix the aliquot of a step heat you may have to resume), and a step letter only if you give one (`A`, `B`, `AA`: at most two letters). A fixed `aliquot` is allowed for unknowns, and the same identifier, aliquot and step may not appear twice. |
 | `extraction` | The extraction (table, see below). |
 | `measurement` | `plan` (the plan name), `overrides` (values that change a plan for this run), `hook`, `advanced`. |
 | `post_equilibration` | Name of a script that starts when the inlet closes, while the measurement goes on. |

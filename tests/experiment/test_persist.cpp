@@ -4,7 +4,10 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
@@ -245,6 +248,38 @@ TEST_F(PersistTest, AliquotAllocator) {
   EXPECT_EQ(a->step, "B");
   EXPECT_EQ(alloc.allocate(RunIdentity{"12345", 7, ""})->aliquot, 7);  // user-fixed
   EXPECT_FALSE(alloc.allocate(RunIdentity{"12345", 0, ""}));
+}
+
+// A step after the last one given to its identifier takes that aliquot, so a
+// step heat is one aliquot. A new heating (its A, or a step not after the last
+// one when its A was skipped) and a run with no step take the next free one.
+TEST_F(PersistTest, AliquotAllocatorKeepsTheStepsOfAHeatingTogether) {
+  FilePersister files(dir_ / "records");
+  AliquotAllocator alloc(files);
+  struct Row {
+    std::string identifier;
+    std::optional<int> aliquot;
+    std::string step;
+    int expected;
+  };
+  const std::vector<Row> rows{
+      {"12345", std::nullopt, "A", 1},  // a heating
+      {"12345", std::nullopt, "B", 1},
+      {"99999", std::nullopt, "A", 1},  // another identifier between its steps
+      {"12345", std::nullopt, "", 2},   // a run with no step: its own aliquot, the heating remembered
+      {"12345", std::nullopt, "C", 1},
+      {"99999", std::nullopt, "B", 1},
+      {"12345", std::nullopt, "A", 3},  // the next heating
+      {"12345", std::nullopt, "C", 3},  // its B skipped
+      {"12345", std::nullopt, "B", 4},  // a heating whose A was skipped: never 3, whose B exists
+      {"12345", 7, "A", 7},             // a fixed aliquot starts a heating too
+      {"12345", std::nullopt, "B", 7},
+  };
+  for (const auto& r : rows) {
+    auto a = alloc.allocate(RunIdentity{r.identifier, r.aliquot, r.step});
+    ASSERT_TRUE(a) << r.identifier << r.step;
+    EXPECT_EQ(a->aliquot, r.expected) << r.identifier << " step '" << r.step << "'";
+  }
 }
 
 }  // namespace

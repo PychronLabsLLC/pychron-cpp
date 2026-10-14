@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "pychron/experiment/factory/increments.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 
 namespace pychron::experiment::persist {
@@ -217,12 +218,29 @@ std::optional<std::string> SavePipeline::last_error() const {
 // ---- AliquotAllocator -----------------------------------------------------------
 
 Result<Allocation> AliquotAllocator::allocate(const RunIdentity& id) {
+  const int step = step_index(id.step);
+  auto remember = [&](int aliquot) {
+    if (step < 0) return;
+    const std::lock_guard lock(mutex_);
+    last_[id.identifier] = Heating{aliquot, step};
+  };
   if (id.aliquot) {
     if (*id.aliquot < 1) return fail(ErrorKind::Config, "aliquot must be >= 1, got " + std::to_string(*id.aliquot));
+    remember(*id.aliquot);
     return Allocation{*id.aliquot, id.step};
   }
+  if (step > 0) {
+    const std::lock_guard lock(mutex_);
+    if (auto it = last_.find(id.identifier); it != last_.end() && step > it->second.step) {
+      it->second.step = step;
+      return Allocation{it->second.aliquot, id.step};
+    }
+  }
+  // Runs of one identifier start one after another, so nothing can come
+  // between this lookup and remember() for the same identifier.
   auto next = persister_.next_aliquot(id.identifier);
   if (!next) return fail(next.error());
+  remember(*next);
   return Allocation{*next, id.step};
 }
 
