@@ -1,9 +1,7 @@
 # Inverse isochron: an inset on the intercept
 
-Status: draft, not agreed. Written by an unattended run 2026-10-13 from task
-T070, itself an agent's suggestion out of T051 (legacy had it; owner has not
-asked for it). First question of section 8 is whether it is wanted. Nothing
-built.
+Status: agreed in outline 2026-10-13 (owner: wanted, legacy's arrangement;
+section 8). Drafted by an unattended run from task T070. Nothing built.
 
 ## 1. Problem
 
@@ -52,11 +50,14 @@ in a corner, with limits of its own, drawn and saved with the figure.
 
 ### 5.1 Which view is the inset
 
-Main plot keeps its limits (whole line, both intercepts: today's default).
-Inset is the close view: by default the box around the points, padded 10 %,
-so the scatter about the line shows. Operator who wants legacy's
-arrangement (main on the points, inset the whole line) types main limits
-and sets inset limits to `whole`.
+Legacy's arrangement (owner, 2026-10-13). With the inset on: main plot is
+the close view, the box round the points padded 10 %, so the scatter about
+the line shows; inset is the overview, the whole line from axis to axis with
+both intercepts. Typed main limits (`x.min` ...) win as always. With the
+inset off the figure is as today (whole line).
+
+`inset.view = points` gives the other way round (main plot whole line, inset
+on the points) for whoever wants it.
 
 ### 5.2 Scene
 
@@ -80,7 +81,7 @@ any figure may fill it later.
 | `inset.show` | off |
 | `inset.location` | `top_right` (corners) |
 | `inset.width`, `inset.height` | 35, 35 (% of panel; 15 to 60) |
-| `inset.view` | `points` (box round the points) or `whole` (axis to axis, legacy) |
+| `inset.view` | `whole` (axis to axis, legacy; main plot then fits the points) or `points` (box round the points; main plot as today) |
 | `inset.x_min`, `inset.x_max`, `inset.y_min`, `inset.y_max` | unset: from `inset.view` |
 | `inset.show_ellipses` | follows `ellipse` of the figure |
 | `inset.show_nominal_intercept` | off |
@@ -122,18 +123,18 @@ PNG and PDF carry it (same plot).
 - Legacy's `inset_marker_size`, `inset_label_font` as separate settings:
   derived from the figure's.
 
-## 8. Questions for owner
+## 8. Owner, 2026-10-13
 
-1. Wanted at all? Legacy had it; nobody here asked.
-2. 5.1: inset as the close view of the points (drafted), or legacy's
-   arrangement by default (main plot on the points, inset the whole line)?
-3. Several groups: one inset with all (drafted), or none unless one group?
+Decided: wanted; legacy's arrangement by default (5.1).
 
-## 9. Tests (if agreed)
+Kept as drafted, not asked (say if wrong): several groups in one graph
+share one inset, in their colours (legacy stacked an inset a group).
+
+## 9. Tests
 
 - `tests/processing/test_arar_figures.cpp`: off by default, scene equal to
-  today's; on: inset present, limits by `points` and by `whole` against
-  hand numbers; typed limits win; line clipped to range; fewer than 3
+  today's; on: inset present, main plot on the points; limits by `whole`
+  and by `points` against hand numbers; typed limits win; line clipped to range; fewer than 3
   points none; an older preset loads.
 - `tests/ui/test_scene_view.cpp`: an inset draws a second axis rect inside
   the panel's, in its corner, at its size; a click on an inset point emits
