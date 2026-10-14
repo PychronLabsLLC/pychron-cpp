@@ -57,7 +57,7 @@ struct EditedFit {
 };
 
 struct FitEditResult {
-  AnalysisPtr analysis;  // a copy with the edited values, fits, n and exclusions
+  AnalysisPtr analysis;  // a copy with the edited values, fits, n and exclusions, and no input_fingerprint
   std::vector<EditedFit> fits;
 };
 

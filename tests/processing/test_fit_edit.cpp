@@ -88,6 +88,19 @@ TEST(FitEdits, ApplyRefitsOnACopy) {
   EXPECT_NE(missing.error().what.find("Ar39"), std::string::npos);
 }
 
+TEST(FitEdits, AnEditedCopyHasNoFingerprint) {
+  // The fingerprint keys the age cache by what is stored; an edited copy is
+  // not what is stored, so its age must not be cached under that key.
+  Analysis stored = *test::make_air(0);
+  stored.input_fingerprint = std::string(64, 'a');
+  RawData raw;
+  raw.series.push_back(signal());
+  auto result = apply_fit_edits(stored, raw, {FitEdit{SeriesKind::Signal, "Ar40", linear(), {7}}});
+  ASSERT_TRUE(result) << result.error().what;
+  EXPECT_TRUE(result->analysis->input_fingerprint.empty());
+  EXPECT_EQ(stored.input_fingerprint, std::string(64, 'a'));  // original untouched
+}
+
 TEST(FitEdits, RefsTogglesAndMessages) {
   EXPECT_EQ(evolution_ref("H1:Ar40", 12), "H1:Ar40#12");
   auto ref = parse_evolution_ref("H1:Ar40#12");

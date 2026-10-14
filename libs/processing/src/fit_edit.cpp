@@ -45,6 +45,9 @@ std::optional<StoredFit> stored_fit(const Analysis& a, SeriesKind kind, const st
 
 Result<FitEditResult> apply_fit_edits(const Analysis& analysis, const RawData& raw, const std::vector<FitEdit>& edits) {
   auto copy = std::make_shared<Analysis>(analysis);
+  // The fingerprint names what is stored; an edited copy is not that, and an
+  // age reduced from it must not reach the age cache under the stored key.
+  copy->input_fingerprint.clear();
   FitEditResult result;
   for (const auto& e : edits) {
     const std::string what = e.kind == SeriesKind::Baseline ? e.key + " baseline" : e.key;
