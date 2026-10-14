@@ -1,8 +1,7 @@
 # Gauge history: a time series from a gauge on the canvas
 
-Status: draft, not agreed. Written by an unattended run 2026-10-13 from task
-T077 (owner's words, section 1). Questions for owner in section 9. Nothing
-built.
+Status: agreed 2026-10-13 (owner's answers, section 9). Drafted by an
+unattended run from task T077 (owner's words, section 1). Nothing built.
 
 ## 1. Asked for
 
@@ -40,7 +39,7 @@ with a range the operator chooses).
 
 ## 4. Design
 
-### 4.1 History (`PressureHistory`, `apps/pychron-ui/src/pressure_history.{hpp,cpp}`)
+### 4.1 History (`ReadingHistory`, `apps/pychron-ui/src/reading_history.{hpp,cpp}`)
 
 - One `TimeSeriesRing` per configured gauge, fed from
   `CoreBridge::pressureSample` from the moment the main window exists. Owned
@@ -80,8 +79,8 @@ with a range the operator chooses).
 - Range chosen is kept per gauge in settings
   (`gauge_window/<line>/<gauge>/range_s`); window geometry too. Default
   stays 10 min for a gauge never opened.
-- Y: log by default (pressures span decades), box for linear; autoscale to
-  the range shown, with alarm limits drawn as horizontal rules when set and
+- Y: linear by default, box for log (pressures span decades); choice kept
+  per gauge with the range; autoscale to the range shown, with alarm limits drawn as horizontal rules when set and
   inside the view.
 - X: time before the newest sample, labelled as time of day from the
   line's wall clock (`CoreBridge::wall_now`), so a simulated session reads
@@ -94,9 +93,11 @@ with a range the operator chooses).
 
 ### 4.4 Chart
 
-One small widget (`PressureChart`) used by popup and window: QCustomPlot
+One small widget (`HistoryChart`) used by popup and window: QCustomPlot
 directly, one graph, theme's plot background. Fed plain points; tested
-without a line.
+without a line. Popup's y is linear. Neither it nor the history of 4.1
+knows what a gauge is (a named series of timed values with units): heaters
+and cryostat temperatures are to use both later (section 6).
 
 ## 5. Rules
 
@@ -123,8 +124,8 @@ without a line.
 
 ## 7. Files (expected)
 
-- `apps/pychron-ui/src/pressure_history.{hpp,cpp}`: 4.1.
-- `apps/pychron-ui/src/pressure_chart.{hpp,cpp}`: 4.4.
+- `apps/pychron-ui/src/reading_history.{hpp,cpp}`: 4.1.
+- `apps/pychron-ui/src/history_chart.{hpp,cpp}`: 4.4.
 - `apps/pychron-ui/src/gauge_popup.{hpp,cpp}`, `gauge_window.{hpp,cpp}`:
   4.2, 4.3.
 - `apps/pychron-ui/src/canvas_view.{hpp,cpp}`, `canvas_items.{hpp,cpp}`:
@@ -135,7 +136,7 @@ without a line.
 
 ## 8. Tests
 
-- `tests/ui/test_pressure_history.cpp`: ring per gauge; span bound; gap
+- `tests/ui/test_reading_history.cpp`: ring per gauge; span bound; gap
   becomes a break; time going back empties; unknown gauge ignored; units
   change empties.
 - `tests/ui/test_canvas_view.cpp`: click on a gauge chip emits
@@ -149,14 +150,11 @@ without a line.
 - Popup: text when no readings; chart when there are; closes on leave.
 - Changes `apps/pychron-ui`: final run `dev-ui`.
 
-## 9. Questions for owner
+## 9. Owner, 2026-10-13
 
-1. Click: a window of its own a gauge (4.3), or a dock in the main window
-   that shows whichever gauge was clicked last?
-2. Ranges offered: 10 min, 30 min, 1 h, 6 h, 24 h, with 24 h of history
-   kept in memory (1.4 MB a gauge at a 1 s scan). Enough, or should longer
-   ranges read from somewhere (which means storing readings: a larger task)?
-3. Y axis log by default?
-4. History begins when the app starts: after a restart the chart is empty
-   for a while. Acceptable?
-5. Same for heaters and cryostat temperatures in this task, or later?
+1. Click opens a window of its own a gauge (4.3).
+2. Ranges 10 min to 24 h, 24 h kept in memory: as drafted.
+3. Y linear by default, with a toggle for log.
+4. History beginning at app start is accepted.
+5. Gauges only now; heaters and cryostat later, on the same history and
+   chart.
