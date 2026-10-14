@@ -144,12 +144,22 @@ struct Axis {
   std::vector<std::string> categories;  // Category: label of value i
 };
 
+// A small second view inside a panel, in one of its corners, with limits of
+// its own; drawn over the panel. Its layers are of the panel's kinds.
+struct Inset {
+  Corner corner = Corner::TopRight;
+  double width = 0.35, height = 0.35;  // fractions of the panel
+  Axis x, y;
+  std::vector<Layer> layers;
+};
+
 struct Panel {
   std::string id;        // stable per panel row ("p0", ...)
   std::string quantity;  // canonical quantity text
   double height = 1.0;   // relative
   Axis y;
   std::vector<Layer> layers;
+  std::optional<Inset> inset;
 };
 
 struct Graph {
@@ -181,7 +191,9 @@ struct Scene {
   SceneStyle style;
   std::vector<std::string> warnings;
 
-  std::size_t point_count() const;  // over every PointLayer
+  // Over every PointLayer and StepLayer of the panels; not their insets,
+  // which repeat the same analyses.
+  std::size_t point_count() const;
 };
 
 using ScenePtr = std::shared_ptr<const Scene>;

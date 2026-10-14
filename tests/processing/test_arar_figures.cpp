@@ -445,6 +445,21 @@ TEST(Isochron, EllipsesFitAndResults) {
   EXPECT_NEAR(layers<pp::EllipseLayer>(e95->graphs[0].panels[0])[0]->scale, 2.4477, 1e-9);
 }
 
+TEST(Isochron, APanelHasNoInsetUnlessAsked) {
+  pp::Options o(pp::isochron_schema());
+  auto s = pp::build_isochron(steps(), o);
+  ASSERT_TRUE(s) << s.error().what;
+  EXPECT_FALSE(s->graphs[0].panels[0].inset);
+
+  // An inset repeats the panel's analyses: they are not counted twice.
+  const std::size_t points = s->point_count();
+  pp::Scene with = *s;
+  auto& panel = with.graphs[0].panels[0];
+  panel.inset.emplace();
+  panel.inset->layers = panel.layers;
+  EXPECT_EQ(with.point_count(), points);
+}
+
 TEST(Isochron, ExcludeNonPlateau) {
   pp::Dataset d;
   const double ar39[] = {5, 10, 40, 60, 50, 30, 15, 5};

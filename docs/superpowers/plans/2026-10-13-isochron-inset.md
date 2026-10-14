@@ -50,8 +50,8 @@ Read from `develop` `358eb184`.
 
 **Files:** `scene.hpp`, `tests/processing/test_arar_figures.cpp`.
 
-- [ ] Failing test `Isochron.APanelHasNoInsetUnlessAsked`: the default isochron scene's panel has `!inset`.
-- [ ] Add, as spec 5.2 gives it, beside `Panel`:
+- [x] Failing test `Isochron.APanelHasNoInsetUnlessAsked`: the default isochron scene's panel has `!inset`.
+- [x] Add, as spec 5.2 gives it, beside `Panel`:
 
 ```cpp
 // A small second view inside a panel, in one of its corners, with limits of
@@ -65,7 +65,7 @@ struct Inset {
 ```
 
   and `std::optional<Inset> inset;` last in `Panel`. `Scene::point_count()` counts the panel's layers only (an inset repeats the same analyses): say so in its comment.
-- [ ] `build/dev-ui/tests/processing/pychron_processing_tests --gtest_filter='Isochron.*'`; commit `feat(processing): a scene's panel can hold an inset`.
+- [x] `build/dev-ui/tests/processing/pychron_processing_tests --gtest_filter='Isochron.*'`; commit `feat(processing): a scene's panel can hold an inset`.
 
 ### Task 2: The options
 
