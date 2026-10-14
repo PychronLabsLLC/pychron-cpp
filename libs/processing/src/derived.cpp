@@ -20,8 +20,10 @@ std::optional<DerivedAge> derived_age(const ReducedAnalysis& reduced, const Redu
   const r::AgeUnits units = reduced.constants ? reduced.constants->age_units : r::AgeUnits::Ma;
   const double to_ma = r::age_scale(units, r::AgeUnits::Ma);
   out.age = ages.age * to_ma;
-  out.age_w_j = ages.age_w_j_err * to_ma;
-  out.kca = reduced.arar->kca;
+  // The same for what goes beside it: a row is a number and its error, or is not there.
+  const auto finite = [](const r::UFloat& v) { return std::isfinite(v.nominal()) && std::isfinite(v.std_dev()); };
+  if (finite(ages.age_w_j_err)) out.age_w_j = ages.age_w_j_err * to_ma;
+  if (reduced.arar->kca && finite(*reduced.arar->kca)) out.kca = reduced.arar->kca;
   return out;
 }
 

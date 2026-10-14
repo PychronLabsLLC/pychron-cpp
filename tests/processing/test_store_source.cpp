@@ -575,8 +575,8 @@ TEST_F(StoreSourceTest, AnAnalysisWithNoAgeGetsANullAge) {
   EXPECT_EQ(src.flush_derived().current, 1u);
 }
 
-// A cache: what cannot be written is counted and dropped, and the rest of the
-// batch is written all the same.
+// A cache: an age with a malformed id or fingerprint is counted and dropped,
+// and so is a whole batch the store refuses (it is one transaction).
 TEST_F(StoreSourceTest, WhatTheSinkCannotWriteIsDroppedAndCounted) {
   auto& src = source();
   DerivedAge no_such = derived_of(unknown_);

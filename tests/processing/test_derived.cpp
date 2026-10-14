@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include "fixtures.hpp"
 #include "pychron/processing/reduced.hpp"
 
@@ -83,6 +85,29 @@ TEST(DerivedAge, AnAnalysisThatReducesToNoAgeIsADerivedAgeWithoutOne) {
   const auto no_flux = pp::derived_age(*pp::reduce_analysis(unknown, pp::ReductionSettings{}), pp::ReductionSettings{});
   ASSERT_TRUE(no_flux);
   EXPECT_FALSE(no_flux->age);
+}
+
+// A row of the cache is a number and its error: what is neither is left out.
+TEST(DerivedAge, AValueThatIsNoNumberIsLeftOut) {
+  auto a = make_unknown(0);
+  a->input_fingerprint = kFingerprint;
+  pp::ReducedAnalysis reduced = *pp::reduce_analysis(a, pp::ReductionSettings{});
+  ASSERT_TRUE(reduced.arar && reduced.arar->ages && reduced.arar->kca);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  reduced.arar->kca = r::UFloat(nan);
+  reduced.arar->ages->age_w_j_err = r::UFloat(std::numeric_limits<double>::infinity());
+  auto d = pp::derived_age(reduced, pp::ReductionSettings{});
+  ASSERT_TRUE(d);
+  EXPECT_TRUE(d->age);
+  EXPECT_FALSE(d->age_w_j);
+  EXPECT_FALSE(d->kca);
+  // and an age that is none is no age at all
+  reduced.arar->ages->age = r::UFloat(nan);
+  d = pp::derived_age(reduced, pp::ReductionSettings{});
+  ASSERT_TRUE(d);
+  EXPECT_FALSE(d->age);
+  EXPECT_FALSE(d->age_w_j);
+  EXPECT_FALSE(d->kca);
 }
 
 // A source that keeps no fingerprint (a record directory, memory) has no cache.
