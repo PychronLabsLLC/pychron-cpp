@@ -22,7 +22,7 @@ class CountingTransport final : public Transport {
     return {};
   }
   void close() override { ++closes; }
-  Result<Bytes> exchange(Bytes, ReadSpec, Duration) override { return Bytes{}; }
+  Result<Bytes> exchange(Bytes, ReadSpec, Duration, Resend) override { return Bytes{}; }
   Result<void> write(Bytes) override { return {}; }
   Result<Bytes> read(ReadSpec, Duration) override { return Bytes{}; }
   Result<void> transaction(std::function<Result<void>()> body) override { return body(); }

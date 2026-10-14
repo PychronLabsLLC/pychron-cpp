@@ -18,6 +18,10 @@ namespace pychron {
 
 class SignalBus;
 
+// Whether exchange() may send its bytes again when no reply came. Only the
+// caller knows if the command behind them may arrive twice.
+enum class Resend { Never, Allowed };
+
 // One physical channel (serial port, socket, simulated wire). Knows how bytes
 // reach the wire; never what they mean or which device sent them.
 //
@@ -36,8 +40,11 @@ class Transport {
   virtual Result<void> open() = 0;
   virtual void close() = 0;
 
-  // Discard stale input, write `tx`, read one reply framed by `rs`.
-  virtual Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) = 0;
+  // Discard stale input, write `tx`, read one reply framed by `rs`. With
+  // Resend::Allowed a transport that has retries configured sends `tx` again
+  // after a Timeout; nothing is ever resent otherwise.
+  virtual Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout,
+                                 Resend resend = Resend::Never) = 0;
   virtual Result<void> write(Bytes tx) = 0;
   virtual Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) = 0;
   // read() for a reader that waits on unsolicited input (an instrument's
@@ -54,7 +61,7 @@ class Transport {
   // it makes on this transport run back to back, and no other caller's
   // traffic interleaves until it returns. For multi-step protocols ("select
   // bank, then switch relay"; "send mnemonic, then ENQ") so drivers need no
-  // locks of their own. Each call inside keeps its own retry and health
+  // locks of their own. Each call inside keeps its own resend and health
   // handling; the sequence as a whole is not retried. Nested transactions
   // run inline. Returns body's result, or Cancelled if the transport shut
   // down before body could run. Prefer the typed transact() helper.
@@ -82,7 +89,8 @@ struct TransportOptions {
   std::string name;
   // Per-attempt reply timeout used when a call passes kDefaultTimeout.
   Duration timeout = std::chrono::milliseconds(500);
-  // Extra attempts for exchange()/write() after a Timeout or Io failure.
+  // Extra attempts for an exchange() made with Resend::Allowed, each after a
+  // Timeout. A write() is sent once, and so is any other exchange().
   int retries = 0;
   // Consecutive failed calls after which health() reports Down.
   std::uint64_t down_after = 3;
@@ -97,7 +105,9 @@ struct TransportOptions {
 // every public call is enqueued and the caller blocks until the worker has
 // run it. Retries, default timeouts, error attribution and health tracking
 // are applied here, once; subclasses implement only the raw primitives,
-// which always run on the worker thread.
+// which always run on the worker thread. A primitive that fails with
+// ErrorKind::Io closes the channel: the calls after it fail NotConnected
+// until open() succeeds again.
 //
 // Subclasses must call shutdown() from their destructor so the worker stops
 // before their primitives are destroyed.
@@ -112,7 +122,8 @@ class QueuedTransport : public Transport {
   const std::string& name() const final;
   Result<void> open() final;
   void close() final;
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) final;
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout,
+                         Resend resend = Resend::Never) final;
   Result<void> write(Bytes tx) final;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) final;
   Result<std::optional<Bytes>> poll(ReadSpec rs, Duration timeout = kDefaultTimeout) final;
@@ -137,6 +148,9 @@ class QueuedTransport : public Transport {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+
+  template <class T>
+  Result<T> settle(Result<T> r);
 };
 
 }  // namespace pychron

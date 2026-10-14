@@ -54,7 +54,9 @@ class FlakyTransport final : public Transport {
     return inner_.open();
   }
   void close() override { inner_.close(); }
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) override { return inner_.exchange(tx, rs, timeout); }
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout, Resend resend) override {
+    return inner_.exchange(tx, rs, timeout, resend);
+  }
   Result<void> write(Bytes tx) override {
     if (before_write) before_write(std::string(tx.begin(), tx.end()));
     return inner_.write(std::move(tx));

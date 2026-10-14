@@ -60,10 +60,10 @@ Health TraceRecorder::health() const { return inner_->health(); }
 // never held while waiting for the bus. Holding a recorder-wide lock across
 // the inner call would deadlock against a transaction running on the bus.
 
-Result<Bytes> TraceRecorder::exchange(Bytes tx, ReadSpec rs, Duration timeout) {
+Result<Bytes> TraceRecorder::exchange(Bytes tx, ReadSpec rs, Duration timeout, Resend resend) {
   return transact(*inner_, [&]() -> Result<Bytes> {
     record(TraceRecord::Dir::Tx, tx);
-    auto r = inner_->exchange(std::move(tx), std::move(rs), timeout);
+    auto r = inner_->exchange(std::move(tx), std::move(rs), timeout, resend);
     if (r) {
       record(TraceRecord::Dir::Rx, *r);
     } else {

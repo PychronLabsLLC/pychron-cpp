@@ -114,7 +114,7 @@ TEST(SimTransportFaults, DropNextCausesTimeoutThenRetrySucceeds) {
   auto t = open_scripted({{to_bytes("A"), to_bytes("r1\r\n")}, {to_bytes("A"), to_bytes("r2\r\n")}},
                          /*retries=*/1);
   t->drop_next();
-  auto r = t->exchange(to_bytes("A"), kCrLf);
+  auto r = t->exchange(to_bytes("A"), kCrLf, Transport::kDefaultTimeout, Resend::Allowed);
   ASSERT_TRUE(r);
   EXPECT_EQ(to_string(*r), "r2\r\n");
   EXPECT_TRUE(t->verify());

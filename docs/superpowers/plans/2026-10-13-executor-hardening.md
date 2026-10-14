@@ -77,15 +77,15 @@ Tests: `tests/transport/test_queued_transport.cpp`, `test_sim_transport.cpp`, `t
 
 Today `open` stays true after the peer closes (`queued_transport.cpp:56`) and `exchange` and `write` resend after `Timeout` or `Io` when `retries > 0` (`:273-280`, `:291-293`).
 
-- [ ] Failing tests, in a fake `QueuedTransport` subclass whose `do_read` can be told to fail:
+- [x] Failing tests, in a fake `QueuedTransport` subclass whose `do_read` can be told to fail:
   - `QueuedTransport.AnIoErrorClosesTheChannel`: after one `Io` from `do_read`, `do_close` was called once, health is `Down`, and the next `exchange` fails `NotConnected` without `do_write` being called.
   - `QueuedTransport.ATimeoutLeavesTheChannelOpen`.
   - `QueuedTransport.WriteIsNeverSentTwice`: `retries = 3`, `do_write` fails `Timeout`: one call.
   - `QueuedTransport.ExchangeRepeatsOnlyWhenAsked`: `exchange(tx, spec)` with `retries = 3` sends once; `exchange(tx, spec, timeout, Resend::Allowed)` sends up to four times on `Timeout`, and stops at once on `Io` (the channel is closed).
-- [ ] Implement: in the worker, `Io` from `do_write` or `do_read` runs `do_close()`, sets `open = false` and calls `note_closed`. Remove the loop from `write()`. Add `enum class Resend { Never, Allowed }` as a defaulted fourth parameter of `Transport::exchange`, after `timeout` (`transport.hpp:40`; default `Never`); the loop stays for `Allowed`. `exchange` is virtual with default arguments: every override and every fake in `tests/` takes the parameter, and the default is written on the base only. `retries` keeps its meaning for the calls that pass `Allowed`, which from Task 5 on are the `Safe` ones (spec 4.1): `Device::call` hands the driver's op the `Resend` to use.
-- [ ] `grep -rn 'retries' libs apps configs profiles tests`: no shipped config sets it (spec section 2); fix any test that counted on the old meaning by passing `Resend::Allowed`, never by deleting the case.
-- [ ] `build/dev/tests/transport/pychron_transport_tests --gtest_filter='QueuedTransport.*'`, then `ctest --preset dev-quick`.
-- [ ] Commit: `fix(transport): an Io error closes the channel and nothing is resent unasked`.
+- [x] Implement: in the worker, `Io` from `do_write` or `do_read` runs `do_close()`, sets `open = false` and calls `note_closed`. Remove the loop from `write()`. Add `enum class Resend { Never, Allowed }` as a defaulted fourth parameter of `Transport::exchange`, after `timeout` (`transport.hpp:40`; default `Never`); the loop stays for `Allowed`. `exchange` is virtual with default arguments: every override and every fake in `tests/` takes the parameter. The default is written on the base and, with the same value, on the overrides that already repeat the default of `timeout` (`QueuedTransport`, `TraceRecorder`, `LinkTransport`, one test fake): they are called through their own type, where the base's defaults do not apply. `retries` keeps its meaning for the calls that pass `Allowed`, which from Task 5 on are the `Safe` ones (spec 4.1): `Device::call` hands the driver's op the `Resend` to use.
+- [x] `grep -rn 'retries' libs apps configs profiles tests`: no shipped config sets it (spec section 2); fix any test that counted on the old meaning by passing `Resend::Allowed`, never by deleting the case.
+- [x] `build/dev/tests/transport/pychron_transport_tests --gtest_filter='QueuedTransport.*'`, then `ctest --preset dev-quick`.
+- [x] Commit: `fix(transport): an Io error closes the channel and nothing is resent unasked`.
 
 ### Task 2: `SimTransport` can be down for a while
 

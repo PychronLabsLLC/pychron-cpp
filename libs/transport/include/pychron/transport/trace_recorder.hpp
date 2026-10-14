@@ -36,7 +36,8 @@ class TraceRecorder final : public Transport {
   const std::string& name() const override;
   Result<void> open() override;
   void close() override;
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) override;
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout,
+                         Resend resend = Resend::Never) override;
   Result<void> transaction(std::function<Result<void>()> body) override;
   Result<void> write(Bytes tx) override;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) override;

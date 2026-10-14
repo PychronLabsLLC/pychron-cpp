@@ -10,7 +10,7 @@ Unexpected<Error> LinkTransport::misuse() const {
               name_);
 }
 
-Result<Bytes> LinkTransport::exchange(Bytes, ReadSpec, Duration) { return misuse(); }
+Result<Bytes> LinkTransport::exchange(Bytes, ReadSpec, Duration, Resend) { return misuse(); }
 Result<void> LinkTransport::write(Bytes) { return misuse(); }
 Result<Bytes> LinkTransport::read(ReadSpec, Duration) { return misuse(); }
 Result<std::optional<Bytes>> LinkTransport::poll(ReadSpec, Duration) { return misuse(); }

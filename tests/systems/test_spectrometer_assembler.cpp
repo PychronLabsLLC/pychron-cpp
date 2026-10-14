@@ -175,8 +175,9 @@ class ProbeTransport final : public Transport {
     if (is_open()) events_.push_back("close:" + name_);
     inner_->close();
   }
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration t = kDefaultTimeout) override {
-    return inner_->exchange(std::move(tx), std::move(rs), t);
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration t = kDefaultTimeout,
+                         Resend resend = Resend::Never) override {
+    return inner_->exchange(std::move(tx), std::move(rs), t, resend);
   }
   Result<void> write(Bytes tx) override { return inner_->write(std::move(tx)); }
   Result<Bytes> read(ReadSpec rs, Duration t = kDefaultTimeout) override { return inner_->read(std::move(rs), t); }

@@ -22,7 +22,8 @@ class LinkTransport final : public Transport {
 
   Result<void> open() override { return {}; }
   void close() override {}
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout) override;
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout = kDefaultTimeout,
+                         Resend resend = Resend::Never) override;
   Result<void> write(Bytes tx) override;
   Result<Bytes> read(ReadSpec rs, Duration timeout = kDefaultTimeout) override;
   Result<std::optional<Bytes>> poll(ReadSpec rs, Duration timeout = kDefaultTimeout) override;

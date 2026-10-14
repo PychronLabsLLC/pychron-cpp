@@ -63,12 +63,13 @@ Result<std::unique_ptr<PfeifferMaxiGauge>> PfeifferMaxiGauge::create(const Drive
 
 Result<Bytes> PfeifferMaxiGauge::query(const codec::Command& mnemonic) {
   return transact(transport_, [&]() -> Result<Bytes> {
-    auto ack = transport_.exchange(mnemonic.tx, *mnemonic.reply);
+    // A query's mnemonic and its ENQ change nothing on the controller: either may be sent again.
+    auto ack = transport_.exchange(mnemonic.tx, *mnemonic.reply, Transport::kDefaultTimeout, Resend::Allowed);
     if (!ack) return fail(std::move(ack).error());
     if (auto ok = mg::decode_ack(*ack); !ok) return fail(std::move(ok).error());
 
     const codec::Command enq = mg::enquiry();
-    return transport_.exchange(enq.tx, *enq.reply);
+    return transport_.exchange(enq.tx, *enq.reply, Transport::kDefaultTimeout, Resend::Allowed);
   });
 }
 

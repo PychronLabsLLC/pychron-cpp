@@ -602,9 +602,9 @@ class TapTransport final : public Transport {
   const std::string& name() const override { return inner_.name(); }
   Result<void> open() override { return inner_.open(); }
   void close() override { inner_.close(); }
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) override {
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout, Resend resend) override {
     if (on_exchange) on_exchange(tx);
-    return inner_.exchange(std::move(tx), std::move(rs), timeout);
+    return inner_.exchange(std::move(tx), std::move(rs), timeout, resend);
   }
   Result<void> write(Bytes tx) override { return inner_.write(std::move(tx)); }
   Result<Bytes> read(ReadSpec rs, Duration timeout) override { return inner_.read(std::move(rs), timeout); }

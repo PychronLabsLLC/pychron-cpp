@@ -30,8 +30,6 @@ struct Pending {
   std::condition_variable done;
 };
 
-bool retryable(const Error& e) { return e.kind == ErrorKind::Timeout || e.kind == ErrorKind::Io; }
-
 }  // namespace
 
 struct QueuedTransport::Impl {
@@ -264,22 +262,39 @@ void QueuedTransport::close() {
   });
 }
 
-Result<Bytes> QueuedTransport::exchange(Bytes tx, ReadSpec rs, Duration timeout) {
-  return impl_->submit<Bytes>([this, tx = std::move(tx), rs = std::move(rs), timeout]() -> Result<Bytes> {
+// An Io error means the channel is gone (the peer closed, the port vanished),
+// where a Timeout only means nothing came back. The channel is closed there
+// and then, so the calls after it fail NotConnected at once instead of each
+// waiting out its timeout on a dead socket, and open() is what brings the
+// link back. Runs on the worker.
+template <class T>
+Result<T> QueuedTransport::settle(Result<T> r) {
+  auto& impl = *impl_;
+  if (!r && r.error().kind == ErrorKind::Io && impl.open) {
+    impl.open = false;
+    do_close();
+  }
+  return impl.finish(std::move(r));
+}
+
+Result<Bytes> QueuedTransport::exchange(Bytes tx, ReadSpec rs, Duration timeout, Resend resend) {
+  return impl_->submit<Bytes>([this, tx = std::move(tx), rs = std::move(rs), timeout, resend]() -> Result<Bytes> {
     auto& impl = *impl_;
     if (!impl.open) return fail(impl.not_connected());
     const auto t = impl.effective(timeout);
+    const int attempts = resend == Resend::Allowed ? impl.options.retries + 1 : 1;
     Result<Bytes> r = fail(ErrorKind::Io, "no attempt made");
-    for (int attempt = 0; attempt <= impl.options.retries; ++attempt) {
+    for (int attempt = 0; attempt < attempts; ++attempt) {
       do_discard_input();
       if (auto w = do_write(tx, t); !w) {
         r = fail(w.error());
       } else {
         r = do_read(rs, t);
       }
-      if (r || !retryable(r.error())) break;
+      // Only silence is worth another try: after an Io there is no channel.
+      if (r || r.error().kind != ErrorKind::Timeout) break;
     }
-    return impl.finish(std::move(r));
+    return settle(std::move(r));
   });
 }
 
@@ -287,12 +302,7 @@ Result<void> QueuedTransport::write(Bytes tx) {
   return impl_->submit<void>([this, tx = std::move(tx)]() -> Result<void> {
     auto& impl = *impl_;
     if (!impl.open) return fail(impl.not_connected());
-    Result<void> r;
-    for (int attempt = 0; attempt <= impl.options.retries; ++attempt) {
-      r = do_write(tx, impl.options.timeout);
-      if (r || !retryable(r.error())) break;
-    }
-    return impl.finish(std::move(r));
+    return settle(do_write(tx, impl.options.timeout));
   });
 }
 
@@ -308,7 +318,7 @@ Result<Bytes> QueuedTransport::read(ReadSpec rs, Duration timeout) {
   return impl_->submit<Bytes>([this, rs = std::move(rs), timeout]() -> Result<Bytes> {
     auto& impl = *impl_;
     if (!impl.open) return fail(impl.not_connected());
-    return impl.finish(do_read(rs, impl.effective(timeout)));
+    return settle(do_read(rs, impl.effective(timeout)));
   });
 }
 
@@ -318,7 +328,7 @@ Result<std::optional<Bytes>> QueuedTransport::poll(ReadSpec rs, Duration timeout
     if (!impl.open) return fail(impl.not_connected());
     auto r = do_read(rs, impl.effective(timeout));
     if (!r && r.error().kind == ErrorKind::Timeout) return std::optional<Bytes>{};  // nothing yet: not a failure
-    auto done = impl.finish(std::move(r));
+    auto done = settle(std::move(r));
     if (!done) return fail(std::move(done).error());
     return std::optional<Bytes>(std::move(*done));
   });

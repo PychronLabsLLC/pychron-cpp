@@ -63,7 +63,8 @@ Result<int> ProxrRelay::select(const ValveAddress& address) {
 }
 
 Result<Bytes> ProxrRelay::send(const codec::Command& command) {
-  return transport_.exchange(command.tx, *command.reply);
+  // Every ProXR command sets an absolute state or reads one: it may arrive twice.
+  return transport_.exchange(command.tx, *command.reply, Transport::kDefaultTimeout, Resend::Allowed);
 }
 
 }  // namespace pychron

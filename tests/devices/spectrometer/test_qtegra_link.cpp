@@ -33,12 +33,12 @@ class Flaky final : public Transport {
     return inner_.open();
   }
   void close() override { inner_.close(); }
-  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout) override {
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout, Resend resend) override {
     if (fail_exchanges > 0) {
       --fail_exchanges;
       return fail(ErrorKind::Io, "connection reset", inner_.name());
     }
-    return inner_.exchange(std::move(tx), std::move(rs), timeout);
+    return inner_.exchange(std::move(tx), std::move(rs), timeout, resend);
   }
   Result<void> write(Bytes tx) override { return inner_.write(std::move(tx)); }
   Result<Bytes> read(ReadSpec rs, Duration timeout) override { return inner_.read(std::move(rs), timeout); }

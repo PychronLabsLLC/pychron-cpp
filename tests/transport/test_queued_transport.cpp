@@ -124,13 +124,13 @@ TEST(QueuedTransport, ZeroTimeoutUsesConfiguredDefault) {
   EXPECT_EQ(t.last_timeout, Duration(40ms));
 }
 
-TEST(QueuedTransport, RetriesTimeoutThenSucceeds) {
+TEST(QueuedTransport, ResendsAfterATimeoutWhenAskedThenSucceeds) {
   FakeChannel t(opts(/*retries=*/2));
   ASSERT_TRUE(t.open());
   t.reads.emplace_back(fail(ErrorKind::Timeout, "t1"));
-  t.reads.emplace_back(fail(ErrorKind::Io, "glitch"));
+  t.reads.emplace_back(fail(ErrorKind::Timeout, "t2"));
   t.reads.emplace_back(to_bytes("OK\r"));
-  auto r = t.exchange(to_bytes("q"), kCr);
+  auto r = t.exchange(to_bytes("q"), kCr, Transport::kDefaultTimeout, Resend::Allowed);
   ASSERT_TRUE(r);
   EXPECT_EQ(t.write_calls, 3);
   EXPECT_EQ(t.discard_calls, 3);
@@ -140,7 +140,7 @@ TEST(QueuedTransport, RetriesTimeoutThenSucceeds) {
 TEST(QueuedTransport, RetriesExhaustedReportsLastErrorOnce) {
   FakeChannel t(opts(/*retries=*/1));
   ASSERT_TRUE(t.open());
-  auto r = t.exchange(to_bytes("q"), kCr);
+  auto r = t.exchange(to_bytes("q"), kCr, Transport::kDefaultTimeout, Resend::Allowed);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
   EXPECT_EQ(r.error().device, "bus1");
@@ -155,18 +155,110 @@ TEST(QueuedTransport, ProtocolErrorsAreNotRetried) {
   FakeChannel t(opts(/*retries=*/3));
   ASSERT_TRUE(t.open());
   t.writes.emplace_back(fail(ErrorKind::Protocol, "rejected"));
-  auto r = t.exchange(to_bytes("q"), kCr);
+  auto r = t.exchange(to_bytes("q"), kCr, Transport::kDefaultTimeout, Resend::Allowed);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
   EXPECT_EQ(t.write_calls, 1);
   EXPECT_EQ(t.read_calls, 0);
 }
 
-TEST(QueuedTransport, WriteIsRetriedOnIo) {
-  FakeChannel t(opts(/*retries=*/1));
+// A write has no reply to tell "not sent" from "sent and lost": the caller,
+// who knows whether the command may arrive twice, is the one to send it again.
+TEST(QueuedTransport, WriteIsNeverSentTwice) {
+  FakeChannel t(opts(/*retries=*/3));
   ASSERT_TRUE(t.open());
-  t.writes.emplace_back(fail(ErrorKind::Io, "EAGAIN"));
-  EXPECT_TRUE(t.write(to_bytes("w")));
+  t.writes.emplace_back(fail(ErrorKind::Timeout, "stalled"));
+  auto r = t.write(to_bytes("w"));
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(t.write_calls, 1);
+}
+
+TEST(QueuedTransport, ExchangeRepeatsOnlyWhenAsked) {
+  {
+    FakeChannel t(opts(/*retries=*/3));
+    ASSERT_TRUE(t.open());
+    EXPECT_FALSE(t.exchange(to_bytes("q"), kCr));
+    EXPECT_EQ(t.write_calls, 1);
+  }
+  {
+    FakeChannel t(opts(/*retries=*/3));
+    ASSERT_TRUE(t.open());
+    auto r = t.exchange(to_bytes("q"), kCr, Transport::kDefaultTimeout, Resend::Allowed);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+    EXPECT_EQ(t.write_calls, 4);
+  }
+  {
+    // The channel is closed by the Io: there is nothing left to resend on.
+    FakeChannel t(opts(/*retries=*/3));
+    ASSERT_TRUE(t.open());
+    t.reads.emplace_back(fail(ErrorKind::Io, "reset by peer"));
+    auto r = t.exchange(to_bytes("q"), kCr, Transport::kDefaultTimeout, Resend::Allowed);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, ErrorKind::Io);
+    EXPECT_EQ(t.write_calls, 1);
+  }
+}
+
+TEST(QueuedTransport, AnIoErrorClosesTheChannel) {
+  FakeChannel t(opts());
+  ASSERT_TRUE(t.open());
+  t.reads.emplace_back(fail(ErrorKind::Io, "reset by peer"));
+  auto r = t.exchange(to_bytes("q"), kCr);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_EQ(t.close_calls, 1);
+  EXPECT_EQ(t.health().state, HealthState::Down);
+
+  auto next = t.exchange(to_bytes("q"), kCr);
+  ASSERT_FALSE(next);
+  EXPECT_EQ(next.error().kind, ErrorKind::NotConnected);
+  EXPECT_EQ(t.write_calls, 1);
+  EXPECT_EQ(t.close_calls, 1);
+
+  // It can be opened again, which is how a link comes back.
+  ASSERT_TRUE(t.open());
+  t.reads.emplace_back(to_bytes("OK\r"));
+  EXPECT_TRUE(t.exchange(to_bytes("q"), kCr));
+  EXPECT_EQ(t.health().state, HealthState::Connected);
+}
+
+TEST(QueuedTransport, AnIoErrorOnAWriteOrAReadClosesTheChannel) {
+  {
+    FakeChannel t(opts());
+    ASSERT_TRUE(t.open());
+    t.writes.emplace_back(fail(ErrorKind::Io, "broken pipe"));
+    EXPECT_FALSE(t.write(to_bytes("w")));
+    EXPECT_EQ(t.close_calls, 1);
+    EXPECT_EQ(t.write(to_bytes("w")).error().kind, ErrorKind::NotConnected);
+  }
+  {
+    FakeChannel t(opts());
+    ASSERT_TRUE(t.open());
+    t.reads.emplace_back(fail(ErrorKind::Io, "eof"));
+    EXPECT_FALSE(t.read(kCr));
+    EXPECT_EQ(t.close_calls, 1);
+    EXPECT_EQ(t.read(kCr).error().kind, ErrorKind::NotConnected);
+  }
+  {
+    FakeChannel t(opts());
+    ASSERT_TRUE(t.open());
+    t.reads.emplace_back(fail(ErrorKind::Io, "eof"));
+    EXPECT_FALSE(t.poll(kCr));
+    EXPECT_EQ(t.close_calls, 1);
+    EXPECT_EQ(t.health().state, HealthState::Down);
+  }
+}
+
+TEST(QueuedTransport, ATimeoutLeavesTheChannelOpen) {
+  FakeChannel t(opts());
+  ASSERT_TRUE(t.open());
+  EXPECT_EQ(t.exchange(to_bytes("q"), kCr).error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(t.close_calls, 0);
+  EXPECT_EQ(t.health().state, HealthState::Degraded);
+  t.reads.emplace_back(to_bytes("OK\r"));
+  EXPECT_TRUE(t.exchange(to_bytes("q"), kCr));
   EXPECT_EQ(t.write_calls, 2);
 }
 

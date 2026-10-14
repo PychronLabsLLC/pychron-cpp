@@ -85,7 +85,8 @@ Result<double> GpMicroIon::read_pressure(int channel) {
   }
   auto cmd = mi::read_pressure(address_, channel);
   if (!cmd) return observe(Result<double>(fail(std::move(cmd).error())));
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+  // A read may be sent again: nothing on the gauge changes by it.
+  auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, Resend::Allowed);
   if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
   return observe(mi::decode_pressure(address_, *reply));
 }
