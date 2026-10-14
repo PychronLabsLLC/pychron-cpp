@@ -131,6 +131,21 @@ Result<std::optional<std::vector<DerivedRow>>> get_derived(Db& db, Uuid analysis
   return std::optional<std::vector<DerivedRow>>{std::move(out)};
 }
 
+Result<std::map<Uuid, Sha256Digest>> derived_fingerprints(Db& db, std::span<const Uuid> analyses) {
+  // In parts: a statement takes a bounded number of values (999 on an older SQLite).
+  constexpr std::size_t kPart = 500;
+  std::map<Uuid, Sha256Digest> out;
+  for (std::size_t at = 0; at < analyses.size(); at += kPart) {
+    const auto part = analyses.subspan(at, std::min(kPart, analyses.size() - at));
+    Bindings ids;
+    for (const Uuid& id : part) ids << qv(id);
+    auto rows = db.select(sql::derived_fingerprints(static_cast<qsizetype>(part.size())), ids);
+    if (!rows) return fail(rows.error());
+    for (const auto& r : *rows) out.insert_or_assign(to_uuid(r.value("analysis_uuid")), to_digest(r.value("fingerprint")));
+  }
+  return out;
+}
+
 Result<int> prune_derived(Db& db, Uuid analysis) {
   auto versions = db.select(sql::kDerivedVersions, {qv(analysis)});
   if (!versions) return fail(versions.error());

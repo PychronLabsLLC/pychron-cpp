@@ -203,6 +203,26 @@ TEST(SchemaIndexes, TheLastAnalysisOfAnIdentifierIsASeek) {
   EXPECT_EQ(all.find("TEMP B-TREE"), std::string::npos) << all;
 }
 
+// The age sink reads the cached fingerprints of a batch before it writes:
+// each analysis is a seek on derived_value's primary key (analysis_uuid,
+// fingerprint, name), not a walk of every cached age.
+TEST(SchemaIndexes, CachedFingerprintsAreFoundByAnalysis) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const pd::Bindings ids{pd::qv(Uuid::v7()), pd::qv(Uuid::v7()), pd::qv(Uuid::v7())};
+  const std::vector<std::string> plan =
+      column(*db, QStringLiteral("EXPLAIN QUERY PLAN ") + pd::sql::derived_fingerprints(3), "detail", ids);
+  ASSERT_FALSE(plan.empty());
+  std::string all;
+  for (const auto& step : plan) all += step + "\n";
+  EXPECT_NE(all.find("sqlite_autoindex_derived_value_1"), std::string::npos) << all;
+  EXPECT_NE(all.find("analysis_uuid=?"), std::string::npos) << all;
+  EXPECT_EQ(all.find("derived_value_name_ix"), std::string::npos) << "found by name, across every analysis:\n" << all;
+  EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
+}
+
 TEST_P(SchemaTest, ChecksumMismatchIsFatal) {
   TestDatabase tdb(GetParam(), true);
   ASSERT_TRUE(open_or_die(tdb.url()));

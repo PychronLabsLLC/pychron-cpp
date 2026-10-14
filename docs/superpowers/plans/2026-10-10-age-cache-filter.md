@@ -100,7 +100,10 @@ Spec 4.1, 4.4, and the "not written when nothing changed" rule of 4.5.
   (analysis to fingerprint of its `age` row) and its statement
   `kDerivedFingerprints`; forwarded in `forwarding_store.hpp`.
 - `StoreSource` gains `flush_derived()` for tests and for `elctl`: returns
-  when every queued write is done.
+  when every queued write is done, with what became of the ages since the
+  last flush (`DerivedFlush`: written, current, failed, last error). The
+  source has no logger, so that count is how a dropped write is reported;
+  `elctl db derive` (Task 5) prints it.
 - Tests:
   - `tests/processing/test_derived.cpp`: no fingerprint, null; settings
     other than default, null; an air (no age), a `DerivedAge` without age;
@@ -118,6 +121,11 @@ Spec 4.1, 4.4, and the "not written when nothing changed" rule of 4.5.
   `tests/processing/pychron_processing_store_tests` under
   `-DPYCHRON_SANITIZE=thread` before the commit.
 - Commit: `feat(processing): a sink that keeps reduced ages in the store's cache`.
+
+Done 2026-10-13 on `feat/age-cache-sink`. One departure from the spec's
+text, made in the spec too (4.5): the statement tests the name as
+`name || '' = 'age'`, since with `name = 'age'` and no statistics SQLite
+searched `derived_value_name_ix` and read every cached age of the store.
 
 ## Task 4: every reduction the application makes writes the cache
 

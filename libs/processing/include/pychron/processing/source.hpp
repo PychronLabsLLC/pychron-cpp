@@ -76,6 +76,23 @@ std::string facet_value(const AnalysisSummary& s, Facet f);
 
 class IRevisionSource;  // revisions.hpp
 
+// What one reduction of one analysis gives the cache of ages (age cache spec
+// 4.1, 4.4). Ages are in Ma whatever units a lab displays in. `age` absent:
+// the analysis reduces to no age (a blank, an air, an unknown without flux),
+// which is cached as such.
+struct DerivedAge {
+  std::string uuid, input_fingerprint;
+  std::optional<reduction::UFloat> age, age_w_j, kca;
+};
+
+class IDerivedSink {
+ public:
+  virtual ~IDerivedSink() = default;
+  // Queues the ages and returns at once: no caller waits on a cache. A write
+  // that fails is the sink's to report; the next reduction fills it.
+  virtual void put(std::vector<DerivedAge> ages) = 0;
+};
+
 class IAnalysisSource {
  public:
   virtual ~IAnalysisSource() = default;
@@ -92,6 +109,10 @@ class IAnalysisSource {
   virtual Result<std::vector<std::string>> facet(Facet facet, const BrowseQuery& query) = 0;
   virtual Result<AnalysisPtr> load(const std::string& uuid) = 0;
   virtual Result<RawData> load_raw(const std::string& uuid) = 0;
+  // Where reductions of this source's analyses leave their ages, for a source
+  // that keeps a cache of them (the DVC store); nullptr otherwise. Owned by
+  // the source.
+  virtual IDerivedSink* derived() noexcept { return nullptr; }
 };
 
 // An in-memory source; tests and figure previews use it.

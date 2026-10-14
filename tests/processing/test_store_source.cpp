@@ -13,6 +13,7 @@
 #include <random>
 #include <thread>
 
+#include "pychron/processing/derived.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/recall.hpp"
 #include "pychron/processing/reduced.hpp"
@@ -106,7 +107,8 @@ class StoreSourceTest : public ::testing::Test {
     flux.monitor_material = "sanidine";
     flux.monitor_age = 28.201;
     flux.monitor_age_err = 0.023;
-    publish(ref_object(ps::RefType::FluxPosition, "NM-300/A/3", pos), flux);
+    flux_object_ = ref_object(ps::RefType::FluxPosition, "NM-300/A/3", pos);
+    publish(flux_object_, flux);
     const auto prod = ref_object(ps::RefType::Production, "NM-300/Triga", {});
     publish(prod, ps::ProductionValue{"Triga", std::nullopt, {{"K4039", 0.0008, 5e-5}, {"Ca3937", 0.0007, 1e-5}}});
     publish(ref_object(ps::RefType::LevelProduction, "NM-300/A", lvl), ps::LevelProductionValue{prod, std::nullopt});
@@ -212,7 +214,27 @@ class StoreSourceTest : public ::testing::Test {
   std::string url_;
   std::unique_ptr<ps::IStore> store_;
   std::unique_ptr<StoreSource> source_;
-  ps::Uuid acq_, red_, reducer_, ms_, irr_, level_, position_, unknown_, air_, project_, material_;
+  ps::Uuid acq_, red_, reducer_, ms_, irr_, level_, position_, unknown_, air_, project_, material_, flux_object_;
+
+  // What a reduction of `uuid` with the default settings gives the cache.
+  DerivedAge derived_of(const ps::Uuid& uuid) {
+    auto loaded = source().load(uuid.str());
+    EXPECT_TRUE(loaded) << (loaded ? "" : to_string(loaded.error()));
+    if (!loaded) return {};
+    auto d = derived_age(*reduce_analysis(*loaded, ReductionSettings{}), ReductionSettings{});
+    EXPECT_TRUE(d);
+    return d ? *d : DerivedAge{};
+  }
+
+  // The cached rows of `uuid` by name, when they are of its current inputs.
+  std::map<std::string, ps::DerivedRow> cached(const ps::Uuid& uuid) {
+    std::map<std::string, ps::DerivedRow> out;
+    auto rows = store_->get_derived(uuid, std::string(reduction::kReductionVersion));
+    EXPECT_TRUE(rows) << (rows ? "" : to_string(rows.error()));
+    if (rows && *rows)
+      for (const auto& r : **rows) out[r.name] = r;
+    return out;
+  }
   ps::Bytes signal_;
 };
 
@@ -427,6 +449,169 @@ TEST_F(StoreSourceTest, LoadCarriesTheInputFingerprint) {
   auto air = src.load(air_.str());
   ASSERT_TRUE(air);
   EXPECT_NE((*air)->input_fingerprint, (*again)->input_fingerprint);
+}
+
+// ---- The sink (age cache spec 4.1, 4.4, 4.5) ---------------------------------
+
+TEST_F(StoreSourceTest, TheSinkFillsTheCache) {
+  auto& src = source();
+  ASSERT_NE(src.derived(), nullptr);
+  EXPECT_TRUE(cached(unknown_).empty());
+  const DerivedAge d = derived_of(unknown_);
+  ASSERT_TRUE(d.age && d.age_w_j && d.kca);
+
+  src.derived()->put({d});
+  const auto done = src.flush_derived();
+  EXPECT_EQ(done.written, 1u);
+  EXPECT_EQ(done.current, 0u);
+  EXPECT_EQ(done.failed, 0u) << done.last_error;
+
+  const auto rows = cached(unknown_);
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, d.age->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age").error, d.age->std_dev());
+  EXPECT_EQ(rows.at("age").units, "Ma");
+  EXPECT_DOUBLE_EQ(*rows.at("age_w_j").value, d.age_w_j->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age_w_j").error, d.age_w_j->std_dev());
+  EXPECT_EQ(rows.at("age_w_j").units, "Ma");
+  EXPECT_DOUBLE_EQ(*rows.at("kca").value, d.kca->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("kca").error, d.kca->std_dev());
+  EXPECT_FALSE(rows.at("kca").units);
+  // nothing was queued since: a flush has nothing to say
+  const auto idle = src.flush_derived();
+  EXPECT_EQ(idle.written + idle.current + idle.failed, 0u);
+}
+
+// Opening a figure of analyses whose ages are current costs one read and no write.
+TEST_F(StoreSourceTest, ACurrentAgeIsNotWrittenAgain) {
+  auto& src = source();
+  const DerivedAge unknown = derived_of(unknown_);
+  const DerivedAge air = derived_of(air_);
+  src.derived()->put({unknown});
+  EXPECT_EQ(src.flush_derived().written, 1u);
+
+  src.derived()->put({unknown});
+  auto done = src.flush_derived();
+  EXPECT_EQ(done.written, 0u);
+  EXPECT_EQ(done.current, 1u);
+
+  // a batch of one current and one new: only the new one is written
+  src.derived()->put({unknown, air});
+  done = src.flush_derived();
+  EXPECT_EQ(done.written, 1u);
+  EXPECT_EQ(done.current, 1u);
+  EXPECT_EQ(done.failed, 0u) << done.last_error;
+  // an analysis given twice in one batch is one write
+  auto third = ingest("77000", 2, "unknown", "2026-10-02T12:00:00Z");
+  const DerivedAge d3 = derived_of(third);
+  src.derived()->put({d3, d3});
+  done = src.flush_derived();
+  EXPECT_EQ(done.written, 1u);
+  EXPECT_EQ(done.failed, 0u) << done.last_error;
+  EXPECT_EQ(cached(third).size(), 3u);
+  // and an empty batch is nothing at all
+  src.derived()->put({});
+  done = src.flush_derived();
+  EXPECT_EQ(done.written + done.current + done.failed, 0u);
+}
+
+TEST_F(StoreSourceTest, AChangedFluxReplacesTheAge) {
+  auto& src = source();
+  const DerivedAge before = derived_of(unknown_);
+  src.derived()->put({before});
+  ASSERT_EQ(src.flush_derived().written, 1u);
+  ASSERT_EQ(cached(unknown_).size(), 3u);
+
+  ps::FluxValue flux;
+  flux.j = 0.002;
+  flux.j_err = 2e-6;
+  flux.position_jerr = 2e-7;
+  flux.monitor_name = "FC-2";
+  flux.monitor_material = "sanidine";
+  flux.monitor_age = 28.201;
+  flux.monitor_age_err = 0.023;
+  publish(flux_object_, flux);
+  // The age cached is of other inputs now: it is not served.
+  EXPECT_TRUE(cached(unknown_).empty());
+
+  ASSERT_TRUE(src.refresh());
+  const DerivedAge after = derived_of(unknown_);
+  ASSERT_NE(after.input_fingerprint, before.input_fingerprint);
+  ASSERT_TRUE(after.age);
+  EXPECT_GT(after.age->nominal(), 1.5 * before.age->nominal());
+  src.derived()->put({after});
+  const auto done = src.flush_derived();
+  EXPECT_EQ(done.written, 1u);
+  EXPECT_EQ(done.failed, 0u) << done.last_error;
+  const auto rows = cached(unknown_);
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, after.age->nominal());
+  // one fingerprint an analysis: the old rows are gone, not beside the new
+  const auto fingerprints = store_->derived_fingerprints(std::vector<ps::Uuid>{unknown_});
+  ASSERT_TRUE(fingerprints);
+  EXPECT_EQ(to_hex(fingerprints->at(unknown_)), after.input_fingerprint);
+
+  // An age of inputs that are no longer the analysis's is still what that
+  // reduction gave: it is written, and not served as current.
+  src.derived()->put({before});
+  EXPECT_EQ(src.flush_derived().written, 1u);
+  EXPECT_TRUE(cached(unknown_).empty());
+}
+
+TEST_F(StoreSourceTest, AnAnalysisWithNoAgeGetsANullAge) {
+  auto& src = source();
+  const DerivedAge air = derived_of(air_);
+  ASSERT_FALSE(air.age);
+  src.derived()->put({air});
+  const auto done = src.flush_derived();
+  EXPECT_EQ(done.written, 1u);
+  EXPECT_EQ(done.failed, 0u) << done.last_error;
+  const auto rows = cached(air_);
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_FALSE(rows.at("age").value);
+  EXPECT_FALSE(rows.at("age").error);
+  // "current, and there is no age": not written again
+  src.derived()->put({air});
+  EXPECT_EQ(src.flush_derived().current, 1u);
+}
+
+// A cache: what cannot be written is counted and dropped, and the rest of the
+// batch is written all the same.
+TEST_F(StoreSourceTest, WhatTheSinkCannotWriteIsDroppedAndCounted) {
+  auto& src = source();
+  DerivedAge no_such = derived_of(unknown_);
+  no_such.uuid = ps::Uuid::v7().str();  // no analysis of the store
+  DerivedAge bad_uuid = derived_of(unknown_);
+  bad_uuid.uuid = "not a uuid";
+  DerivedAge bad_fingerprint = derived_of(unknown_);
+  bad_fingerprint.input_fingerprint = "zz";
+  src.derived()->put({bad_uuid, bad_fingerprint});
+  auto done = src.flush_derived();
+  EXPECT_EQ(done.written, 0u);
+  EXPECT_EQ(done.failed, 2u);
+  EXPECT_FALSE(done.last_error.empty());
+  EXPECT_TRUE(cached(unknown_).empty());
+
+  src.derived()->put({no_such});  // the store refuses it: a row for no analysis
+  done = src.flush_derived();
+  EXPECT_EQ(done.written, 0u);
+  EXPECT_EQ(done.failed, 1u);
+  EXPECT_FALSE(done.last_error.empty());
+
+  // The source still works, and writes are still taken.
+  src.derived()->put({derived_of(unknown_)});
+  EXPECT_EQ(src.flush_derived().written, 1u);
+}
+
+// Queued writes are done before the source closes: nothing is lost by
+// closing a window right after a figure was drawn.
+TEST_F(StoreSourceTest, ClosingTheSourceFinishesTheQueuedWrites) {
+  const DerivedAge unknown = derived_of(unknown_);
+  const DerivedAge air = derived_of(air_);
+  for (int i = 0; i < 20; ++i) source().derived()->put({unknown, air});
+  source_.reset();
+  EXPECT_EQ(cached(unknown_).size(), 3u);
+  EXPECT_EQ(cached(air_).size(), 1u);
 }
 
 TEST_F(StoreSourceTest, RefreshSeesNewAnalysesAndNewRevisions) {

@@ -556,6 +556,16 @@ struct StoreSource::Impl {
   std::mutex cache_mutex;
   std::map<std::string, AnalysisPtr> cache;
 
+  // The sink: tasks queued and not yet done, and what became of the ages
+  // since the last flush. A worker finishes the queue before it stops, so
+  // these outlive every task (the destructor joins before they go).
+  std::mutex derived_mutex;
+  std::condition_variable derived_cv;
+  std::size_t derived_pending = 0;
+  DerivedFlush derived_done;
+
+  void write_derived(ps::IStore& s, const std::vector<DerivedAge>& ages);
+
   // Who saves edits; registered on the first save.
   std::string user, hostname;
   std::mutex actor_mutex;
@@ -618,6 +628,117 @@ struct StoreSource::Impl {
     return future.get();
   }
 };
+
+namespace {
+
+// A SHA-256 as 64 hex digits (to_hex's text) back to its bytes.
+std::optional<Sha256Digest> digest_from_hex(std::string_view hex) {
+  Sha256Digest out{};
+  if (hex.size() != 2 * out.size()) return std::nullopt;
+  const auto nibble = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    const int hi = nibble(hex[2 * i]), lo = nibble(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) return std::nullopt;
+    out[i] = static_cast<std::uint8_t>(hi * 16 + lo);
+  }
+  return out;
+}
+
+// The rows of spec 4.1. No age: one `age` row without value, which says
+// "current, and there is no age".
+std::vector<ps::DerivedRow> derived_rows(const DerivedAge& d) {
+  const std::string ma = "Ma";
+  if (!d.age) return {{"age", std::nullopt, std::nullopt, ma}};
+  std::vector<ps::DerivedRow> rows{{"age", d.age->nominal(), d.age->std_dev(), ma}};
+  if (d.age_w_j) rows.push_back({"age_w_j", d.age_w_j->nominal(), d.age_w_j->std_dev(), ma});
+  if (d.kca) rows.push_back({"kca", d.kca->nominal(), d.kca->std_dev(), std::nullopt});
+  return rows;
+}
+
+}  // namespace
+
+void StoreSource::Impl::write_derived(ps::IStore& s, const std::vector<DerivedAge>& ages) {
+  DerivedFlush done;
+  // One put an analysis: the last of a batch that names one twice.
+  std::map<ps::Uuid, ps::DerivedPut> wanted;
+  for (const auto& d : ages) {
+    const auto id = parse_uuid(d.uuid);
+    const auto fingerprint = digest_from_hex(d.input_fingerprint);
+    if (!id || !fingerprint) {
+      ++done.failed;
+      done.last_error = !id ? "derived age of '" + d.uuid + "': not an analysis id"
+                            : "derived age of " + d.uuid + ": '" + d.input_fingerprint + "' is no fingerprint";
+      continue;
+    }
+    wanted.insert_or_assign(*id, ps::DerivedPut{*id, *fingerprint, derived_rows(d)});
+  }
+  if (!wanted.empty()) {
+    std::vector<ps::Uuid> ids;
+    ids.reserve(wanted.size());
+    for (const auto& [id, put] : wanted) ids.push_back(id);
+    // Not written when nothing changed: one read for the batch says which are current.
+    std::vector<ps::DerivedPut> puts;
+    if (auto cached = s.derived_fingerprints(ids); !cached) {
+      done.failed += wanted.size();
+      done.last_error = to_string(cached.error());
+    } else {
+      for (auto& [id, put] : wanted) {
+        const auto it = cached->find(id);
+        if (it != cached->end() && it->second == put.fingerprint) {
+          ++done.current;
+        } else {
+          puts.push_back(std::move(put));
+        }
+      }
+      if (!puts.empty()) {
+        if (auto wrote = s.put_derived_many(puts, std::string(reduction::kReductionVersion)); wrote) {
+          done.written += puts.size();
+        } else {
+          done.failed += puts.size();
+          done.last_error = to_string(wrote.error());
+        }
+      }
+    }
+  }
+  {
+    std::lock_guard lock(derived_mutex);
+    derived_done.written += done.written;
+    derived_done.current += done.current;
+    derived_done.failed += done.failed;
+    if (!done.last_error.empty()) derived_done.last_error = std::move(done.last_error);
+    --derived_pending;
+  }
+  derived_cv.notify_all();
+}
+
+void StoreSource::put(std::vector<DerivedAge> ages) {
+  if (ages.empty()) return;
+  Impl* impl = impl_.get();
+  {
+    // Counted before it is queued, under both locks in this order, so a
+    // flush that follows this put waits for it.
+    std::lock_guard queue_lock(impl->queue_mutex);
+    if (impl->stopping) return;
+    {
+      std::lock_guard lock(impl->derived_mutex);
+      ++impl->derived_pending;
+    }
+    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks): std::function's own storage, freed with the queue
+    impl->queue.emplace_back([impl, ages = std::move(ages)](ps::IStore& s) { impl->write_derived(s, ages); });
+  }
+  impl->queue_cv.notify_one();
+}
+
+DerivedFlush StoreSource::flush_derived() {
+  std::unique_lock lock(impl_->derived_mutex);
+  impl_->derived_cv.wait(lock, [this] { return impl_->derived_pending == 0; });
+  return std::exchange(impl_->derived_done, DerivedFlush{});
+}
 
 StoreSource::StoreSource(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 StoreSource::~StoreSource() = default;

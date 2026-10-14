@@ -709,6 +709,11 @@ class IStore {
                                                                     const std::string& reduction_version) = 0;
   // Deletes cache rows whose inputs are no longer current. Returns rows removed.
   virtual Result<int> prune_derived(Uuid analysis) = 0;
+  // The fingerprint each of `analyses` is cached under (that of its `age`
+  // row), whether or not it is current; an analysis with nothing cached is
+  // not in the result. A writer asks this for a whole batch before it
+  // reduces or writes anything.
+  virtual Result<std::map<Uuid, Sha256Digest>> derived_fingerprints(std::span<const Uuid> analyses) = 0;
 
   // Idempotent ingest of one outbox item (I7). Used by the uploader.
   virtual Result<IngestAck> ingest(const IngestItem& item) = 0;

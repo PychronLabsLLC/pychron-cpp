@@ -526,6 +526,9 @@ class TinyStore final : public IStore {
     return detail::get_derived(*db_, analysis, reduction_version);
   }
   Result<int> prune_derived(Uuid analysis) override { return detail::prune_derived(*db_, analysis); }
+  Result<std::map<Uuid, Sha256Digest>> derived_fingerprints(std::span<const Uuid> analyses) override {
+    return detail::derived_fingerprints(*db_, analyses);
+  }
 
   // ------------------------------------------------------------ ingest
 

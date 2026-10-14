@@ -87,6 +87,7 @@ Result<void> put_derived(Db& db, Uuid analysis, const Sha256Digest& fingerprint,
 Result<void> put_derived_many(Db& db, std::span<const DerivedPut> puts, const std::string& reduction_version);
 Result<std::optional<std::vector<DerivedRow>>> get_derived(Db& db, Uuid analysis, const std::string& reduction_version);
 Result<int> prune_derived(Db& db, Uuid analysis);
+Result<std::map<Uuid, Sha256Digest>> derived_fingerprints(Db& db, std::span<const Uuid> analyses);
 
 Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject);
 

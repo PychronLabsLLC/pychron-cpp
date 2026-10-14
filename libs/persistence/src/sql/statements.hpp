@@ -192,6 +192,17 @@ inline const QString kDerivedVersions =
     QStringLiteral("SELECT DISTINCT reduction_version FROM derived_value WHERE analysis_uuid = ?");
 inline const QString kPruneDerived = QStringLiteral(
     "DELETE FROM derived_value WHERE analysis_uuid = ? AND reduction_version = ? AND fingerprint <> ?");
+// The fingerprint `n` analyses are cached under: one row an analysis, since
+// the cache keeps one fingerprint each. Found by the primary key
+// (analysis_uuid, fingerprint, name), a seek an analysis. Written `name = 'age'`
+// SQLite takes derived_value_name_ix instead and reads every cached age of
+// the store; `name || ''` is no column of an index, so the name is tested on
+// the rows the key found (SchemaIndexes.CachedFingerprintsAreFoundByAnalysis).
+inline QString derived_fingerprints(qsizetype n) {
+  return QStringLiteral("SELECT analysis_uuid, fingerprint FROM derived_value "
+                        "WHERE analysis_uuid IN (%1) AND name || '' = 'age'")
+      .arg(placeholders(n));
+}
 
 // ---------------------------------------------------------------- analysis reads
 

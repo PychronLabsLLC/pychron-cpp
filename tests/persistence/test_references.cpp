@@ -225,6 +225,48 @@ TEST_P(ReferenceTest, DerivedValuesAreServedOnlyForCurrentInputs) {
   EXPECT_FALSE(*store_->get_derived(a, "red-1"));
 }
 
+// What the age sink asks before it writes: the fingerprint each of a batch of
+// analyses is cached under, in one read (age cache spec 4.5).
+TEST_P(ReferenceTest, TheCachedFingerprintsOfManyAnalysesAreReadTogether) {
+  RefObjectSpec pos;
+  pos.position = lab_.position;
+  publish(object(RefType::FluxPosition, "NM-300/A/1", pos), flux(0.01));
+  const Uuid a = ingest(1);
+  const Uuid b = ingest(2);
+  const Uuid never = ingest(3);
+  const std::vector<Uuid> all{a, b, never, Uuid::v7()};  // the last is no analysis at all
+
+  auto none = store_->derived_fingerprints(all);
+  ASSERT_TRUE(none) << to_string(none.error());
+  EXPECT_TRUE(none->empty());
+  EXPECT_TRUE(store_->derived_fingerprints({})->empty());
+
+  const auto fa = *store_->input_fingerprint(a, "red-1");
+  Sha256Digest fb{};
+  fb[0] = 7;
+  ASSERT_TRUE(store_->put_derived(a, fa, "red-1", {{"age", 28.1, 0.05, "Ma"}, {"kca", 12.0, 0.4, std::nullopt}}));
+  // "current, and there is no age" is cached too: a null age
+  ASSERT_TRUE(store_->put_derived(b, fb, "red-1", {{"age", std::nullopt, std::nullopt, "Ma"}}));
+
+  auto got = store_->derived_fingerprints(all);
+  ASSERT_TRUE(got) << to_string(got.error());
+  ASSERT_EQ(got->size(), 2u);
+  EXPECT_EQ(got->at(a), fa);
+  EXPECT_EQ(got->at(b), fb);
+  EXPECT_FALSE(got->contains(never));
+
+  // More analyses than one statement is given: read in parts, the same answer.
+  std::vector<Uuid> many;
+  many.reserve(1202);
+  for (int i = 0; i < 1200; ++i) many.push_back(Uuid::v7());
+  many.push_back(a);
+  many.insert(many.begin(), b);
+  got = store_->derived_fingerprints(many);
+  ASSERT_TRUE(got) << to_string(got.error());
+  EXPECT_EQ(got->size(), 2u);
+  EXPECT_EQ(got->at(a), fa);
+}
+
 // After any write the cache holds one fingerprint's rows for an analysis
 // (age cache spec 4.2): a join from an analysis to its age is one row or none.
 TEST_P(ReferenceTest, APutReplacesAnotherFingerprintsRows) {

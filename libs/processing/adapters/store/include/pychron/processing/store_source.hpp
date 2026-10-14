@@ -9,6 +9,7 @@
 // owns a small pool of threads, each opening its own store, and runs every
 // call on one of them; callers on any thread block until it returns.
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -29,7 +30,15 @@ struct StoreSourceOptions {
   std::string user, hostname;
 };
 
-class StoreSource final : public IAnalysisSource, public IRevisionSource {
+// What the sink did with the ages given to it since the last flush.
+struct DerivedFlush {
+  std::size_t written = 0;  // analyses whose rows were written
+  std::size_t current = 0;  // analyses already cached under that fingerprint: not written
+  std::size_t failed = 0;   // analyses dropped: a malformed id or fingerprint, or a write the store refused
+  std::string last_error;   // of the last that failed
+};
+
+class StoreSource final : public IAnalysisSource, public IRevisionSource, public IDerivedSink {
  public:
   // Opens one store per connection (applying migrations as `config` says)
   // and fails if any cannot be opened.
@@ -48,6 +57,19 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource {
   Result<AnalysisPtr> load(const std::string& uuid) override;
   Result<RawData> load_raw(const std::string& uuid) override;
   IRevisionSource* revisions() noexcept override { return this; }
+  IDerivedSink* derived() noexcept override { return this; }
+
+  // The sink (age cache spec 4.4, 4.5). put() queues one task on the pool
+  // and returns. The task reads the fingerprints the batch's analyses are
+  // cached under, in one statement, and writes those that differ, in one
+  // transaction: `age`, `age_w_j` (Ma) and `kca`, or an `age` without value
+  // for an analysis that has none. A batch the store refuses is dropped: it
+  // is a cache, and the next reduction or the backfill fills it. What is
+  // queued when the source closes is written first.
+  void put(std::vector<DerivedAge> ages) override;
+  // Returns when every write queued so far is done, with what became of
+  // them since the last flush. For tests and for elctl.
+  DerivedFlush flush_derived();
 
   Result<std::vector<RevisionSummary>> history(const std::string& analysis, RevisionKind kind) override;
   Result<RevisionTable> revision_table(const std::string& revision) override;

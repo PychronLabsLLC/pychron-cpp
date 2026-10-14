@@ -97,6 +97,7 @@ class ForwardingStore : public persistence::IStore {
   Result<void> put_derived_many(std::span<const persistence::DerivedPut> puts, const std::string& reduction_version) override { return inner_.put_derived_many(puts, reduction_version); }
   Result<std::optional<std::vector<persistence::DerivedRow>>> get_derived(Uuid analysis, const std::string& reduction_version) override { return inner_.get_derived(analysis, reduction_version); }
   Result<int> prune_derived(Uuid analysis) override { return inner_.prune_derived(analysis); }
+  Result<std::map<Uuid, Sha256Digest>> derived_fingerprints(std::span<const Uuid> analyses) override { return inner_.derived_fingerprints(analyses); }
   Result<persistence::IngestAck> ingest(const persistence::IngestItem& item) override { return inner_.ingest(item); }
   Result<std::optional<Uuid>> head(Uuid subject, Kind kind) override { return inner_.head(subject, kind); }
   Result<std::vector<persistence::HeadInfo>> heads(Uuid subject) override { return inner_.heads(subject); }

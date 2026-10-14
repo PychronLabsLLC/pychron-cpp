@@ -130,8 +130,11 @@ filed under the new fingerprint.
     std::optional<DerivedAge> derived_age(const ReducedAnalysis&, const ReductionSettings&);
 
 - `StoreSource` implements the sink: posts one task to its pool (no future
-  waited on) that calls `put_derived_many`. A write that fails is logged
+  waited on) that calls `put_derived_many`. A write that fails is counted
   and dropped: it is a cache, next reduction or backfill fills it.
+  `StoreSource::flush_derived()` waits for the queued writes and returns the
+  counts since the last flush (written, current, failed, last error): the
+  source has no logger, so that is where a failure is reported.
 - `MemorySource`, record source: no sink.
 - Sink is on real time and on StoreSource's own threads, like the rest of
   StoreSource; no simulated path waits on it.
@@ -145,7 +148,9 @@ filed under the new fingerprint.
    purpose: never cached.
    - Not written when nothing changed: `StoreSource::load` cannot know
      without a statement, so the sink's task asks first, one statement for
-     the batch (`SELECT analysis_uuid, fingerprint FROM derived_value WHERE name = 'age' AND analysis_uuid IN (...)`),
+     the batch (`SELECT analysis_uuid, fingerprint FROM derived_value WHERE analysis_uuid IN (...) AND name || '' = 'age'`:
+     written `name = 'age'`, SQLite searches `derived_value_name_ix` and reads
+     every cached age; the concatenation leaves it the primary key),
      and writes only analyses whose cached fingerprint differs. Opening a
      figure of 2000 current analyses costs that one read and no write.
 2. **Backfill.** `elctl db derive --db <url> [--all] [--limit N] [--quiet]`.
