@@ -89,7 +89,7 @@ class ReadingHistory {
 
 Time is kept per series as seconds from that series' first reading, and handed out relative to its newest: a caller never needs the history's origin. Emptying a series (time going back, a change of units) forgets its origin too. A break is a NaN point at the midpoint in time of the two readings it parts. `series()` finds the start of the range by binary search on `t`, not from the front.
 
-- [ ] **Failing tests** (QtTest, `QTEST_APPLESS_MAIN`), times built as `TimePoint{} + seconds`:
+- [x] **Failing tests** (QtTest, `QTEST_APPLESS_MAIN`), times built as `TimePoint{} + seconds`:
   - `aSeriesIsKeptForEachName`: two names, readings interleaved; each has its own.
   - `timesAreSecondsBeforeTheNewest`: readings at 100, 160, 220 s: `t` is -120, -60, 0; `newest` is 220 s.
   - `aRangeLeavesOutWhatIsOlder`: range 90 s gives the last two; the reading exactly at the edge is in.
@@ -101,8 +101,8 @@ Time is kept per series as seconds from that series' first reading, and handed o
   - `aDayOfSecondsIsReadQuickly`: 86 400 readings; `series(name, 10 min)` and `series(name, 24 h)` each a thousand times; print the time (no assertion on it: the number goes in the commit message, and decides whether the 24 h chart needs thinning).
   - `aValueThatIsNoNumberIsABreak`: a NaN or infinite value is stored as a break, not drawn.
   - `revisionMovesWithEachReading`.
-- [ ] **Implement** over `TimeSeriesRing(kSpanSeconds)`; check `size()` before `back()`.
-- [ ] `cmake --build --preset dev-ui --target pychron_ui_test_reading_history && ctest --preset dev-ui -R '^ui\.test_reading_history$'`; commit `feat(ui): a history of timed readings, a day long, a series a name`.
+- [x] **Implement** over `TimeSeriesRing(kSpanSeconds)`; check `size()` before `back()`.
+- [x] `cmake --build --preset dev-ui --target pychron_ui_test_reading_history && ctest --preset dev-ui -R '^ui\.test_reading_history$'`; commit `feat(ui): a history of timed readings, a day long, a series a name`.
 
 ### Task 2: A chart of one series
 
