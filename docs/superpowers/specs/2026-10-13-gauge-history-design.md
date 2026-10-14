@@ -46,7 +46,9 @@ with a range the operator chooses).
 - One `TimeSeriesRing` per configured gauge, fed from
   `CoreBridge::pressureSample` from the moment the main window exists. Owned
   by the main window; canvas, popup and gauge windows read it.
-- Span kept: 24 h (longest range offered, 4.3). At a 1 s scan that is
+- Span kept: 24 h (longest range offered, 4.3), at most 200 000 points a
+  gauge (the ring's bound): a line scanned faster than every 0.43 s holds
+  less than a day; window's "since" says how much. At a 1 s scan that is
   86 400 points a gauge, 16 bytes each: 1.4 MB a gauge. Rings are bounded by
   time, so a slower gauge costs less.
 - Point: `(seconds since history's first sample, value)`; units kept beside
@@ -73,11 +75,14 @@ with a range the operator chooses).
 - The 3 s is real time (a wait on the operator's hand): a `QTimer`. Added
   to the virtual clock spec's list of what stays on real time (its 4.5).
 - Popup takes no focus and no clicks meant for the canvas: a `Qt::ToolTip`
-  window, not `Qt::Popup` (which takes the click that closes it).
+  window transparent to the mouse, not `Qt::Popup` (which takes the click
+  that closes it); placed beside the chip, never over it; hidden when the
+  app is deactivated.
 
 ### 4.3 Click: gauge window
 
-- Click on a gauge chip opens a small tool window "IG1" (one a gauge;
+- Click on a gauge chip opens a small window "IG1" (a plain window, not a
+  tool window: those vanish on macOS when the app is not active) (one a gauge;
   a second click raises it). Chart of that gauge, range box: 10 min
   (default), 30 min, 1 h, 6 h, 24 h.
 - Range chosen is kept per gauge in settings
