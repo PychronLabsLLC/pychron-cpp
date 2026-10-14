@@ -2,7 +2,71 @@
 
 #include "asio_stream.hpp"
 
+#if defined(_WIN32)
+#include <winsock2.h>
+// winsock2 first: mstcpip needs its types.
+#include <mstcpip.h>
+#else
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#endif
+
 namespace pychron {
+
+namespace {
+
+[[maybe_unused]] constexpr int kKeepIdleSeconds = 10;
+[[maybe_unused]] constexpr int kKeepIntervalSeconds = 5;
+[[maybe_unused]] constexpr int kKeepCount = 3;
+
+// Keepalive on, with the spec's timings where the platform takes them. A
+// setting the platform refuses leaves its default: keepalive is a help in
+// finding a dead peer, not a condition of being connected.
+void enable_keepalive(asio::ip::tcp::socket& socket) {
+  asio::error_code ignored;
+  socket.set_option(asio::socket_base::keep_alive(true), ignored);
+  auto fd = socket.native_handle();
+#if defined(_WIN32)
+  tcp_keepalive vals{};
+  vals.onoff = 1;
+  vals.keepalivetime = kKeepIdleSeconds * 1000;
+  vals.keepaliveinterval = kKeepIntervalSeconds * 1000;
+  DWORD returned = 0;
+  (void)WSAIoctl(fd, SIO_KEEPALIVE_VALS, &vals, sizeof(vals), nullptr, 0, &returned, nullptr, nullptr);
+#else
+  const int idle = kKeepIdleSeconds;
+#if defined(TCP_KEEPIDLE)
+  (void)::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+#elif defined(TCP_KEEPALIVE)
+  (void)::setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle));
+#endif
+#if defined(TCP_KEEPINTVL)
+  const int interval = kKeepIntervalSeconds;
+  (void)::setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+#endif
+#if defined(TCP_KEEPCNT)
+  const int count = kKeepCount;
+  (void)::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+#endif
+#endif
+}
+
+std::optional<int> keepalive_idle_seconds([[maybe_unused]] asio::ip::tcp::socket& socket) {
+#if !defined(_WIN32) && (defined(TCP_KEEPIDLE) || defined(TCP_KEEPALIVE))
+  int idle = 0;
+  socklen_t len = sizeof(idle);
+#if defined(TCP_KEEPIDLE)
+  const int option = TCP_KEEPIDLE;
+#else
+  const int option = TCP_KEEPALIVE;
+#endif
+  if (::getsockopt(socket.native_handle(), IPPROTO_TCP, option, &idle, &len) == 0) return idle;
+#endif
+  return std::nullopt;
+}
+
+}  // namespace
 
 struct TcpTransport::Io {
   asio::io_context io;
@@ -52,8 +116,26 @@ Result<void> TcpTransport::do_open() {
   }
   asio::error_code ignored;
   io.socket.set_option(asio::ip::tcp::no_delay(true), ignored);
+  enable_keepalive(io.socket);
   io.pending.clear();
   return {};
+}
+
+Result<TcpKeepalive> TcpTransport::keepalive() {
+  TcpKeepalive out;
+  auto r = transaction([&]() -> Result<void> {
+    auto& socket = io_->socket;
+    if (!socket.is_open()) return fail(ErrorKind::NotConnected, "transport is not open", name());
+    asio::socket_base::keep_alive option;
+    asio::error_code ec;
+    socket.get_option(option, ec);
+    if (ec) return fail(detail::io_error("cannot read keepalive", ec));
+    out.on = option.value();
+    out.idle_seconds = keepalive_idle_seconds(socket);
+    return {};
+  });
+  if (!r) return fail(std::move(r).error());
+  return out;
 }
 
 void TcpTransport::do_close() {

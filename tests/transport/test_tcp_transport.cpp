@@ -195,3 +195,36 @@ TEST(TcpTransport, UntilCloseTimesOutWhileThePeerStaysOpen) {
   EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
   (void)t.write(to_bytes("bye\n"));
 }
+
+TEST(TcpTransport, KeepaliveIsOnAfterOpen) {
+  LoopbackServer server([](asio::ip::tcp::socket& s) { read_line(s); });
+  TcpTransport t({"127.0.0.1", server.port()}, opts());
+  ASSERT_TRUE(t.open());
+  auto k = t.keepalive();
+  ASSERT_TRUE(k) << k.error().what;
+  EXPECT_TRUE(k->on);
+#if defined(__linux__) || defined(__APPLE__)
+  ASSERT_TRUE(k->idle_seconds.has_value());
+  EXPECT_EQ(*k->idle_seconds, 10);
+#endif
+  (void)t.write(to_bytes("bye\n"));
+}
+
+TEST(TcpTransport, KeepaliveIsAnErrorWhenNotOpen) {
+  TcpTransport t({"127.0.0.1", 1}, opts());
+  auto k = t.keepalive();
+  ASSERT_FALSE(k);
+  EXPECT_EQ(k.error().kind, ErrorKind::NotConnected);
+}
+
+TEST(TcpTransport, APeerThatClosesIsSeenAsDown) {
+  LoopbackServer server([](asio::ip::tcp::socket&) {});  // closes as soon as it accepts
+  TcpTransport t({"127.0.0.1", server.port()}, opts());
+  ASSERT_TRUE(t.open());
+  auto first = t.exchange(to_bytes("q\n"), kLf);
+  ASSERT_FALSE(first);
+  EXPECT_EQ(first.error().kind, ErrorKind::Io);
+  auto second = t.exchange(to_bytes("q\n"), kLf);
+  ASSERT_FALSE(second);
+  EXPECT_EQ(second.error().kind, ErrorKind::NotConnected);
+}

@@ -102,11 +102,11 @@ Today `open` stays true after the peer closes (`queued_transport.cpp:56`) and `e
 
 **Files:** `libs/transport/src/tcp_transport.cpp`, `tests/transport/test_tcp_transport.cpp`, `docs/superpowers/specs/2026-10-06-virtual-clock-design.md` (section 4.4 list).
 
-- [ ] Failing test `TcpTransport.KeepaliveIsOnAfterOpen`: open against the loopback listener the file already has, read the option back from the socket through a test accessor. Then `TcpTransport.APeerThatClosesIsSeenAsDown`: the listener closes the accepted socket; the next `exchange` fails `Io`, the one after `NotConnected` (Task 1).
-- [ ] Implement after `no_delay(true)` (`tcp_transport.cpp:54`): `asio::socket_base::keep_alive(true)`, then idle 10 s, interval 5 s, count 3 through `setsockopt` on `native_handle()` behind `#if defined(TCP_KEEPIDLE)` (Linux), `TCP_KEEPALIVE` (macOS, idle only) and `SIO_KEEPALIVE_VALS` (Windows). A platform that offers none of them keeps the system defaults; a failed `setsockopt` is logged, not an error of `open()`.
-- [ ] Add "TCP keepalive (kernel)" to the virtual clock spec's list of what stays on real time.
-- [ ] Windows and Linux compile only in CI: note in the commit body that the branch needs a CI run before release.
-- [ ] Commit: `feat(transport): TCP keepalive finds a half-open connection between commands`.
+- [x] Failing test `TcpTransport.KeepaliveIsOnAfterOpen`: open against the loopback listener the file already has, read the option back from the socket through a test accessor. Then `TcpTransport.APeerThatClosesIsSeenAsDown`: the listener closes the accepted socket; the next `exchange` fails `Io`, the one after `NotConnected` (Task 1).
+- [x] Implement after `no_delay(true)` (`tcp_transport.cpp:54`): `asio::socket_base::keep_alive(true)`, then idle 10 s, interval 5 s, count 3 through `setsockopt` on `native_handle()` behind `#if defined(TCP_KEEPIDLE)` (Linux), `TCP_KEEPALIVE` (macOS, idle only) and `SIO_KEEPALIVE_VALS` (Windows). A platform that offers none of them keeps the system defaults; a failed `setsockopt` is not an error of `open()` and is not logged (the transport has no logger): `TcpTransport::keepalive()` reads back what took (on, and the idle time on Linux and macOS).
+- [x] Add "TCP keepalive (kernel)" to the virtual clock spec's list of what stays on real time.
+- [x] Windows and Linux compile only in CI: note in the commit body that the branch needs a CI run before release.
+- [x] Commit: `feat(transport): TCP keepalive finds a half-open connection between commands`.
 
 ---
 

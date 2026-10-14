@@ -394,6 +394,9 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
 - the log hub (record stamps, the flusher, the crash flush); the vision live
   feed; `process.cpp` (an outside program's timeout); `asio_stream.hpp` (a
   real socket or serial port);
+- TCP keepalive (kernel): `tcp_transport.cpp` turns it on (idle 10 s,
+  interval 5 s, count 3 where the platform allows); the kernel times the
+  probes, so a dead peer is found on real time;
 - the EarthBank client's waits (`libs/earthbank_qt`: a request's timeout, on a
   Qt timer; `libs/earthbank` `secret_store_linux.cpp`: the timer thread that
   cancels a secret-service call after 3 s for the probe and 120 s for a
