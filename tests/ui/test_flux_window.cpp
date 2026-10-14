@@ -955,6 +955,7 @@ class FluxWindowTest : public QObject {
     const auto grid_shown = [&w] { return w.view()->scene() && w.view()->scene()->style.grid; };
     QVERIFY(w.options_editor()->apply(QStringLiteral("show_grid"), false));
     QVERIFY(!w.options_editor()->options().get_bool("show_grid"));
+    QVERIFY(!w.busy());  // redrawn at once: no refit is asked for
     QVERIFY(settle(w));
     QVERIFY(!grid_shown());
     QVERIFY(!w.edited());
@@ -986,6 +987,24 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w.options(), nearest3());
     QVERIFY(!w.edited());
     QVERIFY(!grid_shown());
+
+    // With a model edit pending, Reload puts it back (R19), with the style.
+    QVERIFY(w.options_editor()->apply(QStringLiteral("model.neighbors"), std::int64_t{2}));
+    QVERIFY(w.options_editor()->apply(QStringLiteral("show_legend"), false));
+    QVERIFY(settle(w));
+    w.reload();
+    QVERIFY(settle(w));
+    QCOMPARE(w.options().fit.n_neighbors, 2);
+    QVERIFY(w.edited());
+    QVERIFY(!grid_shown());
+    QVERIFY(!w.view()->scene()->style.legend);
+    // Revert drops the model edit and keeps both style changes.
+    w.revert();
+    QVERIFY(settle(w));
+    QCOMPARE(w.options(), nearest3());
+    QVERIFY(!w.edited());
+    QVERIFY(!grid_shown());
+    QVERIFY(!w.view()->scene()->style.legend);
 
     // A save writes the fit alone, and keeps the style; saved again with
     // another style there is nothing to write: the style is no part of it.
