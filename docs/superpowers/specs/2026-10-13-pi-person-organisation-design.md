@@ -1,6 +1,9 @@
 # A PI is a person or an organisation: design
 
-Status: draft, 2026-10-13 (nightly). Not agreed. Open points: section 9.
+Status: draft, 2026-10-13. Owner decided 2026-10-13 (section 9): way B
+(clean), shown as "Jake Ross", browser filters by uuid, no allowed-names
+list, ORCID optional, a namesake in a sheet import stops and asks. T039's
+relaxed parser folds in here. Open points: section 10.
 Task T084 (from T039). Owner's row: store a PI as a person or an
 organisation: family and given name in full, optional ORCID (unique when
 present), optional ROR for the affiliation, no uniqueness on the name (warn
@@ -41,8 +44,12 @@ CREATE TABLE principal_investigator (uuid uuid PRIMARY KEY, last_name text NOT N
 - Person: family name and given name as written, any letters.
 - Optional ORCID, unique among rows that have one. Optional ROR for the
   affiliation.
-- Two PIs may have same name. Entry warns, does not refuse.
-- One migration, and what legacy import and stored data have keeps working.
+- Two PIs may have same name. Entry asks which, does not refuse.
+- No allowed-names list: an organisation is a kind of PI, not an exception
+  to a name pattern.
+- Browser tells namesakes apart: filter and facet by the PI's uuid.
+- One migration, clean (way B). What legacy import and stored data have
+  keeps working.
 
 ## 3. Out of scope
 
@@ -52,45 +59,36 @@ CREATE TABLE principal_investigator (uuid uuid PRIMARY KEY, last_name text NOT N
 - Merging duplicate PIs already in a store (a tool, later).
 - Email export rules: email stays optional and is not exported, as now.
 
-## 4. Schema: migration `0006_pi_identity.sql`
+## 4. Schema: migration `0006_pi_identity.sql` (way B, clean)
 
-Added columns:
+```sql
+CREATE TABLE principal_investigator (uuid uuid PRIMARY KEY,
+  kind text NOT NULL DEFAULT 'person' CHECK (kind IN ('person','organisation')),
+  family_name text NOT NULL,           -- person: family name in full; organisation: its name
+  given_name text NOT NULL DEFAULT '', -- person: given name(s), or what is known (an initial)
+  orcid text,                          -- 0000-0002-1825-0097 form, no URL; persons only
+  ror text,                            -- 0xxxxxxnn, no URL; the affiliation's, or the organisation's own
+  affiliation text, email text,
+  display_name text GENERATED ALWAYS AS (...) STORED,   -- 5.1
+  created_utc timestamptz NOT NULL,
+  CHECK (kind = 'person' OR (orcid IS NULL AND given_name = '')));
+CREATE UNIQUE INDEX principal_investigator_orcid ON principal_investigator (orcid) WHERE orcid IS NOT NULL;
+```
 
-| Column | Type | Meaning |
-|---|---|---|
-| `kind` | `text NOT NULL DEFAULT 'person' CHECK (kind IN ('person','organisation'))` | |
-| `family_name` | `text` | person: family name in full. organisation: its name |
-| `given_name` | `text NOT NULL DEFAULT ''` | person: given name(s) in full, or what is known (an initial). organisation: `''` |
-| `orcid` | `text` | `0000-0002-1825-0097` form, no URL; persons only |
-| `ror` | `text` | 9 characters, `0xxxxxxnn` form, no URL; of the affiliation (person) or of itself (organisation) |
-
-- Backfill: `family_name = last_name`, `given_name = first_initial`, `kind =
-  'person'`.
-- Indexes: `CREATE UNIQUE INDEX principal_investigator_orcid ON
-  principal_investigator (orcid) WHERE orcid IS NOT NULL` (lookup by ORCID at
-  entry and import; plan test in `SchemaIndexes`). No index on `ror` (never
-  looked up by).
-- `CHECK (kind = 'person' OR (orcid IS NULL AND given_name = ''))`.
-- Name uniqueness: `UNIQUE (last_name, first_initial)` has to go for
-  namesakes. Two ways, owner chooses (section 9, point 2):
-  - **A, additive (draft).** `last_name`, `first_initial`, `display_name`
-    and the `UNIQUE` stay as columns old builds read. New builds read and
-    write `family_name`, `given_name`, and keep `last_name` /
-    `first_initial` filled as a unique short key: `last_name = family_name`,
-    `first_initial =` first letter of `given_name`, and for a namesake of an
-    existing pair, that letter followed by a counter (`"R"`, `"R2"`).
-    Migration only adds: a migrated store stays usable by the build before
-    it (`libs/persistence/AGENTS.md`, "Prefer a change old builds can live
-    with"). Cost: two representations kept in step, in one place
-    (`ensure_principal_investigator`).
-  - **B, clean.** Drop the `UNIQUE`, `last_name`, `first_initial`; regenerate
-    `display_name` from new columns. SQLite cannot drop a table constraint:
-    table rebuilt there (`-- @sqlite exec`), with `project`'s foreign key.
-    Old builds cannot open the store again.
-- Either way one migration; commit carries `BREAKING CHANGE:` footer naming
-  `elctl db migrate --db <url>`.
+- No uniqueness on the name. Old `UNIQUE (last_name, first_initial)`,
+  `last_name`, `first_initial` gone.
+- Data: `family_name = last_name`, `given_name = first_initial`, `kind =
+  'person'`, uuids kept (projects point at them unchanged).
+- PostgreSQL: `ALTER TABLE` (add columns, backfill, drop constraint and old
+  columns, drop and re-add generated `display_name`). SQLite cannot drop a
+  constraint: new table, copy, drop old, rename, inside the migration's
+  transaction with foreign keys deferred; `project.pi_uuid` keeps pointing
+  at same uuids (`-- @sqlite exec` lines). Test proves `project` rows and
+  their PI survive on both engines.
+- Old builds cannot open a migrated store: accepted (owner, way B). Commit
+  carries `BREAKING CHANGE:` footer naming `elctl db migrate --db <url>`.
 - `python3 tools/ddl_sqlite.py`; `SchemaTest.MigrateIsIdempotentAndRecords
-  Checksums` gains `0006`.
+  Checksums` gains `0006`; plan test in `SchemaIndexes` for the ORCID index.
 
 ## 5. Store API (`libs/persistence`)
 
@@ -101,87 +99,143 @@ struct PrincipalInvestigatorRow {
   Uuid uuid;
   PiKind kind = PiKind::Person;
   std::string family_name, given_name;
-  std::string display_name;            // "Family, G." person; name, organisation
-  std::string full_name;               // "Given Family" person; name, organisation
+  std::string display_name;                     // 5.1
   std::optional<std::string> orcid, ror, affiliation, email;
 };
 ```
 
-- `PrincipalInvestigatorSpec` same fields less the derived two. `last_name`
-  / `first_initial` leave the C++ API in both ways A and B; callers
-  (`libs/entry`, `libs/ingest`, `libs/dvc`, `apps/pychron-ui`, 17 files) move
-  to the new names in the same commit as the API.
-- Display form derived, not stored by callers: person `Family, G.` from
-  first letter of each given name (`"Ruiz García, M. J."`); with no given
-  name, `Family`. Listings where two rows show the same display form add
-  the ORCID's last four, or affiliation, in brackets.
-- Catalog key of a PI (`catalog.hpp:26`, used by `apply_catalog_edits`):
-  becomes its `uuid`. A name no longer finds one row.
-- New read: `principal_investigators_named(family_name, given_name_prefix)`
-  for the namesake warning and for legacy import; rows by `lower(family_
-  name)`. Table is small (a lab has tens to hundreds of PIs): a scan is
-  accepted and no index added; stated in a comment on the statement.
-- `find_principal_investigator_by_orcid(orcid)`: one row, by the partial
-  index.
-- New edit fields through `apply_catalog_edits` only (`libs/entry/AGENTS.md`):
-  `kind`, `family_name`, `given_name`, `orcid`, `ror`.
+- `PrincipalInvestigatorSpec`: same less `display_name`. `last_name` /
+  `first_initial` leave the C++ API; callers (`libs/entry`, `libs/ingest`,
+  `libs/dvc`, `apps/pychron-ui`, about 17 files) move in same commit.
+- Catalog key of a PI (`catalog.hpp:26`, `apply_catalog_edits`): its `uuid`.
+  A name no longer finds one row.
+- `principal_investigators_named(family_name, given_initial)`: candidates for
+  a namesake question and for legacy import; by `lower(family_name)`. A lab
+  has tens to hundreds of PIs: a scan accepted, no index; said in a comment
+  on the statement.
+- `find_principal_investigator_by_orcid(orcid)`: by the partial index.
+- Edit fields through `apply_catalog_edits` only (`libs/entry/AGENTS.md`):
+  `kind`, `family_name`, `given_name`, `orcid`, `ror`, `affiliation`,
+  `email`.
+
+### 5.1 How a PI is shown (owner: "Jake Ross")
+
+- Person: `given_name family_name` ("Jake Ross", "María José Ruiz García").
+  Given name of one letter (legacy's initial) gets a period: "J. Ross".
+  No given name: family name alone ("Ross").
+- Organisation: its name ("NMGRL").
+- Lists sorted by `family_name`, then `given_name`, not by display.
+- Two PIs showing same text (namesakes): listings add affiliation, else the
+  ORCID's last four, in brackets.
+- Everywhere a PI is shown or exported (browser column, data report's PI
+  column, entry sheets written back, EarthBank sample rows) this text. A
+  migrated store's "Ross, J" becomes "J. Ross": a visible change, said in
+  release notes.
 
 ## 6. Entry (`libs/entry`, UI)
 
-- `parse_pi` gives `{kind, family_name, given_name}`:
-  - `Family, Given` and `Family` : person.
-  - Lab's allowed list entry: organisation (what the list was standing in
-    for). List stays readable; its entries create organisation rows.
-  - A sheet column `principal_investigator_orcid` (optional): when present
-    and it matches a row, that row, whatever the name cell says; mismatch
-    of family name with that row is an error naming both.
-- ORCID check: 16 digits in fours, last may be `X`, ISO 7064 mod 11-2
-  checksum; URL prefix stripped. ROR: `0` + 6 of `[a-hj-km-np-tv-z0-9]` + 2
-  digits; URL prefix stripped. Bad form refused with the value quoted.
-- Namesake: adding a person whose family name and given-name initial match
-  an existing row and who has no matching ORCID gives a warning listing the
-  rows (name, affiliation, ORCID) and the choice "same person" (use that
-  row) or "another person" (new row). In a sheet import the default with no
-  answer is "same person" when exactly one row matches, and a stop with the
-  list when several do.
-- Organisation with an ORCID: refused.
+- Forms (samples window, project editor) ask for kind, then family and
+  given name, ORCID, affiliation, ROR, each its own field. Nothing parsed.
+- Sheet import, columns:
+  - `principal_investigator`: a person as "Family, Given" (T039's relaxed
+    rule: any letters, particles, spaces; the given name kept in full); an
+    organisation's name when `principal_investigator_kind` says so.
+  - `principal_investigator_kind` (optional): `person` (default) or
+    `organisation`.
+  - `principal_investigator_orcid` (optional): matched first; a row with it
+    is that PI whatever the name cell says; a family name that differs from
+    that row's is an error naming both.
+  - `principal_investigator_uuid` (optional, written by the sheet export):
+    the PI itself, no matching at all.
+  - A person's cell without a comma: refused (section 10, point 2).
+- ORCID optional everywhere (owner). Check when given: 16 digits in fours,
+  last may be `X`, ISO 7064 mod 11-2 checksum; URL prefix stripped. ROR: `0`
+  + 6 of `[a-hj-km-np-tv-z0-9]` + 2 digits; URL prefix stripped. Bad form
+  refused with the value quoted.
+- Namesake (owner: stop and ask). A person whose family name and given
+  initial match an existing row, given without ORCID or uuid, is not
+  resolved by guessing:
+  - form: dialog listing the rows (name, affiliation, ORCID, projects) with
+    "this one" or "another person";
+  - sheet import in the UI: the import plan stops at those rows and the
+    dialog asks once a distinct name, the answer used for every row of it;
+  - `elctl entry samples import`: fails with the rows listed and how to
+    say which (`principal_investigator_orcid` or `_uuid` column); nothing
+    written.
+- Organisation with an ORCID or a given name: refused.
 
-## 7. Legacy import (`libs/dvc`, `libs/ingest`)
+### 6.1 No allowed-names list
 
-- Legacy gives `last, initial`. Resolved as: rows with that family name and
-  a given name starting with that initial. One: that row. None: new person,
-  `given_name` = the initial. Several: oldest by `created_utc`, and a note
-  in the import report naming the others.
-- Re-import of same legacy data creates no second row (idempotent, as now).
+- It existed because the parser took only `Last` / `Last, F`: a lab or a
+  group could only be a PI as a listed exception. With `kind =
+  organisation` it has no use.
+- `EntrySettings::pi_names_allowed` removed; Entry Settings field,
+  `elctl entry settings` key, docs (`docs/entry.md`) with it. A stored
+  settings value of it stays in `other_json`, unread.
+- PIs the list admitted are migrated as persons with a family name only.
+  `elctl db migrate` lists, after 0006, PI rows with no given name, as
+  candidates to mark `organisation` in the PI editor; nothing is guessed.
 
-## 8. Rules and tests
+## 7. Browser: filter and facet by uuid (owner)
+
+- `persistence::BrowseFilter::principal_investigators` and
+  `processing::BrowseQuery::principal_investigators`: PI uuids, matched on
+  `p.pi_uuid` (`browse.cpp:79`, `sql/browse.hpp` `kColPrincipalInvestigator`
+  becomes `p.pi_uuid`; display still selected for the column).
+- Facets: `facet()` returns `FacetValue{value, label}` (`source.hpp`); for
+  every facet but the PI's, label is value. PI: value the uuid, label the
+  display text of 5.1. `MemorySource` and the record source have no PI
+  rows: their value is the name, as now.
+- `AnalysisSummary` gains `principal_investigator_uuid` (empty without one).
+- Facet box shows labels, keeps values; a saved browser search stores
+  values. A saved search with PI names (before 0006) is read as names and
+  matched by display text once, then saved as uuids.
+- Plan test: the browse filtered by PI uses an index on `project.pi_uuid`
+  or says why none is needed (projects are few). `libs/persistence/AGENTS.md`,
+  "Indexes".
+
+## 8. Legacy import (`libs/dvc`, `libs/ingest`)
+
+- Legacy gives `Last, F`: `family_name = Last`, `given_name = F`. Resolved:
+  rows with that family name and a given name starting with that letter.
+  One: that row. None: new person. Several: section 10, point 1 (draft:
+  oldest by `created_utc`, a note in the import report).
+- Re-import of same legacy data creates no second row (idempotent).
+
+## 9. Owner, 2026-10-13
+
+1. Way B, clean.
+2. Shown "Jake Ross" (5.1).
+3. Browser filters by uuid (7).
+4. No allowed-names list (6.1).
+5. ORCID optional.
+6. Namesake in a sheet import: stop and ask (6).
+7. T039 folds in: its parser is the sheet's "Family, Given" rule.
+
+## 10. Open points
+
+1. Legacy import has nobody to ask: several matching PIs, take the oldest
+   and report it (draft), or stop the import?
+2. Sheet cell without a comma for a person: refused (draft: "Jake Ross"
+   cannot be told from a two-word family name), or taken as a family name
+   alone as legacy's "Ross" was?
+3. EarthBank: what its API takes for a person and an organisation (ORCID,
+   ROR, a name). Not in tree. Decides whether ROR on a person means the
+   affiliation's, as drafted, and what EarthBank rows show.
+4. One-letter given names shown "J. Ross" (draft) or "J Ross"?
+
+## 11. Rules and tests
 
 - ORCID unique when present; two rows without one never conflict.
-- A store migrated from 0005 shows every PI as before, but for the period
-  after the initial if section 9, point 3 keeps it.
-- Nothing reaches the table but through `apply_catalog_edits` /
-  `ensure_*`.
-- Tests: `tests/persistence` (migration on a 0005 fixture keeps rows and
-  display names; ORCID uniqueness; namesakes allowed; plan test for the
-  ORCID index; both engines when `PYCHRON_TEST_PG_URL` is set),
-  `tests/entry` (parser forms, ORCID and ROR checks with known-good and
-  known-bad values, namesake outcomes, organisation rules), `tests/ingest`
-  and `tests/dvc` (three resolutions of section 7; fixtures' catalog files
-  updated), `tests/ui` entry page.
-
-## 9. Open points for owner
-
-1. What does EarthBank's API take for a person and an organisation (ORCID,
-   ROR, both, a name only)? Not found in tree. Decides whether ROR on a
-   person means the affiliation's, as drafted.
-2. Schema way A (additive, old builds keep working, short key kept in
-   step) or B (clean, table rebuilt on SQLite, no going back)? Draft: A.
-3. Display form of a person: `Family, G.` with a period (draft), or today's
-   `Family, G`? Today's keeps migrated stores' text identical everywhere,
-   including exports.
-4. Allowed-list names become organisations (draft): right for every lab's
-   list, or are some of them people written without a comma?
-5. Sheet import with one namesake and no ORCID: assume same person (draft),
-   or always stop and ask?
-6. T039 (parser relaxed, no migration) first and separately, as its notes
-   say, or folded into this?
+- Migration keeps every PI uuid and every project's PI; display changes
+  only as 5.1 says.
+- Nothing reaches the table but through `apply_catalog_edits` / `ensure_*`.
+- No guess between namesakes anywhere a person can answer.
+- Tests: `tests/persistence` (0006 on a 0005 fixture on both engines: rows,
+  uuids, projects kept; namesakes allowed; ORCID unique; plan tests),
+  `tests/entry` (sheet columns, kinds, ORCID and ROR checks with known-good
+  and known-bad values, namesake stops, no allowed list), `tests/ingest`
+  and `tests/dvc` (three resolutions of section 8; fixtures' catalog files
+  updated), `tests/processing` (facet values and labels, filter by uuid),
+  `tests/ui` (entry forms, namesake dialog, facet box), `apps/elctl/tests`
+  (import stops on a namesake; settings without `pi_names_allowed`).
