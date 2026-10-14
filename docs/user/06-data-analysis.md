@@ -362,6 +362,17 @@ different colours), **Graph by** (which groups share a graph, see below),
 PNG), **Export table...** (the data report of exactly these analyses; see
 [export.md](../export.md)).
 
+Zoom with the wheel and pan by dragging; a double-click, or **Reset view**,
+goes back to the figure's limits. To keep a view, right-click the graph and
+choose **Use these limits**: the ranges on show are written into the
+figure's limit options (**X min** and **X max**, and **Y min** and **Y
+max** of each panel), so they are saved with a preset and stay when the
+figure is rebuilt. With several graphs, the ranges are those of the graph
+you clicked, and the X limits apply to every graph. A figure whose options
+have no limits (a spectrum has none for X, the spectrum with its isochron
+has none at all) says so in the status line. Clear the fields in
+**Options** to go back to limits worked out from the data.
+
 **Graph by** splits the figure into several graphs, each titled with what
 it holds:
 

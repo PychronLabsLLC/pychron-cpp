@@ -23,6 +23,7 @@
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/units.hpp"
 #include "processing_bridge.hpp"
+#include "scene_view.hpp"
 
 class QComboBox;
 class QLabel;
@@ -32,7 +33,6 @@ namespace pychron::ui {
 
 class OptionsEditor;
 class PresetBar;
-class SceneView;
 
 class FigureWindow : public QMainWindow {
   Q_OBJECT
@@ -62,6 +62,11 @@ class FigureWindow : public QMainWindow {
   // "Graphs per row".
   void set_graph_key(const QString& key);
   static QString same_as_group();
+  // Writes a graph's ranges on show into the figure's limit options (x.min,
+  // x.max; y.min, y.max; y_min, y_max of the panels rows) and reruns, so the
+  // view is saved with a preset and outlives a rebuild. False, with a word in
+  // the status line and nothing changed, when the options hold no such field.
+  bool use_view_limits(const SceneView::ViewLimits& limits);
   void toggle_exclusion(const QStringList& uuids);
   void select_preset(const QString& name);
   bool export_figure(const QString& path);  // .pdf or .png by extension

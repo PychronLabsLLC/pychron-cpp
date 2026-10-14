@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <string_view>
+#include <utility>
 
 #include <QComboBox>
 #include <QDockWidget>
@@ -93,6 +95,8 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   connect(view_, &SceneView::point_clicked, this, [this](const QString& id) { toggle_exclusion({id}); });
   connect(view_, &SceneView::points_toggled, this, [this](const QStringList& ids) { toggle_exclusion(ids); });
   connect(view_, &SceneView::recall_requested, this, &FigureWindow::recall_requested);
+  connect(view_, &SceneView::use_limits_requested, this,
+          [this](const SceneView::ViewLimits& limits) { use_view_limits(limits); });
 
   auto* tools = addToolBar(tr("Figure"));
   tools->addWidget(new QLabel(tr(" Group by ")));
@@ -328,6 +332,46 @@ void FigureWindow::set_figure_options(const pp::Options& options) {
   pipeline_.find(kFigure)->options = options;
   editor_->set_options(options);
   run();
+}
+
+bool FigureWindow::use_view_limits(const SceneView::ViewLimits& limits) {
+  pp::Options options = pipeline_.find(kFigure)->options;
+  const auto has = [](const pp::Schema& schema, std::string_view key) {
+    return std::any_of(schema.fields.begin(), schema.fields.end(),
+                       [key](const pp::FieldSpec& f) { return f.key == key; });
+  };
+  // An axis drawn reversed has its ends the other way round.
+  const auto put = [](pp::Options& o, const char* min_key, const char* max_key, double a, double b) {
+    return o.set(min_key, std::min(a, b)).has_value() && o.set(max_key, std::max(a, b)).has_value();
+  };
+  bool written = false;
+  const pp::Schema& schema = *schema_;
+  if (has(schema, "x.min") && has(schema, "x.max"))
+    written = put(options, "x.min", "x.max", limits.x_min, limits.x_max) || written;
+  // A figure of one panel keeps its y limits beside the x ones.
+  if (has(schema, "y.min") && has(schema, "y.max") && limits.panels.size() == 1)
+    written = put(options, "y.min", "y.max", limits.panels[0].y_min, limits.panels[0].y_max) || written;
+  // One of several panels keeps them in its row: panel "p<n>" is row n.
+  const auto list = std::find_if(schema.lists.begin(), schema.lists.end(),
+                                 [](const pp::ListSpec& l) { return l.key == "panels"; });
+  if (list != schema.lists.end() && list->row && has(*list->row, "y_min") && has(*list->row, "y_max")) {
+    auto rows = options.rows("panels");
+    bool any = false;
+    for (const auto& panel : limits.panels) {
+      if (panel.id.size() < 2 || panel.id.front() != 'p') continue;
+      bool ok = false;
+      const int row = QString::fromStdString(panel.id.substr(1)).toInt(&ok);
+      if (!ok || row < 0 || std::cmp_greater_equal(row, rows.size())) continue;
+      any = put(rows[static_cast<std::size_t>(row)], "y_min", "y_max", panel.y_min, panel.y_max) || any;
+    }
+    if (any && options.set_rows("panels", std::move(rows)).has_value()) written = true;
+  }
+  if (!written) {
+    status_->setText(tr("This figure's options have no limits to set"));
+    return false;
+  }
+  set_figure_options(options);
+  return true;
 }
 
 void FigureWindow::set_group_key(const QString& key) {

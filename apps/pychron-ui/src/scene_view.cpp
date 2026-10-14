@@ -247,6 +247,8 @@ void SceneView::rebuild() {
       }
       RectInfo info;
       info.rect = rect;
+      info.graph = index - 1;
+      info.panel_id = panel.id;
       info.x_min = g.x.min;
       info.x_max = g.x.max;
       info.y_min = panel.y.min;
@@ -506,6 +508,22 @@ bool SceneView::save_pdf(const QString& path) {
   return true;
 }
 
+std::optional<SceneView::ViewLimits> SceneView::limits_at(const QPoint& pos) const {
+  const auto under = std::find_if(rects_.begin(), rects_.end(),
+                                  [&pos](const RectInfo& info) { return info.rect->rect().contains(pos); });
+  if (under == rects_.end()) return std::nullopt;
+  ViewLimits out;
+  const QCPRange x = under->rect->axis(QCPAxis::atBottom)->range();
+  out.x_min = x.lower;
+  out.x_max = x.upper;
+  for (const auto& info : rects_) {
+    if (info.graph != under->graph) continue;
+    const QCPRange y = info.rect->axis(QCPAxis::atLeft)->range();
+    out.panels.push_back({info.panel_id, y.lower, y.upper});
+  }
+  return out;
+}
+
 const SceneView::HitPoint* SceneView::hit(const QPoint& pos, const RectInfo** where, bool analyses_only) const {
   const HitPoint* best = nullptr;
   double best_d = kHitPixels * kHitPixels;
@@ -665,6 +683,10 @@ void SceneView::show_context_menu(const QPoint& pos) {
     menu.addSeparator();
   }
   menu.addAction(tr("Reset view"), this, &SceneView::reset_view);
+  if (const auto limits = limits_at(pos)) {
+    QAction* use = menu.addAction(tr("Use these limits"), this, [this, limits] { emit use_limits_requested(*limits); });
+    use->setToolTip(tr("Write the ranges on show into the figure's limit options"));
+  }
   menu.addAction(tr("Copy image"), this, [this] { QApplication::clipboard()->setPixmap(plot_->toPixmap()); });
   menu.addAction(tr("Save as PNG..."), this, [this] {
     const QString path = QFileDialog::getSaveFileName(this, tr("Save figure"), QString(), tr("PNG (*.png)"));

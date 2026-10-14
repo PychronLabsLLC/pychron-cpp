@@ -1880,6 +1880,114 @@ class TestDataWindows : public QObject {
     QVERIFY(!same(x_axis()->range(), zoomed));
   }
 
+  // "Use these limits" writes the ranges on show into the figure's limit
+  // options, so the view is saved with a preset and outlives a rebuild.
+  void the_view_on_show_becomes_the_figures_limits() {
+    QTemporaryDir dir;
+    auto src = make_aliquots();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
+    FigureWindow w(bridge, presets, "ideogram", ids);
+    w.resize(1200, 900);
+    w.show();
+    int runs = 0;
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    const auto rect = [&w](int i) { return w.view()->plot()->axisRects().at(i); };
+    const auto x_axis = [&](int i = 0) { return rect(i)->axis(QCPAxis::atBottom); };
+    const auto y_axis = [&](int i = 0) { return rect(i)->axis(QCPAxis::atLeft); };
+    const auto same = [](double a, double b) { return qAbs(a - b) <= 1e-9 * qMax(1.0, qAbs(b)); };
+
+    // Nothing is under a place outside every plot.
+    QVERIFY(!w.view()->limits_at(QPoint(-5, -5)).has_value());
+    QVERIFY(!w.pipeline().find("figure")->options.is_set("x.min"));
+
+    const QCPRange whole = x_axis()->range();
+    const QCPRange x_zoomed(whole.lower + whole.size() * 0.4, whole.lower + whole.size() * 0.6);
+    const QCPRange y_zoomed(y_axis()->range().lower, y_axis()->range().lower + y_axis()->range().size() * 0.5);
+    x_axis()->setRange(x_zoomed);
+    y_axis()->setRange(y_zoomed);
+    const auto limits = w.view()->limits_at(rect(0)->rect().center());
+    QVERIFY(limits.has_value());
+    QCOMPARE(limits->x_min, x_zoomed.lower);
+    QCOMPARE(limits->x_max, x_zoomed.upper);
+    QVERIFY(!limits->panels.empty());
+    QCOMPARE(limits->panels[0].id, std::string("p0"));
+    QCOMPARE(limits->panels[0].y_min, y_zoomed.lower);
+    QCOMPARE(limits->panels[0].y_max, y_zoomed.upper);
+
+    QVERIFY(w.use_view_limits(*limits));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    {
+      const pp::Options& o = w.pipeline().find("figure")->options;
+      QVERIFY(same(*o.get_optional_double("x.min"), x_zoomed.lower));
+      QVERIFY(same(*o.get_optional_double("x.max"), x_zoomed.upper));
+      const auto panels = o.rows("panels");
+      QVERIFY(same(*panels[0].get_optional_double("y_min"), y_zoomed.lower));
+      QVERIFY(same(*panels[0].get_optional_double("y_max"), y_zoomed.upper));
+      // every panel of the graph, not the one under the pointer only
+      for (std::size_t i = 0; i < limits->panels.size(); ++i) {
+        QVERIFY(same(*panels[i].get_optional_double("y_min"), limits->panels[i].y_min));
+        QVERIFY(same(*panels[i].get_optional_double("y_max"), limits->panels[i].y_max));
+      }
+      // and they are what a preset would hold
+      QVERIFY(QString::fromStdString(pp::options_to_toml(o)).contains(QStringLiteral("y_max")));
+    }
+    // The view is where it was, and it is now what a reset comes back to.
+    QVERIFY(same(x_axis()->range().lower, x_zoomed.lower) && same(x_axis()->range().upper, x_zoomed.upper));
+    QVERIFY(same(y_axis()->range().upper, y_zoomed.upper));
+    x_axis()->setRange(whole);
+    w.view()->reset_view();
+    QVERIFY(same(x_axis()->range().lower, x_zoomed.lower) && same(x_axis()->range().upper, x_zoomed.upper));
+
+    // Several graphs: the limits are those of the graph the place is in.
+    auto opts = w.pipeline().find("figure")->options;
+    opts.unset("x.min");
+    opts.unset("x.max");
+    w.set_figure_options(opts);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    w.set_graph_key(QStringLiteral("aliquot"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    const int n_rects = static_cast<int>(w.view()->plot()->axisRects().size());
+    const int per_graph = static_cast<int>(limits->panels.size());
+    QVERIFY(n_rects >= 2 * per_graph);
+    const int second = per_graph;  // the first panel of the second graph
+    const QCPRange g2 = x_axis(second)->range();
+    const QCPRange g2_zoomed(g2.lower + g2.size() * 0.25, g2.lower + g2.size() * 0.5);
+    x_axis(second)->setRange(g2_zoomed);
+    const auto first_graph = w.view()->limits_at(rect(0)->rect().center());
+    const auto second_graph = w.view()->limits_at(rect(second)->rect().center());
+    QVERIFY(first_graph.has_value() && second_graph.has_value());
+    QCOMPARE(second_graph->x_min, g2_zoomed.lower);
+    QCOMPARE(second_graph->x_max, g2_zoomed.upper);
+    QCOMPARE(first_graph->x_min, x_axis(0)->range().lower);
+    QCOMPARE(static_cast<int>(second_graph->panels.size()), per_graph);
+    QVERIFY(w.use_view_limits(*second_graph));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(same(*w.pipeline().find("figure")->options.get_optional_double("x.min"), g2_zoomed.lower));
+  }
+
+  // A figure whose options hold no limit says so and changes nothing.
+  void a_figure_without_limit_fields_takes_none() {
+    QTemporaryDir dir;
+    auto src = make_steps();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
+    FigureWindow w(bridge, presets, "spectrum_isochron", ids);
+    w.resize(1200, 600);
+    w.show();
+    QVERIFY(wait_runs(w, bridge, 1));
+    const auto before = w.pipeline().find("figure")->options;
+    const auto limits = w.view()->limits_at(w.view()->plot()->axisRects().at(0)->rect().center());
+    QVERIFY(limits.has_value());
+    QVERIFY(!w.use_view_limits(*limits));
+    QVERIFY(w.pipeline().find("figure")->options == before);
+    QVERIFY2(w.status_label()->text().contains(QStringLiteral("no limits")), qPrintable(w.status_label()->text()));
+  }
+
   void spectrum_and_isochron_open_as_one_figure() {
     QTemporaryDir dir;
     auto src = make_steps();

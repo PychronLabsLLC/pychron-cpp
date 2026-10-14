@@ -10,7 +10,7 @@
 //   hover                  the point's tooltip
 //   wheel / drag           zoom / pan (x shared within a graph)
 //   double-click           reset the view to the scene's limits
-//   right-click            reset view, save PNG/PDF, copy image
+//   right-click            reset view, use these limits, save PNG/PDF, copy image
 
 #include <memory>
 #include <optional>
@@ -37,6 +37,17 @@ class SceneView : public QWidget {
   Q_OBJECT
 
  public:
+  // The axis ranges on show of one graph: its x, and the y of each of its
+  // panels by the panel's id in the scene.
+  struct ViewLimits {
+    struct Panel {
+      std::string id;
+      double y_min = 0, y_max = 0;
+    };
+    double x_min = 0, x_max = 0;
+    std::vector<Panel> panels;  // top to bottom
+  };
+
   explicit SceneView(QWidget* parent = nullptr);
 
   void set_scene(processing::ScenePtr scene);
@@ -44,6 +55,8 @@ class SceneView : public QWidget {
 
   // Puts every axis back to the scene's limits (or the data's).
   void reset_view();
+  // Of the graph that has a panel at `pos` (plot coordinates); nullopt elsewhere.
+  std::optional<ViewLimits> limits_at(const QPoint& pos) const;
   bool save_png(const QString& path, int width = 0, int height = 0);
   bool save_pdf(const QString& path);
 
@@ -64,6 +77,8 @@ class SceneView : public QWidget {
   void point_clicked(const QString& uuid);
   void points_toggled(const QStringList& uuids);
   void recall_requested(const QString& uuid);
+  // "Use these limits" was chosen over a graph.
+  void use_limits_requested(const pychron::ui::SceneView::ViewLimits& limits);
 
  protected:
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -80,6 +95,8 @@ class SceneView : public QWidget {
   };
   struct RectInfo {
     QCPAxisRect* rect = nullptr;
+    int graph = 0;         // which of the scene's graphs
+    std::string panel_id;  // the panel's id in the scene
     std::vector<HitPoint> points;
     std::vector<HitBox> boxes;
     std::vector<QString> texts;
