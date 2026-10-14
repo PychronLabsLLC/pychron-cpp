@@ -133,7 +133,7 @@ class HistoryChart : public QWidget {
 };
 ```
 
-- [ ] **Failing tests** (`QTEST_MAIN`):
+- [x] **Failing tests** (`QTEST_MAIN`):
   - `drawsThePointsOfTheRange`: three points and a break: `point_count()` 3, the line broken (two segments: test through the graph's data having a NaN at the break).
   - `theXAxisIsTheRangeEndingAtTheNewest`: range 600 s, newest wall 2026-10-13 08:30:00 local: `shown_x()` is that instant less 600 s to that instant, and `x_label_at` of the right edge reads `08:30`. A range of 6 h or more labels with the date too.
   - `withoutAWallTimeTheAxisIsMinutesBeforeNow`: `shown_x()` is -600 to 0.
@@ -143,8 +143,8 @@ class HistoryChart : public QWidget {
   - `guidesInsideTheViewAreDrawnAndOthersAreNot`.
   - `anEmptySeriesHasNoSummaryAndSaysSo`: a centred text "No readings" in place of the plot; `summary()` nullopt.
   - `theSummaryIsOfTheRangeShown`: latest, lowest, highest, points.
-- [ ] **Implement** as `StripChartView` sets its plot up (`strip_chart_view.cpp:39-62`: `theme().plot_bg`, `phFastPolylines`), one graph in `theme().series[0]`, `QCPAxisTickerDateTime` with `Qt::LocalTime` when given a wall time (`hh:mm` under 6 h, `MM-dd hh:mm` from 6 h), guides as `QCPItemStraightLine` in `theme().error`.
-- [ ] `ctest --preset dev-ui -R '^ui\.test_history_chart$'`; commit `feat(ui): a chart of one series of readings over a chosen range`.
+- [x] **Implement** as `StripChartView` sets its plot up (`strip_chart_view.cpp:39-62`: `theme().plot_bg`, `phFastPolylines`), one graph in `theme().series[0]`, `QCPAxisTickerDateTime` with `Qt::LocalTime` when given a wall time (`hh:mm` under 6 h, `MM-dd hh:mm` from 6 h), guides as `QCPItemStraightLine` in `theme().error`.
+- [x] `ctest --preset dev-ui -R '^ui\.test_history_chart$'`; commit `feat(ui): a chart of one series of readings over a chosen range`.
 
 ### Task 3: The canvas says when a gauge is clicked or rested on
 
