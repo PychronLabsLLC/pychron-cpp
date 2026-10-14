@@ -7,6 +7,7 @@
 #include <set>
 
 #include "migrate.hpp"
+#include "sql/browse.hpp"
 #include "sql/statements.hpp"
 #include "store_fixture.hpp"
 
@@ -221,6 +222,96 @@ TEST(SchemaIndexes, CachedFingerprintsAreFoundByAnalysis) {
   EXPECT_NE(all.find("analysis_uuid=?"), std::string::npos) << all;
   EXPECT_EQ(all.find("derived_value_name_ix"), std::string::npos) << "found by name, across every analysis:\n" << all;
   EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
+}
+
+// The experiment window's References dock reads, after every saved run, the
+// newest analyses of some types on the session's spectrometer since a time,
+// leaving out the invalid ones (browse.cpp composes the statement this way).
+// The index (mass_spectrometer_uuid, analysis_type, timestamp_utc) cannot give
+// time order across several types, so two shapes are good: a search on it, or
+// a walk of analysis_ts_ix that stops at the limit. A scan of analysis with no
+// index, or a sort of every match in a temp tree, is what a lab pays per run.
+namespace {
+
+struct ReferenceBrowse {
+  QString where;
+  pd::Bindings bindings;
+};
+
+ReferenceBrowse reference_browse(const std::vector<std::string>& types) {
+  ReferenceBrowse out;
+  QStringList clauses;
+  clauses << pd::sql::kBrowseIn.arg(pd::sql::kColAnalysisType, pd::sql::placeholders(static_cast<qsizetype>(types.size())));
+  for (const auto& t : types) out.bindings << pd::qv(t);
+  clauses << pd::sql::kBrowseIn.arg(pd::sql::kColMassSpectrometer, pd::sql::placeholders(1));
+  out.bindings << pd::qv(std::string("jan"));
+  clauses << pd::sql::kBrowseSince;
+  out.bindings << QStringLiteral("2026-10-01T00:00:00.000000Z");
+  clauses << pd::sql::kBrowseTagNotIn.arg(pd::sql::placeholders(1));
+  out.bindings << pd::qv(std::string("invalid"));
+  out.where = QStringLiteral("WHERE ") + clauses.join(QStringLiteral(" AND "));
+  return out;
+}
+
+std::string plan_of(pd::Db& db, const QString& sql, const pd::Bindings& bindings) {
+  std::string all;
+  for (const auto& step : column(db, QStringLiteral("EXPLAIN QUERY PLAN ") + sql, "detail", bindings)) all += step + "\n";
+  return all;
+}
+
+// A step that reads `analysis a` whole, in no index's order.
+bool scans_analysis_without_an_index(const std::string& plan) {
+  std::size_t at = 0;
+  while ((at = plan.find("SCAN a", at)) != std::string::npos) {
+    const std::size_t end = plan.find('\n', at);
+    if (plan.substr(at, end - at).find("USING") == std::string::npos) return true;
+    at = end;
+  }
+  return false;
+}
+
+const std::vector<std::string> kBlankTypes{"blank_unknown", "blank_air", "blank_cocktail", "blank_extraction_line",
+                                           "blank_laser"};
+
+}  // namespace
+
+TEST(SchemaIndexes, TheReferenceSeriesBrowseUsesAnIndexAndDoesNotSortInATempTree) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  for (const auto& types : {kBlankTypes, std::vector<std::string>{"air"}}) {
+    auto q = reference_browse(types);
+    pd::Bindings paged = q.bindings;
+    paged << 51;
+    const std::string plan =
+        plan_of(*db,
+                pd::sql::kBrowseSelect.arg(pd::sql::ts(Dialect::Sqlite, QStringLiteral("a.timestamp_utc"))) +
+                    pd::sql::kBrowseFrom + q.where + pd::sql::kBrowseOrder,
+                paged);
+    ASSERT_FALSE(plan.empty());
+    const bool by_type = plan.find("analysis_ms_type_ts_ix") != std::string::npos;
+    const bool by_time = plan.find("analysis_ts_ix") != std::string::npos;
+    EXPECT_TRUE(by_type || by_time) << types.size() << " type(s):\n" << plan;
+    EXPECT_FALSE(scans_analysis_without_an_index(plan)) << types.size() << " type(s):\n" << plan;
+    // In time order off analysis_ts_ix nothing is sorted; found by type, only the matches are.
+    if (by_time) {
+      EXPECT_EQ(plan.find("TEMP B-TREE FOR ORDER BY"), std::string::npos) << types.size() << " type(s):\n" << plan;
+    }
+  }
+}
+
+TEST(SchemaIndexes, TheReferenceSeriesCountDoesNotScanAnalysis) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  for (const auto& types : {kBlankTypes, std::vector<std::string>{"air"}}) {
+    const auto q = reference_browse(types);
+    const std::string plan = plan_of(*db, pd::sql::kBrowseCount + pd::sql::kBrowseFrom + q.where, q.bindings);
+    ASSERT_FALSE(plan.empty());
+    EXPECT_FALSE(scans_analysis_without_an_index(plan)) << types.size() << " type(s):\n" << plan;
+  }
 }
 
 TEST_P(SchemaTest, ChecksumMismatchIsFatal) {

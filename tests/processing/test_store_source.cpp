@@ -123,7 +123,8 @@ class StoreSourceTest : public ::testing::Test {
 
   // An analysis with five argon isotopes on two detectors. Only the Ar40
   // signal and the H1 baseline have blobs; the Ar40 one is uploaded.
-  ps::Uuid ingest(const std::string& identifier, int aliquot, const std::string& type, const std::string& ts) {
+  ps::Uuid ingest(const std::string& identifier, int aliquot, const std::string& type, const std::string& ts,
+                  const std::string& spectrometer = "jan") {
     ps::AnalysisIngest a;
     a.analysis = ps::Uuid::v7();
     a.changeset = ps::Uuid::v7();
@@ -132,7 +133,7 @@ class StoreSourceTest : public ::testing::Test {
     a.aliquot = aliquot;
     a.analysis_type = type;
     a.timestamp = *ps::UtcTime::parse(ts);
-    a.mass_spectrometer = "jan";
+    a.mass_spectrometer = spectrometer;
     a.extract_device = "co2";
     a.extraction.extract_value = 4.5;
     a.extraction.extract_units = "W";
@@ -278,6 +279,70 @@ TEST_F(StoreSourceTest, BrowsePagesNewestFirstWithCatalogColumns) {
   EXPECT_EQ(*source().facet(Facet::Sample, {}), (std::vector<std::string>{"FC-2"}));
   q.limit = 0;
   EXPECT_FALSE(source().browse(q));
+}
+
+// What the experiment window's References dock asks after each saved run: the
+// newest blanks (of every kind), or airs, of the session's spectrometer since
+// a time.
+TEST_F(StoreSourceTest, TheNewestReferencesOfOneSpectrometerSinceATime) {
+  ASSERT_TRUE(store_->add_mass_spectrometer(acq_, {"felix", "helix", "f", std::nullopt}));
+  const std::vector<std::pair<std::string, std::string>> specials{
+      {"66601", "blank_unknown"}, {"66602", "blank_air"}, {"66603", "blank_cocktail"}, {"66604", "cocktail"}};
+  for (const auto& [identifier, type] : specials) {
+    ASSERT_TRUE(store_->add_identifier(
+        acq_, {identifier, "special", type, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
+  }
+  const auto at = [](const std::string& ts) { return static_cast<double>(ps::UtcTime::parse(ts)->micros) / 1e6; };
+  // jan, oldest first; the fixture's unknown (10:00 on the 2nd) and air (11:00) are before all of these
+  const ps::Uuid b1 = ingest("66601", 1, "blank_unknown", "2026-10-03T01:00:00Z");
+  const ps::Uuid a1 = ingest("66574", 2, "air", "2026-10-03T02:00:00Z");
+  const ps::Uuid b2 = ingest("66602", 1, "blank_air", "2026-10-03T03:00:00Z");
+  ingest("77000", 2, "unknown", "2026-10-03T04:00:00Z");
+  const ps::Uuid b3 = ingest("66603", 1, "blank_cocktail", "2026-10-03T05:00:00Z");
+  ingest("66604", 1, "cocktail", "2026-10-03T06:00:00Z");
+  const ps::Uuid b4 = ingest("66601", 2, "blank_unknown", "2026-10-03T07:00:00Z");
+  const ps::Uuid a2 = ingest("66574", 3, "air", "2026-10-03T08:00:00Z");
+  const ps::Uuid b5 = ingest("66602", 2, "blank_air", "2026-10-03T09:00:00Z");
+  // the other spectrometer's, newer than all of jan's
+  ingest("66601", 3, "blank_unknown", "2026-10-03T10:00:00Z", "felix");
+  ingest("66574", 4, "air", "2026-10-03T10:30:00Z", "felix");
+
+  const auto uuids = [](const BrowsePage& page) {
+    std::vector<std::string> out;
+    out.reserve(page.rows.size());
+    for (const auto& r : page.rows) out.push_back(r.uuid);
+    return out;
+  };
+
+  BrowseQuery blanks;
+  blanks.analysis_types = {"blank_unknown", "blank_air", "blank_cocktail", "blank_extraction_line", "blank_laser"};
+  blanks.mass_spectrometers = {"jan"};
+  blanks.from = at("2026-10-03T03:00:00Z");  // b2's own time: the edge is in
+  blanks.limit = 3;
+  auto page = source().browse(blanks);
+  ASSERT_TRUE(page) << to_string(page.error());
+  EXPECT_EQ(uuids(*page), (std::vector<std::string>{b5.str(), b4.str(), b3.str()}));
+  for (const auto& r : page->rows) EXPECT_EQ(r.mass_spectrometer, "jan");
+  ASSERT_TRUE(page->next);  // b2 is still to come
+  blanks.limit = 50;
+  page = source().browse(blanks);
+  ASSERT_TRUE(page) << to_string(page.error());
+  EXPECT_EQ(uuids(*page), (std::vector<std::string>{b5.str(), b4.str(), b3.str(), b2.str()}));
+  EXPECT_FALSE(page->next);
+  blanks.from.reset();
+  page = source().browse(blanks);
+  ASSERT_TRUE(page) << to_string(page.error());
+  EXPECT_EQ(uuids(*page), (std::vector<std::string>{b5.str(), b4.str(), b3.str(), b2.str(), b1.str()}));
+
+  BrowseQuery airs;
+  airs.analysis_types = {"air"};
+  airs.mass_spectrometers = {"jan"};
+  airs.from = at("2026-10-03T00:00:00Z");
+  airs.limit = 3;
+  page = source().browse(airs);
+  ASSERT_TRUE(page) << to_string(page.error());
+  EXPECT_EQ(uuids(*page), (std::vector<std::string>{a2.str(), a1.str()}));
+  EXPECT_FALSE(page->next);
 }
 
 TEST_F(StoreSourceTest, LoadAssemblesTheAnalysisAndItsReductionContext) {
