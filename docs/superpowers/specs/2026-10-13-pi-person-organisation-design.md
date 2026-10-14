@@ -3,7 +3,8 @@
 Status: draft, 2026-10-13. Owner decided 2026-10-13 (section 9): way B
 (clean), shown as "Jake Ross", browser filters by uuid, no allowed-names
 list, ORCID optional, a namesake in a sheet import stops and asks. T039's
-relaxed parser folds in here. Open points: section 10.
+relaxed parser folds in here. Section 10 settled the same day; what
+EarthBank takes is left for the EarthBank work.
 Task T084 (from T039). Owner's row: store a PI as a person or an
 organisation: family and given name in full, optional ORCID (unique when
 present), optional ROR for the affiliation, no uniqueness on the name (warn
@@ -121,7 +122,7 @@ struct PrincipalInvestigatorRow {
 ### 5.1 How a PI is shown (owner: "Jake Ross")
 
 - Person: `given_name family_name` ("Jake Ross", "María José Ruiz García").
-  Given name of one letter (legacy's initial) gets a period: "J. Ross".
+  Given name of one letter (legacy's initial) as it is: "J Ross" (owner).
   No given name: family name alone ("Ross").
 - Organisation: its name ("NMGRL").
 - Lists sorted by `family_name`, then `given_name`, not by display.
@@ -129,7 +130,7 @@ struct PrincipalInvestigatorRow {
   ORCID's last four, in brackets.
 - Everywhere a PI is shown or exported (browser column, data report's PI
   column, entry sheets written back, EarthBank sample rows) this text. A
-  migrated store's "Ross, J" becomes "J. Ross": a visible change, said in
+  migrated store's "Ross, J" becomes "J Ross": a visible change, said in
   release notes.
 
 ## 6. Entry (`libs/entry`, UI)
@@ -147,7 +148,9 @@ struct PrincipalInvestigatorRow {
     that row's is an error naming both.
   - `principal_investigator_uuid` (optional, written by the sheet export):
     the PI itself, no matching at all.
-  - A person's cell without a comma: refused (section 10, point 2).
+  - A person's cell without a comma: a family name alone, as legacy took
+    "Ross" (owner). "Jake Ross" so written is a family name of two words;
+    the template's header note says to write "Family, Given".
 - ORCID optional everywhere (owner). Check when given: 16 digits in fours,
   last may be `X`, ISO 7064 mod 11-2 checksum; URL prefix stripped. ROR: `0`
   + 6 of `[a-hj-km-np-tv-z0-9]` + 2 digits; URL prefix stripped. Bad form
@@ -198,8 +201,9 @@ struct PrincipalInvestigatorRow {
 
 - Legacy gives `Last, F`: `family_name = Last`, `given_name = F`. Resolved:
   rows with that family name and a given name starting with that letter.
-  One: that row. None: new person. Several: section 10, point 1 (draft:
-  oldest by `created_utc`, a note in the import report).
+  One: that row. None: new person. Several: the oldest by `created_utc`,
+  and a note in the import report naming the others (owner: nobody is
+  there to ask).
 - Re-import of same legacy data creates no second row (idempotent).
 
 ## 9. Owner, 2026-10-13
@@ -212,17 +216,14 @@ struct PrincipalInvestigatorRow {
 6. Namesake in a sheet import: stop and ask (6).
 7. T039 folds in: its parser is the sheet's "Family, Given" rule.
 
-## 10. Open points
+## 10. Settled 2026-10-13 (owner)
 
-1. Legacy import has nobody to ask: several matching PIs, take the oldest
-   and report it (draft), or stop the import?
-2. Sheet cell without a comma for a person: refused (draft: "Jake Ross"
-   cannot be told from a two-word family name), or taken as a family name
-   alone as legacy's "Ross" was?
-3. EarthBank: what its API takes for a person and an organisation (ORCID,
-   ROR, a name). Not in tree. Decides whether ROR on a person means the
-   affiliation's, as drafted, and what EarthBank rows show.
-4. One-letter given names shown "J. Ross" (draft) or "J Ross"?
+1. Legacy import, several matching PIs: the oldest, reported (8).
+2. Sheet cell without a comma: a family name alone, as legacy (6).
+3. EarthBank: what its API takes for a PI is decided with the EarthBank
+   work. Until then ROR is stored and shown, not sent; nothing here sends
+   ORCID or ROR anywhere.
+4. One-letter given names: "J Ross" (5.1).
 
 ## 11. Rules and tests
 
