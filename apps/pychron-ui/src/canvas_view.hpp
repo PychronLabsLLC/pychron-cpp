@@ -2,7 +2,9 @@
 
 // CanvasView: builds the scene from the loaded canvas.toml and keeps it in
 // step with the CoreBridge snapshot. Clicking a valve toggles it through
-// CoreBridge::actuate; rejections flash the valve. Stages and pipettes are
+// CoreBridge::actuate; rejections flash the valve. Clicking a gauge the line
+// defines, or resting the pointer on it, is said by a signal; what follows is
+// the window's. Stages and pipettes are
 // coloured by NetworkGraph region (volumes sharing gas share a colour).
 
 #include <functional>
@@ -17,6 +19,7 @@
 #include <QGraphicsView>
 #include <QRectF>
 #include <QStringList>
+#include <QTimer>
 
 #include "canvas_items.hpp"
 #include "core_bridge.hpp"
@@ -27,7 +30,12 @@ class CanvasView : public QGraphicsView {
   Q_OBJECT
 
  public:
+  // How long the pointer stays on a gauge before gauge_rested.
+  static constexpr int kGaugeRestMs = 3000;
+
   explicit CanvasView(CoreBridge& bridge, QWidget* parent = nullptr);
+
+  void set_gauge_rest_ms(int ms);  // tests: 0
 
   ValveItem* valve(const std::string& name) const;
   StageItem* stage(const std::string& name) const;  // stages and pipettes
@@ -60,8 +68,25 @@ class CanvasView : public QGraphicsView {
   // kinds have one colour each.
   static QColor source_color(canvas::SourceKind kind, int ordinal = 0);
 
+ signals:
+  void gauge_clicked(const QString& name);
+  // The pointer stayed on the gauge for the delay; `global_chip` is its chip
+  // on the screen.
+  void gauge_rested(const QString& name, const QRect& global_chip);
+  // After a rest: the pointer moved off, the view scrolled, or a button went
+  // down or a wheel turned over the view.
+  void gauge_left();
+
+ protected:
+  void scrollContentsBy(int dx, int dy) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
+
  private:
   void build(const canvas::Canvas& canvas);
+  void on_gauge_hover(const std::string& name, bool entered);
+  void on_gauge_rest();
+  // Stops a pending rest; after one that was said, says gauge_left.
+  void end_gauge_rest();
   void add_path(const std::vector<std::string>& names, double width);
   ConnectionItem* add_pipe(const std::vector<QPointF>& points, double width, std::vector<std::string> endpoints);
   bool position(const std::string& name, QPointF& out) const;
@@ -89,6 +114,9 @@ class CanvasView : public QGraphicsView {
   std::map<std::string, canvas::Source, std::less<>> sources_;  // what colours the region it is in
   std::vector<ConnectionItem*> pipes_;
   int connections_ = 0;
+  QTimer gauge_rest_timer_;
+  std::string gauge_under_;  // the wired gauge the pointer is on, if any
+  bool gauge_rested_ = false;
 };
 
 }  // namespace pychron::ui

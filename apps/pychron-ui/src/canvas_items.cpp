@@ -9,6 +9,7 @@
 #include <QFontMetricsF>
 #include <QAction>
 #include <QGraphicsSceneContextMenuEvent>
+#include <QGraphicsSceneHoverEvent>
 #include <QGraphicsSceneMouseEvent>
 #include <QMenu>
 #include <QPainter>
@@ -587,6 +588,7 @@ GaugeLabelItem::GaugeLabelItem(std::string name, QGraphicsItem* parent)
   QFont small = font();
   small.setPointSizeF(small.pointSizeF() * 0.85);
   setFont(small);
+  apply_wired();
   refresh();
 }
 
@@ -617,6 +619,35 @@ QRectF GaugeLabelItem::chip_rect() const {
 }
 
 QRectF GaugeLabelItem::boundingRect() const { return chip_rect().adjusted(-1, -1, 1, 1); }
+
+QPainterPath GaugeLabelItem::shape() const {
+  QPainterPath path;
+  const QRectF chip = chip_rect();
+  path.addRoundedRect(chip, chip.height() / 2, chip.height() / 2);
+  return path;
+}
+
+void GaugeLabelItem::mousePressEvent(QGraphicsSceneMouseEvent* event) {
+  if (wired_ && event->button() == Qt::LeftButton && on_click_) {
+    on_click_(name_);
+    event->accept();
+    return;
+  }
+  event->ignore();  // through to what is under the chip
+}
+
+// The second press of a double click is a click too.
+void GaugeLabelItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) { mousePressEvent(event); }
+
+void GaugeLabelItem::hoverEnterEvent(QGraphicsSceneHoverEvent* event) {
+  if (wired_ && on_hover_) on_hover_(true);
+  QGraphicsSimpleTextItem::hoverEnterEvent(event);
+}
+
+void GaugeLabelItem::hoverLeaveEvent(QGraphicsSceneHoverEvent* event) {
+  if (wired_ && on_hover_) on_hover_(false);
+  QGraphicsSimpleTextItem::hoverLeaveEvent(event);
+}
 
 void GaugeLabelItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) {
   const QColor ink = brush().color();  // red with the reading while in alarm
@@ -651,7 +682,19 @@ void GaugeLabelItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
 void GaugeLabelItem::set_wired(bool wired) {
   if (wired != wired_) {
     wired_ = wired;
+    apply_wired();
     refresh();
+  }
+}
+
+// Only a gauge the line defines answers the pointer; a drawn one leaves the
+// hover to what is under it.
+void GaugeLabelItem::apply_wired() {
+  setAcceptHoverEvents(wired_);
+  if (wired_) {
+    setCursor(Qt::PointingHandCursor);
+  } else {
+    unsetCursor();
   }
 }
 

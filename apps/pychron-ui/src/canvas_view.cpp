@@ -2,6 +2,7 @@
 #include "theme.hpp"
 
 #include <QDateTime>
+#include <QEvent>
 #include <QLocale>
 
 #include <algorithm>
@@ -65,6 +66,10 @@ QColor CanvasView::source_color(canvas::SourceKind kind, int ordinal) {
 CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(parent), bridge_(bridge) {
   setScene(&scene_);
   setRenderHint(QPainter::Antialiasing);
+  gauge_rest_timer_.setSingleShot(true);
+  gauge_rest_timer_.setInterval(kGaugeRestMs);
+  connect(&gauge_rest_timer_, &QTimer::timeout, this, &CanvasView::on_gauge_rest);
+  viewport()->installEventFilter(this);
   if (const canvas::Canvas* c = bridge_.canvas()) {
     build(*c);
     open_valve_color_ = c->canvas.open_valve_color;
@@ -88,6 +93,53 @@ CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(pare
   });
   connect(&bridge_, &CoreBridge::actuationFinished, this, &CanvasView::on_finished);
   apply_state();
+}
+
+void CanvasView::set_gauge_rest_ms(int ms) { gauge_rest_timer_.setInterval(std::max(ms, 0)); }
+
+void CanvasView::on_gauge_hover(const std::string& name, bool entered) {
+  if (!entered) {
+    if (name == gauge_under_) end_gauge_rest();
+    return;
+  }
+  end_gauge_rest();
+  gauge_under_ = name;
+  gauge_rest_timer_.start();
+}
+
+void CanvasView::on_gauge_rest() {
+  const GaugeLabelItem* item = gauge(gauge_under_);
+  if (item == nullptr) return;
+  const QRect local = mapFromScene(item->mapRectToScene(item->chip_rect())).boundingRect();
+  gauge_rested_ = true;
+  emit gauge_rested(QString::fromStdString(gauge_under_), QRect(viewport()->mapToGlobal(local.topLeft()), local.size()));
+}
+
+void CanvasView::end_gauge_rest() {
+  gauge_rest_timer_.stop();
+  gauge_under_.clear();
+  if (gauge_rested_) {
+    gauge_rested_ = false;
+    emit gauge_left();
+  }
+}
+
+void CanvasView::scrollContentsBy(int dx, int dy) {
+  QGraphicsView::scrollContentsBy(dx, dy);
+  end_gauge_rest();
+}
+
+// Sees the viewport's presses and wheels before the scene does; consumes nothing.
+bool CanvasView::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == viewport()) {
+    switch (event->type()) {
+      case QEvent::MouseButtonPress:
+      case QEvent::MouseButtonDblClick:
+      case QEvent::Wheel: end_gauge_rest(); break;
+      default: break;
+    }
+  }
+  return QGraphicsView::eventFilter(watched, event);
 }
 
 void CanvasView::build(const canvas::Canvas& c) {
@@ -138,6 +190,8 @@ void CanvasView::build(const canvas::Canvas& c) {
     const auto& defined = bridge_.config().gauges;
     item->set_wired(std::any_of(defined.begin(), defined.end(), [&](const auto& d) { return d.name == g.name; }));
     item->setPos(to_qpoint(g.pos));
+    item->set_on_click([this](const std::string& name) { emit gauge_clicked(QString::fromStdString(name)); });
+    item->set_on_hover([this, name = g.name](bool entered) { on_gauge_hover(name, entered); });
     scene_.addItem(item);
     gauges_[g.name] = item;
     positions_[g.name] = item->pos();

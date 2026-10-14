@@ -16,6 +16,7 @@
 #include <QGraphicsObject>
 #include <QGraphicsPathItem>
 #include <QGraphicsSimpleTextItem>
+#include <QPainterPath>
 #include <QPen>
 #include <QPointF>
 #include <QTimer>
@@ -233,11 +234,28 @@ class GaugeLabelItem : public QGraphicsSimpleTextItem {
   QRectF dial_rect() const;
   QRectF chip_rect() const;
   QRectF boundingRect() const override;
+  // The chip, dial and padding included: what takes a click or a hover.
+  QPainterPath shape() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
+
+  // A wired gauge only: a left click on the chip, and the pointer coming
+  // onto it (true) or leaving it (false). An unwired one lets both through
+  // to what is under it.
+  void set_on_click(std::function<void(const std::string&)> cb) { on_click_ = std::move(cb); }
+  void set_on_hover(std::function<void(bool entered)> cb) { on_hover_ = std::move(cb); }
+
+ protected:
+  void mousePressEvent(QGraphicsSceneMouseEvent* event) override;
+  void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override;
+  void hoverEnterEvent(QGraphicsSceneHoverEvent* event) override;
+  void hoverLeaveEvent(QGraphicsSceneHoverEvent* event) override;
 
  private:
   void refresh();
+  void apply_wired();
 
+  std::function<void(const std::string&)> on_click_;
+  std::function<void(bool)> on_hover_;
   std::string name_;
   QString value_ = QStringLiteral("--");
   bool alarm_ = false;

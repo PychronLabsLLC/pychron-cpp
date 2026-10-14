@@ -18,12 +18,17 @@
 
 #include <QGraphicsScene>
 #include <QGraphicsSceneHoverEvent>
+#include <QScrollBar>
+#include <QSignalSpy>
+#include <QWheelEvent>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "canvas_view.hpp"
 #include "core_bridge.hpp"
+#include "pychron/core/config/local_file.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "pychron/systems/canvas/loader.hpp"
 #include "theme.hpp"
 #include "ui_fixture.hpp"
 
@@ -864,7 +869,216 @@ class TestCanvasView : public QObject {
     QTRY_VERIFY(!ig->in_alarm());
   }
 
+  // ---- a gauge clicked or rested on (gauge history) ----
+
+  // Clicking a wired gauge says which, on its text, its dial and its chip's
+  // padding alike; no valve moves and nothing is sent to the line.
+  void clickingAGaugeSaysWhich() {
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    const auto valves_before = bridge_->state().valves;
+    QSignalSpy clicked(view_.get(), &CanvasView::gauge_clicked);
+    ui::GaugeLabelItem* ig = view_->gauge("IG1");
+    const QRectF chip = ig->chip_rect();
+    const QRectF text = ig->QGraphicsSimpleTextItem::boundingRect();
+    const std::vector<QPointF> spots{text.center(), ig->dial_rect().center(), QPointF(chip.right() - 2, chip.center().y())};
+    for (const QPointF& spot : spots) {
+      QTest::mouseClick(view_->viewport(), Qt::LeftButton, {}, view_->mapFromScene(ig->mapToScene(spot)));
+    }
+    QCOMPARE(clicked.count(), 3);
+    // A double click is taken too, not passed to what is under the chip.
+    QTest::mouseDClick(view_->viewport(), Qt::LeftButton, {}, view_->mapFromScene(ig->mapToScene(text.center())));
+    QVERIFY(clicked.count() > 3);
+    for (const auto& args : clicked) QCOMPARE(args.at(0).toString(), QStringLiteral("IG1"));
+    QTest::qWait(50);
+    QCOMPARE(bridge_->state().valves, valves_before);
+    for (const auto& [name, item] : valves_before) QVERIFY2(!view_->valve(name)->is_pending(), name.c_str());
+  }
+
+  void clickingAGaugeTheLineDoesNotDefineSaysNothing() {
+    const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    QTemporaryDir tmp;
+    const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
+    std::filesystem::copy_file(examples / "canvas.toml", canvas);
+    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Bone IG\"\npos = [100, 120]\n";
+    auto line = ui::test::make_example_line(canvas);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    view.resize(1100, 800);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    QSignalSpy clicked(&view, &CanvasView::gauge_clicked);
+    const ui::GaugeLabelItem* gauge = view.gauge("Bone IG");
+    QTest::mouseClick(view.viewport(), Qt::LeftButton, {}, view.mapFromScene(gauge->mapToScene(gauge->chip_rect().center())));
+    QCOMPARE(clicked.count(), 0);
+    line->stop();
+  }
+
+  void aRightClickOnAGaugeSaysNothing() {
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    QSignalSpy clicked(view_.get(), &CanvasView::gauge_clicked);
+    const ui::GaugeLabelItem* ig = view_->gauge("IG1");
+    QTest::mouseClick(view_->viewport(), Qt::RightButton, {}, view_->mapFromScene(ig->mapToScene(ig->chip_rect().center())));
+    QCOMPARE(clicked.count(), 0);
+  }
+
+  void restingOnAGaugeSaysSoAfterTheDelay() {
+    view_->set_gauge_rest_ms(0);
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    QSignalSpy rested(view_.get(), &CanvasView::gauge_rested);
+    const ui::GaugeLabelItem* ig = view_->gauge("IG1");
+    QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    QTest::mouseMove(view_->viewport(), on_gauge(*ig));
+    QTRY_COMPARE(rested.count(), 1);
+    QCOMPARE(rested.at(0).at(0).toString(), QStringLiteral("IG1"));
+    QCOMPARE(rested.at(0).at(1).toRect(), global_chip(*ig));
+  }
+
+  void leavingBeforeTheDelayCancelsIt() {
+    // 200 and 400 ms: the one real wait here; widen both if CI shows it close.
+    view_->set_gauge_rest_ms(200);
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    QSignalSpy rested(view_.get(), &CanvasView::gauge_rested);
+    const ui::GaugeLabelItem* ig = view_->gauge("IG1");
+    QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    QTest::mouseMove(view_->viewport(), on_gauge(*ig));
+    QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    QTest::qWait(400);
+    QCOMPARE(rested.count(), 0);
+  }
+
+  void leavingAfterARestSaysSo() {
+    view_->set_gauge_rest_ms(0);
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    QSignalSpy rested(view_.get(), &CanvasView::gauge_rested);
+    QSignalSpy left(view_.get(), &CanvasView::gauge_left);
+    const ui::GaugeLabelItem* ig = view_->gauge("IG1");
+    const auto rest = [&] {
+      QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+      QTest::mouseMove(view_->viewport(), on_gauge(*ig));
+    };
+
+    // Moving off.
+    rest();
+    QTRY_COMPARE(rested.count(), 1);
+    QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    QTRY_COMPARE(left.count(), 1);
+
+    // A button pressed while rested (the right one: the left would also click).
+    rest();
+    QTRY_COMPARE(rested.count(), 2);
+    QTest::mousePress(view_->viewport(), Qt::RightButton, {}, on_gauge(*ig));
+    QTest::mouseRelease(view_->viewport(), Qt::RightButton, {}, on_gauge(*ig));
+    QTRY_COMPARE(left.count(), 2);
+
+    // A wheel over the view, with nothing to scroll.
+    QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    rest();
+    QTRY_COMPARE(rested.count(), 3);
+    QCOMPARE(left.count(), 2);
+    QWheelEvent wheel(QPointF(on_gauge(*ig)), QPointF(view_->viewport()->mapToGlobal(on_gauge(*ig))), QPoint(),
+                      QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(view_->viewport(), &wheel);
+    QCOMPARE(left.count(), 3);
+
+    // A scroll bar moved, on a view small enough to scroll. Resizing and
+    // centring may themselves end or start a rest: counted from after them.
+    QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    view_->resize(300, 200);
+    view_->centerOn(ig);
+    QTRY_VERIFY(view_->verticalScrollBar()->maximum() > 0);
+    QVERIFY(view_->viewport()->rect().contains(on_gauge(*ig)));
+    QTest::qWait(0);
+    const int rests = rested.count();
+    rest();
+    QTRY_COMPARE(rested.count(), rests + 1);
+    const int before = left.count();
+    QScrollBar* bar = view_->verticalScrollBar();
+    bar->setValue(bar->value() == bar->minimum() ? bar->maximum() : bar->minimum());
+    QCOMPARE(left.count(), before + 1);
+  }
+
+  void restingOnADecorationGaugeSaysNothing() {
+    const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    QTemporaryDir tmp;
+    const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
+    std::filesystem::copy_file(examples / "canvas.toml", canvas);
+    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Bone IG\"\npos = [100, 120]\n";
+    auto line = ui::test::make_example_line(canvas);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    view.set_gauge_rest_ms(0);
+    view.resize(1100, 800);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    QSignalSpy rested(&view, &CanvasView::gauge_rested);
+    const ui::GaugeLabelItem* gauge = view.gauge("Bone IG");
+    const QPoint on = view.mapFromScene(gauge->mapToScene(gauge->chip_rect().center()));
+    QTest::mouseMove(view.viewport(), on + QPoint(0, 80));
+    QTest::mouseMove(view.viewport(), on);
+    QTest::qWait(100);
+    QCOMPARE(rested.count(), 0);
+    line->stop();
+  }
+
+  // A wired gauge takes the click on its chip: no chip, showing a reading,
+  // may cover a valve's centre, on the example canvas and on NMGRL's (with
+  // its own line, which the example's does not load). One that does is a
+  // fault of the canvas file.
+  void aValveUnderAGaugeChipStillTakesItsClick() {
+    const std::filesystem::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    for (const auto& dir : {examples, examples / "nmgrl"}) {
+      const auto config = config::load_system_config_without_local(dir / "extraction_line.toml");
+      QVERIFY2(config.has_value(), qPrintable(QString::fromStdString(dir.string())));
+      const auto drawing = canvas::load_canvas(dir / "canvas.toml");
+      QVERIFY2(drawing.has_value(), qPrintable(QString::fromStdString(dir.string())));
+      int wired = 0;
+      for (const auto& g : drawing->gauges) {
+        const auto defined = std::find_if(config->gauges.begin(), config->gauges.end(),
+                                          [&](const auto& d) { return d.name == g.name; });
+        if (defined == config->gauges.end()) continue;
+        ++wired;
+        ui::GaugeLabelItem gauge(g.name);
+        gauge.set_value(1.23e-8, "torr");  // as wide as any unit drawn
+        gauge.setPos(ui::to_qpoint(g.pos));
+        const QRectF chip = gauge.mapRectToScene(gauge.chip_rect());
+        for (const auto& v : drawing->valves) {
+          QVERIFY2(!chip.contains(ui::to_qpoint(v.pos)),
+                   qPrintable(QStringLiteral("%1: gauge %2 covers valve %3")
+                                  .arg(QString::fromStdString(dir.string()), QString::fromStdString(g.name),
+                                       QString::fromStdString(v.name))));
+        }
+      }
+      // NMGRL's gauges are drawn for illustration (its line imports no gauge
+      // controller): none is wired, and an unwired chip lets a click through.
+      // If NMGRL's line ever wires one, its chips are checked here too: drop
+      // this case then.
+      if (dir == examples) {
+        QVERIFY(wired > 0);
+      } else {
+        QCOMPARE(wired, 0);
+      }
+    }
+  }
+
  private:
+  // A point on the gauge's chip, and one well off it, in viewport coordinates.
+  QPoint on_gauge(const ui::GaugeLabelItem& g) const {
+    return view_->mapFromScene(g.mapToScene(g.chip_rect().center()));
+  }
+  QPoint off_gauge(const ui::GaugeLabelItem& g) const {
+    const QRectF chip = g.mapRectToScene(g.chip_rect());
+    return view_->mapFromScene(QPointF(chip.center().x(), chip.bottom() + 40));
+  }
+  QRect global_chip(const ui::GaugeLabelItem& g) const {
+    const QRect local = view_->mapFromScene(g.mapRectToScene(g.chip_rect())).boundingRect();
+    return {view_->viewport()->mapToGlobal(local.topLeft()), local.size()};
+  }
+
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<CoreBridge> bridge_;
   std::unique_ptr<CanvasView> view_;

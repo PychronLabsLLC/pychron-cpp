@@ -161,7 +161,7 @@ class HistoryChart : public QWidget {
   void set_gauge_rest_ms(int ms);   // tests: 0
 ```
 
-- [ ] **Failing tests**, in the fixture of `test_canvas_view.cpp` (`:58-65`), clicking as `clickingAValveActuatesIt` does (`:122-133`: `view_->mapFromScene(item->scenePos())`, `QTest::mouseClick(view_->viewport(), ...)`):
+- [x] **Failing tests**, in the fixture of `test_canvas_view.cpp` (`:58-65`), clicking as `clickingAValveActuatesIt` does (`:122-133`: `view_->mapFromScene(item->scenePos())`, `QTest::mouseClick(view_->viewport(), ...)`):
   - `clickingAGaugeSaysWhich`: `gauge_clicked("IG1")` once (`QSignalSpy`); no valve changed state; nothing was sent to the line. Also with the click on the chip's dial and on its padding, not only on the text.
   - `clickingAGaugeTheLineDoesNotDefineSaysNothing` (the decoration gauge of `:836-852`).
   - `aRightClickOnAGaugeSaysNothing`.
@@ -171,8 +171,10 @@ class HistoryChart : public QWidget {
   - `restingOnADecorationGaugeSaysNothing`.
   - `aValveUnderAGaugeChipStillTakesItsClick`: for the example canvas and `configs/examples/nmgrl/canvas.toml`, no wired gauge's chip (`mapRectToScene(chip_rect())`) covers a valve's centre. If one does, that is reported to the owner as a fault of the canvas file, not worked round.
   - `clickingAValveIsAsBefore` (the existing test passes unchanged).
-- [ ] **Implement:** `GaugeLabelItem` gets `set_on_click`, `set_on_hover(std::function<void(bool entered)>)`, `setAcceptHoverEvents(true)`, a pointing-hand cursor when wired, a `shape()` that is the chip (dial and padding included), `mousePressEvent` (left button, wired: callback and accept; else ignore), `hoverEnterEvent` / `hoverLeaveEvent`. `CanvasView` gets the `signals:` block, a single-shot `QTimer` started on enter and stopped on leave, and emits `gauge_left` from leave, from `scrollContentsBy`, and from a press or a wheel anywhere on the viewport (an event filter that consumes nothing).
-- [ ] `ctest --preset dev-ui -R '^ui\.test_canvas_view$'`; commit `feat(ui): the canvas says when a gauge is clicked or rested on`.
+- [x] **Implement:** `GaugeLabelItem` gets `set_on_click`, `set_on_hover(std::function<void(bool entered)>)`, `setAcceptHoverEvents(true)`, a pointing-hand cursor when wired, a `shape()` that is the chip (dial and padding included), `mousePressEvent` (left button, wired: callback and accept; else ignore), `hoverEnterEvent` / `hoverLeaveEvent`. `CanvasView` gets the `signals:` block, a single-shot `QTimer` started on enter and stopped on leave, and emits `gauge_left` from leave, from `scrollContentsBy`, and from a press or a wheel anywhere on the viewport (an event filter that consumes nothing).
+- [x] `ctest --preset dev-ui -R '^ui\.test_canvas_view$'`; commit `feat(ui): the canvas says when a gauge is clicked or rested on`.
+
+  Built: `QTest::mouseMove` reaches the item on the offscreen platform, so the hover tests move the pointer. `aValveUnderAGaugeChipStillTakesItsClick` reads each canvas and its own `extraction_line.toml` and measures a chip showing a reading, instead of loading a line: the example's line cannot load NMGRL's canvas. NMGRL's five gauges are drawn for illustration and none is wired, so there it holds with nothing to check; an unwired chip lets the click through. `gauge_left` is said only after a `gauge_rested`. The second press of a double click on a wired gauge is a click too.
 
 ### Task 4: The hover popup
 
