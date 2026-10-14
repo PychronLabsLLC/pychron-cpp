@@ -29,6 +29,17 @@ Result<PiName> parse_pi(std::string_view text, const std::vector<std::string>& a
 // "Last, F" or "Last", as the database's display_name.
 std::string display_name(const PiName& name);
 
+// An ORCID iD in its bare form ("0000-0002-1825-0097"): four groups of four
+// digits joined by '-', the last character a digit or 'X', the ISO 7064 mod
+// 11-2 check character right. A leading "https://orcid.org/" (or http) is
+// taken off. A bad form is refused with the value quoted. Format only:
+// nothing is looked up.
+Result<std::string> parse_orcid(std::string_view text);
+// A ROR id in its bare form ("03yrm5c26"): '0', six of 0-9 and the lower-case
+// letters but i, l, o and u, then two digits. A leading "https://ror.org/"
+// (or http) is taken off. A bad form is refused with the value quoted.
+Result<std::string> parse_ror(std::string_view text);
+
 // A letter, then letters, digits, '-' or '_'.
 bool valid_project_name(std::string_view name);
 // Not empty, no whitespace (legacy SpacelessStr).

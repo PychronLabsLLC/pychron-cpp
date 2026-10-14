@@ -19,6 +19,42 @@ TEST(Names, PrincipalInvestigator) {
   EXPECT_EQ(display_name({"Ross", ""}), "Ross");
 }
 
+TEST(Names, AnOrcidIsCheckedByItsChecksum) {
+  EXPECT_EQ(*parse_orcid("0000-0002-1825-0097"), "0000-0002-1825-0097");
+  EXPECT_EQ(*parse_orcid("https://orcid.org/0000-0002-1825-0097"), "0000-0002-1825-0097");
+  EXPECT_EQ(*parse_orcid(" http://orcid.org/0000-0002-1825-0097 "), "0000-0002-1825-0097");
+  EXPECT_EQ(*parse_orcid("0000-0001-5109-3700"), "0000-0001-5109-3700");
+  EXPECT_EQ(*parse_orcid("0000-0002-1694-233X"), "0000-0002-1694-233X");
+  EXPECT_FALSE(parse_orcid("0000-0002-1825-0098"));  // a changed digit
+  EXPECT_FALSE(parse_orcid("0000-0002-1694-2330"));  // the X made a digit
+  EXPECT_FALSE(parse_orcid("0000-0002-1825-009X"));
+  EXPECT_FALSE(parse_orcid("0000000218250097"));  // wrong grouping
+  EXPECT_FALSE(parse_orcid("000-00002-1825-0097"));
+  EXPECT_FALSE(parse_orcid("0000-0002-1825-0097-"));
+  EXPECT_FALSE(parse_orcid("abcd-0002-1825-0097"));
+  EXPECT_FALSE(parse_orcid("0000-000X-1825-0097"));  // X only last
+  EXPECT_FALSE(parse_orcid(""));
+  const auto bad = parse_orcid("0000-0002-1825-0098");
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().what.find("'0000-0002-1825-0098'"), std::string::npos) << bad.error().what;
+}
+
+TEST(Names, ARorIsItsNineCharacters) {
+  EXPECT_EQ(*parse_ror("03yrm5c26"), "03yrm5c26");
+  EXPECT_EQ(*parse_ror("https://ror.org/03yrm5c26"), "03yrm5c26");
+  EXPECT_EQ(*parse_ror(" 05dxps055 "), "05dxps055");
+  EXPECT_FALSE(parse_ror("03yrm5c2"));    // short
+  EXPECT_FALSE(parse_ror("03yrm5c266"));  // long
+  EXPECT_FALSE(parse_ror("03yrl5c26"));   // 'l' is not in the set
+  EXPECT_FALSE(parse_ror("03yru5c26"));   // nor 'u'
+  EXPECT_FALSE(parse_ror("13yrm5c26"));   // not starting with 0
+  EXPECT_FALSE(parse_ror("03yrm5c2a"));   // the last two are digits
+  EXPECT_FALSE(parse_ror(""));
+  const auto bad = parse_ror("13yrm5c26");
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().what.find("'13yrm5c26'"), std::string::npos) << bad.error().what;
+}
+
 TEST(Names, Project) {
   EXPECT_TRUE(valid_project_name("IR-1010_a"));
   EXPECT_TRUE(valid_project_name("a"));

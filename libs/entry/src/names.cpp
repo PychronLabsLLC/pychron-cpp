@@ -26,6 +26,22 @@ std::string increment_digits(const std::string& digits) {
   return out;
 }
 
+// `text` without a leading "https://<host>/" or "http://<host>/".
+std::string_view strip_url(std::string_view text, std::string_view host) {
+  for (const std::string_view scheme : {"https://", "http://"}) {
+    if (text.starts_with(scheme) && text.substr(scheme.size()).starts_with(host) &&
+        text.substr(scheme.size() + host.size()).starts_with('/'))
+      return text.substr(scheme.size() + host.size() + 1);
+  }
+  return text;
+}
+
+// ROR's alphabet: digits and lower-case letters, less i, l, o and u.
+bool is_ror_char(char c) {
+  if (is_digit(c)) return true;
+  return c >= 'a' && c <= 'z' && c != 'i' && c != 'l' && c != 'o' && c != 'u';
+}
+
 }  // namespace
 
 std::string trim(std::string_view text) {
@@ -47,6 +63,39 @@ Result<PiName> parse_pi(std::string_view text, const std::vector<std::string>& a
 
 std::string display_name(const PiName& name) {
   return name.first_initial.empty() ? name.last_name : name.last_name + ", " + name.first_initial;
+}
+
+Result<std::string> parse_orcid(std::string_view text) {
+  const std::string t = trim(text);
+  const std::string_view id = strip_url(t, "orcid.org");
+  const auto refuse = [&] {
+    return fail(ErrorKind::Config, "'" + t + "' is not an ORCID iD (0000-0002-1825-0097)");
+  };
+  if (id.size() != 19) return refuse();
+  int total = 0;  // ISO 7064 mod 11-2 over the first 15 digits
+  for (std::size_t i = 0; i < id.size(); ++i) {
+    const char c = id[i];
+    if (i % 5 == 4) {
+      if (c != '-') return refuse();
+    } else if (i == 18) {
+      const int remainder = total % 11;
+      const int check = (12 - remainder) % 11;
+      if (c != (check == 10 ? 'X' : static_cast<char>('0' + check))) return refuse();
+    } else {
+      if (!is_digit(c)) return refuse();
+      total = (total + (c - '0')) * 2;
+    }
+  }
+  return std::string(id);
+}
+
+Result<std::string> parse_ror(std::string_view text) {
+  const std::string t = trim(text);
+  const std::string_view id = strip_url(t, "ror.org");
+  const bool ok = id.size() == 9 && id[0] == '0' &&
+                  std::all_of(id.begin() + 1, id.begin() + 7, is_ror_char) && is_digit(id[7]) && is_digit(id[8]);
+  if (!ok) return fail(ErrorKind::Config, "'" + t + "' is not a ROR id (03yrm5c26)");
+  return std::string(id);
 }
 
 bool valid_project_name(std::string_view name) {

@@ -43,9 +43,9 @@ Read from `develop` `358eb184`.
 
 **Files:** `libs/entry/include/pychron/entry/names.hpp`, `src/names.cpp`, `tests/entry/test_names.cpp`.
 
-- [ ] Failing tests: `Names.AnOrcidIsCheckedByItsChecksum` (`0000-0002-1825-0097` and `https://orcid.org/0000-0002-1825-0097` give the bare form; `0000-0001-5109-3700`; one with `X` (`0000-0002-1694-233X`); a changed digit, wrong grouping, letters refused, the value quoted); `Names.ARorIsItsNineCharacters` (`03yrm5c26`, `https://ror.org/03yrm5c26`; wrong length, a letter outside the set, not starting with `0` refused).
-- [ ] `Result<std::string> parse_orcid(std::string_view)`, `Result<std::string> parse_ror(std::string_view)`: ISO 7064 mod 11-2; ROR alphabet `0-9a-hj-km-np-tv-z`.
-- [ ] Commit `feat(entry): ORCID and ROR are checked when given`.
+- [x] Failing tests: `Names.AnOrcidIsCheckedByItsChecksum` (`0000-0002-1825-0097` and `https://orcid.org/0000-0002-1825-0097` give the bare form; `0000-0001-5109-3700`; one with `X` (`0000-0002-1694-233X`); a changed digit, wrong grouping, letters refused, the value quoted); `Names.ARorIsItsNineCharacters` (`03yrm5c26`, `https://ror.org/03yrm5c26`; wrong length, a letter outside the set, not starting with `0` refused).
+- [x] `Result<std::string> parse_orcid(std::string_view)`, `Result<std::string> parse_ror(std::string_view)`: ISO 7064 mod 11-2; ROR alphabet `0-9a-hj-km-np-tv-z`.
+- [x] Commit `feat(entry): ORCID and ROR are checked when given`.
 
 ### Task 2: Migration 0006 and the store's PI
 
