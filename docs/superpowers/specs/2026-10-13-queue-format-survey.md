@@ -80,3 +80,16 @@ Legacy: `experiments/` under lab root, with `auto_save/`, `blocks/`, `rem/`. Her
 ## Out of scope
 
 Changing any code; measurement-plan or block formats beyond where blocks live; T024 (split queue tables in the editor).
+
+## 7. Owner's decisions (2026-10-13)
+
+1. Format A: `experiment.toml` stays TOML. Checked for 1000 runs: 236 KB,
+   about 6 lines a run; `elctl exp validate` 1.07 s (3 runs 0.09 s, 100
+   runs 0.19 s, 5000 runs 4.99 s), linear at about 1 ms a run in
+   validation; parsing is milliseconds (Python's `tomllib` 16 ms for 1000).
+2. Queues under `<lab>/queues/`, blocks under `queues/blocks/`.
+3. No legacy `.txt` queue importer.
+4. No autosave, no `rem` / `ex` copies: never used in legacy.
+5. No comment-preserving writer.
+
+Next: spec for the `queues/` subdirectory.
