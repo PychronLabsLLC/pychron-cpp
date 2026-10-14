@@ -1,6 +1,8 @@
 # Gauge history: a time series from a gauge on the canvas
 
-Status: agreed 2026-10-13 (owner's answers, section 9). Drafted by an
+Status: agreed 2026-10-13 (owner's answers, section 9). Plan:
+`docs/superpowers/plans/2026-10-13-gauge-history.md`; 4.1, 4.2, 4.3 and 5
+corrected from code when it was written. Drafted by an
 unattended run from task T077 (owner's words, section 1). Nothing built.
 
 ## 1. Asked for
@@ -50,7 +52,8 @@ with a range the operator chooses).
 - Point: `(seconds since history's first sample, value)`; units kept beside
   (last seen; a change of units empties that gauge's ring).
 - A gap (read failed, no samples) is a gap: when two samples are further
-  apart than 3 scan intervals of that gauge, a NaN point is put between, so
+  apart than 3 scan intervals (the line's `scan_interval_ms`: there is no
+  interval a gauge), a NaN point is put between, so
   the line breaks instead of bridging.
 - Sample whose `ts` is before the last (scan restarted, simulated clock
   reset): that gauge's ring is emptied.
@@ -62,14 +65,15 @@ with a range the operator chooses).
 - Pointer rests on a gauge chip for 3 s (not moved off it): a frameless
   popup beside the chip, about 320 x 180 px: gauge name, latest reading, a
   small chart of the last 10 minutes. Updates while shown. Goes when the
-  pointer leaves the chip (or the popup), on a click anywhere, on scroll or
-  zoom of the canvas.
+  pointer leaves the chip, on a button press anywhere, on a scroll of the
+  canvas (it has no zoom or pan).
 - Fewer than 2 points in the last 10 minutes: popup says "no readings yet"
   (or "no readings in the last 10 minutes"), no empty chart.
 - Decoration gauge (not configured): no popup.
 - The 3 s is real time (a wait on the operator's hand): a `QTimer`. Added
   to the virtual clock spec's list of what stays on real time (its 4.5).
-- Popup takes no focus and no clicks meant for the canvas.
+- Popup takes no focus and no clicks meant for the canvas: a `Qt::ToolTip`
+  window, not `Qt::Popup` (which takes the click that closes it).
 
 ### 4.3 Click: gauge window
 
@@ -82,9 +86,9 @@ with a range the operator chooses).
 - Y: linear by default, box for log (pressures span decades); choice kept
   per gauge with the range; autoscale to the range shown, with alarm limits drawn as horizontal rules when set and
   inside the view.
-- X: time before the newest sample, labelled as time of day from the
-  line's wall clock (`CoreBridge::wall_now`), so a simulated session reads
-  simulated time. No `QDateTime::currentDateTime()`.
+- X: time before the newest sample, labelled as local time of day from the
+  line's wall clock (wall time of a sample: `CoreBridge::wall_now()` less
+  `now() - ts`), so a simulated session reads simulated time. No `QDateTime::currentDateTime()`.
 - Header: latest value, min and max over the range shown.
 - "Copy": the points shown as tab-separated `time, value`.
 - Window follows new samples (redraw at most 4 times a second).
@@ -107,8 +111,8 @@ and cryostat temperatures are to use both later (section 6).
   `CoreBridge::wall_now`. Hover delay is the one real-time wait.
 - Click on a gauge does nothing else (no actuation, no selection change).
   Valve clicks unchanged.
-- Canvas in edit or view-only modes (if any): same behaviour; nothing here
-  writes.
+- A gauge chip drawn over a valve must not take the valve's click: press
+  accepted only inside the chip; plan tests the shipped canvases.
 - Memory bounded by 4.1's span whatever the session's length.
 
 ## 6. Out of scope
