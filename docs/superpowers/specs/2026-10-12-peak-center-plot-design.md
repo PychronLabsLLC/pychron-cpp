@@ -136,7 +136,7 @@ and swaps the kind plot, focus box and intercepts table for the view.
   center again. Results kept for this: newest 20, in memory.
 - Queue start clears view and its kept results (`queueStarted`).
   `EvolutionsView::clear` is per run and does not: a run starting returns
-  the dock to Signal and leaves the last graph in its tab (plan, question 2).
+  the dock to Signal and leaves the last graph in its tab (owner, 2026-10-13).
 - Job cancelled or failed in hardware: no `PeakCenterDone`. Points stay,
   title says not finished, nothing kept.
 - Drawing: `QCustomPlot` directly, as `EvolutionsView` (decision 1). No
@@ -151,7 +151,7 @@ fits. Shipped `configs/examples/peak_center.toml` gains
 that carry a peak at the reference position, so the example shows the
 scaling; user guide says how to choose them. Found when planning: shipped
 simulator puts no other detector's peak inside the example's sweep window.
-Example left without the key until owner chooses (plan, question 1).
+Owner, 2026-10-13: example left without the key; user guide explains it.
 
 ## 5. Rules
 
@@ -216,4 +216,5 @@ Changes `apps/pychron-ui`: final run is `dev-ui`.
 4. Scaling is legacy's range mapping (4.3).
 5. Retries stay, faint, behind the current try.
 
-Not asked, kept as drafted: no jump back to Signal when measurement begins.
+6. (2026-10-13) Example carries no `additional_detectors`; dock returns to
+   Signal when the next run starts; a detector is always scaled, as legacy.
