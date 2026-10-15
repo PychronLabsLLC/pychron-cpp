@@ -1,16 +1,19 @@
 // The References dock of the experiment window
 // (docs/superpowers/plans/2026-10-13-experiment-reference-series.md). Task 4:
 // the pipeline of a tab, run directly on a MemorySource, no bridge. Task 5:
-// the dock's widget, over a ProcessingBridge on such a source.
+// the dock's widget, over a ProcessingBridge on such a source. Task 6: the
+// dock in the experiment window, after a queue of the simulated lab.
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -19,13 +22,20 @@
 #include <vector>
 
 #include <QDialog>
+#include <QDockWidget>
 #include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QtTest/QtTest>
 
+#include "experiment_bridge.hpp"
+#include "experiment_fixture.hpp"
+#include "experiment_window.hpp"
+#include "executor_pane.hpp"
 #include "fixtures.hpp"
+#include "pychron/experiment/model/queue_file.hpp"
+#include "pychron/processing/record_source.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "processing_bridge.hpp"
@@ -281,6 +291,19 @@ int points(const SceneView* view) {
 bool says_no_analyses(const SceneView* view) {
   const auto& scene = view->scene();
   return scene && std::ranges::find(scene->warnings, std::string("no analyses")) != scene->warnings.end();
+}
+
+// The uuids of every point of a view's scene.
+std::set<std::string> scene_uuids(const SceneView* view) {
+  std::set<std::string> out;
+  const auto& scene = view->scene();
+  if (!scene) return out;
+  for (const auto& graph : scene->graphs)
+    for (const auto& panel : graph.panels)
+      for (const auto& layer : panel.layers)
+        if (const auto* p = std::get_if<pp::PointLayer>(&layer))
+          for (const auto& ref : p->refs) out.insert(ref.analysis);
+  return out;
 }
 
 SceneView* blanks(const ReferenceSeriesDock& d) { return d.view(ReferenceKind::Blanks); }
@@ -724,6 +747,80 @@ class TestReferenceSeries : public QObject {
     QVERIFY(rig.bridge.wait_idle());
     QCOMPARE(points(blanks(*dock)), 3);
     QVERIFY(rig.delays.empty());
+  }
+
+  // ---- in the experiment window (Task 6; the spec's window test, section 8)
+
+  // A queue of blank, air, unknown, blank on the simulated lab, whose record
+  // files are the source (no UI fixture has a store): the dock follows it with
+  // no call from the test, and a fifth run, a blank, adds a point the same way.
+  void theQueueOfBlankAirUnknownBlank() {
+    namespace fs = std::filesystem;
+    pychron::ui::test::SimLab sim;
+    QTemporaryDir dir;
+    // The folder the session writes its records to.
+    pp::RecordDirectorySource records(sim.dir / "data" / "records");
+    pp::PresetStore presets((dir.path() + QStringLiteral("/presets")).toStdString());
+    ProcessingBridge processing(records);
+    pychron::ui::ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::ExperimentWindow window(
+        bridge, true, std::make_unique<QSettings>(dir.path() + QStringLiteral("/ui.ini"), QSettings::IniFormat));
+    window.set_references(&processing, &presets);
+    ReferenceSeriesDock* dock = window.references();
+    QVERIFY(dock != nullptr);
+
+    // By hand: no example queue has this order. Without embedded Python the
+    // scripts are dropped; the air run is still typed air by its identifier.
+    auto queue = sim.queue();
+    queue.delays.before_analyses = pychron::experiment::Duration{0};
+    queue.delays.between_analyses = pychron::experiment::Duration{0};
+    queue.delays.after_blank = pychron::experiment::Duration{0};
+    const auto blank = queue.runs.at(0);
+    const auto unknown = queue.runs.at(1);
+    QCOMPARE(QString::fromStdString(blank.id.identifier), QStringLiteral("bu"));
+    QCOMPARE(QString::fromStdString(unknown.id.identifier), QStringLiteral("66001"));
+    auto air = blank;
+    air.id.identifier = "a";
+    air.id.type = pychron::experiment::AnalysisType::Air;
+    queue.runs = {blank, air, unknown, blank};
+    const fs::path file = sim.dir / "references.toml";
+    QVERIFY(pychron::experiment::save_queue_file(file.string(), queue));
+    QString error;
+    QVERIFY2(window.load_queue(file, &error), qPrintable(error));
+    window.show();
+
+    auto* pane = window.executor();
+    pane->request_start();
+    QVERIFY(pane->running());
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 120000);
+    using pychron::experiment::run::RunState;
+    for (int row = 0; row < 4; ++row) QCOMPARE(window.model().status(row), std::optional<RunState>(RunState::Success));
+    QTRY_COMPARE_WITH_TIMEOUT(points(blanks(*dock)), 2, 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(points(airs(*dock)), 1, 20000);
+
+    // The unknown was saved, and is in neither tab.
+    QVERIFY(records.refresh());
+    pp::BrowseQuery unknowns;
+    unknowns.analysis_types = {"unknown"};
+    const auto found = records.browse(unknowns);
+    QVERIFY(found);
+    QCOMPARE(found->rows.size(), std::size_t{1});
+    const std::string unknown_uuid = found->rows.front().uuid;
+    QVERIFY(!scene_uuids(blanks(*dock)).contains(unknown_uuid));
+    QVERIFY(!scene_uuids(airs(*dock)).contains(unknown_uuid));
+
+    // A fifth run, a blank.
+    auto fifth = queue;
+    fifth.runs = {blank};
+    const fs::path again = sim.dir / "fifth.toml";
+    QVERIFY(pychron::experiment::save_queue_file(again.string(), fifth));
+    QVERIFY2(window.load_queue(again, &error), qPrintable(error));
+    pane->request_start();
+    QVERIFY(pane->running());
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
+    QTRY_COMPARE_WITH_TIMEOUT(points(blanks(*dock)), 3, 20000);
+    QCOMPARE(points(airs(*dock)), 1);
+    window.set_references(nullptr, nullptr);  // before the bridge it reads through
   }
 
   void destroyingItWithAReadInFlightIsSafe() {

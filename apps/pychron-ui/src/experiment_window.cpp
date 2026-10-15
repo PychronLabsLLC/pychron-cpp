@@ -28,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include "pychron/experiment/model/queue_file.hpp"
+#include "reference_series_dock.hpp"
 #include "strip_chart_model.hpp"
 #include "theme.hpp"
 
@@ -178,6 +179,11 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
     update_state();
   });
 
+  // What the References dock asked to have done later: looked at as often as
+  // the timeline ticks, against the same clock.
+  later_clock_.setInterval(250);
+  connect(&later_clock_, &QTimer::timeout, this, [this] { run_due(); });
+
   default_layout();  // the saved one, if any, wins below
   layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(), QStringLiteral("experiment_window"));
   layouts_->restore_last();
@@ -197,10 +203,89 @@ void ExperimentWindow::default_layout() {
   tabifyDockWidget(factory_dock_, measurement_dock_);
   for (QDockWidget* dock : {executor_dock_, evolutions_dock_, factory_dock_, measurement_dock_}) dock->show();
   factory_dock_->raise();
+  if (references_dock_ != nullptr) {
+    // Behind the evolutions, which stay in front.
+    references_dock_->setFloating(false);
+    addDockWidget(Qt::RightDockWidgetArea, references_dock_);
+    tabifyDockWidget(evolutions_dock_, references_dock_);
+    references_dock_->show();
+    evolutions_dock_->raise();
+  }
   resizeDocks({evolutions_dock_, factory_dock_}, {500, 380}, Qt::Horizontal);
   resizeDocks({executor_dock_}, {300}, Qt::Vertical);
   addToolBar(Qt::TopToolBarArea, toolbar_);
   toolbar_->show();
+}
+
+void ExperimentWindow::set_references(ProcessingBridge* bridge, processing::PresetStore* presets) {
+  if (references_dock_ != nullptr) {
+    // Its reads again after a saved run go with it; the dock lets go of its
+    // channels on the bridge it was given, which is still there.
+    later_.clear();
+    later_clock_.stop();
+    removeDockWidget(references_dock_);
+    delete references_dock_;
+    references_dock_ = nullptr;
+    references_ = nullptr;
+  }
+  if (bridge == nullptr || presets == nullptr) return;
+
+  ReferenceSeriesDock::Deps deps;
+  deps.bridge = bridge;
+  deps.presets = presets;
+  deps.wall_now = [this] {
+    return std::chrono::duration<double>(bridge_.session().wall_now().time_since_epoch()).count();
+  };
+  deps.mass_spectrometer = [this] { return model_.queue().mass_spectrometer; };
+  deps.settings = settings_.get();
+  deps.later = [this](std::chrono::seconds delay, std::function<void()> what) { later(delay, std::move(what)); };
+  references_ = new ReferenceSeriesDock(std::move(deps));
+  references_dock_ = new QDockWidget(tr("References"), this);
+  references_dock_->setObjectName(QStringLiteral("ExperimentReferencesDock"));
+  references_dock_->setWidget(references_);
+  // The window's last layout was applied before there was this dock. Qt kept
+  // what that layout said of it, if anything: a layout saved with the dock
+  // puts it back where it was left (once; a dock made again later, for
+  // another data source, finds nothing kept). One saved without it, or none,
+  // leaves it where the factory layout has it, behind the evolutions.
+  if (!restoreDockWidget(references_dock_)) {
+    addDockWidget(Qt::RightDockWidgetArea, references_dock_);
+    tabifyDockWidget(evolutions_dock_, references_dock_);
+    evolutions_dock_->raise();
+  }
+  // Queued: the run's save is done with before the dock reads for it. A run
+  // that was not saved has nothing new to show.
+  connect(
+      &bridge_, &ExperimentBridge::runFinished, references_,
+      [this](const exec::RunFinished& e) {
+        if (!e.summary.save_error && references_ != nullptr) references_->run_saved();
+      },
+      Qt::QueuedConnection);
+}
+
+void ExperimentWindow::references_follow(const std::string& before) {
+  // The dock draws the queue's spectrometer: another queue may have another.
+  if (references_ != nullptr && model_.queue().mass_spectrometer != before) references_->read();
+}
+
+void ExperimentWindow::later(std::chrono::seconds delay, std::function<void()> what) {
+  later_.push_back(Later{.at = bridge_.session().now() + delay, .what = std::move(what)});
+  if (!later_clock_.isActive()) later_clock_.start();
+}
+
+void ExperimentWindow::run_due() {
+  const TimePoint now = bridge_.session().now();
+  std::vector<std::function<void()>> due;
+  for (auto it = later_.begin(); it != later_.end();) {
+    if (it->at <= now) {
+      due.push_back(std::move(it->what));
+      it = later_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (later_.empty()) later_clock_.stop();
+  for (auto& what : due) what();  // may ask for more
 }
 
 void ExperimentWindow::build_actions() {
@@ -494,7 +579,9 @@ bool ExperimentWindow::load_queue(const std::filesystem::path& path, QString* er
   if (!resolve_unsaved()) return set_error(tr("cancelled"));
   auto q = experiment::load_queue_file(path.string(), bridge_.lab().ids);
   if (!q) return set_error(QString::fromStdString(q.error().what));
+  const std::string spectrometer = model_.queue().mass_spectrometer;
   model_.set_queue(std::move(*q));
+  references_follow(spectrometer);
   path_ = path;
   set_modified(false);
   settings_->setValue(QStringLiteral("experiment_window/last_queue"), QString::fromStdString(path.string()));
@@ -508,7 +595,9 @@ bool ExperimentWindow::new_queue(QString* error) {
   };
   if (bridge_.running()) return set_error(tr("a queue is running"));
   if (!resolve_unsaved()) return set_error(tr("cancelled"));
+  const std::string spectrometer = model_.queue().mass_spectrometer;
   model_.set_queue({});
+  references_follow(spectrometer);
   path_.reset();
   set_modified(false);
   return true;

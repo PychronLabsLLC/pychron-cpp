@@ -364,6 +364,7 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
                                               experiment_settings_ ? experiment_settings_() : nullptr, this);
     experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
     experiment_window_->factory()->set_identifier_source(identifier_source_);
+    give_references();
     if (experiment_queue_) {
       QString error;
       if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
@@ -508,9 +509,19 @@ MainWindow::~MainWindow() {
   set_data(nullptr, nullptr);
 }
 
-void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets) {
+void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets, bool session_store) {
+  // The References dock reads through the workspace's bridge, which
+  // set_source destroys: the dock goes first.
+  if (experiment_window_ != nullptr) experiment_window_->set_references(nullptr, nullptr);
   data_->set_source(source, presets);
+  presets_ = presets;
+  session_store_ = session_store && source != nullptr && presets != nullptr;
   data_action_->setEnabled(data_->enabled());
+  give_references();
+}
+
+void MainWindow::give_references() {
+  if (experiment_window_ != nullptr && session_store_) experiment_window_->set_references(processing_bridge(), presets_);
 }
 
 void MainWindow::set_data_unavailable(const QString& reason) { data_->set_unavailable(reason); }

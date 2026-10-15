@@ -13,6 +13,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDockWidget>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -36,6 +37,7 @@
 #include "data_browser_window.hpp"
 #include "experiment_bridge.hpp"
 #include "experiment_fixture.hpp"
+#include "experiment_window.hpp"
 #include "theme.hpp"
 #include "data_workspace.hpp"
 #include "figure_window.hpp"
@@ -2400,6 +2402,53 @@ class TestDataWindows : public QObject {
       emit other.runFinished({});
       QTRY_COMPARE(src.refreshes, opened + 3);
       window.set_experiment(nullptr, false);
+    }
+  }
+
+  // The experiment window's References dock is given only over the store the
+  // session saves to (main.cpp says which), whether the window is made before
+  // or after the data; and it goes before the data workspace's bridge does.
+  void main_window_gives_references_only_over_the_session_store() {
+    ui::test::SimLab sim;
+    QTemporaryDir dir;
+    pp::MemorySource src;
+    pp::PresetStore presets(dir.path().toStdString());
+    const auto has_dock = [](const ui::MainWindow& window) {
+      return window.experiment_window() != nullptr &&
+             window.experiment_window()->findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock")) != nullptr;
+    };
+    ui::ExperimentBridge bridge(*sim.session, sim.line->bus());
+    {
+      // The records folder, or a database that could not be opened: none.
+      ui::MainWindow window(*sim.line);
+      window.set_data(&src, &presets);
+      window.set_experiment(&bridge, true, std::nullopt,
+                            [&dir] { return std::make_unique<QSettings>(dir.filePath("a.ini"), QSettings::IniFormat); });
+      window.experiment_action()->trigger();
+      QVERIFY(window.experiment_window() != nullptr);
+      QVERIFY(!has_dock(window));
+      QVERIFY(window.experiment_window()->references() == nullptr);
+      // The session's store, set on a window that exists.
+      window.set_data(&src, &presets, true);
+      QVERIFY(has_dock(window));
+      QVERIFY(window.experiment_window()->references() != nullptr);
+      window.set_data(nullptr, nullptr, true);  // no data: no dock
+      QVERIFY(!has_dock(window));
+      window.set_experiment(nullptr, false);
+    }
+    {
+      // The session's store, given before the window is made.
+      ui::MainWindow window(*sim.line);
+      window.set_data(&src, &presets, true);
+      window.set_experiment(&bridge, true, std::nullopt,
+                            [&dir] { return std::make_unique<QSettings>(dir.filePath("b.ini"), QSettings::IniFormat); });
+      window.experiment_action()->trigger();
+      QVERIFY(has_dock(window));
+      window.set_data(&src, &presets);  // another source, not the session's
+      QVERIFY(!has_dock(window));
+      window.set_data(&src, &presets, true);
+      QVERIFY(has_dock(window));
+      // Destroyed with the dock there: it goes before the bridge.
     }
   }
 

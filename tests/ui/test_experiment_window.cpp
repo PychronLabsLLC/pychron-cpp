@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -26,6 +28,10 @@
 #include <QtTest/QtTest>
 
 #include "conditionals_editor_window.hpp"
+#include "processing_bridge.hpp"
+#include "pychron/processing/options.hpp"
+#include "pychron/processing/source.hpp"
+#include "reference_series_dock.hpp"
 #include "experiment_bridge.hpp"
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
@@ -79,6 +85,62 @@ struct RefusingPersister : pychron::experiment::persist::IAnalysisPersister {
   }
 };
 
+// What the References dock reads: counts the refreshes the dock asks the
+// bridge for (one a tab a read), and can hold one until released.
+class RefreshCountingSource : public pychron::processing::MemorySource {
+ public:
+  pychron::Result<void> refresh() override {
+    std::unique_lock lock(mutex_);
+    ++refreshes_;
+    if (closed_) {
+      ++held_;
+      gate_.wait(lock, [this] { return !closed_; });
+      --held_;
+    }
+    return {};
+  }
+  int refreshes() const {
+    const std::lock_guard lock(mutex_);
+    return refreshes_;
+  }
+  int held() const {
+    const std::lock_guard lock(mutex_);
+    return held_;
+  }
+  void close() {
+    const std::lock_guard lock(mutex_);
+    closed_ = true;
+  }
+  void open() {
+    {
+      const std::lock_guard lock(mutex_);
+      closed_ = false;
+    }
+    gate_.notify_all();
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::condition_variable gate_;
+  bool closed_ = false;
+  int refreshes_ = 0;
+  int held_ = 0;
+};
+
+// What set_references is given, declared before any window that is given it.
+struct References {
+  QTemporaryDir dir;
+  RefreshCountingSource source;
+  std::unique_ptr<pychron::ui::ProcessingBridge> bridge = std::make_unique<pychron::ui::ProcessingBridge>(source);
+  pychron::processing::PresetStore presets{(dir.path() + QStringLiteral("/presets")).toStdString()};
+};
+
+pychron::experiment::executor::RunFinished finished_run(bool save_error) {
+  pychron::experiment::executor::RunFinished e;
+  e.summary.save_error = save_error;
+  return e;
+}
+
 class TestExperimentWindow : public QObject {
   Q_OBJECT
 
@@ -93,6 +155,13 @@ class TestExperimentWindow : public QObject {
     const fs::path p = sim.dir / name;
     if (!pychron::experiment::save_queue_file(p.string(), sim.queue())) qFatal("cannot write the queue");
     return p;
+  }
+  // The title of the dock in front among those tabbed with `title`, or empty.
+  static QString in_front_of(const QMainWindow& window, const QString& title) {
+    for (const QTabBar* bar : window.findChildren<QTabBar*>(QString(), Qt::FindDirectChildrenOnly))
+      for (int i = 0; i < bar->count(); ++i)
+        if (bar->tabText(i) == title) return bar->tabText(bar->currentIndex());
+    return {};
   }
   static bool contains(const QStringList& lines, const QString& text) {
     for (const auto& l : lines)
@@ -174,6 +243,230 @@ class TestExperimentWindow : public QObject {
     QVERIFY(again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
     QVERIFY(again.dock_layouts()->apply(QStringLiteral("quiet")));
     QVERIFY(!again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+  }
+
+  // ---- the References dock -------------------------------------------------------
+
+  void aWindowGivenReferencesHasTheDock() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    ExperimentWindow window(bridge, true, settings());
+    window.set_references(refs.bridge.get(), &refs.presets);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* dock = window.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock"));
+    auto* evolutions = window.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"));
+    QVERIFY(dock != nullptr && evolutions != nullptr);
+    QVERIFY(window.references() != nullptr);
+    QCOMPARE(dock->widget(), window.references());
+    QCOMPARE(dock->windowTitle(), QStringLiteral("References"));
+    QVERIFY(window.tabifiedDockWidgets(evolutions).contains(dock));
+    QCOMPARE(window.dockWidgetArea(dock), Qt::RightDockWidgetArea);
+    QVERIFY(!dock->isFloating());
+    QTRY_COMPARE(in_front_of(window, QStringLiteral("References")), QStringLiteral("Evolutions"));
+    QStringList panels;
+    for (const QAction* action : window.dock_layouts()->panel_actions()) panels.append(action->text());
+    QVERIFY2(panels.contains(QStringLiteral("References")), qPrintable(panels.join(QLatin1Char(','))));
+
+    // Reset Layout puts it back behind the evolutions.
+    dock->setFloating(true);
+    window.dock_layouts()->reset();
+    QVERIFY(!dock->isFloating());
+    QVERIFY(window.tabifiedDockWidgets(evolutions).contains(dock));
+    QTRY_COMPARE(in_front_of(window, QStringLiteral("References")), QStringLiteral("Evolutions"));
+    window.set_references(nullptr, nullptr);
+  }
+
+  void aWindowNotGivenThemHasNone() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock")) == nullptr);
+    QVERIFY(window.references() == nullptr);
+    window.set_references(refs.bridge.get(), nullptr);  // both, or none
+    QVERIFY(window.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock")) == nullptr);
+    window.set_references(nullptr, &refs.presets);
+    QVERIFY(window.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock")) == nullptr);
+    for (const QAction* action : window.dock_layouts()->panel_actions())
+      QVERIFY(action->text() != QStringLiteral("References"));
+  }
+
+  void aSavedRunIsFollowedByARead() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    ExperimentWindow window(bridge, true, settings());
+    window.set_references(refs.bridge.get(), &refs.presets);
+    QCOMPARE(refs.source.refreshes(), 0);  // behind the evolutions: not read yet
+    emit bridge.runFinished(finished_run(false));
+    QTRY_COMPARE(refs.source.refreshes(), 2);  // a tab, a refresh
+    QVERIFY(refs.bridge->wait_idle());
+    window.set_references(nullptr, nullptr);
+  }
+
+  void aRunThatWasNotSavedIsNot() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    ExperimentWindow window(bridge, true, settings());
+    window.set_references(refs.bridge.get(), &refs.presets);
+    emit bridge.runFinished(finished_run(true));
+    QCoreApplication::processEvents();  // the connection is queued
+    QVERIFY(refs.bridge->wait_idle());
+    QCoreApplication::processEvents();
+    QCOMPARE(refs.source.refreshes(), 0);
+    window.set_references(nullptr, nullptr);
+  }
+
+  // The dock draws the queue's spectrometer: a queue of another is read for.
+  void aQueueOfAnotherSpectrometerIsReadFor() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    ExperimentWindow window(bridge, true, settings());
+    window.set_references(refs.bridge.get(), &refs.presets);
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));  // "sim", from none
+    QTRY_COMPARE(refs.source.refreshes(), 2);
+    QVERIFY(refs.bridge->wait_idle());
+    QVERIFY2(window.load_queue(queue_file(sim, "same.toml"), &error), qPrintable(error));
+    QVERIFY(refs.bridge->wait_idle());
+    QCoreApplication::processEvents();
+    QCOMPARE(refs.source.refreshes(), 2);  // the same spectrometer: nothing to read again
+    QVERIFY(window.new_queue(&error));     // none: any
+    QTRY_COMPARE(refs.source.refreshes(), 4);
+    QVERIFY(refs.bridge->wait_idle());
+    window.set_references(nullptr, nullptr);
+  }
+
+  void aLayoutSavedWithTheDockPlacesItAgain() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.set_references(refs.bridge.get(), &refs.presets);
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock"))->close();
+      QVERIFY(window.close());  // keeps the layout
+      window.set_references(nullptr, nullptr);
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.set_references(refs.bridge.get(), &refs.presets);
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    auto* dock = again.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock"));
+    QVERIFY(dock != nullptr);
+    QVERIFY(dock->isHidden());
+    QVERIFY(again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->isVisible());
+    again.set_references(nullptr, nullptr);
+  }
+
+  void aLayoutSavedBeforeTheDockStillPlacesIt() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      QVERIFY(window.close());  // a layout with no References dock in it
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.set_references(refs.bridge.get(), &refs.presets);
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    auto* dock = again.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock"));
+    auto* evolutions = again.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"));
+    QVERIFY(dock != nullptr && evolutions != nullptr);
+    QVERIFY(!dock->isHidden());
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(again.dockWidgetArea(dock), Qt::RightDockWidgetArea);
+    QVERIFY(again.tabifiedDockWidgets(evolutions).contains(dock));
+    QTRY_COMPARE(in_front_of(again, QStringLiteral("References")), QStringLiteral("Evolutions"));
+    again.set_references(nullptr, nullptr);
+  }
+
+  // A named arrangement kept before the window had the dock leaves it shown.
+  void anArrangementSavedWithoutTheDockLeavesItShown() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      QVERIFY(window.dock_layouts()->save_as(QStringLiteral("before")));
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.set_references(refs.bridge.get(), &refs.presets);
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    QVERIFY(again.dock_layouts()->apply(QStringLiteral("before")));
+    auto* dock = again.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock"));
+    QVERIFY(dock != nullptr);
+    // Where it was when the arrangement was applied: Qt moves only the docks it names.
+    QVERIFY(!dock->isHidden());
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(again.dockWidgetArea(dock), Qt::RightDockWidgetArea);
+    again.set_references(nullptr, nullptr);
+  }
+
+  // A layout kept with the evolutions closed, and no dock.
+  void aLayoutWithTheEvolutionsClosedStillShowsTheDock() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      window.findChild<QDockWidget*>(QStringLiteral("ExperimentEvolutionsDock"))->close();
+      QVERIFY(window.close());
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    again.set_references(refs.bridge.get(), &refs.presets);
+    again.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&again));
+    auto* dock = again.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock"));
+    QVERIFY(dock != nullptr);
+    QVERIFY(!dock->isHidden());
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(again.dockWidgetArea(dock), Qt::RightDockWidgetArea);
+    again.set_references(nullptr, nullptr);
+  }
+
+  // As MainWindow::set_data does before the data workspace's bridge goes.
+  void closingTheDataFirstTakesTheDockAway() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    References refs;
+    ExperimentWindow window(bridge, true, settings());
+    window.set_references(refs.bridge.get(), &refs.presets);
+    refs.source.close();
+    emit bridge.runFinished(finished_run(false));
+    QTRY_COMPARE_WITH_TIMEOUT(refs.source.held(), 1, 5000);  // a read in flight
+    window.set_references(nullptr, nullptr);
+    QVERIFY(window.findChild<QDockWidget*>(QStringLiteral("ExperimentReferencesDock")) == nullptr);
+    QVERIFY(window.references() == nullptr);
+    refs.source.open();
+    QVERIFY(refs.bridge->wait_idle());
+    const int seen = refs.source.refreshes();
+    refs.bridge.reset();  // the bridge goes, as set_source destroys it
+    emit bridge.runFinished(finished_run(false));
+    QCoreApplication::processEvents();  // the connection is queued
+    QCOMPARE(refs.source.refreshes(), seen);
   }
 
   void runsTheExampleQueue() {

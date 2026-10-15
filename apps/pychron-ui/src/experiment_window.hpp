@@ -11,16 +11,25 @@
 // queue edits). Closing asks about unsaved edits (Cancel keeps the window open)
 // and, while running, whether to stop the queue; the queue keeps running if
 // the window is only hidden.
+//
+// Given the data workspace's ProcessingBridge and figure presets
+// (set_references), it has a References dock beside the evolutions: the
+// recent blanks and airs of the queue's spectrometer, read again after each
+// saved run (docs/superpowers/specs/2026-10-13-experiment-reference-series-design.md).
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include <QList>
 #include <QMainWindow>
 #include <QSettings>
 #include <QString>
+#include <QTimer>
 
 #include "dock_layouts.hpp"
 
@@ -28,6 +37,7 @@
 #include "evolutions_view.hpp"
 #include "executor_pane.hpp"
 #include "experiment_bridge.hpp"
+#include "pychron/core/clock.hpp"
 #include "queue_table_model.hpp"
 #include "measurement_panel.hpp"
 #include "run_factory_panel.hpp"
@@ -40,7 +50,14 @@ class QLabel;
 class QTableView;
 class QToolBar;
 
+namespace pychron::processing {
+class PresetStore;
+}
+
 namespace pychron::ui {
+
+class ProcessingBridge;
+class ReferenceSeriesDock;
 
 class ExperimentWindow : public QMainWindow {
   Q_OBJECT
@@ -61,6 +78,14 @@ class ExperimentWindow : public QMainWindow {
   EvolutionsView* evolutions() const noexcept { return evolutions_; }
   RunFactoryPanel* factory() const noexcept { return factory_; }
   MeasurementPanel* measurement() const noexcept { return measurement_; }
+
+  // The References dock (reference-series design 5.1), made when both are
+  // given and taken away when either is null. Both must outlive the dock:
+  // call set_references(nullptr, nullptr) before either goes. Given only
+  // when the data source is the store the session saves to.
+  void set_references(ProcessingBridge* bridge, processing::PresetStore* presets);
+  // Null without one.
+  ReferenceSeriesDock* references() const noexcept { return references_; }
   // Null until first opened.
   ScriptEditorWindow* script_editor() const noexcept { return script_editor_; }
   ScriptEditorWindow* open_script_editor();
@@ -119,6 +144,12 @@ class ExperimentWindow : public QMainWindow {
   bool resolve_unsaved();
   void set_modified(bool modified);
   void default_layout();
+  // The References dock reads again when the queue's spectrometer is no
+  // longer `before`.
+  void references_follow(const std::string& before);
+  // Calls `what` once, `delay` later on the session's clock, on this thread.
+  void later(std::chrono::seconds delay, std::function<void()> what);
+  void run_due();
   void update_title();
   void update_state();
   void save_as_dialog();
@@ -134,6 +165,14 @@ class ExperimentWindow : public QMainWindow {
   QDockWidget* evolutions_dock_ = nullptr;
   QDockWidget* factory_dock_ = nullptr;
   QDockWidget* measurement_dock_ = nullptr;
+  QDockWidget* references_dock_ = nullptr;
+  ReferenceSeriesDock* references_ = nullptr;
+  struct Later {
+    TimePoint at;
+    std::function<void()> what;
+  };
+  std::vector<Later> later_;
+  QTimer later_clock_;  // looks at the session's clock while something waits in later_
   QToolBar* toolbar_ = nullptr;
   QueueTableModel model_;
   QTableView* table_;

@@ -123,7 +123,10 @@ class MainWindow : public QMainWindow {
   // Enables View > Data (browser, recall and figure windows) over `source`
   // with figure presets from `presets` (null disables it and closes every data
   // window). Both must outlive the main window or be cleared first.
-  void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets);
+  // `session_store`: `source` is the store the session saves its runs to;
+  // only then does the experiment window get its References dock (not over
+  // the records folder, nor a database that could not be opened).
+  void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets, bool session_store = false);
   // Why the data window has less than was expected (a database that could
   // not be opened): DataBrowserWindow::set_unavailable, whenever it is made.
   void set_data_unavailable(const QString& reason);
@@ -171,6 +174,8 @@ class MainWindow : public QMainWindow {
 
  private:
   ExperimentWindow* ensure_experiment_window();  // made on first use; nullptr without a session
+  // The experiment window's References dock, as set_data said.
+  void give_references();
   ExperimentWindow* show_experiment_window();    // and brought to the front
   void build_file_entries();
   // The window in front, to open a dialog over: not a dialog itself, and
@@ -201,6 +206,8 @@ class MainWindow : public QMainWindow {
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
+  processing::PresetStore* presets_ = nullptr;  // set_data's
+  bool session_store_ = false;                  // set_data's: the experiment window gets References
   QPointer<IdentifierSource> identifier_source_;
   QList<QAction*> file_entries_;  // File > New and File > Open: live while there is a session
   QAction* data_action_;

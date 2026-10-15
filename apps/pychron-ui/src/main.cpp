@@ -566,7 +566,16 @@ int main(int argc, char** argv) {
     if (const auto& dir = (*line)->config().logging.dir; !dir.empty()) {
       window.log_dock()->load_history(dir / "pychron.log");
     }
-    window.set_data(&data_source, &presets);
+    // The experiment window shows the recent references only when what the
+    // data window reads is where the session saves its runs: the store, with
+    // the session saving to it (not the records folder, not a database that
+    // could not be opened, not a simulated session that writes files).
+#ifdef PYCHRON_UI_HAS_STORE
+    const bool session_store = store_source != nullptr && acquisition != nullptr;
+#else
+    const bool session_store = false;
+#endif
+    window.set_data(&data_source, &presets, session_store);
 #ifdef PYCHRON_UI_HAS_STORE
     // The Entry and Fit menus, parented to the window, Entry made first (fit_actions.hpp).
     if (!database.empty()) {
