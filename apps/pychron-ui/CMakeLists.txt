@@ -64,6 +64,7 @@ add_library(pychron_ui_lib STATIC
   src/figure_window.cpp
   src/reference_fit_window.cpp
   src/reference_series.cpp
+  src/reference_series_dock.cpp
   src/preset_bar.cpp
   src/isotope_evolution_window.cpp
   src/theme.cpp
@@ -145,6 +146,7 @@ add_library(pychron_ui_lib STATIC
   src/figure_window.hpp
   src/reference_fit_window.hpp
   src/reference_series.hpp
+  src/reference_series_dock.hpp
   src/preset_bar.hpp
   src/isotope_evolution_window.hpp
   src/theme.hpp

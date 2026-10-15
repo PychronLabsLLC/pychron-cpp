@@ -153,7 +153,7 @@ simulated time (AGENTS.md, Time).
   after a queue of blank, air, unknown, blank: Blanks has two points and
   Airs one; the unknown is in neither; a further blank adds a point without
   touching the dock; Reset empties the tabs and the next reference returns
-  one; N = 1 shows the newest only; a session without a store has no dock.
+  one; N = 5 shows newest five only (dock min 5); a session without a store has no dock.
 - Preset kept per type across two windows.
 - Changes `apps/pychron-ui`: final run is `dev-ui`. A query added: numbers
   from `StoreLoadTiming`-style timing on a lab's store copy in the commit
