@@ -1,7 +1,9 @@
 # Isotope evolutions: one panel a series
 
-Status: draft 2026-10-14, from brainstorm with owner (task T018). Owner's
-decisions in section 9. Nothing built.
+Status: agreed 2026-10-14 (owner; decisions in section 9). Plan:
+`docs/superpowers/plans/2026-10-14-isotope-evolutions-split.md`; 4.5's
+ranges made pairs there (no QCustomPlot type in the header). From task
+T018. Nothing built.
 
 ## 1. Asked for
 
@@ -112,9 +114,10 @@ of one series onto another.
 
 ```cpp
 static constexpr int kPanelMinHeight = 80;
-[[nodiscard]] QStringList panel_titles() const;     // top to bottom, shown kind
-[[nodiscard]] QCPRange panel_x_range(int i) const;  // 0 = top
-[[nodiscard]] QCPRange panel_y_range(int i) const;
+[[nodiscard]] QStringList panel_titles() const;                      // top to bottom, shown kind
+[[nodiscard]] std::pair<double, double> panel_x_range(int i) const;  // (lower, upper); 0 = top
+[[nodiscard]] std::pair<double, double> panel_y_range(int i) const;
+[[nodiscard]] bool panel_has_time_labels(int i) const;
 [[nodiscard]] QScrollArea* scroll_area() const;
 ```
 
