@@ -6,7 +6,6 @@
 #include <set>
 #include <utility>
 
-#include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -52,9 +51,9 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
     : QWidget(parent),
       colors_(std::move(colors)),
       tabs_(new QTabBar),
-      focus_box_(new QComboBox),
       title_(new QLabel),
       plot_(new QCustomPlot),
+      margins_(new QCPMarginGroup(plot_)),
       peaks_(new QListWidget),
       intercepts_(new QTableWidget) {
   auto* layout = new QVBoxLayout(this);
@@ -64,10 +63,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
     if (!name.isEmpty()) name[0] = name[0].toUpper();
     tabs_->addTab(name);
   }
-  auto* top = new QHBoxLayout;
-  top->addWidget(tabs_, 1);
-  top->addWidget(focus_box_);
-  layout->addLayout(top);
+  layout->addWidget(tabs_);
   layout->addWidget(title_);
   layout->addWidget(plot_, 1);
   layout->addWidget(new QLabel(tr("Intercepts")));
@@ -88,20 +84,8 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   layout->addWidget(peaks_);
 
   plot_->setMinimumHeight(200);
-  plot_->axisRect()->setBackground(QBrush(theme().plot_bg));
-  plot_->xAxis->setLabel(tr("Time (s)"));
-  plot_->yAxis->setLabel(tr("Intensity"));
-  plot_->legend->setVisible(false);  // shown once there are graphs
   plot_->setPlottingHint(QCP::phFastPolylines, true);
-
-  connect(focus_box_, &QComboBox::activated, this, [this](int i) {
-    if (i <= 0) {
-      set_focus(std::nullopt);
-      return;
-    }
-    const QStringList parts = focus_box_->itemData(i).toStringList();
-    set_focus(SeriesKey{parts.value(0).toStdString(), parts.value(1).toStdString(), kind_});
-  });
+  rebuild();  // no panels yet: the default axis rect goes
   connect(tabs_, &QTabBar::currentChanged, this, [this](int i) {
     if (i >= 0 && std::cmp_less(i, std::size(kKinds))) set_kind(kKinds[i]);
   });
@@ -115,7 +99,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
 
 void EvolutionsView::clear() {
   lines_.clear();
-  fill_focus();  // the focus stays chosen for the next run's series
+  arrived_.clear();
   peaks_->clear();
   block_.clear();
   rebuild();
@@ -152,6 +136,7 @@ void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpda
           }
         }
         it = lines_.emplace(key, std::move(line)).first;
+        arrived_.push_back(key);
         new_line |= key.kind == kind_;
       }
       it->second.t.push_back(u.t);
@@ -160,10 +145,7 @@ void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpda
     block_ = QStringLiteral("%1 %2/%3").arg(QString::fromStdString(u.label)).arg(u.count).arg(u.target);
   }
   title_->setText(block_.isEmpty() ? run_ : QStringLiteral("%1 — %2").arg(run_, block_));
-  if (new_line) {
-    fill_focus();
-    rebuild();
-  }
+  if (new_line) rebuild();
   dirty_ = true;
 }
 
@@ -190,39 +172,9 @@ void EvolutionsView::on_fits(const std::vector<experiment::collect::FitsUpdated>
   dirty_ = true;
 }
 
-void EvolutionsView::set_focus(std::optional<SeriesKey> key) {
-  focus_ = std::move(key);
-  fill_focus();
-  rebuild();
-  refresh();
-}
-
-void EvolutionsView::fill_focus() {
-  const QSignalBlocker block(focus_box_);
-  focus_box_->clear();
-  focus_box_->addItem(tr("All series"));
-  for (const auto& [key, line] : lines_)
-    if (key.kind == kind_)
-      focus_box_->addItem(series_name(key), QStringList{QString::fromStdString(key.isotope), QString::fromStdString(key.detector)});
-  int current = 0;
-  if (focus_)
-    for (int i = 1; i < focus_box_->count(); ++i) {
-      const QStringList parts = focus_box_->itemData(i).toStringList();
-      if (parts.value(0).toStdString() == focus_->isotope && parts.value(1).toStdString() == focus_->detector) current = i;
-    }
-  focus_box_->setCurrentIndex(current);
-}
-
-QStringList EvolutionsView::focus_choices() const {
-  QStringList out;
-  for (int i = 0; i < focus_box_->count(); ++i) out.append(focus_box_->itemText(i));
-  return out;
-}
-
 void EvolutionsView::set_kind(SeriesKind kind) {
   if (kind == kind_) return;
   kind_ = kind;
-  if (focus_) focus_->kind = kind;  // the same isotope on the same detector, if it has this kind
   for (int i = 0; std::cmp_less(i, std::size(kKinds)); ++i)
     if (kKinds[i] == kind && tabs_->currentIndex() != i) tabs_->setCurrentIndex(i);
   rebuild();
@@ -230,47 +182,53 @@ void EvolutionsView::set_kind(SeriesKind kind) {
 }
 
 void EvolutionsView::rebuild() {
+  // Graphs first: they hang on the axes the layout's rects own.
   plot_->clearGraphs();
+  plot_->plotLayout()->clear();
   graphs_.clear();
-  for (const auto& [key, line] : lines_) {
-    if (key.kind != kind_ || (focus_ && !(key == *focus_))) continue;
-    Graphs g{key};
-    g.points = plot_->addGraph();
-    g.points->setName(series_name(key));
+  const auto panels = evolution_panels(arrived_, kind_);
+  for (std::size_t i = 0; i < panels.size(); ++i) {
+    const Line& line = lines_.at(panels[i].key);
+    auto* rect = new QCPAxisRect(plot_);  // owned by the layout
+    plot_->plotLayout()->addElement(static_cast<int>(i), 0, rect);
+    rect->setBackground(QBrush(theme().plot_bg));
+    rect->setMarginGroup(QCP::msLeft | QCP::msRight, margins_);
+    QCPAxis* x = rect->axis(QCPAxis::atBottom);
+    QCPAxis* y = rect->axis(QCPAxis::atLeft);
+    y->setLabel(panels[i].title);
+    // One time axis: labelled under the bottom panel only.
+    const bool bottom = i + 1 == panels.size();
+    x->setTickLabels(bottom);
+    x->setLabel(bottom ? tr("Time (s)") : QString());
+    Graphs g{panels[i].key, panels[i].title, rect};
+    g.points = plot_->addGraph(x, y);
     g.points->setPen(QPen(line.color, 1.5));
     g.points->setLineStyle(QCPGraph::lsNone);
     // Every point is clickable, and QCustomPlot 2.1.1's scatter thinning
     // divides by a zero pixel span when a column's points are off-range.
     g.points->setAdaptiveSampling(false);
     g.points->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle, line.color, line.color, 4));
-    g.curve = plot_->addGraph();
+    g.curve = plot_->addGraph(x, y);
     g.curve->setPen(QPen(line.color, 1.2));
-    g.curve->removeFromLegend();
-    g.intercept = plot_->addGraph();
+    g.intercept = plot_->addGraph(x, y);
     g.intercept->setLineStyle(QCPGraph::lsNone);
     g.intercept->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssDiamond, QPen(line.color.darker(150), 1.5),
                                                  QBrush(line.color), 9));
-    g.intercept->removeFromLegend();
+    g.excluded = plot_->addGraph(x, y);
+    g.excluded->setLineStyle(QCPGraph::lsNone);
+    g.excluded->setAdaptiveSampling(false);
+    g.excluded->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross, theme().muted_text, 9));
     graphs_.push_back(g);
   }
-  excluded_ = nullptr;
-  if (!graphs_.empty()) {
-    excluded_ = plot_->addGraph();
-    excluded_->setLineStyle(QCPGraph::lsNone);
-    excluded_->setAdaptiveSampling(false);
-    excluded_->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross, theme().muted_text, 9));
-    excluded_->removeFromLegend();
-  }
-  plot_->legend->setVisible(!graphs_.empty());  // an empty legend draws a stray box
   dirty_ = true;
 }
 
 void EvolutionsView::refresh() {
   constexpr int kCurveSamples = 48;
   dirty_ = false;
-  QVector<double> ex, ey;
   int row = 0;
   for (auto& g : graphs_) {
+    QVector<double> ex, ey;
     const Line& line = lines_.at(g.key);
     g.points->setData(line.t, line.v, true);
     QVector<double> cx, cy, ix, iy;
@@ -318,20 +276,58 @@ void EvolutionsView::refresh() {
     }
     g.curve->setData(cx, cy, true);
     g.intercept->setData(ix, iy, true);
+    g.excluded->setData(ex, ey);
   }
   intercepts_->setRowCount(row);
-  if (excluded_) excluded_->setData(ex, ey);
-  plot_->rescaleAxes();
   // A margin so the intercept marker at time zero and the extreme points are not clipped.
-  for (QCPAxis* axis : {plot_->xAxis, plot_->yAxis}) {
-    const QCPRange r = axis->range();
+  const auto padded = [](const QCPRange& r) {
     const double pad = r.size() > 0 ? r.size() * 0.04 : 1.0;
-    axis->setRange(r.lower - pad, r.upper + pad);
+    return QCPRange(r.lower - pad, r.upper + pad);
+  };
+  // Each panel's y is its own; x is one range over every panel.
+  std::optional<QCPRange> x;
+  for (const auto& g : graphs_) {
+    QCPAxis* y = g.rect->axis(QCPAxis::atLeft);
+    y->rescale();
+    y->setRange(padded(y->range()));
+    QCPAxis* t = g.rect->axis(QCPAxis::atBottom);
+    t->rescale();
+    if (x) {
+      x->expand(t->range());
+    } else {
+      x = t->range();
+    }
   }
+  if (x)
+    for (const auto& g : graphs_) g.rect->axis(QCPAxis::atBottom)->setRange(padded(*x));
   plot_->replot(QCustomPlot::rpQueuedReplot);
 }
 
 int EvolutionsView::graph_count() const { return static_cast<int>(graphs_.size()); }
+
+QStringList EvolutionsView::panel_titles() const {
+  QStringList out;
+  for (const auto& g : graphs_) out << g.title;
+  return out;
+}
+
+std::pair<double, double> EvolutionsView::panel_x_range(int i) const {
+  if (i < 0 || std::cmp_greater_equal(i, graphs_.size())) return {0, 0};
+  const QCPRange r = graphs_[static_cast<std::size_t>(i)].rect->axis(QCPAxis::atBottom)->range();
+  return {r.lower, r.upper};
+}
+
+std::pair<double, double> EvolutionsView::panel_y_range(int i) const {
+  if (i < 0 || std::cmp_greater_equal(i, graphs_.size())) return {0, 0};
+  const QCPRange r = graphs_[static_cast<std::size_t>(i)].rect->axis(QCPAxis::atLeft)->range();
+  return {r.lower, r.upper};
+}
+
+bool EvolutionsView::panel_has_time_labels(int i) const {
+  if (i < 0 || std::cmp_greater_equal(i, graphs_.size())) return false;
+  const QCPAxis* x = graphs_[static_cast<std::size_t>(i)].rect->axis(QCPAxis::atBottom);
+  return x->tickLabels() && !x->label().isEmpty();
+}
 
 int EvolutionsView::fit_curve_count() const {
   int n = 0;
