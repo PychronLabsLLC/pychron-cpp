@@ -556,6 +556,7 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
 
   std::optional<Error> error;
   bool had_gap = false;
+  bool ended_by_gap = false;
   auto status = collect::CollectStatus::Running;
   while (status == collect::CollectStatus::Running && !stopping()) {
     {
@@ -581,6 +582,7 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
       if (w->end != GapEnd::Resumed) {
         if (gap_from_) close_gap(block, ctx_.clock.now(), false);
         if (w->end == GapEnd::NotResumed && block == Block::Main) main_cut_ = true;
+        ended_by_gap = !stopping();
         break;
       }
       reading = std::move(w->reading);
@@ -590,7 +592,10 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
     status = collector_.add(*reading);
     if (ctx_.bus != nullptr)
       ctx_.bus->publish(CountsProgress{in_.run_id, block, collector_.count(), collector_.target()});
-    if (had_gap && status == collect::CollectStatus::Running && ctx_.clock.now() >= planned_end) break;
+    if (had_gap && status == collect::CollectStatus::Running && ctx_.clock.now() >= planned_end) {
+      ended_by_gap = true;
+      break;
+    }
   }
   collecting_ = false;
   collector_.finish();
@@ -610,7 +615,7 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
     }
     if (block == Block::Main) break_main_ = false;  // a non-resuming action ended main
   }
-  if (status == collect::CollectStatus::Running) status = collect::CollectStatus::Complete;  // ended by time
+  if (ended_by_gap && status == collect::CollectStatus::Running) status = collect::CollectStatus::Complete;
   return status;
 }
 
@@ -636,19 +641,24 @@ Result<MeasurementEngine::GapWait> MeasurementEngine::wait_out_gap(Block block, 
   while (!stopping()) {
     const TimePoint now = clock.now();
     if (now >= deadline) break;
-    const auto left = deadline - now;
-    auto r = ctx_.spectrometer.next_reading(std::min(timeout, std::chrono::duration_cast<pychron::Duration>(left)));
+    const auto left = std::chrono::duration_cast<pychron::Duration>(deadline - now);
+    auto r = ctx_.spectrometer.next_reading(std::min(timeout, left));
     if (r && *r) {
-      close_gap(block, clock.now(), true);
+      close_gap(block, (*r)->ts, true);
       return GapWait{GapEnd::Resumed, std::move(**r)};
     }
     if (!r) {
-      if (!is_transient(r.error().kind)) return fail(r.error());
+      if (!is_transient(r.error().kind)) {
+        close_gap(block, clock.now(), false);
+        return fail(r.error());
+      }
       silence_error_ = r.error().what;
     }
-    // A port that answered at once (its link is down) is asked again after a while.
-    if (clock.now() == now && !wait(std::chrono::duration<double>(std::min<pychron::Duration>(integration, left)).count()))
-      break;
+    // A port that answered sooner than an integration (its link is down) is
+    // asked again after one, so the wait is on the clock, not a spin.
+    const pychron::Duration step = integration > pychron::Duration::zero() ? integration : std::chrono::seconds(1);
+    const auto pause = std::min(step, left) - (clock.now() - now);
+    if (pause > pychron::Duration::zero() && !wait(std::chrono::duration<double>(pause).count())) break;
   }
   if (stopping() || clock.now() < max_end) return GapWait{GapEnd::Cap, std::nullopt};
   // max_gap has passed: the acquisition is started again once, if the link is back.
@@ -657,12 +667,16 @@ Result<MeasurementEngine::GapWait> MeasurementEngine::wait_out_gap(Block block, 
                                   " s; starting the acquisition again");
   ctx_.spectrometer.stop_acquisition();
   if (auto s = start_acquisition(integration); s) {
-    auto r = ctx_.spectrometer.next_reading(timeout);
-    if (r && *r) {
-      close_gap(block, clock.now(), true);
-      return GapWait{GapEnd::Resumed, std::move(**r)};
+    // No further than the cap: the planned end, or the inlet's next move.
+    const auto left = std::chrono::duration_cast<pychron::Duration>(cap - clock.now());
+    if (left > pychron::Duration::zero()) {
+      auto r = ctx_.spectrometer.next_reading(std::min(timeout, left));
+      if (r && *r) {
+        close_gap(block, (*r)->ts, true);
+        return GapWait{GapEnd::Resumed, std::move(**r)};
+      }
+      if (!r) silence_error_ = r.error().what;
     }
-    if (!r) silence_error_ = r.error().what;
   } else {
     silence_error_ = s.error().what;
   }
@@ -672,7 +686,8 @@ Result<MeasurementEngine::GapWait> MeasurementEngine::wait_out_gap(Block block, 
 
 void MeasurementEngine::close_gap(Block block, TimePoint to, bool resumed) {
   if (!gap_from_) return;
-  MeasurementGap gap{in_.run_id, block, collector_.seconds(*gap_from_), collector_.seconds(to), resumed, to};
+  MeasurementGap gap{in_.run_id, block, collector_.seconds(*gap_from_), collector_.seconds(to), resumed,
+                     ctx_.clock.now()};
   gap_from_.reset();
   publish_log(resumed ? LogLevel::Info : LogLevel::Warn, describe(gap));
   if (resumed) collector_.mark_gap(gap.to);  // windowed conditionals start again here
@@ -687,6 +702,7 @@ Result<void> MeasurementEngine::start_acquisition(pychron::Duration integration)
     publish_log(LogLevel::Warn, "acquisition start of unknown outcome: starting it again (" + r.error().what + ")");
     ctx_.spectrometer.stop_acquisition();
     r = ctx_.spectrometer.start_acquisition(integration);
+    if (!r) ctx_.spectrometer.stop_acquisition();  // it may have started after all
   }
   return r;
 }
@@ -711,10 +727,10 @@ Result<void> MeasurementEngine::close_inlet() {
 }
 
 Result<void> MeasurementEngine::check_main_counts() {
-  if (!main_gap_ && !main_cut_) return {};
+  if ((!main_gap_ && !main_cut_) || stopping()) return {};  // a stop is its own outcome
   int planned = 0;
   for (const auto& hop : in_.plan.main.hops)
-    if (!hop.baseline) planned += hop.counts;
+    if (!hop.baseline) planned += scaled(hop.counts);  // after a truncation, what it left
   planned *= in_.plan.main.cycles;
   std::size_t fit_minimum = 0;
   for (const auto& [key, kind] : in_.plan.fits.signal) {

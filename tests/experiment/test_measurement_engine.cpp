@@ -67,16 +67,20 @@ class FakeSpectrometer final : public ISpectrometerPort {
     // once with Io when the link is down.
     if (silent_from && clock_.now() >= *silent_from && (!silent_until || clock_.now() < *silent_until)) {
       ++silent_calls;
-      if (silence_is_link_down) return fail(ErrorKind::Io, "spectrometer link down");
+      if (silence_is_link_down) {
+        clock_.advance(link_down_costs);  // even a failing call takes some time on a real clock
+        return fail(ErrorKind::Io, "spectrometer link down");
+      }
       const TimePoint until = silent_until ? std::min(clock_.now() + timeout, *silent_until) : clock_.now() + timeout;
       clock_.set(until);
       if (!silent_until || clock_.now() < *silent_until) return std::optional<spectrometer::Reading>{};
+      if (silence_ends_in_error) return fail(ErrorKind::Protocol, "acquirer fault");
     }
     ++readings;
     if (fail_at && readings == *fail_at) return fail(fail_kind, "acquirer stalled");
     clock_.advance(integration_);
     spectrometer::Reading r;
-    r.ts = clock_.now();
+    r.ts = clock_.now() - ts_lag;
     r.integration = integration_;
     const double t = secs(clock_.now() - TimePoint{});
     for (const auto& det : detectors) {
@@ -112,6 +116,9 @@ class FakeSpectrometer final : public ISpectrometerPort {
   ErrorKind fail_kind = ErrorKind::Timeout;
   std::optional<TimePoint> silent_from, silent_until;
   bool silence_is_link_down = false;
+  pychron::Duration link_down_costs{};
+  bool silence_ends_in_error = false;
+  pychron::Duration ts_lag{};  // a reading's own time is this much behind the clock
   int silent_calls = 0;
   int lose_starts = 0;
   std::function<Result<void>(const std::string&, bool)> protect_fault;
@@ -1020,11 +1027,13 @@ TEST_F(MeasurementGaps, TheFitsMinimumIsTheFloor) {
 TEST_F(MeasurementGaps, ALinkThatFailsAtOnceIsWaitedOutOnTheClock) {
   auto p = multicollect(100);
   spec_.silence_is_link_down = true;
+  spec_.link_down_costs = 1ms;  // a clock that moves between two reads of it, as a real one
   silence(30, 20s);
   const auto r = run(p);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
   ASSERT_EQ(r.gaps.size(), 1u);
-  EXPECT_EQ(*last_main_ - main_began(), 100s);
+  EXPECT_GE(*last_main_ - main_began(), 100s);  // each failing call cost 1 ms
+  EXPECT_LT(*last_main_ - main_began(), 101s);
   EXPECT_LT(spec_.silent_calls, 40);  // waited, not spun
 }
 
@@ -1130,6 +1139,7 @@ TEST_F(MeasurementGaps, ADetectorUnprotectKeepsTryingForTheCriticalWindow) {
 TEST_F(MeasurementGaps, AConditionalsWindowStartsAgainAfterTheGap) {
   auto p = multicollect(100);
   silence(30, 20s);
+  spec_.ts_lag = 500ms;  // a reading is stamped when it was integrated, before it arrives
   MetricRef ar40;
   ar40.a = "Ar40";
   std::optional<std::size_t> from_at_resume;
@@ -1141,4 +1151,52 @@ TEST_F(MeasurementGaps, AConditionalsWindowStartsAgainAfterTheGap) {
   ASSERT_EQ(r.gaps.size(), 1u);
   ASSERT_TRUE(from_at_resume);
   EXPECT_EQ(*from_at_resume, 30u);  // the 31st point is the first after the gap
+}
+
+// Review of the branch: what a gap must not do.
+
+TEST_F(MeasurementGaps, ACancelAfterAGapIsACancelNotAFailure) {
+  auto p = multicollect(300);
+  silence(30, 20s);
+  auto sub = bus_.subscribe<CountsProgress>([this](const CountsProgress& e) {
+    if (e.block == Block::Main && e.i == 35) token_.cancel();
+  });
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled) << (r.error ? r.error->what : "");
+}
+
+TEST_F(MeasurementGaps, StartingAgainDoesNotRunPastThePlannedEnd) {
+  auto p = multicollect(124);
+  silence(1, std::nullopt);  // max_gap ends at 121 s; the planned end is 124 s
+  std::optional<TimePoint> main_done;
+  auto sub = bus_.subscribe<BlockFinished>([&](const BlockFinished& e) {
+    if (e.block == Block::Main) main_done = clock_.now();
+  });
+  const auto r = run(p);
+  ASSERT_TRUE(main_done);
+  EXPECT_LE(*main_done - main_began(), 124s);
+  EXPECT_EQ(r.gaps.size(), 1u);
+}
+
+TEST_F(MeasurementGaps, ADefiniteErrorInAGapFailsAndKeepsTheGap) {
+  auto p = multicollect(100);
+  spec_.silence_ends_in_error = true;
+  silence(30, 20s);
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_EQ(r.error->kind, ErrorKind::Protocol);
+  ASSERT_EQ(r.gaps.size(), 1u);
+  EXPECT_FALSE(r.gaps[0].resumed);
+}
+
+TEST_F(MeasurementGaps, AStartLostTwiceLeavesTheAcquisitionStopped) {
+  auto p = multicollect(10);
+  spec_.lose_starts = 2;  // the sniff's start, then its one retry
+  (void)run(p);
+  const auto second = std::find(std::find(spec_.log.begin(), spec_.log.end(), "start lost") + 1, spec_.log.end(),
+                                "start lost");
+  ASSERT_NE(second, spec_.log.end());
+  ASSERT_NE(second + 1, spec_.log.end());
+  EXPECT_EQ(*(second + 1), "stop");  // it may have started: stopped, to be sure
 }
