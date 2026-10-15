@@ -99,6 +99,9 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
   a.mass_spectrometer = r.instrument.mass_spectrometer;
   a.extract_device = r.instrument.extract_device;
   a.analyst = r.instrument.analyst;
+  // A failed run is kept but left out as an invalid analysis, as the store
+  // tags it (spec 4.5).
+  if (r.provenance.status == rec::RecordStatus::Failed) a.tag = "invalid";
 
   const auto& act = r.extraction.actuals;
   const auto& spec = r.extraction.spec;

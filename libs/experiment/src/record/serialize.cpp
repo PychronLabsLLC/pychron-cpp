@@ -17,6 +17,21 @@ double icfactor(const Results& r, const std::string& det) {
   return it == r.icfactors.end() ? 1.0 : it->second;
 }
 
+std::string_view to_string(RecordStatus s) noexcept {
+  switch (s) {
+    case RecordStatus::Truncated: return "truncated";
+    case RecordStatus::Failed: return "failed";
+    case RecordStatus::Complete: break;
+  }
+  return "complete";
+}
+
+std::optional<RecordStatus> parse_record_status(std::string_view s) noexcept {
+  for (const auto status : {RecordStatus::Complete, RecordStatus::Truncated, RecordStatus::Failed})
+    if (s == to_string(status)) return status;
+  return std::nullopt;
+}
+
 namespace {
 
 // ---- writing --------------------------------------------------------------
@@ -276,6 +291,11 @@ toml::table to_table(const AnalysisRecord& r) {
   pv.insert_or_assign("schema_version", r.provenance.schema_version);
   pv.insert_or_assign("sha", r.provenance.sha);
   pv.insert_or_assign("persister_refs", str_array(r.provenance.persister_refs));
+  // Only when the run did not complete, and a failure only when it has text:
+  // a complete record keeps the bytes and sha it had before (spec 4.5).
+  if (r.provenance.status != RecordStatus::Complete)
+    pv.insert_or_assign("status", std::string(to_string(r.provenance.status)));
+  if (!r.provenance.failure.empty()) pv.insert_or_assign("failure", r.provenance.failure);
   root.insert_or_assign("provenance", std::move(pv));
   return root;
 }
@@ -436,6 +456,11 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
                                        " (expected " + std::to_string(kRecordSchemaVersion) + ")");
   pv.str("sha", r.provenance.sha);
   pv.strs("persister_refs", r.provenance.persister_refs);
+  std::string status{to_string(RecordStatus::Complete)};  // absent: complete
+  pv.str("status", status);
+  if (auto st = parse_record_status(status)) r.provenance.status = *st;
+  else if (err.empty()) err = "record.provenance.status: unknown status '" + status + "'";
+  pv.str("failure", r.provenance.failure);
 
   const auto id = top.sub("identity");
   id.str("uuid", r.identity.uuid);

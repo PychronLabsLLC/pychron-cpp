@@ -70,6 +70,14 @@ only this component's. Kept compressed, as that file is.
     `sqlite:` database when not given with `--db`, or anywhere with
     `--sim-save`; otherwise record files and one line saying so. Neither
     rule is restated in a program.
+  - How run ended: `provenance.status` (`complete`, `truncated`, `failed`)
+    and `provenance.failure`, each written only when not default (not
+    `complete`, not empty), so complete record keeps bytes and sha; absent:
+    `complete`. Version stays 2. `failed` record stored as any run, tag
+    `invalid`, failure text its note (`RecordIngest`); records path reads
+    it `invalid` too (`analysis_from_record`). `truncated` stored as any run,
+    tag `ok`. Spec: `docs/superpowers/specs/2026-10-09-executor-hardening-design.md`
+    4.5.
   - A database url is shown only through `store::without_password`; an
     error text of an `Acquisition` already has url and password taken out.
     The acquisition worker's `try` is the library's one catch (thread

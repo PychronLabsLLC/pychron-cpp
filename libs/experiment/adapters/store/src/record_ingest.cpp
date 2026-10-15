@@ -82,6 +82,11 @@ Result<void> fill_identity(const record::AnalysisRecord& rec, const ps::Uuid& an
   a.roots.blanks = ps::Uuid::v5(analysis, "blanks");
   a.roots.icfactors = ps::Uuid::v5(analysis, "icfactors");
   a.roots.tags = ps::Uuid::v5(analysis, "tags");
+  // A failed run is kept, but left out as any invalid analysis is (spec 4.5).
+  if (rec.provenance.status == record::RecordStatus::Failed) {
+    a.roots.tag.name = "invalid";
+    if (!rec.provenance.failure.empty()) a.roots.tag.note = rec.provenance.failure;
+  }
   return {};
 }
 

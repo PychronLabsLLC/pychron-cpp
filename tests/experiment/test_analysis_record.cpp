@@ -321,3 +321,75 @@ TEST(RecordSerialize, ASimulatedRecordSaysSoAndKeepsSayingSo) {
   text.replace(text.find("simulated = false"), std::string("simulated = false").size(), "simulated = \"yes\"");
   EXPECT_FALSE(from_toml(text).has_value());
 }
+
+// ---- how the run ended (executor hardening, spec 4.5) ------------------------
+
+// A complete record has neither key, so it keeps the bytes and the sha it had
+// before records could say how their run ended; the others say so.
+TEST(AnalysisRecord, StatusIsWrittenOnlyWhenNotComplete) {
+  auto b = full_builder();
+  const auto complete = b.finalize().value();
+  EXPECT_EQ(complete.provenance.status, RecordStatus::Complete);
+  for (const auto& text : {to_toml(complete), to_json(complete)}) {
+    EXPECT_EQ(text.find("status"), std::string::npos) << text;
+    EXPECT_EQ(text.find("failure"), std::string::npos);
+  }
+
+  b.set_status(RecordStatus::Truncated);
+  const auto truncated = b.finalize().value();
+  EXPECT_NE(to_toml(truncated).find("status = 'truncated'"), std::string::npos) << to_toml(truncated);
+  EXPECT_NE(to_json(truncated).find("\"status\" : \"truncated\""), std::string::npos);
+  EXPECT_EQ(to_toml(truncated).find("failure"), std::string::npos);  // empty: not written
+  EXPECT_NE(truncated.provenance.sha, complete.provenance.sha);
+
+  b.set_status(RecordStatus::Failed, "spectrometer link down");
+  const auto failed = b.finalize().value();
+  const auto toml = to_toml(failed);
+  EXPECT_NE(toml.find("status = 'failed'"), std::string::npos) << toml;
+  EXPECT_NE(toml.find("failure = 'spectrometer link down'"), std::string::npos) << toml;
+  EXPECT_NE(to_json(failed).find("\"failure\" : \"spectrometer link down\""), std::string::npos);
+}
+
+TEST(AnalysisRecord, StatusRoundTrips) {
+  for (const auto status : {RecordStatus::Complete, RecordStatus::Truncated, RecordStatus::Failed}) {
+    auto b = full_builder();
+    b.set_status(status, status == RecordStatus::Failed ? "lost" : "");
+    const auto rec = b.finalize().value();
+    auto t = from_toml(to_toml(rec));
+    ASSERT_TRUE(t.has_value()) << t.error().what;
+    EXPECT_EQ(*t, rec);
+    EXPECT_TRUE(verify_sha(*t));
+    auto j = from_json(to_json(rec));
+    ASSERT_TRUE(j.has_value()) << j.error().what;
+    EXPECT_EQ(*j, rec);
+    EXPECT_EQ(to_json(*j), to_json(rec));
+  }
+}
+
+TEST(AnalysisRecord, AnUnknownStatusIsRejected) {
+  auto b = full_builder();
+  b.set_status(RecordStatus::Truncated);
+  auto text = to_toml(b.finalize().value());
+  const auto at = text.find("'truncated'");
+  ASSERT_NE(at, std::string::npos);
+  text.replace(at, std::string("'truncated'").size(), "'half'");
+  auto r = from_toml(text);
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, pychron::ErrorKind::Config);
+  EXPECT_NE(r.error().what.find("status"), std::string::npos) << r.error().what;
+}
+
+// Records written before the key read as complete, with their own sha.
+TEST(AnalysisRecord, ARecordWrittenBeforeStatusStillReadsWithItsSha) {
+  for (const char* name : {"v2.json", "v2.toml"}) {
+    const std::string text = fixture(name);
+    ASSERT_FALSE(text.empty()) << name;
+    EXPECT_EQ(text.find("status"), std::string::npos) << name;
+    auto rec = std::string(name).ends_with(".json") ? from_json(text) : from_toml(text);
+    ASSERT_TRUE(rec.has_value()) << rec.error().what;
+    EXPECT_EQ(rec->provenance.status, RecordStatus::Complete);
+    EXPECT_TRUE(rec->provenance.failure.empty());
+    EXPECT_TRUE(verify_sha(*rec));
+    EXPECT_EQ(rec->provenance.schema_version, kRecordSchemaVersion);
+  }
+}

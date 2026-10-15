@@ -103,6 +103,18 @@ TEST(RecordSource, MapsARecord) {
   EXPECT_EQ(raw.find(pp::SeriesKind::Signal, "Ar40")->t.size(), 3u);
 }
 
+// A failed run's record (spec 4.5) is an invalid analysis, as the store
+// gives it; truncated and complete are ok.
+TEST(RecordSource, AFailedRecordIsAnInvalidAnalysis) {
+  auto r = record("u1", "66001", 2, "B", "unknown", "2026-09-30T12:00:00Z");
+  EXPECT_EQ(pp::analysis_from_record(r).tag, "ok");
+  r.provenance.status = rec::RecordStatus::Truncated;
+  EXPECT_EQ(pp::analysis_from_record(r).tag, "ok");
+  r.provenance.status = rec::RecordStatus::Failed;
+  r.provenance.failure = "spectrometer link down";
+  EXPECT_EQ(pp::analysis_from_record(r).tag, "invalid");
+}
+
 // A detector intercalibration: Ar40 hopped onto H1 and AX. The record keeps
 // the acquisition's names ("Ar40:H1"); the analysis has the isotope under its
 // detector, as every other analysis of the kind is read ("H1:Ar40").

@@ -224,15 +224,15 @@ enum class RecordStatus { Complete, Truncated, Failed };
 struct Provenance { /* ... */ RecordStatus status = RecordStatus::Complete; std::string failure; };
 ```
 
-- [ ] Failing tests:
+- [x] Failing tests (`RecordBuilder::set_status(status, failure)` sets both):
   - `AnalysisRecord.StatusIsWrittenOnlyWhenNotComplete`: a complete record's TOML and JSON have no `status` key; truncated and failed have `provenance.status = "truncated" | "failed"`; `failure` only when not empty.
   - `AnalysisRecord.ARecordWrittenBeforeStatusStillReadsWithItsSha`: `tests/data/records/v2.json` and `v2.toml` read, `verify_sha` holds, `status == Complete`.
   - `AnalysisRecord.StatusRoundTrips` and `...AnUnknownStatusIsRejected` (`Config`).
   - `kRecordSchemaVersion` stays 2; `SchemaVersionBumpIsRejected` untouched.
-- [ ] `libs/experiment/AGENTS.md:24-26`: a field added to `AnalysisRecord` needs a row in `test_record_ingest.cpp` or a line in the not-stored list. Owner, 2026-10-13: `RecordIngest` stores a `failed` record like any other and gives it the tag `invalid` (its tags revision), with the `failure` text as the tag's note where the tag has one; so the browser and every figure leave it out by default, as they do any invalid analysis, and the recall window can still open it. `truncated` is stored as any run is today, tag `ok`. Test both; `AnOrdinaryRunConvertsAsItAlwaysDid` unchanged.
-- [ ] `libs/processing/adapters/records/src/record_source.cpp` (`:294`): a `failed` record is read as an analysis whose tag is `invalid`, the same as the store gives it. Test in `tests/processing/test_record_source.cpp`.
-- [ ] Add the key to `libs/experiment/AGENTS.md` beside the `simulated` rule (`:64-69`).
-- [ ] Commit: `feat(experiment): a record says whether its run was complete, truncated or failed`.
+- [x] `libs/experiment/AGENTS.md:24-26`: a field added to `AnalysisRecord` needs a row in `test_record_ingest.cpp` or a line in the not-stored list. Owner, 2026-10-13: `RecordIngest` stores a `failed` record like any other and gives it the tag `invalid` (its tags revision), with the `failure` text as the tag's note where the tag has one; so the browser and every figure leave it out by default, as they do any invalid analysis, and the recall window can still open it. `truncated` is stored as any run is today, tag `ok`. Test both; `AnOrdinaryRunConvertsAsItAlwaysDid` unchanged. Built: `RecordIngest.AFailedRecordIsStoredTaggedInvalid`, `...ATruncatedRecordIsStoredAsAnyRun` (stored items the same but the item's payload sha).
+- [x] `libs/processing/adapters/records/src/record_source.cpp` (`:294`): a `failed` record is read as an analysis whose tag is `invalid`, the same as the store gives it. Test in `tests/processing/test_record_source.cpp` (`RecordSource.AFailedRecordIsAnInvalidAnalysis`).
+- [x] Add the key to `libs/experiment/AGENTS.md` beside the `simulated` rule (`:64-69`).
+- [x] Commit: `feat(experiment): a record says whether its run was complete, truncated or failed`.
 
 ### Task 10: A run that fails after extraction began is saved
 

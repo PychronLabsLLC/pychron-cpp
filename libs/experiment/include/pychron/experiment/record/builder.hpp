@@ -38,6 +38,8 @@ class RecordBuilder {
   RecordBuilder& set_conditionals(Conditionals v);
   RecordBuilder& add_event(Event v);
   RecordBuilder& add_persister_ref(std::string ref);
+  // How the run ended; `failure` says what ended a Failed one.
+  RecordBuilder& set_status(RecordStatus status, std::string failure = {});
 
   // Missing/invalid items for `phase`; empty when the phase is complete.
   std::vector<std::string> problems(Phase phase) const;

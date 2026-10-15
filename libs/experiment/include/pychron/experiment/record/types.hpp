@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -199,10 +200,21 @@ struct Event {
   friend bool operator==(const Event&, const Event&) = default;
 };
 
+// How the run ended (executor hardening, spec 4.5). Written as
+// provenance.status only when not Complete, so a complete record keeps the
+// bytes and sha it had before; a record without the key is Complete.
+enum class RecordStatus { Complete, Truncated, Failed };
+
+// "complete", "truncated", "failed".
+[[nodiscard]] std::string_view to_string(RecordStatus s) noexcept;
+[[nodiscard]] std::optional<RecordStatus> parse_record_status(std::string_view s) noexcept;
+
 struct Provenance {
   int schema_version = kRecordSchemaVersion;
   std::string sha;  // sha256 hex of the canonical record with this field empty
   std::vector<std::string> persister_refs;
+  RecordStatus status = RecordStatus::Complete;
+  std::string failure;  // what ended a Failed run; written only when not empty
   friend bool operator==(const Provenance&, const Provenance&) = default;
 };
 

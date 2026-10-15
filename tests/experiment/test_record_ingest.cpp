@@ -831,3 +831,30 @@ TEST(RecordIngest, ASeriesOfMismatchedLengthsIsRefused) {
   rec.data.series[0].trace.v.pop_back();
   EXPECT_NE(error_of(rec).find("mismatched"), std::string::npos);
 }
+
+// How the run ended (spec 4.5, owner 2026-10-13): a failed run is stored as
+// any other and tagged invalid, with what ended it as the tag's note, so the
+// browser and figures leave it out by default and recall can still open it.
+// A truncated run is stored as a run always was, tagged ok.
+TEST(RecordIngest, AFailedRecordIsStoredTaggedInvalid) {
+  auto b = sample_builder();
+  b.set_status(record::RecordStatus::Failed, "spectrometer link down");
+  const auto out = convert(finalized(b));
+  EXPECT_EQ(body_of(out).roots.tag, (ps::TagValue{"invalid", "spectrometer link down", std::nullopt}));
+
+  b.set_status(record::RecordStatus::Failed);
+  EXPECT_EQ(body_of(convert(finalized(b))).roots.tag, (ps::TagValue{"invalid", std::nullopt, std::nullopt}));
+}
+
+TEST(RecordIngest, ATruncatedRecordIsStoredAsAnyRun) {
+  auto b = sample_builder();
+  const auto plain = convert(finalized(b));
+  b.set_status(record::RecordStatus::Truncated);
+  const auto truncated = convert(finalized(b));
+  EXPECT_EQ(body_of(truncated).roots.tag, (ps::TagValue{"ok", std::nullopt, std::nullopt}));
+  // Everything stored is the same but the item's payload sha: the record's
+  // own bytes say truncated.
+  const auto after_item = [](const std::string& d) { return d.substr(d.find('\n')); };
+  EXPECT_EQ(after_item(describe(truncated)), after_item(describe(plain)));
+  EXPECT_NE(describe(truncated), describe(plain));
+}
