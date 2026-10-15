@@ -229,7 +229,7 @@ class GaugeWindow : public QWidget {    // a `Qt::Window` of its own; hidden on 
 };
 ```
 
-- [ ] **Failing tests:**
+- [x] **Failing tests:**
   - `opensOnTenMinutesAndLinear`.
   - `theRangeChosenIsKeptForThatGauge`: choose 1 h on IG1; a new `GaugeWindow("IG1")` on the same settings opens on 1 h; `GaugeWindow("CG1")` on 10 min. Key `gauge_window/<line>/<gauge>/range_s`; a value that is none of the ranges falls back to 10 min. The same for `log` (`.../log`) and the window's geometry (`.../geometry`).
   - `pointsOutsideTheRangeAreNotDrawn`.
@@ -241,8 +241,10 @@ class GaugeWindow : public QWidget {    // a `Qt::Window` of its own; hidden on 
   - `aNewReadingIsDrawn`: `refresh()` after `add`: one more point, at once when the window has not drawn in the last 250 ms. Many `refresh()` calls in one event-loop turn redraw once more, 250 ms later (`QTRY_*`) (count through the history's `revision` the window last drew, and a redraw counter).
   - `withoutAWallClockTheAxisIsMinutesBeforeNow` and Copy's time column is seconds before the newest.
   - `theTitleIsTheGaugesName`.
-- [ ] **Implement.** Redraws are throttled as `StripChartView` throttles its own (draw at once when the last was long enough ago, else a single-shot timer for the rest), 250 ms. `Deps` is filled field by field where it is made, not with a designated initializer that leaves fields out (clang 18).
-- [ ] `ctest --preset dev-ui -R '^ui\.test_gauge_window$'`; commit `feat(ui): a window of a gauge's history, with its range and scale`.
+- [x] **Implement.** Redraws are throttled as `StripChartView` throttles its own (draw at once when the last was long enough ago, else a single-shot timer for the rest), 250 ms. `Deps` is filled field by field where it is made, not with a designated initializer that leaves fields out (clang 18).
+- [x] `ctest --preset dev-ui -R '^ui\.test_gauge_window$'`; commit `feat(ui): a window of a gauge's history, with its range and scale`.
+
+  Built: `range()`, `gauge()`, and for tests `redraw_count()` and `drawn_revision()`, `kMinRedrawMs` (250) and `kDefaultRange`. A `refresh()` while the window is hidden draws nothing and marks it stale; it draws when shown again (a closed window is kept by the main window, and redrawing a day of points four times a second for nobody is waste). The redraw cap is measured from the end of a drawing. Geometry is saved on every hide, which a close is too. Header numbers are the chip's (`'e', 2`): `1.20e-08 torr   min 1.10e-08   max 1.40e-08   since 09:40`; with no reading, "No readings". The `since` time is the newest reading's wall time less the age of the oldest held, so `wall_of` is still asked once a drawing; without a wall clock it reads `since 20 min before newest`. Copy's header line is `time` (or `seconds before newest`) and `value (<units>)`; a value is the shortest text that reads back as the same double (`QLocale::FloatingPointShortest`), and every finite reading of the range is in it, a non-positive one on a log scale too.
 
 ### Task 6: The main window ties them together
 
