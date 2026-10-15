@@ -199,6 +199,9 @@ class ExtractionLine {
   // an unknown name and for kind "link": that one's drivers are recovered by
   // the connection it names.
   Link* link(std::string_view transport) const;
+  // Every link of the line, in config order: what a run's scripts may reach
+  // (executor hardening, spec 4.3).
+  std::vector<Link*> links() const;
   Device* device(std::string_view name) const;
 
  private:

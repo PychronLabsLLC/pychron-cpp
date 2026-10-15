@@ -338,15 +338,15 @@ class IPreRunCheck { /* name(); */ virtual std::optional<CheckFailure> check(con
 struct LinkSet { std::vector<Link*> required; };   // derived, never configured
 ```
 
-- [ ] Failing tests:
+- [x] Failing tests:
   - `LinkSet.ARunNeedsTheWholeLineItsDeviceAndTheSpectrometer`: the example sim lab; an unknown on the laser needs the line's transports, the laser's and the spectrometer's.
   - `LinkSet.ARunWithoutAPlanDoesNotNeedTheSpectrometer`.
   - `LinkSet.AnOptionalTransportIsLeftOut` (`optional = true`, Task 7).
   - `LinksUp.WaitsWhenARequiredLinkIsDown` (kind `Wait`, names the links); `...PassesWhenOnlyAnOptionalOneIs`.
   - `SpoolWritable.WaitsUnderMinFreeOrOverMaxPending` (free space through an injected function, not the real disk).
   - An existing `IPreRunCheck` in the tests keeps ending the queue (`Refuse`).
-- [ ] `LabSession` builds the `LinkSet` per run from `SessionHardware` (`session.hpp:51-65`) and registers `LinksUp` and `SpoolWritable`.
-- [ ] Commit: `feat(experiment): a pre-run check can ask the queue to wait, and two do`.
+- [x] `LabSession` builds the `LinkSet` per run from `SessionHardware` (`session.hpp:51-65`) and registers `LinksUp` and `SpoolWritable`. Built: `required_links(run, line_links, spectrometer_links)` (`executor/links.hpp`): every link of the line (its extraction device is a driver on it, so its link is among them) and the spectrometer's when the run has a plan, less optional ones; `ExtractionLine::links()`, `Spectrometer::links()`, `Link::transport()`. A link is down when its transport's health is `Down`. `SpoolWritable` takes the free space and the backlog as functions; the session gives `fs::space` of the spool and `SavePipeline::pending()`, with the limits of `executor.toml` `[spool]`. Until Task 17 a `Wait` ends the queue as a `Refuse` does. Tests: `LinkSetTest.*` (`LinkSet` is the struct), `SpoolWritable.*` in `test_executor_links.cpp`; `LabSessionTest.ALinkTheRunNeedsIsCheckedBeforeItStarts` (a spectrometer transport closed before the first run: a line transport is reopened by the line's own scan through its link).
+- [x] Commit: `feat(experiment): a pre-run check can ask the queue to wait, and two do`.
 
 ### Task 17: The executor holds
 

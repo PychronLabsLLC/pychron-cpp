@@ -185,6 +185,13 @@ class Spectrometer {
   bool has_source() const noexcept { return roles_.source != nullptr; }
   bool has_detector_control() const noexcept { return roles_.detector_control != nullptr; }
   bool has_beam_blank() const noexcept { return roles_.beam_blank != nullptr; }
+  // Its links, one per transport but those of kind "link" (spec 4.3).
+  std::vector<Link*> links() const {
+    std::vector<Link*> out;
+    out.reserve(roles_.links.size());
+    for (const auto& l : roles_.links) out.push_back(l.get());
+    return out;
+  }
   Caps detector_caps() const;
 
   // ---- positioning ----

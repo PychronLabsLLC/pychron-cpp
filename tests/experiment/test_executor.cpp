@@ -34,10 +34,10 @@ namespace {
 class FailingCheck final : public IPreRunCheck {
  public:
   std::string name() const override { return "disk"; }
-  Result<void> check(const RunSpec& run) override {
+  std::optional<CheckFailure> check(const RunSpec& run) override {
     ++calls;
-    if (run.id.identifier == fail_on) return fail(ErrorKind::Io, "disk full");
-    return {};
+    if (run.id.identifier == fail_on) return CheckFailure{CheckKind::Refuse, Error{ErrorKind::Io, "disk full", {}}, {}};
+    return std::nullopt;
   }
   std::string fail_on;
   int calls = 0;

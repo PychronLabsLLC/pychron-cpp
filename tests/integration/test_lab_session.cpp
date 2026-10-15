@@ -275,6 +275,23 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
   EXPECT_FALSE(scan_->paused());
 }
 
+// The session checks the links each run needs before it starts (executor
+// hardening, 4.3): one down stops the queue before its first run (a hold,
+// once the executor can hold).
+TEST_F(LabSessionTest, ALinkTheRunNeedsIsCheckedBeforeItStarts) {
+  // A spectrometer transport: nothing calls it before the first run (the
+  // scan is not started here), so closed it stays down until the check.
+  auto links = spec_->links();
+  ASSERT_FALSE(links.empty());
+  links.front()->transport().close();
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->runs.empty());
+  EXPECT_NE(result->reason.find("pre-run check 'links'"), std::string::npos) << result->reason;
+  EXPECT_NE(result->reason.find(links.front()->transport().name()), std::string::npos) << result->reason;
+}
+
 TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {
   session_.reset();
   persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere",

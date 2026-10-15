@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "pychron/core/events.hpp"
+#include "pychron/experiment/executor/links.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/experiment/persist/persister.hpp"
@@ -39,7 +40,19 @@ struct LabSession::Services {
         files(data / "records"),
         spool(data / "spool"),
         save(spool, given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)),
-        aliquots(given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)) {
+        aliquots(given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)),
+        // The links each run needs (spec 4.3), and a spool the queue can rely on (4.6).
+        links_up([line = &hw.line, spec = hw.spectrometer](const RunSpec& run) {
+          return executor::required_links(run, line->links(), spec != nullptr ? spec->links() : std::vector<Link*>{});
+        }),
+        spool_writable({lab.executor.spool.min_free_mb, static_cast<std::size_t>(lab.executor.spool.max_pending)},
+                       [dir = data / "spool"]() -> std::optional<double> {
+                         std::error_code ec;
+                         const auto space = fs::space(fs::exists(dir, ec) ? dir : dir.parent_path(), ec);
+                         if (ec) return std::nullopt;
+                         return static_cast<double>(space.available) / (1024.0 * 1024.0);
+                       },
+                       [this] { return save.pending(); }) {
     if (hw.spectrometer != nullptr) {
       port.emplace(*hw.spectrometer);
       jobs::PeakCenterOptions pc;
@@ -77,6 +90,7 @@ struct LabSession::Services {
     s.persister = given != nullptr ? given : &files;
     s.save = &save;
     ctx.pre_run_metrics = &instrument;
+    ctx.checks = {&links_up, &spool_writable};
     ctx.blank = default_blank_factory(lab.ids);
   }
 
@@ -92,6 +106,8 @@ struct LabSession::Services {
   persist::Spool spool;
   persist::SavePipeline save;
   persist::AliquotAllocator aliquots;
+  executor::LinksUp links_up;
+  executor::SpoolWritable spool_writable;
   executor::ExecutorContext ctx;
 };
 

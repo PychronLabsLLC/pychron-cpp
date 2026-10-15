@@ -136,6 +136,8 @@ class Link {
   [[nodiscard]] std::uint64_t repeats() const noexcept { return repeats_.load(); }
 
   [[nodiscard]] const LinkPolicy& policy() const noexcept { return policy_; }
+  // The transport it recovers: its name and health() say whether it is up.
+  [[nodiscard]] Transport& transport() const noexcept { return transport_; }
 
  private:
   // One call's recovery: its deadline, the wait before the next reopen

@@ -76,11 +76,21 @@ std::string_view to_string(ExecutorState s) noexcept;
 bool can_transition(ExecutorState from, ExecutorState to) noexcept;
 
 // A pluggable check before every run (managers healthy, disk space, ...).
+// What it finds wrong either ends the queue (Refuse, as a check always did)
+// or holds it until the check passes (Wait: a link down, a full spool;
+// executor hardening spec 4.6).
+enum class CheckKind { Refuse, Wait };
+struct CheckFailure {
+  CheckKind kind = CheckKind::Refuse;
+  Error error;
+  std::vector<std::string> links;  // the links it waits for, when it is about links
+};
 class IPreRunCheck {
  public:
   virtual ~IPreRunCheck() = default;
   virtual std::string name() const = 0;
-  virtual Result<void> check(const RunSpec& run) = 0;
+  // Nothing: the run may start.
+  virtual std::optional<CheckFailure> check(const RunSpec& run) = 0;
 };
 
 struct ExecutorStateChanged {

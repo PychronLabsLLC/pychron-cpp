@@ -547,6 +547,13 @@ Transport* ExtractionLine::transport(std::string_view name) const {
   return nullptr;
 }
 
+std::vector<Link*> ExtractionLine::links() const {
+  std::vector<Link*> out;
+  out.reserve(links_.size());
+  for (const auto& [name, link] : links_) out.push_back(link.get());
+  return out;
+}
+
 Link* ExtractionLine::link(std::string_view transport) const {
   for (const auto& [n, l] : links_) {
     if (n == transport) return l.get();

@@ -620,10 +620,11 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
 
     bool blocked = false;
     for (auto* check : ctx_.checks) {
-      if (auto r = check->check(spec); !r) {
+      if (auto r = check->check(spec)) {
+        // A Wait ends the queue too until the executor can hold it.
         std::lock_guard lock(mutex_);
         end_ = QueueEnd::Cancelled;
-        end_reason_ = "pre-run check '" + check->name() + "': " + r.error().what;
+        end_reason_ = "pre-run check '" + check->name() + "': " + r->error.what;
         clock_.notify_all(cv_);
         blocked = true;
         break;
