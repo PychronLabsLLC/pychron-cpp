@@ -194,10 +194,12 @@ class GaugePopup : public QFrame {      // Qt::ToolTip: no focus, takes no click
 };
 ```
 
-- [ ] **Failing tests:** with two or more readings in the last 10 minutes: heading has name, latest value as the chip writes it (`'e', 2`) and units; the chart has the points; `message()` empty. With one reading: no chart, `message()` "No readings yet". With readings, all older than 10 minutes: "No readings in the last 10 minutes". `refresh()` after a new reading adds a point; `refresh()` when hidden does nothing. Size about 320 x 180. The window flags are `Qt::ToolTip` and it does not take focus when shown (`QApplication::focusWidget()` unchanged). `show_for` near the right or bottom edge of the screen keeps the popup inside it, and it never covers the chip it is for. It has `WA_TransparentForMouseEvents` and `WA_ShowWithoutActivating`. It hides on `hide()` from its owner and by itself when the application is deactivated.
-- [ ] **Implement.** The chart is compact and linear (spec 4.4). `wall_of` is called once a refresh, for the newest reading.
-- [ ] `cmake --build --preset dev-ui --target pychron_ui_test_gauge_window && ctest --preset dev-ui -R '^ui\.test_gauge_window$'`.
-- [ ] Commit `feat(ui): a popup of a gauge's last ten minutes`.
+- [x] **Failing tests:** with two or more readings in the last 10 minutes: heading has name, latest value as the chip writes it (`'e', 2`) and units; the chart has the points; `message()` empty. With one reading: no chart, `message()` "No readings yet". With readings, all older than 10 minutes: "No readings in the last 10 minutes". `refresh()` after a new reading adds a point; `refresh()` when hidden does nothing. Size about 320 x 180. The window flags are `Qt::ToolTip` and it does not take focus when shown (`QApplication::focusWidget()` unchanged). `show_for` near the right or bottom edge of the screen keeps the popup inside it, and it never covers the chip it is for. It has `WA_TransparentForMouseEvents` and `WA_ShowWithoutActivating`. It hides on `hide()` from its owner and by itself when the application is deactivated.
+- [x] **Implement.** The chart is compact and linear (spec 4.4). `wall_of` is called once a refresh, for the newest reading.
+- [x] `cmake --build --preset dev-ui --target pychron_ui_test_gauge_window && ctest --preset dev-ui -R '^ui\.test_gauge_window$'`.
+- [x] Commit `feat(ui): a popup of a gauge's last ten minutes`.
+
+  Built: the constructor also takes `std::function<TimePoint()> now`, the line's time (`CoreBridge::now()`; Task 6 passes it): "all older than 10 minutes" is measured from now, and `ReadingHistory::series` measures from the series' newest reading, so without it a gauge that stopped reporting would be drawn as current. `gauge()` returns a `const QString&`. Placement is a static `placed(chip, size, screen)`, tested on its own: right of the chip, else left, else below, else above. `wall_of` is called once a refresh when the chart is shown, and not at all when a message is.
 
 ### Task 5: The gauge window
 

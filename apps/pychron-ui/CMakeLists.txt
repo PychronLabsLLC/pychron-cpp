@@ -55,6 +55,7 @@ add_library(pychron_ui_lib STATIC
   src/data_icons.cpp
   src/recall_window.cpp
   src/history_chart.cpp
+  src/gauge_popup.cpp
   src/reading_history.cpp
   src/peak_center_scale.cpp
   src/peak_center_view.cpp
@@ -134,6 +135,7 @@ add_library(pychron_ui_lib STATIC
   src/data_icons.hpp
   src/recall_window.hpp
   src/history_chart.hpp
+  src/gauge_popup.hpp
   src/reading_history.hpp
   src/peak_center_scale.hpp
   src/peak_center_view.hpp
