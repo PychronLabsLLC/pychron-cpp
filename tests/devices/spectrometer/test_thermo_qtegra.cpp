@@ -5,9 +5,11 @@
 #include <atomic>
 #include <mutex>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "spectrometer/legacy/sim_util.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -48,6 +50,13 @@ class FlakyTransport final : public Transport {
 
  private:
   Transport& inner_;
+};
+
+// A test whose thread takes part in a virtual clock: the link's backoff and
+// call window pass in no real time.
+struct QtegraVirtual : pychron::testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
 };
 
 std::vector<std::string> written_text(const SimTransport& sim) {
@@ -235,12 +244,27 @@ TEST(Qtegra, SettersTreatErrorReplyAsProtocol) {
   EXPECT_EQ(q.reconnects(), 0U);
 }
 
-TEST(Qtegra, SetterTimeoutIsStillAnError) {
-  auto sim = open_scripted({SimStep{to_bytes("BlankBeam True\r"), to_bytes("OK\r\n"), 1s}});
-  QtegraSpectrometer q("argus", *sim, {});
+// Every Qtegra command is Safe, so the link reconnects and sends a setter
+// again until its call window; one that is never answered is still an error.
+TEST_F(QtegraVirtual, SetterTimeoutIsStillAnError) {
+  auto model = std::make_shared<QtegraSimModel>();
+  model->clock = &clock;
+  TransportOptions options = bus_options();
+  options.clock = &clock;
+  auto sim = opened(SimTransport::hooked(
+      [inner = qtegra_sim_hook(model)](const Bytes& tx) {
+        return to_string(tx) == "BlankBeam True\r" ? Bytes{} : inner(tx);  // never answered
+      },
+      options));
+  QtegraSpectrometer q("argus", *sim, {}, &clock);
+  const TimePoint start = clock.now();
   auto r = q.blank(true);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.error().device, sim->name());
+  EXPECT_GE(clock.now() - start, LinkPolicy{}.call_window);
+  EXPECT_GT(q.reconnects(), 0U);
+  EXPECT_EQ(q.health().state, DeviceState::Degraded);
 }
 
 TEST(Qtegra, SetOutsideLimitsIsConfigAndWritesNothing) {
@@ -717,17 +741,27 @@ TEST_F(QtegraReconnect, ConnectIoErrorIsReturnedWithoutReconnecting) {
   EXPECT_TRUE(sim->written().empty());
 }
 
-TEST_F(QtegraReconnect, FailedConnectDuringReconnectIsReturnedOnce) {
-  // Both the command and the connect step after the reopen fail: the connect
-  // step's error comes back and nothing recurses.
+// Was FailedConnectDuringReconnectIsReturnedOnce. Both the command and the
+// connect step after the first reopen fail: the link tries again at the
+// backoff (1 s) instead of returning, and nothing recurses.
+TEST_F(QtegraVirtual, FailedConnectDuringReconnectIsTriedAgainAtTheBackoff) {
+  auto model = std::make_shared<QtegraSimModel>();
+  {
+    std::lock_guard lock(model->mutex);
+    model->dac = 3.25;
+  }
+  auto sim = open_hooked(qtegra_sim_hook(model));
+  FlakyTransport flaky{*sim};
+  QtegraSpectrometer q{"argus", flaky, {}, &clock};
   flaky.fail_exchanges = 2;
+  const TimePoint start = clock.now();
   auto v = q.read();
-  ASSERT_FALSE(v);
-  EXPECT_EQ(v.error().kind, ErrorKind::Io);
-  EXPECT_EQ(v.error().device, sim->name());
-  EXPECT_EQ(q.reconnects(), 0U);
-  EXPECT_EQ(flaky.opens, 1);
-  EXPECT_TRUE(sim->written().empty());
+  ASSERT_TRUE(v) << to_string(v.error());
+  EXPECT_DOUBLE_EQ(*v, 3.25);
+  EXPECT_EQ(clock.now() - start, 1s);
+  EXPECT_EQ(q.reconnects(), 1U);
+  EXPECT_EQ(flaky.opens, 2);
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "GetMagnetDAC\r"}));
 }
 
 // --- sim hook ------------------------------------------------------------------

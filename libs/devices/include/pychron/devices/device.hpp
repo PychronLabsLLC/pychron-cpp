@@ -2,12 +2,15 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/devices/link.hpp"
+#include "pychron/transport/transport.hpp"
 
 namespace pychron {
 
@@ -29,6 +32,7 @@ struct DeviceHealth {
 struct DeviceOptions {
   const Clock* clock = nullptr;       // stamps last_ok; SteadyClock if null
   std::uint64_t fault_after = 3;      // consecutive failures that mean Faulted
+  Link* link = nullptr;               // the transport's recovery; none: no reconnect
 };
 
 // Identity and health of one configured device. Behavior lives in the
@@ -62,6 +66,25 @@ class Device {
     return result;
   }
 
+  // One wire call, observed. `op` makes the call's exchanges with the Resend
+  // it is given: Allowed for a Safe call, Never for an Unsafe one. Through
+  // the link when there is one (reconnect, and repeat when Safe; see Link),
+  // else `op` once: an Unsafe command is resent by neither layer.
+  template <class T>
+  Result<T> call(const std::function<Result<T>(Resend)>& op, Repeat repeat) {
+    return call(link_, op, repeat);
+  }
+
+  // The same through `link`, for a driver whose link is not known when the
+  // device is made (a Qtegra borrower finds the owner's at each call).
+  template <class T>
+  Result<T> call(Link* link, const std::function<Result<T>(Resend)>& op, Repeat repeat) {
+    const Resend resend = repeat == Repeat::Safe ? Resend::Allowed : Resend::Never;
+    if (link == nullptr) return observe(op(resend));
+    const std::function<Result<T>()> bound = [&op, resend] { return op(resend); };
+    return observe(link->call(bound, repeat));
+  }
+
  private:
   void record_ok();
   void record_failure(ErrorKind kind);
@@ -69,6 +92,7 @@ class Device {
   std::string name_;
   const Clock* clock_;
   std::uint64_t fault_after_;
+  Link* link_;
   std::atomic<bool> ever_ok_{false};
   std::atomic<TimePoint::rep> last_ok_{0};
   std::atomic<std::uint64_t> failures_{0};

@@ -8,11 +8,13 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "pychron/core/events.hpp"
+#include "pychron/devices/device.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/transport/sim_transport.hpp"
@@ -60,9 +62,10 @@ class FakeTransport final : public Transport {
   const std::string& name() const override { return name_; }
   Result<void> open() override {
     ++opens;
+    if (open_error) return fail(*open_error);
     return {};
   }
-  void close() override {}
+  void close() override { ++closes; }
   Result<Bytes> exchange(Bytes, ReadSpec, Duration, Resend) override { return Bytes{}; }
   Result<void> write(Bytes) override { return {}; }
   Result<Bytes> read(ReadSpec, Duration) override { return Bytes{}; }
@@ -77,6 +80,8 @@ class FakeTransport final : public Transport {
   Health health() const override { return {}; }
 
   std::atomic<int> opens{0};
+  std::atomic<int> closes{0};
+  std::optional<Error> open_error;  // every open() fails with it while set
   std::function<void()> before_next_transaction;
 
  private:
@@ -357,6 +362,355 @@ TEST_F(Link, AProbeTriesOnceAndReconnectsOnce) {
   t->set_down(false);
   EXPECT_TRUE(link.probe());
   EXPECT_EQ(link.reconnects(), 0u);  // the probe's open was enough
+}
+
+// --- Device::call ---------------------------------------------------------------
+
+class Wired : public Device {
+ public:
+  using Device::call;
+  using Device::Device;
+};
+
+struct DeviceCall : testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
+
+  // Every exchange the transport may resend, it resends three times.
+  std::unique_ptr<SimTransport> sim() {
+    TransportOptions o;
+    o.name = "sim1";
+    o.timeout = 100ms;
+    o.retries = 3;
+    o.clock = &clock;
+    auto t = SimTransport::hooked([](const Bytes&) { return to_bytes("ok\r\n"); }, o);
+    EXPECT_TRUE(t->open());
+    return t;
+  }
+
+  static std::function<Result<Bytes>(Resend)> sends(Transport& t) {
+    return [&t](Resend resend) { return t.exchange(to_bytes("a"), kCrLf, Transport::kDefaultTimeout, resend); };
+  }
+};
+
+TEST_F(DeviceCall, AnUnsafeCallThatTimesOutIsSentOnceByEitherLayer) {
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  Wired device("dev", DeviceOptions{&clock, 3, &link});
+  t->drop_next(10);
+  const auto r = device.call(sends(*t), Repeat::Unsafe);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.error().code, "outcome_unknown");
+  EXPECT_EQ(t->written().size(), 1u);
+  EXPECT_EQ(device.health().state, DeviceState::Degraded);
+}
+
+TEST_F(DeviceCall, ASafeCallMayBeResentByTheTransport) {
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  Wired device("dev", DeviceOptions{&clock, 3, &link});
+  t->drop_next(1);
+  const auto r = device.call(sends(*t), Repeat::Safe);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(t->written().size(), 2u);
+  EXPECT_EQ(link.reconnects(), 0u);  // the transport's resend was enough
+  EXPECT_EQ(device.health().state, DeviceState::Ok);
+}
+
+TEST_F(DeviceCall, ASafeCallIsRepeatedThroughTheLink) {
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  Wired device("dev", DeviceOptions{&clock, 3, &link});
+  t->down_for(2s);
+  const auto r = device.call(sends(*t), Repeat::Safe);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(link.repeats(), 1u);
+  EXPECT_EQ(device.health().state, DeviceState::Ok);
+}
+
+TEST_F(DeviceCall, WithoutALinkTheCallIsMadeOnceAndObserved) {
+  Wired device("dev", DeviceOptions{&clock, 3});
+  int count = 0;
+  std::optional<Resend> given;
+  const std::function<Result<int>(Resend)> op = [&](Resend resend) -> Result<int> {
+    ++count;
+    given = resend;
+    return fail(ErrorKind::Io, "dropped", "");
+  };
+  const auto r = device.call(op, Repeat::Safe);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_TRUE(r.error().code.empty());
+  EXPECT_EQ(r.error().device, "dev");
+  EXPECT_EQ(count, 1);
+  EXPECT_EQ(given, Resend::Allowed);
+  EXPECT_EQ(device.health().consecutive_failures, 1u);
+
+  const auto unsafe = device.call(op, Repeat::Unsafe);
+  ASSERT_FALSE(unsafe);
+  EXPECT_EQ(given, Resend::Never);
+}
+
+// --- The cases of the Reconnector this Link replaced ------------------------------
+//
+// Under their old names where the behaviour is kept. Two things changed: a
+// Timeout is now transient like Io (it reconnects), and the old rate limit
+// (no second reconnect within 1 s of the last) is the backoff between the
+// attempts of one call.
+
+struct ReconnectTest : testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
+  FakeTransport transport;
+  ::pychron::Link link{transport, clock};
+  std::atomic<int> connects{0};
+  // While set, the connect step fails with it.
+  std::optional<Error> connect_error;
+
+  ReconnectTest() {
+    link.set_connect([this](Transport&) -> Result<void> {
+      ++connects;
+      if (connect_error) return fail(*connect_error);
+      return {};
+    });
+  }
+
+  // Op that fails with `kind` for its first `failures` calls, then returns 7.
+  static std::function<Result<int>()> failing(ErrorKind kind, int failures, int* calls) {
+    return [=]() -> Result<int> {
+      if ((*calls)++ < failures) return fail(kind, "boom", "dev");
+      return 7;
+    };
+  }
+};
+
+TEST_F(ReconnectTest, SuccessPassesThroughWithoutReconnect) {
+  int calls = 0;
+  auto r = link.call(failing(ErrorKind::Io, 0, &calls), Repeat::Safe);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(*r, 7);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(transport.opens, 0);
+  EXPECT_EQ(connects, 0);
+  EXPECT_EQ(link.reconnects(), 0u);
+}
+
+TEST_F(ReconnectTest, IoTriggersReopenOnConnectAndRetry) {
+  int calls = 0;
+  auto r = link.call(failing(ErrorKind::Io, 1, &calls), Repeat::Safe);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(*r, 7);
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(transport.closes, 1);
+  EXPECT_EQ(transport.opens, 1);
+  EXPECT_EQ(connects, 1);
+  EXPECT_EQ(link.reconnects(), 1u);
+}
+
+TEST_F(ReconnectTest, NotConnectedAlsoTriggers) {
+  int calls = 0;
+  auto r = link.call(failing(ErrorKind::NotConnected, 1, &calls), Repeat::Safe);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(transport.opens, 1);
+  EXPECT_EQ(link.reconnects(), 1u);
+}
+
+// Was ProtocolAndTimeoutErrorsPassThrough: Protocol and Config still do.
+TEST_F(ReconnectTest, ProtocolAndConfigErrorsPassThrough) {
+  for (ErrorKind kind : {ErrorKind::Protocol, ErrorKind::Config}) {
+    int calls = 0;
+    auto r = link.call(failing(kind, 5, &calls), Repeat::Safe);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, kind);
+    EXPECT_EQ(calls, 1);
+  }
+  EXPECT_EQ(transport.closes, 0);
+  EXPECT_EQ(transport.opens, 0);
+  EXPECT_EQ(connects, 0);
+}
+
+// ... and a Timeout, which passed through, is now transient.
+TEST_F(ReconnectTest, ATimeoutTriggersReopenOnConnectAndRetry) {
+  int calls = 0;
+  auto r = link.call(failing(ErrorKind::Timeout, 1, &calls), Repeat::Safe);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(transport.opens, 1);
+  EXPECT_EQ(connects, 1);
+}
+
+// Was RateLimitedWithinMinInterval: a second reconnect inside one call waits
+// backoff_min (1 s) after the first, where the old one refused it.
+TEST_F(ReconnectTest, ASecondReconnectWaitsTheBackoff) {
+  int calls = 0;
+  const TimePoint start = clock.now();
+  auto r = link.call(failing(ErrorKind::Io, 2, &calls), Repeat::Safe);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(calls, 3);
+  EXPECT_EQ(transport.opens, 2);
+  EXPECT_EQ(clock.now() - start, 1s);
+  EXPECT_EQ(link.reconnects(), 2u);
+
+  // A later call starts its own recovery: its first reconnect is at once.
+  calls = 0;
+  const TimePoint later = clock.now();
+  ASSERT_TRUE(link.call(failing(ErrorKind::Io, 1, &calls), Repeat::Safe));
+  EXPECT_EQ(transport.opens, 3);
+  EXPECT_EQ(clock.now(), later);
+}
+
+// Was FailedAttemptsAreRateLimitedToo: failed attempts are spaced by the
+// backoff (1 s, then 2 s cut short by the window, which gets a last try).
+TEST_F(ReconnectTest, FailedAttemptsBackOffToo) {
+  connect_error = Error{ErrorKind::Io, "no", "dev"};
+  int calls = 0;
+  const TimePoint start = clock.now();
+  const auto r = link.call(failing(ErrorKind::Io, 9, &calls), Repeat::Safe, 2500ms);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_EQ(r.error().what, "no");  // the last attempt's error
+  EXPECT_EQ(transport.opens, 3);    // at 0, 1 and 2.5 s
+  EXPECT_EQ(connects, 3);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(clock.now() - start, 2500ms);
+}
+
+// A reopen that fails definitely is returned at once; one that fails
+// transiently is tried again at the backoff (Link.ASafeCallGivesUpAtItsWindow).
+TEST_F(ReconnectTest, FailedReopenReturnsItsError) {
+  transport.open_error = Error{ErrorKind::Config, "no such port", "dev"};
+  int calls = 0;
+  auto r = link.call(failing(ErrorKind::Io, 1, &calls), Repeat::Safe);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_EQ(r.error().what, "no such port");
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(connects, 0);
+  EXPECT_EQ(link.reconnects(), 0u);
+}
+
+TEST_F(ReconnectTest, FailedOnConnectReturnsItsError) {
+  connect_error = Error{ErrorKind::Protocol, "handshake", "dev"};
+  int calls = 0;
+  auto r = link.call(failing(ErrorKind::Io, 1, &calls), Repeat::Safe);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(r.error().what, "handshake");
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(link.reconnects(), 0u);
+}
+
+TEST_F(ReconnectTest, RetryFailureReturnsRetryError) {
+  int n = 0;
+  std::function<Result<int>()> op = [&]() -> Result<int> {
+    const int attempt = ++n;
+    return fail(attempt == 1 ? ErrorKind::Io : ErrorKind::Protocol, "attempt " + std::to_string(attempt), "dev");
+  };
+  auto r = link.call(op, Repeat::Safe);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_EQ(r.error().what, "attempt 2");
+  EXPECT_EQ(transport.opens, 1);
+}
+
+TEST_F(ReconnectTest, VoidResultSupported) {
+  int calls = 0;
+  std::function<Result<void>()> op = [&]() -> Result<void> {
+    if (calls++ == 0) return fail(ErrorKind::Io, "boom", "dev");
+    return {};
+  };
+  EXPECT_TRUE(link.call(op, Repeat::Safe));
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(link.reconnects(), 1u);
+}
+
+TEST_F(ReconnectTest, CallerInFlightDuringAnotherReconnectOnlyRetries) {
+  std::mutex m;
+  std::condition_variable cv;  // waited on and notified through the clock
+  bool b_started = false;
+  bool b_release = false;
+  int b_calls = 0;
+  std::function<Result<int>()> b_op = [&]() -> Result<int> {
+    const int call = ++b_calls;
+    if (call == 1) {
+      std::unique_lock lock(m);
+      b_started = true;
+      clock.notify_all(cv);
+      while (!b_release) clock.wait(cv, lock);
+      return fail(ErrorKind::Io, "late drop", "dev");
+    }
+    return fail(ErrorKind::Protocol, "retry result", "dev");
+  };
+
+  Result<int> b_result = 0;
+  {
+    testing::Crew crew(clock);
+    crew.start("b", [&] { b_result = link.call(b_op, Repeat::Safe); });
+    {
+      std::unique_lock lock(m);
+      while (!b_started) clock.wait(cv, lock);
+    }
+
+    // B is mid-op (on generation 0); A runs to completion and reconnects.
+    int a_calls = 0;
+    ASSERT_TRUE(link.call(failing(ErrorKind::Io, 1, &a_calls), Repeat::Safe));
+    ASSERT_EQ(transport.opens, 1);
+
+    {
+      const std::lock_guard lock(m);
+      b_release = true;
+      clock.notify_all(cv);
+    }
+    crew.join();
+  }
+
+  EXPECT_EQ(b_calls, 2);
+  ASSERT_FALSE(b_result);
+  EXPECT_EQ(b_result.error().what, "retry result");
+  EXPECT_EQ(transport.opens, 1);
+  EXPECT_EQ(transport.closes, 1);
+  EXPECT_EQ(connects, 1);
+  EXPECT_EQ(link.reconnects(), 1u);
+}
+
+TEST_F(ReconnectTest, ConcurrentRunsReconnectOnce) {
+  constexpr int kThreads = 4;
+  std::mutex m;
+  std::condition_variable cv;  // waited on and notified through the clock
+  int failed = 0;
+  bool reopened = false;
+  link.set_connect([&](Transport&) -> Result<void> {
+    ++connects;
+    const std::lock_guard lock(m);
+    reopened = true;
+    return {};
+  });
+  // Every thread's first op call fails; none fails before all have tried, so
+  // all of them fail against the same (pre-reconnect) generation.
+  std::function<Result<int>()> op = [&]() -> Result<int> {
+    std::unique_lock lock(m);
+    if (reopened) return 7;
+    ++failed;
+    clock.notify_all(cv);
+    while (failed < kThreads) clock.wait(cv, lock);
+    return fail(ErrorKind::Io, "dropped", "dev");
+  };
+  std::atomic<int> ok{0};
+  {
+    testing::Crew crew(clock);
+    for (int i = 0; i < kThreads; ++i) {
+      crew.start("caller " + std::to_string(i), [&] {
+        if (link.call(op, Repeat::Safe)) ++ok;
+      });
+    }
+    crew.join();
+  }
+  EXPECT_EQ(ok, kThreads);
+  EXPECT_EQ(transport.opens, 1);
+  EXPECT_EQ(transport.closes, 1);
+  EXPECT_EQ(connects, 1);
+  EXPECT_EQ(link.reconnects(), 1u);
 }
 
 }  // namespace

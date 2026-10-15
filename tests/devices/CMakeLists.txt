@@ -7,7 +7,6 @@ add_executable(pychron_devices_tests
   test_device.cpp
   test_capabilities.cpp
   test_driver_registry.cpp
-  test_reconnect.cpp
   test_link.cpp
   test_modbus_ids.cpp
   test_codec_conventions.cpp

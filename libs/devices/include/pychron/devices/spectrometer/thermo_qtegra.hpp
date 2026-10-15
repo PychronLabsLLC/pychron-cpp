@@ -16,6 +16,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -132,8 +133,10 @@ class QtegraSpectrometer final : public Device,
   // The connect step on the bare transport. It is also the link's reconnect
   // handshake, so it must never go through the link's exchange.
   Result<void> handshake(Transport& transport);
-  // One command through the Reconnector; the raw reply is the caller's to decode.
-  Result<Bytes> exchange(Result<codec::Command> cmd);
+  // One command as a Safe Device::call through the link; `decode` turns its
+  // reply into the result inside the call, so the call is observed once.
+  template <class T>
+  Result<T> command(Result<codec::Command> cmd, const std::function<Result<T>(const Bytes&)>& decode);
   // For the setters whose reply pychron ignores: any reply but ERROR is success.
   Result<void> command_ack(Result<codec::Command> cmd);
   // For SetHV / SetParameter: the reply must be "OK".

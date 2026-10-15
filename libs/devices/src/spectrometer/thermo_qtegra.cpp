@@ -156,27 +156,32 @@ Result<void> QtegraSpectrometer::handshake(Transport& transport) {
   return {};
 }
 
-Result<Bytes> QtegraSpectrometer::exchange(Result<codec::Command> cmd) {
-  if (!cmd) return fail(std::move(cmd).error());
-  return link_->exchange(*cmd);
+template <class T>
+Result<T> QtegraSpectrometer::command(Result<codec::Command> cmd,
+                                      const std::function<Result<T>(const Bytes&)>& decode) {
+  if (!cmd) return observe(Result<T>(fail(std::move(cmd).error())));
+  const codec::Command& sent = *cmd;
+  QtegraLink& link = *link_;
+  return call<T>(
+      &link.link(),
+      [&](Resend resend) -> Result<T> {
+        auto reply = link.exchange(sent, resend);
+        if (!reply) return fail(std::move(reply).error());
+        return decode(*reply);
+      },
+      Repeat::Safe);
 }
 
 Result<void> QtegraSpectrometer::command_ack(Result<codec::Command> cmd) {
-  auto reply = exchange(std::move(cmd));
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(q::decode_ack(*reply));
+  return command<void>(std::move(cmd), [](const Bytes& reply) { return q::decode_ack(reply); });
 }
 
 Result<void> QtegraSpectrometer::command_ok(Result<codec::Command> cmd) {
-  auto reply = exchange(std::move(cmd));
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(q::decode_ok(*reply));
+  return command<void>(std::move(cmd), [](const Bytes& reply) { return q::decode_ok(reply); });
 }
 
 Result<double> QtegraSpectrometer::query_number(Result<codec::Command> cmd) {
-  auto reply = exchange(std::move(cmd));
-  if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
-  return observe(q::decode_number(*reply));
+  return command<double>(std::move(cmd), [](const Bytes& reply) { return q::decode_number(reply); });
 }
 
 Result<void> QtegraSpectrometer::check_channel(const ChannelId& channel) const {
@@ -199,9 +204,8 @@ Result<void> QtegraSpectrometer::set(double value) {
 Result<double> QtegraSpectrometer::read() { return query_number(q::get_magnet_dac(options_.terminator)); }
 
 Result<bool> QtegraSpectrometer::moving() {
-  auto reply = exchange(q::get_magnet_moving(options_.terminator));
-  if (!reply) return observe(Result<bool>(fail(std::move(reply).error())));
-  return observe(q::decode_bool(*reply));
+  return command<bool>(q::get_magnet_moving(options_.terminator),
+                       [](const Bytes& reply) { return q::decode_bool(reply); });
 }
 
 // --- IBeamBlank ----------------------------------------------------------------
@@ -374,38 +378,40 @@ Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
     due_ = now - due_ > span ? now + span : due_ + span;
   }
 
-  // Outside the mutex: stop() must not wait for a transport timeout.
-  auto reply = exchange(q::get_data(options_.terminator));
-  if (!reply) return observe(Next(fail(std::move(reply).error())));
-  auto data = q::decode_data(*reply);
-  if (!data) return observe(Next(fail(std::move(data).error())));
+  // Outside the mutex: stop() must not wait for a transport timeout. The
+  // frame is made inside the call, which observes its outcome once.
+  return command<std::optional<Frame>>(q::get_data(options_.terminator), [&](const Bytes& reply) -> Next {
+    auto data = q::decode_data(reply);
+    if (!data) return fail(std::move(data).error());
 
-  Frame frame;
-  frame.ts = clock_.now();
-  frame.seq = seq;
-  frame.integrated = true;
-  frame.span = span;
-  // Only the channels the reply names; one it omits is absent, never guessed.
-  for (const auto& channel : options_.channels) {
-    const auto it = std::find_if(data->begin(), data->end(), [&](const auto& pair) { return pair.first == channel; });
-    if (it != data->end()) frame.values.emplace_back(channel, it->second);
-  }
-  {
-    std::lock_guard lock(mutex_);
-    if (run != run_) return observe(Next(std::optional<Frame>{}));  // stopped or reconfigured during the read
-  }
-  // A reply naming none of them (wrong case, other detector names, untagged
-  // values) is not an empty frame: the operator would see a blank plot and no
-  // error.
-  if (frame.values.empty() && !options_.channels.empty()) {
-    const bool truncated = reply->size() > kMaxQuotedReply;
-    const auto shown = static_cast<std::ptrdiff_t>(truncated ? kMaxQuotedReply : reply->size());
-    const Bytes quoted(reply->begin(), reply->begin() + shown);
-    return observe(Next(codec::protocol_error(
-        std::string("GetData reply names none of the configured channels") + (truncated ? " (reply truncated)" : ""),
-        quoted)));
-  }
-  return observe(Next(std::optional<Frame>{std::move(frame)}));
+    Frame frame;
+    frame.ts = clock_.now();
+    frame.seq = seq;
+    frame.integrated = true;
+    frame.span = span;
+    // Only the channels the reply names; one it omits is absent, never guessed.
+    for (const auto& channel : options_.channels) {
+      const auto it =
+          std::find_if(data->begin(), data->end(), [&](const auto& pair) { return pair.first == channel; });
+      if (it != data->end()) frame.values.emplace_back(channel, it->second);
+    }
+    {
+      std::lock_guard lock(mutex_);
+      if (run != run_) return std::optional<Frame>{};  // stopped or reconfigured during the read
+    }
+    // A reply naming none of them (wrong case, other detector names, untagged
+    // values) is not an empty frame: the operator would see a blank plot and
+    // no error.
+    if (frame.values.empty() && !options_.channels.empty()) {
+      const bool truncated = reply.size() > kMaxQuotedReply;
+      const auto shown = static_cast<std::ptrdiff_t>(truncated ? kMaxQuotedReply : reply.size());
+      const Bytes quoted(reply.begin(), reply.begin() + shown);
+      return codec::protocol_error(
+          std::string("GetData reply names none of the configured channels") + (truncated ? " (reply truncated)" : ""),
+          quoted);
+    }
+    return std::optional<Frame>{std::move(frame)};
+  });
 }
 
 REGISTER_DRIVER("thermo_qtegra", QtegraSpectrometer);

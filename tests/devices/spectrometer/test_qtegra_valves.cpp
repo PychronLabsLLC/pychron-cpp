@@ -6,11 +6,13 @@
 
 #include <chrono>
 
+#include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/transport/link_transport.hpp"
 #include "spectrometer/legacy/sim_util.hpp"
 #include "valve_conformance.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
@@ -18,29 +20,34 @@ using namespace std::chrono_literals;
 
 namespace {
 
-TransportOptions fast() {
+TransportOptions fast(const Clock* clock = nullptr) {
   TransportOptions o;
   o.name = "qtegra";
   o.timeout = 50ms;
+  o.clock = clock;
   return o;
 }
 
-Result<std::unique_ptr<Device>> make(Transport& t, std::string_view toml, std::string name) {
-  return DriverRegistry::global().create("qtegra_valves", t, legacy_test::table_of(toml), DriverContext{name});
+Result<std::unique_ptr<Device>> make(Transport& t, std::string_view toml, std::string name,
+                                     const Clock* clock = nullptr) {
+  return DriverRegistry::global().create("qtegra_valves", t, legacy_test::table_of(toml),
+                                         DriverContext{std::move(name), clock});
 }
 
-// The valves owning a Qtegra connection of their own.
+// The valves owning a Qtegra connection of their own, on `clock` (real time
+// when null).
 struct Rig final : pychron::test::ValveRig {
-  explicit Rig(std::string link) {
+  explicit Rig(const std::string& link, const Clock* on = nullptr) : clock(on) {
     EXPECT_TRUE(bus->open());
-    auto made = make(*bus, "link = \"" + link + "\"", "switch_controller");
+    auto made = make(*bus, "link = \"" + link + "\"", "switch_controller", clock);
     EXPECT_TRUE(made) << made.error().what;
     if (made) device = std::move(*made);
   }
 
+  const Clock* clock;
   std::shared_ptr<QtegraSimModel> model = std::make_shared<QtegraSimModel>();
   pychron::test::WireTap wire{qtegra_sim_hook(model), to_bytes("ERROR: no such valve\r\n")};
-  std::unique_ptr<SimTransport> bus = SimTransport::hooked(wire.hook(), fast());
+  std::unique_ptr<SimTransport> bus = SimTransport::hooked(wire.hook(), fast(clock));
   std::unique_ptr<Device> device;
 
   IValveActuator& actuator() override { return *capability<IValveActuator>(*device); }
@@ -52,8 +59,15 @@ struct Rig final : pychron::test::ValveRig {
 
 }  // namespace
 
-TEST(QtegraValves, PassTheValveConformanceSuite) {
-  Rig rig("qv_conformance");
+// On a virtual clock: every Qtegra command is Safe, so the link tries a
+// silent instrument for its call window, which then costs no real time.
+struct QtegraValvesVirtual : pychron::testing::VirtualTimeTest {
+  VirtualClock clock;
+  Clock::Participant main{clock, "test"};
+};
+
+TEST_F(QtegraValvesVirtual, PassTheValveConformanceSuite) {
+  Rig rig("qv_conformance", &clock);
   pychron::test::expect_valve_conformance(rig);
 }
 

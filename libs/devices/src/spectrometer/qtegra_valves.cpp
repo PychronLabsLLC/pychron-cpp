@@ -41,36 +41,46 @@ Result<std::unique_ptr<QtegraValves>> QtegraValves::create(const DriverArgs& arg
   return std::make_unique<QtegraValves>(args.name, std::move(*link), options);
 }
 
-Result<void> QtegraValves::open(const ValveAddress& address) { return observe(actuate(address, true)); }
+Result<void> QtegraValves::open(const ValveAddress& address) { return actuate(address, true); }
 
-Result<void> QtegraValves::close(const ValveAddress& address) { return observe(actuate(address, false)); }
+Result<void> QtegraValves::close(const ValveAddress& address) { return actuate(address, false); }
 
 Result<void> QtegraValves::actuate(const ValveAddress& address, bool open) {
-  if (auto ok = q::validate_name(address.value); !ok) return fail(std::move(ok).error());  // nothing sent
+  if (auto ok = q::validate_name(address.value); !ok) return observe(std::move(ok));  // nothing sent
   auto link = link_.get();
-  if (!link) return fail(std::move(link).error());
-  auto command = open ? q::open_valve(address.value, (*link)->terminator())
-                      : q::close_valve(address.value, (*link)->terminator());
-  if (!command) return fail(std::move(command).error());
-  auto reply = (*link)->exchange(*command);
-  if (!reply) return fail(std::move(reply).error());
-  return q::decode_ok(*reply);
+  if (!link) return observe(Result<void>(fail(std::move(link).error())));
+  QtegraLink& shared = **link;
+  auto command = open ? q::open_valve(address.value, shared.terminator())
+                      : q::close_valve(address.value, shared.terminator());
+  if (!command) return observe(Result<void>(fail(std::move(command).error())));
+  // An absolute target: Safe to send again.
+  return call<void>(
+      &shared.link(),
+      [&](Resend resend) -> Result<void> {
+        auto reply = shared.exchange(*command, resend);
+        if (!reply) return fail(std::move(reply).error());
+        return q::decode_ok(*reply);
+      },
+      Repeat::Safe);
 }
 
 Result<ValveState> QtegraValves::read(const ValveAddress& address) {
-  auto state = [&]() -> Result<ValveState> {
-    if (auto ok = q::validate_name(address.value); !ok) return fail(std::move(ok).error());
-    auto link = link_.get();
-    if (!link) return fail(std::move(link).error());
-    auto command = q::get_valve_state(address.value, (*link)->terminator());
-    if (!command) return fail(std::move(command).error());
-    auto reply = (*link)->exchange(*command);
-    if (!reply) return fail(std::move(reply).error());
-    auto open = q::decode_valve_state(*reply);
-    if (!open) return fail(std::move(open).error());
-    return *open ? ValveState::Open : ValveState::Closed;
-  }();
-  return observe(std::move(state));
+  if (auto ok = q::validate_name(address.value); !ok) return observe(Result<ValveState>(fail(std::move(ok).error())));
+  auto link = link_.get();
+  if (!link) return observe(Result<ValveState>(fail(std::move(link).error())));
+  QtegraLink& shared = **link;
+  auto command = q::get_valve_state(address.value, shared.terminator());
+  if (!command) return observe(Result<ValveState>(fail(std::move(command).error())));
+  return call<ValveState>(
+      &shared.link(),
+      [&](Resend resend) -> Result<ValveState> {
+        auto reply = shared.exchange(*command, resend);
+        if (!reply) return fail(std::move(reply).error());
+        auto is_open = q::decode_valve_state(*reply);
+        if (!is_open) return fail(std::move(is_open).error());
+        return *is_open ? ValveState::Open : ValveState::Closed;
+      },
+      Repeat::Safe);
 }
 
 }  // namespace pychron::spectrometer

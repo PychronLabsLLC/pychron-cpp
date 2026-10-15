@@ -74,23 +74,27 @@ std::vector<int> QtegraGauges::pressure_channels() const {
 Result<double> QtegraGauges::read_pressure() { return read_pressure(1); }
 
 Result<double> QtegraGauges::read_pressure(int channel) {
-  auto value = [&]() -> Result<double> {
-    if (channel < 1 || std::cmp_greater(channel, parameters_.size())) {
-      return fail(ErrorKind::Config, "channel " + std::to_string(channel) + " has no parameter (parameters has " +
-                                         std::to_string(parameters_.size()) + ")");
-    }
-    auto link = link_.get();
-    if (!link) return fail(std::move(link).error());
-    auto command = q::get_parameter(parameters_[static_cast<std::size_t>(channel - 1)], (*link)->terminator());
-    if (!command) return fail(std::move(command).error());
-    auto reply = (*link)->exchange(*command);
-    if (!reply) return fail(std::move(reply).error());
-    auto number = q::decode_number(*reply);
-    if (!number) return fail(std::move(number).error());
-    if (*number < 0) return codec::protocol_error("qtegra: a negative pressure", *reply);
-    return *number;
-  }();
-  return observe(std::move(value));
+  if (channel < 1 || std::cmp_greater(channel, parameters_.size())) {
+    return observe(Result<double>(fail(ErrorKind::Config, "channel " + std::to_string(channel) +
+                                                              " has no parameter (parameters has " +
+                                                              std::to_string(parameters_.size()) + ")")));
+  }
+  auto link = link_.get();
+  if (!link) return observe(Result<double>(fail(std::move(link).error())));
+  QtegraLink& shared = **link;
+  auto command = q::get_parameter(parameters_[static_cast<std::size_t>(channel - 1)], shared.terminator());
+  if (!command) return observe(Result<double>(fail(std::move(command).error())));
+  return call<double>(
+      &shared.link(),
+      [&](Resend resend) -> Result<double> {
+        auto reply = shared.exchange(*command, resend);
+        if (!reply) return fail(std::move(reply).error());
+        auto number = q::decode_number(*reply);
+        if (!number) return fail(std::move(number).error());
+        if (*number < 0) return codec::protocol_error("qtegra: a negative pressure", *reply);
+        return *number;
+      },
+      Repeat::Safe);
 }
 
 Result<Sample> QtegraGauges::sample() {

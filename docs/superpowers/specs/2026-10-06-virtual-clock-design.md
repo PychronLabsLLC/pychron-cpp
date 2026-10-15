@@ -369,7 +369,7 @@ hold time back.
 | `Spectrometer::mutex_` (every hardware operation, a move's settle included) | `std::recursive_mutex` | `RecursiveClockMutex`, on the context clock |
 | `LaserSystem::gate_` (every driver, camera and centering call) | `std::recursive_mutex` | `RecursiveClockMutex`, on the clock given at construction (the line's; `SteadyClock` when none is given). `LaserSystem::mutex_` guards fields and stays `std::mutex` |
 | `ScanService::op_mutex_` (the engine start and stop sequences) | `std::mutex` | `ClockMutex`. The service's state mutex stays `std::mutex` |
-| `SwitchManager::actuation_` (one actuation or refresh at a time, settle included), `Reconnector::mutex_` (close, open, handshake), `QtegraLink::handshake_mutex_` | `std::mutex` | `ClockMutex`. `SwitchManager::state_` stays `std::mutex` |
+| `SwitchManager::actuation_` (one actuation or refresh at a time, settle included), `Link::mutex_` (close, open, connect step, backoff; was `Reconnector::mutex_`), `QtegraLink::handshake_mutex_` | `std::mutex` | `ClockMutex`. `SwitchManager::state_` stays `std::mutex` |
 | `ExtractionLine::lifecycle_` (`start` talking to the devices, `stop` waiting for the jobs under way; `running`) | `std::mutex` | `ClockMutex`, on the line's clock |
 | thread joins of participants (scheduler dispatcher and workers, `QueuedTransport` worker, NGX reader, `Executor` slots, `post_eq`, session) | `join()` while the thread may still wait | the thread, as its last act while still a participant, sets a done flag (or drops a live count) under the owner's mutex and notifies through the clock; the joiner waits for that with `clock.wait`, then `join()`. Never a `Detached` around the join (3.5) |
 

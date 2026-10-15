@@ -13,7 +13,7 @@ std::string_view to_string(DeviceState state) noexcept {
 }
 
 Device::Device(std::string name, DeviceOptions options)
-    : name_(std::move(name)), clock_(options.clock), fault_after_(options.fault_after) {}
+    : name_(std::move(name)), clock_(options.clock), fault_after_(options.fault_after), link_(options.link) {}
 
 DeviceHealth Device::health() const {
   DeviceHealth h;

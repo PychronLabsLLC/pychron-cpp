@@ -159,11 +159,11 @@ class Link {  // one per transport, shared by the devices on it
 
 **Files:** `libs/devices/include/pychron/devices/device.hpp`, `libs/devices/src/device.cpp`, `libs/devices/src/spectrometer/qtegra_link.cpp` and its header, `thermo_qtegra.cpp`, `qtegra_valves.cpp`, `qtegra_gauges.cpp`, `libs/devices/include/pychron/devices/reconnect.hpp` and `src/reconnect.cpp` (deleted), `tests/devices/test_link.cpp`, `tests/devices/test_reconnect.cpp` (its cases moved, none dropped), `tests/systems/test_qtegra_system.cpp`.
 
-- [ ] `DeviceOptions` gains `Link* link = nullptr`. `Device::call(op, Repeat)` is `observe(link ? link->call(op, repeat) : op())`, where `op` takes the `Resend` for its exchanges (`Allowed` when `Safe`, `Never` when `Unsafe`): a device without a link behaves as today, and an `Unsafe` command is resent by neither layer (test: `retries = 3`, an `Unsafe` call that times out is seen once by the `SimTransport`).
-- [ ] `QtegraLink` owns a `Link` in place of its `Reconnector`; `set_handshake` becomes `Link::set_connect`. Every Qtegra command is `Safe` (spec section 9).
-- [ ] Move each case of `test_reconnect.cpp` into `test_link.cpp` under its old name where the behaviour is kept; where the rate limit was asserted, assert the backoff instead and say so in the commit body.
-- [ ] `QtegraAcquireSteady` and `test_qtegra_system` pass unchanged.
-- [ ] Commit: `refactor(devices): Qtegra reconnects through the shared link`.
+- [x] `DeviceOptions` gains `Link* link = nullptr`. `Device::call(op, Repeat)` is `observe(link ? link->call(op, repeat) : op())`, where `op` takes the `Resend` for its exchanges (`Allowed` when `Safe`, `Never` when `Unsafe`): a device without a link behaves as today, and an `Unsafe` command is resent by neither layer (test: `retries = 3`, an `Unsafe` call that times out is seen once by the `SimTransport`).
+- [x] `QtegraLink` owns a `Link` in place of its `Reconnector`; `set_handshake` becomes `Link::set_connect`. Every Qtegra command is `Safe` (spec section 9).
+- [x] Move each case of `test_reconnect.cpp` into `test_link.cpp` under its old name where the behaviour is kept; where the rate limit was asserted, assert the backoff instead and say so in the commit body.
+- [x] `QtegraAcquireSteady` and `test_qtegra_system` pass unchanged.
+- [x] Commit: `refactor(devices): Qtegra reconnects through the shared link`.
 
 ### Task 6: Every driver marks its commands
 

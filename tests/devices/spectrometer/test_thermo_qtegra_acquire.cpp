@@ -196,16 +196,6 @@ TEST_F(QtegraAcquire, NextWaitingAcrossConfigureUsesTheNewPeriod) {
   EXPECT_EQ(frame().span, two);
 }
 
-// A failed period change restores the due time it held back.
-TEST_F(QtegraAcquire, FailedConfigureDoesNotHoldFramesBack) {
-  ASSERT_TRUE(q.start());
-  sim->drop_next();
-  auto r = q.configure(1s);
-  ASSERT_FALSE(r);
-  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
-  EXPECT_EQ(frame().span, kHalf);
-}
-
 TEST_F(QtegraAcquire, SettlePeriodsComeFromOptions) {
   QtegraOptions options;
   options.settle_periods = 0.0;
@@ -341,14 +331,18 @@ TEST_F(QtegraAcquire, NonNumericValueIsProtocol) {
   EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
 }
 
-TEST_F(QtegraAcquire, NoReplyIsTimeoutAndIsNotRetried) {
+// Was NoReplyIsTimeoutAndIsNotRetried. GetData is Safe: a reply that never
+// comes is a transient failure, so the link reconnects (the handshake again)
+// and asks once more.
+TEST_F(QtegraAcquire, NoReplyIsRepeatedAfterAReconnect) {
   ASSERT_TRUE(q.start());
   sim->drop_next();
   auto r = q.next(Duration::zero());
-  ASSERT_FALSE(r);
-  EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
-  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "GetData\r"}));
-  EXPECT_EQ(q.reconnects(), 0U);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_TRUE(r->has_value());
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "GetData\r",
+                                                          "GetIntegrationTime\r", "GetData\r"}));
+  EXPECT_EQ(q.reconnects(), 1U);
 }
 
 // GetData replies nobody has captured from an instrument. These outcomes are a
@@ -466,6 +460,22 @@ struct QtegraAcquireSteady : pychron::testing::VirtualTimeTest {
 };
 
 }  // namespace
+
+// A failed period change restores the due time it held back. It fails only
+// once the link has tried for its call window.
+TEST_F(QtegraAcquireVirtual, FailedConfigureDoesNotHoldFramesBack) {
+  ASSERT_TRUE(q.connect());
+  ASSERT_TRUE(q.start());
+  rig.sim->set_down(true);
+  auto r = q.configure(1s);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  rig.sim->set_down(false);
+  auto f = q.next(Duration::zero());
+  ASSERT_TRUE(f) << to_string(f.error());
+  ASSERT_TRUE(f->has_value());
+  EXPECT_EQ((*f)->span, kHalf);
+}
 
 TEST_F(QtegraAcquireVirtual, ATimeoutEndsOnTheClockWithoutTraffic) {
   ASSERT_TRUE(q.connect());
@@ -594,7 +604,8 @@ struct Gate {
   }
 };
 
-// Forwards to a transport, calling `on_exchange` first on the caller's thread.
+// Forwards to a transport, calling `on_exchange` or `on_transaction` first on
+// the caller's thread.
 class TapTransport final : public Transport {
  public:
   explicit TapTransport(Transport& inner) : inner_(inner) {}
@@ -608,10 +619,14 @@ class TapTransport final : public Transport {
   }
   Result<void> write(Bytes tx) override { return inner_.write(std::move(tx)); }
   Result<Bytes> read(ReadSpec rs, Duration timeout) override { return inner_.read(std::move(rs), timeout); }
-  Result<void> transaction(std::function<Result<void>()> body) override { return inner_.transaction(std::move(body)); }
+  Result<void> transaction(std::function<Result<void>()> body) override {
+    if (on_transaction) on_transaction();
+    return inner_.transaction(std::move(body));
+  }
   Health health() const override { return inner_.health(); }
 
   std::function<void(const Bytes&)> on_exchange;  // set before any other thread runs
+  std::function<void()> on_transaction;           // the same
 
  private:
   Transport& inner_;
@@ -693,13 +708,12 @@ TEST_F(QtegraBlockedRead, RestartDuringBlockedNextStillDropsTheOldFrame) {
 TEST_F(QtegraBlockedRead, ConfigureDuringBlockedNextDropsTheFrameAndSettles) {
   ASSERT_TRUE(q.connect());
   ASSERT_TRUE(q.start());
-  // The read is released only once configure() is about to send its command,
-  // which queues behind the read on the transport.
-  tap.on_exchange = [this](const Bytes& tx) {
-    if (to_string(tx) == "SetIntegrationTime 1.048576\r") gate.release();
-  };
   Result<std::optional<Frame>> blocked = std::optional<Frame>{Frame{}};
   std::thread t = blocked_next(blocked);
+  // The read is released only once configure() is about to send its command:
+  // the link runs each call in a transport transaction, which queues behind
+  // the read's. The read's own transaction began before this is set.
+  tap.on_transaction = [this] { gate.release(); };
   ASSERT_TRUE(q.configure(1s));
   t.join();
 
