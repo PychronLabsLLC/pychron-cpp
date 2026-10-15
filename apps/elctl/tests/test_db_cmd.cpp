@@ -27,6 +27,7 @@ TEST(DbCmd, StubWithoutPersistence) {
 #include <QString>
 
 #include "pychron/persistence/store.hpp"
+#include "store_fixture.hpp"
 
 namespace {
 
@@ -126,6 +127,59 @@ TEST_F(DbCmd, UsageErrors) {
   EXPECT_EQ(run_raw({"db", "vacuum", "--db", db_}).code, elctl::kUsage);
   EXPECT_EQ(run_raw({"db", "status", "--db", db_, "--force"}).code, elctl::kUsage);
   EXPECT_EQ(run_raw({"db", "help"}).code, elctl::kOk);
+}
+
+// elctl db derive, on the seeded store: two heating steps of an irradiated
+// unknown, which have ages, and an air, which has none.
+class DbDerive : public elctl::testing::StoreTest {};
+
+TEST_F(DbDerive, FillsTheCacheAndSaysSo) {
+  const Outcome o = run_raw({"db", "derive", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "  3 seen, 3 written")) << o.out;  // the page's line
+  EXPECT_TRUE(contains(o.out, "derived: 3 seen, 3 written (1 without an age), 0 current, 0 failed")) << o.out;
+  EXPECT_TRUE(o.err.empty()) << o.err;
+
+  const Outcome again = run_raw({"db", "derive", "--db", db_});
+  EXPECT_EQ(again.code, elctl::kOk) << again.err;
+  EXPECT_TRUE(contains(again.out, "derived: 3 seen, 0 written (0 without an age), 3 current, 0 failed")) << again.out;
+}
+
+TEST_F(DbDerive, AllWritesAgainAndQuietSaysOnlyTheSummary) {
+  ASSERT_EQ(run_raw({"db", "derive", "--db", db_}).code, elctl::kOk);
+  const Outcome o = run_raw({"db", "derive", "--db", db_, "--all", "--quiet"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(o.out, "derived: 3 seen, 3 written (1 without an age), 0 current, 0 failed\n");
+}
+
+TEST_F(DbDerive, TheLimitIsHowManyAreWalked) {
+  const Outcome o = run_raw({"db", "derive", "--db", db_, "--limit", "1", "--quiet"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "derived: 1 seen")) << o.out;
+  for (const char* bad : {"0", "-2", "x", "1.5"})
+    EXPECT_EQ(run_raw({"db", "derive", "--db", db_, "--limit", bad}).code, elctl::kUsage) << bad;
+}
+
+TEST_F(DbDerive, AStoreBehindItsMigrationsIsRefused) {
+  store_.reset();
+  {
+    QSqlDatabase d = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("db-derive-test"));
+    d.setDatabaseName(QString::fromStdString(path("store.db").string()));
+    ASSERT_TRUE(d.open());
+    QSqlQuery q(d);
+    ASSERT_TRUE(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version = 5")));
+    d.close();
+  }
+  QSqlDatabase::removeDatabase(QStringLiteral("db-derive-test"));
+  const Outcome o = run_raw({"db", "derive", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "migration")) << o.err;
+  EXPECT_FALSE(ps::open_store(ps::StoreConfig{db_, false}));  // still behind: derive never migrates
+}
+
+TEST_F(DbDerive, ItsOptionsAreOnlyDerives) {
+  EXPECT_EQ(run_raw({"db", "status", "--db", db_, "--all"}).code, elctl::kUsage);
+  EXPECT_EQ(run_raw({"db", "migrate", "--db", db_, "--limit", "3"}).code, elctl::kUsage);
 }
 
 #endif

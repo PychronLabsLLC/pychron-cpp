@@ -740,6 +740,58 @@ DerivedFlush StoreSource::flush_derived() {
   return std::exchange(impl_->derived_done, DerivedFlush{});
 }
 
+Result<std::map<std::string, StoreSource::Fingerprints>> StoreSource::fingerprints(
+    const std::vector<std::string>& analyses) {
+  std::vector<ps::Uuid> ids;
+  ids.reserve(analyses.size());
+  for (const auto& a : analyses) {
+    auto id = parse_uuid(a);
+    if (!id) return fail(id.error());
+    ids.push_back(*id);
+  }
+  return impl_->call<std::map<std::string, Fingerprints>>(
+      [ids = std::move(ids)](ps::IStore& s) -> Result<std::map<std::string, Fingerprints>> {
+        auto cached = s.derived_fingerprints(ids);
+        if (!cached) return fail(cached.error());
+        std::map<std::string, Fingerprints> out;
+        for (const auto& id : ids) {
+          Fingerprints f;
+          if (const auto it = cached->find(id); it != cached->end()) f.cached = to_hex(it->second);
+          // One that cannot be read is loaded, and the load says why.
+          if (auto now = s.input_fingerprint(id, std::string(reduction::kReductionVersion))) f.current = to_hex(*now);
+          out.emplace(id.str(), std::move(f));
+        }
+        return out;
+      });
+}
+
+Result<std::size_t> StoreSource::write_derived_now(const std::vector<DerivedAge>& ages) {
+  std::map<ps::Uuid, ps::DerivedPut> wanted;
+  for (const auto& d : ages) {
+    const auto id = parse_uuid(d.uuid);
+    if (!id) return fail(id.error());
+    const auto fingerprint = digest_from_hex(d.input_fingerprint);
+    if (!fingerprint)
+      return fail(ErrorKind::Config, "derived age of " + d.uuid + ": '" + d.input_fingerprint + "' is no fingerprint");
+    wanted.insert_or_assign(*id, ps::DerivedPut{*id, *fingerprint, derived_rows(d)});
+  }
+  if (wanted.empty()) return std::size_t{0};
+  std::vector<ps::DerivedPut> puts;
+  puts.reserve(wanted.size());
+  for (auto& [id, put] : wanted) puts.push_back(std::move(put));
+  const std::size_t n = puts.size();
+  return impl_->call<std::size_t>([puts = std::move(puts), n](ps::IStore& s) -> Result<std::size_t> {
+    if (auto wrote = s.put_derived_many(puts, std::string(reduction::kReductionVersion)); !wrote)
+      return fail(wrote.error());
+    return n;
+  });
+}
+
+void StoreSource::drop_loaded(const std::vector<std::string>& analyses) {
+  std::lock_guard lock(impl_->cache_mutex);
+  for (const auto& a : analyses) impl_->cache.erase(a);
+}
+
 StoreSource::StoreSource(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 StoreSource::~StoreSource() = default;
 

@@ -183,6 +183,20 @@ Spec 4.5, writer 2.
   of the lab's store, first run and second, wall time and the stats line.
 - Commit: `feat(elctl): db derive fills the cache of ages`.
 
+Done 2026-10-14 on `feat/age-derive`. As built: `derive_ages` works over a
+small `IDeriveSource` (browse, fingerprints, load, write, drop), with
+`StoreSource` behind it, so a test can make one load fail; `StoreSource`
+gains `fingerprints` (cached and current, one page), `write_derived_now`
+(the `--all` write, whatever is cached) and `drop_loaded` (a walk holds no
+more than a page of analyses: its load cache has no bound). `DeriveStats`
+also names its failures (`failures`, "<run id>: <why>"); `written` counts
+those without an age as well, `no_age` says how many. `DeriveOptions` has a
+`page_size` (200) so a test walks pages of one; a page the store refuses to
+write stops the walk with that error (what earlier pages wrote stays). The
+tests are in
+`tests/processing/test_store_source.cpp`, on its seeded store, not in a
+`test_derive.cpp`.
+
 ## Task 6: import derives
 
 Spec 4.5, writer 3.

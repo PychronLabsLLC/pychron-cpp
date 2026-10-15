@@ -13,6 +13,7 @@
 #include <random>
 #include <thread>
 
+#include "pychron/processing/derive.hpp"
 #include "pychron/processing/derived.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/recall.hpp"
@@ -813,6 +814,188 @@ TEST_F(StoreSourceTest, ARefreshWhileOtherThreadsReadIsSafe) {
   ASSERT_TRUE(src.refresh());
   EXPECT_GT(src.generation(), g0);
   EXPECT_EQ(src.browse(BrowseQuery{})->rows.size(), 3u);
+}
+
+// ---------------------------------------------------------------- backfill
+// derive_ages (age cache spec 4.5, writer 2), on the seeded store: an
+// irradiated unknown that has an age and an air that has none.
+
+bool always(const DeriveStats&) { return true; }
+
+TEST_F(StoreSourceTest, TheBackfillFillsAnEmptyCache) {
+  auto stats = derive_ages(source(), {}, always);
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(stats->seen, 2);
+  EXPECT_EQ(stats->written, 2);
+  EXPECT_EQ(stats->no_age, 1);
+  EXPECT_EQ(stats->current, 0);
+  EXPECT_EQ(stats->failed, 0);
+  const auto rows = cached(unknown_);
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, derived_of(unknown_).age->nominal());
+  ASSERT_EQ(cached(air_).size(), 1u);
+  EXPECT_FALSE(cached(air_).at("age").value);
+}
+
+TEST_F(StoreSourceTest, ASecondBackfillFindsEverythingCurrent) {
+  ASSERT_TRUE(derive_ages(source(), {}, always));
+  auto again = derive_ages(source(), {}, always);
+  ASSERT_TRUE(again) << to_string(again.error());
+  EXPECT_EQ(again->seen, 2);
+  EXPECT_EQ(again->current, 2);  // the air's null age too
+  EXPECT_EQ(again->written, 0);
+}
+
+TEST_F(StoreSourceTest, AfterAFluxChangeTheBackfillWritesOnlyWhatItChanged) {
+  ASSERT_TRUE(derive_ages(source(), {}, always));
+  ps::FluxValue flux;
+  flux.j = 0.002;
+  flux.j_err = 2e-6;
+  flux.position_jerr = 2e-7;
+  flux.monitor_name = "FC-2";
+  flux.monitor_material = "sanidine";
+  flux.monitor_age = 28.201;
+  flux.monitor_age_err = 0.023;
+  publish(flux_object_, flux);
+  ASSERT_TRUE(source().refresh());
+  auto stats = derive_ages(source(), {}, always);
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(stats->written, 1);  // the unknown of that position
+  EXPECT_EQ(stats->current, 1);  // the air
+  const auto rows = cached(unknown_);
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, derived_of(unknown_).age->nominal());
+}
+
+TEST_F(StoreSourceTest, AllWritesWhatIsCurrentToo) {
+  ASSERT_TRUE(derive_ages(source(), {}, always));
+  DeriveOptions all;
+  all.all = true;
+  auto stats = derive_ages(source(), all, always);
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(stats->written, 2);
+  EXPECT_EQ(stats->current, 0);
+}
+
+TEST_F(StoreSourceTest, TheBackfillWalksNoFurtherThanItsLimit) {
+  DeriveOptions one;
+  one.limit = 1;
+  auto stats = derive_ages(source(), one, always);
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(stats->seen, 1);
+  EXPECT_EQ(cached(air_).size(), 1u);  // the newest
+  EXPECT_TRUE(cached(unknown_).empty());
+}
+
+TEST_F(StoreSourceTest, TheBackfillWalksInvalidAnalysesToo) {
+  auto uow = *store_->begin(reducer());
+  ASSERT_TRUE(uow->add_revision(unknown_, ps::Kind::Tags, ps::TagValue{"invalid", std::nullopt, std::nullopt},
+                                *store_->head(unknown_, ps::Kind::Tags)));
+  ASSERT_TRUE(uow->commit(ps::ChangesetKind::Reduction, "tag"));
+  auto stats = derive_ages(source(), {}, always);
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(stats->seen, 2);
+  EXPECT_EQ(cached(unknown_).size(), 3u);
+}
+
+TEST_F(StoreSourceTest, TheBackfillWalksPageAfterPage) {
+  (void)ingest("77000", 2, "unknown", "2026-10-02T12:00:00Z");
+  DeriveOptions pages;
+  pages.page_size = 1;
+  std::vector<int> seen_after;
+  auto stats = derive_ages(source(), pages, [&](const DeriveStats& so_far) {
+    seen_after.push_back(so_far.seen);
+    return true;
+  });
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(seen_after, (std::vector<int>{1, 2, 3}));  // every analysis once, none twice
+  EXPECT_EQ(stats->written, 3);
+  // and with a limit across pages
+  DeriveOptions two = pages;
+  two.limit = 2;
+  two.all = true;
+  auto limited = derive_ages(source(), two, always);
+  ASSERT_TRUE(limited);
+  EXPECT_EQ(limited->seen, 2);
+}
+
+TEST_F(StoreSourceTest, TheBackfillStopsWhenToldTo) {
+  DeriveOptions pages;
+  pages.page_size = 1;
+  int asked = 0;
+  auto stats = derive_ages(source(), pages, [&](const DeriveStats&) {
+    ++asked;
+    return false;
+  });
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(asked, 1);
+  EXPECT_EQ(stats->seen, 1);  // the second page was never read
+  EXPECT_EQ(cached(air_).size(), 1u);
+  EXPECT_TRUE(cached(unknown_).empty());
+}
+
+// The store source, but one analysis does not load.
+class OneFailsToLoad final : public IDeriveSource {
+ public:
+  OneFailsToLoad(StoreSource& source, std::string broken) : source_(source), broken_(std::move(broken)) {}
+  Result<BrowsePage> browse(const BrowseQuery& query) override { return source_.browse(query); }
+  Result<std::map<std::string, StoreSource::Fingerprints>> fingerprints(
+      const std::vector<std::string>& analyses) override {
+    return source_.fingerprints(analyses);
+  }
+  Result<AnalysisPtr> load(const std::string& uuid) override {
+    if (uuid == broken_) return fail(ErrorKind::Protocol, "a payload that does not parse", "store");
+    return source_.load(uuid);
+  }
+  Result<std::size_t> write(const std::vector<DerivedAge>& ages) override { return source_.write_derived_now(ages); }
+  void drop_loaded(const std::vector<std::string>& analyses) override { source_.drop_loaded(analyses); }
+
+ private:
+  StoreSource& source_;
+  std::string broken_;
+};
+
+// The store source, but it refuses every write.
+class RefusesWrites final : public IDeriveSource {
+ public:
+  explicit RefusesWrites(StoreSource& source) : source_(source) {}
+  Result<BrowsePage> browse(const BrowseQuery& query) override { return source_.browse(query); }
+  Result<std::map<std::string, StoreSource::Fingerprints>> fingerprints(
+      const std::vector<std::string>& analyses) override {
+    return source_.fingerprints(analyses);
+  }
+  Result<AnalysisPtr> load(const std::string& uuid) override { return source_.load(uuid); }
+  Result<std::size_t> write(const std::vector<DerivedAge>&) override {
+    ++writes;
+    return fail(ErrorKind::Io, "disk full", "store");
+  }
+  void drop_loaded(const std::vector<std::string>& analyses) override { source_.drop_loaded(analyses); }
+  int writes = 0;
+
+ private:
+  StoreSource& source_;
+};
+
+TEST_F(StoreSourceTest, ARefusedWriteStopsTheWalk) {
+  RefusesWrites src(source());
+  DeriveOptions pages;
+  pages.page_size = 1;
+  auto stats = derive_ages(src, pages, always);
+  ASSERT_FALSE(stats);
+  EXPECT_EQ(stats.error().what, "disk full");
+  EXPECT_EQ(src.writes, 1);
+}
+
+TEST_F(StoreSourceTest, AFailingLoadIsCountedNamedAndPassedOver) {
+  OneFailsToLoad src(source(), unknown_.str());
+  auto stats = derive_ages(src, {}, always);
+  ASSERT_TRUE(stats) << to_string(stats.error());
+  EXPECT_EQ(stats->failed, 1);
+  ASSERT_EQ(stats->failures.size(), 1u);
+  EXPECT_NE(stats->failures[0].find("77000"), std::string::npos) << stats->failures[0];
+  EXPECT_NE(stats->failures[0].find("does not parse"), std::string::npos) << stats->failures[0];
+  EXPECT_EQ(stats->written, 1);  // the air, after it
+  EXPECT_TRUE(cached(unknown_).empty());
 }
 
 TEST_F(StoreSourceTest, OpenFailsForABadUrlAndHidesPasswords) {

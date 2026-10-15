@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/revisions.hpp"
@@ -70,6 +71,23 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource, public
   // Returns when every write queued so far is done, with what became of
   // them since the last flush. For tests and for elctl.
   DerivedFlush flush_derived();
+
+  // For the backfill (derive.hpp, age cache spec 4.5): for each analysis,
+  // the fingerprint its age is cached under (none when it has no age row) and
+  // its input fingerprint now, both hex; `current` is empty when it could not
+  // be read. One statement for the cached ones, a few an analysis for the rest.
+  struct Fingerprints {
+    std::optional<std::string> cached;
+    std::string current;
+  };
+  Result<std::map<std::string, Fingerprints>> fingerprints(const std::vector<std::string>& analyses);
+  // Writes the ages now, in one transaction, whatever is cached (the
+  // backfill's --all); how many were written. A malformed id or fingerprint
+  // is a Config error and nothing is written.
+  Result<std::size_t> write_derived_now(const std::vector<DerivedAge>& ages);
+  // Forgets loaded analyses without moving the generation: a walk over a
+  // whole store holds no more than a page of them.
+  void drop_loaded(const std::vector<std::string>& analyses);
 
   Result<std::vector<RevisionSummary>> history(const std::string& analysis, RevisionKind kind) override;
   Result<RevisionTable> revision_table(const std::string& revision) override;
