@@ -147,7 +147,11 @@ Inner loop (keep waits short):
   `-fsyntax-only`, all warnings at once; needs `brew install gcc` and a
   configured build directory; the pre-push hook runs it on `build/dev`, so a
   change under `apps/pychron-ui` or `tests/ui` is swept by hand with
-  `--build-dir build/dev-ui`). Nearest thing to CI a Mac has, not CI: gcc 16
+  `--build-dir build/dev-ui`). While working, `--changed`: only sources the
+  branch's changes reach (own file, or header read when last built, from
+  Ninja's dependency log; unknown → swept; changed CMake file → whole tree).
+  One edited source: seconds, not minutes. Whole tree once before push (the
+  hook). Nearest thing to CI a Mac has, not CI: gcc 16
   does not give every gcc 14 warning. Met in CI and not locally, October
   2026:
   - gcc: `EXPECT_*` under an unbraced `if` (`-Wdangling-else`); a local or a

@@ -45,23 +45,27 @@ class CannotRun(Exception):
     """The sweep cannot run: exit status 2."""
 
 
-def parse_ninja_deps(text: str, build_dir: Path) -> dict[str, set[Path]]:
-    """`ninja -t deps` output: the files each object read when last built, by its output path. A record
+def _absolute(path: str, directory: Path) -> Path:
+    return Path(os.path.normpath(Path(directory) / path))
+
+
+def parse_ninja_deps(text: str, build_dir: Path) -> dict[Path, set[Path]]:
+    """`ninja -t deps` output: the files each object read when last built, by its absolute path. A record
     that is not VALID, or that lists nothing, is left out: what that object reads is not known."""
-    deps: dict[str, set[Path]] = {}
+    deps: dict[Path, set[Path]] = {}
     current: set[Path] | None = None
     for line in text.splitlines():
         record = DEPS_RECORD.match(line)
         if record:
             current = set()
             if record.group(3) == "VALID" and int(record.group(2)) > 0:
-                deps[record.group(1)] = current
+                deps[_absolute(record.group(1), build_dir)] = current
         elif line.startswith("    ") and current is not None:
-            current.add(Path(os.path.normpath(build_dir / line.strip())))
+            current.add(_absolute(line.strip(), build_dir))
     return deps
 
 
-def ninja_deps(build_dir: Path) -> dict[str, set[Path]] | None:
+def ninja_deps(build_dir: Path) -> dict[Path, set[Path]] | None:
     """The build directory's dependency log, or None when it cannot be read."""
     ninja = shutil.which("ninja")
     if not ninja:
@@ -89,7 +93,7 @@ def changed_files(base: str) -> set[Path]:
 
 
 def select_entries(entries: list[dict], changed: set[Path],
-                   deps: dict[str, set[Path]] | None) -> tuple[list[dict], str | None]:
+                   deps: dict[Path, set[Path]] | None) -> tuple[list[dict], str | None]:
     """The entries the changes reach, and why the whole tree is swept instead (None when it is not)."""
     build = sorted(str(p) for p in changed if p.name in BUILD_FILES or p.suffix == ".cmake")
     if build:
@@ -100,7 +104,7 @@ def select_entries(entries: list[dict], changed: set[Path],
         return entries, "the compile database has no output field: the whole tree is swept"
     selected = []
     for e in entries:
-        read = deps.get(e["output"])
+        read = deps.get(_absolute(e["output"], e["directory"]))   # CMake writes it absolute or relative
         if read is None or Path(e["file"]) in changed or read & changed:
             selected.append(e)
     return selected, None

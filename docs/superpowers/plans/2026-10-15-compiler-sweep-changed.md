@@ -20,14 +20,14 @@ Files: `tools/compiler_sweep.py`, `tools/tests/test_compiler_sweep.py`.
 - [x] Test: `main()` with `--changed` on a fixture database, stubbed compiler and stubbed git and deps,
   prints `<k> of <n> sources (changed since <base>)`; without `--changed` the summary is as before.
 - [x] Add `--changed` and `--base`; whole-tree fallbacks print their reason on stderr; git failure exits 2.
-- [ ] Run `python3 tools/compiler_sweep.py --changed` on a real branch and compare its count with a full
+- [x] Run `python3 tools/compiler_sweep.py --changed` on a real branch and compare its count with a full
   sweep's.
 
 ### Task 3: Docs
 
 Files: `AGENTS.md`.
 
-- [ ] Build and test section: `--changed` for the inner loop; the whole tree is what the pre-push hook runs.
+- [x] Build and test section: `--changed` for the inner loop; the whole tree is what the pre-push hook runs.
 
 ## Open questions
 

@@ -55,14 +55,14 @@ def names(selected: list[dict]) -> list[str]:
 class ParseDeps(unittest.TestCase):
     def test_records_by_object(self):
         deps = cs.parse_ninja_deps(DEPS, BUILD)
-        a = deps["libs/core/CMakeFiles/pychron_core.dir/src/a.cpp.o"]
+        a = deps[BUILD / "libs/core/CMakeFiles/pychron_core.dir/src/a.cpp.o"]
         self.assertIn(Path("/repo/libs/core/include/pychron/core/base.hpp"), a)
         self.assertIn(Path("/repo/libs/core/src/a.cpp"), a)
 
     def test_stale_and_empty_records_are_unknown(self):
         deps = cs.parse_ninja_deps(DEPS, BUILD)
-        self.assertNotIn("libs/core/CMakeFiles/pychron_core.dir/src/c.cpp.o", deps)
-        self.assertNotIn("libs/core/CMakeFiles/pychron_core.dir/src/e.cpp.o", deps)
+        self.assertNotIn(BUILD / "libs/core/CMakeFiles/pychron_core.dir/src/c.cpp.o", deps)
+        self.assertNotIn(BUILD / "libs/core/CMakeFiles/pychron_core.dir/src/e.cpp.o", deps)
 
 
 class Select(unittest.TestCase):
@@ -98,6 +98,12 @@ class Select(unittest.TestCase):
         self.assertEqual(names(selected), ["a", "b"])
         self.assertIn("dependency log", why)
 
+    def test_absolute_output_matches_the_log(self):
+        # CMake writes `output` absolute in compile_commands.json; Ninja's log keys are relative
+        absolute = [{**entry(n), "output": str(BUILD / entry(n)["output"])} for n in ("a", "b")]
+        selected, _ = self.select({"libs/core/src/b.cpp"}, entries=absolute)
+        self.assertEqual(names(selected), ["b"])
+
     def test_entries_without_output_sweep_everything(self):
         selected, why = self.select({"libs/core/src/b.cpp"}, entries=[entry("a", output=False), entry("b")])
         self.assertEqual(names(selected), ["a", "b"])
@@ -129,12 +135,12 @@ class Main(unittest.TestCase):
     def run_main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
         ok = mock.Mock(returncode=0, stdout="", stderr="")
-        deps = DEPS.replace("../../", "")
+        deps = DEPS.replace("../../", "/repo/")
         with mock.patch.object(sys, "argv", ["compiler_sweep.py", "--build-dir", str(self.build),
                                              "--compiler", "true", *argv]), \
                 mock.patch.object(cs, "ROOT", Path("/repo")), \
                 mock.patch.object(cs, "changed_files", return_value={Path("/repo/libs/core/src/b.cpp")}), \
-                mock.patch.object(cs, "ninja_deps", return_value=cs.parse_ninja_deps(deps, Path("/repo"))), \
+                mock.patch.object(cs, "ninja_deps", return_value=cs.parse_ninja_deps(deps, self.build)), \
                 mock.patch.object(cs.subprocess, "run", return_value=ok), \
                 redirect_stdout(out), redirect_stderr(err):
             status = cs.main()
