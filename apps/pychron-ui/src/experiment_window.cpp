@@ -162,6 +162,10 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&bridge_, &ExperimentBridge::seriesUpdated, evolutions_, &EvolutionsView::on_series);
   connect(&bridge_, &ExperimentBridge::fitsUpdated, evolutions_, &EvolutionsView::on_fits);
   connect(&bridge_, &ExperimentBridge::peakCenterDone, evolutions_, &EvolutionsView::on_peak_center);
+  connect(&bridge_, &ExperimentBridge::peakCenterTryStarted, evolutions_, &EvolutionsView::on_peak_center_try);
+  connect(&bridge_, &ExperimentBridge::peakCenterPoint, evolutions_, &EvolutionsView::on_peak_center_point);
+  // The peak center graph keeps the queue's results: a new queue starts it empty.
+  connect(&bridge_, &ExperimentBridge::queueStarted, evolutions_, [this] { evolutions_->clear_peak_centers(); });
   connect(&bridge_, &ExperimentBridge::queueEdited, this, [this](const exec::QueueEdited& e) {
     if (model_.on_queue_edited(e)) set_modified(true);  // the file no longer matches the queue
   });

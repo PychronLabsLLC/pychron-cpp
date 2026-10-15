@@ -11,12 +11,14 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QScrollArea>
+#include <QStackedWidget>
 #include <QTabBar>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <qcustomplot.h>
 
+#include "peak_center_view.hpp"
 #include "strip_chart_model.hpp"
 #include "theme.hpp"
 
@@ -29,6 +31,9 @@ using experiment::collect::SeriesKind;
 
 constexpr std::size_t kPaletteSize = 8;  // StripChartModel::palette_color cycles 8
 constexpr SeriesKind kKinds[] = {SeriesKind::Signal, SeriesKind::Baseline, SeriesKind::Sniff};
+constexpr int kPeakCenterTab = static_cast<int>(std::size(kKinds));  // after the kinds
+
+bool is_kind_tab(int i) { return i >= 0 && std::cmp_less(i, std::size(kKinds)); }
 
 QString series_name(const SeriesKey& key) {
   return key.isotope.empty() ? QString::fromStdString(key.detector)
@@ -50,22 +55,31 @@ std::vector<EvolutionPanel> evolution_panels(const std::vector<SeriesKey>& arriv
 
 EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* parent)
     : QWidget(parent),
-      colors_(std::move(colors)),
+      colors_(colors),
       tabs_(new QTabBar),
       title_(new QLabel),
       plot_(new QCustomPlot),
       margins_(new QCPMarginGroup(plot_)),
       scroll_(new QScrollArea),
       peaks_(new QListWidget),
-      intercepts_(new QTableWidget) {
-  auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(0, 0, 0, 0);
+      intercepts_(new QTableWidget),
+      pages_(new QStackedWidget),
+      kind_page_(new QWidget),
+      peak_view_(new PeakCenterView(std::move(colors))) {
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
   for (auto k : kKinds) {
     QString name = QString::fromLatin1(experiment::collect::to_string(k).data());
     if (!name.isEmpty()) name[0] = name[0].toUpper();
     tabs_->addTab(name);
   }
-  layout->addWidget(tabs_);
+  tabs_->addTab(tr("Peak center"));
+  outer->addWidget(tabs_);
+  outer->addWidget(pages_, 1);
+  pages_->addWidget(kind_page_);
+  pages_->addWidget(peak_view_);
+  auto* layout = new QVBoxLayout(kind_page_);
+  layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(title_);
   // The panels scroll; they never scroll sideways.
   scroll_->setWidget(plot_);
@@ -87,21 +101,49 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   intercepts_->setMaximumHeight(150);
   layout->addWidget(intercepts_);
   auto* peaks_label = new QLabel(tr("Peak centers"));
-  layout->addWidget(peaks_label);
+  outer->addWidget(peaks_label);
   peaks_->setMaximumHeight(80);
-  layout->addWidget(peaks_);
+  outer->addWidget(peaks_);
 
   plot_->setPlottingHint(QCP::phFastPolylines, true);
   rebuild();  // no panels yet: the default axis rect goes
-  connect(tabs_, &QTabBar::currentChanged, this, [this](int i) {
-    if (i >= 0 && std::cmp_less(i, std::size(kKinds))) set_kind(kKinds[i]);
-  });
+  connect(tabs_, &QTabBar::currentChanged, this, &EvolutionsView::on_tab);
+  connect(peak_view_, &PeakCenterView::tryStarted, this, [this] { tabs_->setCurrentIndex(kPeakCenterTab); });
+  connect(peaks_, &QListWidget::itemClicked, this, &EvolutionsView::on_peak_line);
   refresh_.setInterval(kRefreshMs);
   connect(&refresh_, &QTimer::timeout, this, [this] {
     if (dirty_) refresh();
   });
   refresh_.start();
   title_->setText(tr("No run"));
+}
+
+void EvolutionsView::on_tab(int index) {
+  // The page first: set_kind returns early when the kind has not changed.
+  if (is_kind_tab(index)) {
+    pages_->setCurrentWidget(kind_page_);
+    set_kind(kKinds[index]);
+  } else if (index == kPeakCenterTab) {
+    pages_->setCurrentWidget(peak_view_);
+  }
+}
+
+void EvolutionsView::clear_peak_centers() {
+  peak_view_->clear();
+  peak_centers_done_ = 0;
+}
+
+void EvolutionsView::on_peak_center_try(const jobs::PeakCenterTryStarted& e) { peak_view_->on_try_started(e); }
+
+void EvolutionsView::on_peak_center_point(const jobs::PeakCenterPoint& e) { peak_view_->on_point(e); }
+
+void EvolutionsView::on_peak_line(const QListWidgetItem* item) {
+  if (item == nullptr) return;
+  // Index among the kept results: the oldest kept is number done - kept.
+  const int index = item->data(Qt::UserRole).toInt() - (peak_centers_done_ - peak_view_->kept());
+  if (index < 0) return;  // no longer kept
+  peak_view_->show_result(index);
+  tabs_->setCurrentIndex(kPeakCenterTab);
 }
 
 void EvolutionsView::clear() {
@@ -117,6 +159,8 @@ void EvolutionsView::on_run_started(const experiment::executor::RunStarted& e) {
   run_ = QString::fromStdString(e.identifier);
   clear();
   title_->setText(run_);
+  peak_view_->abandon();
+  tabs_->setCurrentIndex(0);
 }
 
 void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpdated>& batch) {
@@ -168,7 +212,9 @@ void EvolutionsView::on_peak_center(const jobs::PeakCenterDone& e) {
   } else {
     text += tr("failed: %1").arg(QString::fromStdString(r.message));
   }
-  peaks_->addItem(text);
+  auto* item = new QListWidgetItem(text, peaks_);  // owned by the list
+  item->setData(Qt::UserRole, peak_centers_done_++);
+  peak_view_->on_done(e);
 }
 
 void EvolutionsView::on_fits(const std::vector<experiment::collect::FitsUpdated>& batch) {
@@ -185,8 +231,10 @@ void EvolutionsView::on_fits(const std::vector<experiment::collect::FitsUpdated>
 void EvolutionsView::set_kind(SeriesKind kind) {
   if (kind == kind_) return;
   kind_ = kind;
-  for (int i = 0; std::cmp_less(i, std::size(kKinds)); ++i)
-    if (kKinds[i] == kind && tabs_->currentIndex() != i) tabs_->setCurrentIndex(i);
+  // The tab follows the kind, unless the peak center is shown.
+  if (is_kind_tab(tabs_->currentIndex()))
+    for (int i = 0; std::cmp_less(i, std::size(kKinds)); ++i)
+      if (kKinds[i] == kind && tabs_->currentIndex() != i) tabs_->setCurrentIndex(i);
   rebuild();
   refresh();
 }

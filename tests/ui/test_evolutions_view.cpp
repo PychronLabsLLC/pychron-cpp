@@ -1,16 +1,20 @@
 // EvolutionsView fed synthetic series and fits: curves to time zero,
-// intercepts, outliers.
+// intercepts, outliers; and its Peak center tab.
 
 #include <cmath>
 #include <limits>
 
+#include <QListWidget>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QTabBar>
+#include <QTableWidget>
 #include <QtTest/QtTest>
 
 #include <qcustomplot.h>
 
 #include "evolutions_view.hpp"
+#include "peak_center_view.hpp"
 
 using pychron::experiment::collect::FitsUpdated;
 using pychron::experiment::collect::SeriesFit;
@@ -20,6 +24,7 @@ using pychron::experiment::collect::SeriesUpdated;
 using pychron::ui::evolution_panels;
 using pychron::ui::EvolutionsView;
 namespace reduction = pychron::reduction;
+namespace jobs = pychron::jobs;
 
 class TestEvolutionsView : public QObject {
   Q_OBJECT
@@ -31,6 +36,50 @@ class TestEvolutionsView : public QObject {
     u.values.emplace_back(key, v);
     u.t = t;
     return u;
+  }
+
+  // ---------------------------------------------------------------- peak centers
+  static constexpr int kPeakCenterTab = 3;
+
+  static jobs::SweepPoint sweep_point(double x, double h1) {
+    jobs::SweepPoint p;
+    p.x = x;
+    p.y["H1"] = h1;
+    return p;
+  }
+  static jobs::PeakCenterTryStarted try_started(int index) {
+    jobs::PeakCenterTryStarted e;
+    e.detector = "H1";
+    e.isotope = "Ar40";
+    e.try_index = index;
+    e.n_tries = 2;
+    e.start = 4.9;
+    e.end = 5.1;
+    e.initial_center = 5.0;
+    return e;
+  }
+  static jobs::PeakCenterDone done(double center) {
+    jobs::PeakCenterDone d;
+    auto& r = d.result;
+    r.ok = true;
+    r.detector = "H1";
+    r.isotope = "Ar40";
+    r.initial_center = 5.0;
+    r.center = center;
+    r.config.n_tries = 1;
+    jobs::PeakCenterTry t;
+    t.points = {sweep_point(center - 0.01, 0), sweep_point(center, 100), sweep_point(center + 0.01, 0)};
+    r.tries.push_back(t);
+    return d;
+  }
+  static QTabBar* tab_bar(const EvolutionsView& view) { return view.findChild<QTabBar*>(); }
+  static QListWidget* peak_list(const EvolutionsView& view) { return view.findChild<QListWidget*>(); }
+  static void click_row(QListWidget* list, int row) {
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, list->visualItemRect(list->item(row)).center());
+  }
+  // The kind page: its panels and the intercepts table.
+  static bool kind_page_shown(const EvolutionsView& view) {
+    return view.scroll_area()->isVisibleTo(&view) && view.findChild<QTableWidget*>()->isVisibleTo(&view);
   }
 
  private slots:
@@ -293,6 +342,173 @@ class TestEvolutionsView : public QObject {
     QCOMPARE(titles(evolution_panels(arrived, SeriesKind::Signal)), (QStringList{"Ar40 H1", "Ar39 AX"}));
     QCOMPARE(titles(evolution_panels(arrived, SeriesKind::Baseline)), (QStringList{"H1", "AX"}));
     QVERIFY(evolution_panels(arrived, SeriesKind::Sniff).empty());
+  }
+
+  void hasAPeakCenterTabAfterTheKinds() {
+    EvolutionsView view;
+    QCOMPARE(tab_bar(view)->count(), 4);
+    QCOMPARE(tab_bar(view)->tabText(kPeakCenterTab), QStringLiteral("Peak center"));
+  }
+
+  void thePeakCenterTabShowsTheGraphAndHidesTheKindControls() {
+    EvolutionsView view;
+    QVERIFY(kind_page_shown(view));
+    QVERIFY(!view.peak_center_view()->isVisibleTo(&view));
+    view.set_kind(SeriesKind::Baseline);
+    tab_bar(view)->setCurrentIndex(kPeakCenterTab);
+    QVERIFY(view.peak_center_view()->isVisibleTo(&view));
+    QVERIFY(!kind_page_shown(view));
+    QCOMPARE(view.kind(), SeriesKind::Baseline);
+    // Back to the kind it was on: the kind is unchanged, its page is shown again.
+    tab_bar(view)->setCurrentIndex(1);
+    QVERIFY(kind_page_shown(view));
+    QVERIFY(!view.peak_center_view()->isVisibleTo(&view));
+    QCOMPARE(view.kind(), SeriesKind::Baseline);
+    tab_bar(view)->setCurrentIndex(kPeakCenterTab);
+    tab_bar(view)->setCurrentIndex(0);
+    QVERIFY(kind_page_shown(view));
+    QCOMPARE(view.kind(), SeriesKind::Signal);
+  }
+
+  void aTryStartingSelectsTheTab() {
+    EvolutionsView view;
+    QCOMPARE(tab_bar(view)->currentIndex(), 0);
+    view.on_peak_center_try(try_started(0));
+    QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
+    QVERIFY(view.peak_center_view()->isVisibleTo(&view));
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1, try 1 of 2"));
+    view.on_peak_center_point({0, sweep_point(5.0, 10)});
+    QCOMPARE(view.peak_center_view()->series().front().x.size(), 1);
+  }
+
+  void aSeriesArrivingDoesNotLeaveIt() {
+    EvolutionsView view;
+    view.on_peak_center_try(try_started(0));
+    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
+    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
+    QVERIFY(view.peak_center_view()->isVisibleTo(&view));
+    tab_bar(view)->setCurrentIndex(0);
+    QCOMPARE(view.graph_count(), 2);
+    QCOMPARE(view.panel_titles(), (QStringList{"Ar40 H1", "Ar36 CDD"}));
+  }
+
+  void aKindSetInCodeDoesNotLeaveIt() {
+    EvolutionsView view;
+    view.on_peak_center_try(try_started(0));
+    view.set_kind(SeriesKind::Baseline);
+    QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
+    QCOMPARE(view.kind(), SeriesKind::Baseline);
+  }
+
+  void aPeakCenterStillAddsItsLine() {
+    EvolutionsView view;
+    view.on_peak_center(done(5.123456));
+    QCOMPARE(view.peak_centers(), QStringList{QStringLiteral("Ar40 on H1: center 5.123456")});
+    QCOMPARE(view.peak_center_view()->kept(), 1);
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.123456"));
+  }
+
+  void clickingALineShowsThatPeakCenter() {
+    EvolutionsView view;
+    view.resize(400, 700);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.on_peak_center(done(5.1));
+    view.on_peak_center(done(5.2));
+    QVERIFY(view.peak_center_view()->title().contains(QStringLiteral("5.200000")));
+    QCOMPARE(tab_bar(view)->currentIndex(), 0);
+    click_row(peak_list(view), 0);
+    QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.100000"));
+  }
+
+  void aRunStartingKeepsTheGraphAndItsKeptResults() {
+    EvolutionsView view;
+    view.on_peak_center(done(5.1));
+    view.on_run_started({1, "uuid", "66002", {}});
+    QVERIFY(view.peak_centers().isEmpty());  // the list is the run's
+    QCOMPARE(view.peak_center_view()->kept(), 1);
+    QVERIFY(!view.peak_center_view()->series().empty());
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.100000"));
+  }
+
+  void aRunStartingAbandonsAnOpenTry() {
+    EvolutionsView view;
+    view.on_peak_center_try(try_started(0));
+    view.on_peak_center_point({0, sweep_point(5.0, 10)});
+    view.on_run_started({1, "uuid", "66002", {}});
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1, try 1 of 2: not finished"));
+    QCOMPARE(view.peak_center_view()->kept(), 0);
+  }
+
+  void aRunStartingReturnsToTheSignalTab() {
+    EvolutionsView view;
+    view.set_kind(SeriesKind::Sniff);
+    view.on_peak_center_try(try_started(0));
+    view.on_run_started({1, "uuid", "66002", {}});
+    QCOMPARE(tab_bar(view)->currentIndex(), 0);
+    QCOMPARE(view.kind(), SeriesKind::Signal);
+    QVERIFY(kind_page_shown(view));
+    // From another kind's tab too.
+    tab_bar(view)->setCurrentIndex(2);
+    view.on_run_started({2, "uuid2", "66003", {}});
+    QCOMPARE(tab_bar(view)->currentIndex(), 0);
+    QCOMPARE(view.kind(), SeriesKind::Signal);
+  }
+
+  void clearingPeakCentersEmptiesTheGraph() {
+    EvolutionsView view;
+    view.on_peak_center(done(5.1));
+    view.clear();  // a run's clear leaves the graph
+    QCOMPARE(view.peak_center_view()->kept(), 1);
+    view.clear_peak_centers();
+    QCOMPARE(view.peak_center_view()->kept(), 0);
+    QVERIFY(view.peak_center_view()->series().empty());
+  }
+
+  void theListOutlivesTheTwentyKept() {
+    EvolutionsView view;
+    view.resize(400, 700);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    constexpr int kDone = 22;
+    const auto center = [](int i) { return 5.0 + 0.001 * i; };
+    for (int i = 0; i < kDone; ++i) view.on_peak_center(done(center(i)));
+    QCOMPARE(view.peak_centers().size(), kDone);
+    QCOMPARE(view.peak_center_view()->kept(), static_cast<int>(pychron::ui::PeakCenterView::kKept));
+    const QString last = view.peak_center_view()->title();
+    QVERIFY(last.contains(QString::number(center(kDone - 1), 'f', 6)));
+    // The two oldest are no longer kept: clicking them changes nothing.
+    for (int row : {0, 1}) {
+      click_row(peak_list(view), row);
+      QCOMPARE(view.peak_center_view()->title(), last);
+      QCOMPARE(tab_bar(view)->currentIndex(), 0);
+    }
+    // The third is the oldest kept.
+    click_row(peak_list(view), 2);
+    QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
+    QVERIFY(view.peak_center_view()->title().contains(QString::number(center(2), 'f', 6)));
+    click_row(peak_list(view), kDone - 1);
+    QCOMPARE(view.peak_center_view()->title(), last);
+  }
+
+  void theKeptCountFollowsAQueueAcrossRuns() {
+    EvolutionsView view;
+    view.resize(400, 700);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.on_peak_center(done(5.1));
+    view.on_run_started({1, "uuid", "66002", {}});
+    view.on_peak_center(done(5.2));
+    view.on_peak_center(done(5.3));
+    click_row(peak_list(view), 0);  // this run's first: the queue's second
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.200000"));
+    view.clear_peak_centers();
+    view.on_run_started({2, "uuid2", "66003", {}});
+    view.on_peak_center(done(5.4));
+    click_row(peak_list(view), 0);
+    QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.400000"));
   }
 
   void aFitBeforeItsPointsIsIgnored() {

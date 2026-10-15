@@ -18,6 +18,7 @@
 #include <QComboBox>
 #include <QMenu>
 #include <QMenuBar>
+#include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QDockWidget>
@@ -29,6 +30,7 @@
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
 #include "main_window.hpp"
+#include "peak_center_view.hpp"
 #include "shortcuts.hpp"
 #include "menu_hub.hpp"
 #include "preferences_dialog.hpp"
@@ -267,6 +269,16 @@ class TestExperimentWindow : public QObject {
     QVERIFY2(std::abs(ar40->value - second) < 0.02 * second, qPrintable(QString::number(ar40->value)));
     QCOMPARE(evo->peak_centers().size(), 1);
     QVERIFY(evo->peak_centers().front().contains(QStringLiteral("table updated")));
+    // The peak center's sweep is drawn on the Peak center tab, the reference first, marked.
+    const auto* tabs = evo->findChild<QTabBar*>();
+    QVERIFY(tabs != nullptr);
+    QCOMPARE(tabs->tabText(tabs->count() - 1), QStringLiteral("Peak center"));
+    const auto drawn = evo->peak_center_view()->series();
+    QVERIFY(!drawn.empty());
+    QCOMPARE(drawn.front().name, QStringLiteral("*H1"));
+    QVERIFY(!drawn.front().x.isEmpty());
+    QCOMPARE(evo->peak_center_view()->marker_x().size(), 4);
+    QVERIFY(evo->peak_center_view()->kept() >= 1);
     evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);
     QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Baseline) > 0);
     QVERIFY(evo->graph_count() > 0);
@@ -283,6 +295,10 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(measuring, 3);
     QVERIFY(waits >= 2);  // the delays before the runs
     QVERIFY(pane->start_enabled());
+    // A second queue in the same window starts with no peak center kept.
+    emit bridge.queueStarted(pychron::experiment::lab::QueueStarted{3, 0});
+    QCOMPARE(evo->peak_center_view()->kept(), 0);
+    QVERIFY(evo->peak_center_view()->series().empty());
   }
 
   void notificationsShowInTheExecutorPane() {

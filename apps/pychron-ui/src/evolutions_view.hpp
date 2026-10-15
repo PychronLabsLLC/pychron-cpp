@@ -17,8 +17,15 @@
 // own data, since isotopes differ by orders of magnitude. Tick labels and the
 // time title are on the bottom panel only.
 //
-// Cleared when a run starts. Points arrive in the bridge's SeriesUpdated
-// batches; repaints are capped at 20 Hz.
+// A fourth tab, Peak center (peak center plot design 4.4), shows a
+// PeakCenterView in place of the panels and the intercepts: it is selected
+// when a peak center's try starts, and the Signal tab again when the next run
+// starts. A line of the peak centers list brings that peak center back, while
+// the view still keeps it (its newest 20 of the queue).
+//
+// Cleared when a run starts; the peak center graph and its kept results only
+// when a queue starts (clear_peak_centers). Points arrive in the bridge's
+// SeriesUpdated batches; repaints are capped at 20 Hz.
 
 #include <map>
 #include <string>
@@ -44,10 +51,14 @@ class QCPMarginGroup;
 class QScrollArea;
 class QLabel;
 class QListWidget;
+class QListWidgetItem;
+class QStackedWidget;
 class QTabBar;
 class QTableWidget;
 
 namespace pychron::ui {
+
+class PeakCenterView;
 
 // One panel of the view: the series it draws and its y title.
 struct EvolutionPanel {
@@ -77,8 +88,11 @@ class EvolutionsView : public QWidget {
   void on_run_started(const experiment::executor::RunStarted& e);
   void on_series(const std::vector<experiment::collect::SeriesUpdated>& batch);
   void on_peak_center(const jobs::PeakCenterDone& e);
+  void on_peak_center_try(const jobs::PeakCenterTryStarted& e);
+  void on_peak_center_point(const jobs::PeakCenterPoint& e);
   void on_fits(const std::vector<experiment::collect::FitsUpdated>& batch);
-  void clear();
+  void clear();               // a run's: series, fits, the peak centers list
+  void clear_peak_centers();  // a queue's: the peak center graph and its kept results
 
   void set_kind(experiment::collect::SeriesKind kind);
   experiment::collect::SeriesKind kind() const noexcept { return kind_; }
@@ -104,6 +118,7 @@ class EvolutionsView : public QWidget {
   std::optional<reduction::Intercept> fit_of(const experiment::collect::SeriesKey& key) const;
   int fit_curve_count() const;  // fit curves drawn for the shown kind
   QColor series_color(const experiment::collect::SeriesKey& key) const;  // invalid if unknown
+  [[nodiscard]] PeakCenterView* peak_center_view() const noexcept { return peak_view_; }
 
  private:
   struct Line {
@@ -122,6 +137,8 @@ class EvolutionsView : public QWidget {
     QCPGraph* excluded = nullptr;  // the fit's outliers
   };
 
+  void on_tab(int index);
+  void on_peak_line(const QListWidgetItem* item);
   void rebuild();  // graphs for the shown kind
   void refresh();  // push data, rescale, replot
 
@@ -139,6 +156,12 @@ class EvolutionsView : public QWidget {
   QScrollArea* scroll_;      // holds plot_
   QListWidget* peaks_;
   QTableWidget* intercepts_;
+  QStackedWidget* pages_;    // the kind page, or the peak center view
+  QWidget* kind_page_;       // title, panels, intercepts
+  PeakCenterView* peak_view_;
+  // Peak centers done since the queue started: a list line holds its number
+  // among them, so that it finds its result while the view still keeps it.
+  int peak_centers_done_ = 0;
   QTimer refresh_;
   bool dirty_ = false;
 };
