@@ -221,7 +221,7 @@ the Evolutions pane switches to its **Peak center** tab by itself and draws
 the sweep as it goes: intensity against the magnet position, one point a
 step. The reference detector is drawn heavy and named with a star in the
 legend (`*H1`). Each of the config's `additional_detectors` is drawn in its
-own colour, scaled so that its lowest and highest readings span the same
+own color, scaled so that its lowest and highest readings span the same
 range as the reference's: the graph compares the shapes and positions of the
 peaks, not their sizes. Hovering over a point gives its detector, magnet
 position and raw intensity. The title names the isotope, the detector and
@@ -317,7 +317,7 @@ series** in the data window, [Data analysis](06-data-analysis.md)):
 
 | Tab | Analyses | Starting preset |
 |---|---|---|
-| **Blanks** | Every kind of blank: `blank_unknown`, `blank_air`, `blank_cocktail`, `blank_extractionline`, and the plain `blank` of imported data. Each kind is a group of the figure, with its own colour and legend entry. | Blanks |
+| **Blanks** | Every kind of blank: `blank_unknown`, `blank_air`, `blank_cocktail`, `blank_extractionline`, and the plain `blank` of imported data. Each kind is a group of the figure, with its own color and legend entry. | Blanks |
 | **Airs** | `air` | Air monitor |
 
 Unknowns, cocktails, detector intercalibrations and other run types are in
