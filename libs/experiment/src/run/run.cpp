@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "pychron/devices/link.hpp"
+#include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/measurement/results.hpp"
 #include "pychron/experiment/record/builder.hpp"
 
@@ -407,33 +408,19 @@ SafeStateResult Run::make_safe() {
 }
 
 Result<void> Run::keep_trying(const std::string& step, const std::function<Result<void>()>& op) {
-  const Clock& clock = *s_.clock;
-  const auto start = clock.now();
-  pychron::Duration backoff = std::chrono::seconds(1);
-  bool warned = false;
-  for (;;) {
-    auto r = op();
-    if (r) return r;
-    const auto elapsed = clock.now() - start;
-    if (!is_transient(r.error().kind) || elapsed >= kSafeStateWindow) {
-      alarm(AlarmSeverity::Critical, "safe state: " + step + " failed: " + r.error().what);
-      return r;
-    }
-    if (!warned && elapsed >= kSafeStateAlarmAfter) {
-      warned = true;
-      alarm(AlarmSeverity::Warning, "safe state: " + step + " still failing: " + r.error().what);
-    }
-    // Wake for the warning and for the window's end, whichever backoff misses.
-    pychron::Duration wait = std::min<pychron::Duration>(backoff, kSafeStateWindow - elapsed);
-    if (!warned) wait = std::min<pychron::Duration>(wait, kSafeStateAlarmAfter - elapsed);
-    clock.sleep_for(wait);
-    backoff = std::min<pychron::Duration>(backoff * 2, std::chrono::seconds(30));
-  }
+  const measurement::KeepTrying how{*s_.clock, s_.bus, "safe state",
+                                    [this](pychron::Duration d) {
+                                      s_.clock->sleep_for(d);
+                                      return true;
+                                    },
+                                    [this](const std::string& message) { note(message); },
+                                    kSafeStateWindow, kSafeStateAlarmAfter};
+  return measurement::keep_trying(how, step, op);
 }
 
 void Run::alarm(AlarmSeverity severity, std::string message) {
   note(message);
-  if (s_.bus != nullptr) s_.bus->publish(Alarm{"safe_state", severity, std::move(message), s_.clock->now()});
+  if (s_.bus != nullptr) s_.bus->publish(Alarm{"safe state", severity, std::move(message), s_.clock->now()});
 }
 
 Result<void> Run::extract(RunControl& control) {
@@ -512,6 +499,11 @@ Result<void> Run::measure(RunControl& control) {
   measurement::MeasurementEngine engine(ctx, std::move(in), std::move(options));
   control.attach(&engine);
   result_.measurement = engine.run(control.token());
+  // Each silence in the readings is said (the record has it as a gap event).
+  if (s_.bus != nullptr)
+    for (const auto& gap : result_.measurement.gaps)
+      s_.bus->publish(RunNote{run_id_, row_, measurement::describe(gap), gap.at});
+  if (result_.measurement.truncated_by_link) note("truncated: the spectrometer went silent and did not resume");
   control.attach(nullptr);
   if (post_eq.joinable()) {
     {
@@ -619,6 +611,8 @@ Result<void> Run::save(const std::optional<Error>& failure) {
     b.add_event(record::Event{std::chrono::duration<double>(h.ts - t0).count(), "state",
                               std::string(to_string(h.from)) + " -> " + std::string(to_string(h.to)) +
                                   (h.reason.empty() ? "" : ": " + h.reason)});
+  for (const auto& gap : meas.gaps)
+    b.add_event(record::Event{std::chrono::duration<double>(gap.at - t0).count(), "gap", measurement::describe(gap)});
   for (const auto& pc : meas.peak_centers) {
     char buf[160];
     std::snprintf(buf, sizeof buf, "%s on %s (%s): ", pc.request.isotope.c_str(), pc.request.detector.c_str(),

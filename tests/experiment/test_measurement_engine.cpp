@@ -10,10 +10,12 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "pychron/experiment/measurement/engine.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/experiment/measurement/results.hpp"
 
 using namespace pychron;
@@ -40,20 +42,38 @@ class FakeSpectrometer final : public ISpectrometerPort {
     return {};
   }
   Result<void> protect(const std::string& det, bool on) override {
+    if (protect_fault) {
+      if (auto r = protect_fault(det, on); !r) return r;
+    }
     log.push_back(std::string(on ? "protect " : "unprotect ") + det);
     if (on) protected_.insert(det); else protected_.erase(det);
     return {};
   }
   Result<void> start_acquisition(pychron::Duration integration) override {
+    if (lose_starts > 0) {  // as NGX's StartAcq whose reply was lost (link.hpp)
+      --lose_starts;
+      log.emplace_back("start lost");
+      return fail(Error{ErrorKind::Io, "StartAcq: reply lost", {}, kOutcomeUnknown});
+    }
     log.push_back("start " + std::to_string(secs(integration)));
     integration_ = integration;
     acquiring = true;
     return {};
   }
-  Result<std::optional<spectrometer::Reading>> next_reading(pychron::Duration) override {
+  Result<std::optional<spectrometer::Reading>> next_reading(pychron::Duration timeout) override {
     if (!acquiring) return fail(ErrorKind::Config, "not acquiring");
+    // Silent from silent_from until silent_until: the call waits its timeout
+    // (or until the silence ends, when a reading comes at once), or fails at
+    // once with Io when the link is down.
+    if (silent_from && clock_.now() >= *silent_from && (!silent_until || clock_.now() < *silent_until)) {
+      ++silent_calls;
+      if (silence_is_link_down) return fail(ErrorKind::Io, "spectrometer link down");
+      const TimePoint until = silent_until ? std::min(clock_.now() + timeout, *silent_until) : clock_.now() + timeout;
+      clock_.set(until);
+      if (!silent_until || clock_.now() < *silent_until) return std::optional<spectrometer::Reading>{};
+    }
     ++readings;
-    if (fail_at && readings == *fail_at) return fail(ErrorKind::Timeout, "acquirer stalled");
+    if (fail_at && readings == *fail_at) return fail(fail_kind, "acquirer stalled");
     clock_.advance(integration_);
     spectrometer::Reading r;
     r.ts = clock_.now();
@@ -89,6 +109,12 @@ class FakeSpectrometer final : public ISpectrometerPort {
   std::map<std::string, double> abundance{{"Ar40", 1000}, {"Ar39", 100}, {"Ar36", 3}, {"Ar41", 0}};
   std::function<void(int)> on_reading;
   std::optional<int> fail_at;
+  ErrorKind fail_kind = ErrorKind::Timeout;
+  std::optional<TimePoint> silent_from, silent_until;
+  bool silence_is_link_down = false;
+  int silent_calls = 0;
+  int lose_starts = 0;
+  std::function<Result<void>(const std::string&, bool)> protect_fault;
   bool fail_position = false;
   bool acquiring = false;
   int readings = 0;
@@ -109,6 +135,9 @@ class FakeValves final : public IValvePort {
     return {};
   }
   Result<void> close(const std::string& v) override {
+    if (close_fault) {
+      if (auto r = close_fault(v); !r) return r;
+    }
     log.push_back("close " + v + " @" + std::to_string(secs(clock_.now() - t0)));
     state[v] = false;
     return {};
@@ -116,6 +145,7 @@ class FakeValves final : public IValvePort {
   std::vector<std::string> log;
   std::map<std::string, bool> state;
   TimePoint t0{};
+  std::function<Result<void>(const std::string&)> close_fault;  // its error is the call's
 
  private:
   ManualClock& clock_;
@@ -658,10 +688,11 @@ TEST_F(EngineTest, AcquisitionFailureFailsAndCleansUp) {
   auto p = multicollect(10);
   p.equilibration.close_inlet = false;
   spec_.fail_at = 15;  // inside main (10 sniff readings first)
+  spec_.fail_kind = ErrorKind::Protocol;  // definite: a timeout is a gap (MeasurementGap below)
   auto r = run(p);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
   ASSERT_TRUE(r.error);
-  EXPECT_EQ(r.error->kind, ErrorKind::Timeout);
+  EXPECT_EQ(r.error->kind, ErrorKind::Protocol);
   EXPECT_FALSE(spec_.acquiring);
   EXPECT_FALSE(valves_.state["B"]);
 }
@@ -875,3 +906,222 @@ TEST_F(EngineTest, IsotopeOnTwoDetectorsGetsDetectorQualifiedIntercepts) {
 }
 
 }  // namespace
+
+// ---- a silence in the readings (executor hardening, spec 4.4) ----------------
+
+class MeasurementGaps : public EngineTest {
+ protected:
+  MeasurementGaps() {
+    progress_ = bus_.subscribe<CountsProgress>([this](const CountsProgress& e) {
+      if (e.block != Block::Main) return;
+      if (e.i == 1) first_main_ = clock_.now();
+      if (silence_after_ && e.i == *silence_after_ && !spec_.silent_from) {
+        spec_.silent_from = clock_.now();
+        if (silence_for_) spec_.silent_until = clock_.now() + *silence_for_;
+        valves_at_silence_ = valves_.log.size();
+        spec_log_at_silence_ = spec_.log.size();
+      }
+      if (e.i == (silence_after_ ? *silence_after_ : 0) + 1 && spec_.silent_from) {
+        valves_at_resume_ = valves_.log.size();
+        spec_log_at_resume_ = spec_.log.size();
+      }
+      last_main_ = clock_.now();
+    });
+    gaps_ = bus_.subscribe<measurement::MeasurementGap>([this](const measurement::MeasurementGap& g) { published_.push_back(g); });
+    alarms_ = bus_.subscribe<Alarm>([this](const Alarm& a) { said_.push_back(a); });
+  }
+
+  // Silent after the n-th main reading, for `d` (for good when not given).
+  void silence(int n, std::optional<pychron::Duration> d) {
+    silence_after_ = n;
+    silence_for_ = d;
+  }
+  // When the main collection began: one integration (1 s) before its first reading.
+  TimePoint main_began() const { return *first_main_ - 1s; }
+
+  std::optional<int> silence_after_;
+  std::optional<pychron::Duration> silence_for_;
+  std::optional<TimePoint> first_main_, last_main_;
+  std::size_t valves_at_silence_ = 0, valves_at_resume_ = 0, spec_log_at_silence_ = 0, spec_log_at_resume_ = 0;
+  std::vector<measurement::MeasurementGap> published_;
+  std::vector<Alarm> said_;
+  SignalBus::Subscription progress_, gaps_, alarms_;
+};
+
+TEST_F(MeasurementGaps, AShortSilenceIsRecordedAndTheBlockEndsOnTime) {
+  auto p = multicollect(100);
+  silence(30, 20s);
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_FALSE(r.truncated_by_link);
+  ASSERT_EQ(r.gaps.size(), 1u);
+  EXPECT_EQ(r.gaps[0].block, Block::Main);
+  // From the last reading before the silence to the first after it.
+  EXPECT_NEAR(r.gaps[0].to - r.gaps[0].from, 21.0, 1e-9);
+  ASSERT_EQ(published_.size(), 1u);
+  EXPECT_EQ(published_[0].from, r.gaps[0].from);
+  // The block ends at its planned end (100 s after it began), with what 80 s gives.
+  EXPECT_EQ(*last_main_ - main_began(), 100s);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 80);
+}
+
+TEST_F(MeasurementGaps, NothingIsDoneToTheLineWhileWaiting) {
+  auto p = multicollect(100);
+  silence(30, 20s);
+  const auto r = run(p);
+  ASSERT_EQ(r.gaps.size(), 1u);
+  EXPECT_EQ(valves_at_resume_, valves_at_silence_);
+  EXPECT_EQ(spec_log_at_resume_, spec_log_at_silence_);  // no protect, no position, no restart
+}
+
+TEST_F(MeasurementGaps, ASilenceLongerThanMaxGapEndsTheBlock) {
+  auto p = multicollect(300);
+  silence(100, std::nullopt);
+  const auto r = run(p);
+  ASSERT_EQ(r.gaps.size(), 1u);
+  // Waited max_gap (120 s) from the last reading, then the acquisition was
+  // started again once, which gave nothing within a reading's timeout (8 s).
+  EXPECT_EQ(*last_main_ - main_began(), 100s);
+  const auto restarts = std::count(spec_.log.begin() + static_cast<std::ptrdiff_t>(spec_log_at_silence_), spec_.log.end(),
+                                   "start 1.000000");
+  EXPECT_EQ(restarts, 1);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 100);
+}
+
+TEST_F(MeasurementGaps, EnoughCountsIsTruncatedWithReasonLink) {
+  auto p = multicollect(300);
+  silence(100, std::nullopt);  // 100 of 300: above 20 %
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated) << (r.error ? r.error->what : "");
+  EXPECT_TRUE(r.truncated_by_link);
+  EXPECT_FALSE(spec_.acquiring);
+  EXPECT_FALSE(valves_.state["B"]);
+}
+
+TEST_F(MeasurementGaps, TooFewCountsIsFailed) {
+  auto p = multicollect(300);
+  silence(30, std::nullopt);  // 30 of 300: under 20 %
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("30 of 300"), std::string::npos) << r.error->what;
+}
+
+// 20 % of 5 is one count; a linear fit needs two: the fit's is the floor.
+TEST_F(MeasurementGaps, TheFitsMinimumIsTheFloor) {
+  auto p = multicollect(5);
+  silence(1, std::nullopt);
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("1 of 5"), std::string::npos) << r.error->what;
+}
+
+TEST_F(MeasurementGaps, ALinkThatFailsAtOnceIsWaitedOutOnTheClock) {
+  auto p = multicollect(100);
+  spec_.silence_is_link_down = true;
+  silence(30, 20s);
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(r.gaps.size(), 1u);
+  EXPECT_EQ(*last_main_ - main_began(), 100s);
+  EXPECT_LT(spec_.silent_calls, 40);  // waited, not spun
+}
+
+TEST_F(MeasurementGaps, AnAcquisitionStartOfUnknownOutcomeIsRestartedOnce) {
+  auto p = multicollect(10);
+  spec_.lose_starts = 1;
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_GE(spec_.log.size(), 3u);
+  const auto lost = std::find(spec_.log.begin(), spec_.log.end(), "start lost");
+  ASSERT_NE(lost, spec_.log.end());
+  EXPECT_EQ(*(lost + 1), "stop");
+  EXPECT_EQ(*(lost + 2), "start 1.000000");
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 10);
+}
+
+TEST_F(MeasurementGaps, EquilibrationFollowsTheSameRule) {
+  auto p = multicollect(10);
+  // Silent from the third sniff reading for 15 s, longer than a reading's
+  // timeout (8 s): a gap, waited out without moving the inlet, which still
+  // closes on time.
+  spec_.on_reading = [this](int n) {
+    if (n == 3) {
+      spec_.silent_from = clock_.now();
+      spec_.silent_until = clock_.now() + 15s;
+    }
+  };
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(r.gaps.size(), 1u);
+  EXPECT_EQ(r.gaps[0].block, Block::Equilibrate);
+  EXPECT_FALSE(r.gaps[0].resumed);  // silent until the inlet closed
+  const auto& tm = r.data.timing;
+  ASSERT_TRUE(tm.inlet_open && tm.inlet_close);
+  EXPECT_NEAR(*tm.inlet_close - *tm.inlet_open, 10.0, 1e-9);  // as without a gap
+  EXPECT_FALSE(valves_.state["B"]);
+}
+
+TEST_F(MeasurementGaps, WithNoGapNothingChanges) {
+  const auto r = run(multicollect(10));
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed);
+  EXPECT_TRUE(r.gaps.empty());
+  EXPECT_FALSE(r.truncated_by_link);
+  EXPECT_TRUE(published_.empty());
+  EXPECT_TRUE(said_.empty());
+}
+
+// Spec 4.4, valve row: in a measurement the inlet close and a detector's
+// unprotect keep trying for the critical window, with an alarm at 20 s.
+TEST_F(MeasurementGaps, AValveCallInMeasurementKeepsTryingForTheCriticalWindow) {
+  std::optional<TimePoint> first_try, closed;
+  valves_.close_fault = [&](const std::string& v) -> Result<void> {
+    if (v != "B") return {};
+    if (!first_try) first_try = clock_.now();
+    if (clock_.now() - *first_try < 5min) return fail(ErrorKind::Io, "valve bus down");
+    closed = clock_.now();
+    return {};
+  };
+  const auto r = run(multicollect(10));
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(closed);
+  EXPECT_GE(*closed - *first_try, 5min);
+  EXPECT_LE(*closed - *first_try, 5min + 30s);
+  ASSERT_EQ(said_.size(), 1u);
+  EXPECT_EQ(said_[0].severity, AlarmSeverity::Warning);
+  EXPECT_EQ(said_[0].ts - *first_try, 20s);
+}
+
+TEST_F(MeasurementGaps, AValveDownForGoodFailsTheMeasurementAfterTheCriticalWindow) {
+  std::optional<TimePoint> first_try;
+  valves_.close_fault = [&](const std::string& v) -> Result<void> {
+    if (v != "B") return {};
+    if (!first_try) first_try = clock_.now();
+    return fail(ErrorKind::Io, "valve bus down");
+  };
+  const auto r = run(multicollect(10));
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
+  ASSERT_EQ(said_.size(), 2u);
+  EXPECT_EQ(said_[1].severity, AlarmSeverity::Critical);
+  EXPECT_EQ(said_[1].ts - *first_try, 10min);
+}
+
+TEST_F(MeasurementGaps, ADetectorUnprotectKeepsTryingForTheCriticalWindow) {
+  auto p = multicollect(10);
+  p.main.hops.front().protect = {"CDD"};
+  std::optional<TimePoint> first_try, done;
+  spec_.protect_fault = [&](const std::string& det, bool on) -> Result<void> {
+    if (on || det != "CDD") return {};
+    if (!first_try) first_try = clock_.now();
+    if (clock_.now() - *first_try < 5min) return fail(ErrorKind::Io, "spectrometer link down");
+    done = clock_.now();
+    return {};
+  };
+  const auto r = run(p);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(done);
+  EXPECT_GE(*done - *first_try, 5min);
+  ASSERT_FALSE(said_.empty());
+  EXPECT_EQ(said_[0].severity, AlarmSeverity::Warning);
+}

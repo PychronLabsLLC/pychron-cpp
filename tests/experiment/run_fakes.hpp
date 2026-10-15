@@ -78,7 +78,7 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
       std::lock_guard lock(mutex_);
       n = ++readings;
     }
-    if (fail_from > 0 && n >= fail_from) return fail(ErrorKind::Io, "spectrometer link down");
+    if (fail_from > 0 && n >= fail_from) return fail(fail_kind, "spectrometer link down");
     if (manual_ != nullptr) manual_->advance(integration_);
     else clock_.sleep_for(integration_);
     spectrometer::Reading r;
@@ -95,7 +95,8 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
 
   std::function<void(int)> on_reading;
   Journal* journal = nullptr;
-  std::atomic<int> fail_from{0};  // reading n and every one after fail (Io); 0: none do
+  std::atomic<int> fail_from{0};  // reading n and every one after fail (fail_kind); 0: none do
+  ErrorKind fail_kind = ErrorKind::Protocol;  // Io: a link down, which a measurement waits out
   std::atomic<int> readings{0}, moves{0}, overlapping{0};
   std::atomic<bool> acquiring{false};
 

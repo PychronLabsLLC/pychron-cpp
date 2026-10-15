@@ -1053,3 +1053,26 @@ TEST_F(SafeState, AScriptThatCannotBeReadIsAFailedStep) {
   ASSERT_EQ(alarms().size(), 1u);
   EXPECT_EQ(alarms()[0].severity, AlarmSeverity::Critical);
 }
+
+// ---- a silence in the readings, as the run keeps it (spec 4.4) ---------------
+
+TEST_F(RunTest, AGapIsInTheRecordAndSaid) {
+  std::vector<RunNote> said;
+  auto sub = bus_.subscribe<RunNote>([&](const RunNote& n) { said.push_back(n); });
+  // Link down from the 6th reading, for good: waited out, the acquisition
+  // started again once, then main ends with what it has.
+  spec_.fail_kind = ErrorKind::Io;
+  spec_.fail_from = 6;
+  auto r = go(unknown_run("12345"));
+  ASSERT_TRUE(r.record);
+  ASSERT_FALSE(r.measurement.gaps.empty());
+  const auto gap = std::find_if(r.record->events.begin(), r.record->events.end(),
+                                [](const record::Event& e) { return e.kind == "gap"; });
+  ASSERT_NE(gap, r.record->events.end());
+  EXPECT_EQ(gap->detail, measurement::describe(r.measurement.gaps.front()));
+  EXPECT_TRUE(std::any_of(said.begin(), said.end(), [&](const RunNote& n) { return n.text == gap->detail; }));
+  // Said once as a note, kept once as a gap: not again as a note event.
+  EXPECT_EQ(std::count_if(r.record->events.begin(), r.record->events.end(),
+                          [&](const record::Event& e) { return e.detail == gap->detail; }),
+            1);
+}

@@ -180,6 +180,17 @@ evaluated across a gap: first evaluation after it uses data after it only
 for window functions that need contiguous points (`slope`, `mean` over
 window); plan lists functions.
 
+As built (Task 13): gap per collection (hop, baseline, whiff, sniff);
+counted from last reading; collection's planned end = its start + counts x
+integration. `Io`/`Timeout`/`NotConnected` from port are silence; definite
+error fails as before. Sniff gap waits only to inlet's next move (open or
+close stays on time). After main with a gap: signal counts under
+`max(ceil(0.2 x planned), fit's parameter count)` -> `Failed`; silence not
+resumed with enough -> `Truncated`, `truncated_by_link`. A resumed gap that
+ends main on time with enough counts: `Completed`. Inlet close and
+unprotect in measurement: `measurement::keep_trying` (shared with 4.7).
+Record: `gap` event per gap; `RunNote` said, not repeated as `note` event.
+
 ### 4.5 Nothing measured is dropped
 
 `Failed` run that passed point of no return calls `save()`: record with

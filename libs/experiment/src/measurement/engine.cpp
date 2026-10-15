@@ -9,7 +9,9 @@
 #include <utility>
 
 #include "pychron/core/events.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
+#include "pychron/reduction/fits.hpp"
 
 namespace pychron::experiment::measurement {
 
@@ -172,8 +174,13 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   stop_ = Stop::None;
   main_truncated_ = false;
   break_main_ = false;
+  gap_from_.reset();
+  silence_error_.clear();
+  main_gap_ = false;
+  main_cut_ = false;
   // A truncate requested before run() (e.g. during extraction) is kept.
-  collector_.start(ctx_.clock.now());
+  started_ = ctx_.clock.now();
+  collector_.start(started_);
   collector_.set_fallback(ctx_.metrics);
   collector_.set_fits(in_.plan.fits);
   collector_.set_icfactors(in_.icfactors);
@@ -235,7 +242,12 @@ Result<void> MeasurementEngine::run_blocks() {
   if (!stopping()) {
     if (auto r = call_hook("before_main"); !r) return r;
   }
-  if (auto r = step(Block::Main, [&] { return main(); }); !r) return r;
+  if (auto r = step(Block::Main, [&] {
+        if (auto m = main(); !m) return m;
+        return check_main_counts();
+      });
+      !r)
+    return r;
   if (!stopping()) {
     if (auto r = call_hook("after_main"); !r) return r;
   }
@@ -334,8 +346,13 @@ Result<void> MeasurementEngine::equilibrate() {
     if (!p.sniff.enabled || p.sniff.counts <= 0) return {};
     auto channels = channels_of(p, p.main.hops.front());
     last_channels_ = channels;
-    if (auto r = ctx_.spectrometer.start_acquisition(sniff_integration); !r) return r;
+    if (auto r = start_acquisition(sniff_integration); !r) {
+      if (!is_transient(r.error().kind)) return r;
+      publish_log(LogLevel::Warn, "sniff not started: " + r.error().what);  // the equilibration goes on
+      return {};
+    }
     acquiring_ = true;
+    last_reading_ = ctx_.clock.now();
     collector_.begin({collect::SeriesKind::Sniff, p.sniff.counts, std::move(channels), "sniff"},
                      [this](int, double) { return sniff_reading(); });
     collecting_ = true;
@@ -378,12 +395,9 @@ Result<void> MeasurementEngine::equilibrate() {
     }
     if (close_at && (now >= *close_at || close_inlet_now_)) {
       if (eq.close_inlet) {
-        if (!eq.inlet.empty()) {
-          if (auto r = ctx_.valves->close(eq.inlet); !r) {
-            out = r;
-            break;
-          }
-          inlet_open_ = false;
+        if (auto r = close_inlet(); !r) {
+          out = r;
+          break;
         }
         collector_.set_inlet_close(now);
         if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
@@ -394,15 +408,31 @@ Result<void> MeasurementEngine::equilibrate() {
     }
     if (sniffing) {
       auto r = ctx_.spectrometer.next_reading(timeout);
-      if (!r) {
+      if (!r && !is_transient(r.error().kind)) {
         out = fail(r.error());
         break;
       }
-      if (!*r) {
-        out = fail(ErrorKind::Timeout, "sniff: no reading within the timeout");
-        break;
+      std::optional<spectrometer::Reading> reading;
+      if (r && *r) {
+        reading = std::move(**r);
+      } else {
+        // A silence: waited out up to the inlet's next move, which is made on time.
+        if (!r) silence_error_ = r.error().what;
+        const TimePoint cap = started_ + seconds_to(close_at ? *close_at : open_at);
+        auto w = wait_out_gap(Block::Equilibrate, sniff_integration, timeout, cap);
+        if (!w) {
+          out = fail(w.error());
+          break;
+        }
+        if (w->end == GapEnd::Cap) continue;
+        if (w->end == GapEnd::NotResumed) {
+          stop_sniff();
+          continue;
+        }
+        reading = std::move(w->reading);
       }
-      const auto status = collector_.add(**r);
+      last_reading_ = ctx_.clock.now();
+      const auto status = collector_.add(*reading);
       ++sniffed;
       if (ctx_.bus != nullptr) ctx_.bus->publish(CountsProgress{in_.run_id, Block::Equilibrate, sniffed, p.sniff.counts});
       if (status != collect::CollectStatus::Running) stop_sniff();
@@ -411,6 +441,7 @@ Result<void> MeasurementEngine::equilibrate() {
     }
   }
   stop_sniff();
+  if (gap_from_) close_gap(Block::Equilibrate, ctx_.clock.now(), false);  // silent until the inlet closed
   return out;
 }
 
@@ -436,10 +467,7 @@ Result<void> MeasurementEngine::whiff() {
     case WhiffCheck::Action::RunRemainder: break;
     case WhiffCheck::Action::Pump: {
       const auto& eq = p.equilibration;
-      if (!eq.inlet.empty()) {
-        if (auto c = ctx_.valves->close(eq.inlet); !c) return c;
-        inlet_open_ = false;
-      }
+      if (auto c = close_inlet(); !c) return c;
       if (!eq.outlet.empty()) {
         if (auto o = ctx_.valves->open(eq.outlet); !o) return o;
       }
@@ -466,7 +494,7 @@ Result<void> MeasurementEngine::main() {
                         std::move(channels), "main"},
                        p.main.integration_s, std::move(hook));
       if (!r) return fail(r.error());
-      if (*r == collect::CollectStatus::Truncated) return {};
+      if (*r == collect::CollectStatus::Truncated || main_cut_) return {};
     }
   }
   return {};
@@ -496,7 +524,7 @@ Result<void> MeasurementEngine::move_to(const std::optional<plan::HopTarget>& ta
     position_.reset();
   }
   for (const auto& d : protect) {
-    auto u = ctx_.spectrometer.protect(d, false);
+    auto u = critical("unprotect " + d, [&] { return ctx_.spectrometer.protect(d, false); });
     if (u) protected_.erase(d);
     if (!u && r) r = u;
   }
@@ -509,12 +537,25 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
   const auto integration = seconds_to(integration_s);
   const auto timeout =
       std::chrono::duration_cast<pychron::Duration>(integration * options_.timeout_factor) + options_.timeout_slack;
-  if (auto r = ctx_.spectrometer.start_acquisition(integration); !r) return fail(r.error());
+  if (auto r = start_acquisition(integration); !r) {
+    if (!is_transient(r.error().kind)) return fail(r.error());
+    // Not started, and not again (spec 4.4): the collection ends without data.
+    silence_error_ = r.error().what;
+    gap_from_ = ctx_.clock.now();
+    close_gap(block, ctx_.clock.now(), false);
+    if (block == Block::Main) main_cut_ = true;
+    return collect::CollectStatus::Complete;
+  }
   acquiring_ = true;
+  // A collection's planned end: after a gap it ends then, not at its count,
+  // so that its end and time zero do not move (spec 4.4).
+  const TimePoint planned_end = ctx_.clock.now() + integration * spec.counts;
+  last_reading_ = ctx_.clock.now();
   collector_.begin(std::move(spec), std::move(hook));
   collecting_ = true;
 
   std::optional<Error> error;
+  bool had_gap = false;
   auto status = collect::CollectStatus::Running;
   while (status == collect::CollectStatus::Running && !stopping()) {
     {
@@ -522,17 +563,34 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
       if (truncate_request_ && block != Block::Equilibrate) collector_.truncate();
     }
     auto r = ctx_.spectrometer.next_reading(timeout);
-    if (!r) {
+    if (!r && !is_transient(r.error().kind)) {
       error = r.error();
       break;
     }
-    if (!*r) {
-      error = Error{ErrorKind::Timeout, std::string(to_string(block)) + ": no reading within the timeout", {}};
-      break;
+    std::optional<spectrometer::Reading> reading;
+    if (r && *r) {
+      reading = std::move(**r);
+    } else {
+      if (!r) silence_error_ = r.error().what;
+      auto w = wait_out_gap(block, integration, timeout, planned_end);
+      if (!w) {
+        error = w.error();
+        break;
+      }
+      if (block == Block::Main) main_gap_ = true;
+      if (w->end != GapEnd::Resumed) {
+        if (gap_from_) close_gap(block, ctx_.clock.now(), false);
+        if (w->end == GapEnd::NotResumed && block == Block::Main) main_cut_ = true;
+        break;
+      }
+      reading = std::move(w->reading);
+      had_gap = true;
     }
-    status = collector_.add(**r);
+    last_reading_ = ctx_.clock.now();
+    status = collector_.add(*reading);
     if (ctx_.bus != nullptr)
       ctx_.bus->publish(CountsProgress{in_.run_id, block, collector_.count(), collector_.target()});
+    if (had_gap && status == collect::CollectStatus::Running && ctx_.clock.now() >= planned_end) break;
   }
   collecting_ = false;
   collector_.finish();
@@ -552,7 +610,130 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
     }
     if (block == Block::Main) break_main_ = false;  // a non-resuming action ended main
   }
+  if (status == collect::CollectStatus::Running) status = collect::CollectStatus::Complete;  // ended by time
   return status;
+}
+
+std::string describe(const MeasurementGap& gap) {
+  std::array<char, 160> text{};
+  std::snprintf(text.data(), text.size(), "%s: no readings from %.1f s to %.1f s; %s",
+                std::string(to_string(gap.block)).c_str(), gap.from, gap.to,
+                gap.resumed ? "they resumed" : "they did not resume");
+  return text.data();
+}
+
+Result<MeasurementEngine::GapWait> MeasurementEngine::wait_out_gap(Block block, pychron::Duration integration,
+                                                                 pychron::Duration timeout, TimePoint cap) {
+  const auto& clock = ctx_.clock;
+  if (!gap_from_) {
+    gap_from_ = last_reading_;
+    publish_log(LogLevel::Warn, std::string(to_string(block)) + ": no readings; waiting for them" +
+                                    (silence_error_.empty() ? "" : " (" + silence_error_ + ")"));
+  }
+  const TimePoint max_end = *gap_from_ + options_.max_gap;
+  const TimePoint deadline = std::min(max_end, cap);
+  // Nothing else is done while waiting: no valve, no detector, no safe state.
+  while (!stopping()) {
+    const TimePoint now = clock.now();
+    if (now >= deadline) break;
+    const auto left = deadline - now;
+    auto r = ctx_.spectrometer.next_reading(std::min(timeout, std::chrono::duration_cast<pychron::Duration>(left)));
+    if (r && *r) {
+      close_gap(block, clock.now(), true);
+      return GapWait{GapEnd::Resumed, std::move(**r)};
+    }
+    if (!r) {
+      if (!is_transient(r.error().kind)) return fail(r.error());
+      silence_error_ = r.error().what;
+    }
+    // A port that answered at once (its link is down) is asked again after a while.
+    if (clock.now() == now && !wait(std::chrono::duration<double>(std::min<pychron::Duration>(integration, left)).count()))
+      break;
+  }
+  if (stopping() || clock.now() < max_end) return GapWait{GapEnd::Cap, std::nullopt};
+  // max_gap has passed: the acquisition is started again once, if the link is back.
+  publish_log(LogLevel::Warn, std::string(to_string(block)) + ": no readings for " +
+                                  std::to_string(std::chrono::duration_cast<std::chrono::seconds>(options_.max_gap).count()) +
+                                  " s; starting the acquisition again");
+  ctx_.spectrometer.stop_acquisition();
+  if (auto s = start_acquisition(integration); s) {
+    auto r = ctx_.spectrometer.next_reading(timeout);
+    if (r && *r) {
+      close_gap(block, clock.now(), true);
+      return GapWait{GapEnd::Resumed, std::move(**r)};
+    }
+    if (!r) silence_error_ = r.error().what;
+  } else {
+    silence_error_ = s.error().what;
+  }
+  close_gap(block, clock.now(), false);
+  return GapWait{GapEnd::NotResumed, std::nullopt};
+}
+
+void MeasurementEngine::close_gap(Block block, TimePoint to, bool resumed) {
+  if (!gap_from_) return;
+  MeasurementGap gap{in_.run_id, block, collector_.seconds(*gap_from_), collector_.seconds(to), resumed, to};
+  gap_from_.reset();
+  publish_log(resumed ? LogLevel::Info : LogLevel::Warn, describe(gap));
+  result_.gaps.push_back(gap);
+  if (ctx_.bus != nullptr) ctx_.bus->publish(gap);
+}
+
+Result<void> MeasurementEngine::start_acquisition(pychron::Duration integration) {
+  auto r = ctx_.spectrometer.start_acquisition(integration);
+  if (!r && r.error().code == kOutcomeUnknown) {
+    // It may or may not have started (spec 4.4): stopped and started again, once.
+    publish_log(LogLevel::Warn, "acquisition start of unknown outcome: starting it again (" + r.error().what + ")");
+    ctx_.spectrometer.stop_acquisition();
+    r = ctx_.spectrometer.start_acquisition(integration);
+  }
+  return r;
+}
+
+Result<void> MeasurementEngine::critical(const std::string& what, const std::function<Result<void>()>& op) {
+  const KeepTrying how{ctx_.clock,
+                       ctx_.bus,
+                       "measurement",
+                       [this](pychron::Duration d) { return wait(std::chrono::duration<double>(d).count()); },
+                       [this](const std::string& message) { publish_log(LogLevel::Warn, message); },
+                       options_.critical_window,
+                       options_.critical_alarm_after};
+  return keep_trying(how, what, op);
+}
+
+Result<void> MeasurementEngine::close_inlet() {
+  const auto& inlet = in_.plan.equilibration.inlet;
+  if (inlet.empty()) return {};
+  if (auto r = critical("close inlet " + inlet, [&] { return ctx_.valves->close(inlet); }); !r) return r;
+  inlet_open_ = false;
+  return {};
+}
+
+Result<void> MeasurementEngine::check_main_counts() {
+  if (!main_gap_ && !main_cut_) return {};
+  int planned = 0;
+  for (const auto& hop : in_.plan.main.hops)
+    if (!hop.baseline) planned += hop.counts;
+  planned *= in_.plan.main.cycles;
+  std::size_t fit_minimum = 0;
+  for (const auto& [key, kind] : in_.plan.fits.signal) {
+    reduction::FitSpec f;
+    f.kind = kind;
+    fit_minimum = std::max(fit_minimum, reduction::parameter_count(f));
+  }
+  const int minimum = std::max(static_cast<int>(std::ceil(options_.min_counts_fraction * planned)),
+                               static_cast<int>(fit_minimum));
+  if (main_count_ < minimum)
+    return fail(ErrorKind::Io, "main: " + std::to_string(main_count_) + " of " + std::to_string(planned) +
+                                   " counts when the spectrometer went silent, at least " + std::to_string(minimum) +
+                                   " needed" + (silence_error_.empty() ? "" : ": " + silence_error_));
+  if (main_cut_) {
+    main_truncated_ = true;
+    result_.truncated_by_link = true;
+    publish_log(LogLevel::Warn, "main truncated by the spectrometer link: " + std::to_string(main_count_) + " of " +
+                                    std::to_string(planned) + " counts");
+  }
+  return {};
 }
 
 bool MeasurementEngine::main_reading(int /*count*/, double t) {

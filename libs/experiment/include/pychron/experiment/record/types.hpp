@@ -195,7 +195,8 @@ struct Conditionals {
 
 struct Event {
   double t = 0;
-  std::string kind;  // "state", "alarm", "peak_center", "environment", "note" (what the run said)
+  std::string kind;  // "state", "alarm", "peak_center", "environment", "note" (what the run said),
+                     // "gap" (a silence in the readings, spec 4.4)
   std::string detail;
   friend bool operator==(const Event&, const Event&) = default;
 };

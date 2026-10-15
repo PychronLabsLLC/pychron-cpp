@@ -41,6 +41,7 @@
 #include "pychron/devices/extraction/services.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
+#include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/model/run_spec.hpp"
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/plan/plan_library.hpp"
@@ -152,8 +153,8 @@ struct SafeStateResult {
 
 // How long a step of the safe state keeps trying before it alarms, and how
 // long in all (the critical window, spec 4.4; from executor.toml later).
-inline constexpr pychron::Duration kSafeStateAlarmAfter = std::chrono::seconds(20);
-inline constexpr pychron::Duration kSafeStateWindow = std::chrono::minutes(10);
+inline constexpr pychron::Duration kSafeStateAlarmAfter = measurement::kCriticalAlarmAfter;
+inline constexpr pychron::Duration kSafeStateWindow = measurement::kCriticalWindow;
 
 struct RunResult {
   RunState state = RunState::Pending;

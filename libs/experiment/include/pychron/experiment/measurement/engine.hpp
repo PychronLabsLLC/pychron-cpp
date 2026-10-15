@@ -74,6 +74,7 @@
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/experiment/collect/collector.hpp"
 #include "pychron/experiment/conditionals/conditional.hpp"
+#include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/measurement/ports.hpp"
 #include "pychron/experiment/plan/plan.hpp"
 #include "pychron/scripting/cancel_token.hpp"
@@ -106,6 +107,21 @@ struct BlockFinished {
   Block block = Block::Main;
   bool ok = true;
 };
+// The readings stopped (spec 4.4). Seconds since the measurement started:
+// from the last reading before the silence to the first after it, or, when
+// none came, to when the collection gave up on it.
+struct MeasurementGap {
+  std::string run_id;
+  Block block = Block::Main;
+  double from = 0;
+  double to = 0;
+  bool resumed = true;
+  TimePoint at{};  // when the gap was closed, on the engine's clock
+};
+
+// "main: no readings from 30.0 s to 51.0 s; they resumed".
+std::string describe(const MeasurementGap& gap);
+
 struct CountsProgress {
   std::string run_id;
   Block block = Block::Main;
@@ -141,9 +157,21 @@ struct EngineOptions {
   // Blocking wait. Default: CancelToken::wait_until on the context clock.
   // Tests inject one that advances a ManualClock.
   std::function<void(pychron::Duration)> sleep;
-  // Reading timeout = integration x timeout_factor + timeout_slack.
+  // Reading timeout = integration x timeout_factor + timeout_slack. A
+  // reading that does not come within it starts a gap (spec 4.4): the
+  // collection waits on the clock, doing nothing else, for up to max_gap from
+  // the last reading, or to its planned end; then the acquisition is started
+  // again once, and the collection ends if that gives nothing.
   double timeout_factor = 3.0;
   pychron::Duration timeout_slack = std::chrono::seconds(5);
+  pychron::Duration max_gap = std::chrono::minutes(2);
+  // After a gap in main: fewer signal counts than this share of the planned
+  // ones (and never fewer than the fit needs) fail the measurement.
+  double min_counts_fraction = 0.2;
+  // The inlet close and a detector's unprotect keep trying this long (spec
+  // 4.4, valve row), with an alarm at critical_alarm_after.
+  pychron::Duration critical_window = kCriticalWindow;
+  pychron::Duration critical_alarm_after = kCriticalAlarmAfter;
   // Called on the engine thread right after the inlet closes.
   std::function<void()> on_inlet_closed;
   // Called on the engine thread as a block begins, before its BlockStarted
@@ -176,6 +204,8 @@ struct MeasurementResult {
   std::vector<ConditionalError> conditional_errors;  // checks that could not be evaluated
   double count_scale = 1.0;               // after a truncation of main
   std::vector<Block> blocks;              // blocks that ran, in order
+  std::vector<MeasurementGap> gaps;       // silences in the readings, in order
+  bool truncated_by_link = false;         // main ended by a silence that did not end (Truncated)
 };
 
 // The plan's own [conditionals].truncations as a ConditionalSet level (names
@@ -221,6 +251,25 @@ class MeasurementEngine {
   Result<collect::CollectStatus> collect(Block block, collect::CollectionSpec spec, double integration_s,
                                          collect::ReadingHook hook);
   bool main_reading(int count, double t);
+
+  // A silence in the readings (spec 4.4).
+  enum class GapEnd { Resumed, Cap, NotResumed };
+  struct GapWait {
+    GapEnd end = GapEnd::Cap;
+    std::optional<spectrometer::Reading> reading;  // Resumed
+  };
+  // Waits for readings to resume, on the clock, until max_gap from the
+  // silence's start or `cap` (Cap: the gap stays open for the caller), and
+  // past max_gap starts the acquisition again once (NotResumed when that
+  // gives nothing). A definite error is returned.
+  Result<GapWait> wait_out_gap(Block block, pychron::Duration integration, pychron::Duration timeout, TimePoint cap);
+  void close_gap(Block block, TimePoint to, bool resumed);
+  // start_acquisition, started again once when its outcome is unknown.
+  Result<void> start_acquisition(pychron::Duration integration);
+  // A call that must get through (spec 4.4, valve row).
+  Result<void> critical(const std::string& what, const std::function<Result<void>()>& op);
+  Result<void> close_inlet();
+  Result<void> check_main_counts();
   bool sniff_reading();
   void handle_trip(const Trip& trip);
   void request_truncate(double ratio);
@@ -250,6 +299,12 @@ class MeasurementEngine {
   Stop stop_ = Stop::None;
   bool main_truncated_ = false;
   bool break_main_ = false;  // a non-resuming action ended main
+  TimePoint started_{};                 // the measurement's start, time 0 of the collector
+  TimePoint last_reading_{};            // of the current collection (its start before any)
+  std::optional<TimePoint> gap_from_;   // a silence not yet closed
+  std::string silence_error_;           // what the port said while silent
+  bool main_gap_ = false;               // main had a gap
+  bool main_cut_ = false;               // a silence in main did not end
 
   std::mutex truncate_mutex_;
   std::optional<double> truncate_request_;  // count ratio for later collections
