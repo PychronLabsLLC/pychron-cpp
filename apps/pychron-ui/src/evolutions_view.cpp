@@ -38,6 +38,16 @@ QString series_name(const SeriesKey& key) {
 
 }  // namespace
 
+std::vector<EvolutionPanel> evolution_panels(const std::vector<SeriesKey>& arrived, SeriesKind kind) {
+  std::vector<EvolutionPanel> out;
+  for (const auto& key : arrived) {
+    if (key.kind != kind) continue;
+    const QString title = kind == SeriesKind::Sniff ? QString::fromStdString(key.isotope) : series_name(key);
+    out.push_back({key, title});
+  }
+  return out;
+}
+
 EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* parent)
     : QWidget(parent),
       colors_(std::move(colors)),

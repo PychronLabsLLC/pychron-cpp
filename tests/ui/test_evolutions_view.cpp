@@ -12,6 +12,7 @@ using pychron::experiment::collect::SeriesFit;
 using pychron::experiment::collect::SeriesKey;
 using pychron::experiment::collect::SeriesKind;
 using pychron::experiment::collect::SeriesUpdated;
+using pychron::ui::evolution_panels;
 using pychron::ui::EvolutionsView;
 namespace reduction = pychron::reduction;
 
@@ -101,6 +102,49 @@ class TestEvolutionsView : public QObject {
     view.on_run_started({1, "uuid2", "66002", {}});
     QVERIFY(!view.fit_of(ar40).has_value());
     QCOMPARE(view.fit_curve_count(), 0);
+  }
+
+  // ---------------------------------------------------------------- panels
+  static QStringList titles(const std::vector<pychron::ui::EvolutionPanel>& panels) {
+    QStringList out;
+    for (const auto& p : panels) out << p.title;
+    return out;
+  }
+
+  void panelsComeInArrivalOrder() {
+    const std::vector<SeriesKey> arrived{{"Ar40", "H1", SeriesKind::Signal},
+                                         {"Ar36", "CDD", SeriesKind::Signal},
+                                         {"Ar39", "AX", SeriesKind::Signal}};
+    const auto panels = evolution_panels(arrived, SeriesKind::Signal);
+    QCOMPARE(titles(panels), (QStringList{"Ar40 H1", "Ar36 CDD", "Ar39 AX"}));
+    QCOMPARE(panels.size(), std::size_t{3});
+    for (std::size_t i = 0; i < panels.size(); ++i) QVERIFY(panels[i].key == arrived[i]);
+  }
+
+  void anIsotopeOnTwoDetectorsHasTwoPanels() {
+    const auto panels = evolution_panels({{"Ar40", "H1", SeriesKind::Signal}, {"Ar40", "H2", SeriesKind::Signal}},
+                                         SeriesKind::Signal);
+    QCOMPARE(titles(panels), (QStringList{"Ar40 H1", "Ar40 H2"}));
+  }
+
+  void baselinePanelsAreTitledByDetector() {
+    QCOMPARE(titles(evolution_panels({{"", "H1", SeriesKind::Baseline}}, SeriesKind::Baseline)), QStringList{"H1"});
+    QCOMPARE(titles(evolution_panels({{"Ar40", "H1", SeriesKind::Baseline}}, SeriesKind::Baseline)),
+             QStringList{"Ar40 H1"});
+  }
+
+  void sniffPanelsAreTitledByIsotope() {
+    QCOMPARE(titles(evolution_panels({{"Ar40", "H1", SeriesKind::Sniff}}, SeriesKind::Sniff)), QStringList{"Ar40"});
+  }
+
+  void eachKindKeepsItsOwnOrder() {
+    const std::vector<SeriesKey> arrived{{"", "H1", SeriesKind::Baseline},
+                                         {"Ar40", "H1", SeriesKind::Signal},
+                                         {"", "AX", SeriesKind::Baseline},
+                                         {"Ar39", "AX", SeriesKind::Signal}};
+    QCOMPARE(titles(evolution_panels(arrived, SeriesKind::Signal)), (QStringList{"Ar40 H1", "Ar39 AX"}));
+    QCOMPARE(titles(evolution_panels(arrived, SeriesKind::Baseline)), (QStringList{"H1", "AX"}));
+    QVERIFY(evolution_panels(arrived, SeriesKind::Sniff).empty());
   }
 
   void aFitBeforeItsPointsIsIgnored() {

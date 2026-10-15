@@ -44,6 +44,19 @@ class QTableWidget;
 
 namespace pychron::ui {
 
+// One panel of the view: the series it draws and its y title.
+struct EvolutionPanel {
+  experiment::collect::SeriesKey key;
+  QString title;
+};
+
+// Panels of `kind` in arrival order; `arrived` holds every key in the order
+// its first point came. Titles: a signal "Ar40 H1"; a baseline "H1" (block
+// baseline) or "Ar40 H1"; a sniff "Ar40" (sniffs are multicollection: one
+// detector an isotope).
+[[nodiscard]] std::vector<EvolutionPanel> evolution_panels(
+    const std::vector<experiment::collect::SeriesKey>& arrived, experiment::collect::SeriesKind kind);
+
 class EvolutionsView : public QWidget {
   Q_OBJECT
 
