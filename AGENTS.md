@@ -37,8 +37,9 @@ Day to day:
   `.claude/worktrees/nightly-<topic>` and never lands them itself, so a
   later nightly run removes one, and its branch, when every commit of the
   branch is on `origin/develop` and the worktree has no uncommitted change;
-  never with `--force` or `-D`. A nightly run deletes the build trees of its
-  own worktrees when it ends.
+  never with `--force` or `-D`. A nightly run deletes the build tree of its
+  worktree whose row is closed or whose plan is done; one whose row goes on
+  keeps it for the next night (developer, 2026-10-15).
 - Never skip or disable failing test; find root cause.
 - Never push to `main`. Do not open a pull request into `main` or merge one
   unless asked to release.
