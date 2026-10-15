@@ -53,7 +53,7 @@ struct ExperimentMetricsTest : ::testing::Test {
     sum.save_error = save_error;
     bus.publish(executor::RunFinished{sum});
   }
-  void ended(QueueEnd end) { bus.publish(lab::QueueEnded{executor::QueueResult{end, "", {}}}); }
+  void ended(QueueEnd end) { bus.publish(lab::QueueEnded{executor::QueueResult{end, "", {}, {}}}); }
 
   // A whole run, r, from Pending to `last`, one state every 10 s from `t0`.
   void walk_to_measuring(const std::string& r, int t0) {

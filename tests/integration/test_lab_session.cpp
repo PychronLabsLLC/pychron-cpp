@@ -276,20 +276,30 @@ TEST_F(LabSessionTest, RunsTheExampleQueueAndPausesTheScan) {
 }
 
 // The session checks the links each run needs before it starts (executor
-// hardening, 4.3): one down stops the queue before its first run (a hold,
-// once the executor can hold).
-TEST_F(LabSessionTest, ALinkTheRunNeedsIsCheckedBeforeItStarts) {
+// hardening, 4.3 and 4.6): one down holds the queue, which probes it back
+// and goes on.
+TEST_F(LabSessionTest, ALinkTheRunNeedsIsHeldForBeforeItStarts) {
   // A spectrometer transport: nothing calls it before the first run (the
   // scan is not started here), so closed it stays down until the check.
   auto links = spec_->links();
   ASSERT_FALSE(links.empty());
+  const std::string name = links.front()->transport().name();
   links.front()->transport().close();
+  std::vector<executor::ExecutorHolding> held;
+  std::mutex m;
+  auto sub = line_->bus().subscribe<executor::ExecutorHolding>([&](const executor::ExecutorHolding& h) {
+    std::lock_guard lock(m);
+    held.push_back(h);
+  });
   ASSERT_TRUE(session_->start(queue_));
   const auto result = session_->wait();
   ASSERT_TRUE(result.has_value());
-  EXPECT_TRUE(result->runs.empty());
-  EXPECT_NE(result->reason.find("pre-run check 'links'"), std::string::npos) << result->reason;
-  EXPECT_NE(result->reason.find(links.front()->transport().name()), std::string::npos) << result->reason;
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  EXPECT_EQ(result->runs.size(), 3u);
+  std::lock_guard lock(m);
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_EQ(held[0].links, std::vector<std::string>{name});
+  EXPECT_EQ(held[0].row, std::optional<std::size_t>(0));
 }
 
 TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {

@@ -55,6 +55,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/signal_bus.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/experiment/model/experiment_queue.hpp"
 #include "pychron/experiment/run/run.hpp"
@@ -62,12 +63,13 @@
 
 namespace pychron::experiment::executor {
 
-enum class ExecutorState { Idle, Preparing, Running, StoppingAtBoundary, Cancelling, Aborting, Finalizing };
+enum class ExecutorState { Idle, Preparing, Running, Holding, StoppingAtBoundary, Cancelling, Aborting, Finalizing };
 std::string_view to_string(ExecutorState s) noexcept;
 // Whether the executor may go from `from` to `to`:
 //
 //   Idle -> Preparing -> Running -> Finalizing -> Idle
-//   Preparing | Running -> StoppingAtBoundary -> Cancelling -> Aborting -> Finalizing
+//   Running <-> Holding (a link the next run needs is down: spec 4.6)
+//   Preparing | Running | Holding -> StoppingAtBoundary -> Cancelling -> Aborting -> Finalizing
 //
 // A request only ever strengthens (a stop does not replace a cancel, nor a
 // cancel an abort), none is taken back, and none moves an idle executor.
@@ -109,6 +111,10 @@ struct RunSummary {
   std::string step;
   run::RunState state = run::RunState::Pending;
   bool truncated = false, save_error = false;
+  // How the run's record says it ended, and why it failed (spec 4.5). A run
+  // that saved no record is Complete here; go by `state`.
+  record::RecordStatus status = record::RecordStatus::Complete;
+  std::string failure;
   std::optional<std::string> error;
   std::vector<std::string> queue_changes;  // descriptions of applied queue actions
   std::vector<std::string> messages;       // what the run said (run::RunNote), in order
@@ -138,19 +144,37 @@ struct ExecutorWaiting {
   std::string run_id;   // the run waiting (extraction device, pump time); empty: the queue
 };
 
+// The queue holds (spec 4.6): it waits for the links the next run needs, and
+// for any other pre-run check that asked it to wait, before it goes on.
+struct ExecutorHolding {
+  std::string reason;
+  std::vector<std::string> links;  // the links it waits for, when it is about links
+  TimePoint since{};
+  TimePoint until{};  // when the hold limit ends the queue
+  std::optional<std::size_t> row;  // the row held back, when it has not started
+};
+
 enum class QueueEnd { Completed, Stopped, Cancelled, Aborted, Failed };
 std::string_view to_string(QueueEnd e) noexcept;
+
+// QueueResult::code of a queue ended because a failed run left the line
+// unsafe (spec 4.7): the executor neither holds nor goes on.
+inline constexpr const char* kUnsafe = "unsafe";
 
 struct QueueResult {
   QueueEnd end = QueueEnd::Completed;
   std::string reason;
   std::vector<RunSummary> runs;
+  std::string code;  // kUnsafe, or empty
 };
 
 struct ExecutorContext {
   run::RunServices services;                         // copied into every run
   const MetricContext* pre_run_metrics = nullptr;    // instrument metrics for pre_run conditionals
   std::vector<IPreRunCheck*> checks;
+  // The links a run needs (spec 4.3): probed while the queue holds, and
+  // waited for to be up and stable. None: a hold waits on the checks alone.
+  std::function<std::vector<Link*>(const RunSpec&)> links;
   BlankFactory blank = default_blank_factory(IdentifierRules::defaults());
 };
 
@@ -162,7 +186,16 @@ struct ExecutorOptions {
   std::optional<TimePoint> start_at;  // wait before the first run
   std::optional<TimePoint> stop_at;   // stop at the first run boundary after it
   bool allow_overlap = true;
+  // After a run that failed for a reason of its own (a definite error): go on
+  // with the next row. A failure for a link holds instead (spec 4.6).
   bool continue_on_failure = false;
+  // How the queue holds (executor.toml [hold]).
+  struct Hold {
+    pychron::Duration settle = std::chrono::seconds(30);          // up this long, a link is back
+    pychron::Duration probe_interval = std::chrono::seconds(15);  // each link down is asked this often
+    pychron::Duration limit = std::chrono::hours(2);              // a hold this long ends the queue
+    bool end_after_link_failure = false;                          // after_link_failure = "end"
+  } hold;
 };
 
 class Executor {
@@ -182,6 +215,11 @@ class Executor {
   void cancel();                     // cancel the active run(s) and end the queue
   void abort();                      // abort the active run(s) and end the queue
   void truncate(bool quick = false); // the run currently measuring
+  // While holding: try now, without waiting for the links to settle.
+  void resume();
+  // While holding for a row that has not started: drop it and go on. Config
+  // error otherwise.
+  Result<void> skip();
   ExecutorState state() const;
 
   // Replaces the running queue's rows with `runs`, which must keep the
@@ -211,6 +249,17 @@ class Executor {
   std::unique_ptr<Slot> launch(std::size_t row, RunSpec spec, QueueSpec header, int index);
   void freeze(std::size_t rows);  // caller holds queue_mutex_
   void finish(ExperimentQueue& queue, Slot& slot, QueueResult& out);
+
+  // Holding (spec 4.6).
+  enum class HoldEnd { Back, Resumed, Skipped, Ended };
+  // Holds before `next` (row `row`, when it has not started) until every
+  // pre-run check passes and every link it needs has been up for settle, or
+  // the operator resumes, skips or stops, or the limit passes.
+  HoldEnd hold(const std::string& reason, const RunSpec& next, std::optional<std::size_t> row,
+               const ExperimentQueue& queue, const QueueResult& out);
+  // Whether `next` may start: nothing when it may; else why, and the links
+  // it waits for. A Refuse ends the queue (end_ is set).
+  std::optional<CheckFailure> ready(const RunSpec& next);
   void write_state(const ExperimentQueue& queue, std::size_t next_row, const QueueResult& out);
   // The queue is over: its end is read into `out` (when `read`) and the
   // requests that ended it are cleared, in one step under mutex_, so a
@@ -237,6 +286,28 @@ class Executor {
   Slot* pump_owed_ = nullptr;
   std::optional<RunChecks> run_checks_;
   std::size_t last_started_row_ = 0;
+  // Holding: what the operator asked for, and what the state file says.
+  // Under mutex_; a request notifies cv_ through the clock.
+  bool resume_ = false, skip_ = false;
+  struct Held {
+    std::string reason;
+    TimePoint since{};
+    std::optional<std::size_t> row;
+  };
+  std::optional<Held> holding_;
+  std::optional<std::size_t> last_failed_row_;
+  bool unsafe_ = false;  // a run left the line unsafe: QueueResult::code
+  // Set by finish() for the run loop: hold before the next row, or start the
+  // same row again (it failed for a link before its point of no return:
+  // spec 4.4), with the aliquot and step it was given.
+  std::optional<std::string> hold_next_;
+  struct Retry {
+    std::size_t row = 0;
+    int aliquot = 0;
+    std::string step;
+    std::string reason;
+  };
+  std::optional<Retry> retry_;
   std::optional<RunSpec> previous_spec_;  // last run that ran (for the delay policy)
 
   // The queue being executed. The executor thread reads and changes it only

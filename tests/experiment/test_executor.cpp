@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -20,6 +22,8 @@
 #include <vector>
 
 #include "pychron/experiment/executor/executor.hpp"
+#include "pychron/experiment/executor/links.hpp"
+#include "pychron/transport/sim_transport.hpp"
 #include "run_fakes.hpp"
 #include "virtual_time.hpp"
 
@@ -685,7 +689,14 @@ class StampingPersister final : public persist::IAnalysisPersister {
  public:
   explicit StampingPersister(persist::IAnalysisPersister& to) : to_(to) {}
   Result<int> next_aliquot(const std::string& identifier) override { return to_.next_aliquot(identifier); }
-  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return to_.begin_run(id, queue); }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override {
+    if (fail_begins > 0) {  // a store whose link is down, before anything of the sample is spent
+      --fail_begins;
+      return fail(ErrorKind::Io, "store link down");
+    }
+    return to_.begin_run(id, queue);
+  }
+  std::atomic<int> fail_begins{0};
   Result<void> save_extraction(const record::AnalysisRecord& record) override {
     {
       std::lock_guard lock(mutex_);
@@ -1162,3 +1173,474 @@ TEST_F(ExecutorVirtual, ScheduledStartWaitsOnTheClock) {
 }
 
 }  // namespace
+
+// ---- Holding (executor hardening, spec 4.6) -----------------------------------
+
+namespace {
+
+// A link the runs need, on the world's clock, publishing its health.
+struct Wire {
+  explicit Wire(World& w) : clock(w.clock) {
+    TransportOptions o;
+    o.name = "valve_bus";
+    o.clock = &w.clock;
+    o.bus = &w.bus;
+    transport = SimTransport::hooked([](const Bytes&) { return Bytes{}; }, o);
+    EXPECT_TRUE(transport->open());
+    link = std::make_unique<Link>(*transport, w.clock);
+    link->set_connect([this](Transport& t) -> Result<void> {
+      {
+        std::lock_guard lock(mutex);
+        probes.push_back(clock.now());
+      }
+      return t.open();
+    });
+  }
+  // Down for `d` from now (for good when not given), closed as a dropped link is.
+  void down(std::optional<pychron::Duration> d = std::nullopt) {
+    if (d) transport->down_for(*d);
+    else transport->set_down(true);
+    transport->close();
+  }
+  std::vector<TimePoint> probe_times() {
+    std::lock_guard lock(mutex);
+    return probes;
+  }
+
+  const Clock& clock;
+  std::unique_ptr<SimTransport> transport;
+  std::unique_ptr<Link> link;
+  std::mutex mutex;
+  std::vector<TimePoint> probes;
+};
+
+// What a held queue published.
+struct HoldLog {
+  explicit HoldLog(SignalBus& bus) {
+    subs.push_back(bus.subscribe<ExecutorHolding>([this](const ExecutorHolding& h) {
+      std::lock_guard lock(mutex);
+      holds.push_back(h);
+    }));
+    subs.push_back(bus.subscribe<ExecutorStateChanged>([this](const ExecutorStateChanged& e) {
+      std::lock_guard lock(mutex);
+      states.push_back(e);
+    }));
+  }
+  std::vector<ExecutorHolding> held() {
+    std::lock_guard lock(mutex);
+    return holds;
+  }
+  bool went(ExecutorState from, ExecutorState to) {
+    std::lock_guard lock(mutex);
+    return std::any_of(states.begin(), states.end(), [&](const auto& e) { return e.from == from && e.to == to; });
+  }
+  std::mutex mutex;
+  std::vector<ExecutorHolding> holds;
+  std::vector<ExecutorStateChanged> states;
+  std::vector<SignalBus::Subscription> subs;
+};
+
+// A check that asks the queue to wait while `waiting` names the run's identifier.
+class WaitFor final : public IPreRunCheck {
+ public:
+  std::string name() const override { return "test"; }
+  std::optional<CheckFailure> check(const RunSpec& run) override {
+    std::lock_guard lock(mutex);
+    if (run.id.identifier != waiting) return std::nullopt;
+    return CheckFailure{CheckKind::Wait, Error{ErrorKind::Io, "not yet", {}}, {}};
+  }
+  void set(std::string identifier) {
+    std::lock_guard lock(mutex);
+    waiting = std::move(identifier);
+  }
+  std::mutex mutex;
+  std::string waiting;
+};
+
+// The world's context, needing the wire's link (checked and probed).
+struct Held {
+  explicit Held(World& w) : wire(w), links_up([this](const RunSpec&) { return LinkSet{{wire.link.get()}}; }), log(w.bus) {}
+  ExecutorContext context(World& w) {
+    auto c = w.context();
+    c.checks = {&links_up};
+    c.links = [this](const RunSpec&) { return std::vector<Link*>{wire.link.get()}; };
+    return c;  // NOLINT(clang-analyzer-core.StackAddressEscape): by value; its pointers are into World and this
+  }
+  Wire wire;
+  LinksUp links_up;
+  HoldLog log;
+};
+
+int started_count(World& w, const std::string& identifier) {
+  int n = 0;
+  for (const auto& e : w.starts()) n += e.identifier == identifier;
+  return n;
+}
+std::optional<TimePoint> started_at(World& w, const std::string& identifier, int nth = 0) {
+  for (const auto& e : w.starts())
+    if (e.identifier == identifier && nth-- == 0) return e.ts;
+  return std::nullopt;
+}
+
+// After row 0 finishes, `act()` (the link drops, an operator acts...).
+SignalBus::Subscription after_first_run(World& w, std::function<void()> act) {
+  return w.bus.subscribe<RunFinished>([act = std::move(act)](const RunFinished& f) {
+    if (f.summary.row == 0) act();
+  });
+}
+
+}  // namespace
+
+using ExecutorHolding_ = pychron::testing::VirtualTimeTest;
+using pychron::testing::Crew;
+
+namespace {
+
+// An extraction that fails with `kind` the first `n` times, then succeeds.
+FakeScriptHost::Body fails_first(int n, ErrorKind kind, const std::string& what) {
+  auto left = std::make_shared<std::atomic<int>>(n);
+  return [left, kind, what](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    if (left->fetch_sub(1) > 0) return fail(kind, what);
+    return {};
+  };
+}
+
+}  // namespace
+
+TEST_F(ExecutorHolding_, ALinkDownBeforeARunHoldsThenStartsThatRunOnce) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  std::optional<TimePoint> dropped;
+  auto sub = after_first_run(w, [&] {
+    dropped = w.clock.now();
+    h.wire.down(5min);
+  });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12346:success", "12347:success"}));
+  EXPECT_EQ(started_count(w, "12346"), 1);
+  const auto held = h.log.held();
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_EQ(held[0].row, std::optional<std::size_t>(1));
+  EXPECT_EQ(held[0].links, std::vector<std::string>{"valve_bus"});
+  EXPECT_EQ(held[0].until - held[0].since, 2h);
+  EXPECT_TRUE(h.log.went(ExecutorState::Running, ExecutorState::Holding));
+  EXPECT_TRUE(h.log.went(ExecutorState::Holding, ExecutorState::Running));
+  // Back at 5 min, seen by a probe (every 15 s), then 30 s of settle.
+  const auto second = *started_at(w, "12346");
+  EXPECT_GE(second - *dropped, 5min + 30s);
+  EXPECT_LE(second - *dropped, 5min + 15s + 30s + 2s);
+}
+
+TEST_F(ExecutorHolding_, WaitsForTheLinkToBeStableForSettle) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  auto options = w.options();
+  options.hold.probe_interval = 1s;  // up is seen at once
+  Crew crew(w.clock);
+  std::optional<TimePoint> t0;
+  auto sub = after_first_run(w, [&] {
+    t0 = w.clock.now();
+    h.wire.down();
+    crew.start("outage", [&] {
+      w.clock.sleep_for(60s);
+      h.wire.transport->set_down(false);  // up at 60 s
+      w.clock.sleep_for(10s);
+      h.wire.down();  // down again at 70 s
+      w.clock.sleep_for(30s);
+      h.wire.transport->set_down(false);  // up at 100 s
+    });
+  });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), options);
+  const auto r = ex.execute(q);
+  crew.join();
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  const auto second = *started_at(w, "12346") - *t0;
+  EXPECT_GE(second, 130s);
+  EXPECT_LE(second, 132s);
+}
+
+TEST_F(ExecutorHolding_, ProbesEachLinkAtTheProbeInterval) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  std::optional<TimePoint> t0;
+  auto sub = after_first_run(w, [&] {
+    t0 = w.clock.now();
+    h.wire.down(130s);  // the hold begins after the 60 s delay between runs
+  });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), w.options());
+  ASSERT_EQ(ex.execute(q).end, QueueEnd::Completed);
+  // The probes of the hold (a probe may reconnect once more within it).
+  std::vector<TimePoint> starts;
+  for (const auto& t : h.wire.probe_times())
+    if (t >= *t0 && (starts.empty() || t - starts.back() > 5s)) starts.push_back(t);
+  ASSERT_GE(starts.size(), 4u);
+  for (std::size_t i = 1; i < starts.size(); ++i) EXPECT_EQ(starts[i] - starts[i - 1], 15s) << i;
+}
+
+TEST_F(ExecutorHolding_, ARunThatFailedForALinkHoldsThenGoesOnToTheNextRow) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  auto q = w.three_runs();
+  w.host.bodies["extract"] = fails_first(1, ErrorKind::Io, "laser link down");
+  Executor ex(h.context(w), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:failed", "12346:success", "12347:success"}));
+  EXPECT_EQ(started_count(w, "12345"), 1);  // past its point of no return: never again
+  const auto held = h.log.held();
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_FALSE(held[0].row);  // held after a run that started
+  EXPECT_NE(held[0].reason.find("laser link down"), std::string::npos) << held[0].reason;
+  EXPECT_EQ(r.runs[0].status, record::RecordStatus::Failed);  // flagged in its summary
+  EXPECT_EQ(r.runs[0].failure, "laser link down");
+  // Made safe before the hold (the run did it as it failed; spec 4.7).
+  EXPECT_NE(std::find(w.valves.log.begin(), w.valves.log.end(), "close B"), w.valves.log.end());
+}
+
+TEST_F(ExecutorHolding_, AfterLinkFailureEndEndsTheQueue) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  auto q = w.three_runs();
+  w.host.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  auto options = w.options();
+  options.hold.end_after_link_failure = true;
+  Executor ex(h.context(w), options);
+  const auto r = ex.execute(q);
+  EXPECT_EQ(r.end, QueueEnd::Failed);
+  EXPECT_EQ(r.runs.size(), 1u);
+  EXPECT_TRUE(h.log.held().empty());
+}
+
+TEST_F(ExecutorHolding_, TheHoldLimitEndsTheQueueAsFailedNamingTheLinks) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  std::optional<TimePoint> dropped;
+  auto sub = after_first_run(w, [&] {
+    dropped = w.clock.now();
+    h.wire.down();
+  });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), w.options());
+  const auto r = ex.execute(q);
+  EXPECT_EQ(r.end, QueueEnd::Failed);
+  EXPECT_NE(r.reason.find("hold limit"), std::string::npos) << r.reason;
+  EXPECT_NE(r.reason.find("valve_bus"), std::string::npos) << r.reason;
+  EXPECT_EQ(r.runs.size(), 1u);
+  EXPECT_GE(w.clock.now() - *dropped, 2h);
+}
+
+TEST_F(ExecutorHolding_, ResumeSkipsSettle) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  auto options = w.options();
+  options.hold.probe_interval = 1s;
+  std::optional<TimePoint> back;
+  Executor* exec = nullptr;
+  auto health = w.bus.subscribe<TransportHealth>([&](const TransportHealth& e) {
+    if (e.connected && back == std::nullopt && exec != nullptr && exec->state() == ExecutorState::Holding) {
+      back = w.clock.now();
+      exec->resume();
+    }
+  });
+  auto sub = after_first_run(w, [&] { h.wire.down(60s); });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), options);
+  exec = &ex;
+  ASSERT_EQ(ex.execute(q).end, QueueEnd::Completed);
+  ASSERT_TRUE(back);
+  EXPECT_LT(*started_at(w, "12346") - *back, 5s);  // not the 30 s of settle
+}
+
+TEST_F(ExecutorHolding_, SkipDropsTheHeldRow) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  HoldLog log(w.bus);
+  WaitFor check;
+  check.set("12346");
+  Executor* exec = nullptr;
+  std::optional<Result<void>> skipped;
+  auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding&) { skipped = exec->skip(); });
+  auto ctx = w.context();
+  ctx.checks = {&check};
+  auto q = w.three_runs();
+  Executor ex(ctx, w.options());
+  exec = &ex;
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  ASSERT_TRUE(skipped && *skipped);
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12347:success"}));
+  EXPECT_EQ(started_count(w, "12346"), 0);
+}
+
+TEST_F(ExecutorHolding_, SkipIsRefusedForARowThatStarted) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  Executor* exec = nullptr;
+  std::optional<Result<void>> skipped;
+  auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding&) { skipped = exec->skip(); });
+  auto q = w.three_runs();
+  w.host.bodies["extract"] = fails_first(1, ErrorKind::Io, "laser link down");
+  Executor ex(h.context(w), w.options());
+  exec = &ex;
+  const auto r = ex.execute(q);
+  ASSERT_TRUE(skipped);
+  ASSERT_FALSE(*skipped);
+  EXPECT_NE(skipped->error().what.find("already started"), std::string::npos);
+  EXPECT_EQ(r.runs.size(), 3u);
+}
+
+TEST_F(ExecutorHolding_, StopCancelAndAbortLeaveAHold) {
+  for (const auto how : {QueueEnd::Stopped, QueueEnd::Cancelled, QueueEnd::Aborted}) {
+    World w({});
+    Clock::Participant me(w.clock, "test");
+    Held h(w);
+    Executor* exec = nullptr;
+    auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding&) {
+      if (how == QueueEnd::Stopped) exec->stop();
+      if (how == QueueEnd::Cancelled) exec->cancel();
+      if (how == QueueEnd::Aborted) exec->abort();
+    });
+    auto drop = after_first_run(w, [&] { h.wire.down(); });
+    auto q = w.three_runs();
+    Executor ex(h.context(w), w.options());
+    exec = &ex;
+    const TimePoint began = w.clock.now();
+    const auto r = ex.execute(q);
+    EXPECT_EQ(r.end, how) << r.reason;
+    EXPECT_EQ(r.runs.size(), 1u);
+    EXPECT_LT(w.clock.now() - began, 1h);  // not the hold limit
+  }
+}
+
+TEST_F(ExecutorHolding_, AnUnsafeRunEndsTheQueueWithoutHolding) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  auto q = w.three_runs();
+  w.host.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  // The safe state cannot close the inlet: it is interlocked (definite).
+  w.valves.fault = [](const std::string& v, bool open) -> Result<void> {
+    if (!open && v == "B") return fail(ErrorKind::Interlock, "B is interlocked");
+    return {};
+  };
+  Executor ex(h.context(w), w.options());
+  const auto r = ex.execute(q);
+  EXPECT_EQ(r.end, QueueEnd::Failed);
+  EXPECT_EQ(r.code, kUnsafe);
+  EXPECT_NE(r.reason.find("close inlet B"), std::string::npos) << r.reason;
+  EXPECT_TRUE(h.log.held().empty());
+}
+
+TEST_F(ExecutorHolding_, ADefiniteFailureEndsTheQueueAsToday) {
+  for (const bool go_on : {false, true}) {
+    World w({});
+    Clock::Participant me(w.clock, "test");
+    Held h(w);
+    auto q = w.three_runs();
+    w.host.bodies["extract"] = fails_first(1, ErrorKind::Protocol, "laser fault");
+    auto options = w.options();
+    options.continue_on_failure = go_on;
+    Executor ex(h.context(w), options);
+    const auto r = ex.execute(q);
+    EXPECT_TRUE(h.log.held().empty());
+    if (go_on) {
+      EXPECT_EQ(r.end, QueueEnd::Completed) << r.reason;
+      EXPECT_EQ(r.runs.size(), 3u);
+    } else {
+      EXPECT_EQ(r.end, QueueEnd::Failed);
+      EXPECT_EQ(r.runs.size(), 1u);
+    }
+  }
+}
+
+TEST_F(ExecutorHolding_, ALinkThatDropsDuringPrepareHoldsAndStartsTheRowAgain) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  w.persister.fail_begins = 1;  // the first run's prepare
+  std::optional<std::size_t> next_row_while_held;
+  Executor* exec = nullptr;
+  auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding&) {
+    auto row = Executor::resume_row(w.lab.dir() / "executor_state.json");
+    if (row) next_row_while_held = *row;
+    (void)exec;
+  });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), w.options());
+  exec = &ex;
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  ASSERT_EQ(r.runs.size(), 4u);  // the attempt, then the run
+  EXPECT_EQ(r.runs[0].state, run::RunState::Failed);
+  EXPECT_EQ(r.runs[1].identifier, "12345");
+  EXPECT_EQ(r.runs[1].state, run::RunState::Success);
+  EXPECT_EQ(r.runs[1].aliquot, r.runs[0].aliquot);  // allocated once
+  EXPECT_EQ(next_row_while_held, std::optional<std::size_t>(0));  // not consumed
+  const auto held = h.log.held();
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_EQ(held[0].row, std::optional<std::size_t>(0));
+  // A definite failure in prepare ends the queue as before.
+  World w2({});
+  Clock::Participant me2(w2.clock, "test2");
+  auto bad = w2.queue({unknown_run("12345", "no_such_plan")}, Seconds{0}, Seconds{0});
+  Executor ex2(w2.context(), w2.options());
+  EXPECT_EQ(ex2.execute(bad).end, QueueEnd::Failed);
+}
+
+TEST_F(ExecutorHolding_, TheStateFileCarriesTheHoldAndTheLastFailedRow) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  std::string while_held;
+  auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding&) {
+    std::ifstream in(w.lab.dir() / "executor_state.json");
+    while_held.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  });
+  auto q = w.three_runs();
+  w.host.bodies["extract"] = fails_first(1, ErrorKind::Io, "laser link down");
+  Executor ex(h.context(w), w.options());
+  ASSERT_EQ(ex.execute(q).end, QueueEnd::Completed);
+  EXPECT_NE(while_held.find("\"holding\": {\"reason\": "), std::string::npos) << while_held;
+  EXPECT_NE(while_held.find("\"last_failed_row\": 0"), std::string::npos) << while_held;
+  // A file with the hold gives the same resume_row as one without.
+  const auto with = w.lab.dir() / "with.json";
+  const auto without = w.lab.dir() / "without.json";
+  std::ofstream(with) << while_held;
+  std::ofstream(without) << "{\n  \"queue\": \"q1\",\n  \"state\": \"running\",\n  \"next_row\": 1,\n  \"runs\": []\n}\n";
+  EXPECT_EQ(Executor::resume_row(with).value(), 1u);
+  EXPECT_EQ(Executor::resume_row(without).value(), 1u);
+}
+
+TEST_F(ExecutorHolding_, InOverlapTheRunInFlightCarriesOn) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  std::atomic<bool> once{false};
+  auto drop = w.bus.subscribe<measurement::OverlapReady>([&](const measurement::OverlapReady&) {
+    if (!once.exchange(true)) h.wire.down(5min);
+  });
+  auto q = w.overlapped_runs();
+  Executor ex(h.context(w), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12346:success"}));
+  ASSERT_EQ(h.log.held().size(), 1u);
+  EXPECT_EQ(h.log.held()[0].row, std::optional<std::size_t>(1));
+}

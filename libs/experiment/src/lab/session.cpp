@@ -91,6 +91,10 @@ struct LabSession::Services {
     s.save = &save;
     ctx.pre_run_metrics = &instrument;
     ctx.checks = {&links_up, &spool_writable};
+    ctx.links = [line = &hw.line, spec = hw.spectrometer](const RunSpec& run) {
+      return executor::required_links(run, line->links(), spec != nullptr ? spec->links() : std::vector<Link*>{})
+          .required;
+    };
     ctx.blank = default_blank_factory(lab.ids);
   }
 
@@ -114,6 +118,17 @@ struct LabSession::Services {
 LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions options)
     : lab_(lab), hardware_(hardware), options_(std::move(options)) {
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
+  {
+    // executor.toml [hold] (spec 4.10).
+    const auto& h = lab_.executor.hold;
+    const auto seconds = [](double s) {
+      return std::chrono::duration_cast<pychron::Duration>(std::chrono::duration<double>(s));
+    };
+    options_.executor.hold.settle = seconds(h.settle_s);
+    options_.executor.hold.probe_interval = seconds(h.probe_interval_s);
+    options_.executor.hold.limit = seconds(h.limit_s);
+    options_.executor.hold.end_after_link_failure = h.after_link_failure == AfterLinkFailure::End;
+  }
   if (hardware_.lasers == nullptr) own_lasers_ = std::make_unique<Lasers>(lab_, hardware_.line, hardware_.simulated);
   lasers_ = hardware_.lasers != nullptr ? hardware_.lasers : own_lasers_.get();
   services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_, options_.persister);

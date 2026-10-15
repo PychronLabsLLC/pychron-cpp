@@ -359,7 +359,7 @@ void Executor::resume();   // try now, skip settle
 Result<void> Executor::skip();   // only a row that has not started
 ```
 
-- [ ] Failing tests (`VirtualTimeTest`, `Crew`), each asserting the events published and the queue's end:
+- [x] Failing tests (`VirtualTimeTest`, `Crew`), each asserting the events published and the queue's end:
   - `ExecutorHolding.ALinkDownBeforeARunHoldsThenStartsThatRunOnce`: down 5 min from before row 2: row 2 starts once, its aliquot is allocated once, the queue completes.
   - `...WaitsForTheLinkToBeStableForSettle`: up at 60 s, down again at 70 s, up at 100 s: the run starts at 130 s.
   - `...ProbesEachLinkAtTheProbeInterval`.
@@ -375,10 +375,11 @@ Result<void> Executor::skip();   // only a row that has not started
   - `...AFailedRunIsFlaggedInItsSummary`: `RunSummary` gains `status` (the record's `RecordStatus`) and `failure`; `truncated` stays for its readers.
   - `...TheStateFileCarriesTheHoldAndTheLastFailedRow`: round trip; a file written before this task still gives its `resume_row`; a file with the new `holding` object gives the same `resume_row` as one without.
   - `...AQueueNeverEndsForATransientFailureWithoutHavingHeld` (spec section 5).
-- [ ] Implement. The hold's wait is a `clock.wait_until` on the executor's condition variable, woken through the clock by a `TransportHealth` subscription, `resume()`, `skip()` and the stop family. `write_state` writes with a JSON library if the file is still hand-built, and `resume_row` reads `next_row` as before.
-- [ ] Safe state is applied on entering a hold when a run failed past no return (Task 11 did it at the run's end; here assert it is not skipped and applying twice is harmless).
-- [ ] TSan run of `ExecutorHolding.*`.
-- [ ] Commit: `feat(experiment): the executor holds the queue while a needed link is down`.
+- [x] Implement. The hold's wait is a `clock.wait_until` on the executor's condition variable, woken through the clock by a `TransportHealth` subscription, `resume()`, `skip()` and the stop family. `write_state` writes with a JSON library if the file is still hand-built, and `resume_row` reads `next_row` as before.
+- [x] Safe state is applied on entering a hold when a run failed past no return (Task 11 did it at the run's end; here assert it is not skipped and applying twice is harmless).
+- [x] TSan run of `ExecutorHolding.*`.
+- Built: suite `ExecutorHolding_` (`ExecutorHolding` is the event). `Executor::hold()` waits on `cv_` through the clock until `ready()` (every pre-run check passes and every link of `ExecutorContext::links` is not `Down`) has held for `settle`, probing each link that is down at `probe_interval`; a `TransportHealth` subscription, `resume()`, `skip()` and the stop family wake it. `finish()` sorts a failed run: unsafe ends the queue (`QueueResult::code = kUnsafe`, after `runs` so aggregate initialisers keep their meaning); a failure for a link (a transient error, not a save error) before its point of no return leaves the row unconsumed and starts it again after a hold with the aliquot and step it was given (`RunResult::past_no_return` stands for the plan's `started`); after it, a hold before the next row (or the queue's end with `after_link_failure = "end"`); a definite failure as before. The not-started attempt stays in `QueueResult::runs` and is published as it was. `RunSummary::status` and `failure` come from the record. The state file stays hand-built (`json_string` escapes every string it writes) and gains `holding` and `last_failed_row`; it is written before `ExecutorHolding` is published. `LabSession` gives the executor `executor.toml` `[hold]` and the links of each run. Not built here: `AQueueNeverEndsForATransientFailureWithoutHavingHeld` as a test of its own (each path is a test above; Task 18 checks the rule across a queue). User guide chapter 4 says how the queue holds.
+- [x] Commit: `feat(experiment): the executor holds the queue while a needed link is down`.
 
 ### Task 18: Every cut, across the whole queue
 

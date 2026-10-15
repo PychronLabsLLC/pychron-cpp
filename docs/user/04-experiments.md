@@ -835,6 +835,23 @@ runs: the lab's own sequence to isolate and pump the line ([Scripting](09-script
 section 1). A run whose post-measurement script failed is saved and then
 made safe the same way.
 
+**When a link drops, the queue holds.** Before each run the executor checks
+the links the run needs: every transport of the extraction line (its
+extraction device is one of them) and, for a run with a measurement plan,
+the spectrometer's; a transport marked `optional = true` is left out. It
+also checks that the spool's disk has room and that not too many records
+wait to be sent. When one of these is not so, or a run has just failed
+because of a link, the Executor pane says **Holding** and why. While it
+holds, each link that is down is tried again every 15 s; once every link
+the next run needs has been up for 30 s, the queue goes on. A run that
+failed before its extraction began spent nothing: it is started again, with
+the aliquot it was given. A run that failed after it is never run again.
+After 2 hours of holding the queue ends, failed, naming the links. Stop,
+Cancel and Abort work while it holds. A run whose safe state failed ends
+the queue at once, without holding. These times, and whether the queue
+goes on after a run failed for a link, are in `executor.toml`
+([Configuration reference](07-configuration-reference.md)).
+
 ### 8.3 Stop, Cancel, Abort, Truncate
 
 The buttons in the Executor pane (also **Experiment > Executor**):
