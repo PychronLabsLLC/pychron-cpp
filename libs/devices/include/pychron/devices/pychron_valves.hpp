@@ -25,6 +25,10 @@
 
 namespace pychron {
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    Open, Close (an absolute target), GetValveState
+//   Unsafe  none
 class PychronValves final : public Device, public IValveActuator {
  public:
   PychronValves(std::string name, Transport& transport, DeviceOptions options = {});

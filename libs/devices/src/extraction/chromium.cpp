@@ -147,13 +147,24 @@ Unexpected<Error> ChromiumLaser::refuse(ErrorKind kind, std::string what) const 
 }
 
 Result<Bytes> ChromiumLaser::query(const codec::Command& q) {
-  auto reply = transport_.exchange(q.tx, *q.reply);
-  if (!reply) return fail(std::move(reply).error());
-  if (const auto code = cr::error_code(*reply)) return fail(cr::to_error(*code, text_of(q)));
-  return reply;
+  // A query: Safe.
+  return relay<Bytes>(
+      [&](Resend resend) -> Result<Bytes> {
+        auto reply = transport_.exchange(q.tx, *q.reply, Transport::kDefaultTimeout, resend);
+        if (!reply) return fail(std::move(reply).error());
+        if (const auto code = cr::error_code(*reply)) return fail(cr::to_error(*code, text_of(q)));
+        return reply;
+      },
+      Repeat::Safe);
 }
 
-Result<Bytes> ChromiumLaser::act(const codec::Command& action, const codec::Command& confirm) {
+Result<Bytes> ChromiumLaser::act(const codec::Command& action, const codec::Command& confirm, Repeat repeat,
+                                 std::optional<Duration> window) {
+  // The whole transaction is the unit repeated: drain, action, confirm.
+  return relay<Bytes>([&](Resend) { return act_once(action, confirm); }, repeat, window);
+}
+
+Result<Bytes> ChromiumLaser::act_once(const codec::Command& action, const codec::Command& confirm) {
   return transact(transport_, [&]() -> Result<Bytes> {
     // Anything unread would be taken for this action's verdict.
     for (int i = 0; i < kDrainLimit; ++i) {
@@ -370,7 +381,8 @@ Result<void> ChromiumLaser::fire_laser() {
   }
   if (auto ok = observe(check_interlocks("fire")); !ok) return ok;
   auto run = [&]() -> Result<void> {
-    auto reply = act(cr::laser_fire(), cr::laser_status());
+    // The one Unsafe command: a second Laser.Fire would start the output again.
+    auto reply = act(cr::laser_fire(), cr::laser_status(), Repeat::Unsafe);
     if (!reply) return fail(std::move(reply).error());
     // An interlock can trip between the check and the command, and a Chromium
     // that then simply does not fire says so only here.
@@ -383,7 +395,13 @@ Result<void> ChromiumLaser::fire_laser() {
   if (!result) {
     // Laser.Fire may have gone out. Whatever went wrong after it, the beam
     // is not left on behind an error (a refused Laser.Fire never opened it).
-    if (!action_refused(result.error())) (void)act(cr::laser_stop(), cr::sys_id());
+    // When the link lost it, or lost what came after it, the Stop is kept
+    // trying for the critical window, not the call's: the beam may be on.
+    if (result.error().code == kOutcomeUnknown || is_transient(result.error().kind)) {
+      (void)act(cr::laser_stop(), cr::sys_id(), Repeat::Safe, kCriticalWindow);
+    } else if (!action_refused(result.error())) {
+      (void)act(cr::laser_stop(), cr::sys_id());
+    }
     std::lock_guard lock(state_);
     firing_ = false;
     return observe(std::move(result));

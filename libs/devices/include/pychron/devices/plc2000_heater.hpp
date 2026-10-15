@@ -55,9 +55,15 @@ struct Plc2000HeaterOptions {
   SetpointWriteFormat setpoint_write_format = SetpointWriteFormat::Int32;
 };
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    read coils (01), write single coil (05), read input registers
+//           (04), write multiple registers (16: the setpoint); every write
+//           sets an absolute value
+//   Unsafe  none
 class Plc2000Heater final : public Device, public IHeater {
  public:
-  Plc2000Heater(std::string name, Transport& transport, Plc2000HeaterOptions options, const Clock* clock = nullptr);
+  Plc2000Heater(std::string name, Transport& transport, Plc2000HeaterOptions options, const Clock* clock = nullptr, Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<Plc2000Heater>> create(const DriverArgs& args);

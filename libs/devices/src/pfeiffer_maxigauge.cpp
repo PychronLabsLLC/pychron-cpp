@@ -42,8 +42,8 @@ Result<std::vector<int>> parse_channels(const toml::table& options) {
 }  // namespace
 
 PfeifferMaxiGauge::PfeifferMaxiGauge(std::string name, Transport& transport, std::vector<int> channels,
-                                     const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+                                     const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       transport_(transport),
       channels_(std::move(channels)),
       clock_(clock != nullptr ? clock : &steady_clock()) {}
@@ -62,15 +62,20 @@ Result<std::unique_ptr<PfeifferMaxiGauge>> PfeifferMaxiGauge::create(const Drive
 }
 
 Result<Bytes> PfeifferMaxiGauge::query(const codec::Command& mnemonic) {
-  return transact(transport_, [&]() -> Result<Bytes> {
-    // A query's mnemonic and its ENQ change nothing on the controller: either may be sent again.
-    auto ack = transport_.exchange(mnemonic.tx, *mnemonic.reply, Transport::kDefaultTimeout, Resend::Allowed);
-    if (!ack) return fail(std::move(ack).error());
-    if (auto ok = mg::decode_ack(*ack); !ok) return fail(std::move(ok).error());
+  // A query's mnemonic and its ENQ change nothing on the controller: either
+  // may be sent again, and the pair is repeated whole.
+  return relay<Bytes>(
+      [&](Resend resend) {
+        return transact(transport_, [&]() -> Result<Bytes> {
+          auto ack = transport_.exchange(mnemonic.tx, *mnemonic.reply, Transport::kDefaultTimeout, resend);
+          if (!ack) return fail(std::move(ack).error());
+          if (auto ok = mg::decode_ack(*ack); !ok) return fail(std::move(ok).error());
 
-    const codec::Command enq = mg::enquiry();
-    return transport_.exchange(enq.tx, *enq.reply, Transport::kDefaultTimeout, Resend::Allowed);
-  });
+          const codec::Command enq = mg::enquiry();
+          return transport_.exchange(enq.tx, *enq.reply, Transport::kDefaultTimeout, resend);
+        });
+      },
+      Repeat::Safe);
 }
 
 Result<double> PfeifferMaxiGauge::read_pressure() { return read_pressure(channels_.front()); }

@@ -21,13 +21,19 @@ Result<std::unique_ptr<PychronValves>> PychronValves::create(const DriverArgs& a
 }
 
 Result<Bytes> PychronValves::ask(const codec::Command& command) {
-  return transact(transport_, [&]() -> Result<Bytes> {
-    transport_.close();  // the server hung up after the last reply
-    if (auto opened = transport_.open(); !opened) return fail(std::move(opened).error());
-    auto reply = transport_.exchange(command.tx, *command.reply);
-    transport_.close();
-    return reply;
-  });
+  // Every command is Safe: the connection and its one exchange are repeated
+  // as a unit.
+  return relay<Bytes>(
+      [&](Resend resend) {
+        return transact(transport_, [&]() -> Result<Bytes> {
+          transport_.close();  // the server hung up after the last reply
+          if (auto opened = transport_.open(); !opened) return fail(std::move(opened).error());
+          auto reply = transport_.exchange(command.tx, *command.reply, Transport::kDefaultTimeout, resend);
+          transport_.close();
+          return reply;
+        });
+      },
+      Repeat::Safe);
 }
 
 Result<void> PychronValves::open(const ValveAddress& address) {

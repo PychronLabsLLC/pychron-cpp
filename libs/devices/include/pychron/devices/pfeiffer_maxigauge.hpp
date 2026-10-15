@@ -22,6 +22,11 @@ namespace pychron {
 
 // read_pressure() and sample() use the first configured channel; multi-gauge
 // managers use IChannelPressureGauge::read_pressure(channel).
+// May each command be sent twice (Repeat, link.hpp)? Each query is its
+// mnemonic and the ENQ in one transaction, repeated whole.
+//
+//   Safe    PR1..PR6, PRX, UNI, ENQ
+//   Unsafe  none
 class PfeifferMaxiGauge final : public Device,
                                 public IPressureGauge,
                                 public IChannelPressureGauge,
@@ -30,7 +35,7 @@ class PfeifferMaxiGauge final : public Device,
   // `channels` must be non-empty, unique and within 1..6 (create() checks).
   // `clock` stamps samples and health; SteadyClock when null.
   PfeifferMaxiGauge(std::string name, Transport& transport, std::vector<int> channels,
-                    const Clock* clock = nullptr);
+                    const Clock* clock = nullptr, Link* link = nullptr);
 
   // Registry hooks (REGISTER_DRIVER).
   static DriverSchema schema();

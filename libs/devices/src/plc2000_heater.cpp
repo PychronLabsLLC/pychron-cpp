@@ -19,8 +19,8 @@ std::uint16_t wire(std::uint16_t address) { return static_cast<std::uint16_t>(ad
 }  // namespace
 
 Plc2000Heater::Plc2000Heater(std::string name, Transport& transport, Plc2000HeaterOptions options,
-                             const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}), transport_(transport), options_(std::move(options)) {}
+                             const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}), transport_(transport), options_(options) {}
 
 DriverSchema Plc2000Heater::schema() {
   return {"",
@@ -77,38 +77,38 @@ Result<Plc2000HeaterOptions> Plc2000Heater::parse_options(const toml::table& o) 
 
 Result<bool> Plc2000Heater::read_coil(const std::optional<std::uint16_t>& address, const char* what) {
   if (!address) return fail(extraction::not_supported(std::string(what) + " (no address configured)", name()));
-  auto value = [&]() -> Result<bool> {
+  auto value = relay<bool>([&](Resend resend) -> Result<bool> {
     const auto tid = next_modbus_transaction_id();
     auto cmd = mb::read_coils(tid, options_.unit, wire(*address), 1);
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+    auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     auto coils = mb::decode_coils(tid, options_.unit, 1, *reply);
     if (!coils) return fail(std::move(coils).error());
     return coils->front();
-  }();
+  }, Repeat::Safe);
   return observe(std::move(value));
 }
 
 Result<void> Plc2000Heater::write_coil(const std::optional<std::uint16_t>& address, const char* what, bool on) {
   if (!address) return fail(extraction::not_supported(std::string(what) + " (no address configured)", name()));
-  auto done = [&]() -> Result<void> {
+  auto done = relay<void>([&](Resend resend) -> Result<void> {
     const auto tid = next_modbus_transaction_id();
     const auto cmd = mb::write_single_coil(tid, options_.unit, wire(*address), on);
-    auto reply = transport_.exchange(cmd.tx, *cmd.reply);
+    auto reply = transport_.exchange(cmd.tx, *cmd.reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     return mb::decode_write_single_coil(tid, options_.unit, wire(*address), on, *reply);
-  }();
+  }, Repeat::Safe);
   return observe(std::move(done));
 }
 
 Result<double> Plc2000Heater::read_float(const std::optional<std::uint16_t>& address, const char* what) {
   if (!address) return fail(extraction::not_supported(std::string(what) + " (no address configured)", name()));
-  auto value = [&]() -> Result<double> {
+  auto value = relay<double>([&](Resend resend) -> Result<double> {
     const auto tid = next_modbus_transaction_id();
     auto cmd = mb::read_input_registers(tid, options_.unit, wire(*address), 2);
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+    auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     auto regs = mb::decode_registers(tid, options_.unit, mb::Function::ReadInputRegisters, 2, *reply);
     if (!regs) return fail(std::move(regs).error());
@@ -117,7 +117,7 @@ Result<double> Plc2000Heater::read_float(const std::optional<std::uint16_t>& add
       return codec::protocol_error("plc2000_heater: " + std::string(what) + " register holds no number", *reply);
     }
     return v;
-  }();
+  }, Repeat::Safe);
   return observe(std::move(value));
 }
 
@@ -142,15 +142,15 @@ Result<void> Plc2000Heater::set_setpoint(double value) {
     if (!std::isfinite(value)) return fail(ErrorKind::Config, "setpoint is not a number", name());
     words = mb::encode_float(static_cast<float>(value), options_.word_order);
   }
-  auto done = [&]() -> Result<void> {
+  auto done = relay<void>([&](Resend resend) -> Result<void> {
     const auto tid = next_modbus_transaction_id();
     const auto start = wire(*options_.setpoint);
     auto cmd = mb::write_multiple_registers(tid, options_.unit, start, {words[0], words[1]});
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+    auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     return mb::decode_write_multiple_registers(tid, options_.unit, start, 2, *reply);
-  }();
+  }, Repeat::Safe);
   return observe(std::move(done));
 }
 

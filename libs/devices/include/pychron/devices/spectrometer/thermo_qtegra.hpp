@@ -44,6 +44,11 @@ struct QtegraOptions {
   double settle_periods = 2.0;
 };
 
+// May each command be sent twice (Repeat, link.hpp)? Through the
+// QtegraLink's Link.
+//
+//   Safe    every command (spec section 9)
+//   Unsafe  none
 class QtegraSpectrometer final : public Device,
                                  public IConnectable,
                                  public IMassPositioner,

@@ -18,6 +18,11 @@
 
 namespace pychron {
 
+// May each command be sent twice (Repeat, link.hpp)? Each operation is one
+// transaction (bank select, then the relay command), repeated whole.
+//
+//   Safe    bank select, relay on, relay off, relay state read
+//   Unsafe  none
 class ProxrRelay final : public Device, public IValveActuator {
  public:
   ProxrRelay(std::string name, Transport& transport, DeviceOptions options = {});
@@ -33,8 +38,8 @@ class ProxrRelay final : public Device, public IValveActuator {
   Result<void> actuate(const ValveAddress& address, bool energize);
   Result<ValveState> query(const ValveAddress& address);
   // Bank select + ack for the relay at `address`; its relay within the bank.
-  Result<int> select(const ValveAddress& address);
-  Result<Bytes> send(const codec::Command& command);
+  Result<int> select(const ValveAddress& address, Resend resend);
+  Result<Bytes> send(const codec::Command& command, Resend resend);
 
   // Bank select and relay command run as one Transport transaction so no
   // other traffic on the bus (from this or any other device) splits them.

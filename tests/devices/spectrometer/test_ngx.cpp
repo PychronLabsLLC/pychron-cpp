@@ -258,11 +258,21 @@ TEST_F(Ngx, ALateReplyIsNeverHandedToTheNextCommand) {
     model->params["IE"] = 4500;
     model->hold_replies = 1;  // the GSO reply comes late
   }
+  // The late reply arrives while GSO, Safe, waits to be sent again.
+  Crew crew(clock);
+  crew.start("late", [&] {
+    clock.sleep_for(1s);
+    {
+      std::lock_guard lock(model->mutex);
+      model->params["IE"] = 4400;  // what the repeat is answered
+    }
+    model->release_held();
+  });
+  // The repeat waits out the owed reply; it gets its own answer, not "4500,4500".
   auto hv = s->read_hv();
-  ASSERT_FALSE(hv);
-  EXPECT_EQ(hv.error().kind, ErrorKind::Timeout);
-  model->release_held();
-  // GETMASS waits out the owed reply; it gets its own answer, not "4500,4500".
+  crew.join();
+  ASSERT_TRUE(hv) << hv.error().what;
+  EXPECT_DOUBLE_EQ(*hv, 4400);
   auto m = s->read();
   ASSERT_TRUE(m) << m.error().what;
   EXPECT_DOUBLE_EQ(*m, 39.96);

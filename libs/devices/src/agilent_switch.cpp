@@ -23,19 +23,25 @@ Result<std::unique_ptr<AgilentSwitch>> AgilentSwitch::create(const DriverArgs& a
 }
 
 Result<void> AgilentSwitch::connect() {
-  return observe(transact(transport_, [&]() -> Result<void> {
-    auto reply = ask(ag::identify());
-    if (!reply) return fail(std::move(reply).error());
-    auto id = ag::decode_identity(*reply);
-    if (!id) return fail(std::move(id).error());
-    if (!ag::is_switch_unit(*id)) {
-      return fail(ErrorKind::Config, "agilent_switch: \"" + id->manufacturer + "," + id->model +
-                                         "\" answered, not a 34970A-family unit");
-    }
-    const auto clear = ag::clear_status();
-    if (auto sent = transport_.write(clear.tx); !sent) return fail(std::move(sent).error());
-    return drain_errors("*CLS");
-  }));
+  // *IDN? and *CLS are Safe: the whole handshake is repeated, but not after
+  // a lost SYST:ERR? reply (drain_errors).
+  return call<void>(
+      [&](Resend resend) {
+        return transact(transport_, [&]() -> Result<void> {
+          auto reply = ask(ag::identify(), resend);
+          if (!reply) return fail(std::move(reply).error());
+          auto id = ag::decode_identity(*reply);
+          if (!id) return fail(std::move(id).error());
+          if (!ag::is_switch_unit(*id)) {
+            return fail(ErrorKind::Config, "agilent_switch: \"" + id->manufacturer + "," + id->model +
+                                               "\" answered, not a 34970A-family unit");
+          }
+          const auto clear = ag::clear_status();
+          if (auto sent = transport_.write(clear.tx); !sent) return fail(std::move(sent).error());
+          return drain_errors("*CLS");
+        });
+      },
+      Repeat::Safe);
 }
 
 Result<void> AgilentSwitch::open(const ValveAddress& address) { return observe(route(address, true)); }
@@ -45,7 +51,7 @@ Result<void> AgilentSwitch::close(const ValveAddress& address) { return observe(
 Result<ValveState> AgilentSwitch::read(const ValveAddress& address) {
   auto query = invert_ ? ag::query_close(address.value) : ag::query_open(address.value);
   if (!query) return observe(Result<ValveState>(fail(std::move(query).error())));
-  auto reply = ask(*query);
+  auto reply = relay<Bytes>([&](Resend resend) { return ask(*query, resend); }, Repeat::Safe);
   if (!reply) return observe(Result<ValveState>(fail(std::move(reply).error())));
   auto yes = ag::decode_route_state(*reply);
   if (!yes) return observe(Result<ValveState>(fail(std::move(yes).error())));
@@ -56,19 +62,28 @@ Result<void> AgilentSwitch::route(const ValveAddress& address, bool open_valve) 
   const bool relay_open = open_valve != invert_;
   auto command = relay_open ? ag::route_open(address.value) : ag::route_close(address.value);
   if (!command) return fail(std::move(command).error());  // nothing sent
-  return transact(transport_, [&]() -> Result<void> {
-    if (auto sent = transport_.write(command->tx); !sent) return fail(std::move(sent).error());
-    auto text = to_string(command->tx);
-    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
-    return drain_errors(text);
-  });
+  // The route and its error read are one transaction, repeated whole when
+  // the route was lost; a lost SYST:ERR? reply ends it as outcome_unknown.
+  return relay<void>(
+      [&](Resend) {
+        return transact(transport_, [&]() -> Result<void> {
+          if (auto sent = transport_.write(command->tx); !sent) return fail(std::move(sent).error());
+          auto text = to_string(command->tx);
+          while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+          return drain_errors(text);
+        });
+      },
+      Repeat::Safe);
 }
 
 Result<void> AgilentSwitch::drain_errors(std::string_view after) {
   std::optional<ag::InstrumentError> first;
   for (int i = 0; i < kMaxErrorReads; ++i) {
-    auto reply = ask(ag::next_error());
-    if (!reply) return fail(std::move(reply).error());
+    // Unsafe: the read takes the error off the queue, so a lost reply loses
+    // it. Sent once; a transient failure is marked outcome_unknown, which the
+    // link does not repeat.
+    auto reply = ask(ag::next_error(), Resend::Never);
+    if (!reply) return fail(outcome_unknown_if_transient(std::move(reply).error()));
     auto error = ag::decode_error(*reply);
     if (!error) return fail(std::move(error).error());
     if (!error->has_value()) {
@@ -82,8 +97,8 @@ Result<void> AgilentSwitch::drain_errors(std::string_view after) {
                                        std::to_string(kMaxErrorReads) + " reads (after " + std::string(after) + ")");
 }
 
-Result<Bytes> AgilentSwitch::ask(const codec::Command& command) {
-  return transport_.exchange(command.tx, *command.reply);
+Result<Bytes> AgilentSwitch::ask(const codec::Command& command, Resend resend) {
+  return transport_.exchange(command.tx, *command.reply, Transport::kDefaultTimeout, resend);
 }
 
 }  // namespace pychron

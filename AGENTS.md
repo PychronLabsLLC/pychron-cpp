@@ -211,6 +211,7 @@ given it when it reads a file there; any other agent opens it itself).
 | `libs/earthbank`, `libs/earthbank_qt`, `tests/earthbank`, `elctl earthbank`, EarthBank page and Publish dialog | `libs/earthbank/AGENTS.md` |
 | `libs/experiment` record, store adapter, `tests/experiment`, how a run is saved | `libs/experiment/AGENTS.md` |
 | `profiles/`, `configs/examples`, shipped plans, queue, field tables, `tests/setup`, `tests/integration/test_install_e2e.cpp` | `libs/setup/AGENTS.md` |
+| `libs/devices`, `tests/devices`, a driver's command or wire call | `libs/devices/AGENTS.md` (which command may be sent twice; a new command has a row in `test_repeat_tables.cpp`) |
 | `libs/sim`, `sim.toml`, simulator noise or gas | `libs/sim/AGENTS.md` |
 | `libs/metrics`, an exporter, a dashboard | `libs/metrics/AGENTS.md` |
 | `apps/pychron-ui` Preferences, the line's local override file | `apps/pychron-ui/AGENTS.md` |

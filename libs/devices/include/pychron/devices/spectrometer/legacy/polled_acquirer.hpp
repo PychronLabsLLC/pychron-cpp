@@ -37,7 +37,9 @@ class PolledAcquirer : public Device, public IIntensityAcquirer {
 
  protected:
   // `channels` non-empty and unique, `sample_hz` > 0 (create() helpers check).
-  PolledAcquirer(std::string name, std::vector<ChannelId> channels, double sample_hz, const Clock* clock);
+  // `link`: the transport's recovery (DeviceOptions::link); none by default.
+  PolledAcquirer(std::string name, std::vector<ChannelId> channels, double sample_hz, const Clock* clock,
+                 Link* link = nullptr);
 
   // One value per channel, in channels() order.
   virtual Result<std::vector<double>> sample() = 0;

@@ -17,8 +17,8 @@ const Clock& steady_clock() {
 }  // namespace
 
 VarianXgs600::VarianXgs600(std::string name, Transport& transport, std::string address,
-                           std::vector<std::string> labels, const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+                           std::vector<std::string> labels, const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       transport_(transport),
       address_(std::move(address)),
       labels_(std::move(labels)),
@@ -66,7 +66,9 @@ Result<double> VarianXgs600::read_pressure(int channel) {
   }
   auto cmd = xgs::read_pressure(address_, labels_[static_cast<std::size_t>(channel - 1)]);
   if (!cmd) return observe(Result<double>(fail(std::move(cmd).error())));
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+  auto reply = relay<Bytes>(
+      [&](Resend resend) { return transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend); },
+      Repeat::Safe);
   if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
   return observe(xgs::decode_pressure(*reply));
 }

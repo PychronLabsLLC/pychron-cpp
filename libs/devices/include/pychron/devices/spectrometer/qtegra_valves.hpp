@@ -25,6 +25,11 @@
 
 namespace pychron::spectrometer {
 
+// May each command be sent twice (Repeat, link.hpp)? Through the
+// QtegraLink's Link.
+//
+//   Safe    every command (spec section 9)
+//   Unsafe  none
 class QtegraValves final : public Device, public IValveActuator {
  public:
   QtegraValves(std::string name, QtegraLinkHandle link, DeviceOptions options = {});

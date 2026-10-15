@@ -19,8 +19,8 @@ const Clock& steady_clock() {
 }  // namespace
 
 Plc2000Gauges::Plc2000Gauges(std::string name, Transport& transport, Plc2000GaugesOptions options,
-                             const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+                             const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       transport_(transport),
       options_(std::move(options)),
       clock_(clock != nullptr ? clock : &steady_clock()) {}
@@ -70,14 +70,14 @@ Result<std::unique_ptr<Plc2000Gauges>> Plc2000Gauges::create(const DriverArgs& a
 Result<double> Plc2000Gauges::read_pressure() { return read_pressure(options_.channels.front()); }
 
 Result<double> Plc2000Gauges::read_pressure(int channel) {
-  auto value = [&]() -> Result<double> {
+  auto value = relay<double>([&](Resend resend) -> Result<double> {
     if (std::ranges::find(options_.channels, channel) == options_.channels.end())
       return fail(ErrorKind::Config, "channel " + std::to_string(channel) + " is not configured");
     const auto reg = static_cast<std::uint16_t>(channel + options_.register_offset);
     const auto tid = next_modbus_transaction_id();
     auto cmd = mb::read_holding_registers(tid, options_.unit, reg, 2);
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+    auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     auto regs = mb::decode_registers(tid, options_.unit, mb::Function::ReadHoldingRegisters, 2, *reply);
     if (!regs) return fail(std::move(regs).error());
@@ -85,7 +85,7 @@ Result<double> Plc2000Gauges::read_pressure(int channel) {
     if (!std::isfinite(v) || v < 0) return codec::protocol_error("plc2000: register " + std::to_string(reg) +
                                                                      " holds no pressure", *reply);
     return v;
-  }();
+  }, Repeat::Safe);
   return observe(std::move(value));
 }
 

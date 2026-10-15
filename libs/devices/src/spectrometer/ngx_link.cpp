@@ -329,6 +329,39 @@ Result<std::string> NgxLink::ask(std::string_view command, std::optional<Duratio
   return reply;
 }
 
+bool NgxLink::await_back(std::uint64_t seen, ErrorKind kind, TimePoint deadline, Duration& backoff) {
+  bool started = false;
+  {
+    std::unique_lock lock(mutex_);
+    started = started_;
+    if (started) {
+      // Still up on the connection the op used: only a Timeout, which the
+      // next ask may simply follow.
+      if (kind == ErrorKind::Timeout && up_ && session_ == seen) return clock_.now() < deadline;
+      while (!(up_ && session_ != seen) && !stop_ && clock_.now() < deadline) clock_.wait_until(cv_, lock, deadline);
+      return up_ && session_ != seen && !stop_;
+    }
+  }
+  // No reader yet (connect() failed): nobody else reopens the transport.
+  const Duration left = deadline - clock_.now();
+  if (left <= Duration::zero()) return false;
+  clock_.sleep_for(std::min(backoff, left));
+  backoff = std::min(backoff * 2, options_.reconnect_max);
+  std::lock_guard connecting(connect_mutex_);
+  {
+    std::lock_guard lock(mutex_);
+    if (started_) return true;  // another caller's connect() got there
+  }
+  transport_.close();
+  (void)transport_.open();  // a failure is the next op's
+  return clock_.now() < deadline;
+}
+
+void NgxLink::note_repeat() {
+  std::lock_guard lock(mutex_);
+  ++stats_.repeats;
+}
+
 // --- handle -----------------------------------------------------------------
 
 Result<NgxLinkHandle> make_ngx_link(Transport& transport, const std::string& name, NgxLinkOptions options,

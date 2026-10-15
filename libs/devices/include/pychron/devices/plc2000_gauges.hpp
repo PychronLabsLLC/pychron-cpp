@@ -32,9 +32,13 @@ struct Plc2000GaugesOptions {
   std::vector<int> channels{1};
 };
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    read holding registers (03)
+//   Unsafe  none
 class Plc2000Gauges final : public Device, public IPressureGauge, public IChannelPressureGauge, public IScannable {
  public:
-  Plc2000Gauges(std::string name, Transport& transport, Plc2000GaugesOptions options, const Clock* clock = nullptr);
+  Plc2000Gauges(std::string name, Transport& transport, Plc2000GaugesOptions options, const Clock* clock = nullptr, Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<Plc2000Gauges>> create(const DriverArgs& args);

@@ -16,6 +16,10 @@
 
 namespace pychron::spectrometer {
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    read input registers (04)
+//   Unsafe  none
 class AdcBank final : public PolledAcquirer {
  public:
   struct Options {
@@ -26,7 +30,7 @@ class AdcBank final : public PolledAcquirer {
   };
 
   AdcBank(std::string name, Transport& transport, std::vector<ChannelId> channels, Options options,
-          const Clock* clock = nullptr);
+          const Clock* clock = nullptr, Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<AdcBank>> create(const DriverArgs& args);

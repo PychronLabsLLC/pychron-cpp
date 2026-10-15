@@ -71,6 +71,21 @@ struct ChromiumOptions {
   bool use_enable = true;
 };
 
+// May each command be sent twice (Repeat, link.hpp)? Each query is one wire
+// call; each action is one wire call with its confirming query, in one
+// transaction (act), and is repeated as that unit.
+//
+//   Safe    every query (Sys.ID?, Laser.Status?, Laser.Interlocks?,
+//           Laser.Enable?, Laser.Output?, Stage.Pos?, Stage.Status?,
+//           Scans.InPos?); Laser.Enable 0|1, Laser.Output, Stage.MoveTo,
+//           Scans.MoveTo, Laser.Stop, Stage.Stop, Scans.Stop,
+//           Scans.Status_Verbosity
+//   Unsafe  Laser.Fire (starts the output; its confirm does not say whether
+//           it fired)
+//
+// Laser.Fire lost (outcome_unknown), or a transient failure after it:
+// fire_laser() sends Laser.Stop, tried for kCriticalWindow, and returns the
+// error. Nothing is fired twice.
 class ChromiumLaser final : public Device, public IExtractionDevice, public ILaserDevice, public IStage {
  public:
   ChromiumLaser(std::string name, Transport& transport, ChromiumOptions options = {}, DeviceOptions device = {});
@@ -115,8 +130,11 @@ class ChromiumLaser final : public Device, public IExtractionDevice, public ILas
  private:
   // One reply line for a query; input left unread before it is discarded.
   Result<Bytes> query(const codec::Command& q);
-  // `action`, then `confirm`'s reply. See the header comment.
-  Result<Bytes> act(const codec::Command& action, const codec::Command& confirm);
+  // `action`, then `confirm`'s reply. See the header comment. The whole
+  // transaction is one wire call: repeated as a unit when Safe.
+  Result<Bytes> act(const codec::Command& action, const codec::Command& confirm, Repeat repeat = Repeat::Safe,
+                    std::optional<Duration> window = std::nullopt);
+  Result<Bytes> act_once(const codec::Command& action, const codec::Command& confirm);
   // Laser.Output 0, and the read-back says 0.
   Result<void> zero_output();
   // Interlock error naming what is tripped, if anything is.

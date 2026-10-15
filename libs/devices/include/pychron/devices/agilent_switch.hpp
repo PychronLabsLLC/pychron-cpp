@@ -28,6 +28,14 @@
 
 namespace pychron {
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    *IDN?, *CLS (connect(), repeated whole), ROUT:OPEN, ROUT:CLOSE
+//           (each with its error read, as one transaction), ROUT:OPEN?,
+//           ROUT:CLOSE?
+//   Unsafe  SYST:ERR? (the read takes the error off the instrument's queue:
+//           a repeat after a lost reply loses it). A transaction whose
+//           SYST:ERR? reply is lost returns outcome_unknown.
 class AgilentSwitch final : public Device, public IConnectable, public IValveActuator {
  public:
   static constexpr int kMaxErrorReads = 10;
@@ -49,7 +57,7 @@ class AgilentSwitch final : public Device, public IConnectable, public IValveAct
   // Reads SYST:ERR? until "+0"; the first instrument error, if any, as a
   // Protocol error naming `after`.
   Result<void> drain_errors(std::string_view after);
-  Result<Bytes> ask(const codec::Command& command);
+  Result<Bytes> ask(const codec::Command& command, Resend resend);
 
   Transport& transport_;
   bool invert_;

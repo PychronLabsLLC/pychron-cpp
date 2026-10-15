@@ -44,6 +44,16 @@ struct NgxOptions {
   Limits limits{0.0, 200.0};      // mass
 };
 
+// May each command be sent twice (Repeat, link.hpp)? Each goes through
+// NgxLink::call; the reconnect is the link's reader's, so an NGX device is
+// never given a Link (DeviceOptions::link): two layers would both reopen the
+// transport the reader owns. A lost StartAcq waits, within the call window,
+// for the link to return before it answers outcome_unknown.
+//
+//   Safe    Login (the session handshake, which the reader repeats after
+//           every reconnect anyway), SetAcqPeriod, SetMass, GETMASS, SSO,
+//           GSO, StopAcq
+//   Unsafe  StartAcq (a second one starts another integration)
 class NgxSpectrometer final : public Device,
                               public IConnectable,
                               public IMassPositioner,
@@ -99,7 +109,9 @@ class NgxSpectrometer final : public Device,
   // answered; trigger() waits it out (a StartAcq before it would be E43).
   enum class State { Idle, Arming, Armed, Stopping };
   Result<std::shared_ptr<NgxLink>> link();
-  Result<std::string> ask(const std::string& command);
+  // One command through NgxLink::call: repeated after a dropped link when
+  // Safe. Not observed: the caller observes its operation.
+  Result<std::string> ask(const std::string& command, Repeat repeat = Repeat::Safe);
   void on_event(const codec::ngx::AcqFrame& frame, TimePoint at, std::uint64_t session);
   // Ends the current integration (caller holds acq_mutex_); `why` is queued
   // for the waiting next() when non-empty.
@@ -140,6 +152,12 @@ struct NgxValvesOptions {
   int status_retries = 2;  // GetValveStatus answered E00: read again at most this often
 };
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    Login, GetValveStatus; an actuation as one unit: SAB 1,
+//           OpenValve or CloseValve, SAB 0 (SAB is an absolute set), never
+//           one command of it
+//   Unsafe  none
 class NgxValves final : public Device, public IConnectable, public IValveActuator {
  public:
   NgxValves(std::string name, NgxLinkHandle link, NgxValvesOptions options);

@@ -29,6 +29,11 @@ struct Plc2000ValvesOptions {
   int coil_offset = -1;
 };
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    write single coil (05: on is open, off is close; absolute),
+//           read coils (01)
+//   Unsafe  none
 class Plc2000Valves final : public Device, public IValveActuator {
  public:
   // Most coils one read asks for (Modbus allows 2000).

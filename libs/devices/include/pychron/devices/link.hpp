@@ -32,9 +32,26 @@ struct LinkPolicy {
   Duration call_window = std::chrono::seconds(20);  // how long one call keeps trying
 };
 
+// The window of a call that must get through while the line is in a state
+// that is not safe to leave it in: a stop after a fire whose outcome is
+// unknown, a valve call during a measurement (spec 4.4).
+inline constexpr Duration kCriticalWindow = std::chrono::minutes(10);
+
 // The error code an Unsafe call returns when it failed in a way that leaves
 // open whether the command reached the device: the caller reads back.
 inline constexpr const char* kOutcomeUnknown = "outcome_unknown";
+
+// A failure that may be the link's, not the device's: a reconnect may cure it.
+[[nodiscard]] constexpr bool is_transient(ErrorKind kind) noexcept {
+  return kind == ErrorKind::Timeout || kind == ErrorKind::Io || kind == ErrorKind::NotConnected;
+}
+
+// `error` with code kOutcomeUnknown when it is transient: for the Unsafe part
+// of an op that is otherwise Safe (see Link).
+[[nodiscard]] inline Error outcome_unknown_if_transient(Error error) {
+  if (is_transient(error.kind)) error.code = kOutcomeUnknown;
+  return error;
+}
 
 // One per transport, shared by the devices on it. Runs a device's wire call
 // and, when it fails with a transient error (Timeout, Io, NotConnected),
@@ -45,6 +62,11 @@ inline constexpr const char* kOutcomeUnknown = "outcome_unknown";
 // back (or the window has passed) it returns its error with code
 // kOutcomeUnknown and its kind unchanged. Definite errors (Protocol, Config,
 // Interlock) and Cancelled pass through at once.
+//
+// An op that is one transaction of Safe and Unsafe commands (a route, then
+// the read that takes the instrument's error off its queue) marks a transient
+// failure of its Unsafe part with code kOutcomeUnknown: that failure is
+// handled as an Unsafe call's, whatever `repeat` says.
 //
 // Thread-safe. Each call runs `op` inside one transport transaction and reads
 // the reconnect generation there; a reconnect (close, open, connect step) is
@@ -81,7 +103,7 @@ class Link {
     while (!r && transient(r.error().kind)) {
       Error error = std::move(r).error();
       if (!episode.failed_at) episode.failed_at = clock_.now();
-      if (repeat == Repeat::Unsafe) {
+      if (repeat == Repeat::Unsafe || error.code == kOutcomeUnknown) {
         // Brought back for the caller's read-back, whatever that gives.
         if (policy_.reconnect) (void)reconnect_since(seen, episode, error);
         error.code = kOutcomeUnknown;
@@ -120,9 +142,7 @@ class Link {
     std::optional<TimePoint> failed_at;
   };
 
-  static bool transient(ErrorKind kind) noexcept {
-    return kind == ErrorKind::Timeout || kind == ErrorKind::Io || kind == ErrorKind::NotConnected;
-  }
+  static bool transient(ErrorKind kind) noexcept { return is_transient(kind); }
 
   template <class T>
   Result<T> run_once(const std::function<Result<T>()>& op, std::uint64_t& seen) {

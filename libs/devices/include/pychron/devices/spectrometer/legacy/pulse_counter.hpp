@@ -15,10 +15,15 @@
 
 namespace pychron::spectrometer {
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    none
+//   Unsafe  R (the read clears the count: a poll whose reply is lost returns
+//           outcome_unknown and that interval's counts are gone)
 class PulseCounter final : public PolledAcquirer {
  public:
   PulseCounter(std::string name, Transport& transport, std::vector<ChannelId> channels, double sample_hz = 10.0,
-               const Clock* clock = nullptr);
+               const Clock* clock = nullptr, Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<PulseCounter>> create(const DriverArgs& args);

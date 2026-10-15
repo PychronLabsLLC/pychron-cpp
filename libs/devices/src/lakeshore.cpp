@@ -22,8 +22,8 @@ std::string allowed_inputs(const std::string& model) { return model == "336" ? "
 
 }  // namespace
 
-Lakeshore::Lakeshore(std::string name, Transport& transport, LakeshoreOptions options, const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+Lakeshore::Lakeshore(std::string name, Transport& transport, LakeshoreOptions options, const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       transport_(transport),
       options_(std::move(options)),
       clock_(clock != nullptr ? clock : &steady_clock()) {}
@@ -115,39 +115,44 @@ double Lakeshore::from_wire(double value) const {
   return options_.units == ls::Units::Kelvin ? value : value + kZeroCelsius;
 }
 
-Result<Bytes> Lakeshore::ask(const codec::Command& command) {
-  return transport_.exchange(command.tx, *command.reply);
+Result<Bytes> Lakeshore::ask(const codec::Command& command, Resend resend) {
+  return transport_.exchange(command.tx, *command.reply, Transport::kDefaultTimeout, resend);
 }
 
 Result<void> Lakeshore::connect() {
-  return observe(transact(transport_, [&]() -> Result<void> {
-    if (auto sent = transport_.write(ls::clear_status().tx); !sent) return fail(std::move(sent).error());
-    auto reply = ask(ls::identify());
-    if (!reply) return fail(std::move(reply).error());
-    auto id = ls::decode_identity(*reply);
-    if (!id) return fail(std::move(id).error());
-    if (id->manufacturer != "LSCI" || id->model.find(options_.model) == std::string::npos) {
-      return fail(ErrorKind::Config, "lakeshore: \"" + id->manufacturer + "," + id->model +
-                                         "\" answered, not a Lake Shore model " + options_.model);
-    }
-    return {};
-  }));
+  // *CLS and *IDN?, repeated together.
+  return call<void>(
+      [&](Resend resend) {
+        return transact(transport_, [&]() -> Result<void> {
+          if (auto sent = transport_.write(ls::clear_status().tx); !sent) return fail(std::move(sent).error());
+          auto reply = ask(ls::identify(), resend);
+          if (!reply) return fail(std::move(reply).error());
+          auto id = ls::decode_identity(*reply);
+          if (!id) return fail(std::move(id).error());
+          if (id->manufacturer != "LSCI" || id->model.find(options_.model) == std::string::npos) {
+            return fail(ErrorKind::Config, "lakeshore: \"" + id->manufacturer + "," + id->model +
+                                               "\" answered, not a Lake Shore model " + options_.model);
+          }
+          return {};
+        });
+      },
+      Repeat::Safe);
 }
 
 Result<double> Lakeshore::read_temperature(std::string_view input) {
-  auto value = [&]() -> Result<double> {
+  auto value = relay<double>([&](Resend resend) -> Result<double> {
     if (std::find(options_.inputs.begin(), options_.inputs.end(), input) == options_.inputs.end())
       return fail(ErrorKind::Config, "input \"" + std::string(input) + "\" is not configured");
     auto cmd = ls::read_input(input[0], options_.units);
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = ask(*cmd);
+    auto reply = ask(*cmd, resend);
     if (!reply) return fail(std::move(reply).error());
     auto v = ls::decode_number(*reply);
     if (!v) return fail(std::move(v).error());
     const double kelvin = from_wire(*v);
     if (kelvin < 0) return codec::protocol_error("lakeshore: below absolute zero", *reply);
     return kelvin;
-  }();
+  }, Repeat::Safe);
   return observe(std::move(value));
 }
 
@@ -167,7 +172,7 @@ Result<std::optional<int>> Lakeshore::range_for(int output, double kelvin) const
 }
 
 Result<void> Lakeshore::set_setpoint(int output, double kelvin) {
-  auto done = [&]() -> Result<void> {
+  auto done = relay<void>([&](Resend resend) -> Result<void> {
     if (auto ok = check_output(output); !ok) return ok;
     auto range = range_for(output, kelvin);
     if (!range) return fail(std::move(range).error());
@@ -184,7 +189,7 @@ Result<void> Lakeshore::set_setpoint(int output, double kelvin) {
       double last = 0.0;
       for (int attempt = 0; attempt <= options_.verify_retries; ++attempt) {
         if (auto sent = transport_.write(setp->tx); !sent) return fail(std::move(sent).error());
-        auto reply = ask(*query);
+        auto reply = ask(*query, resend);
         if (!reply) return fail(std::move(reply).error());
         auto read = ls::decode_number(*reply);
         if (!read) return fail(std::move(read).error());
@@ -194,21 +199,21 @@ Result<void> Lakeshore::set_setpoint(int output, double kelvin) {
       return fail(ErrorKind::Protocol, "lakeshore: output " + std::to_string(output) + " setpoint read back " +
                                            std::to_string(last) + " K, not " + std::to_string(kelvin) + " K");
     });
-  }();
+  }, Repeat::Safe);
   return observe(std::move(done));
 }
 
 Result<double> Lakeshore::setpoint(int output) {
-  auto value = [&]() -> Result<double> {
+  auto value = relay<double>([&](Resend resend) -> Result<double> {
     if (auto ok = check_output(output); !ok) return fail(std::move(ok).error());
     auto cmd = ls::query_setpoint(output);
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = ask(*cmd);
+    auto reply = ask(*cmd, resend);
     if (!reply) return fail(std::move(reply).error());
     auto v = ls::decode_number(*reply);
     if (!v) return fail(std::move(v).error());
     return from_wire(*v);
-  }();
+  }, Repeat::Safe);
   return observe(std::move(value));
 }
 

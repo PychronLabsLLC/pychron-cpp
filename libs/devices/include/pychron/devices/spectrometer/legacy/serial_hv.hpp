@@ -16,10 +16,16 @@
 
 namespace pychron::spectrometer {
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    VSET (an absolute setpoint), VSET?, VOUT? (read_param's pair is
+//           one transaction, repeated whole)
+//   Unsafe  none
 class SerialHv final : public Device, public IBeamSource {
  public:
   // `max_hv` > 0 (create() checks); setpoints outside 0..max_hv are Config.
-  SerialHv(std::string name, Transport& transport, double max_hv = 10000.0, const Clock* clock = nullptr);
+  SerialHv(std::string name, Transport& transport, double max_hv = 10000.0, const Clock* clock = nullptr,
+           Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<SerialHv>> create(const DriverArgs& args);

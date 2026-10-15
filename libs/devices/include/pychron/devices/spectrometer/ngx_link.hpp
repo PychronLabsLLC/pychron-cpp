@@ -40,6 +40,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/devices/link_registry.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -57,6 +58,8 @@ struct NgxLinkOptions {
   Duration read_timeout = std::chrono::milliseconds(10);
   Duration reconnect_min = std::chrono::milliseconds(250);
   Duration reconnect_max = std::chrono::seconds(5);
+  // How long one call() keeps trying (LinkPolicy::call_window).
+  Duration call_window = std::chrono::seconds(20);
 };
 
 class NgxLink {
@@ -80,8 +83,40 @@ class NgxLink {
   std::uint64_t session() const;
 
   // One command; the reply line without terminator. An "Exx" reply other
-  // than E00 is the error it names (codec::ngx::error_kind).
+  // than E00 is the error it names (codec::ngx::error_kind). Sent once.
   Result<std::string> ask(std::string_view command, std::optional<Duration> timeout = std::nullopt);
+
+  // A request as one unit: one ask, or several made under the caller's own
+  // mutex (a valve actuation's SAB 1 .. SAB 0). What Link::call (link.hpp)
+  // does for a transport, with the reconnect left to the reader: when `op`
+  // fails with a transient error (Timeout, Io, NotConnected), a Safe call
+  // waits for the session after the one its op ran in and runs `op` again,
+  // until it succeeds or `window` (default call_window) passes, and then
+  // returns the last error. A Timeout on a link still up is run again at
+  // once (ask has waited out the owed reply). An Unsafe call is never run
+  // again: it waits for the link to come back, within the window, and
+  // returns its error with code kOutcomeUnknown. Before connect() has
+  // started the reader, the link is reopened here, at the reader's backoff.
+  // Definite errors pass through at once.
+  template <class T>
+  [[nodiscard]] Result<T> call(const std::function<Result<T>()>& op, Repeat repeat,
+                               std::optional<Duration> window = std::nullopt) {
+    const TimePoint deadline = clock_.now() + window.value_or(options_.call_window);
+    Duration backoff = options_.reconnect_min;
+    for (;;) {
+      const std::uint64_t seen = session();
+      Result<T> r = op();
+      if (r || !transient(r.error().kind)) return r;
+      const bool back = await_back(seen, r.error().kind, deadline, backoff);
+      if (repeat == Repeat::Unsafe) {
+        Error error = std::move(r).error();
+        error.code = kOutcomeUnknown;
+        return fail(std::move(error));
+      }
+      if (!back) return r;
+      note_repeat();
+    }
+  }
 
   // Replaces the sink; returns once no call to the old one is in progress.
   void set_event_sink(EventSink sink);
@@ -95,6 +130,7 @@ class NgxLink {
     std::uint64_t events = 0;
     std::uint64_t bad_events = 0;       // "#EVENT:ACQ..." that did not decode
     std::uint64_t reconnects = 0;
+    std::uint64_t repeats = 0;          // a Safe call() run again
   };
   Stats stats() const;
 
@@ -108,6 +144,13 @@ class NgxLink {
   void reader(std::shared_ptr<Clock::Hold> started);
   void route(std::string line);
   void went_down(const Error& why);
+  static bool transient(ErrorKind kind) noexcept {
+    return kind == ErrorKind::Timeout || kind == ErrorKind::Io || kind == ErrorKind::NotConnected;
+  }
+  // After a call's op failed with `kind` in session `seen`: true once the
+  // link is there to run it again, false when `deadline` passed first.
+  bool await_back(std::uint64_t seen, ErrorKind kind, TimePoint deadline, Duration& backoff);
+  void note_repeat();
 
   Transport& transport_;
   const NgxLinkOptions options_;

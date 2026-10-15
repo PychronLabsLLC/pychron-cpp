@@ -52,8 +52,8 @@ Result<std::vector<int>> parse_channels(const toml::table& options) {
 }  // namespace
 
 GpMicroIon::GpMicroIon(std::string name, Transport& transport, int address, std::vector<int> channels,
-                       const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+                       const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       transport_(transport),
       address_(address),
       channels_(std::move(channels)),
@@ -86,7 +86,9 @@ Result<double> GpMicroIon::read_pressure(int channel) {
   auto cmd = mi::read_pressure(address_, channel);
   if (!cmd) return observe(Result<double>(fail(std::move(cmd).error())));
   // A read may be sent again: nothing on the gauge changes by it.
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, Resend::Allowed);
+  auto reply = relay<Bytes>(
+      [&](Resend resend) { return transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend); },
+      Repeat::Safe);
   if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
   return observe(mi::decode_pressure(address_, *reply));
 }
@@ -100,7 +102,10 @@ Result<Sample> GpMicroIon::sample() {
 Result<void> GpMicroIon::set_ion_gauge(bool on) {
   auto cmd = mi::set_ion_gauge(address_, on);
   if (!cmd) return observe(Result<void>(fail(std::move(cmd).error())));
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+  // IG1 ON|OFF is an absolute state: Safe.
+  auto reply = relay<Bytes>(
+      [&](Resend resend) { return transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend); },
+      Repeat::Safe);
   if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
   return observe(mi::decode_ok(address_, *reply));
 }

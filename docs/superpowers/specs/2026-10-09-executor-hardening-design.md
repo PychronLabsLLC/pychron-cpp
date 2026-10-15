@@ -119,6 +119,14 @@ struct LinkPolicy {                   // per transport; [transports.<name>.recov
   command whose second arrival does more (toggle, step, `StartAcq`, fire for
   duration, relative move) is `Unsafe`. Table per driver in plan; driver
   header carries it.
+- Unit repeated is the driver's transaction, never one write of it (Chromium
+  action + confirm, ProXR bank select + relay, Lakeshore `RANGE` + `SETP` +
+  `SETP?`). Transaction holding `Safe` and `Unsafe` commands (Agilent route,
+  then `SYST:ERR?`): op marks transient failure of its `Unsafe` part with
+  `code = "outcome_unknown"`; `Link` handles that failure as `Unsafe` call's
+  (reconnect, no repeat), whatever call's `Repeat`.
+- Stop after `Laser.Fire` lost (`outcome_unknown`): `Safe`, tried for
+  critical window (10 min, 4.4), not `call_window`.
 - `SwitchManager::actuate`: `outcome_unknown` from actuator -> read state
   back (already there when `verify`); matches target: success; else repeat
   once; `verify = false` valve: repeat (absolute target). State stays

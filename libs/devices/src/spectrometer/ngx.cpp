@@ -194,10 +194,13 @@ Result<std::shared_ptr<NgxLink>> NgxSpectrometer::link() {
   return l;
 }
 
-Result<std::string> NgxSpectrometer::ask(const std::string& command) {
+Result<std::string> NgxSpectrometer::ask(const std::string& command, Repeat repeat) {
   auto l = link();
   if (!l) return fail(std::move(l).error());
-  return (*l)->ask(command);
+  NgxLink& ngx = **l;
+  // Not observed here: each caller observes its operation once.
+  return relay<std::string>(
+      [&](Resend) { return ngx.call<std::string>([&] { return ngx.ask(command); }, repeat); }, repeat);
 }
 
 Result<void> NgxSpectrometer::stop_acq() {
@@ -211,7 +214,13 @@ Result<void> NgxSpectrometer::stop_acq() {
 Result<void> NgxSpectrometer::connect() {
   auto l = link();
   if (!l) return observe(Result<void>(fail(std::move(l).error())));
-  if (auto c = (*l)->connect(); !c) return observe(c);
+  NgxLink& ngx = **l;
+  // The session handshake (banner, Login): Safe, as the reader repeats it.
+  if (auto c = relay<void>([&](Resend) { return ngx.call<void>([&] { return ngx.connect(); }, Repeat::Safe); },
+                           Repeat::Safe);
+      !c) {
+    return observe(c);
+  }
   if (auto s = stop_acq(); !s) return observe(s);
   auto period = body(ngx::set_acq_period(1000, ""));
   if (!period) return observe(Result<void>(fail(std::move(period).error())));
@@ -340,7 +349,8 @@ Result<void> NgxSpectrometer::trigger() {
       std::lock_guard lock(acq_mutex_);
       if (state_ != State::Arming) return {};
     }
-    r = cmd ? ask(*cmd) : Result<std::string>(fail(cmd.error()));
+    // The one Unsafe command: a second StartAcq would start another integration.
+    r = cmd ? ask(*cmd, Repeat::Unsafe) : Result<std::string>(fail(cmd.error()));
   }
   if (l) session = std::max(session, (*l)->session());
   std::lock_guard lock(acq_mutex_);
@@ -512,7 +522,9 @@ Result<void> NgxValves::connect() {
   if (!link_.owner()) return {};
   auto l = link_.get();
   if (!l) return observe(Result<void>(fail(std::move(l).error())));
-  return observe((*l)->connect());
+  NgxLink& ngx = **l;
+  return call<void>([&](Resend) { return ngx.call<void>([&] { return ngx.connect(); }, Repeat::Safe); },
+                    Repeat::Safe);
 }
 
 Result<void> NgxValves::actuate(const ValveAddress& address, bool open) {
@@ -523,16 +535,21 @@ Result<void> NgxValves::actuate(const ValveAddress& address, bool open) {
   auto sab_on = body(Result<codec::Command>(ngx::sab(true, "")));
   auto sab_off = body(Result<codec::Command>(ngx::sab(false, "")));
 
-  std::lock_guard one_actuation((*l)->valve_mutex());
-  if (auto r = (*l)->ask(*sab_on); !r) return observe(Result<void>(fail(std::move(r).error())));
-  auto reply = (*l)->ask(*cmd);
-  // SAB 0 on every path, whatever the actuation did.
-  auto off = (*l)->ask(*sab_off);
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  if (*reply != "E00")
-    return observe(Result<void>(fail(ErrorKind::Protocol, "NGX answered \"" + *reply + "\" to " + *cmd + " (expected E00)")));
-  if (!off) return observe(Result<void>(fail(std::move(off).error())));
-  return observe(Result<void>{});
+  NgxLink& ngx = **l;
+  // SAB is an absolute set, and the valve's target is absolute: the bracket
+  // is Safe, and repeated whole, never one command of it.
+  const std::function<Result<void>()> bracket = [&]() -> Result<void> {
+    std::lock_guard one_actuation(ngx.valve_mutex());
+    if (auto r = ngx.ask(*sab_on); !r) return fail(std::move(r).error());
+    auto reply = ngx.ask(*cmd);
+    // SAB 0 on every path, whatever the actuation did.
+    auto off = ngx.ask(*sab_off);
+    if (!reply) return fail(std::move(reply).error());
+    if (*reply != "E00") return fail(ErrorKind::Protocol, "NGX answered \"" + *reply + "\" to " + *cmd + " (expected E00)");
+    if (!off) return fail(std::move(off).error());
+    return {};
+  };
+  return call<void>([&](Resend) { return ngx.call(bracket, Repeat::Safe); }, Repeat::Safe);
 }
 
 Result<void> NgxValves::open(const ValveAddress& address) { return actuate(address, true); }
@@ -543,17 +560,20 @@ Result<ValveState> NgxValves::read(const ValveAddress& address) {
   if (!l) return observe(Result<ValveState>(fail(std::move(l).error())));
   auto cmd = body(ngx::get_valve_status(address.value, ""));
   if (!cmd) return fail(std::move(cmd).error());
-  std::lock_guard serial((*l)->valve_mutex());
-  for (int attempt = 0;; ++attempt) {
-    auto reply = (*l)->ask(*cmd);
-    if (!reply) return observe(Result<ValveState>(fail(std::move(reply).error())));
-    if (*reply == "OPEN") return observe(Result<ValveState>(ValveState::Open));
-    if (*reply == "CLOSED") return observe(Result<ValveState>(ValveState::Closed));
-    // pychron's known oddity: E00 in place of a status. Read again, bounded.
-    if (*reply == "E00" && attempt < options_.status_retries) continue;
-    return observe(Result<ValveState>(
-        fail(ErrorKind::Protocol, "NGX answered \"" + *reply + "\" to " + *cmd + " (expected OPEN or CLOSED)")));
-  }
+  NgxLink& ngx = **l;
+  const std::function<Result<ValveState>()> status = [&]() -> Result<ValveState> {
+    std::lock_guard serial(ngx.valve_mutex());
+    for (int attempt = 0;; ++attempt) {
+      auto reply = ngx.ask(*cmd);
+      if (!reply) return fail(std::move(reply).error());
+      if (*reply == "OPEN") return ValveState::Open;
+      if (*reply == "CLOSED") return ValveState::Closed;
+      // pychron's known oddity: E00 in place of a status. Read again, bounded.
+      if (*reply == "E00" && attempt < options_.status_retries) continue;
+      return fail(ErrorKind::Protocol, "NGX answered \"" + *reply + "\" to " + *cmd + " (expected OPEN or CLOSED)");
+    }
+  };
+  return call<ValveState>([&](Resend) { return ngx.call(status, Repeat::Safe); }, Repeat::Safe);
 }
 
 REGISTER_DRIVER("isotopx_ngx", NgxSpectrometer);

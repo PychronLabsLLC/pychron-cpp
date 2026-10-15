@@ -16,8 +16,8 @@ const Clock& steady_clock() {
 }  // namespace
 
 PolledAcquirer::PolledAcquirer(std::string name, std::vector<ChannelId> channels, double sample_hz,
-                               const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+                               const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       channels_(std::move(channels)),
       period_(std::chrono::duration_cast<Duration>(std::chrono::duration<double>(1.0 / sample_hz))),
       clock_(clock != nullptr ? *clock : steady_clock()) {}

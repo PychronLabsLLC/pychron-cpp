@@ -224,6 +224,27 @@ TEST_F(Link, AnUnsafeCallIsUnknownWithoutAReconnectToo) {
   EXPECT_EQ(link.reconnects(), 0u);
 }
 
+// A Safe call whose op failed in its Unsafe part (Agilent's SYST:ERR? after a
+// route) says so with the code: that failure is handled as an Unsafe call's.
+TEST_F(Link, ASafeCallWhoseOpSaysOutcomeUnknownIsNotRepeated) {
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  int count = 0;
+  std::function<Result<Bytes>()> op = [&]() -> Result<Bytes> {
+    ++count;
+    Error e{ErrorKind::Io, "error read lost", "dev"};
+    e.code = kOutcomeUnknown;
+    return fail(std::move(e));
+  };
+  const auto r = link.call(op, Repeat::Safe);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Io);
+  EXPECT_EQ(r.error().code, "outcome_unknown");
+  EXPECT_EQ(count, 1);
+  EXPECT_EQ(link.reconnects(), 1u);
+  EXPECT_EQ(link.repeats(), 0u);
+}
+
 TEST_F(Link, ADefiniteErrorIsNeverRepeated) {
   auto t = sim();
   OpenTimes opens(*t, clock);

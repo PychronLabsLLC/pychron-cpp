@@ -22,13 +22,17 @@ namespace pychron {
 
 // Channels: 1 = ion gauge (IG), 2 = Convectron A (CG1), 3 = Convectron B
 // (CG2). read_pressure() and sample() use the first configured channel.
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    DS (pressure read), IG1 ON, IG1 OFF (an absolute state)
+//   Unsafe  none
 class GpMicroIon final : public Device, public IPressureGauge, public IChannelPressureGauge, public IScannable {
  public:
   // `address` in 0..255; `channels` non-empty, unique, within 1..3
   // (create() checks). `clock` stamps samples and health; SteadyClock when
   // null.
   GpMicroIon(std::string name, Transport& transport, int address, std::vector<int> channels,
-             const Clock* clock = nullptr);
+             const Clock* clock = nullptr, Link* link = nullptr);
 
   // Registry hooks (REGISTER_DRIVER).
   static DriverSchema schema();

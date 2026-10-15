@@ -22,8 +22,8 @@ Error unsupported_param(const ParamId& id) {
 
 }  // namespace
 
-SerialHv::SerialHv(std::string name, Transport& transport, double max_hv, const Clock* clock)
-    : Device(std::move(name), DeviceOptions{clock}),
+SerialHv::SerialHv(std::string name, Transport& transport, double max_hv, const Clock* clock, Link* link)
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
       transport_(transport),
       params_{ParamSpec{kHv, Unit::Volts, {0.0, max_hv}, true, true, "HV"}} {}
 
@@ -47,14 +47,18 @@ Result<void> SerialHv::set_hv(double volts) {
   }
   auto cmd = hv::set_voltage(volts);
   if (!cmd) return observe(Result<void>(fail(std::move(cmd).error())));
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+  auto reply = relay<Bytes>(
+      [&](Resend resend) { return transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend); },
+      Repeat::Safe);
   if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
   return observe(hv::decode_ok(*reply));
 }
 
 Result<double> SerialHv::read_hv() {
   const auto cmd = hv::read_output();
-  auto reply = transport_.exchange(cmd.tx, *cmd.reply);
+  auto reply = relay<Bytes>(
+      [&](Resend resend) { return transport_.exchange(cmd.tx, *cmd.reply, Transport::kDefaultTimeout, resend); },
+      Repeat::Safe);
   if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
   return observe(hv::decode_voltage(*reply));
 }
@@ -67,19 +71,23 @@ Result<void> SerialHv::set_param(const ParamId& id, double value) {
 Result<Readback> SerialHv::read_param(const ParamId& id) {
   if (!is_hv(id)) return observe(Result<Readback>(fail(unsupported_param(id))));
   // Setpoint and output as one bus step so no other command interleaves.
-  auto rb = transact(transport_, [&]() -> Result<Readback> {
-    const auto set_cmd = hv::read_setpoint();
-    auto set_reply = transport_.exchange(set_cmd.tx, *set_cmd.reply);
-    if (!set_reply) return fail(std::move(set_reply).error());
-    auto setpoint = hv::decode_voltage(*set_reply);
-    if (!setpoint) return fail(std::move(setpoint).error());
-    const auto out_cmd = hv::read_output();
-    auto out_reply = transport_.exchange(out_cmd.tx, *out_cmd.reply);
-    if (!out_reply) return fail(std::move(out_reply).error());
-    auto output = hv::decode_voltage(*out_reply);
-    if (!output) return fail(std::move(output).error());
-    return Readback{*setpoint, *output};
-  });
+  auto rb = relay<Readback>(
+      [&](Resend resend) {
+        return transact(transport_, [&]() -> Result<Readback> {
+          const auto set_cmd = hv::read_setpoint();
+          auto set_reply = transport_.exchange(set_cmd.tx, *set_cmd.reply, Transport::kDefaultTimeout, resend);
+          if (!set_reply) return fail(std::move(set_reply).error());
+          auto setpoint = hv::decode_voltage(*set_reply);
+          if (!setpoint) return fail(std::move(setpoint).error());
+          const auto out_cmd = hv::read_output();
+          auto out_reply = transport_.exchange(out_cmd.tx, *out_cmd.reply, Transport::kDefaultTimeout, resend);
+          if (!out_reply) return fail(std::move(out_reply).error());
+          auto output = hv::decode_voltage(*out_reply);
+          if (!output) return fail(std::move(output).error());
+          return Readback{*setpoint, *output};
+        });
+      },
+      Repeat::Safe);
   return observe(std::move(rb));
 }
 

@@ -10,8 +10,8 @@ namespace pychron::spectrometer {
 namespace mb = codec::modbus_adc;
 
 AdcBank::AdcBank(std::string name, Transport& transport, std::vector<ChannelId> channels, Options options,
-                 const Clock* clock)
-    : PolledAcquirer(std::move(name), std::move(channels), options.sample_hz, clock),
+                 const Clock* clock, Link* link)
+    : PolledAcquirer(std::move(name), std::move(channels), options.sample_hz, clock, link),
       transport_(transport),
       options_(options) {}
 
@@ -50,16 +50,21 @@ Result<std::unique_ptr<AdcBank>> AdcBank::create(const DriverArgs& args) {
 }
 
 Result<std::vector<double>> AdcBank::sample() {
-  const auto tid = static_cast<std::uint16_t>(tid_.fetch_add(1) + 1);
-  const auto n = channels().size();
-  auto cmd = mb::read_channels(tid, options_.unit, options_.start_register, n);
-  if (!cmd) return fail(std::move(cmd).error());
-  auto reply = transport_.exchange(cmd->tx, *cmd->reply);
-  if (!reply) return fail(std::move(reply).error());
-  auto volts = mb::decode_channels(tid, options_.unit, n, *reply);
-  if (!volts) return fail(std::move(volts).error());
-  for (auto& v : *volts) v *= options_.scale;
-  return volts;
+  // A register read: Safe.
+  return relay<std::vector<double>>(
+      [&](Resend resend) -> Result<std::vector<double>> {
+        const auto tid = static_cast<std::uint16_t>(tid_.fetch_add(1) + 1);
+        const auto n = channels().size();
+        auto cmd = mb::read_channels(tid, options_.unit, options_.start_register, n);
+        if (!cmd) return fail(std::move(cmd).error());
+        auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend);
+        if (!reply) return fail(std::move(reply).error());
+        auto volts = mb::decode_channels(tid, options_.unit, n, *reply);
+        if (!volts) return fail(std::move(volts).error());
+        for (auto& v : *volts) v *= options_.scale;
+        return volts;
+      },
+      Repeat::Safe);
 }
 
 SimTransport::Hook adc_sim_hook(AdcSimModel model) {

@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "pychron/core/error.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/devices/spectrometer/types.hpp"
 #include "pychron/transport/sim_transport.hpp"
 #include "pychron/transport/transport.hpp"
@@ -26,10 +27,16 @@ struct IDacOutput {
 
 // MAP-215 serial DAC (codec::map215): every write selects `range` then writes
 // the code, as one bus transaction.
+//
+// May each command be sent twice (Repeat, link.hpp)? The pair is repeated
+// whole through `link`, when there is one.
+//
+//   Safe    B (select range), W (write code): both absolute
+//   Unsafe  none
 class Map215Dac final : public IDacOutput {
  public:
   // `range` in 0..9 and `full_scale` > 0 (checked by DacPositioner::create).
-  Map215Dac(Transport& transport, int range, double full_scale);
+  Map215Dac(Transport& transport, int range, double full_scale, Link* link = nullptr);
 
   Range span() const override { return {0.0, full_scale_}; }
   Result<double> write(double volts) override;
@@ -38,6 +45,7 @@ class Map215Dac final : public IDacOutput {
   Transport& transport_;
   int range_;
   double full_scale_;
+  Link* link_;
 };
 
 // SimTransport::hooked() hook for a MAP-215 DAC: never replies (the hardware

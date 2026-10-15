@@ -52,13 +52,13 @@ Result<std::uint16_t> Plc2000Valves::coil(const ValveAddress& address) const {
 Result<void> Plc2000Valves::write(const ValveAddress& address, bool on) {
   auto c = coil(address);
   if (!c) return fail(std::move(c).error());
-  auto done = [&]() -> Result<void> {
+  auto done = relay<void>([&](Resend resend) -> Result<void> {
     const auto tid = next_modbus_transaction_id();
     const auto cmd = mb::write_single_coil(tid, options_.unit, *c, on);
-    auto reply = transport_.exchange(cmd.tx, *cmd.reply);
+    auto reply = transport_.exchange(cmd.tx, *cmd.reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     return mb::decode_write_single_coil(tid, options_.unit, *c, on, *reply);
-  }();
+  }, Repeat::Safe);
   return observe(std::move(done));
 }
 
@@ -66,14 +66,14 @@ Result<void> Plc2000Valves::open(const ValveAddress& address) { return write(add
 Result<void> Plc2000Valves::close(const ValveAddress& address) { return write(address, false); }
 
 Result<std::vector<bool>> Plc2000Valves::read_coils(std::uint16_t start, std::uint16_t count) {
-  auto coils = [&]() -> Result<std::vector<bool>> {
+  auto coils = relay<std::vector<bool>>([&](Resend resend) -> Result<std::vector<bool>> {
     const auto tid = next_modbus_transaction_id();
     auto cmd = mb::read_coils(tid, options_.unit, start, count);
     if (!cmd) return fail(std::move(cmd).error());
-    auto reply = transport_.exchange(cmd->tx, *cmd->reply);
+    auto reply = transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     return mb::decode_coils(tid, options_.unit, count, *reply);
-  }();
+  }, Repeat::Safe);
   return observe(std::move(coils));
 }
 

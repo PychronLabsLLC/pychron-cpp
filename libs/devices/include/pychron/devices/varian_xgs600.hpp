@@ -24,11 +24,15 @@
 
 namespace pychron {
 
+// May each command be sent twice (Repeat, link.hpp)?
+//
+//   Safe    #aa02U (the pressure read)
+//   Unsafe  none
 class VarianXgs600 final : public Device, public IPressureGauge, public IChannelPressureGauge, public IScannable {
  public:
   // `labels` non-empty and valid (create() checks).
   VarianXgs600(std::string name, Transport& transport, std::string address, std::vector<std::string> labels,
-               const Clock* clock = nullptr);
+               const Clock* clock = nullptr, Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<VarianXgs600>> create(const DriverArgs& args);

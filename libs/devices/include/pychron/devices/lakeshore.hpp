@@ -50,9 +50,14 @@ struct LakeshoreOptions {
   int verify_retries = 3;
 };
 
+// May each command be sent twice (Repeat, link.hpp)? connect() and
+// set_setpoint() are each one transaction, repeated whole.
+//
+//   Safe    *CLS, *IDN?, KRDG?, CRDG?, SETP?, RANGE, SETP (absolute)
+//   Unsafe  none
 class Lakeshore final : public Device, public IConnectable, public ITemperatureController, public IScannable {
  public:
-  Lakeshore(std::string name, Transport& transport, LakeshoreOptions options, const Clock* clock = nullptr);
+  Lakeshore(std::string name, Transport& transport, LakeshoreOptions options, const Clock* clock = nullptr, Link* link = nullptr);
 
   static DriverSchema schema();
   static Result<std::unique_ptr<Lakeshore>> create(const DriverArgs& args);
@@ -76,7 +81,7 @@ class Lakeshore final : public Device, public IConnectable, public ITemperatureC
   Result<void> check_output(int output) const;
   double to_wire(double kelvin) const;
   double from_wire(double value) const;
-  Result<Bytes> ask(const codec::Command& command);
+  Result<Bytes> ask(const codec::Command& command, Resend resend);
 
   Transport& transport_;
   LakeshoreOptions options_;

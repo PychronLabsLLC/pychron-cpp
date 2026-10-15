@@ -22,6 +22,11 @@
 
 namespace pychron::spectrometer {
 
+// May each command be sent twice (Repeat, link.hpp)? Through the
+// QtegraLink's Link.
+//
+//   Safe    every command (spec section 9)
+//   Unsafe  none
 class QtegraGauges final : public Device, public IPressureGauge, public IChannelPressureGauge, public IScannable {
  public:
   QtegraGauges(std::string name, QtegraLinkHandle link, std::vector<std::string> parameters,
