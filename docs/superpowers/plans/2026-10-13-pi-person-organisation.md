@@ -66,8 +66,8 @@ Read from `develop` `358eb184`.
 
 **Files:** `store.hpp`, `store.cpp`, `catalog.cpp`, `sql/catalog.hpp`, `tests/ingest/forwarding_store.hpp`, `tests/persistence/test_catalog_import.cpp`.
 
-- [ ] Failing tests: `principal_investigators_named("Ross", "J")` gives every Ross whose given name starts with J (case of the family name ignored), oldest first; `find_principal_investigator_by_orcid` finds one and nothing for an unknown ORCID.
-- [ ] Implement (spec 5); the scan by `lower(family_name)` carries the comment that a lab's PIs are few. Commit `feat(persistence): PIs are found by family name and initial, or by ORCID`.
+- [x] Failing tests: `principal_investigators_named("Ross", "J")` gives every Ross whose given name starts with J (case of the family name ignored), oldest first; `find_principal_investigator_by_orcid` finds one and nothing for an unknown ORCID.
+- [x] Implement (spec 5); the scan by `lower(family_name)` carries the comment that a lab's PIs are few. Commit `feat(persistence): PIs are found by family name and initial, or by ORCID`.
 
 ### Task 4: Legacy import resolves a PI as spec 8 says
 

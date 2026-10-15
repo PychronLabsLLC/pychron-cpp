@@ -60,6 +60,8 @@ class ForwardingStore : public persistence::IStore {
   Result<Uuid> add_irradiation(Uuid client, const std::string& name) override { return inner_.add_irradiation(client, name); }
   Result<Uuid> add_irradiation(Uuid client, const persistence::IrradiationSpec& spec) override { return inner_.add_irradiation(client, spec); }
   Result<std::vector<persistence::PrincipalInvestigatorRow>> principal_investigators() override { return inner_.principal_investigators(); }
+  Result<std::vector<persistence::PrincipalInvestigatorRow>> principal_investigators_named(const std::string& family_name, const std::string& given_initial) override { return inner_.principal_investigators_named(family_name, given_initial); }
+  Result<std::optional<persistence::PrincipalInvestigatorRow>> find_principal_investigator_by_orcid(const std::string& orcid) override { return inner_.find_principal_investigator_by_orcid(orcid); }
   Result<std::vector<persistence::ProjectRow>> projects(std::optional<Uuid> pi) override { return inner_.projects(pi); }
   Result<std::vector<persistence::MaterialRow>> materials() override { return inner_.materials(); }
   Result<std::vector<persistence::SampleRow>> samples(const persistence::SampleQuery& query) override { return inner_.samples(query); }

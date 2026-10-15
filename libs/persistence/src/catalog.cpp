@@ -850,6 +850,32 @@ Result<std::vector<PrincipalInvestigatorRow>> principal_investigators(Db& db) {
   return out;
 }
 
+Result<std::vector<PrincipalInvestigatorRow>> principal_investigators_named(Db& db, const std::string& family_name,
+                                                                           const std::string& given_initial) {
+  QString sql = sql::kPrincipalInvestigatorsNamed;
+  Bindings b{qv(family_name)};
+  if (given_initial.empty()) {
+    sql += sql::kGivenNameEmpty;
+  } else {
+    sql += sql::kGivenNameStartsWith;
+    b << qv(given_initial) << qv(given_initial);
+  }
+  sql += sql::kOldestFirst;
+  auto rows = db.select(sql, b);
+  if (!rows) return fail(rows.error());
+  std::vector<PrincipalInvestigatorRow> out;
+  out.reserve(rows->size());
+  for (const auto& r : *rows) out.push_back(principal_investigator_row(r));
+  return out;
+}
+
+Result<std::optional<PrincipalInvestigatorRow>> find_principal_investigator_by_orcid(Db& db, const std::string& orcid) {
+  auto row = db.select_one(sql::kPrincipalInvestigatorByOrcid, {qv(orcid)});
+  if (!row) return fail(row.error());
+  if (!*row) return std::optional<PrincipalInvestigatorRow>{};
+  return std::optional<PrincipalInvestigatorRow>{principal_investigator_row(**row)};
+}
+
 Result<std::vector<ProjectRow>> projects(Db& db, std::optional<Uuid> pi) {
   QString sql = sql::kProjects;
   Bindings b;

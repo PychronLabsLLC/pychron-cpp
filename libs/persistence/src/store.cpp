@@ -449,6 +449,14 @@ class TinyStore final : public IStore {
   Result<std::vector<PrincipalInvestigatorRow>> principal_investigators() override {
     return detail::principal_investigators(*db_);
   }
+  Result<std::vector<PrincipalInvestigatorRow>> principal_investigators_named(
+      const std::string& family_name, const std::string& given_initial) override {
+    return detail::principal_investigators_named(*db_, family_name, given_initial);
+  }
+  Result<std::optional<PrincipalInvestigatorRow>> find_principal_investigator_by_orcid(
+      const std::string& orcid) override {
+    return detail::find_principal_investigator_by_orcid(*db_, orcid);
+  }
   Result<std::vector<ProjectRow>> projects(std::optional<Uuid> pi) override { return detail::projects(*db_, pi); }
   Result<std::vector<MaterialRow>> materials() override { return detail::materials(*db_); }
   Result<std::vector<SampleRow>> samples(const SampleQuery& query) override {

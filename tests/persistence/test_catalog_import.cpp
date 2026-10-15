@@ -188,6 +188,62 @@ TEST_P(CatalogImportTest, AddPrincipalInvestigatorWithEmptyInitialTwice) {
   expect_ensure([&] { return store_->add_principal_investigator(client(), {.family_name = "Smith"}); });
 }
 
+// Namesakes are candidates, not one row: every PI of that family name (case
+// ignored) whose given name starts with the initial, oldest first. Each is
+// added under its own uuid, since a name is no key.
+TEST_P(CatalogImportTest, PrincipalInvestigatorsNamedGivesEveryNamesakeOldestFirst) {
+  auto add = [&](PrincipalInvestigatorSpec spec) {
+    spec.uuid = Uuid::v7();
+    auto made = store_->add_principal_investigator(client(), spec);
+    EXPECT_TRUE(made) << (made ? "" : to_string(made.error()));
+    return made ? *made : Uuid{};
+  };
+  const Uuid jake = add({.family_name = "Ross", .given_name = "Jake"});
+  const Uuid j = add({.family_name = "ross", .given_name = "J"});
+  const Uuid john = add({.family_name = "ROSS", .given_name = "john"});
+  add({.family_name = "Ross", .given_name = "Kate"});
+  const Uuid bare = add({.family_name = "Ross"});
+  add({.family_name = "Rossi", .given_name = "Jake"});
+
+  auto named = store_->principal_investigators_named("Ross", "J");
+  ASSERT_TRUE(named) << to_string(named.error());
+  std::vector<Uuid> uuids;
+  for (const auto& p : *named) uuids.push_back(p.uuid);
+  EXPECT_EQ(uuids, (std::vector<Uuid>{jake, j, john}));
+
+  auto lower = store_->principal_investigators_named("ross", "j");
+  ASSERT_TRUE(lower) << to_string(lower.error());
+  EXPECT_EQ(lower->size(), 3u);
+
+  // No initial: only those without a given name, as legacy "Ross" was its own PI.
+  auto alone = store_->principal_investigators_named("Ross", "");
+  ASSERT_TRUE(alone) << to_string(alone.error());
+  ASSERT_EQ(alone->size(), 1u);
+  EXPECT_EQ(alone->front().uuid, bare);
+
+  auto none = store_->principal_investigators_named("Smith", "J");
+  ASSERT_TRUE(none) << to_string(none.error());
+  EXPECT_TRUE(none->empty());
+}
+
+TEST_P(CatalogImportTest, APrincipalInvestigatorIsFoundByOrcid) {
+  const Uuid with = *store_->add_principal_investigator(
+      client(), {.family_name = "Ross", .given_name = "Jake", .uuid = Uuid::v7(), .orcid = "0000-0002-1825-0097"});
+  ASSERT_TRUE(store_->add_principal_investigator(client(),
+                                                 {.family_name = "Ross", .given_name = "J", .uuid = Uuid::v7()}));
+
+  auto found = store_->find_principal_investigator_by_orcid("0000-0002-1825-0097");
+  ASSERT_TRUE(found) << to_string(found.error());
+  ASSERT_TRUE(found->has_value());
+  EXPECT_EQ((*found)->uuid, with);
+  EXPECT_EQ((*found)->display_name, "Jake Ross");
+  EXPECT_EQ((*found)->orcid, std::optional<std::string>("0000-0002-1825-0097"));
+
+  auto unknown = store_->find_principal_investigator_by_orcid("0000-0001-5109-3700");
+  ASSERT_TRUE(unknown) << to_string(unknown.error());
+  EXPECT_FALSE(unknown->has_value());
+}
+
 TEST_P(CatalogImportTest, AddSampleTwice) {
   const Uuid p = project(), m = material();
   expect_ensure([&] { return store_->add_sample(client(), {.name = "FC-1", .project = p, .material = m}); });

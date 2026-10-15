@@ -29,6 +29,9 @@ class StagedRefs {
 Result<StagedRefs*> prepare_staged(IUnitOfWork& uow, Db& db, ChangesetKind kind, std::string message);
 
 Result<std::vector<PrincipalInvestigatorRow>> principal_investigators(Db& db);
+Result<std::vector<PrincipalInvestigatorRow>> principal_investigators_named(Db& db, const std::string& family_name,
+                                                                           const std::string& given_initial);
+Result<std::optional<PrincipalInvestigatorRow>> find_principal_investigator_by_orcid(Db& db, const std::string& orcid);
 Result<std::vector<ProjectRow>> projects(Db& db, std::optional<Uuid> pi);
 Result<std::vector<MaterialRow>> materials(Db& db);
 Result<std::vector<SampleRow>> samples(Db& db, Dialect dialect, const SampleQuery& query);

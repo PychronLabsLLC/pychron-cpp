@@ -20,6 +20,18 @@ inline const QString kPrincipalInvestigatorByOrcid = QStringLiteral(
     "SELECT uuid, kind, family_name, given_name, display_name, orcid, ror, affiliation, email "
     "FROM principal_investigator WHERE orcid = ?");
 
+// Namesakes of a family name, case ignored, oldest first; the caller appends
+// the condition on the given name. lower(family_name) has no index and the
+// table is scanned on purpose: a lab has tens to hundreds of PIs, and this
+// runs once a name entered or imported, never per analysis.
+inline const QString kPrincipalInvestigatorsNamed = QStringLiteral(
+    "SELECT uuid, kind, family_name, given_name, display_name, orcid, ror, affiliation, email "
+    "FROM principal_investigator WHERE lower(family_name) = lower(?)");
+inline const QString kGivenNameEmpty = QStringLiteral(" AND given_name = ''");
+inline const QString kGivenNameStartsWith =
+    QStringLiteral(" AND lower(substr(given_name, 1, length(?))) = lower(?)");
+inline const QString kOldestFirst = QStringLiteral(" ORDER BY created_utc, uuid");
+
 inline const QString kProjects = QStringLiteral(
     "SELECT p.uuid, p.name, p.pi_uuid, pi.display_name AS pi_name, p.checkin_date, p.comment, p.lab_contact, "
     "p.institution, (SELECT count(*) FROM sample s WHERE s.project_uuid = p.uuid) AS n_samples "

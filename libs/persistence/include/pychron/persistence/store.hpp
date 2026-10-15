@@ -653,6 +653,15 @@ class IStore {
   // Entry reads (entry spec 5.1). Packages are listed newest first, levels
   // by name, positions by position.
   virtual Result<std::vector<PrincipalInvestigatorRow>> principal_investigators() = 0;
+  // Candidates for a name (PI spec 5): the PIs of `family_name`, case
+  // ignored, whose given name starts with `given_initial` (case ignored),
+  // oldest first. An empty initial gives only those without a given name. A
+  // name is no key: these are namesakes to choose among, not one PI.
+  virtual Result<std::vector<PrincipalInvestigatorRow>> principal_investigators_named(
+      const std::string& family_name, const std::string& given_initial) = 0;
+  // The PI of `orcid` (the bare form, "0000-0002-1825-0097"); nullopt when none has it.
+  virtual Result<std::optional<PrincipalInvestigatorRow>> find_principal_investigator_by_orcid(
+      const std::string& orcid) = 0;
   virtual Result<std::vector<ProjectRow>> projects(std::optional<Uuid> principal_investigator) = 0;
   virtual Result<std::vector<MaterialRow>> materials() = 0;
   virtual Result<std::vector<SampleRow>> samples(const SampleQuery& query) = 0;
