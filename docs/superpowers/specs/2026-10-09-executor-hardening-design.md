@@ -402,7 +402,10 @@ default; test holds example and defaults together (as `sim.toml`).
   record is byte for byte what it was (`status` not written).
 - Outage shorter than `call_window` on any one link, at any instant of a
   run, changes nothing in queue's result but notes and counters. (Property
-  test, section 6.)
+  test, section 6.) As built (Task 18): "nothing" = same queue end, same
+  runs and states, same record status, same series with same counts. A
+  reading that waited for a link is later on a moving clock: its time and
+  value are not compared.
 - Executor never ends a queue for a transient failure without having held
   first, except `after_link_failure = "end"`.
 

@@ -3,7 +3,7 @@
 # line and spectrometer. Globbed so later suites only add files.
 file(GLOB PYCHRON_INTEGRATION_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
 # The install end-to-end test needs the store and has its own executable (below).
-list(FILTER PYCHRON_INTEGRATION_TESTS EXCLUDE REGEX "test_install_e2e\\.cpp$")
+list(FILTER PYCHRON_INTEGRATION_TESTS EXCLUDE REGEX "test_(install_e2e|outage)\\.cpp$")
 
 if(PYCHRON_INTEGRATION_TESTS)
   add_executable(pychron_integration_tests ${PYCHRON_INTEGRATION_TESTS})
@@ -52,3 +52,16 @@ if(TARGET pychron_experiment_store AND TARGET pychron_processing_store AND TARGE
   pychron_set_warnings(pychron_install_e2e_tests)
   gtest_discover_tests(pychron_install_e2e_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
 endif()
+
+# An outage at every instant of the example queue (executor hardening): some
+# hundred queues, each a second or so of simulated hardware. Its own
+# executable for a timeout fit for it; dev-quick leaves it out.
+add_executable(pychron_outage_tests test_outage.cpp)
+target_link_libraries(pychron_outage_tests PRIVATE pychron::experiment pychron::systems GTest::gtest_main)
+target_include_directories(pychron_outage_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
+target_compile_definitions(pychron_outage_tests PRIVATE
+  PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+pychron_link_drivers(pychron_outage_tests pychron_sim)
+pychron_set_warnings(pychron_outage_tests)
+# Above the fixture's dead-man (600 s), as AGENTS.md "Tests" asks.
+gtest_discover_tests(pychron_outage_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 900)

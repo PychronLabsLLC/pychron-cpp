@@ -178,7 +178,7 @@
       "inherits": "dev",
       "filter": {
         "exclude": {
-          "name": "^(Engines/(Project|Meta)ImportTest\\.|ImportCmd)"
+          "name": "^(Engines/(Project|Meta)ImportTest\\.|ImportCmd|Outage\\.|Links/Outage)"
         }
       }
     },
