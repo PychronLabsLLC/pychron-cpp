@@ -30,6 +30,13 @@
 // command or read-back leaves the switch Unknown; a read-back that disagrees
 // records what the hardware reported and fails with Protocol.
 //
+// A command that fails with code outcome_unknown (a lost Unsafe call, see
+// pychron/devices/link.hpp) may have reached the valve. The switch is Unknown
+// until that is settled: after the settle time the valve is read back; at its
+// target, the actuation succeeded; elsewhere, the command is sent once more
+// and goes on as above. A `verify = false` switch has nothing to read and is
+// sent once more. A read that fails returns the lost command's error.
+//
 // Wiring (valves and switches):
 //   - `inverted`: the actuator's channel is wired backwards. Opening sends
 //     close(), and the actuator's read-back is inverted, so the recorded
@@ -206,6 +213,8 @@ class SwitchManager {
   Result<void> check_access(const Entry& e, std::string_view actor) const;
   Result<void> check_interlocks(const Entry& e) const;
   Result<void> drive(Entry& e, SwitchOp op);
+  // The switch is at op's target: recorded, counted, published.
+  Result<void> reached(Entry& e, SwitchOp op);
   void settle(Duration d) const;
   // The switch's state as its read-back device reports it, inversion applied.
   Result<ValveState> read_back(const Entry& e) const;

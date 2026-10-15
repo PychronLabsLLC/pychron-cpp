@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -21,6 +22,7 @@
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/devices/proxr_relay.hpp"
 #include "pychron/transport/sim_transport.hpp"
@@ -42,6 +44,12 @@ class FakeActuator final : public IValveActuator {
   Result<void> close(const ValveAddress& a) override { return command(a, ValveState::Closed); }
 
   Result<ValveState> read(const ValveAddress& a) override {
+    std::function<void()> hook;
+    {
+      std::lock_guard lk(m_);
+      hook = on_read_;
+    }
+    if (hook) hook();
     std::lock_guard lk(m_);
     calls_.push_back("read " + a.value);
     if (clock_) read_times_.push_back(clock_->now());
@@ -82,6 +90,17 @@ class FakeActuator final : public IValveActuator {
     std::lock_guard lk(m_);
     fail_read_ = k;
   }
+  // The next command fails as a lost Unsafe call does (Link): Io, code
+  // outcome_unknown. `arrived` says whether it reached the valve first.
+  void lose_next_command(bool arrived) {
+    std::lock_guard lk(m_);
+    lose_next_ = arrived;
+  }
+  // Called before each read, outside the fake's lock.
+  void on_read(std::function<void()> hook) {
+    std::lock_guard lk(m_);
+    on_read_ = std::move(hook);
+  }
   void stick(const std::string& a) {
     std::lock_guard lk(m_);
     stuck_.push_back(a);
@@ -105,7 +124,11 @@ class FakeActuator final : public IValveActuator {
     std::lock_guard lk(m_);
     calls_.push_back((s == ValveState::Open ? "open " : "close ") + a.value);
     if (fail_command_) return fail(*fail_command_, "command failed", "fake");
-    if (std::find(stuck_.begin(), stuck_.end(), a.value) == stuck_.end()) hw_[a.value] = s;
+    const bool lost = lose_next_.has_value();
+    const bool arrived = !lost || *lose_next_;
+    lose_next_.reset();
+    if (arrived && std::find(stuck_.begin(), stuck_.end(), a.value) == stuck_.end()) hw_[a.value] = s;
+    if (lost) return fail(Error{ErrorKind::Io, "reply lost", "fake", kOutcomeUnknown});
     return {};
   }
 
@@ -118,6 +141,8 @@ class FakeActuator final : public IValveActuator {
   std::vector<std::string> stuck_;
   std::optional<ErrorKind> fail_command_;
   std::optional<ErrorKind> fail_read_;
+  std::optional<bool> lose_next_;
+  std::function<void()> on_read_;
 };
 
 SwitchSpec valve(std::string name, std::string address, std::vector<std::string> interlocks = {},
@@ -474,6 +499,75 @@ TEST(SwitchManager, CommandFailureLeavesUnknownAndPublishes) {
   EXPECT_EQ(st(*f.mgr, "A"), ValveState::Unknown);
   ASSERT_EQ(f.rec.failed.size(), 1u);
   EXPECT_EQ(f.rec.failed[0].error.kind, ErrorKind::Timeout);
+}
+
+// ---- a command whose outcome is unknown (spec 4.2) -------------------------
+
+TEST(SwitchManager, AnUnknownOutcomeThatReadsBackAtTargetIsSuccess) {
+  Fixture f({valve("A", "1")});
+  std::vector<ValveState> at_read;
+  f.act.on_read([&] { at_read.push_back(st(*f.mgr, "A")); });
+  f.act.lose_next_command(/*arrived=*/true);
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  EXPECT_EQ(f.act.commands(), 1u);  // not sent again: it arrived
+  EXPECT_EQ(at_read, std::vector<ValveState>{ValveState::Unknown});
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  EXPECT_TRUE(f.rec.failed.empty());
+  ASSERT_FALSE(f.rec.changed.empty());
+  EXPECT_EQ(f.rec.changed.back().state, ValveState::Open);
+  EXPECT_EQ(f.mgr->info("A")->stats.opens, 1);
+  EXPECT_EQ(f.mgr->info("A")->stats.failures, 0);
+}
+
+TEST(SwitchManager, AnUnknownOutcomeThatReadsBackElsewhereIsRepeatedOnce) {
+  Fixture f({valve("A", "1")});
+  std::vector<ValveState> at_read;
+  f.act.on_read([&] { at_read.push_back(st(*f.mgr, "A")); });
+  f.act.lose_next_command(/*arrived=*/false);
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  EXPECT_EQ(f.act.commands(), 2u);
+  // Unknown from the lost command until the repeat's read-back settles it.
+  EXPECT_EQ(at_read, (std::vector<ValveState>{ValveState::Unknown, ValveState::Unknown}));
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  EXPECT_TRUE(f.rec.failed.empty());
+  EXPECT_EQ(f.mgr->info("A")->stats.opens, 1);
+}
+
+TEST(SwitchManager, AnUnknownOutcomeThatReadsBackElsewhereAfterItsRepeatIsAMismatch) {
+  Fixture f({valve("A", "1")});
+  f.act.stick("1");
+  f.act.lose_next_command(/*arrived=*/false);
+  auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);  // the read-back mismatch, as today
+  EXPECT_NE(r.error().what.find("read back"), std::string::npos);
+  EXPECT_EQ(f.act.commands(), 2u);  // repeated once, not more
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Closed);
+  ASSERT_EQ(f.rec.failed.size(), 1u);
+}
+
+TEST(SwitchManager, AnUnknownOutcomeOnAValveWithoutVerifyIsRepeated) {
+  auto a = valve("A", "1");
+  a.verify = false;
+  Fixture f({a}, /*refresh=*/false);
+  f.act.lose_next_command(/*arrived=*/true);
+  ASSERT_TRUE(f.mgr->actuate("A", SwitchOp::Open, "op"));
+  EXPECT_EQ(f.act.calls(), (std::vector<std::string>{"open 1", "open 1"}));  // nothing read
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Open);
+  EXPECT_TRUE(f.rec.failed.empty());
+}
+
+TEST(SwitchManager, AnUnknownOutcomeWhoseReadFailsIsTheLostCommandsError) {
+  Fixture f({valve("A", "1")});
+  f.act.fail_reads(ErrorKind::Timeout);
+  f.act.lose_next_command(/*arrived=*/true);
+  auto r = f.mgr->actuate("A", SwitchOp::Open, "op");
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().code, kOutcomeUnknown);
+  EXPECT_EQ(f.act.commands(), 1u);  // not repeated blind
+  EXPECT_EQ(st(*f.mgr, "A"), ValveState::Unknown);
+  ASSERT_EQ(f.rec.failed.size(), 1u);
+  EXPECT_EQ(f.mgr->info("A")->stats.failures, 1);
 }
 
 TEST(SwitchManager, ReadBackFailureLeavesUnknown) {

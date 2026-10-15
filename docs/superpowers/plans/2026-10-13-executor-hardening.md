@@ -207,9 +207,9 @@ The spec called the table `link`; a spectrometer transport already has a string 
 
 No shipped valve driver has an `Unsafe` command after Task 6, so this is reached only through a fake actuator: it is the rule for the next driver that has one.
 
-- [ ] Failing tests: `SwitchManager.AnUnknownOutcomeThatReadsBackAtTargetIsSuccess`; `...ThatReadsBackElsewhereIsRepeatedOnce` (then success, or the read-back mismatch error as today); `...OnAValveWithoutVerifyIsRepeated`; state on the bus is `Unknown` from the failed command until resolved.
-- [ ] Implement in `drive` after the command at `:302`.
-- [ ] Commit: `feat(systems): a valve command of unknown outcome is settled by reading the valve`.
+- [x] Failing tests: `SwitchManager.AnUnknownOutcomeThatReadsBackAtTargetIsSuccess`; `...ThatReadsBackElsewhereIsRepeatedOnce` (then success, or the read-back mismatch error as today); `...OnAValveWithoutVerifyIsRepeated`; state on the bus is `Unknown` from the failed command until resolved. Built as those, with the mismatch case its own test (`...ThatReadsBackElsewhereAfterItsRepeatIsAMismatch`) and one more: `...WhoseReadFailsIsTheLostCommandsError` (not sent again blind; the switch stays `Unknown`).
+- [x] Implement in `drive` after the command at `:302`.
+- [x] Commit: `feat(systems): a valve command of unknown outcome is settled by reading the valve`.
 
 ---
 

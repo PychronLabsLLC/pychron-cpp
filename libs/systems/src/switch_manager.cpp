@@ -6,6 +6,7 @@
 #include <set>
 #include <utility>
 
+#include "pychron/devices/link.hpp"
 #include "pychron/devices/types.hpp"
 
 namespace pychron::systems {
@@ -299,7 +300,24 @@ Result<ValveState> SwitchManager::read_back(const Entry& e) const {
 Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
   const auto target = target_of(op);
   const bool channel_open = (op == SwitchOp::Open) != e.spec.inverted;
-  auto sent = channel_open ? e.actuator->open(e.spec.address) : e.actuator->close(e.spec.address);
+  const auto send = [&] { return channel_open ? e.actuator->open(e.spec.address) : e.actuator->close(e.spec.address); };
+  auto sent = send();
+  if (!sent && sent.error().code == kOutcomeUnknown) {
+    // Lost on its way back (spec 4.2): it may have reached the valve. The
+    // valve says which; Unknown until it has.
+    record(e, ValveState::Unknown);
+    if (e.spec.verify) {
+      settle(e.spec.settle);
+      auto read = read_back(e);
+      if (!read) {
+        count(e, &SwitchStats::failures);
+        return failed(e, std::move(sent).error());
+      }
+      if (*read == target) return reached(e, op);
+    }
+    // Not there, or nothing to ask: the target is absolute, so sent again, once.
+    sent = send();
+  }
   if (!sent) {
     // The command may or may not have reached the valve.
     record(e, ValveState::Unknown);
@@ -309,12 +327,7 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
 
   settle(e.spec.settle);
 
-  if (!e.spec.verify) {
-    record(e, target);
-    count(e, op == SwitchOp::Open ? &SwitchStats::opens : &SwitchStats::closes);
-    if (bus_) bus_->publish(ValveChanged{e.spec.name, target, clock_->now()});
-    return {};
-  }
+  if (!e.spec.verify) return reached(e, op);
 
   auto read = read_back(e);
   if (!read) {
@@ -334,6 +347,14 @@ Result<void> SwitchManager::drive(Entry& e, SwitchOp op) {
                            e.spec.name});
   }
   if (bus_) bus_->publish(ValveChanged{e.spec.name, *read, clock_->now()});
+  return {};
+}
+
+Result<void> SwitchManager::reached(Entry& e, SwitchOp op) {
+  const auto target = target_of(op);
+  record(e, target);
+  count(e, op == SwitchOp::Open ? &SwitchStats::opens : &SwitchStats::closes);
+  if (bus_) bus_->publish(ValveChanged{e.spec.name, target, clock_->now()});
   return {};
 }
 
