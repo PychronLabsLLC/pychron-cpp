@@ -20,7 +20,9 @@ std::uint16_t wire(std::uint16_t address) { return static_cast<std::uint16_t>(ad
 
 Plc2000Heater::Plc2000Heater(std::string name, Transport& transport, Plc2000HeaterOptions options,
                              const Clock* clock, Link* link)
-    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}), transport_(transport), options_(options) {}
+    : Device(std::move(name), DeviceOptions{clock, DeviceOptions{}.fault_after, link}),
+      transport_(transport),
+      options_(options) {}
 
 DriverSchema Plc2000Heater::schema() {
   return {"",
