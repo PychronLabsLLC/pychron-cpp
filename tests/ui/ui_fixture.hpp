@@ -21,8 +21,10 @@ namespace pychron::ui::test {
 
 // `canvas`: another drawing of the example line (default: the example's own).
 // `clock`: the line's clock, which must outlive it (default: real time).
+// `line_file`: a line file of the test's own in place of the example's.
 inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {},
-                                                                  const Clock* clock = nullptr) {
+                                                                  const Clock* clock = nullptr,
+                                                                  const std::filesystem::path& line_file = {}) {
   using namespace std::chrono_literals;
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   systems::ExtractionLine::Options options;
@@ -40,7 +42,8 @@ inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::fil
   // and independent of each other.
   options.state_file = pychron::testing::unique_temp_path("pychron-ui-test-", ".state.toml");
   auto line =
-      systems::ExtractionLine::load(dir / "extraction_line.toml", canvas.empty() ? dir / "canvas.toml" : canvas, options);
+      systems::ExtractionLine::load(line_file.empty() ? dir / "extraction_line.toml" : line_file,
+                                    canvas.empty() ? dir / "canvas.toml" : canvas, options);
   if (!line) {
     qFatal("cannot load example line: %s", to_string(line.error()).c_str());
   }

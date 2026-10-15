@@ -251,14 +251,27 @@ class TestCanvasView : public QObject {
 
   // A command that was sent and failed is in the valve's history at once.
   void failedCommandIsCountedInTheTooltip() {
-    ui::ValveItem* c = view_->valve("C");
-    QVERIFY(line_->transport("valve_bus") != nullptr);
-    line_->transport("valve_bus")->close();
-    bridge_->actuate("C", SwitchOp::Open);
+    // A closed transport is reopened by its link and the command repeated
+    // (spec 4.2): for a command to fail, the valve bus here does not reconnect.
+    std::ifstream in(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "extraction_line.toml");
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    text += "\n[transports.valve_bus.recovery]\nreconnect = false\n";
+    QTemporaryDir dir;
+    const auto file = std::filesystem::path(dir.path().toStdString()) / "extraction_line.toml";
+    { std::ofstream(file) << text; }
+    auto line = ui::test::make_example_line({}, nullptr, file);
+    CoreBridge bridge(*line);
+    CanvasView view(bridge);
+    QVERIFY(line->start().has_value());
+    ui::ValveItem* c = view.valve("C");
+    QVERIFY(line->transport("valve_bus") != nullptr);
+    line->transport("valve_bus")->close();
+    bridge.actuate("C", SwitchOp::Open);
     QTRY_VERIFY(c->is_flashing());
     QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("failed 1, refused 0")), qPrintable(c->toolTip()));
-    bridge_->actuate("C", SwitchOp::Open);
+    bridge.actuate("C", SwitchOp::Open);
     QTRY_VERIFY2(c->toolTip().contains(QStringLiteral("failed 2, refused 0")), qPrintable(c->toolTip()));
+    line->stop();
   }
 
   void lockedValveDrawsBlueBorderAndUnlockClearsIt() {
