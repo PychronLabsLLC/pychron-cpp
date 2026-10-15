@@ -133,12 +133,12 @@ struct ReferenceQuery {
 };
 
 [[nodiscard]] std::vector<std::string> analysis_types(ReferenceKind kind);
-[[nodiscard]] std::string starting_preset(ReferenceKind kind);   // "Blanks", "Air monitor"
+[[nodiscard]] std::string_view starting_preset(ReferenceKind kind);   // "Blanks", "Air monitor"
 // select (the query) -> reduce -> group (key = analysis_type) -> time_series (figure options).
 [[nodiscard]] processing::Pipeline reference_pipeline(const ReferenceQuery& query, const processing::Options& figure);
 ```
 
-- [ ] **Step 1: failing tests** on a `MemorySource` filled by hand (a helper that makes an analysis of a type, spectrometer and time; `MemorySource` applies the same filter, `libs/processing/src/source.cpp:99`), the pipeline run directly, no bridge:
+- [x] **Step 1: failing tests** on a `MemorySource` filled by hand (a helper that makes an analysis of a type, spectrometer and time; `MemorySource` applies the same filter, `libs/processing/src/source.cpp:99`), the pipeline run directly, no bridge:
   - `blanksAreTheNewestNOfEveryBlankKind`: seven blanks of four kinds, `last_n` 5: the dataset has the five newest, oldest first; the scene has one group per kind present, each named by its type.
   - `airsAreAirsOnly`; `unknownsAndCocktailsAreInNeither`.
   - `anotherSpectrometersAreLeftOut`; `anEmptySpectrometerMeansAny`.
@@ -146,8 +146,10 @@ struct ReferenceQuery {
   - `nothingFoundIsASceneThatSaysSo` (`no analyses` warning, not an error).
   - `theFigureOptionsReachTheFigure`: an option of the preset changes the scene.
   - `analysis_types(Blanks)` is the five strings; `analysis_types(Airs)` is `air`.
-- [ ] **Step 2:** implement, following `figure_window.cpp:56-88` for how a pipeline is put together (`pipeline.add(registry, kind, id, inputs)`, then options set on the node; `UnitRegistry::builtin()`). The chain is `select`, `reduce`, `group` (key `analysis_type`), `time_series`: no graph-level `group` and no `edits` unit. The figure node's id is a named constant the dock submits as its target. `select`'s `limit` is `last_n`; its `remove_tags` and `omit_tags` are left at their defaults (an invalid blank is not drawn).
-- [ ] **Step 3:** `ctest --preset dev-ui -R '^ui\.test_reference_series$'`; commit `feat(ui): the pipeline that draws the recent blanks or airs of a spectrometer`.
+- [x] **Step 2:** implement, following `figure_window.cpp:56-88` for how a pipeline is put together (`pipeline.add(registry, kind, id, inputs)`, then options set on the node; `UnitRegistry::builtin()`). The chain is `select`, `reduce`, `group` (key `analysis_type`), `time_series`: no graph-level `group` and no `edits` unit. The figure node's id is a named constant the dock submits as its target. `select`'s `limit` is `last_n`; its `remove_tags` and `omit_tags` are left at their defaults (an invalid blank is not drawn).
+- [x] **Step 3:** `ctest --preset dev-ui -R '^ui\.test_reference_series$'`; commit `feat(ui): the pipeline that draws the recent blanks or airs of a spectrometer`.
+
+  Built: the figure node's id is `kReferenceFigure` (`"figure"`). `starting_preset` returns a `std::string_view` (clang-tidy's `modernize-use-string-view`; it names a literal). `reference_pipeline` clamps `last_n` to 1..500, the bounds `select`'s page and limit accept, and leaves the dock its own 5..500. One test more than listed: `thePipelineIsTheFourUnitsWithTheFigureLast` (the chain, `limit`, no `uuids`, `remove_tags` left at `invalid`, the group key).
 
 ### Task 5: The dock's widget
 

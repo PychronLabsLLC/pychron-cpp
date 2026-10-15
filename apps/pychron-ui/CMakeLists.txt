@@ -63,6 +63,7 @@ add_library(pychron_ui_lib STATIC
   src/rise_rate_panel.cpp
   src/figure_window.cpp
   src/reference_fit_window.cpp
+  src/reference_series.cpp
   src/preset_bar.cpp
   src/isotope_evolution_window.cpp
   src/theme.cpp
@@ -143,6 +144,7 @@ add_library(pychron_ui_lib STATIC
   src/rise_rate_panel.hpp
   src/figure_window.hpp
   src/reference_fit_window.hpp
+  src/reference_series.hpp
   src/preset_bar.hpp
   src/isotope_evolution_window.hpp
   src/theme.hpp
