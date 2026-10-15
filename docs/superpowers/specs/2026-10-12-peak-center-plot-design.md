@@ -114,7 +114,7 @@ std::optional<std::vector<double>> scale_to_reference(std::span<const double> re
 New `PeakCenterView` (`apps/pychron-ui/src/peak_center_view.{hpp,cpp}`), a tab
 "Peak center" of Evolutions dock beside kind tabs of `EvolutionsView`. Kind
 tabs map to series kinds by index: the new tab is last, outside that map,
-and swaps the kind plot, focus box and intercepts table for the view.
+and swaps the kind plot, focus box (while it exists: T018 removes it) and intercepts table for the view.
 
 - x: magnet value applied, native units, as `SweepPoint::x`. y: intensity of
   reference detector (other series scaled onto it).
