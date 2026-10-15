@@ -58,7 +58,7 @@ DriverSchema PfeifferMaxiGauge::schema() {
 Result<std::unique_ptr<PfeifferMaxiGauge>> PfeifferMaxiGauge::create(const DriverArgs& args) {
   auto channels = parse_channels(args.options);
   if (!channels) return fail(std::move(channels).error());
-  return std::make_unique<PfeifferMaxiGauge>(args.name, args.transport, std::move(*channels), args.clock);
+  return std::make_unique<PfeifferMaxiGauge>(args.name, args.transport, std::move(*channels), args.clock, args.link);
 }
 
 Result<Bytes> PfeifferMaxiGauge::query(const codec::Command& mnemonic) {

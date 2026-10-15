@@ -25,7 +25,7 @@ Result<std::unique_ptr<PulseCounter>> PulseCounter::create(const DriverArgs& arg
   if (!channels) return fail(std::move(channels).error());
   auto hz = legacy::parse_sample_hz(args, 10.0);
   if (!hz) return fail(std::move(hz).error());
-  return std::make_unique<PulseCounter>(args.name, args.transport, std::move(*channels), *hz, args.clock);
+  return std::make_unique<PulseCounter>(args.name, args.transport, std::move(*channels), *hz, args.clock, args.link);
 }
 
 Result<std::vector<double>> PulseCounter::sample() {

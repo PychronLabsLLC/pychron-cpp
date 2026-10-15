@@ -50,6 +50,9 @@ class Device {
 
   const std::string& name() const noexcept { return name_; }
   DeviceHealth health() const;
+  // The recovery of the transport this device was given (DeviceOptions::link);
+  // null: none, or the driver keeps its own (Qtegra, NGX).
+  Link* link() const noexcept { return link_; }
 
  protected:
   // Record the outcome of one device operation and pass it through. Errors

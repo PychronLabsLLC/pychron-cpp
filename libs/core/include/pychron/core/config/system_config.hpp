@@ -14,6 +14,7 @@
 #include "pychron/core/config/located.hpp"
 #include "pychron/core/config/logging_config.hpp"
 #include "pychron/core/config/metrics_config.hpp"
+#include "pychron/core/config/recovery_config.hpp"
 
 namespace pychron::config {
 
@@ -77,6 +78,8 @@ struct TransportConfig : Located {
   std::int64_t timeout_ms = 500;
   std::int64_t retries = 0;
   bool trace = false;
+  // Not on kind "link": that transport is recovered by the one it names.
+  RecoveryConfig recovery;
 };
 
 struct DriverConfig : Located {

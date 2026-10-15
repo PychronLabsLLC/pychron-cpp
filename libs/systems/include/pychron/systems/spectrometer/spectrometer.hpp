@@ -130,6 +130,9 @@ struct SpectrometerRoles {
   IBeamBlank* beam_blank = nullptr;
 
   std::vector<std::unique_ptr<Transport>> transports;  // kept alive, destroyed last
+  // One per transport but those of kind "link" ([transports.<name>.recovery]),
+  // shared by the drivers on it: destroyed after them, before the transports.
+  std::vector<std::unique_ptr<Link>> links;
   std::vector<std::unique_ptr<Device>> devices;
 };
 

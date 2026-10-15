@@ -17,6 +17,7 @@ DriverSchema PychronValves::schema() {
 Result<std::unique_ptr<PychronValves>> PychronValves::create(const DriverArgs& args) {
   DeviceOptions options;
   options.clock = args.clock;
+  options.link = args.link;
   return std::make_unique<PychronValves>(args.name, args.transport, options);
 }
 

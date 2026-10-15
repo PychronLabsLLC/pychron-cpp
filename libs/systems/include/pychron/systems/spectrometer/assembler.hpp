@@ -26,8 +26,10 @@ namespace pychron::spectrometer {
 
 using TransportMaker =
     std::function<Result<std::unique_ptr<Transport>>(const cfg::TransportConfig&, const SpectrometerContext&)>;
-using DriverMaker =
-    std::function<Result<std::unique_ptr<Device>>(const cfg::DriverConfig&, Transport&, const SpectrometerContext&)>;
+// The Link is the driver's transport's (none for kind "link"), shared by
+// every driver on it.
+using DriverMaker = std::function<Result<std::unique_ptr<Device>>(const cfg::DriverConfig&, Transport&,
+                                                                  const SpectrometerContext&, Link*)>;
 
 struct AssemblerOptions {
   TransportMaker make_transport;  // default: pychron::make_transport
@@ -55,7 +57,7 @@ class SpectrometerAssembler {
                                                               const SpectrometerContext& context,
                                                               const std::filesystem::path& trace_dir = "traces");
   static Result<std::unique_ptr<Device>> default_driver(const cfg::DriverConfig& config, Transport& transport,
-                                                        const SpectrometerContext& context);
+                                                        const SpectrometerContext& context, Link* link = nullptr);
 };
 
 }  // namespace pychron::spectrometer

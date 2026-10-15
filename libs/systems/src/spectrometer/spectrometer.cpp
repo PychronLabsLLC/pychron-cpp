@@ -204,6 +204,7 @@ Spectrometer::~Spectrometer() {
   for (auto& t : roles_.transports) t->close();
   adapters_.clear();
   roles_.devices.clear();
+  roles_.links.clear();
   roles_.transports.clear();
 }
 

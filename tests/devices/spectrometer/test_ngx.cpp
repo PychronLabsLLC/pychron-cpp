@@ -620,8 +620,8 @@ TEST_F(NgxLinkVirtual, ReconnectBackoffIsClockTime) {
   };
   NgxLinkOptions o;
   o.command_timeout = 60s;  // how long connect() waits for a link that is coming back
-  o.reconnect_min = 2s;
-  o.reconnect_max = 60s;
+  o.policy.backoff_min = 2s;
+  o.policy.backoff_max = 60s;
   NgxLink link(flaky, o, clock);
   ASSERT_TRUE(link.connect());
   const TimePoint kStart = clock.now();

@@ -583,6 +583,16 @@ class ConfigBuilder {
         break;
       }
     }
+    if (const auto* n = t.get("recovery")) {
+      allowed.insert("recovery");  // reported below, not as an unknown field
+      if (tc.kind == TransportKind::Link) {
+        // Recovered by the connection it names, under that one's policy.
+        p_.error(p_.loc(*n), Parser::field(tc, "recovery"),
+                 "not on kind \"link\": transport '" + name + "' is recovered by the connection it names");
+      } else {
+        parse_recovery(*n, Parser::field(tc, "recovery"), tc.recovery);
+      }
+    }
     p_.reject_unknown(t, tc, allowed);
     if (ovr != nullptr) {
       for (auto&& [k, v] : *ovr) {
@@ -592,6 +602,26 @@ class ConfigBuilder {
       }
     }
     return tc;
+  }
+
+  // `[transports.<name>.recovery]`: reconnect, optional, call_window_s.
+  void parse_recovery(const toml::node& n, const std::string& path, RecoveryConfig& r) {
+    const auto* t = p_.as_table(n, path);
+    if (t == nullptr) return;
+    p_.begin(r, *t, path);
+    const auto get = lookup_in(*t);
+    p_.reject_unknown(*t, r, Keys{"reconnect", "optional", "call_window_s"});
+    p_.read(get, r, "reconnect", r.reconnect);
+    p_.read(get, r, "optional", r.optional);
+    std::optional<double> window;
+    if (p_.read(get, r, "call_window_s", window) && window) {
+      if (*window >= 0.0 && *window <= RecoveryConfig::kMaxCallWindowS) {
+        r.call_window_s = *window;
+      } else {
+        p_.error(r.where("call_window_s"), Parser::field(r, "call_window_s"),
+                 "value out of range, must be in [0, 3600]");
+      }
+    }
   }
 
   DriverConfig parse_driver(const std::string& name, const toml::table& t) {

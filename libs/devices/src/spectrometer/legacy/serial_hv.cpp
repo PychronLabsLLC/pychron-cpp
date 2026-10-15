@@ -36,7 +36,7 @@ DriverSchema SerialHv::schema() {
 Result<std::unique_ptr<SerialHv>> SerialHv::create(const DriverArgs& args) {
   const double max_hv = args.options["max_hv"].value_or(10000.0);
   if (!(max_hv > 0.0) || !std::isfinite(max_hv)) return fail(ErrorKind::Config, "max_hv must be positive");
-  return std::make_unique<SerialHv>(args.name, args.transport, max_hv, args.clock);
+  return std::make_unique<SerialHv>(args.name, args.transport, max_hv, args.clock, args.link);
 }
 
 Result<void> SerialHv::set_hv(double volts) {

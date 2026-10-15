@@ -96,7 +96,7 @@ Result<std::unique_ptr<Lakeshore>> Lakeshore::create(const DriverArgs& args) {
         return fail(ErrorKind::Config, "ranges: bands for output " + std::to_string(sorted[i].output) + " overlap");
     }
   }
-  return std::make_unique<Lakeshore>(args.name, args.transport, std::move(options), args.clock);
+  return std::make_unique<Lakeshore>(args.name, args.transport, std::move(options), args.clock, args.link);
 }
 
 int Lakeshore::outputs() const { return outputs_of(options_.model); }

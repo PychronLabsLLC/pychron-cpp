@@ -142,7 +142,7 @@ class Builder {
   void parse_transport(Obj o, TransportConfig& t) {
     record(o, t);
     o.rec = &t;
-    r_.only(o, {"kind", "host", "port", "baud", "timeout_ms", "retries", "trace", "link"});
+    r_.only(o, {"kind", "host", "port", "baud", "timeout_ms", "retries", "trace", "link", "recovery"});
     const bool kind_ok = r_.choice(o, "kind", t.kind, choices(kTransportKinds), true) && o.t.get("kind") != nullptr;
     r_.str(o, "host", t.host, false);
     r_.integer(o, "baud", t.baud, false, 1);
@@ -153,6 +153,15 @@ class Builder {
     r_.str(o, "link", t.link, t.kind == TransportKind::Link);
     if (t.kind != TransportKind::Link && o.t.get("link") != nullptr)
       r_.error(o.loc, Reader::join(o.path, "link"), "only for kind \"link\"");
+    if (const auto* n = o.t.get("recovery")) {
+      if (t.kind == TransportKind::Link) {
+        // Recovered by the connection it names, under that one's policy.
+        r_.error(r_.loc(*n), Reader::join(o.path, "recovery"),
+                 "not on kind \"link\": transport '" + t.name + "' is recovered by the connection it names");
+      } else if (auto rec = r_.sub(o, "recovery", false)) {
+        parse_recovery(*rec, t.recovery);
+      }
+    }
 
     const bool network =
         t.kind == TransportKind::Tcp || t.kind == TransportKind::Udp || t.kind == TransportKind::ModbusTcp;
@@ -170,6 +179,20 @@ class Builder {
       r_.error(o.loc, Reader::join(o.path, "port"), "missing required field");
     }
     if (network && t.host.empty()) r_.error(o.loc, Reader::join(o.path, "host"), "missing required field");
+  }
+
+  // `[transports.<name>.recovery]`: reconnect, optional, call_window_s.
+  void parse_recovery(const Obj& o, config::RecoveryConfig& r) {
+    record(o, r);
+    r_.only(o, {"reconnect", "optional", "call_window_s"});
+    r_.boolean(o, "reconnect", r.reconnect);
+    r_.boolean(o, "optional", r.optional);
+    std::optional<double> window;
+    if (r_.number(o, "call_window_s", window) && window) {
+      const bool in_range = *window >= 0.0 && *window <= config::RecoveryConfig::kMaxCallWindowS;
+      r_.require(in_range, o, "call_window_s", "value out of range, must be in [0, 3600]");
+      if (in_range) r.call_window_s = *window;
+    }
   }
 
   void parse_driver(Obj o, DriverConfig& d) {

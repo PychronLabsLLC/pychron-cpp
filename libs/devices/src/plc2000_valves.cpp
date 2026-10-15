@@ -35,7 +35,8 @@ Result<std::unique_ptr<Plc2000Valves>> Plc2000Valves::create(const DriverArgs& a
     return fail(ErrorKind::Config, "coil_offset: " + std::to_string(offset) + " is outside -65535..65535");
   }
   options.coil_offset = static_cast<int>(offset);
-  return std::make_unique<Plc2000Valves>(args.name, args.transport, options, DeviceOptions{args.clock});
+  return std::make_unique<Plc2000Valves>(args.name, args.transport, options,
+                                         DeviceOptions{args.clock, DeviceOptions{}.fault_after, args.link});
 }
 
 Result<std::uint16_t> Plc2000Valves::coil(const ValveAddress& address) const {

@@ -46,7 +46,7 @@ Result<std::unique_ptr<DacPositioner>> DacPositioner::create(const DriverArgs& a
   const double full_scale = o["full_scale"].value_or(10.0);
   if (!(full_scale > 0.0) || !std::isfinite(full_scale)) return fail(ErrorKind::Config, "full_scale must be positive");
 
-  auto output = std::make_unique<Map215Dac>(args.transport, static_cast<int>(range), full_scale);
+  auto output = std::make_unique<Map215Dac>(args.transport, static_cast<int>(range), full_scale, args.link);
   const Limits limits{o["min"].value_or(0.0), o["max"].value_or(full_scale)};
   const Range span = output->span();
   if (!(limits.min < limits.max) || !span.contains(limits.min) || !span.contains(limits.max)) {

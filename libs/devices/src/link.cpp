@@ -8,6 +8,15 @@
 
 namespace pychron {
 
+LinkPolicy link_policy(const config::RecoveryConfig& recovery) {
+  LinkPolicy policy;
+  policy.reconnect = recovery.reconnect;
+  policy.optional = recovery.optional;
+  policy.call_window =
+      std::chrono::duration_cast<Duration>(std::chrono::duration<double>(recovery.call_window_s));
+  return policy;
+}
+
 Link::Link(Transport& transport, const Clock& clock, LinkPolicy policy, SignalBus* bus)
     : transport_(transport), clock_(clock), policy_(policy), bus_(bus), mutex_(clock) {
   // A zero backoff would retry a dead link without letting time pass.

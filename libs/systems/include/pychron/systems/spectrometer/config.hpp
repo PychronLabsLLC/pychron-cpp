@@ -56,6 +56,9 @@ struct TransportConfig : Located {
   std::int64_t timeout_ms = 1000;
   std::int64_t retries = 0;  // extra attempts per request; 0 = none
   bool trace = false;        // record the wire to <trace_dir>/<name>.trace
+  // `[transports.<name>.recovery]`. Not on kind "link": that transport is
+  // recovered by the connection it names.
+  config::RecoveryConfig recovery;
 };
 
 // `[drivers.<name>]`. Keys other than kind/transport/roles/channels are kept

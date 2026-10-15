@@ -73,7 +73,7 @@ Result<std::unique_ptr<GpMicroIon>> GpMicroIon::create(const DriverArgs& args) {
   if (!address) return fail(std::move(address).error());
   auto channels = parse_channels(args.options);
   if (!channels) return fail(std::move(channels).error());
-  return std::make_unique<GpMicroIon>(args.name, args.transport, *address, std::move(*channels), args.clock);
+  return std::make_unique<GpMicroIon>(args.name, args.transport, *address, std::move(*channels), args.clock, args.link);
 }
 
 Result<double> GpMicroIon::read_pressure() { return read_pressure(channels_.front()); }

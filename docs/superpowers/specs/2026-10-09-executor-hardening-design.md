@@ -329,6 +329,26 @@ Per transport, in line and spectrometer files:
 `"link"`, the NGX's shared connection. Such a transport uses the policy of
 the transport it names.)
 
+As built (Task 7):
+- Table absent: `LinkPolicy{}`. `call_window_s` number, 0 to 3600;
+  unknown key, wrong type, value out of range: `Config` error naming
+  `transports.<name>.recovery.<key>`. Backoff not per transport.
+- Line and spectrometer assembler make one `Link` per transport
+  (`ExtractionLine::link(name)`, `SpectrometerRoles::links`), destroyed after
+  drivers, before transports; every driver on transport given it
+  (`DriverArgs::link`, `Device::link()`).
+- Kind `"link"`: `recovery` table is `Config` error naming transport; no
+  `Link` of its own. Its drivers (NGX, Qtegra borrowers) use recovery of
+  connection it names, made where that connection is owned.
+- Qtegra and NGX keep own connection (`QtegraLink` owns its `Link`;
+  `NgxLink` its reader): take only transport's policy (`policy_of(args)`).
+  `NgxLink` built without one keeps its reader's backoff 250 ms to 5 s
+  (`NgxLinkOptions::reader_policy()`). `reconnect = false` on NGX: `call()`
+  not run again; reader still reopens (only reader of connection).
+- Example line shows table commented out with defaults on `valve_bus`; it has
+  no camera transport (cameras are `cameras.toml`, not transports), so no
+  `optional = true` set there. Test holds commented table to defaults.
+
 Loader range-checks every key; example file lists each commented out with
 default; test holds example and defaults together (as `sim.toml`).
 

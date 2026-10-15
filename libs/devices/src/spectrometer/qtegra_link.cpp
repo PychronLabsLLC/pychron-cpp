@@ -41,9 +41,10 @@ Result<Bytes> QtegraLink::ask(std::string_view text) {
 }
 
 Result<QtegraLinkHandle> make_qtegra_link(Transport& transport, const std::string& name,
-                                          codec::qtegra::Terminator terminator, const Clock& clock) {
+                                          codec::qtegra::Terminator terminator, const Clock& clock,
+                                          LinkPolicy policy) {
   return QtegraLinkHandle::make(transport, name, [&](Transport& t) {
-    return std::make_shared<QtegraLink>(t, terminator, clock);
+    return std::make_shared<QtegraLink>(t, terminator, clock, policy);
   });
 }
 

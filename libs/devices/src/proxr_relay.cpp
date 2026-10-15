@@ -14,6 +14,7 @@ DriverSchema ProxrRelay::schema() {
 Result<std::unique_ptr<ProxrRelay>> ProxrRelay::create(const DriverArgs& args) {
   DeviceOptions options;
   options.clock = args.clock;
+  options.link = args.link;
   return std::make_unique<ProxrRelay>(args.name, args.transport, options);
 }
 

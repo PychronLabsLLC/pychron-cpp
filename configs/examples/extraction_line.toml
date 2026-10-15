@@ -38,6 +38,18 @@ default_level = "info"
 kind = "sim"
 timeout_ms = 500
 
+# How a transport's link recovers when it drops: every transport may have
+# this table; shown here with its defaults. reconnect = false: a failed call
+# is not tried again. optional = true: a run may start while this link is down
+# (a camera, a cryostat readout, a gauge that only watches). call_window_s:
+# how long one call keeps reconnecting and repeating what may be sent twice,
+# 0 to 3600. Not on a transport of kind = "link": the connection it names
+# recovers it.
+# [transports.valve_bus.recovery]
+# reconnect = true
+# optional = false
+# call_window_s = 20
+
 [transports.gauge_net]
 kind = "sim"
 timeout_ms = 500

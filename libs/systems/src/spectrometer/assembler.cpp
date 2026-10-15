@@ -168,14 +168,14 @@ Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(cons
 
 Result<std::unique_ptr<Device>> SpectrometerAssembler::default_driver(const cfg::DriverConfig& dc,
                                                                       Transport& transport,
-                                                                      const SpectrometerContext& context) {
+                                                                      const SpectrometerContext& context, Link* link) {
   toml::table options = dc.options;
   if (!dc.channels.empty() && !options.contains("channels")) {
     toml::array channels;
     for (const auto& c : dc.channels) channels.push_back(c);
     options.insert("channels", std::move(channels));
   }
-  return DriverRegistry::global().create(dc.kind, transport, options, DriverContext{dc.name, &context.clock});
+  return DriverRegistry::global().create(dc.kind, transport, options, DriverContext{dc.name, &context.clock, link});
 }
 
 Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::load(const std::filesystem::path& config_file,
@@ -198,7 +198,9 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
 
   std::vector<std::string> problems;
   std::vector<std::unique_ptr<Transport>> transports;
+  std::vector<std::unique_ptr<Link>> links;
   std::map<std::string, Transport*> by_name;
+  std::map<std::string, Link*> link_of;  // none for kind "link": recovered where it is owned
   std::vector<std::pair<std::string, Transport*>> transport_ptrs;  // config order
   for (const auto& [name, tc] : data.config.transports) {
     auto t = options.make_transport(tc, context);
@@ -208,14 +210,20 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
     }
     by_name[name] = t->get();
     transport_ptrs.emplace_back(name, t->get());
+    if (tc.kind != cfg::TransportKind::Link) {
+      links.push_back(std::make_unique<Link>(**t, context.clock, link_policy(tc.recovery), &context.bus));
+      link_of[name] = links.back().get();
+    }
     transports.push_back(std::move(*t));
   }
+  // Destroyed before `links` and `transports` if anything below fails.
   std::vector<std::unique_ptr<Device>> devices;
   std::vector<std::pair<std::string, Device*>> device_ptrs;
   for (const auto& [name, dc] : data.config.drivers) {
     auto t = by_name.find(dc.transport);
     if (t == by_name.end()) continue;  // already reported
-    auto d = options.make_driver(dc, *t->second, context);
+    const auto l = link_of.find(dc.transport);
+    auto d = options.make_driver(dc, *t->second, context, l == link_of.end() ? nullptr : l->second);
     if (!d) {
       problems.push_back("driver '" + name + "': " + d.error().what);
       continue;
@@ -228,6 +236,7 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
   auto roles = bind(data.config, device_ptrs);
   if (!roles) return fail(roles.error());
   roles->transports = std::move(transports);
+  roles->links = std::move(links);
   roles->devices = std::move(devices);
 
   std::map<std::string, FieldTable> tables;

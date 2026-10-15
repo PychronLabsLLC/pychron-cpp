@@ -60,7 +60,7 @@ Result<std::unique_ptr<QtegraGauges>> QtegraGauges::create(const DriverArgs& arg
   auto terminator = parse_terminator(o["terminator"].value_or(std::string("cr")));
   if (!terminator) return fail(std::move(terminator).error());
   auto link = make_qtegra_link(args.transport, o["link"].value_or(args.name), *terminator,
-                               args.clock != nullptr ? *args.clock : steady_clock());
+                               args.clock != nullptr ? *args.clock : steady_clock(), policy_of(args));
   if (!link) return fail(std::move(link).error());
   return std::make_unique<QtegraGauges>(args.name, std::move(*link), std::move(parameters), args.clock);
 }

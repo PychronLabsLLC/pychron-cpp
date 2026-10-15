@@ -56,10 +56,20 @@ struct NgxLinkOptions {
   // How long one reader read waits; also bounds how long a write waits
   // behind a read on the transport's worker.
   Duration read_timeout = std::chrono::milliseconds(10);
-  Duration reconnect_min = std::chrono::milliseconds(250);
-  Duration reconnect_max = std::chrono::seconds(5);
-  // How long one call() keeps trying (LinkPolicy::call_window).
-  Duration call_window = std::chrono::seconds(20);
+  // The reader reopens at backoff_min, doubling to backoff_max; call_window
+  // is how long one call() keeps trying; reconnect = false: a call() is not
+  // run again (the reader still reopens: it is the only one reading).
+  // Without a line file's [transports.<name>.recovery], the link's own
+  // backoff, quicker than LinkPolicy's default; with one, that transport's
+  // policy (DriverArgs::link).
+  LinkPolicy policy = reader_policy();
+
+  static LinkPolicy reader_policy() {
+    LinkPolicy p;
+    p.backoff_min = std::chrono::milliseconds(250);
+    p.backoff_max = std::chrono::seconds(5);
+    return p;
+  }
 };
 
 class NgxLink {
@@ -101,12 +111,18 @@ class NgxLink {
   template <class T>
   [[nodiscard]] Result<T> call(const std::function<Result<T>()>& op, Repeat repeat,
                                std::optional<Duration> window = std::nullopt) {
-    const TimePoint deadline = clock_.now() + window.value_or(options_.call_window);
-    Duration backoff = options_.reconnect_min;
+    const TimePoint deadline = clock_.now() + window.value_or(options_.policy.call_window);
+    Duration backoff = options_.policy.backoff_min;
     for (;;) {
       const std::uint64_t seen = session();
       Result<T> r = op();
       if (r || !transient(r.error().kind)) return r;
+      if (!options_.policy.reconnect) {
+        if (repeat == Repeat::Safe) return r;
+        Error error = std::move(r).error();
+        error.code = kOutcomeUnknown;
+        return fail(std::move(error));
+      }
       const bool back = await_back(seen, r.error().kind, deadline, backoff);
       if (repeat == Repeat::Unsafe) {
         Error error = std::move(r).error();

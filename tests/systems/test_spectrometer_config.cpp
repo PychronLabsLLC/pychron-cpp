@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <string_view>
@@ -322,6 +323,82 @@ TEST(SpectrometerConfig, LocalFileCannotSetRetriesOrTrace) {
                                     "[transports.qtegra]\nretries = 2\ntrace = true\n", "spectrometer.local.toml");
   EXPECT_TRUE(mentions(r, "transports.qtegra.retries", "may not be overridden")) << dump(r);
   EXPECT_TRUE(mentions(r, "transports.qtegra.trace", "may not be overridden")) << dump(r);
+}
+
+TEST(SpectrometerConfig, ATransportsRecoveryTableIsRead) {
+  auto r = parse(with("timeout_ms = 2000",
+                      "timeout_ms = 2000\n[transports.qtegra.recovery]\n"
+                      "reconnect = false\noptional = true\ncall_window_s = 45.5"));
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& recovery = r.config->transports.at("qtegra").recovery;
+  EXPECT_FALSE(recovery.reconnect);
+  EXPECT_TRUE(recovery.optional);
+  EXPECT_DOUBLE_EQ(recovery.call_window_s, 45.5);
+}
+
+TEST(SpectrometerConfig, WithoutARecoveryTableATransportHasTheDefaults) {
+  auto r = parse(kIntegrated);
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& recovery = r.config->transports.at("qtegra").recovery;
+  EXPECT_TRUE(recovery.reconnect);
+  EXPECT_FALSE(recovery.optional);
+  EXPECT_DOUBLE_EQ(recovery.call_window_s, 20.0);
+}
+
+TEST(SpectrometerConfig, ARecoveryTableIsRangeChecked) {
+  for (const char* window : {"-1", "3600.5", "nan"}) {
+    auto r = parse(with("timeout_ms = 2000",
+                        std::string("timeout_ms = 2000\n[transports.qtegra.recovery]\ncall_window_s = ") + window));
+    EXPECT_TRUE(mentions(r, "transports.qtegra.recovery.call_window_s", "out of range")) << window << "\n" << dump(r);
+  }
+  for (const char* window : {"0", "3600"}) {
+    auto r = parse(with("timeout_ms = 2000",
+                        std::string("timeout_ms = 2000\n[transports.qtegra.recovery]\ncall_window_s = ") + window));
+    EXPECT_TRUE(r.ok()) << window << "\n" << dump(r);
+  }
+  auto unknown = parse(with("timeout_ms = 2000", "timeout_ms = 2000\n[transports.qtegra.recovery]\nbackoff_s = 1"));
+  EXPECT_TRUE(mentions(unknown, "transports.qtegra.recovery.backoff_s", "")) << dump(unknown);
+  EXPECT_FALSE(unknown.ok());
+  auto typed = parse(with("timeout_ms = 2000", "timeout_ms = 2000\n[transports.qtegra.recovery]\noptional = \"yes\""));
+  EXPECT_TRUE(mentions(typed, "transports.qtegra.recovery.optional", "boolean")) << dump(typed);
+}
+
+TEST(SpectrometerConfig, ALinkTransportMayNotHaveARecoveryTable) {
+  auto r = parse(with("kind = \"tcp\"\nhost = \"192.168.0.10\"\nport = 1069\ntimeout_ms = 2000",
+                      "kind = \"link\"\nlink = \"ngx\"\n[transports.qtegra.recovery]\noptional = true"));
+  EXPECT_TRUE(mentions(r, "transports.qtegra.recovery", "transport 'qtegra' is recovered by the connection it names"))
+      << dump(r);
+}
+
+// The Qtegra example shows the table commented out, each key at its default.
+TEST(SpectrometerConfig, TheExampleRecoveryTableIsTheDefaults) {
+  const auto file = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "spectrometer.qtegra.toml";
+  std::ifstream in(file);
+  ASSERT_TRUE(in) << file;
+  std::string text;
+  int uncommented = 0;
+  bool inside = false;
+  for (std::string line; std::getline(in, line);) {
+    if (line == "# [transports.qtegra.recovery]") {
+      inside = true;
+    } else if (!(inside && line.starts_with("# ") && line.find(" = ") != std::string::npos)) {
+      inside = false;
+    }
+    if (inside) {
+      line = line.substr(2);
+      ++uncommented;
+    }
+    text += line + '\n';
+  }
+  ASSERT_EQ(uncommented, 4) << "the table and its three keys, in " << file;
+  auto r = parse(text);
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& shown = r.config->transports.at("qtegra").recovery;
+  EXPECT_EQ(shown.path, "transports.qtegra.recovery");
+  const config::RecoveryConfig defaults;
+  EXPECT_EQ(shown.reconnect, defaults.reconnect);
+  EXPECT_EQ(shown.optional, defaults.optional);
+  EXPECT_DOUBLE_EQ(shown.call_window_s, defaults.call_window_s);
 }
 
 TEST(SpectrometerConfig, ParseChannelRef) {

@@ -188,7 +188,7 @@ void NgxLink::reader(std::shared_ptr<Clock::Hold> started) {
       link.clock_.notify_all(link.cv_);
     }
   } done{*this};
-  Duration backoff = options_.reconnect_min;
+  Duration backoff = options_.policy.backoff_min;
   for (;;) {
     {
       std::lock_guard lock(mutex_);
@@ -219,7 +219,7 @@ void NgxLink::reader(std::shared_ptr<Clock::Hold> started) {
         while (!stop_ && clock_.now() < until) clock_.wait_until(cv_, lock, until);
         if (stop_) return;
       }
-      backoff = std::min(backoff * 2, options_.reconnect_max);
+      backoff = std::min(backoff * 2, options_.policy.backoff_max);
       transport_.close();
       if (auto opened = transport_.open(); !opened) {
         went_down(opened.error());
@@ -237,7 +237,7 @@ void NgxLink::reader(std::shared_ptr<Clock::Hold> started) {
         ++stats_.reconnects;
       }
       clock_.notify_all(cv_);
-      backoff = options_.reconnect_min;
+      backoff = options_.policy.backoff_min;
       break;
     }
   }
@@ -346,7 +346,7 @@ bool NgxLink::await_back(std::uint64_t seen, ErrorKind kind, TimePoint deadline,
   const Duration left = deadline - clock_.now();
   if (left <= Duration::zero()) return false;
   clock_.sleep_for(std::min(backoff, left));
-  backoff = std::min(backoff * 2, options_.reconnect_max);
+  backoff = std::min(backoff * 2, options_.policy.backoff_max);
   std::lock_guard connecting(connect_mutex_);
   {
     std::lock_guard lock(mutex_);

@@ -190,6 +190,10 @@ class ExtractionLine {
   sim::SimSystem* sim() noexcept { return sim_.get(); }
 
   Transport* transport(std::string_view name) const;
+  // The recovery of transport `name`, shared by every driver on it. Null for
+  // an unknown name and for kind "link": that one's drivers are recovered by
+  // the connection it names.
+  Link* link(std::string_view transport) const;
   Device* device(std::string_view name) const;
 
  private:
@@ -240,6 +244,9 @@ class ExtractionLine {
   std::optional<Logger> switches_logger_;
   std::unique_ptr<sim::SimSystem> sim_;
   std::vector<std::pair<std::string, std::unique_ptr<Transport>>> transports_;
+  // One per transport but those of kind "link", under its recovery table;
+  // after the transports, before the drivers that call through them.
+  std::vector<std::pair<std::string, std::unique_ptr<Link>>> links_;
   std::vector<std::pair<std::string, std::unique_ptr<Device>>> devices_;
   std::unique_ptr<SwitchManager> switches_;
   std::unique_ptr<Scheduler> scheduler_;

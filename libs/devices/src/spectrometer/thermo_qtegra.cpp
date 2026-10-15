@@ -140,7 +140,7 @@ Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const Dri
   }
   static const SteadyClock steady;
   auto handle = make_qtegra_link(args.transport, o["link"].value_or(args.name), options.terminator,
-                                 args.clock != nullptr ? *args.clock : steady);
+                                 args.clock != nullptr ? *args.clock : steady, policy_of(args));
   if (!handle) return fail(std::move(handle).error());
   return std::make_unique<QtegraSpectrometer>(args.name, std::move(*handle), std::move(options), args.clock);
 }

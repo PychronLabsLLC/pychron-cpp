@@ -64,7 +64,7 @@ Result<std::unique_ptr<Plc2000Gauges>> Plc2000Gauges::create(const DriverArgs& a
       return fail(ErrorKind::Config, "channel " + std::to_string(ch) + " maps to register " + std::to_string(reg) +
                                          ", outside 0..65534");
   }
-  return std::make_unique<Plc2000Gauges>(args.name, args.transport, std::move(options), args.clock);
+  return std::make_unique<Plc2000Gauges>(args.name, args.transport, std::move(options), args.clock, args.link);
 }
 
 Result<double> Plc2000Gauges::read_pressure() { return read_pressure(options_.channels.front()); }

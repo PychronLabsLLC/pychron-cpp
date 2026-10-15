@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 #include "pychron/devices/connectable.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
@@ -80,6 +81,32 @@ TEST(SpectrometerAssembler, BindSucceedsForMatchingDevices) {
   EXPECT_EQ(roles->beam_blank, nullptr);
 }
 
+TEST(SpectrometerAssembler, EveryDriverOnATransportIsGivenItsOneLink) {
+  auto data = load("spectrometer.sim-legacy.toml");
+  data.config.drivers.at("faradays").transport = "dac";  // two drivers on one transport
+  data.config.transports.at("dac").recovery.optional = true;
+  data.config.transports.at("dac").recovery.call_window_s = 5;
+  Env env;
+  std::map<std::string, Link*> given;
+  std::map<std::string, LinkPolicy> policies;
+  AssemblerOptions options;
+  options.make_driver = [&](const cfg::DriverConfig& dc, Transport& t, const SpectrometerContext& ctx,
+                            Link* link) -> Result<std::unique_ptr<Device>> {
+    given[dc.name] = link;
+    if (link != nullptr) policies[dc.name] = link->policy();
+    return SpectrometerAssembler::default_driver(dc, t, ctx, link);
+  };
+  (void)SpectrometerAssembler::assemble(std::move(data), env.ctx(), options);
+  ASSERT_EQ(given.size(), 4U);
+  ASSERT_NE(given.at("magnet_dac"), nullptr);
+  EXPECT_EQ(given.at("faradays"), given.at("magnet_dac"));
+  ASSERT_NE(given.at("multiplier"), nullptr);
+  EXPECT_NE(given.at("multiplier"), given.at("magnet_dac"));
+  EXPECT_TRUE(policies.at("magnet_dac").optional);
+  EXPECT_EQ(policies.at("magnet_dac").call_window, std::chrono::seconds(5));
+  EXPECT_EQ(policies.at("multiplier"), LinkPolicy{});
+}
+
 TEST(SpectrometerAssembler, ConfigRulesRunBeforeBuilding) {
   auto data = load("spectrometer.sim-integrated.toml");
   data.config.magnet.native_axis = cfg::Axis::Mass;  // HV correction enabled -> rule violation
@@ -101,7 +128,7 @@ TEST(SpectrometerAssembler, DriverFailuresAreCollected) {
   auto data = load("spectrometer.sim-legacy.toml");
   Env env;
   AssemblerOptions options;
-  options.make_driver = [](const cfg::DriverConfig& dc, Transport&, const SpectrometerContext&)
+  options.make_driver = [](const cfg::DriverConfig& dc, Transport&, const SpectrometerContext&, Link*)
       -> Result<std::unique_ptr<Device>> { return fail(ErrorKind::Io, "no " + dc.name); };
   auto spec = SpectrometerAssembler::assemble(std::move(data), env.ctx(), options);
   ASSERT_FALSE(spec.has_value());
@@ -230,7 +257,7 @@ struct Rig {
       return std::unique_ptr<Transport>(std::move(t));
     };
     o.make_driver = [this](const cfg::DriverConfig& dc, Transport& t,
-                           const SpectrometerContext&) -> Result<std::unique_ptr<Device>> {
+                           const SpectrometerContext&, Link*) -> Result<std::unique_ptr<Device>> {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): the test made it
       auto& probe = static_cast<ProbeTransport&>(t);
       std::unique_ptr<Device> d;

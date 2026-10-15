@@ -225,6 +225,71 @@ TEST(ConfigLoader, TransportDefaults) {
   EXPECT_EQ(r->transports.at("s").retries, 0);
 }
 
+TEST(ConfigLoader, ATransportsRecoveryTableIsRead) {
+  const std::string text = std::string(test::kPreamble) +
+                           "[transports.bus.recovery]\nreconnect = false\noptional = true\ncall_window_s = 45\n"
+                           "[transports.cam]\nkind = \"tcp\"\nhost = \"h\"\nport = 1\n"
+                           "recovery = { call_window_s = 0.5 }\n";
+  auto r = load_system_config_from_string(text, "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  const auto& bus = r->transports.at("bus").recovery;
+  EXPECT_FALSE(bus.reconnect);
+  EXPECT_TRUE(bus.optional);
+  EXPECT_DOUBLE_EQ(bus.call_window_s, 45.0);
+  EXPECT_EQ(bus.path, "transports.bus.recovery");
+  const auto& cam = r->transports.at("cam").recovery;
+  EXPECT_TRUE(cam.reconnect);
+  EXPECT_FALSE(cam.optional);
+  EXPECT_DOUBLE_EQ(cam.call_window_s, 0.5);
+}
+
+TEST(ConfigLoader, WithoutARecoveryTableATransportHasTheDefaults) {
+  auto r = load_system_config_from_string(test::kPreamble, "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  const auto& recovery = r->transports.at("bus").recovery;
+  EXPECT_TRUE(recovery.reconnect);
+  EXPECT_FALSE(recovery.optional);
+  EXPECT_DOUBLE_EQ(recovery.call_window_s, 20.0);
+}
+
+TEST(ConfigLoader, ARecoveryTableIsRangeChecked) {
+  const auto with = [](const std::string& body) {
+    return load_report_from_string(std::string(test::kPreamble) + "[transports.bus.recovery]\n" + body, "f.toml");
+  };
+  // kPreamble is 11 lines: the table's first key is on line 13.
+  for (const char* window : {"-1", "3600.5", "nan", "inf"}) {
+    auto rep = with(std::string("call_window_s = ") + window + "\n");
+    EXPECT_TRUE(has(rep.diagnostics,
+                    "f.toml:13:transports.bus.recovery.call_window_s: value out of range, must be in [0, 3600]"))
+        << window << ": " << testing::PrintToString(test::formatted(rep.diagnostics));
+  }
+  for (const char* window : {"0", "3600"}) {
+    auto rep = with(std::string("call_window_s = ") + window + "\n");
+    EXPECT_TRUE(rep.diagnostics.empty()) << window << ": " << testing::PrintToString(test::formatted(rep.diagnostics));
+  }
+  auto unknown = with("backoff_s = 1\n");
+  EXPECT_TRUE(has(unknown.diagnostics, "f.toml:13:transports.bus.recovery.backoff_s: unknown field"))
+      << testing::PrintToString(test::formatted(unknown.diagnostics));
+  auto typed = with("optional = \"yes\"\n");
+  EXPECT_TRUE(has(typed.diagnostics, "f.toml:13:transports.bus.recovery.optional: expected boolean, got string"))
+      << testing::PrintToString(test::formatted(typed.diagnostics));
+  auto whole = load_report_from_string(
+      std::string(test::kPreamble) + "[transports.cam]\nkind = \"sim\"\nrecovery = 3\n", "f.toml");
+  EXPECT_TRUE(has(whole.diagnostics, "f.toml:14:transports.cam.recovery: expected table, got integer"))
+      << testing::PrintToString(test::formatted(whole.diagnostics));
+}
+
+TEST(ConfigLoader, ALinkTransportMayNotHaveARecoveryTable) {
+  const std::string text = std::string(test::kPreamble) +
+                           "[transports.ngx]\nkind = \"link\"\nlink = \"ngx\"\n"
+                           "[transports.ngx.recovery]\noptional = true\n";
+  auto rep = load_report_from_string(text, "f.toml");
+  EXPECT_TRUE(has(rep.diagnostics,
+                  "f.toml:15:transports.ngx.recovery: not on kind \"link\": transport 'ngx' is recovered by the "
+                  "connection it names"))
+      << testing::PrintToString(test::formatted(rep.diagnostics));
+}
+
 TEST(ConfigLoader, IntegerAddressIsAccepted) {
   const std::string text = std::string(test::kPreamble) + "[[valves]]\nname = \"A\"\nactuator = \"act\"\naddress = 7\n";
   auto r = load_system_config_from_string(text, "f.toml");

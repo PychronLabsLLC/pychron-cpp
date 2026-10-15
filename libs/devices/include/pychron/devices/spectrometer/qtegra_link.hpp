@@ -90,6 +90,7 @@ using QtegraLinkHandle = LinkHandle<QtegraLink>;
 // The link a driver should use: its own on a real transport, registered under
 // `name`, or the registered one when `transport` is a LinkTransport.
 Result<QtegraLinkHandle> make_qtegra_link(Transport& transport, const std::string& name,
-                                          codec::qtegra::Terminator terminator, const Clock& clock);
+                                          codec::qtegra::Terminator terminator, const Clock& clock,
+                                          LinkPolicy policy = {});
 
 }  // namespace pychron::spectrometer

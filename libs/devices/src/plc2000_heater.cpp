@@ -41,7 +41,7 @@ DriverSchema Plc2000Heater::schema() {
 Result<std::unique_ptr<Plc2000Heater>> Plc2000Heater::create(const DriverArgs& args) {
   auto options = parse_options(args.options);
   if (!options) return fail(std::move(options).error());
-  return std::make_unique<Plc2000Heater>(args.name, args.transport, std::move(*options), args.clock);
+  return std::make_unique<Plc2000Heater>(args.name, args.transport, *options, args.clock, args.link);
 }
 
 Result<Plc2000HeaterOptions> Plc2000Heater::parse_options(const toml::table& o) {

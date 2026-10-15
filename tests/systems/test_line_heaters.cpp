@@ -23,6 +23,10 @@ scan_interval_ms = 1000
 [transports.plc]
 kind = "sim"
 timeout_ms = 50
+# Taken offline below: a read that failed is not tried again for the call
+# window, whose backoff waits on a clock nothing advances here.
+[transports.plc.recovery]
+reconnect = false
 [transports.plc2]
 kind = "sim"
 timeout_ms = 50

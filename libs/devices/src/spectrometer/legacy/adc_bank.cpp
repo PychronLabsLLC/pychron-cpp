@@ -46,7 +46,7 @@ Result<std::unique_ptr<AdcBank>> AdcBank::create(const DriverArgs& args) {
   if (!std::isfinite(scale) || scale == 0.0) return fail(ErrorKind::Config, "scale must be finite and non-zero");
 
   Options options{*hz, static_cast<std::uint8_t>(unit), static_cast<std::uint16_t>(start), scale};
-  return std::make_unique<AdcBank>(args.name, args.transport, std::move(*channels), options, args.clock);
+  return std::make_unique<AdcBank>(args.name, args.transport, std::move(*channels), options, args.clock, args.link);
 }
 
 Result<std::vector<double>> AdcBank::sample() {

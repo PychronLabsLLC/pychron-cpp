@@ -131,6 +131,7 @@ Result<std::unique_ptr<ChromiumLaser>> ChromiumLaser::create(const DriverArgs& a
   o.use_enable = args.options["use_enable"].value_or(true);
   DeviceOptions device;
   device.clock = args.clock;
+  device.link = args.link;
   return std::make_unique<ChromiumLaser>(args.name, args.transport, o, device);
 }
 

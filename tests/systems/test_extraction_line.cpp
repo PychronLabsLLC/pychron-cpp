@@ -141,6 +141,48 @@ TEST(ExtractionLine, BuildsManagersFromConfig) {
   EXPECT_FALSE(l.running());
 }
 
+TEST(ExtractionLine, EveryDriverOnATransportIsGivenItsOneLink) {
+  const std::string toml = std::string(kSystem) + "\n[drivers.relay2]\nkind = \"proxr_relay\"\ntransport = \"bus\"\n";
+  ManualClock clock;
+  auto line = ExtractionLine::create(system_config(toml.c_str()), canvas_model(), manual(clock));
+  ASSERT_TRUE(line) << line.error().what;
+  auto& l = **line;
+  Link* bus = l.link("bus");
+  Link* gnet = l.link("gnet");
+  ASSERT_NE(bus, nullptr);
+  ASSERT_NE(gnet, nullptr);
+  EXPECT_NE(bus, gnet);
+  EXPECT_EQ(l.device("relay")->link(), bus);
+  EXPECT_EQ(l.device("relay2")->link(), bus);
+  EXPECT_EQ(l.device("ig")->link(), gnet);
+  EXPECT_EQ(l.link("nope"), nullptr);
+  // No [transports.<name>.recovery]: the default policy.
+  EXPECT_EQ(bus->policy(), LinkPolicy{});
+}
+
+TEST(ExtractionLine, ATransportsLinkTakesItsRecoveryTable) {
+  const std::string toml = std::string(kSystem) +
+                           "\n[transports.gnet.recovery]\nreconnect = false\noptional = true\ncall_window_s = 45\n";
+  ManualClock clock;
+  auto line = ExtractionLine::create(system_config(toml.c_str()), canvas_model(), manual(clock));
+  ASSERT_TRUE(line) << line.error().what;
+  const LinkPolicy& gnet = (*line)->link("gnet")->policy();
+  EXPECT_FALSE(gnet.reconnect);
+  EXPECT_TRUE(gnet.optional);
+  EXPECT_EQ(gnet.call_window, std::chrono::seconds(45));
+  EXPECT_EQ((*line)->link("bus")->policy(), LinkPolicy{});
+}
+
+TEST(ExtractionLine, ALinkTransportHasNoLinkOfItsOwn) {
+  // Its drivers are recovered by the connection it names, where that is owned.
+  const std::string toml = std::string(kSystem) + "\n[transports.shared]\nkind = \"link\"\nlink = \"ngx\"\n";
+  ManualClock clock;
+  auto line = ExtractionLine::create(system_config(toml.c_str()), canvas_model(), manual(clock));
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_NE((*line)->transport("shared"), nullptr);
+  EXPECT_EQ((*line)->link("shared"), nullptr);
+}
+
 TEST(ExtractionLine, CanvasNamingUnknownValveIsConfigError) {
   ManualClock clock;
   std::string bad = std::string(kCanvas) + "\n[[valve]]\nname = \"Z\"\npos = [0, 0]\n";
@@ -316,6 +358,39 @@ TEST(ExtractionLine, LoadsExampleFiles) {
   ASSERT_TRUE(line) << line.error().what;
   EXPECT_TRUE((*line)->switches().contains("pump_power"));
   EXPECT_NE((*line)->canvas(), nullptr);
+}
+
+// The example line shows [transports.<name>.recovery] commented out, each key
+// at its default: uncommented, it is the policy a transport has without it.
+TEST(ExtractionLine, TheExampleRecoveryTableIsTheDefaults) {
+  const std::filesystem::path file = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "extraction_line.toml";
+  std::ifstream in(file);
+  ASSERT_TRUE(in) << file;
+  std::string text;
+  std::string table;
+  std::set<std::string> keys;
+  bool inside = false;
+  for (std::string line; std::getline(in, line);) {
+    if (line.starts_with("# [transports.") && line.find(".recovery]") != std::string::npos) {
+      inside = true;
+      table = line.substr(3, line.size() - 4);
+      line = line.substr(2);
+    } else if (inside && line.starts_with("# ") && line.find(" = ") != std::string::npos) {
+      line = line.substr(2);
+      keys.insert(line.substr(0, line.find(' ')));
+    } else {
+      inside = false;
+    }
+    text += line + '\n';
+  }
+  ASSERT_FALSE(table.empty()) << "no commented-out recovery table in " << file;
+  EXPECT_EQ(keys, (std::set<std::string>{"reconnect", "optional", "call_window_s"}));
+  auto cfg = config::load_system_config_from_string(text, file.string());
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  const std::string transport = table.substr(table.find('.') + 1, table.rfind('.') - table.find('.') - 1);
+  const config::RecoveryConfig& shown = cfg->transports.at(transport).recovery;
+  EXPECT_EQ(shown.path, table);  // the table was read, not left out
+  EXPECT_EQ(link_policy(shown), LinkPolicy{});
 }
 
 TEST(ExtractionLine, LoadReportsMissingFile) {

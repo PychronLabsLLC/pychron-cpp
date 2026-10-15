@@ -47,7 +47,7 @@ Result<std::unique_ptr<VarianXgs600>> VarianXgs600::create(const DriverArgs& arg
     }
   }
   if (labels.empty()) return fail(ErrorKind::Config, "labels: at least one sensor label is required");
-  return std::make_unique<VarianXgs600>(args.name, args.transport, address, std::move(labels), args.clock);
+  return std::make_unique<VarianXgs600>(args.name, args.transport, address, std::move(labels), args.clock, args.link);
 }
 
 std::vector<int> VarianXgs600::pressure_channels() const {

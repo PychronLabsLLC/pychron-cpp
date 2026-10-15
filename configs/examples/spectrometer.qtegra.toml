@@ -32,6 +32,14 @@ port = 1069
 timeout_ms = 2000
 # trace = true  # record the wire to traces/qtegra.trace
 
+# How the link recovers when it drops (as in extraction_line.toml), shown with
+# its defaults: reconnect, optional (a run may start while it is down),
+# call_window_s (how long one call keeps trying, 0 to 3600).
+# [transports.qtegra.recovery]
+# reconnect = true
+# optional = false
+# call_window_s = 20
+
 [drivers.qtegra]
 kind = "thermo_qtegra"
 transport = "qtegra"

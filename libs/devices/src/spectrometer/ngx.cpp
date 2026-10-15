@@ -161,6 +161,7 @@ Result<std::unique_ptr<NgxSpectrometer>> NgxSpectrometer::create(const DriverArg
   auto session = session_options(o);
   if (!session) return fail(std::move(session).error());
   options.session = std::move(*session);
+  if (args.link != nullptr) options.session.policy = args.link->policy();  // the line file's recovery table
   options.link = o["link"].value_or(args.name);
   auto channels = legacy::parse_channels(args);
   if (!channels) return fail(std::move(channels).error());
@@ -508,6 +509,7 @@ Result<std::unique_ptr<NgxValves>> NgxValves::create(const DriverArgs& args) {
   auto session = session_options(o);
   if (!session) return fail(std::move(session).error());
   options.session = std::move(*session);
+  if (args.link != nullptr) options.session.policy = args.link->policy();  // the line file's recovery table
   options.link = o["link"].value_or(args.name);
   options.status_retries = static_cast<int>(o["status_retries"].value_or(std::int64_t{options.status_retries}));
   if (options.status_retries < 0 || options.status_retries > 10)

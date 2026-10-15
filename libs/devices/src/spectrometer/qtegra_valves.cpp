@@ -34,7 +34,7 @@ Result<std::unique_ptr<QtegraValves>> QtegraValves::create(const DriverArgs& arg
   if (!terminator) return fail(std::move(terminator).error());
   static const SteadyClock steady;
   auto link = make_qtegra_link(args.transport, o["link"].value_or(args.name), *terminator,
-                               args.clock != nullptr ? *args.clock : steady);
+                               args.clock != nullptr ? *args.clock : steady, policy_of(args));
   if (!link) return fail(std::move(link).error());
   DeviceOptions options;
   options.clock = args.clock;

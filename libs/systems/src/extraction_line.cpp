@@ -226,6 +226,13 @@ Result<void> ExtractionLine::build() {
     }
     auto transport = make_transport(tc, context);
     if (!transport) return fail(transport.error());
+    // A transport of kind "link" borrows a connection that is recovered
+    // where it is owned: a second recovery on it would reopen what it does
+    // not own.
+    if (tc.kind != config::TransportKind::Link) {
+      links_.emplace_back(name,
+                          std::make_unique<Link>(**transport, *clock_, link_policy(tc.recovery), &bus_));
+    }
     transports_.emplace_back(name, std::move(*transport));
   }
   // Every hook is made: a line, or a gauge's volume, the simulator refused.
@@ -236,7 +243,7 @@ Result<void> ExtractionLine::build() {
   for (const auto& [name, dc] : config_.drivers) {
     Transport* t = transport(dc.transport);
     if (!t) return fail(ErrorKind::Config, "unknown transport '" + dc.transport + "'", name);
-    auto device = DriverRegistry::global().create(dc, *t, clock_);
+    auto device = DriverRegistry::global().create(dc, *t, clock_, link(dc.transport));
     if (!device) return fail(device.error());
     devices_.emplace_back(name, std::move(*device));
   }
@@ -536,6 +543,13 @@ Snapshot ExtractionLine::snapshot() const {
 Transport* ExtractionLine::transport(std::string_view name) const {
   for (const auto& [n, t] : transports_) {
     if (n == name) return t.get();
+  }
+  return nullptr;
+}
+
+Link* ExtractionLine::link(std::string_view transport) const {
+  for (const auto& [n, l] : links_) {
+    if (n == transport) return l.get();
   }
   return nullptr;
 }

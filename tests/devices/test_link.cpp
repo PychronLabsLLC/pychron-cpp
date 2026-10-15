@@ -110,6 +110,23 @@ struct Link : testing::VirtualTimeTest {
   }
 };
 
+TEST(LinkPolicyConfig, NoRecoveryTableIsTheDefaultPolicy) {
+  EXPECT_EQ(link_policy(config::RecoveryConfig{}), LinkPolicy{});
+}
+
+TEST(LinkPolicyConfig, ARecoveryTableSetsItsThreeKeysAndKeepsTheBackoff) {
+  config::RecoveryConfig recovery;
+  recovery.reconnect = false;
+  recovery.optional = true;
+  recovery.call_window_s = 2.5;
+  const LinkPolicy policy = link_policy(recovery);
+  EXPECT_FALSE(policy.reconnect);
+  EXPECT_TRUE(policy.optional);
+  EXPECT_EQ(policy.call_window, std::chrono::milliseconds(2500));
+  EXPECT_EQ(policy.backoff_min, LinkPolicy{}.backoff_min);
+  EXPECT_EQ(policy.backoff_max, LinkPolicy{}.backoff_max);
+}
+
 TEST_F(Link, ASafeCallIsRepeatedUntilTheLinkReturns) {
   auto t = sim();
   ::pychron::Link link(*t, clock);

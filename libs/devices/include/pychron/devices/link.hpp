@@ -9,6 +9,7 @@
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/clock_mutex.hpp"
+#include "pychron/core/config/recovery_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -30,7 +31,13 @@ struct LinkPolicy {
   Duration backoff_min = std::chrono::seconds(1);
   Duration backoff_max = std::chrono::seconds(30);
   Duration call_window = std::chrono::seconds(20);  // how long one call keeps trying
+
+  friend bool operator==(const LinkPolicy&, const LinkPolicy&) = default;
 };
+
+// The policy a `[transports.<name>.recovery]` table gives; the backoff is not
+// configured per transport and keeps LinkPolicy's. No table: LinkPolicy{}.
+[[nodiscard]] LinkPolicy link_policy(const config::RecoveryConfig& recovery);
 
 // The window of a call that must get through while the line is in a state
 // that is not safe to leave it in: a stop after a fire whose outcome is

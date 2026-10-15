@@ -18,6 +18,7 @@ DriverSchema AgilentSwitch::schema() {
 Result<std::unique_ptr<AgilentSwitch>> AgilentSwitch::create(const DriverArgs& args) {
   DeviceOptions options;
   options.clock = args.clock;
+  options.link = args.link;
   const bool invert = args.options["invert"].value_or(false);
   return std::make_unique<AgilentSwitch>(args.name, args.transport, invert, options);
 }

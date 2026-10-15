@@ -52,11 +52,22 @@ struct DriverArgs {
   Transport& transport;
   const toml::table& options;
   const Clock* clock = nullptr;
+  // The transport's recovery, shared by every driver on it; the driver hands
+  // it to Device (DeviceOptions::link). Null: no reconnect. A driver that
+  // keeps its own connection (Qtegra, NGX) takes only its policy.
+  Link* link = nullptr;
 };
+
+// The policy of the transport's link, for a driver that keeps its own
+// connection (Qtegra, NGX); LinkPolicy{} without one.
+[[nodiscard]] inline LinkPolicy policy_of(const DriverArgs& args) {
+  return args.link != nullptr ? args.link->policy() : LinkPolicy{};
+}
 
 struct DriverContext {
   std::string name;              // device name; the kind if empty
   const Clock* clock = nullptr;  // passed to the driver for health stamps
+  Link* link = nullptr;          // DriverArgs::link
 };
 
 using DriverFactory = std::function<Result<std::unique_ptr<Device>>(const DriverArgs&)>;
@@ -100,7 +111,7 @@ class DriverRegistry {
   Result<std::unique_ptr<Device>> create(std::string_view kind, Transport& transport,
                                          const toml::table& options, DriverContext context = {}) const;
   Result<std::unique_ptr<Device>> create(const config::DriverConfig& config, Transport& transport,
-                                         const Clock* clock = nullptr) const;
+                                         const Clock* clock = nullptr, Link* link = nullptr) const;
 
  private:
   struct Entry {

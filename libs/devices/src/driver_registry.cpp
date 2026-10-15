@@ -162,15 +162,15 @@ Result<std::unique_ptr<Device>> DriverRegistry::create(std::string_view kind, Tr
   if (auto ok = validate(kind, options); !ok) return attributed(ok.error());
 
   const Entry& entry = entries_.find(kind)->second;
-  auto made = entry.factory(DriverArgs{name, transport, options, context.clock});
+  auto made = entry.factory(DriverArgs{name, transport, options, context.clock, context.link});
   if (!made) return attributed(std::move(made).error());
   if (!*made) return attributed(Error{ErrorKind::Config, "driver factory returned no device", {}});
   return made;
 }
 
 Result<std::unique_ptr<Device>> DriverRegistry::create(const config::DriverConfig& config, Transport& transport,
-                                                       const Clock* clock) const {
-  return create(config.kind, transport, config.options, DriverContext{config.name, clock});
+                                                       const Clock* clock, Link* link) const {
+  return create(config.kind, transport, config.options, DriverContext{config.name, clock, link});
 }
 
 std::string describe(const DriverSchema& schema) {
