@@ -201,7 +201,7 @@ class PeakCenterView : public QWidget {
 
   State is plain data: a `std::vector<Try>` for the peak center in hand (each `Try` the event's fields and its `SweepPoint`s), the done result when there is one, and a `std::deque<jobs::PeakCenterResult>` of the newest 20. One private `redraw()` builds every graph from that state, so that live events and `on_done` alone give the same picture.
 
-- [ ] **Step 1: failing tests.** A helper `sweep_point(x, {{"H1", a}, {"AX", b}})` and a `try_started(index, n, additional)`:
+- [x] **Step 1: failing tests.** A helper `sweep_point(x, {{"H1", a}, {"AX", b}})` and a `try_started(index, n, additional)`:
   - `pointsFedOneByOneGrowTheReferenceSeries`: three points; `series()[0].name == "*H1"`, three x and y, y equal to raw.
   - `anAdditionalDetectorIsScaledOntoTheReference`: H1 `{0, 100, 0}`, AX `{1, 3, 1}`: the AX series' y is `{0, 100, 0}`, its raw `{1, 3, 1}`, its name `AX`, its pen colour the one given for `AX`.
   - `aFlatAdditionalDetectorIsDrawnRaw`.
@@ -224,9 +224,9 @@ class PeakCenterView : public QWidget {
   - `theReferenceIsHeavierAndInTheLegend`: its graph's pen is wider than an additional detector's; the legend has `*H1` and each additional detector, and no faint try.
   - `markersSitOnTheReferencesValues`: `marker_y()` is the `PeakShape`'s low, centre, high and maximum y.
   - `aTryLeftWithoutAnOutcomeSaysSo`: `on_try_started`, two points, then `abandon()`: the points stay, the title is `Ar40 on H1, try 1 of 2: not finished`, nothing is added to the kept results.
-- [ ] **Step 2: implement.** Plot set up as `EvolutionsView`'s is (`evolutions_view.cpp:47`, `:80-85`: minimum height 200, `theme().plot_bg`, `phFastPolylines`), with the legend on, upper left. Axis labels: x the magnet value in native units (take the wording the spectrometer window uses for the same quantity), y `Intensity`. Reference pen width 2.5, additional 1.5, faint 1.0 with alpha 70. Markers are a graph with no line and a scatter style (low, centre and high one colour, maximum another), their y the reference's value from `PeakShape`. Rules are `QCPItemStraightLine` or `QCPItemLine` across the axis rect: clear them with `plot_->clearItems()` in `redraw()`. A detector with no colour given takes `StripChartModel::palette_color(index)`, as `EvolutionsView` does. Tooltip: nearest point of the current try under the cursor, giving detector, x and raw intensity; if `EvolutionsView` has no tooltip to follow, a `QCPItemText` or `QToolTip` from `mouseMove` is enough, and its text comes from a function the test can call (`tooltip_at(series, index)`).
-- [ ] **Step 3:** build `pychron_ui_test_peak_center_view`; `ctest --preset dev-ui -R '^ui\.test_peak_center_view$'`; `python3 tools/quality_check.py`.
-- [ ] **Step 4:** commit `feat(ui): a view of a peak center's sweep, scaled, marked and titled`.
+- [x] **Step 2: implement.** Plot set up as `EvolutionsView`'s is (`evolutions_view.cpp:47`, `:80-85`: minimum height 200, `theme().plot_bg`, `phFastPolylines`), with the legend on, upper left. Axis labels: x the magnet value in native units (take the wording the spectrometer window uses for the same quantity), y `Intensity`. Reference pen width 2.5, additional 1.5, faint 1.0 with alpha 70. Markers are a graph with no line and a scatter style (low, centre and high one colour, maximum another), their y the reference's value from `PeakShape`. Rules are `QCPItemStraightLine` or `QCPItemLine` across the axis rect: clear them with `plot_->clearItems()` in `redraw()`. A detector with no colour given takes `StripChartModel::palette_color(index)`, as `EvolutionsView` does. Tooltip: nearest point of the current try under the cursor, giving detector, x and raw intensity; if `EvolutionsView` has no tooltip to follow, a `QCPItemText` or `QToolTip` from `mouseMove` is enough, and its text comes from a function the test can call (`tooltip_at(series, index)`).
+- [x] **Step 3:** build `pychron_ui_test_peak_center_view`; `ctest --preset dev-ui -R '^ui\.test_peak_center_view$'`; `python3 tools/quality_check.py`.
+- [x] **Step 4:** commit `feat(ui): a view of a peak center's sweep, scaled, marked and titled`.
 
 ### Task 5: The tab in the Evolutions dock
 
