@@ -276,6 +276,17 @@ does not hold or continue. Steps after failed one still run.
 Safe state is idempotent by construction (absolute targets): applying twice
 is allowed and happens.
 
+As built (Task 11): `Run::make_safe()` (`SafeStateResult::failed_steps`).
+Run sees ports, not `Link`: each step repeated by run on its clock (backoff
+1 s doubling to 30 s) until `kSafeStateWindow` (10 min, `run.hpp`; from
+`executor.toml` after Task 15); each port call has its link's own window
+beneath. Definite error: step fails at once. Warning `Alarm` at 20 s,
+critical when step gives up, source `safe_state`. Detectors unprotected:
+union of `protect` of plan's hops. Runs after save, before run is `Failed`;
+also after a failed post-measurement script (run still `Success`).
+`RunResult::unsafe`, `unsafe_steps`. Queue end on `unsafe` and notification:
+Task 17.
+
 ### 4.8 Services
 
 Rule: no run waits on network service. Each has local durable buffer.

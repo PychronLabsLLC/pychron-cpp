@@ -262,15 +262,15 @@ struct SafeStateResult { std::vector<std::string> failed_steps; };  // empty: sa
 [[nodiscard]] SafeStateResult Run::make_safe();  // idempotent; spec 4.7
 ```
 
-- [ ] Failing tests (`VirtualTimeTest`):
+- [x] Failing tests (`VirtualTimeTest`):
   - `SafeState.StepsRunInOrder`: extraction device end and disable, inlet valve of the plan closed, detectors' protection restored.
   - `SafeState.EachStepKeepsTryingForTheCriticalWindow`: the valve's link down for 5 min: the step succeeds at 5 min; an `Alarm` is published at 20 s.
   - `SafeState.AStepThatFailsDoesNotStopTheLaterOnes`: link down for good: after 10 min the step is in `failed_steps`, a critical `Alarm` is on the bus, the next step ran.
   - `SafeState.ApplyingItTwiceChangesNothing`.
   - `Run.AFailedRunPastNoReturnIsMadeSafe`; `Run.AFailedPrepareIsNot`; `Run.APostMeasureFailureStillSavesAndIsMadeSafe` (spec 4.4, PostMeasure row).
-- [ ] Implement with `Link::call(op, Repeat::Safe, critical_window)` (default 10 min; from `executor.toml` after Task 15, a constant until then). `RunResult` gains `unsafe` (true when `failed_steps` is not empty) for Task 17.
-- [ ] TSan run of `SafeState.*`.
-- [ ] Commit: `feat(experiment): a failed run leaves the line in a safe state`.
+- [x] Implement with `Link::call(op, Repeat::Safe, critical_window)` (default 10 min; from `executor.toml` after Task 15, a constant until then). `RunResult` gains `unsafe` (true when `failed_steps` is not empty) for Task 17. Built: `Run` reaches the line through its ports (`IValvePort`, `ISpectrometerPort`, the extraction device), not a `Link`, so `Run::keep_trying` repeats each step on the run's clock (backoff 1 s doubling to 30 s) until `kSafeStateWindow` (10 min, `run.hpp`); each port call still has its link's own window beneath. A definite error gives up at once (`SafeState.ADefiniteErrorIsNotTriedAgain`). `RunResult::unsafe_steps` names the failed steps. Also `RunTest.ASuccessfulRunIsNotMadeSafeAgain`. The detectors unprotected are those the plan's hops protect.
+- [x] TSan run of `SafeState.*`.
+- [x] Commit: `feat(experiment): a failed run leaves the line in a safe state`.
 
 ### Task 12: The lab's own `safe_state` script
 

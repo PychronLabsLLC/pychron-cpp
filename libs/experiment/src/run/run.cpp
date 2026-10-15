@@ -8,9 +8,11 @@
 #include <ctime>
 #include <memory>
 #include <random>
+#include <set>
 #include <string_view>
 #include <thread>
 
+#include "pychron/devices/link.hpp"
 #include "pychron/experiment/measurement/results.hpp"
 #include "pychron/experiment/record/builder.hpp"
 
@@ -116,12 +118,14 @@ RunResult Run::execute(RunControl& control) {
   };
   // Past the point of no return a failed run keeps what it measured (spec
   // 4.5): saved before it is Failed, so before the executor says it finished.
+  // Then the line is made safe (spec 4.7), before the run is over.
   auto fail_run = [&](const Error& error) {
     if (result_.past_no_return) {
       if (auto sv = save(error); !sv) {
         result_.save_error = true;
         note("the failed run's record was not saved: " + sv.error().what);
       }
+      (void)make_safe();
     }
     fail_with(RunEvent::Fail, error);
   };
@@ -165,13 +169,15 @@ RunResult Run::execute(RunControl& control) {
           if (sm_.state() == RunState::Measuring) advance(RunEvent::Truncate);
         }
         advance(RunEvent::Measured, std::string(measurement::to_string(outcome)));
-        if (auto pm = post_measure(control); !pm)
-          note("post-measurement failed: " + pm.error().what);  // still saves
+        const auto pm = post_measure(control);
+        if (!pm) note("post-measurement failed: " + pm.error().what);  // still saves, then made safe
         if (stopped() == RunEvent::Abort) {
           advance(RunEvent::Abort, "during post-measurement");
         } else {
           advance(RunEvent::PostMeasured);
-          if (auto sv = save(); !sv) {
+          auto sv = save();
+          if (!pm) (void)make_safe();  // spec 4.4, PostMeasure row
+          if (!sv) {
             result_.save_error = true;
             fail_with(RunEvent::Fail, sv.error());
           } else {
@@ -344,6 +350,66 @@ void Run::end_extraction() {
   }
   if (auto r = device_->end_extract(); !r) note("end_extract: " + r.error().what);
   if (auto r = device_->disable(); !r) note("disable: " + r.error().what);
+}
+
+SafeStateResult Run::make_safe() {
+  SafeStateResult out;
+  const auto step = [&](const std::string& name, const std::function<Result<void>()>& op) {
+    if (auto r = keep_trying(name, op); !r) {
+      out.failed_steps.push_back(name);
+      note("safe state: " + name + " failed: " + r.error().what);
+    }
+  };
+  if (device_ != nullptr) {
+    step("end extraction", [&] { return device_->end_extract(); });
+    step("disable " + device_->device_name(), [&] { return device_->disable(); });
+  }
+  if (plan_) {
+    const auto& p = plan_->plan;
+    if (s_.valves != nullptr && !p.equilibration.inlet.empty())
+      step("close inlet " + p.equilibration.inlet, [&] { return s_.valves->close(p.equilibration.inlet); });
+    if (s_.spectrometer != nullptr) {
+      std::set<std::string> protected_detectors;
+      for (const auto& hop : p.main.hops) protected_detectors.insert(hop.protect.begin(), hop.protect.end());
+      for (const auto& d : protected_detectors)
+        step("unprotect " + d, [&] { return s_.spectrometer->protect(d, false); });
+    }
+  }
+  if (!out.failed_steps.empty()) {
+    result_.unsafe = true;
+    result_.unsafe_steps.insert(result_.unsafe_steps.end(), out.failed_steps.begin(), out.failed_steps.end());
+  }
+  return out;
+}
+
+Result<void> Run::keep_trying(const std::string& step, const std::function<Result<void>()>& op) {
+  const Clock& clock = *s_.clock;
+  const auto start = clock.now();
+  pychron::Duration backoff = std::chrono::seconds(1);
+  bool warned = false;
+  for (;;) {
+    auto r = op();
+    if (r) return r;
+    const auto elapsed = clock.now() - start;
+    if (!is_transient(r.error().kind) || elapsed >= kSafeStateWindow) {
+      alarm(AlarmSeverity::Critical, "safe state: " + step + " failed: " + r.error().what);
+      return r;
+    }
+    if (!warned && elapsed >= kSafeStateAlarmAfter) {
+      warned = true;
+      alarm(AlarmSeverity::Warning, "safe state: " + step + " still failing: " + r.error().what);
+    }
+    // Wake for the warning and for the window's end, whichever backoff misses.
+    pychron::Duration wait = std::min<pychron::Duration>(backoff, kSafeStateWindow - elapsed);
+    if (!warned) wait = std::min<pychron::Duration>(wait, kSafeStateAlarmAfter - elapsed);
+    clock.sleep_for(wait);
+    backoff = std::min<pychron::Duration>(backoff * 2, std::chrono::seconds(30));
+  }
+}
+
+void Run::alarm(AlarmSeverity severity, std::string message) {
+  note(message);
+  if (s_.bus != nullptr) s_.bus->publish(Alarm{"safe_state", severity, std::move(message), s_.clock->now()});
 }
 
 Result<void> Run::extract(RunControl& control) {

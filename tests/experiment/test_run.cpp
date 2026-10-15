@@ -7,7 +7,9 @@
 #include <iterator>
 
 #include "pychron/experiment/record/serialize.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "run_fakes.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -763,4 +765,222 @@ TEST_F(RunTest, ARunWithoutAnExtractionScriptThatFailsSavesNothing) {
   EXPECT_FALSE(r.past_no_return);
   EXPECT_FALSE(r.record);
   EXPECT_TRUE(saved_records(lab_.dir(), "12345").empty());
+}
+
+// ---- safe state (executor hardening, spec 4.7) -------------------------------
+
+TEST_F(RunTest, AFailedRunPastNoReturnIsMadeSafe) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  auto r = go(unknown_run("12345"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_FALSE(r.unsafe);
+  EXPECT_TRUE(r.unsafe_steps.empty());
+  ASSERT_FALSE(valves_.log.empty());
+  EXPECT_EQ(valves_.log.back(), "close B");  // the plan's inlet
+  EXPECT_GE(device_.end_extracts.load(), 2);  // at the end of extraction, and again
+}
+
+TEST_F(RunTest, AFailedPrepareIsNot) {
+  auto r = go(unknown_run("12345", "no_such_plan"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_TRUE(valves_.log.empty());
+  EXPECT_EQ(device_.end_extracts.load(), 0);
+}
+
+// Spec 4.4, PostMeasure row: as before, a note and the run still saves; and
+// the line is made safe.
+TEST_F(RunTest, APostMeasureFailureStillSavesAndIsMadeSafe) {
+  host_.bodies["post_meas"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "pump valve link down");
+  };
+  auto r = go(unknown_run("12345"));
+  EXPECT_EQ(r.state, RunState::Success);
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(saved_records(lab_.dir(), "12345").size(), 1u);
+  EXPECT_FALSE(r.unsafe);
+  ASSERT_FALSE(valves_.log.empty());
+  EXPECT_EQ(valves_.log.back(), "close B");
+}
+
+TEST_F(RunTest, ASuccessfulRunIsNotMadeSafeAgain) {
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success);
+  EXPECT_EQ(device_.end_extracts.load(), 1);
+}
+
+namespace {
+
+const TimePoint kSafeStart = TimePoint{} + std::chrono::hours(1);
+
+VirtualClock::Options safe_clock() {
+  VirtualClock::Options o;
+  o.start = kSafeStart;
+  return o;
+}
+
+}  // namespace
+
+class SafeState : public pychron::testing::VirtualTimeTest {
+ protected:
+  SafeState() {
+    device_.journal = &journal_;
+    valves_.journal = &journal_;
+    spec_.journal = &journal_;
+    host_.bodies["extract"] = [this](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+      failed_at_ = clock_.now();
+      return fail(ErrorKind::Io, "laser link down");
+    };
+    alarms_sub_ = bus_.subscribe<Alarm>([this](const Alarm& a) {
+      std::lock_guard lock(mutex_);
+      alarms_.push_back(a);
+    });
+  }
+
+  RunServices services() {
+    RunServices s;
+    s.clock = &clock_;
+    s.bus = &bus_;
+    s.scripts = &host_;
+    s.resolver = &resolver_;
+    s.line.device = &device_;
+    s.spectrometer = &spec_;
+    s.valves = &valves_;
+    s.spectrometer_info = [] { return SpectrometerInfo{"hash123", "argon-2026", 1.0}; };
+    s.engine.sleep = [this](pychron::Duration d) { clock_.sleep_for(d); };
+    s.plans = &plans_;
+    s.aliquots = &lab_.aliquots;
+    s.persister = &lab_.files;
+    s.save = &lab_.save;
+    s.instrument.mass_spectrometer = "argus";
+    return s;
+  }
+
+  std::vector<Alarm> alarms() {
+    std::lock_guard lock(mutex_);
+    return alarms_;
+  }
+
+  // The steps the run took after its own end of extraction.
+  std::vector<std::string> safe_steps() {
+    auto lines = journal_.lines();
+    // extract() ends the device once itself: end_extract, disable.
+    if (lines.size() >= 2) lines.erase(lines.begin(), lines.begin() + 2);
+    return lines;
+  }
+
+  // The inlet B cannot be closed until `until` (Io), and for good when not given.
+  void inlet_down(std::optional<TimePoint> until) {
+    valves_.fault = [this, until](const std::string& v, bool open) -> Result<void> {
+      if (v != "B" || open) return {};
+      if (!first_close_) first_close_ = clock_.now();
+      if (until && clock_.now() >= *until) {
+        closed_at_ = clock_.now();
+        return {};
+      }
+      return fail(ErrorKind::Io, "valve bus down");
+    };
+  }
+
+  VirtualClock clock_{safe_clock()};
+  Clock::Participant me_{clock_, "test"};
+  SignalBus bus_;
+  Journal journal_;
+  FakeScriptHost host_;
+  AnyScriptResolver resolver_;
+  FakeDevice device_;
+  FakeSpectrometer spec_{static_cast<const Clock&>(clock_)};
+  FakeValves valves_;
+  plan::PlanLibrary plans_ = test_plans();
+  Lab lab_;
+  QueueSpec queue_ = [] {
+    QueueSpec q;
+    q.name = "q1";
+    q.mass_spectrometer = "argus";
+    return q;
+  }();
+  std::mutex mutex_;
+  std::vector<Alarm> alarms_;
+  SignalBus::Subscription alarms_sub_;
+  std::optional<TimePoint> failed_at_, first_close_, closed_at_;
+};
+
+TEST_F(SafeState, StepsRunInOrder) {
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_FALSE(r.unsafe);
+  EXPECT_EQ(safe_steps(), (std::vector<std::string>{"end_extract", "disable", "close B", "unprotect CDD"}));
+  EXPECT_TRUE(alarms().empty());
+  EXPECT_EQ(clock_.now(), *failed_at_);  // nothing had to wait
+}
+
+TEST_F(SafeState, EachStepKeepsTryingForTheCriticalWindow) {
+  inlet_down(kSafeStart + 5min);
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_FALSE(r.unsafe);
+  ASSERT_TRUE(first_close_ && closed_at_);
+  EXPECT_GE(*closed_at_ - kSafeStart, 5min);
+  EXPECT_LE(*closed_at_ - kSafeStart, 5min + 30s);  // within one backoff of the link's return
+  const auto said = alarms();
+  ASSERT_EQ(said.size(), 1u);
+  EXPECT_EQ(said[0].severity, AlarmSeverity::Warning);
+  EXPECT_EQ(said[0].ts - *first_close_, 20s);
+  EXPECT_NE(said[0].message.find("close inlet B"), std::string::npos) << said[0].message;
+  EXPECT_EQ(safe_steps().back(), "unprotect CDD");
+}
+
+TEST_F(SafeState, AStepThatFailsDoesNotStopTheLaterOnes) {
+  inlet_down(std::nullopt);
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_TRUE(r.unsafe);
+  EXPECT_EQ(r.unsafe_steps, std::vector<std::string>{"close inlet B"});
+  ASSERT_TRUE(first_close_);
+  const auto said = alarms();
+  ASSERT_EQ(said.size(), 2u);
+  EXPECT_EQ(said[0].severity, AlarmSeverity::Warning);
+  EXPECT_EQ(said[1].severity, AlarmSeverity::Critical);
+  EXPECT_EQ(said[1].ts - *first_close_, 10min);
+  EXPECT_EQ(safe_steps(), (std::vector<std::string>{"end_extract", "disable", "unprotect CDD"}));
+  ASSERT_TRUE(r.record);  // saved before it was made safe
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Failed);
+}
+
+TEST_F(SafeState, ADefiniteErrorIsNotTriedAgain) {
+  valves_.fault = [](const std::string& v, bool open) -> Result<void> {
+    if (v == "B" && !open) return fail(ErrorKind::Interlock, "B is interlocked");
+    return {};
+  };
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_EQ(r.unsafe_steps, std::vector<std::string>{"close inlet B"});
+  EXPECT_EQ(clock_.now(), *failed_at_);
+  ASSERT_EQ(alarms().size(), 1u);
+  EXPECT_EQ(alarms()[0].severity, AlarmSeverity::Critical);
+}
+
+TEST_F(SafeState, ApplyingItTwiceChangesNothing) {
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  ASSERT_EQ(r.state, RunState::Failed);
+  const auto once = safe_steps();
+  const auto again = run.make_safe();
+  EXPECT_TRUE(again.failed_steps.empty());
+  auto lines = journal_.lines();
+  const std::vector<std::string> second(lines.end() - 4, lines.end());
+  EXPECT_EQ(second, (std::vector<std::string>{"end_extract", "disable", "close B", "unprotect CDD"}));
+  EXPECT_EQ(once, second);
+  EXPECT_FALSE(valves_.is_open("B"));
+  EXPECT_FALSE(device_.enabled.load());
+  EXPECT_TRUE(alarms().empty());
 }

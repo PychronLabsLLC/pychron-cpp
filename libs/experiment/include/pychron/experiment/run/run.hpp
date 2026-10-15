@@ -145,12 +145,26 @@ struct RunNote {
 // (the notification, the queue table) finds its reason by this.
 inline constexpr std::string_view kNotSavedNote = "not saved to the data store, kept in the spool: ";
 
+// What the safe state (spec 4.7) could not do; empty: the line is safe.
+struct SafeStateResult {
+  std::vector<std::string> failed_steps;
+};
+
+// How long a step of the safe state keeps trying before it alarms, and how
+// long in all (the critical window, spec 4.4; from executor.toml later).
+inline constexpr pychron::Duration kSafeStateAlarmAfter = std::chrono::seconds(20);
+inline constexpr pychron::Duration kSafeStateWindow = std::chrono::minutes(10);
+
 struct RunResult {
   RunState state = RunState::Pending;
   bool truncated = false;
   // Extraction began: the sample is spent from here, and a run that fails
   // after it saves what it has, status failed (spec 4.5).
   bool past_no_return = false;
+  // A step of the safe state (spec 4.7) failed after its window: the line may
+  // not be safe. unsafe_steps names them, in the order they ran.
+  bool unsafe = false;
+  std::vector<std::string> unsafe_steps;
   // The record is not where finished runs go. Either it could not be spooled
   // or finalized (the run is then Failed), or it is in the spool and the
   // persister did not take it (the run keeps its state: a measured run is
@@ -176,6 +190,16 @@ class Run {
   // Runs every phase on the calling thread.
   RunResult execute(RunControl& control);
 
+  // Puts the line in a safe state after a failed run (spec 4.7): the
+  // extraction device ended and disabled, the plan's inlet closed, the
+  // detectors the plan protects unprotected. Each step keeps trying through
+  // transient failures (backoff on the run's clock) for kSafeStateWindow,
+  // with a warning Alarm at kSafeStateAlarmAfter and a critical one when it
+  // gives up; a definite error gives up at once. Steps after a failed one
+  // still run. Idempotent: every target is absolute. execute() calls it;
+  // calling it again is allowed.
+  [[nodiscard]] SafeStateResult make_safe();
+
   const RunSpec& spec() const noexcept { return spec_; }
   RunState state() const { return sm_.state(); }
   const std::string& id() const noexcept { return run_id_; }
@@ -195,6 +219,9 @@ class Run {
                           std::function<void()> on_pump_time_start = {});
   scripting::ScriptContext script_context() const;
   void end_extraction();
+  // `op` until it succeeds, a definite error, or kSafeStateWindow (above).
+  Result<void> keep_trying(const std::string& step, const std::function<Result<void>()>& op);
+  void alarm(AlarmSeverity severity, std::string message);
   void record_cryo();
   void advance(RunEvent e, std::string reason = {});
   void note(std::string message);  // thread-safe: scripts log from their own threads

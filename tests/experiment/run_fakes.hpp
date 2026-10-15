@@ -31,6 +31,23 @@ using namespace std::chrono_literals;
 
 inline double secs(pychron::Duration d) { return std::chrono::duration<double>(d).count(); }
 
+// What several fakes were told, in the order it happened across them.
+class Journal {
+ public:
+  void add(std::string what) {
+    std::lock_guard lock(mutex_);
+    lines_.push_back(std::move(what));
+  }
+  std::vector<std::string> lines() {
+    std::lock_guard lock(mutex_);
+    return lines_;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::vector<std::string> lines_;
+};
+
 class FakeSpectrometer final : public measurement::ISpectrometerPort {
  public:
   explicit FakeSpectrometer(ManualClock& clock) : clock_(clock), manual_(&clock) {}
@@ -44,7 +61,10 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
     ++moves;
     return {};
   }
-  Result<void> protect(const std::string&, bool) override { return {}; }
+  Result<void> protect(const std::string& detector, bool on) override {
+    if (journal != nullptr) journal->add((on ? "protect " : "unprotect ") + detector);
+    return {};
+  }
   Result<void> start_acquisition(pychron::Duration integration) override {
     std::lock_guard lock(mutex_);
     if (acquiring) ++overlapping;  // two runs measuring at once
@@ -74,6 +94,7 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   void stop_acquisition() override { acquiring = false; }
 
   std::function<void(int)> on_reading;
+  Journal* journal = nullptr;
   std::atomic<int> fail_from{0};  // reading n and every one after fail (Io); 0: none do
   std::atomic<int> readings{0}, moves{0}, overlapping{0};
   std::atomic<bool> acquiring{false};
@@ -95,12 +116,20 @@ class FakeValves final : public measurement::IValvePort {
     return state[v];
   }
   std::vector<std::string> log;
+  Journal* journal = nullptr;
+  // Asked before each command; an error it returns is the command's, and the
+  // valve is not moved.
+  std::function<Result<void>(const std::string&, bool)> fault;
 
  private:
   Result<void> set(const std::string& v, bool open) {
+    if (fault) {
+      if (auto r = fault(v, open); !r) return r;
+    }
     std::lock_guard lock(mutex_);
     state[v] = open;
     log.push_back((open ? "open " : "close ") + v);
+    if (journal != nullptr) journal->add((open ? "open " : "close ") + v);
     return {};
   }
   std::mutex mutex_;
@@ -167,6 +196,7 @@ class FakeDevice final : public extraction::IExtractionDevice {
   Result<void> disable() override {
     enabled = false;
     ++disables;
+    if (journal != nullptr) journal->add("disable");
     return {};
   }
   Result<bool> is_enabled() override { return enabled.load(); }
@@ -179,6 +209,7 @@ class FakeDevice final : public extraction::IExtractionDevice {
     if (end_extracts == 0) pattern_running_at_end = fake_patterns.running().value_or(false);
     output_ = 0;
     ++end_extracts;
+    if (journal != nullptr) journal->add("end_extract");
     return {};
   }
   Result<double> output() override { return output_.load(); }
@@ -186,6 +217,7 @@ class FakeDevice final : public extraction::IExtractionDevice {
 
   std::atomic<bool> enabled{false};
   std::atomic<int> disables{0}, end_extracts{0}, extracts{0};
+  Journal* journal = nullptr;
   bool has_stage = false;
   FakeStage fake_stage;
   FakePatterns fake_patterns;
@@ -287,10 +319,22 @@ settle_s = 1
 expose = ["main.hops[0].counts"]
 )";
 
+// "mc" with its hop protecting CDD while the magnet moves.
+inline std::string protecting_plan() {
+  std::string text = kTestPlan;
+  const std::string name = "name = \"mc\"";
+  text.replace(text.find(name), name.size(), "name = \"mcp\"");
+  const std::string hop = "counts = 10\nsettle_s = 1\n";
+  text.replace(text.find(hop), hop.size(), hop + "protect = [\"CDD\"]\n");
+  return text;
+}
+
 inline plan::PlanLibrary test_plans() {
   plan::PlanLibrary lib;
   auto t = plan::parse_plan_template(kTestPlan, "mc.toml");
   if (t) lib.add(*t);
+  auto p = plan::parse_plan_template(protecting_plan(), "mcp.toml");
+  if (p) lib.add(*p);
   return lib;
 }
 
