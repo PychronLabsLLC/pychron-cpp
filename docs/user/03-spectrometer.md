@@ -399,6 +399,27 @@ narrower. A window that misses the peak fails the centring. An unknown key in
 this file is an error, and `elctl exp validate` reports a plan whose
 `config` is not in the file.
 
+`additional_detectors = ["H2", "AX"]` lists other detectors to read during
+the same sweep. They are read at every step and fitted as the reference is,
+but only for display: the centre, the field table update and the outcome come
+from the reference detector alone, and a detector whose fit fails does not
+fail the centring. In the experiment window each one is drawn on the
+reference's graph, scaled so that its lowest and highest readings span the
+same range as the reference's: you compare the shapes and positions of the
+peaks, not their sizes. The values stored and shown in the tooltip are the
+raw readings.
+
+Choose detectors that sit on a peak of their own when the reference is
+centred: in a multicollection setup, the detectors that collect the other
+isotopes of the same gas at that magnet setting (for example, with `Ar40` on
+`H1`, the detector that carries `Ar36` or `Ar39` in your plan). A detector
+with no peak inside the sweep window reads only baseline and noise, and
+scaling stretches that noise over the reference's whole range: it is drawn
+as a peak where there is none. Leave such a detector out. The example lab's
+`peak_center.toml` names none, because in the simulator no other detector
+has a peak in the example's window; the files a new install gets name none
+either, so each lab chooses its own.
+
 `update_table = true` writes a **new version** of the field table (a
 timestamped file under `tables/<name>/`, with a `current` pointer file naming
 the active one). Old versions are kept; nothing is overwritten.

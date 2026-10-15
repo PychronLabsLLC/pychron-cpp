@@ -253,9 +253,9 @@ class PeakCenterView : public QWidget {
 
 Spec 4.5 wants the example to name "the example spectrometer's other detectors that carry a peak at the reference position". In the shipped simulator none does (see "What the code says"). A detector named anyway would read baseline and noise, and the scaling would stretch that noise over the reference's whole range: a peak drawn where there is none. So the example is left as it is (owner, 2026-10-13): the view and its scaling are tested with data fed by hand, and the example shows the reference alone.
 
-- [ ] `docs/user/03-spectrometer.md`, "Peak centring" (`:294`): the `additional_detectors` key, how to choose (detectors that sit on a peak when the reference is centred), and that a detector with no peak there is drawn as its noise scaled up.
-- [ ] `profiles/instrument-common/peak_center.toml` is not changed: a new lab chooses its own (`tests/setup/test_profiles.cpp:127`, `:276` stay as they are).
-- [ ] Commit `docs: how to choose a peak center's additional detectors`.
+- [x] `docs/user/03-spectrometer.md`, "Peak centring" (`:294`): the `additional_detectors` key, how to choose (detectors that sit on a peak when the reference is centred), and that a detector with no peak there is drawn as its noise scaled up.
+- [x] `profiles/instrument-common/peak_center.toml` is not changed: a new lab chooses its own (`tests/setup/test_profiles.cpp:127`, `:276` stay as they are).
+- [x] Commit `docs: how to choose a peak center's additional detectors`.
 
 ### Task 7: The user guide, and the branch as a whole
 
