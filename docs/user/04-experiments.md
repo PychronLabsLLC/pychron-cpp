@@ -674,7 +674,11 @@ A check is a small formula that is true or false. Spaces do not matter.
   `extraction_line.toml`), `device.NAME`, and `param.NAME`.
 * **Functions over a series of readings:** `min(Ar40)`, `max`, `average`,
   `slope`, `std`, `rsd`, `count`, each optionally `window=N` for the last N
-  points: `average(Ar40, window=10)`, `slope(Ar40) > 100`.
+  points: `average(Ar40, window=10)`, `slope(Ar40) > 100`. After a gap in
+  the readings (section 8.2) a window starts again: it holds only the points
+  after the gap, and a check over it is not made until there are enough (two
+  for `slope`, `std` and `rsd`, one for the others). A function without a
+  window sees every point, and `elapsed()` counts through the gap.
   `between(value, low, high)`, `abs(value)` and `elapsed()` work on single
   values.
 
@@ -793,6 +797,19 @@ unfinished run may also end Failed, Cancelled or Aborted.
    plan. The post-equilibration script starts when the inlet closes. The
    Evolutions pane draws the signals, and a peak center, when the plan has
    one, in its Peak center tab (section 3).
+
+   **When the spectrometer goes silent** (no reading within three
+   integrations plus 5 s, or its link drops), the measurement does not end:
+   it waits, for up to 2 minutes, for the readings to come back, and does
+   nothing else to the line meanwhile. Readings that resume continue the
+   block to its planned end time, so time zero and the block's end do not
+   move; the gap is kept in the record and said in the Executor pane. When
+   they do not resume, the acquisition is started once more; if that gives
+   nothing, the block ends. A main block left with fewer than 20 % of its
+   planned counts (and never fewer than its fit needs) fails the run (saved
+   as failed, section 8.2); with more, the run is truncated. During a
+   measurement, closing the inlet and unprotecting a detector keep trying
+   through a dropped link for 10 minutes, with an alarm after 20 s.
 6. **PostMeasuring.** The post-measurement script runs. A failure here is
    logged but the run still saves.
 7. **Saving.** The record is written (section 8.5), and then the `post_run`

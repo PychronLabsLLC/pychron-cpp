@@ -675,6 +675,7 @@ void MeasurementEngine::close_gap(Block block, TimePoint to, bool resumed) {
   MeasurementGap gap{in_.run_id, block, collector_.seconds(*gap_from_), collector_.seconds(to), resumed, to};
   gap_from_.reset();
   publish_log(resumed ? LogLevel::Info : LogLevel::Warn, describe(gap));
+  if (resumed) collector_.mark_gap(gap.to);  // windowed conditionals start again here
   result_.gaps.push_back(gap);
   if (ctx_.bus != nullptr) ctx_.bus->publish(gap);
 }

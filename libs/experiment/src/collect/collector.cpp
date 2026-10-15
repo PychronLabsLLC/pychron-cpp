@@ -28,6 +28,7 @@ void Collector::start(TimePoint epoch) {
   std::lock_guard lock(mutex_);
   data_ = RunData{};
   data_.timing.epoch = epoch;
+  resumed_at_.reset();
 }
 
 TimePoint Collector::epoch() const {
@@ -401,6 +402,45 @@ std::optional<double> Collector::Metrics::scalar(const MetricRef& m) const {
   }
   if (fallback != nullptr) return fallback->scalar(m);
   return std::nullopt;
+}
+
+void Collector::mark_gap(double s) {
+  std::lock_guard lock(mutex_);
+  resumed_at_ = s;
+}
+
+std::size_t Collector::Metrics::contiguous_from(const MetricRef& m) const {
+  using K = MetricRef::Kind;
+  std::lock_guard lock(c_.mutex_);
+  if (!c_.resumed_at_) return 0;
+  const double at = *c_.resumed_at_;
+  // Points of `s` before the gap's end.
+  const auto before = [at](const Series& s) {
+    return static_cast<std::size_t>(std::lower_bound(s.t.begin(), s.t.end(), at) - s.t.begin());
+  };
+  const auto isotope = [&](const std::string& iso) -> const Series* {
+    for (auto kind : {SeriesKind::Signal, SeriesKind::Sniff, SeriesKind::Whiff})
+      if (const Series* s = c_.isotope_series_locked(iso, kind)) return s;
+    return nullptr;
+  };
+  switch (m.kind) {
+    case K::Isotope:
+    case K::IsotopeField: {
+      if (m.kind == K::IsotopeField && m.field == "bs") return 0;
+      const Series* s = isotope(m.a);
+      return s == nullptr ? 0 : before(*s);
+    }
+    case K::Ratio: {
+      const Series* a = c_.isotope_series_locked(m.a, SeriesKind::Signal);
+      const Series* b = c_.isotope_series_locked(m.b, SeriesKind::Signal);
+      if (a == nullptr || b == nullptr) return 0;
+      // The ratio is the tail both have: n points, of which these came after.
+      const std::size_t n = std::min(a->v.size(), b->v.size());
+      const std::size_t after = std::min(a->t.size() - before(*a), b->t.size() - before(*b));
+      return n > after ? n - after : 0;
+    }
+    default: return 0;
+  }
 }
 
 std::optional<double> Collector::Metrics::elapsed() const {

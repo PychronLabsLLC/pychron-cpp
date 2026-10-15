@@ -308,9 +308,9 @@ struct SafeStateResult { std::vector<std::string> failed_steps; };  // empty: sa
 
 The functions that need contiguous points are the series functions that take `window=`: `min`, `max`, `average`, `slope`, `std`, `rsd`, `count`. `between`, `elapsed` and `abs` are not affected.
 
-- [ ] Failing tests: after a gap, a windowed series function sees only readings after it (a `slope` over a window that would straddle the gap is computed from the points after it, and is not evaluated until it has its minimum of points); `elapsed` counts through the gap; a conditional that would have tripped on a straddling window does not.
-- [ ] Implement: the engine gives the evaluator the index of the first reading after the last gap.
-- [ ] Commit: `feat(experiment): a conditional's window does not reach across a gap in the readings`.
+- [x] Failing tests: after a gap, a windowed series function sees only readings after it (a `slope` over a window that would straddle the gap is computed from the points after it, and is not evaluated until it has its minimum of points); `elapsed` counts through the gap; a conditional that would have tripped on a straddling window does not.
+- [x] Implement: the engine gives the evaluator the index of the first reading after the last gap. Built: by time, not reading index (an isotope's series and the readings are not one count in a multi-hop plan): `Collector::mark_gap(s)` when readings resume, `MetricContext::contiguous_from(m)` the index in `series(m)` of its first point at or after it (isotopes, their fields, ratios; 0 for the rest). A windowed call with too few points since the gap fails with `code = kNotYet` (`"not_yet"`), which `ConditionalEngine` takes as "no trip", not an error. Tests: `ConditionalsGap.*` (in `test_conditionals.cpp`, beside the engine's other evaluation tests), `MeasurementGaps.AConditionalsWindowStartsAgainAfterTheGap`. User guide chapter 4: gaps (8.2) and windows.
+- [x] Commit: `feat(experiment): a conditional's window does not reach across a gap in the readings`.
 
 ---
 

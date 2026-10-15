@@ -129,6 +129,54 @@ TEST(ConditionalsEval, MissingMetricIsErrorNotTrip) {
   EXPECT_EQ(eng.errors()[0].name, "t");
 }
 
+// ---- a gap in the readings (executor hardening, spec 4.4) ---------------------
+
+// A windowed function looks at the points after the last gap only.
+TEST(ConditionalsGap, AWindowDoesNotReachAcrossAGap) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {10, 20, 30, 40, 5, 5, 5};
+  auto e = parse_expression("slope(Ar40, window=5)");
+  ASSERT_TRUE(e);
+  EXPECT_LT(*evaluate(**e, ctx, {}), 0);  // [30, 40, 5, 5, 5]: across the drop
+  ctx.contiguous["Ar40"] = 4;             // readings resumed at the 5th point
+  EXPECT_DOUBLE_EQ(*evaluate(**e, ctx, {}), 0.0);
+  // Without a window a function sees the whole series, as before.
+  auto all = parse_expression("average(Ar40)");
+  EXPECT_DOUBLE_EQ(*evaluate(**all, ctx, {}), 115.0 / 7);
+  // Neither elapsed nor between is a series: unaffected.
+  ctx.elapsed_s = 50;
+  auto elapsed = parse_expression("elapsed()");
+  ASSERT_TRUE(elapsed) << elapsed.error().what;
+  auto v = evaluate(**elapsed, ctx, {});
+  ASSERT_TRUE(v) << v.error().what;
+  EXPECT_DOUBLE_EQ(*v, 50.0);
+}
+
+// Not evaluated until it has its minimum of points; that is not an error.
+TEST(ConditionalsGap, AWindowedCheckWaitsForEnoughPointsAfterAGap) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {10, 20, 30, 40, 5};
+  ctx.contiguous["Ar40"] = 4;  // one point since the gap; a slope needs two
+  auto e = parse_expression("slope(Ar40, window=5) < -1");
+  auto r = evaluate(**e, ctx, {});
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().code, kNotYet);
+  ConditionalEngine eng(ConditionalSet{{item(ConditionalKind::Termination, "drop", "slope(Ar40, window=5) < -1")}, {}});
+  EXPECT_FALSE(eng.evaluate(ConditionalKind::Termination, ctx, {}, 5, 0));
+  EXPECT_TRUE(eng.errors().empty());
+}
+
+// A check that would trip on a window straddling the gap does not.
+TEST(ConditionalsGap, ACheckThatOnlyTheStraddlingWindowTripsDoesNot) {
+  MapContext ctx;
+  ctx.series_data["Ar40"] = {10, 20, 30, 40, 5, 6};
+  ConditionalEngine eng(ConditionalSet{{item(ConditionalKind::Termination, "high", "max(Ar40, window=5) > 25")}, {}});
+  ctx.contiguous["Ar40"] = 4;  // after the gap: 5, 6
+  EXPECT_FALSE(eng.evaluate(ConditionalKind::Termination, ctx, {}, 6, 0));
+  ctx.contiguous.clear();  // the same series with no gap: 20, 30, 40, 5, 6
+  EXPECT_TRUE(eng.evaluate(ConditionalKind::Termination, ctx, {}, 7, 0));
+}
+
 TEST(ConditionalsActions, ParseEnumActions) {
   using T = ActionSpec::Type;
   EXPECT_EQ(parse_action("truncate")->type, T::Truncate);

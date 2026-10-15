@@ -135,6 +135,9 @@ class Collector {
   std::optional<double> time_zero() const;
   void set_inlet_open(double s);
   void set_inlet_close(double s);
+  // Readings resumed after a gap at `s` (seconds since the epoch): windowed
+  // conditionals look no further back (MetricContext::contiguous_from).
+  void mark_gap(double s);
 
   // Begins a collection. Any earlier target change or truncate is discarded.
   void begin(CollectionSpec spec, ReadingHook hook = {});
@@ -194,6 +197,7 @@ class Collector {
     std::optional<std::vector<double>> series(const MetricRef& m) const override;
     std::optional<double> scalar(const MetricRef& m) const override;
     std::optional<double> elapsed() const override;
+    std::size_t contiguous_from(const MetricRef& m) const override;
     const MetricContext* fallback = nullptr;
 
    private:
@@ -219,6 +223,7 @@ class Collector {
   Metrics metrics_{*this};
 
   mutable std::mutex mutex_;
+  std::optional<double> resumed_at_;  // the last gap's end (mark_gap)
   RunData data_;
   CollectionSpec spec_;
   ReadingHook hook_;

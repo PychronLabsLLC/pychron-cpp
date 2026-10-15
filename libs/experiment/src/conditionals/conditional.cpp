@@ -333,7 +333,7 @@ std::optional<Trip> ConditionalEngine::step(size_t i, const MetricContext& ctx, 
   State& st = states_[i];
   auto r = evaluate_check(*c.expr, ctx, vars);
   if (!r) {
-    record_error(c, r.error().what);
+    if (r.error().code != kNotYet) record_error(c, r.error().what);
     st.consecutive = 0;
     return std::nullopt;
   }

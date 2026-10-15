@@ -9,12 +9,24 @@ namespace {
 
 Unexpected<Error> eval_fail(const std::string& what) { return fail(ErrorKind::Config, what); }
 
+// The points a function needs to mean anything.
+size_t minimum_points(Func f) { return f == Func::Slope || f == Func::Std || f == Func::Rsd ? 2 : 1; }
+
 Result<std::vector<double>> windowed_series(const Expr& call, const MetricContext& ctx) {
   const MetricRef& m = call.children[0]->metric;
   auto s = ctx.series(m);
   if (!s || s->empty()) return eval_fail("no series for '" + to_string(m) + "'");
-  if (call.window && static_cast<size_t>(*call.window) < s->size())
-    s->erase(s->begin(), s->end() - *call.window);
+  if (call.window) {
+    // A window does not reach across a gap in the readings (spec 4.4): it is
+    // the points after the gap, and is not evaluated until there are enough.
+    const size_t from = std::min(ctx.contiguous_from(m), s->size());
+    if (from > 0) {
+      s->erase(s->begin(), s->begin() + static_cast<std::ptrdiff_t>(from));
+      if (s->size() < minimum_points(call.func))
+        return fail(Error{ErrorKind::Config, "too few points since the gap for '" + to_string(m) + "'", {}, kNotYet});
+    }
+    if (static_cast<size_t>(*call.window) < s->size()) s->erase(s->begin(), s->end() - *call.window);
+  }
   return std::move(*s);
 }
 

@@ -1125,3 +1125,20 @@ TEST_F(MeasurementGaps, ADetectorUnprotectKeepsTryingForTheCriticalWindow) {
   ASSERT_FALSE(said_.empty());
   EXPECT_EQ(said_[0].severity, AlarmSeverity::Warning);
 }
+
+// A conditional over a window sees only readings after the gap in a real run.
+TEST_F(MeasurementGaps, AConditionalsWindowStartsAgainAfterTheGap) {
+  auto p = multicollect(100);
+  silence(30, 20s);
+  MetricRef ar40;
+  ar40.a = "Ar40";
+  std::optional<std::size_t> from_at_resume;
+  auto sub = bus_.subscribe<CountsProgress>([&](const CountsProgress& e) {
+    if (e.block == Block::Main && e.i == 31 && engine_ != nullptr)
+      from_at_resume = engine_->collector().metrics().contiguous_from(ar40);
+  });
+  const auto r = run(p);
+  ASSERT_EQ(r.gaps.size(), 1u);
+  ASSERT_TRUE(from_at_resume);
+  EXPECT_EQ(*from_at_resume, 30u);  // the 31st point is the first after the gap
+}
