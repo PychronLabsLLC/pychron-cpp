@@ -213,6 +213,7 @@ Open it from **View > Experiment** (Ctrl+Shift+E). Its menus are the submenus of
 | Left (tabs) | **Run Factory** (section 5) and **Measurement** (the plan and parameters of the selected run). |
 | Bottom | **Executor**: the Start / Stop / Cancel / Abort / Truncate buttons, status, a timeline, a table of events (each with the time it happened, on the line's clock) and tripped conditionals. |
 | Right | **Evolutions**: the run being measured, one tab a kind (Signal, Baseline, Sniff). Each series of the tab has a panel of its own, stacked in the order the series began on one time axis, each scaled to its own readings, with its live fit and intercept; with many series the panels scroll. Signals and baselines are a panel an isotope on a detector (an isotope peak-hopped onto a second detector has two), sniffs a panel an isotope. Below, a table of the intercepts (isotope, detector, fit, intercept, error, percent error, points used). A last tab, **Peak center**, draws the run's peak center (below). The panels cannot be zoomed or saved yet. |
+| Right, behind Evolutions | **References**: the recent blanks and airs of this spectrometer as time series, redrawn after each saved run (section 3.4). Only when runs are saved to a database. |
 
 **The Peak center tab.** When a run centres a peak (the plan's `peak_center`
 block, see "Peak centring" in [the spectrometer chapter](03-spectrometer.md)),
@@ -302,6 +303,67 @@ The executor can also change the queue itself, when a conditional asks it to
 skip a run or add a blank (section 7.5). Those changes show in the table
 and in the Events list. If you and the executor change the queue at the same
 moment, one of the edits is refused rather than lost; make it again.
+
+### 3.4 References: recent blanks and airs
+
+The **References** panel shows how the instrument's references have been
+behaving while the queue runs: are the blanks falling, is the air steady. It
+sits on the right behind **Evolutions**; click its tab to bring it forward.
+Like the other panels it can be moved, floated or closed, and **Window >
+Panels** brings it back.
+
+It has two tabs, each a time series figure (the same figure as **Time
+series** in the data window, [Data analysis](06-data-analysis.md)):
+
+| Tab | Analyses | Starting preset |
+|---|---|---|
+| **Blanks** | Every kind of blank: `blank_unknown`, `blank_air`, `blank_cocktail`, `blank_extractionline`, and the plain `blank` of imported data. Each kind is a group of the figure, with its own colour and legend entry. | Blanks |
+| **Airs** | `air` | Air monitor |
+
+Unknowns, cocktails, detector intercalibrations and other run types are in
+neither tab. A blank or air tagged invalid is not drawn.
+
+**Which analyses.** Each tab draws the newest analyses of its kind:
+
+* of the queue's mass spectrometer (a queue that names none shows those of
+  every spectrometer; opening a queue of another spectrometer reads again for
+  that one);
+* at most **Last** of them, per tab (default 50, from 5 to 500; the number
+  is remembered);
+* that started at or after the moment **Reset** was last pressed. Until you
+  press Reset there is no lower bound in time. Reset ("from now") empties
+  both tabs, and the next blank or air is the first point again. The reset
+  point is not remembered: a new Experiment window shows everything again.
+  An analysis's time is the time it started, so a run that began before you
+  pressed Reset and is saved after it is left out.
+
+**When it reads.** The panel reads the database the first time it is shown,
+after each run that was saved (a run whose save failed does not count), and
+when you press **Refresh**. Reading is done in the background and never
+holds up the queue. A run is sometimes not in the database yet when it
+finishes; if that read finds nothing new, the panel looks again 2 and 10
+seconds later (on the session's clock, so in a simulation at its speed),
+then stops: press **Refresh** if a point is still missing. A read that
+finds nothing new leaves the figures as they are.
+
+The note beside the buttons says when the panel last read (`read 14:02:11`,
+on the session's clock), or `could not read:` and why. A failed read keeps
+the figures it drew before and does not affect the queue.
+
+**Options and presets.** The **…** button on each tab opens that tab's
+options: the time series options and the bar of named presets that a figure
+window has ("Options and named presets" in
+[Data analysis](06-data-analysis.md#options-and-named-presets)). Choose what
+each tab plots (for example `Ar40/Ar36` for the airs) or pick a preset; a
+change redraws that tab only. The preset chosen for each tab is remembered;
+if it is later deleted the tab goes back to its starting preset. Each tab can
+be zoomed, panned, saved and copied as any figure can.
+
+**When there is no References panel.** The panel needs a database to read
+from, the one the session saves runs to. A queue that writes its runs only
+as record files (no database configured, a database that could not be
+opened, or a simulation writing files) has no References panel, not an
+empty one, and **Window > Panels** does not list it.
 
 ## 4. Run types
 

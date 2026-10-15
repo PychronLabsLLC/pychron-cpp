@@ -235,9 +235,11 @@ class ReferenceSeriesDock : public QWidget {
 
 **Files:** `docs/user/04-experiments.md` (section 3, the table of docks at `:215`), the spec's status line
 
-- [ ] The References dock: what each tab shows, which analyses (the queue's spectrometer, the newest N, since Reset), when it reads (when shown, after each saved run, on Refresh), the options button and presets, that a queue that writes files has no such dock.
-- [ ] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`; the TSan run of Task 3 again on the finished branch. Report the counts.
-- [ ] Commit `docs: the References dock of the experiment window`.
+- [x] The References dock: what each tab shows, which analyses (the queue's spectrometer, the newest N, since Reset), when it reads (when shown, after each saved run, on Refresh), the options button and presets, that a queue that writes files has no such dock.
+- [x] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`; the TSan run of Task 3 again on the finished branch. Report the counts.
+- [x] Commit `docs: the References dock of the experiment window`.
+
+  Built: the guide's section is 3.4, "References: recent blanks and airs", with a row in the table of areas. On the finished branch: `cmake --build --preset dev-ui` clean; `ctest --preset dev-ui` 5067 tests, none failed (7 skipped, none of this branch: no external fixtures, no OpenCV, no Postgres, no live EarthBank, no platform secret store); `quality_check.py` 12 files, 0 findings; `compiler_sweep.py --build-dir build/dev-ui` 896 sources, 0 warnings, 12 not checked (every file that reaches Qt's `qopenglcontext_platform.h`, which g++ 16 does not parse; among them `tests/ui/test_data_windows.cpp` of this branch). TSan (`-DPYCHRON_SANITIZE=thread`, `build/tsan-ui`): `ui.test_processing_bridge` 7 passed, `ui.test_data_windows` 48, `ui.test_reference_series` 34, the two `ARefreshWhileOtherThreadsReadIsSafe`; no report from any.
 
 ## Not in this plan
 

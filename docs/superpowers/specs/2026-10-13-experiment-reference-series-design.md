@@ -3,7 +3,9 @@
 Status: agreed in outline 2026-10-13 (owner: blanks and airs as a live time
 series pane; section 9). Drafted by an unattended run. Plan:
 `docs/superpowers/plans/2026-10-13-experiment-reference-series.md`; 4, 5.1,
-5.2, 5.4 corrected from code when it was written. Nothing built. Task T028 (`pychron usage notes.md`):
+5.2, 5.4 corrected from code when it was written. Built 2026-10-15 on
+`feat/exp-t028` (plan Tasks 1 to 7; departures in plan's "Built" notes);
+user guide `docs/user/04-experiments.md` 3.4. Task T028 (`pychron usage notes.md`):
 "implement legacy's auto time series plotter in the experiment".
 
 ## 1. Problem
