@@ -43,8 +43,8 @@ Related pages: [getting started](01-getting-started.md),
 | Dashed outline around a valve | A command is in flight (waiting on the controller, the settle time and the read-back). |
 | Thick coloured border on a valve | The valve is **locked** in software. |
 | Valve flashes yellow | The last command was refused or failed. Hover for the reason. |
-| A rounded chip with a small dial and `IG1: 1.20e-08 torr` | A gauge and its latest reading. The chip text turns red while the reading is outside `alarm_high` / `alarm_low`. |
-| A gauge chip that shows only its name | The canvas draws a gauge that `extraction_line.toml` does not define; it is decoration and never shows a reading. |
+| A rounded chip with a small dial and `IG1: 1.20e-08 torr` | A gauge and its latest reading. The chip text turns red while the reading is outside `alarm_high` / `alarm_low`. Rest the pointer on it for 3 seconds and a small chart of its last 10 minutes appears beside it (it goes when the pointer moves off, the canvas scrolls or a button is pressed). Click it to open the gauge's own window (see [Gauges](#gauges)). |
+| A gauge chip that shows only its name | The canvas draws a gauge that `extraction_line.toml` does not define; it is decoration and never shows a reading. Resting on it or clicking it does nothing. |
 | Boxes (stages) | Volumes: prep line, bone, turbo, spectrometer, tanks. Some carry a glyph (turbo, ion pump, getter, spectrometer, laser, quadrupole). |
 | Pipes | Connections between boxes and valves. |
 
@@ -155,9 +155,29 @@ also interlocks the two valves so they can never both be open.
 ## Gauges
 
 Gauges are drawn as chips on the canvas. Pychron reads each gauge every
-`scan_interval_ms` (default 1000 ms) in the background; there is no separate
-gauge window. Readings are in the gauge's configured units (`torr`, `mbar` or
-`pa`) in scientific notation.
+`scan_interval_ms` (default 1000 ms) in the background. Readings are in the
+gauge's configured units (`torr`, `mbar` or `pa`) in scientific notation.
+
+Clicking a gauge's chip opens a window of that gauge's readings over time:
+
+- **Range**: the last 10 minutes (the default), 30 minutes, 1 hour, 6 hours
+  or 24 hours (`10 min` to `24 h`).
+- **Log**: a pressure that moves over decades reads better on a log
+  axis; off, the axis is linear.
+- The gauge's `alarm_high` and `alarm_low`, when set, are drawn as
+  horizontal lines whenever they fall inside the view.
+- A header with the latest reading and the lowest and highest of the range.
+- **Copy** puts the points shown on the clipboard as text, a time and a value
+  a line separated by a tab, for a spreadsheet.
+
+The range, the scale and where the window sits are remembered for each gauge.
+Clicking the chip again brings the open window to the front.
+
+The history begins when the program starts and holds the last 24 hours; it is
+not kept when the program closes. When the range asked for is longer than what
+is held, the header says since when the readings go back. For longer records,
+and across restarts, use the observability dashboards
+([observability](../observability.md)).
 
 Alarm limits are optional, per gauge: `alarm_high` and `alarm_low`.
 

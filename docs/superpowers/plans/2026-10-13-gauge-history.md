@@ -267,11 +267,11 @@ class GaugeWindow : public QWidget {    // a `Qt::Window` of its own; hidden on 
 
 **Files:** `docs/user/02-extraction-line.md`, `docs/superpowers/specs/2026-10-06-virtual-clock-design.md`, the spec's status line
 
-- [ ] User guide: the gauge chip rows of the table at `:46-47` (rest for 3 s: a chart of the last 10 minutes; click: the gauge's window; a gauge that is only drawn does neither); "Gauges" (`:155-168`): replace "there is no separate gauge window" with what the window is: the ranges, linear and log, the alarm limits drawn, Copy, that the history begins when the program starts and holds a day, that longer records are the observability dashboards' (`docs/observability.md`).
-- [ ] Virtual clock spec, section 4.4 (`:386-424`), the entry "the UI: its timers" (`:410`) covers the canvas's rest delay and the charts' redraw throttle already; name the rest delay in it, since it is the one the operator feels.
-- [ ] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py --build-dir build/dev-ui`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`. Report the counts.
-- [ ] Spec status: built, with what its section 6 leaves out.
-- [ ] Commit `docs: a gauge's history from the canvas`.
+- [x] User guide: the gauge chip rows of the table at `:46-47` (rest for 3 s: a chart of the last 10 minutes; click: the gauge's window; a gauge that is only drawn does neither); "Gauges" (`:155-168`): replace "there is no separate gauge window" with what the window is: the ranges, linear and log, the alarm limits drawn, Copy, that the history begins when the program starts and holds a day, that longer records are the observability dashboards' (`docs/observability.md`).
+- [x] Virtual clock spec, section 4.4 (`:386-424`), the entry "the UI: its timers" (`:410`) covers the canvas's rest delay and the charts' redraw throttle already; name the rest delay in it, since it is the one the operator feels.
+- [x] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py --build-dir build/dev-ui`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`. Report the counts.
+- [x] Spec status: built, with what its section 6 leaves out.
+- [x] Commit `docs: a gauge's history from the canvas`.
 
 ## Not in this plan
 

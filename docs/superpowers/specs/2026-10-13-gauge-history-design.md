@@ -3,7 +3,12 @@
 Status: agreed 2026-10-13 (owner's answers, section 9). Plan:
 `docs/superpowers/plans/2026-10-13-gauge-history.md`; 4.1, 4.2, 4.3 and 5
 corrected from code when it was written. Drafted by an
-unattended run from task T077 (owner's words, section 1). Nothing built.
+unattended run from task T077 (owner's words, section 1). Built 2026-10-15
+on `feat/ui-t077`: section 4 and 5, user guide (`docs/user/02-extraction-line.md`,
+"Gauges"). Not built, per section 6: history across restarts or older than
+24 h (Prometheus, Grafana), link from gauge window to dashboard, heaters /
+cryostat / valves over time, several gauges on one chart, rate-of-change
+alarms, `elctl` access.
 
 ## 1. Asked for
 

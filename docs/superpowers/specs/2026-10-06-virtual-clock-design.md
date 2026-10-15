@@ -410,8 +410,10 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
   real-time poll inside a `Detached`, so that the operator is heard whatever
   simulated time is doing. The other `elctl` commands (`scan`, the laser
   commands) run on a `SteadyClock` only;
-- the UI: its timers, the bridges' worker threads and their polls and
-  settles (`laser_bridge.cpp`), the plots' autoscale. Not what it shows
+- the UI: its timers (among them canvas's 3 s rest on a gauge chip before
+  its popup chart, `CanvasView::kGaugeRestMs`, the one operator feels; history
+  charts' 250 ms redraw throttle), the bridges' worker threads and their polls
+  and settles (`laser_bridge.cpp`), the plots' autoscale. Not what it shows
   against a stamp of the line's: a valve's "since" and "last actuated"
   (`canvas_view.cpp`), the time on an alarm's row (`alarm_dock.cpp`) and a
   transport's "ok so long ago" (`health_bar.cpp`) are told by the line's
