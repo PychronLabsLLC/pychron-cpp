@@ -42,6 +42,22 @@ SchemaPtr build_schema() {
       optional_number("x.max", "X max", "Axes"),
       optional_number("y.min", "Y min", "Axes"),
       optional_number("y.max", "Y max", "Axes"),
+      // A small second view in a corner (legacy's inset): by default the whole
+      // line from axis to axis, while the main plot closes in on the points.
+      boolean("inset.show", "Inset", "Inset", false),
+      when(choice("inset.location", "Corner", "Inset", corner_choices(), "top_right"), "inset.show"),
+      when(integer("inset.width", "Width (% of the plot)", "Inset", 35, 15, 60), "inset.show"),
+      when(integer("inset.height", "Height (% of the plot)", "Inset", 35, 15, 60), "inset.show"),
+      when(choice("inset.view", "Shows", "Inset", {"whole", "points"}, "whole"), "inset.show"),
+      when(optional_number("inset.x_min", "X min", "Inset"), "inset.show"),
+      when(optional_number("inset.x_max", "X max", "Inset"), "inset.show"),
+      when(optional_number("inset.y_min", "Y min", "Inset"), "inset.show"),
+      when(optional_number("inset.y_max", "Y max", "Inset"), "inset.show"),
+      when(boolean("inset.show_ellipses", "Error ellipses", "Inset", true,
+                   "Drawn when the figure draws them"),
+           "inset.show"),
+      when(boolean("inset.show_nominal_intercept", "Atmospheric intercept", "Inset", false), "inset.show"),
+      when(boolean("inset.show_titles", "Axis titles", "Inset", false), "inset.show"),
   };
   for (auto& f : common_figure_fields()) s->fields.push_back(std::move(f));
   s->lists = {groups_list()};

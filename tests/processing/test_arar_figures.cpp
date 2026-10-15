@@ -445,6 +445,63 @@ TEST(Isochron, EllipsesFitAndResults) {
   EXPECT_NEAR(layers<pp::EllipseLayer>(e95->graphs[0].panels[0])[0]->scale, 2.4477, 1e-9);
 }
 
+TEST(Isochron, InsetOptionsAndTheirDefaults) {
+  const auto& schema = pp::isochron_schema();
+  const auto field = [&](const char* key) {
+    const auto* f = schema->field(key);
+    EXPECT_NE(f, nullptr) << key;
+    if (f) {
+      EXPECT_EQ(f->section, "Inset") << key;
+    }
+    return f;
+  };
+  const auto* show = field("inset.show");
+  ASSERT_NE(show, nullptr);
+  EXPECT_EQ(show->default_value, pp::OptionValue(false));
+  const auto* location = field("inset.location");
+  ASSERT_NE(location, nullptr);
+  EXPECT_EQ(location->choices, (std::vector<std::string>{"top_left", "top_right", "bottom_left", "bottom_right"}));
+  EXPECT_EQ(location->default_value, pp::OptionValue(std::string("top_right")));
+  for (const char* key : {"inset.width", "inset.height"}) {
+    const auto* f = field(key);
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(f->default_value, pp::OptionValue(std::int64_t{35})) << key;
+    EXPECT_EQ(f->min, 15) << key;
+    EXPECT_EQ(f->max, 60) << key;
+  }
+  const auto* view = field("inset.view");
+  ASSERT_NE(view, nullptr);
+  EXPECT_EQ(view->choices, (std::vector<std::string>{"whole", "points"}));
+  EXPECT_EQ(view->default_value, pp::OptionValue(std::string("whole")));
+  for (const char* key : {"inset.x_min", "inset.x_max", "inset.y_min", "inset.y_max"}) {
+    const auto* f = field(key);
+    ASSERT_NE(f, nullptr);
+    EXPECT_TRUE(f->optional) << key;
+  }
+  for (const auto& [key, def] : {std::pair{"inset.show_ellipses", true}, std::pair{"inset.show_nominal_intercept", false},
+                                 std::pair{"inset.show_titles", false}}) {
+    const auto* f = field(key);
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(f->default_value, pp::OptionValue(def)) << key;
+  }
+  // The rest of the inset's options matter only when it is shown.
+  for (const auto& f : schema->fields) {
+    if (f.key.starts_with("inset.") && f.key != "inset.show") {
+      EXPECT_EQ(f.enabled_when, "inset.show") << f.key;
+    }
+  }
+}
+
+TEST(Isochron, APresetWithoutInsetKeysLoads) {
+  auto back = pp::options_from_toml(pp::isochron_schema(), "ellipse = \"95%\"\nshow_points = false\n");
+  ASSERT_TRUE(back) << back.error().what;
+  EXPECT_TRUE(back->warnings.empty());
+  EXPECT_FALSE(back->options.get_bool("inset.show"));
+  EXPECT_EQ(back->options.get_string("inset.location"), "top_right");
+  EXPECT_EQ(back->options.get_int("inset.width"), 35);
+  EXPECT_EQ(back->options.get_string("inset.view"), "whole");
+}
+
 TEST(Isochron, APanelHasNoInsetUnlessAsked) {
   pp::Options o(pp::isochron_schema());
   auto s = pp::build_isochron(steps(), o);
@@ -595,6 +652,17 @@ TEST(SpectrumIsochron, OptionsAreBothFiguresOwnAndTheSharedOnesOnce) {
   auto failed = pp::build_spectrum_isochron(d, bad);
   ASSERT_FALSE(failed);
   EXPECT_EQ(failed.error().what.rfind("spectrum: ", 0), 0u) << failed.error().what;
+}
+
+TEST(SpectrumIsochron, TheIsochronsInsetOptionsArePrefixed) {
+  const auto& schema = pp::spectrum_isochron_schema();
+  for (const char* key : {"inset.show", "inset.location", "inset.width", "inset.height", "inset.view", "inset.x_min",
+                          "inset.x_max", "inset.y_min", "inset.y_max", "inset.show_ellipses",
+                          "inset.show_nominal_intercept", "inset.show_titles"}) {
+    EXPECT_NE(schema->field(std::string("isochron.") + key), nullptr) << key;
+    EXPECT_EQ(schema->field(key), nullptr) << key;
+  }
+  EXPECT_EQ(schema->field("isochron.inset.width")->enabled_when, "isochron.inset.show");
 }
 
 TEST(SpectrumIsochron, TheIsochronOfThePlateauStepsFollowsThePlateauShown) {

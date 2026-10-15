@@ -71,12 +71,14 @@ struct Inset {
 
 **Files:** `isochron.cpp`, `test_arar_figures.cpp`.
 
-- [ ] Failing tests:
+- [x] Failing tests:
   - `Isochron.InsetOptionsAndTheirDefaults`: the schema has, in section "Inset", `inset.show` (false), `inset.location` (corner choices, `top_right`), `inset.width` and `inset.height` (35, 15 to 60), `inset.view` (`whole`, `points`; `whole`), `inset.x_min`, `inset.x_max`, `inset.y_min`, `inset.y_max` (optional), `inset.show_ellipses` (true: drawn when the figure draws them), `inset.show_nominal_intercept` (false), `inset.show_titles` (false).
   - `Isochron.APresetWithoutInsetKeysLoads`: `options_from_toml` of a preset text with none of them gives the defaults and no warning.
   - `SpectrumIsochron.TheIsochronsInsetOptionsArePrefixed`: the combined schema has `isochron.inset.show` and the rest.
-- [ ] Add the fields after `y.max` (`isochron.cpp:44`). Use the corner list the common fields use (`kCorners`, `figure_common`). No schema version bump: fields only add.
-- [ ] Commit `feat(processing): the inverse isochron's inset options`.
+- [x] Add the fields after `y.max` (`isochron.cpp:44`). Use the corner list the common fields use (`kCorners`, `figure_common`). No schema version bump: fields only add.
+- [x] Commit `feat(processing): the inverse isochron's inset options`.
+
+  Built: `inset.width` and `inset.height` are whole percents of the plot (integer fields); every `inset.*` field but `inset.show` is enabled only when it is set (`isochron.inset.show` in the combined figure). The corner list is `figure_common`'s, now `corner_choices()`.
 
 ### Task 3: The isochron fills the inset
 

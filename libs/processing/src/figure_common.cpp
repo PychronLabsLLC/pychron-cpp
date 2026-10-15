@@ -15,6 +15,8 @@ const std::vector<std::string> kCorners{"top_left", "top_right", "bottom_left", 
 
 }  // namespace
 
+const std::vector<std::string>& corner_choices() { return kCorners; }
+
 std::string format_sig(double v, int sig) {
   char buf[64];
   std::snprintf(buf, sizeof buf, "%.*g", std::max(1, sig), v);

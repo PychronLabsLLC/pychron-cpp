@@ -23,6 +23,8 @@ Color with_alpha(Color c, std::uint8_t a);
 // title, graph_columns, panel_spacing, graph_spacing, font.*, background, plot_background,
 // show_grid, error_bar_nsigma, excluded_style, show_legend, legend_location,
 // statistics_location, statistics_sig_figs.
+// The corners a legend, a statistics text or an inset may take, as option choices.
+const std::vector<std::string>& corner_choices();
 std::vector<FieldSpec> common_figure_fields();
 void apply_common_style(const Options& o, Scene& scene);
 
