@@ -64,11 +64,16 @@ reaches `develop` through step 5.
 Anything larger than small fix starts from written spec, not code:
 
 1. Spec: `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`. What is built
-   and why, interfaces, rules that must hold, what is out of scope. Agreed
-   with developer before anything else is written.
+   and why, interfaces, rules that must hold, what is out of scope. Ends with
+   `## Open questions`: one item per question only developer can answer, or
+   `None.`. Settle what code, old implementation and this file settle; list
+   only rest. Spec that lists questions is agreed with developer before
+   anything else is written. Spec whose section says `None.` needs no
+   agreement: plan follows (developer, 2026-10-15).
 2. Plan: `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`. Spec cut into tasks
    small enough to test and commit one at a time, each naming its files and
-   tests.
+   tests. Same `## Open questions` rule: none listed, build starts without
+   review.
 3. Implement plan task by task, test first. When code has to depart from
    spec, spec is changed in same branch: the two never disagree on `develop`.
 
