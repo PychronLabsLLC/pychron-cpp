@@ -783,6 +783,38 @@ TEST_F(StoreSourceTest, ConcurrentLoadsFromManyThreads) {
   EXPECT_EQ(ok.load(), 40);
 }
 
+// The processing bridge refreshes the source on its worker while a window's
+// job may still load on another thread: refresh is safe against both.
+TEST_F(StoreSourceTest, ARefreshWhileOtherThreadsReadIsSafe) {
+  auto& src = source();
+  const auto g0 = src.generation();
+  std::atomic<bool> go{false};
+  std::atomic<int> failed{0};
+  std::vector<std::thread> readers;
+  readers.reserve(4);
+  for (int i = 0; i < 4; ++i)
+    readers.emplace_back([&, i] {
+      while (!go) std::this_thread::yield();
+      for (int k = 0; k < 10; ++k) {
+        if (!src.load((i + k) % 2 ? unknown_.str() : air_.str())) ++failed;
+        if (!src.browse(BrowseQuery{})) ++failed;
+      }
+    });
+  std::thread refresher([&] {
+    while (!go) std::this_thread::yield();
+    for (int k = 0; k < 10; ++k)
+      if (!src.refresh()) ++failed;
+  });
+  (void)ingest("77000", 2, "unknown", "2026-10-02T13:00:00Z");  // something for a refresh to find
+  go = true;
+  for (auto& t : readers) t.join();
+  refresher.join();
+  EXPECT_EQ(failed.load(), 0);
+  ASSERT_TRUE(src.refresh());
+  EXPECT_GT(src.generation(), g0);
+  EXPECT_EQ(src.browse(BrowseQuery{})->rows.size(), 3u);
+}
+
 TEST_F(StoreSourceTest, OpenFailsForABadUrlAndHidesPasswords) {
   EXPECT_FALSE(StoreSource::open(ps::StoreConfig{"mysql://nope", false}));
   EXPECT_EQ(source().name(), "store:" + url_);

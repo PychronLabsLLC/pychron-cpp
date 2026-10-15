@@ -2,8 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <thread>
+#include <vector>
 
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
@@ -226,6 +229,42 @@ TEST(RecordSource, RefreshPicksUpNewFilesAndBumpsGeneration) {
   ASSERT_TRUE(src.refresh());
   EXPECT_EQ(src.problems().size(), 1u);
   EXPECT_EQ(src.browse({})->rows.size(), 2u);
+}
+
+// The processing bridge refreshes the source on its worker while a window's
+// job may still load on another thread: refresh is safe against both.
+TEST(RecordSource, ARefreshWhileOtherThreadsReadIsSafe) {
+  TempDir dir;
+  write(dir.path, record("u1", "66001", 1, "", "unknown", "2026-09-30T10:00:00Z"));
+  write(dir.path, record("u2", "66001", 2, "", "unknown", "2026-09-30T11:00:00Z"));
+  pp::RecordDirectorySource src(dir.path);
+  ASSERT_TRUE(src.refresh());
+  const auto g0 = src.generation();
+  std::atomic<bool> go{false};
+  std::atomic<int> failed{0};
+  std::vector<std::thread> readers;
+  readers.reserve(4);
+  for (int i = 0; i < 4; ++i)
+    readers.emplace_back([&, i] {
+      while (!go) std::this_thread::yield();
+      for (int k = 0; k < 10; ++k) {
+        if (!src.load((i + k) % 2 ? "u1" : "u2")) ++failed;
+        if (!src.browse({})) ++failed;
+      }
+    });
+  std::thread refresher([&] {
+    while (!go) std::this_thread::yield();
+    for (int k = 0; k < 10; ++k)
+      if (!src.refresh()) ++failed;
+  });
+  write(dir.path, record("u3", "66001", 3, "", "unknown", "2026-09-30T12:00:00Z"));
+  go = true;
+  for (auto& t : readers) t.join();
+  refresher.join();
+  EXPECT_EQ(failed.load(), 0);
+  ASSERT_TRUE(src.refresh());
+  EXPECT_GT(src.generation(), g0);
+  EXPECT_EQ(src.browse({})->rows.size(), 3u);
 }
 
 TEST(RecordSource, LoadsAnalysesAndRawAndAppliesReferences) {

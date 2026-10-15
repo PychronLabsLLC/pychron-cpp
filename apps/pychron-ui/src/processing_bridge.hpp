@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -30,6 +31,18 @@ struct PipelineResult {
   double seconds = 0.0;
 };
 
+// What a submission asks of the worker besides the run.
+struct SubmitOptions {
+  // IAnalysisSource::refresh() on the worker, before the run: what the
+  // source has gained since is then read. A failed refresh is every target's
+  // error, and nothing is run.
+  bool refresh_source = false;
+  // The time the run is made at (RunContext::now, UTC epoch seconds): a
+  // simulated session's clock. Without it a unit drawing against "now" reads
+  // the system clock.
+  std::optional<double> now;
+};
+
 class ProcessingBridge : public QObject {
   Q_OBJECT
 
@@ -45,7 +58,8 @@ class ProcessingBridge : public QObject {
   // thread unless a newer submission on the same channel superseded it.
   // Targets are evaluated in order with the channel's runner, so they share
   // its cache.
-  void submit(int channel, processing::Pipeline pipeline, std::vector<std::string> targets, Callback done);
+  void submit(int channel, processing::Pipeline pipeline, std::vector<std::string> targets, Callback done,
+              SubmitOptions options = {});
   int new_channel() { return next_channel_++; }
   // Drops the channel's cached results and pending work (window closed).
   void release(int channel);
@@ -62,6 +76,7 @@ class ProcessingBridge : public QObject {
     processing::Pipeline pipeline;
     std::vector<std::string> targets;
     Callback done;
+    SubmitOptions options;
   };
 
   void loop();

@@ -27,7 +27,8 @@ ProcessingBridge::~ProcessingBridge() {
   worker_.join();
 }
 
-void ProcessingBridge::submit(int channel, pp::Pipeline pipeline, std::vector<std::string> targets, Callback done) {
+void ProcessingBridge::submit(int channel, pp::Pipeline pipeline, std::vector<std::string> targets, Callback done,
+                              SubmitOptions options) {
   {
     std::lock_guard lock(mutex_);
     const std::uint64_t serial = ++serial_;
@@ -42,7 +43,8 @@ void ProcessingBridge::submit(int channel, pp::Pipeline pipeline, std::vector<st
       }
     }
     if (running_channel_ == channel && running_cancel_) running_cancel_->store(true);
-    queue_.push_back(Job{channel, serial, std::move(pipeline), std::move(targets), std::move(done)});
+    queue_.push_back(
+        Job{channel, serial, std::move(pipeline), std::move(targets), std::move(done), options});
     ++in_flight_;
   }
   wake_.notify_one();
@@ -99,8 +101,25 @@ void ProcessingBridge::loop() {
     }
     const auto start = std::chrono::steady_clock::now();
     PipelineResult result;
+    // The source is refreshed here, not on the GUI thread: it may read a store.
+    // Not for a job already superseded or released: a refresh empties the
+    // source's cache for every channel.
+    Result<void> refreshed;
+    if (job.options.refresh_source) {
+      bool wanted = false;
+      {
+        std::lock_guard lock(mutex_);
+        auto it = latest_.find(job.channel);
+        wanted = !stop_ && !cancel->load() && it != latest_.end() && it->second == job.serial;
+      }
+      refreshed = wanted ? source_.refresh() : Result<void>(fail(ErrorKind::Cancelled, "superseded"));
+    }
     for (const auto& target : job.targets) {
-      result.outputs.push_back(runner->run(job.pipeline, target, cancel.get()));
+      if (!refreshed) {
+        result.outputs.emplace_back(fail(refreshed.error()));
+        continue;
+      }
+      result.outputs.push_back(runner->run(job.pipeline, target, cancel.get(), job.options.now));
       for (const auto& d : runner->diagnostics())
         if (std::find(result.diagnostics.begin(), result.diagnostics.end(), d) == result.diagnostics.end())
           result.diagnostics.push_back(d);

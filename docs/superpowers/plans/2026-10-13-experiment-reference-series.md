@@ -111,10 +111,12 @@ void submit(int channel, processing::Pipeline, std::vector<std::string> targets,
             SubmitOptions options = {});
 ```
 
-- [ ] **Step 1:** `refresh()` is safe against a concurrent `browse()`/`load()` by reading (see "What the code says"); confirm it under TSan with a test that refreshes from one thread while another loads, for both sources, before the bridge changes.
-- [ ] **Step 2: failing tests** with a counting fake source: `refreshIsCalledOnTheWorkerBeforeTheRun` (the fake records the thread id and the order of `refresh` and `browse`; the thread is not the GUI thread); `withoutTheOptionRefreshIsNotCalled` (figure windows are unchanged); `aFailedRefreshIsDeliveredAsTheRunsError`; `theRunsTimeReachesTheUnits` (two submits with a later time and a time-dependent figure: the second scene is the later one); `anUnchangedSourceIsNotReadAgain`: two submits with `refresh_source` and the same pipeline, generation not moved: `load` is called for the first only (the channel's `Runner` keeps its cache between submits).
-- [ ] **Step 3:** implement; `-DPYCHRON_SANITIZE=thread` build of the bridge's test and of `ui.test_data_windows`.
-- [ ] **Step 4:** commit `feat(ui): a processing job can bring the source up to date on the worker first`.
+- [x] **Step 1:** `refresh()` is safe against a concurrent `browse()`/`load()` by reading (see "What the code says"); confirm it under TSan with a test that refreshes from one thread while another loads, for both sources, before the bridge changes.
+- [x] **Step 2: failing tests** with a counting fake source: `refreshIsCalledOnTheWorkerBeforeTheRun` (the fake records the thread id and the order of `refresh` and `browse`; the thread is not the GUI thread); `withoutTheOptionRefreshIsNotCalled` (figure windows are unchanged); `aFailedRefreshIsDeliveredAsTheRunsError`; `theRunsTimeReachesTheUnits` (two submits with a later time and a time-dependent figure: the second scene is the later one); `anUnchangedSourceIsNotReadAgain`: two submits with `refresh_source` and the same pipeline, generation not moved: `load` is called for the first only (the channel's `Runner` keeps its cache between submits).
+- [x] **Step 3:** implement; `-DPYCHRON_SANITIZE=thread` build of the bridge's test and of `ui.test_data_windows`.
+- [x] **Step 4:** commit `feat(ui): a processing job can bring the source up to date on the worker first`.
+
+  Built: the bridge's tests are a file of their own, `tests/ui/test_processing_bridge.cpp`; Step 1's are `StoreSourceTest.ARefreshWhileOtherThreadsReadIsSafe` and `RecordSource.ARefreshWhileOtherThreadsReadIsSafe`, clean under TSan before the bridge changed.
 
 ### Task 4: The pipeline of a tab
 
