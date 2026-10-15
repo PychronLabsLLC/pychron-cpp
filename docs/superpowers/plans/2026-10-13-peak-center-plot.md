@@ -261,10 +261,10 @@ Spec 4.5 wants the example to name "the example spectrometer's other detectors t
 
 **Files:** `docs/user/04-experiments.md` (`:215`, the Evolutions row; `:699`, step 5 of "What a run does"), `docs/user/03-spectrometer.md`, the spec's status line
 
-- [ ] The Evolutions row and a short paragraph: what the Peak center tab draws (the reference heavy and starred, the others scaled onto it so that their shapes can be compared, not their sizes; the markers; the rules; earlier tries faint), that it opens by itself when a peak center starts, that the dock returns to Signal when the next run starts, that a line of the list brings that run's peak center back, and that the last 20 of the queue are kept in memory. A peak center skipped for low signal draws nothing; one that was cancelled keeps its points and says it did not finish.
-- [ ] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`. Report the counts.
-- [ ] Spec status: built, with what section 6 leaves out.
-- [ ] Commit `docs: the peak center graph in the experiment window`.
+- [x] The Evolutions row and a short paragraph: what the Peak center tab draws (the reference heavy and starred, the others scaled onto it so that their shapes can be compared, not their sizes; the markers; the rules; earlier tries faint), that it opens by itself when a peak center starts, that the dock returns to Signal when the next run starts, that a line of the list brings that run's peak center back, and that the last 20 of the queue are kept in memory. A peak center skipped for low signal draws nothing; one that was cancelled keeps its points and says it did not finish.
+- [x] Full `cmake --build --preset dev-ui`, `ctest --preset dev-ui`, `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`. Report the counts.
+- [x] Spec status: built, with what section 6 leaves out.
+- [x] Commit `docs: the peak center graph in the experiment window`.
 
 ## Not in this plan
 

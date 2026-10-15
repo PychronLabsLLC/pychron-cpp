@@ -3,7 +3,16 @@
 Status: agreed 2026-10-13 (owner's decisions, section 9). Drafted by an
 unattended run 2026-10-12. Plan:
 `docs/superpowers/plans/2026-10-13-peak-center-plot.md`; sections 1, 4.1 and
-4.4 corrected from code when it was written. Nothing built. Task T042 (`pychron usage notes.md`);
+4.4 corrected from code when it was written. Built 2026-10-15 (branch
+`feat/exp-t042`): sections 4.1 to 4.5, 5, 8; user guide
+`docs/user/04-experiments.md` section 3, `docs/user/03-spectrometer.md`
+"Peak centring". Not built, per section 6: sweep points in run record and
+recall; skip below minimum signal beyond what T004 did; peak center from
+spectrometer window; interpolated curve, deconvolution; mass on x axis;
+per-isotope stacked evolutions (T018). Example `peak_center.toml` has no
+`additional_detectors` (decision 6). Open: run start empties list
+(`EvolutionsView::clear`), so only current run's lines clickable though 20
+results kept. Task T042 (`pychron usage notes.md`);
 related T004 (minimum signal), T018 and T048 (live plots).
 
 ## 1. Problem

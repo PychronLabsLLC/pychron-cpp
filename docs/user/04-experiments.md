@@ -212,7 +212,39 @@ Open it from **View > Experiment** (Ctrl+Shift+E). Its menus are the submenus of
 | Centre | The queue table, one row per run. Above it, the queue's conditionals file and an Edit button. |
 | Left (tabs) | **Run Factory** (section 5) and **Measurement** (the plan and parameters of the selected run). |
 | Bottom | **Executor**: the Start / Stop / Cancel / Abort / Truncate buttons, status, a timeline, a table of events (each with the time it happened, on the line's clock) and tripped conditionals. |
-| Right | **Evolutions**: the run being measured, one tab a kind (Signal, Baseline, Sniff). Each series of the tab has a panel of its own, stacked in the order the series began on one time axis, each scaled to its own readings, with its live fit and intercept; with many series the panels scroll. Signals and baselines are a panel an isotope on a detector (an isotope peak-hopped onto a second detector has two), sniffs a panel an isotope. Below, a table of the intercepts (isotope, detector, fit, intercept, error, percent error, points used). The panels cannot be zoomed or saved yet. |
+| Right | **Evolutions**: the run being measured, one tab a kind (Signal, Baseline, Sniff). Each series of the tab has a panel of its own, stacked in the order the series began on one time axis, each scaled to its own readings, with its live fit and intercept; with many series the panels scroll. Signals and baselines are a panel an isotope on a detector (an isotope peak-hopped onto a second detector has two), sniffs a panel an isotope. Below, a table of the intercepts (isotope, detector, fit, intercept, error, percent error, points used). A last tab, **Peak center**, draws the run's peak center (below). The panels cannot be zoomed or saved yet. |
+
+**The Peak center tab.** When a run centres a peak (the plan's `peak_center`
+block, see "Peak centring" in [the spectrometer chapter](03-spectrometer.md)),
+the Evolutions pane switches to its **Peak center** tab by itself and draws
+the sweep as it goes: intensity against the magnet position, one point a
+step. The reference detector is drawn heavy and named with a star in the
+legend (`*H1`). Each of the config's `additional_detectors` is drawn in its
+own colour, scaled so that its lowest and highest readings span the same
+range as the reference's: the graph compares the shapes and positions of the
+peaks, not their sizes. Hovering over a point gives its detector, magnet
+position and raw intensity. The title names the isotope, the detector and
+the try (`Ar40 on H1, try 1 of 2`). When the centring succeeds the title
+gives the centre (`center 5.123456, table updated`), circles mark the low,
+centre and high points of the peak and a diamond its maximum. Dashed rules
+mark where the sweep was centred when it began and the centre found, and,
+when the config has a `dac_offset`, the centre without that offset. When it
+fails, the points stay, nothing is marked and the title gives the reason
+(`failed: ...`). A second try draws over the first, which stays behind it,
+thin and faint, without markers or a legend entry.
+
+A peak center skipped because the signal was below `min_signal` draws
+nothing (the run's record says it was skipped). One that was cancelled or
+stopped by a hardware fault keeps the points it had and its title ends in
+`not finished`. When the next run starts, the pane returns to the Signal tab;
+the last graph stays in the Peak center tab until another peak center
+replaces it. Each finished peak center adds a line to the **Peak centers**
+list at the bottom of the pane; clicking a line draws that peak center again
+and selects the tab. The list holds the lines of the run being measured
+(a plan with a peak center before and after has two) and is emptied when
+the next run starts. The graphs of the last 20 peak centers of the queue are
+kept in memory only: starting a queue clears them, and the sweep is not
+saved with the run.
 
 The panels around the table can be closed, moved and floated (the Executor
 can be moved but not closed). **Window > Panels**, **Window > Reset Layout**
@@ -696,7 +728,8 @@ unfinished run may also end Failed, Cancelled or Aborted.
    extraction record is saved.
 5. **Equilibrating, Measuring.** The spectrometer measures according to the
    plan. The post-equilibration script starts when the inlet closes. The
-   Evolutions pane draws the signals.
+   Evolutions pane draws the signals, and a peak center, when the plan has
+   one, in its Peak center tab (section 3).
 6. **PostMeasuring.** The post-measurement script runs. A failure here is
    logged but the run still saves.
 7. **Saving.** The record is written (section 8.5), and then the `post_run`

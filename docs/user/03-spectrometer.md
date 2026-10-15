@@ -403,7 +403,9 @@ this file is an error, and `elctl exp validate` reports a plan whose
 the same sweep. They are read at every step and fitted as the reference is,
 but only for display: the centre, the field table update and the outcome come
 from the reference detector alone, and a detector whose fit fails does not
-fail the centring. In the experiment window each one is drawn on the
+fail the centring. In the experiment window (the Evolutions pane's Peak
+center tab, see section 3 of [Experiments](04-experiments.md)) each one is
+drawn on the
 reference's graph, scaled so that its lowest and highest readings span the
 same range as the reference's: you compare the shapes and positions of the
 peaks, not their sizes. The values stored and shown in the tooltip are the
