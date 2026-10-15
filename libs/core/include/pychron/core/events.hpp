@@ -75,6 +75,15 @@ struct TransportHealth {
   TimePoint ts{};
 };
 
+// A link came back: `attempts` reopens since a call found it gone, and how
+// long it was gone from that call's view.
+struct LinkReconnected {
+  std::string transport;
+  std::uint64_t attempts = 0;
+  Duration down_for{};
+  TimePoint ts{};
+};
+
 struct Log {
   LogLevel level = LogLevel::Info;
   std::string logger;

@@ -141,7 +141,7 @@ class Link {  // one per transport, shared by the devices on it
 };
 ```
 
-- [ ] Failing tests, `VirtualTimeTest` over a `SimTransport` with Task 2's faults:
+- [x] Failing tests, `VirtualTimeTest` over a `SimTransport` with Task 2's faults:
   - `Link.ASafeCallIsRepeatedUntilTheLinkReturns`: down for 7 s; the call succeeds, sent twice in all, `reconnects() == 1`, `repeats() == 1`, elapsed is between 7 s and 7 s plus one backoff.
   - `Link.ASafeCallGivesUpAtItsWindow`: down for good; returns the last transient error at `call_window` (20 s), not before, not after 20 s plus `backoff_max`.
   - `Link.BackoffDoublesFromMinToMax`: the `open()` attempts are at 1, 2, 4, 8, 16, 30, 30 s apart.
@@ -151,9 +151,9 @@ class Link {  // one per transport, shared by the devices on it
   - `Link.AReconnectThatStartedAfterMyFailureIsNotSkipped`: the "known window" in `reconnect.hpp`'s comment: the generation is read inside the transport's `transaction`, so a caller that failed on the new connection reconnects again.
   - `Link.EachReconnectIsPublished`: `LinkReconnected{transport, attempts, down_for}` on the bus.
   - `Link.NoReconnectWhenPolicySaysSo`.
-- [ ] Implement from `reconnect.cpp`: `ClockMutex` around the reconnect, `clock.sleep_for` for the backoff, the generation counter taken under `transport.transaction`. `LinkReconnected` goes in `events.hpp` beside `TransportHealth`.
-- [ ] TSan: `cmake --preset dev -DPYCHRON_SANITIZE=thread` in a second build directory, `pychron_devices_tests --gtest_filter='Link.*'`.
-- [ ] Commit: `feat(devices): a link reconnects with backoff and repeats what may be sent twice`.
+- [x] Implement from `reconnect.cpp`: `ClockMutex` around the reconnect, `clock.sleep_for` for the backoff, the generation counter taken under `transport.transaction`. `LinkReconnected` goes in `events.hpp` beside `TransportHealth`.
+- [x] TSan: `cmake --preset dev -DPYCHRON_SANITIZE=thread` in a second build directory, `pychron_devices_tests --gtest_filter='Link.*'`.
+- [x] Commit: `feat(devices): a link reconnects with backoff and repeats what may be sent twice`.
 
 ### Task 5: `Device::call`, and Qtegra moves onto it
 

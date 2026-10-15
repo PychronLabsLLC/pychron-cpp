@@ -16,6 +16,7 @@ add_library(pychron_devices STATIC
   src/modbus_ids.cpp
   src/modbus_device_sim.cpp
   src/reconnect.cpp
+  src/link.cpp
   src/pfeiffer_maxigauge.cpp
   src/gp_microion.cpp
   src/proxr_relay.cpp
