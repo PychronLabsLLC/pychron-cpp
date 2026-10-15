@@ -47,7 +47,8 @@ class RecordBuilder {
 
   const AnalysisRecord& draft() const noexcept { return rec_; }
 
-  // Fails (ErrorKind::Config) listing every problem in every phase.
+  // Fails (ErrorKind::Config) listing every problem in every phase; a record
+  // whose status is Failed needs only its Identity phase.
   Result<AnalysisRecord> finalize() const;
 
  private:

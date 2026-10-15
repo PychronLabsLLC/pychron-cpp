@@ -148,6 +148,9 @@ inline constexpr std::string_view kNotSavedNote = "not saved to the data store, 
 struct RunResult {
   RunState state = RunState::Pending;
   bool truncated = false;
+  // Extraction began: the sample is spent from here, and a run that fails
+  // after it saves what it has, status failed (spec 4.5).
+  bool past_no_return = false;
   // The record is not where finished runs go. Either it could not be spooled
   // or finalized (the run is then Failed), or it is in the spool and the
   // persister did not take it (the run keeps its state: a measured run is
@@ -182,7 +185,10 @@ class Run {
   Result<void> extract(RunControl& control);
   Result<void> measure(RunControl& control);
   Result<void> post_measure(RunControl& control);
-  Result<void> save();
+  // The record as far as the run got. `failure`: the run failed after
+  // extraction began, and this is why (status failed); otherwise complete,
+  // or truncated when it was.
+  Result<void> save(const std::optional<Error>& failure = std::nullopt);
 
   Result<scripting::Script> resolve(const std::string& name, scripting::ScriptKind kind) const;
   Result<void> run_script(const scripting::Script& script, scripting::ScriptKind kind, RunControl& control,

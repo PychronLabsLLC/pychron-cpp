@@ -117,8 +117,13 @@ Result<void> RecordBuilder::check(Phase phase) const {
 
 Result<AnalysisRecord> RecordBuilder::finalize() const {
   std::string msg;
-  for (auto phase : kAllPhases)
+  // A failed run's record has what the run got to (spec 4.5): only who it is
+  // is required, so the store can take it.
+  const bool failed = rec_.provenance.status == RecordStatus::Failed;
+  for (auto phase : kAllPhases) {
+    if (failed && phase != Phase::Identity) continue;
     for (const auto& s : problems(phase)) msg += (msg.empty() ? "" : "; ") + s;
+  }
   if (!msg.empty()) return fail(ErrorKind::Config, "incomplete record: " + msg);
   AnalysisRecord out = rec_;
   out.provenance.schema_version = kRecordSchemaVersion;

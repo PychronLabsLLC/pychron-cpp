@@ -198,6 +198,21 @@ events) and is not reclassified.
 
 Aliquot of such run is spent, never reused.
 
+As built (Tasks 9, 10):
+- `RecordBuilder::set_status(status, failure)`. `failed` record finalized
+  with only Identity phase complete (no results by nature; `to_ingest`
+  refuses record without sha, which would have kept it in spool for good).
+- `RunResult::past_no_return` set as extraction script starts (after
+  resource wait; run without extraction script never sets it, saves nothing
+  on failure); failure
+  after it: `save(error)` before `Fail`, so record on disk before state is
+  `Failed` and before `RunFinished`. Run's error stays run's; save failure
+  of failed run: `save_error`, note. Run without plan (degas) saves nothing,
+  as before.
+- Aliquot number issued in prepare before plan loads; prepare failure saves
+  nothing, spends no sample; `FilePersister` does not issue that number
+  again in same process (as before this spec).
+
 ### 4.6 Executor: Holding
 
 New state.

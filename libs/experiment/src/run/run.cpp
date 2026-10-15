@@ -114,6 +114,17 @@ RunResult Run::execute(RunControl& control) {
     result_.error = error;
     advance(e, error.what);
   };
+  // Past the point of no return a failed run keeps what it measured (spec
+  // 4.5): saved before it is Failed, so before the executor says it finished.
+  auto fail_run = [&](const Error& error) {
+    if (result_.past_no_return) {
+      if (auto sv = save(error); !sv) {
+        result_.save_error = true;
+        note("the failed run's record was not saved: " + sv.error().what);
+      }
+    }
+    fail_with(RunEvent::Fail, error);
+  };
   auto stopped = [&]() -> std::optional<RunEvent> {
     if (token.mode() == scripting::CancelMode::Abort) return RunEvent::Abort;
     if (token.mode() == scripting::CancelMode::Cancel) return RunEvent::Cancel;
@@ -134,7 +145,7 @@ RunResult Run::execute(RunControl& control) {
       (void)post_measure(control);  // cancel still runs post-measurement
       advance(RunEvent::Cancel, "during extraction");
     } else if (!ex) {
-      fail_with(RunEvent::Fail, ex.error());
+      fail_run(ex.error());
     } else {
       advance(RunEvent::Extracted);
       auto me = measure(control);
@@ -145,9 +156,9 @@ RunResult Run::execute(RunControl& control) {
         (void)post_measure(control);
         advance(RunEvent::Cancel, "during measurement");
       } else if (!me) {
-        fail_with(RunEvent::Fail, me.error());
+        fail_run(me.error());
       } else if (outcome == measurement::MeasurementOutcome::Failed) {
-        fail_with(RunEvent::Fail, result_.measurement.error.value_or(Error{ErrorKind::Io, "measurement failed", {}}));
+        fail_run(result_.measurement.error.value_or(Error{ErrorKind::Io, "measurement failed", {}}));
       } else {
         if (outcome == measurement::MeasurementOutcome::Truncated) {
           result_.truncated = true;
@@ -340,6 +351,9 @@ Result<void> Run::extract(RunControl& control) {
   actuals_.cleanup = seconds(spec_.extraction.cleanup);
   if (!extraction_) return {};
   if (hooks_.acquire_extraction && !hooks_.acquire_extraction()) return {};  // cancelled while waiting
+  // The point of no return (spec 4.4): from the script's first line the
+  // sample is spent.
+  result_.past_no_return = true;
   const auto start = s_.clock->now();
   auto r = run_script(*extraction_, scripting::ScriptKind::Extraction, control);
   end_extraction();  // always: the device never stays on after this phase
@@ -442,9 +456,11 @@ Result<void> Run::post_measure(RunControl& control) {
   return r;
 }
 
-Result<void> Run::save() {
+Result<void> Run::save(const std::optional<Error>& failure) {
   if (!plan_) return {};  // nothing measured, nothing to record
   record::RecordBuilder b;
+  if (failure) b.set_status(record::RecordStatus::Failed, failure->what);
+  else if (result_.truncated) b.set_status(record::RecordStatus::Truncated);
   record::Identity id;
   id.uuid = run_id_;
   id.identifier = spec_.id.identifier;

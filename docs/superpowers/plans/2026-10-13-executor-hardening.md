@@ -238,16 +238,16 @@ struct Provenance { /* ... */ RecordStatus status = RecordStatus::Complete; std:
 
 **Files:** `libs/experiment/src/run/run.cpp` (`execute`, `:111-167`; `save`, `:445`), `include/pychron/experiment/run/run.hpp`, `tests/experiment/test_run.cpp`, `tests/experiment/run_fakes.hpp`.
 
-- [ ] Failing tests, one per row of the table in spec 4.4 that ends a run:
-  - `Run.AFailureInPrepareSavesNothingAndSpendsNoAliquot` (as today; pins it).
+- [x] Failing tests, one per row of the table in spec 4.4 that ends a run:
+  - `Run.AFailureInPrepareSavesNothingAndSpendsNoAliquot` (as today; pins it). Built as `RunTest.AFailureInPrepareSavesNothing`: the aliquot number is issued before the plan loads, and `FilePersister` does not issue it again in that process, so "spends no aliquot" was not today's behaviour; nothing of the sample is spent and nothing is saved, which is what the test pins.
   - `Run.AFailureInExtractionIsSavedAsFailed`: the spool holds a record with `status = failed`, `failure` the error's text, the extraction actuals and notes; `RunResult::state` is `Failed`.
   - `Run.AFailureInMeasurementKeepsTheSeriesCollected`: the series up to the failure are in the record.
   - `Run.ATruncatedRunIsMarkedTruncated`.
   - `Run.ACancelledOrAbortedRunIsStillNotSaved` (pins `:131-146`: operator's choice, not a link failure).
   - `Run.TheRecordReachesTheSpoolBeforeRunFinished` (spec section 5): order of spool write and the `RunFinished` event.
-- [ ] Implement: `RunResult` gains `past_no_return` (set at the first line of `extract()`), and `execute` calls `save()` on the `Fail` paths at `:136-137` and `:147-150` when it is set. `save()` returns early without a plan (`:447`) as today.
-- [ ] The aliquot of a saved failed run is spent: `Run.AFailedRunsAliquotIsNotGivenAgain` with `FilePersister`.
-- [ ] Commit: `feat(experiment): a run that fails after extraction began saves what it measured`.
+- [x] Implement: `RunResult` gains `past_no_return` (set at the first line of `extract()`), and `execute` calls `save()` on the `Fail` paths at `:136-137` and `:147-150` when it is set. `save()` returns early without a plan (`:447`) as today. Built: `save(failure)` sets `status = failed` and `failure`, or `truncated` when the run was; the record is saved before the run is `Failed`. A failed record needs only its Identity phase to finalize (`RecordBuilder.AFailedRecordNeedsOnlyItsIdentity`): it lacks results by nature, and `to_ingest` refuses a record without a sha, which would have kept it in the spool for good. Also `RunTest.ACompleteRunIsMarkedComplete`. `past_no_return` is set where the extraction script starts, after the resource wait, not at the first line of `extract()`: a run without an extraction script spent no sample and saves nothing on failure (`RunTest.ARunWithoutAnExtractionScriptThatFailsSavesNothing`; review of the branch).
+- [x] The aliquot of a saved failed run is spent: `Run.AFailedRunsAliquotIsNotGivenAgain` with `FilePersister`.
+- [x] Commit: `feat(experiment): a run that fails after extraction began saves what it measured`.
 
 ---
 

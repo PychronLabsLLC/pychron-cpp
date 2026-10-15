@@ -610,3 +610,157 @@ TEST_F(RunDeviceTest, NoResolverAndNoDeviceIsAsBefore) {
 }
 
 }  // namespace
+
+// ---- a run that fails after extraction began (executor hardening, spec 4.5) --
+
+namespace {
+
+// The finished records of `identifier` on disk, read back.
+std::vector<record::AnalysisRecord> saved_records(const std::filesystem::path& lab, const std::string& identifier) {
+  std::vector<record::AnalysisRecord> out;
+  std::error_code ec;
+  for (const auto& f : std::filesystem::directory_iterator(lab / "records" / identifier, ec)) {
+    const auto name = f.path().filename().string();
+    if (f.path().extension() != ".json" || name.ends_with(".extraction.json")) continue;
+    std::ifstream in(f.path(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (auto r = record::from_json(text)) out.push_back(*r);
+  }
+  return out;
+}
+
+}  // namespace
+
+// Nothing of the sample is spent before extraction, and nothing is saved.
+// (The aliquot number was issued already: FilePersister does not give it
+// again in this process, as before this spec.)
+TEST_F(RunTest, AFailureInPrepareSavesNothing) {
+  auto r = go(unknown_run("12345", "no_such_plan"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_FALSE(r.record);
+  EXPECT_TRUE(saved_records(lab_.dir(), "12345").empty());
+  EXPECT_TRUE(host_.ran_scripts().empty());
+}
+
+TEST_F(RunTest, AFailureInExtractionIsSavedAsFailed) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  auto r = go(unknown_run("12345"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_EQ(r.error->what, "laser link down");  // the run's error, not the save's
+  EXPECT_FALSE(r.save_error);
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Failed);
+  EXPECT_EQ(r.record->provenance.failure, "laser link down");
+  EXPECT_FALSE(r.record->provenance.sha.empty());  // finalized: the store takes it
+  EXPECT_TRUE(r.record->data.series.empty());
+  EXPECT_GE(r.record->extraction.actuals.duration, 0.0);
+  EXPECT_FALSE(r.record->events.empty());
+  const auto saved = saved_records(lab_.dir(), "12345");
+  ASSERT_EQ(saved.size(), 1u);
+  EXPECT_EQ(saved[0], *r.record);
+  EXPECT_EQ(lab_.save.pending(), 0u);
+}
+
+TEST_F(RunTest, AFailureInMeasurementKeepsTheSeriesCollected) {
+  spec_.fail_from = 6;
+  auto r = go(unknown_run("12345"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Failed);
+  EXPECT_NE(r.record->provenance.failure.find("spectrometer link down"), std::string::npos)
+      << r.record->provenance.failure;
+  ASSERT_FALSE(r.record->data.series.empty());
+  std::size_t points = 0;
+  for (const auto& s : r.record->data.series) points += s.trace.t.size();
+  EXPECT_GT(points, 0u);
+  EXPECT_EQ(saved_records(lab_.dir(), "12345").size(), 1u);
+}
+
+TEST_F(RunTest, ATruncatedRunIsMarkedTruncated) {
+  spec_.on_reading = [&](int n) {
+    if (n == 8) control_.truncate();
+  };
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Truncated);
+  EXPECT_TRUE(r.record->provenance.failure.empty());
+  const auto saved = saved_records(lab_.dir(), "12345");
+  ASSERT_EQ(saved.size(), 1u);
+  EXPECT_EQ(saved[0].provenance.status, record::RecordStatus::Truncated);
+}
+
+TEST_F(RunTest, ACompleteRunIsMarkedComplete) {
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Complete);
+}
+
+// The operator's choice, not a link failure: nothing is saved (spec 4.4).
+TEST_F(RunTest, ACancelledOrAbortedRunIsStillNotSaved) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken& token) -> Result<void> {
+    token.cancel();
+    return fail(ErrorKind::Cancelled, "ScriptCancelled");
+  };
+  auto cancelled = go(unknown_run("12345"));
+  EXPECT_EQ(cancelled.state, RunState::Cancelled);
+  EXPECT_FALSE(cancelled.record);
+
+  host_.bodies.erase("extract");
+  RunControl c;
+  spec_.on_reading = [&](int n) {
+    if (n == 4) c.token().abort();
+  };
+  AutomatedRun run(unknown_run("12346"), queue_, services());
+  auto aborted = run.execute(c);
+  EXPECT_EQ(aborted.state, RunState::Aborted);
+  EXPECT_FALSE(aborted.record);
+  EXPECT_TRUE(saved_records(lab_.dir(), "12345").empty());
+  EXPECT_TRUE(saved_records(lab_.dir(), "12346").empty());
+}
+
+// Spec section 5: the record is written before the run is over, so before
+// the executor publishes RunFinished, which comes after execute() returns.
+TEST_F(RunTest, TheRecordReachesTheSpoolBeforeRunFinished) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  std::optional<std::size_t> on_disk_when_failed;
+  auto sub = bus_.subscribe<RunStateChanged>([&](const RunStateChanged& e) {
+    if (e.to == RunState::Failed) on_disk_when_failed = saved_records(lab_.dir(), "12345").size();
+  });
+  auto r = go(unknown_run("12345"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(on_disk_when_failed);
+  EXPECT_EQ(*on_disk_when_failed, 1u);
+}
+
+TEST_F(RunTest, AFailedRunsAliquotIsNotGivenAgain) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  auto failed = go(unknown_run("12345"));
+  EXPECT_EQ(failed.state, RunState::Failed);
+  EXPECT_EQ(failed.aliquot, 1);
+  host_.bodies.erase("extract");
+  RunControl c;
+  AutomatedRun next(unknown_run("12345"), queue_, services());
+  EXPECT_EQ(next.execute(c).aliquot, 2);
+}
+
+// The point of no return is the extraction script's first line (spec 4.4): a
+// run without one spent no sample, and a failure saves nothing, as before.
+TEST_F(RunTest, ARunWithoutAnExtractionScriptThatFailsSavesNothing) {
+  auto spec = unknown_run("12345");
+  spec.extraction.script.clear();
+  spec_.fail_from = 6;
+  auto r = go(spec);
+  EXPECT_EQ(r.state, RunState::Failed);
+  EXPECT_FALSE(r.past_no_return);
+  EXPECT_FALSE(r.record);
+  EXPECT_TRUE(saved_records(lab_.dir(), "12345").empty());
+}

@@ -108,6 +108,22 @@ TEST(RecordBuilder, EmptyFailsEveryPhase) {
   EXPECT_FALSE(b.finalize().has_value());
 }
 
+// A failed run's record (spec 4.5) has what the run got to: only who it is
+// is required, and it is finalized so that the store takes it.
+TEST(RecordBuilder, AFailedRecordNeedsOnlyItsIdentity) {
+  RecordBuilder b;
+  b.set_identity({"u-1", "12345", 2, "A", "unknown", "2026-09-30T12:00:00Z", 7, "q-1"});
+  b.set_instrument({"jan", "co2", "lab", "me", "0.1.0", "abc123"});
+  EXPECT_FALSE(b.finalize().has_value());
+  b.set_status(RecordStatus::Failed, "laser link down");
+  auto r = b.finalize();
+  ASSERT_TRUE(r.has_value()) << r.error().what;
+  EXPECT_TRUE(verify_sha(*r));
+  RecordBuilder nobody;
+  nobody.set_status(RecordStatus::Failed, "laser link down");
+  EXPECT_FALSE(nobody.finalize().has_value());
+}
+
 TEST(RecordBuilder, PhaseCheckIsIndependent) {
   auto b = full_builder();
   for (auto p : kAllPhases) EXPECT_TRUE(b.check(p).has_value()) << to_string(p);
