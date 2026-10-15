@@ -236,6 +236,9 @@ class TestExperimentWindow : public QObject {
     auto* evo = window.evolutions();
     QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Signal) > 0);
     QVERIFY(evo->graph_count() > 0);
+    // A panel a signal series, Ar40 on H1 among them.
+    QCOMPARE(evo->panel_titles().size(), evo->graph_count());
+    QVERIFY(evo->panel_titles().contains(QStringLiteral("Ar40 H1")));
     QVERIFY(evo->title_text().startsWith(QStringLiteral("66001")));
     // The live fits: a curve per signal series and its intercept listed.
     QVERIFY(evo->fit_curve_count() > 0);
@@ -266,6 +269,7 @@ class TestExperimentWindow : public QObject {
     QVERIFY(evo->peak_centers().front().contains(QStringLiteral("table updated")));
     evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);
     QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Baseline) > 0);
+    QVERIFY(evo->graph_count() > 0);
     QVERIFY(fs::exists(sim.dir / "data" / "records" / "66001" / "66001-2.json"));
     // The timeline: a state segment per phase of each run, all closed.
     const auto& tl = pane->timeline();
