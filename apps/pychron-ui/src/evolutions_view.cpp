@@ -152,7 +152,10 @@ void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpda
     block_ = QStringLiteral("%1 %2/%3").arg(QString::fromStdString(u.label)).arg(u.count).arg(u.target);
   }
   title_->setText(block_.isEmpty() ? run_ : QStringLiteral("%1 — %2").arg(run_, block_));
-  if (new_line) rebuild();
+  if (new_line) {
+    rebuild();
+    refresh();  // the new rects at their data at once, not at QCustomPlot's default range
+  }
   dirty_ = true;
 }
 
@@ -309,6 +312,25 @@ void EvolutionsView::refresh() {
   }
   if (x)
     for (const auto& g : graphs_) g.rect->axis(QCPAxis::atBottom)->setRange(padded(*x));
+  // The bottom row also holds the time axis: it gets that much more height, so
+  // its plotting area is as tall as the others'. Measured from the last layout;
+  // a change asks for another refresh until it settles.
+  if (graphs_.size() > 1) {
+    const QCPAxisRect* top = graphs_.front().rect;
+    const QCPAxisRect* bottom = graphs_.back().rect;
+    const int outer = top->outerRect().height();
+    const int extra = (bottom->margins().top() + bottom->margins().bottom()) -
+                      (top->margins().top() + top->margins().bottom());
+    if (outer > 0 && extra > 0) {
+      const double factor = static_cast<double>(outer + extra) / outer;
+      auto* layout = plot_->plotLayout();
+      const int last = static_cast<int>(graphs_.size()) - 1;
+      if (std::abs(layout->rowStretchFactors().value(last, 1.0) - factor) > 0.01) {
+        layout->setRowStretchFactor(last, factor);
+        dirty_ = true;
+      }
+    }
+  }
   plot_->replot(QCustomPlot::rpQueuedReplot);
 }
 
@@ -330,6 +352,11 @@ std::pair<double, double> EvolutionsView::panel_y_range(int i) const {
   if (i < 0 || std::cmp_greater_equal(i, graphs_.size())) return {0, 0};
   const QCPRange r = graphs_[static_cast<std::size_t>(i)].rect->axis(QCPAxis::atLeft)->range();
   return {r.lower, r.upper};
+}
+
+int EvolutionsView::panel_plot_height(int i) const {
+  if (i < 0 || std::cmp_greater_equal(i, graphs_.size())) return 0;
+  return graphs_[static_cast<std::size_t>(i)].rect->height();
 }
 
 bool EvolutionsView::panel_has_time_labels(int i) const {

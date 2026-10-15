@@ -210,6 +210,31 @@ class TestEvolutionsView : public QObject {
     QCOMPARE(view.panel_titles(), QStringList{"H1"});
   }
 
+  void aNewSeriesIsScaledAtOnce() {
+    EvolutionsView view;
+    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 999}, {2, 1001}}));
+    // No wait for the refresh timer: a panel is never shown at QCustomPlot's default 0 to 5.
+    QVERIFY(holds(view.panel_y_range(0), 999) && holds(view.panel_y_range(0), 1001));
+    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 100}, {2, 101}}));
+    QVERIFY(holds(view.panel_y_range(1), 100) && holds(view.panel_y_range(1), 101));
+    QVERIFY(holds(view.panel_y_range(0), 999));
+  }
+
+  void theBottomPanelIsAsTallAsTheOthers() {
+    EvolutionsView view;
+    view.resize(400, 900);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37"}) view.on_series(readings({iso, "H1", SeriesKind::Signal}, {{1, 1}}));
+    QCOMPARE(view.graph_count(), 4);
+    // The plotting area of each panel, its time axis aside: settles within a few refreshes.
+    const auto even = [&] {
+      const int top = view.panel_plot_height(0);
+      return top > 0 && std::abs(view.panel_plot_height(3) - top) <= top / 10;
+    };
+    QTRY_VERIFY2(even(), qPrintable(QString("%1 vs %2").arg(view.panel_plot_height(3)).arg(view.panel_plot_height(0))));
+  }
+
   void manyPanelsScroll() {
     EvolutionsView view;
     view.resize(400, 700);  // the plot's area at least its 200 px floor, under tabs, title and tables

@@ -92,6 +92,7 @@ class EvolutionsView : public QWidget {
   [[nodiscard]] std::pair<double, double> panel_x_range(int i) const;
   [[nodiscard]] std::pair<double, double> panel_y_range(int i) const;
   [[nodiscard]] bool panel_has_time_labels(int i) const;
+  [[nodiscard]] int panel_plot_height(int i) const;  // pixels inside the panel's axes, as last laid out
   [[nodiscard]] QScrollArea* scroll_area() const noexcept { return scroll_; }
   std::size_t point_count(experiment::collect::SeriesKind kind) const;  // over every series of `kind`
   QString title_text() const;
