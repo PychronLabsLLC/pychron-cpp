@@ -51,6 +51,7 @@ std::string_view to_string(ScriptKind kind) noexcept {
     case ScriptKind::PostEquilibration: return "post_equilibration";
     case ScriptKind::PostMeasurement: return "post_measurement";
     case ScriptKind::MeasurementHook: return "measurement_hooks";
+    case ScriptKind::SafeState: return "safe_state";
   }
   return "unknown";
 }

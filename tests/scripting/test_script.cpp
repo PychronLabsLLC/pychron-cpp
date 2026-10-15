@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "pychron/scripting/cancel_token.hpp"
@@ -10,6 +12,7 @@
 #include "pychron/scripting/script.hpp"
 #include "pychron/scripting/services.hpp"
 #include "pychron/scripting/vocabulary.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::scripting;
@@ -83,6 +86,68 @@ TEST(ScriptResolver, MapResolver) {
   EXPECT_FALSE(r.resolve("other", ScriptKind::Extraction));
 }
 
+// A missing script says so by its code, so a caller can tell "there is none"
+// from a script it cannot use.
+TEST(ScriptResolver, NotFoundHasItsCode) {
+  DirectoryScriptResolver d(PYCHRON_SCRIPTING_TEST_SCRIPTS_DIR);
+  auto a = d.resolve("nope", ScriptKind::Extraction);
+  ASSERT_FALSE(a);
+  EXPECT_EQ(a.error().code, kScriptNotFound);
+  MapScriptResolver m;
+  auto b = m.resolve("nope", ScriptKind::Extraction);
+  ASSERT_FALSE(b);
+  EXPECT_EQ(b.error().code, kScriptNotFound);
+  auto bad = d.resolve("../x", ScriptKind::Extraction);
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().code, kScriptNotFound);
+}
+
+// The lab's safe_state script is one file beside the kind directories
+// (executor hardening, spec 4.7), not a directory of names.
+TEST(ScriptResolver, TheSafeStateScriptIsOneFile) {
+  EXPECT_EQ(to_string(ScriptKind::SafeState), "safe_state");
+  const auto root = pychron::testing::unique_temp_path("safe_state_");
+  std::filesystem::create_directories(root / "safe_state");
+  std::filesystem::create_directories(root / "lib");
+  { std::ofstream(root / "lib" / "safe_state.py") << "def main():\n    info('lib')\n"; }
+  DirectoryScriptResolver r(root);
+  auto none = r.resolve("safe_state", ScriptKind::SafeState);
+  ASSERT_FALSE(none);  // not under lib/, nor a directory of its own
+  EXPECT_EQ(none.error().code, kScriptNotFound);
+  { std::ofstream(root / "safe_state.py") << "def main():\n    close('A')\n"; }
+  auto s = r.resolve("safe_state", ScriptKind::SafeState);
+  ASSERT_TRUE(s) << to_string(s.error());
+  EXPECT_EQ(s->name, "safe_state.py");
+  EXPECT_EQ(s->kind, ScriptKind::SafeState);
+  EXPECT_NE(s->text.find("close('A')"), std::string::npos);
+  // A gosub from it is any other name: found under lib/, never the script itself.
+  { std::ofstream(root / "lib" / "vent.py") << "def main():\n    open('B')\n"; }
+  auto sub = r.resolve("vent", ScriptKind::SafeState);
+  ASSERT_TRUE(sub) << to_string(sub.error());
+  EXPECT_EQ(sub->name, "lib/vent.py");
+  auto lib_one = r.resolve("safe_state.py", ScriptKind::SafeState);
+  ASSERT_TRUE(lib_one);
+  EXPECT_EQ(lib_one->name, "safe_state.py");  // the name of the file itself
+  auto missing = r.resolve("nope", ScriptKind::SafeState);
+  ASSERT_FALSE(missing);
+  EXPECT_EQ(missing.error().code, kScriptNotFound);
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+// There but not readable is not "the lab has none": it is said.
+TEST(ScriptResolver, ASafeStateScriptThatCannotBeReadIsNotMissing) {
+  const auto root = pychron::testing::unique_temp_path("safe_state_dir_");
+  std::filesystem::create_directories(root / "safe_state.py");  // a directory where the file goes
+  DirectoryScriptResolver r(root);
+  auto s = r.resolve("safe_state", ScriptKind::SafeState);
+  ASSERT_FALSE(s);
+  EXPECT_NE(s.error().code, kScriptNotFound);
+  EXPECT_NE(s.error().what.find("safe_state.py"), std::string::npos) << s.error().what;
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
 TEST(CancelToken, WaitElapsesWakesAndCancels) {
   SteadyClock clock;
   CancelToken t;
@@ -140,6 +205,10 @@ TEST(Vocabulary, CoversThePyscriptCommands) {
   auto* gi = find_command("get_intensity");
   EXPECT_FALSE(command_allowed(*gi, ScriptKind::Extraction));
   EXPECT_TRUE(command_allowed(*gi, ScriptKind::PostMeasurement));
+  // The safe state runs with the line only: no acquisition (spec 4.7).
+  EXPECT_FALSE(command_allowed(*gi, ScriptKind::SafeState));
+  EXPECT_FALSE(command_allowed(*find_command("signal_pump_time_start"), ScriptKind::SafeState));
+  EXPECT_TRUE(command_allowed(*find_command("close"), ScriptKind::SafeState));
   EXPECT_TRUE(find_command("open")->valve_argument);
   EXPECT_TRUE(find_command("sleep")->blocking);
   EXPECT_EQ(find_command("fire_laser")->capability, extraction::Capability::Laser);

@@ -234,7 +234,8 @@ class FakeScriptHost final : public scripting::IScriptHost {
  public:
   using Body = std::function<Result<void>(const scripting::ScriptEnvironment&, scripting::CancelToken&)>;
 
-  bool available() const noexcept override { return true; }
+  bool available() const noexcept override { return enabled; }
+  bool enabled = true;  // false: as a build without scripting
   Result<scripting::CheckReport> check(const scripting::Script&, const scripting::ScriptEnvironment&) override {
     return scripting::CheckReport{};
   }
@@ -276,7 +277,9 @@ class FakeScriptHost final : public scripting::IScriptHost {
 class AnyScriptResolver final : public scripting::IScriptResolver {
  public:
   Result<scripting::Script> resolve(std::string_view name, scripting::ScriptKind from) const override {
-    if (missing.contains(std::string(name))) return fail(ErrorKind::Config, "no script '" + std::string(name) + "'");
+    if (missing.contains(std::string(name)))
+      return fail(Error{ErrorKind::Config, "no script '" + std::string(name) + "'", {}, scripting::kScriptNotFound});
+    if (broken.contains(std::string(name))) return fail(ErrorKind::Io, "cannot read " + std::string(name));
     scripting::Script s;
     s.name = std::string(name);
     s.text = "def main(): pass";
@@ -284,6 +287,7 @@ class AnyScriptResolver final : public scripting::IScriptResolver {
     return s;
   }
   std::set<std::string> missing;
+  std::set<std::string> broken;  // there, but cannot be read
 };
 
 inline constexpr const char* kTestPlan = R"(

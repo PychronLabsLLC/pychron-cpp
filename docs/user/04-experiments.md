@@ -24,7 +24,8 @@ directory**, a folder of plain files that every program in the package reads:
 <lab>/
   experiment.toml            a queue (any name, you choose where to keep queues)
   plans/*.toml               measurement plans (how the spectrometer measures)
-  scripts/                   extraction, post_equilibration, post_measurement, measurement_hooks
+  scripts/                   extraction, post_equilibration, post_measurement, measurement_hooks;
+                             safe_state.py, the lab's safe state (optional)
   conditionals/*.toml        named sets of conditionals (system.toml is always applied)
   identifiers.toml           special identifiers such as "bu" (optional)
   defaults.toml              what the run factory starts a new run with (optional)
@@ -796,6 +797,24 @@ unfinished run may also end Failed, Cancelled or Aborted.
    logged but the run still saves.
 7. **Saving.** The record is written (section 8.5), and then the `post_run`
    conditionals are checked.
+
+**A run that fails after its extraction script started** has spent its
+sample, so nothing it measured is thrown away: its record is saved with
+status `failed` and the reason, and stored with the tag `invalid` (left out
+of the browser and figures, as any invalid analysis is; the recall window
+still opens it). Its aliquot is not given again. A truncated run's record
+says `truncated`. A cancelled or aborted run is the operator's choice and is
+not saved, as before.
+
+Then the line is put in a **safe state**, in this order: the extraction
+device is stopped and disabled, the plan's inlet valve closed and the
+detectors the plan protects unprotected. A step that fails because a link is
+down keeps trying for 10 minutes; after 20 s an alarm says so, and if it
+still fails a critical alarm says the line may not be safe. The steps after a
+failed one still run. Last, when the lab has one, `scripts/safe_state.py`
+runs: the lab's own sequence to isolate and pump the line ([Scripting](09-scripting.md),
+section 1). A run whose post-measurement script failed is saved and then
+made safe the same way.
 
 ### 8.3 Stop, Cancel, Abort, Truncate
 

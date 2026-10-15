@@ -51,14 +51,21 @@ struct IMeasurementApi {
 
 // Finds gosub targets. pychron names use ':' as a path separator
 // ("common:wait_for_access"); ".py" is implied.
+// Error::code of a script that is not there (a name that cannot be one is a
+// Config error without it).
+inline constexpr const char* kScriptNotFound = "not_found";
+
 struct IScriptResolver {
   virtual ~IScriptResolver() = default;
-  // Config error when not found.
+  // Config error when not found, with code kScriptNotFound.
   virtual Result<Script> resolve(std::string_view name, ScriptKind from) const = 0;
 };
 
 // Looks under <root>/<kind dir>/ then <root>/lib/. Names with ".." or an
-// absolute path are rejected.
+// absolute path are rejected. SafeState, by the name "safe_state" (or
+// none), is <root>/safe_state.py, and any other name from it (a gosub) is
+// looked for under <root>/lib/ only. A safe_state.py that is there but
+// cannot be read is an Io error, not "not found".
 class DirectoryScriptResolver final : public IScriptResolver {
  public:
   explicit DirectoryScriptResolver(std::filesystem::path root) : root_(std::move(root)) {}

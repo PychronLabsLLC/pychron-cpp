@@ -38,7 +38,7 @@ using experiment::lab::ScriptFile;
 using scripting::ScriptKind;
 
 constexpr ScriptKind kKinds[] = {ScriptKind::Extraction, ScriptKind::PostEquilibration, ScriptKind::PostMeasurement,
-                                 ScriptKind::MeasurementHook};
+                                 ScriptKind::MeasurementHook, ScriptKind::SafeState};
 
 QString q(std::string_view s) { return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size())); }
 
@@ -63,6 +63,10 @@ QString skeleton(ScriptKind kind) {
     case ScriptKind::MeasurementHook:
       return QStringLiteral("# Measurement hook: define any of before_main, after_main, on_whiff_result.\n\n"
                             "def before_main(api):\n    pass\n");
+    case ScriptKind::SafeState:
+      return QStringLiteral("# The lab's safe state: run after a failed run, once the extraction device is off,\n"
+                            "# the inlet closed and the detectors unprotected. The line only: no acquisition.\n\n"
+                            "def main():\n    info('making the line safe')\n");
     default:
       return QStringLiteral("#! pychron: \n\ndef main():\n    info('starting')\n");
   }

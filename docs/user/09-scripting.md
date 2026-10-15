@@ -46,6 +46,13 @@ the `.py`; a `:` stands for a folder (`co2:degas` is `co2/degas.py`).
 | `post_measurement` | the run's `post_measurement` | after the measurement, usually to pump out | `main()` |
 | `measurement_hooks` | the plan's or run's `hook` | at points of the measurement (section 10) | any of `before_main`, `after_main`, `on_whiff_result` |
 | `lib` | `gosub('name')` only | called from another script (section 4.7) | `main()` |
+| `safe_state.py` (one file in `scripts/`, not a folder) | nothing: found by its name | after a run that failed past its extraction, once the built-in safe state is done (the device off, the inlet closed, the detectors unprotected) | `main()` |
+
+A `safe_state.py` is the lab's own sequence to isolate and pump the line.
+It works the line only: `get_intensity` and `signal_pump_time_start` are not
+available in it, and a call to either fails it. A script that fails is a
+failed step of the safe state: a critical alarm says the line may not be
+safe. Without the file, only the built-in steps run.
 
 When a script is run, the file is first loaded, then its `main()` is called.
 Put your commands inside `main()`; do not give commands at the top level.

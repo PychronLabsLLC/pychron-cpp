@@ -6,7 +6,8 @@
 // lab is and on what makes a queue runnable.
 //
 //   <lab>/plans/*.toml            measurement plan templates
-//   <lab>/scripts/                extraction, post-equilibration, post-measurement, hooks
+//   <lab>/scripts/                extraction, post-equilibration, post-measurement, hooks;
+//                                 safe_state.py (the lab's own safe state, one file)
 //   <lab>/conditionals/*.toml     named conditional sets
 //   <lab>/identifiers.toml        identifier rules (default rules if absent)
 //   <lab>/peak_center.toml        named peak-center configs (optional)

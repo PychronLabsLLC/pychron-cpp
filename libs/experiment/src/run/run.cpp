@@ -306,10 +306,13 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
   env.on_pump_time_start = std::move(on_pump_time_start);
   env.log = [this](std::string_view line) { note(std::string(line)); };
   auto r = s_.scripts->run(script, env, control.token());
-  const char* ref = kind == scripting::ScriptKind::Extraction         ? "extraction"
-                    : kind == scripting::ScriptKind::PostEquilibration ? "post_eq"
-                                                                       : "post_meas";
-  if (r) script_refs_[ref].sha = r->sha;
+  // The record names a run's own scripts; the safe state comes after it is saved.
+  if (r && kind != scripting::ScriptKind::SafeState) {
+    const char* ref = kind == scripting::ScriptKind::Extraction         ? "extraction"
+                      : kind == scripting::ScriptKind::PostEquilibration ? "post_eq"
+                                                                         : "post_meas";
+    script_refs_[ref].sha = r->sha;
+  }
   if (!r) return fail(r.error());
   return {};
 }
@@ -373,6 +376,27 @@ SafeStateResult Run::make_safe() {
       for (const auto& hop : p.main.hops) protected_detectors.insert(hop.protect.begin(), hop.protect.end());
       for (const auto& d : protected_detectors)
         step("unprotect " + d, [&] { return s_.spectrometer->protect(d, false); });
+    }
+  }
+  // Then the lab's own sequence, when it has one: the line only, no
+  // acquisition (its kind has no such verbs). Not repeated: a script is not
+  // an absolute target.
+  if (s_.scripts != nullptr && s_.resolver != nullptr) {
+    auto script = s_.resolver->resolve(scripting::to_string(scripting::ScriptKind::SafeState),
+                                       scripting::ScriptKind::SafeState);
+    const bool none = !script && script.error().code == scripting::kScriptNotFound;
+    if (none) {
+      // The built-in steps are all there is.
+    } else if (!s_.scripts->available()) {
+      note("safe state: the lab's safe_state script was not run: this build has no scripting");
+    } else {
+      RunControl control;
+      Result<void> r = script ? run_script(*script, scripting::ScriptKind::SafeState, control)
+                              : Result<void>(fail(script.error()));
+      if (!r) {
+        out.failed_steps.emplace_back("safe_state script");
+        alarm(AlarmSeverity::Critical, "safe state: the safe_state script failed: " + r.error().what);
+      }
     }
   }
   if (!out.failed_steps.empty()) {

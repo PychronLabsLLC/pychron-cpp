@@ -23,13 +23,16 @@
 
 namespace pychron::scripting {
 
-// Which run step a script serves. Extraction, PostEquilibration and
-// PostMeasurement scripts define main(); measurement hooks define any of
-// before_main/after_main/on_whiff_result.
-enum class ScriptKind { Extraction, PostEquilibration, PostMeasurement, MeasurementHook };
+// Which run step a script serves. Extraction, PostEquilibration,
+// PostMeasurement and SafeState scripts define main(); measurement hooks
+// define any of before_main/after_main/on_whiff_result. SafeState is the
+// lab's own sequence after a failed run (executor hardening, spec 4.7): one
+// file, scripts/safe_state.py, with the line and no acquisition.
+enum class ScriptKind { Extraction, PostEquilibration, PostMeasurement, MeasurementHook, SafeState };
 
 // Stable name, also the scripts/ subdirectory: "extraction",
-// "post_equilibration", "post_measurement", "measurement_hooks".
+// "post_equilibration", "post_measurement", "measurement_hooks"; and
+// "safe_state", the name of the one file of that kind.
 std::string_view to_string(ScriptKind kind) noexcept;
 
 struct Script {

@@ -91,6 +91,18 @@ TEST_F(ScriptHostTest, SameHostServesAllScriptKinds) {
   EXPECT_TRUE(rig.log.contains("open A"));
 }
 
+// A safe_state script works the line and has no acquisition verbs: a call to
+// one fails it, naming the verb (spec 4.7).
+TEST_F(ScriptHostTest, ASafeStateScriptHasTheLineAndNoAcquisition) {
+  auto ok = host->run(inline_script("def main():\n    close('A')\n", ScriptKind::SafeState), rig.env, token);
+  ASSERT_TRUE(ok) << to_string(ok.error());
+  EXPECT_TRUE(rig.log.contains("close A"));
+  auto bad = host->run(inline_script("def main():\n    get_intensity('Ar40')\n", ScriptKind::SafeState), rig.env,
+                       token);
+  ASSERT_FALSE(bad);
+  EXPECT_NE(to_string(bad.error()).find("get_intensity"), std::string::npos) << to_string(bad.error());
+}
+
 TEST_F(ScriptHostTest, MeasurementHookGetsTypedApi) {
   auto hook = load("measurement_hooks/whiff.py", ScriptKind::MeasurementHook);
   auto r = host->call_hook(hook, "before_main", {}, rig.env, token);

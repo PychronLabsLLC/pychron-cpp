@@ -47,12 +47,19 @@ std::vector<ScriptFile> lab_scripts(const Lab& lab) {
     const fs::path dir = scripts_root(lab) / std::string(scripting::to_string(kind));
     for (const auto& f : python_files(dir)) out.push_back({kind, queue_name(dir, f), fs::absolute(f)});
   }
+  const fs::path safe_state = scripts_root(lab) / (std::string(scripting::to_string(ScriptKind::SafeState)) + ".py");
+  std::error_code ec;
+  if (fs::is_regular_file(safe_state, ec))
+    out.push_back({ScriptKind::SafeState, std::string(scripting::to_string(ScriptKind::SafeState)),
+                   fs::absolute(safe_state)});
   const fs::path lib = scripts_root(lab) / "lib";
   for (const auto& f : python_files(lib)) out.push_back({ScriptKind::Extraction, "lib:" + queue_name(lib, f), fs::absolute(f)});
   return out;
 }
 
 Result<fs::path> script_path(const Lab& lab, ScriptKind kind, std::string_view name) {
+  if (kind == ScriptKind::SafeState)
+    return fs::absolute(scripts_root(lab) / (std::string(scripting::to_string(kind)) + ".py"));
   auto rel = scripting::normalize_script_name(name);
   if (!rel) return fail(rel.error());
   return fs::absolute(scripts_root(lab) / std::string(scripting::to_string(kind)) / *rel);

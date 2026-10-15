@@ -27,11 +27,13 @@ struct ScriptFile {
   friend bool operator==(const ScriptFile&, const ScriptFile&) = default;
 };
 
-// Every script of every kind (kind order, then name), and the lib/ directory
-// gosubs fall back to (kind Extraction, name "lib:<name>").
+// Every script of every kind (kind order, then name), the lab's
+// safe_state.py when it has one (kind SafeState, name "safe_state"), and the
+// lib/ directory gosubs fall back to (kind Extraction, name "lib:<name>").
 std::vector<ScriptFile> lab_scripts(const Lab& lab);
 
 // <lab>/scripts/<kind>/<name>.py; Config error for an unsafe name.
+// SafeState: <lab>/scripts/safe_state.py, whatever the name.
 Result<std::filesystem::path> script_path(const Lab& lab, scripting::ScriptKind kind, std::string_view name);
 
 // What check() and estimate() see without hardware: every capability, the

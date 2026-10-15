@@ -30,6 +30,10 @@ LabScripts::LabScripts(fs::path root) : root_(root), resolver_(std::move(root)) 
 
 std::vector<std::string> LabScripts::names(scripting::ScriptKind kind) const {
   std::vector<std::string> out;
+  if (kind == scripting::ScriptKind::SafeState) {  // one file, scripts/safe_state.py
+    if (resolver_.resolve({}, kind)) out.emplace_back(scripting::to_string(kind));
+    return out;
+  }
   const fs::path dir = root_ / std::string(scripting::to_string(kind));
   std::error_code ec;
   if (!fs::is_directory(dir, ec)) return out;

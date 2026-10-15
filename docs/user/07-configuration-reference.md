@@ -515,6 +515,7 @@ validate`, and stops only what depends on it.
 <lab>/
   plans/*.toml              measurement plans
   scripts/extraction/  post_equilibration/  post_measurement/  measurement_hooks/    (.py files)
+  scripts/safe_state.py     the lab's safe state after a failed run (optional)
   conditionals/*.toml       conditional sets (system.toml is always applied)
   identifiers.toml          what an identifier means (optional)
   peak_center.toml          named peak-center settings (optional)

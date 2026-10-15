@@ -48,6 +48,28 @@ TEST_F(LabScriptsTest, ListsScriptsWithQueueNamesAndPaths) {
   EXPECT_FALSE(script_path(lab_, ScriptKind::Extraction, "../escape"));
 }
 
+// The safe_state script is one file beside the kind directories (spec 4.7):
+// listed when the lab has it, after the kinds and before lib/.
+TEST_F(LabScriptsTest, TheSafeStateScriptIsOneFile) {
+  auto p = script_path(lab_, ScriptKind::SafeState, "anything");
+  ASSERT_TRUE(p);
+  EXPECT_EQ(*p, fs::absolute(dir_ / "scripts" / "safe_state.py"));
+  for (const auto& f : lab_scripts(lab_)) EXPECT_NE(f.kind, ScriptKind::SafeState);
+  EXPECT_TRUE(lab_.scripts->names(ScriptKind::SafeState).empty());
+
+  std::ofstream(dir_ / "scripts" / "safe_state.py") << "def main():\n    close('A')\n";
+  const auto files = lab_scripts(lab_);
+  const auto it = std::find_if(files.begin(), files.end(), [](const auto& f) { return f.kind == ScriptKind::SafeState; });
+  ASSERT_NE(it, files.end());
+  EXPECT_EQ(it->name, "safe_state");
+  EXPECT_EQ(fs::canonical(it->path), fs::canonical(dir_ / "scripts" / "safe_state.py"));
+  EXPECT_EQ(std::next(it)->name, "lib:pump");
+  EXPECT_EQ(lab_.scripts->names(ScriptKind::SafeState), std::vector<std::string>{"safe_state"});
+  auto s = lab_.scripts->resolver().resolve("safe_state", ScriptKind::SafeState);
+  ASSERT_TRUE(s);
+  EXPECT_NE(s->text.find("close('A')"), std::string::npos);
+}
+
 TEST_F(LabScriptsTest, CompletionWordsFollowTheKind) {
   const auto ex = completion_words(ScriptKind::Extraction);
   auto has = [](const std::vector<std::string>& w, const char* s) { return std::binary_search(w.begin(), w.end(), s); };

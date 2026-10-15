@@ -984,3 +984,72 @@ TEST_F(SafeState, ApplyingItTwiceChangesNothing) {
   EXPECT_FALSE(device_.enabled.load());
   EXPECT_TRUE(alarms().empty());
 }
+
+// ---- the lab's own safe_state script (spec 4.7) ------------------------------
+
+TEST_F(SafeState, TheLabsScriptRunsAfterTheBuiltInSteps) {
+  host_.bodies["safe_state"] = [this](const scripting::ScriptEnvironment& env,
+                                      scripting::CancelToken&) -> Result<void> {
+    journal_.add(env.line.device != nullptr ? "safe_state with the line" : "safe_state without the line");
+    return {};
+  };
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_FALSE(r.unsafe);
+  EXPECT_EQ(safe_steps(),
+            (std::vector<std::string>{"end_extract", "disable", "close B", "unprotect CDD", "safe_state with the line"}));
+}
+
+TEST_F(SafeState, ALabWithoutTheScriptRunsTheBuiltInStepsOnly) {
+  resolver_.missing = {"safe_state"};
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_FALSE(r.unsafe);
+  EXPECT_EQ(safe_steps(), (std::vector<std::string>{"end_extract", "disable", "close B", "unprotect CDD"}));
+  const auto ran = host_.ran_scripts();
+  EXPECT_EQ(std::count(ran.begin(), ran.end(), "safe_state"), 0);
+}
+
+TEST_F(SafeState, AScriptThatRaisesIsAFailedStep) {
+  host_.bodies["safe_state"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Protocol, "NameError: name 'get_intensity' is not defined");
+  };
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_TRUE(r.unsafe);
+  EXPECT_EQ(r.unsafe_steps, std::vector<std::string>{"safe_state script"});
+  const auto said = alarms();
+  ASSERT_EQ(said.size(), 1u);
+  EXPECT_EQ(said[0].severity, AlarmSeverity::Critical);
+  EXPECT_NE(said[0].message.find("get_intensity"), std::string::npos) << said[0].message;
+}
+
+// As a build without scripting: the built-in steps still run, the script is
+// not, and that is said, not counted as unsafe.
+TEST_F(SafeState, WithoutScriptingTheBuiltInStepsStillRun) {
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  ASSERT_EQ(run.execute(c).state, RunState::Failed);
+  host_.enabled = false;
+  const auto ran_before = host_.ran_scripts().size();
+  const auto again = run.make_safe();
+  EXPECT_TRUE(again.failed_steps.empty());
+  EXPECT_EQ(host_.ran_scripts().size(), ran_before);
+  auto lines = journal_.lines();
+  EXPECT_EQ(lines.back(), "unprotect CDD");
+}
+
+// There but unreadable is not "the lab has none": a failed step, said loudly.
+TEST_F(SafeState, AScriptThatCannotBeReadIsAFailedStep) {
+  resolver_.broken = {"safe_state"};
+  AutomatedRun run(unknown_run("12345", "mcp"), queue_, services());
+  RunControl c;
+  const auto r = run.execute(c);
+  EXPECT_TRUE(r.unsafe);
+  EXPECT_EQ(r.unsafe_steps, std::vector<std::string>{"safe_state script"});
+  ASSERT_EQ(alarms().size(), 1u);
+  EXPECT_EQ(alarms()[0].severity, AlarmSeverity::Critical);
+}
