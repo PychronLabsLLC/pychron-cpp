@@ -5,6 +5,8 @@
 #include "shortcuts.hpp"
 #include "theme.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <string>
 #include <utility>
 
@@ -21,6 +23,18 @@
 #include <QStatusBar>
 
 namespace pychron::ui {
+
+namespace {
+
+// The names of the gauges the line defines: the only ones the history keeps.
+std::vector<std::string> gauge_names(const config::SystemConfig& config) {
+  std::vector<std::string> names;
+  names.reserve(config.gauges.size());
+  for (const auto& gauge : config.gauges) names.push_back(gauge.name);
+  return names;
+}
+
+}  // namespace
 
 // ---- View menu glyphs ---------------------------------------------------------
 
@@ -152,6 +166,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
     : QMainWindow(parent),
       settings_(std::move(settings)),
       bridge_(line),
+      // Two readings further apart than three scans have a break between them.
+      history_(gauge_names(line.config()), std::chrono::milliseconds(3 * line.config().system.scan_interval_ms)),
       canvas_(new CanvasView(bridge_, this)),
       log_(new LogDock(this)),
       // Both tell the time by the line's clock, which stamped what they show.
@@ -276,6 +292,19 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
   connect(&bridge_, &CoreBridge::logLine, log_, &LogDock::append_log);
   connect(&bridge_, &CoreBridge::alarm, alarms_, &AlarmDock::add_alarm);
   connect(&bridge_, &CoreBridge::transportHealth, health_, &HealthBar::update_health);
+  // A gauge's history: a rest on its chip shows the last ten minutes, a
+  // click opens its window. The popup is the main window's (it places
+  // itself beside the chip and hides with the window).
+  gauge_popup_ = new GaugePopup(
+      history_, [this] { return bridge_.now(); }, [this](TimePoint ts) { return wall_of(ts); }, this);
+  connect(&bridge_, &CoreBridge::pressureSample, this, &MainWindow::on_pressure_sample);
+  connect(canvas_, &CanvasView::gauge_rested, gauge_popup_, &GaugePopup::show_for);
+  connect(canvas_, &CanvasView::gauge_left, gauge_popup_, &QWidget::hide);
+  connect(canvas_, &CanvasView::gauge_clicked, this, [this](const QString& name) {
+    gauge_popup_->hide();
+    open_gauge_window(name);
+  });
+
   connect(&bridge_, &CoreBridge::actuationFinished, log_, [this](const QString& name, const Result<void>& r) {
     if (!r) {
       log_->append_line(QStringLiteral("ERROR [ui] %1 rejected: %2").arg(name, QString::fromStdString(to_string(r.error()))));
@@ -504,7 +533,59 @@ PatternMakerWindow* MainWindow::open_pattern_maker() {
   return pattern_maker_;
 }
 
+// Readings go into the history, then to whatever shows that gauge. The
+// values a start's snapshot carries are not here: they have no time.
+void MainWindow::on_pressure_sample(const PressureSample& sample) {
+  history_.add(sample.gauge, sample.value, sample.units, sample.ts);
+  const QString name = QString::fromStdString(sample.gauge);
+  if (gauge_popup_->isVisible() && gauge_popup_->gauge() == name) gauge_popup_->refresh();
+  if (GaugeWindow* window = gauge_window(name)) window->refresh();
+}
+
+QDateTime MainWindow::wall_of(TimePoint ts) const {
+  const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(bridge_.now() - ts);
+  return bridge_.wall_now().addMSecs(-age.count());
+}
+
+void MainWindow::set_gauge_settings(std::function<std::unique_ptr<QSettings>()> settings) {
+  gauge_settings_ = std::move(settings);
+}
+
+GaugeWindow* MainWindow::gauge_window(const QString& name) const {
+  const auto it = gauge_windows_.find(name);
+  return it == gauge_windows_.end() ? nullptr : it->second;
+}
+
+GaugeWindow* MainWindow::open_gauge_window(const QString& name) {
+  GaugeWindow* window = gauge_window(name);
+  if (window == nullptr) {
+    const auto& gauges = bridge_.config().gauges;
+    const auto gauge = std::find_if(gauges.begin(), gauges.end(),
+                                    [&name](const config::GaugeConfig& g) { return QString::fromStdString(g.name) == name; });
+    if (gauge == gauges.end()) return nullptr;
+    GaugeWindow::Deps deps;
+    deps.history = &history_;
+    deps.wall_of = [this](TimePoint ts) { return wall_of(ts); };
+    deps.alarm_high = gauge->alarm_high;
+    deps.alarm_low = gauge->alarm_low;
+    deps.settings = [this] { return gauge_settings_ ? gauge_settings_() : std::make_unique<QSettings>(); };
+    deps.line = QString::fromStdString(bridge_.config().system.name);
+    // A window of its own (GaugeWindow is a Qt::Window), hidden on close and kept.
+    window = new GaugeWindow(name, std::move(deps), this);
+    gauge_windows_.emplace(name, window);
+  }
+  window->show();
+  window->raise();
+  window->activateWindow();
+  return window;
+}
+
 MainWindow::~MainWindow() {
+  // Qt would delete these children after the history they read is gone.
+  delete gauge_popup_;
+  gauge_popup_ = nullptr;
+  for (auto& [name, window] : gauge_windows_) delete window;
+  gauge_windows_.clear();
   set_lasers({}, false);
   set_data(nullptr, nullptr);
 }
@@ -620,6 +701,8 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     spectrometer_window_->close();
   }
   for (auto& [device, window] : laser_windows_) window->close();
+  for (auto& [name, window] : gauge_windows_) window->close();
+  gauge_popup_->hide();
   if (pattern_maker_ != nullptr) pattern_maker_->close();
   layouts_->save_last();
   QMainWindow::closeEvent(event);

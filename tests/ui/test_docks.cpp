@@ -2,13 +2,16 @@
 
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include <QAction>
+#include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QSettings>
@@ -16,6 +19,10 @@
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
+#include "canvas_items.hpp"
+#include "gauge_popup.hpp"
+#include "gauge_window.hpp"
+#include "history_chart.hpp"
 #include "main_window.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "spectrometer_fixture.hpp"
@@ -42,6 +49,11 @@ class TestDocks : public QObject {
     if (window.cryo_dock() != nullptr) docks.append(window.cryo_dock());
     if (window.heater_dock() != nullptr) docks.append(window.heater_dock());
     return docks;
+  }
+  // QSettings on a file in `dir`, made afresh for each read and write.
+  static std::function<std::unique_ptr<QSettings>()> settings_on(const QTemporaryDir& dir) {
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    return [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); };
   }
 
  private slots:
@@ -623,6 +635,262 @@ class TestDocks : public QObject {
       QVERIFY(!sim->scan->running());
     }
   }
+  // ---- a gauge's history (gauge history design, plan task 6) ----
+
+  // Readings the bus carries go into the window's history, for the gauges
+  // the line defines only.
+  void readingsGoIntoTheHistory() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      // The line's gauges are kept, any other name is not; a start's
+      // snapshot puts nothing in (its values have no time).
+      const ui::ReadingHistory& history = window.reading_history();
+      QVERIFY(history.has("IG1"));
+      QVERIFY(history.has("PG1"));
+      QVERIFY(!history.has("XX9"));
+      QTRY_VERIFY(window.bridge().state().started);
+      QVERIFY(!history.oldest("IG1").has_value());
+      const TimePoint t0 = window.bridge().now();
+      line->bus().publish(PressureSample{"XX9", 1e-8, "torr", t0});
+      line->bus().publish(PressureSample{"IG1", 1e-8, "torr", t0});
+      QTRY_VERIFY(history.oldest("IG1") == std::optional<TimePoint>(t0));
+      QCOMPARE(history.revision("XX9"), 0U);
+      QVERIFY(!history.oldest("XX9").has_value());
+      line->stop();
+    }
+  }
+
+  // A click on a gauge opens a window of its own for it, with its alarm
+  // limits as guides; a second click brings back the same window.
+  void clickingAGaugeOpensItsWindow() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      const TimePoint t0 = window.bridge().now();
+      // Around IG1's alarm_high of 1e-4, so the guide is inside the view.
+      line->bus().publish(PressureSample{"IG1", 5e-5, "torr", t0});
+      line->bus().publish(PressureSample{"IG1", 2e-4, "torr", t0 + 1s});
+      line->bus().publish(PressureSample{"PG1", 1e-3, "torr", t0});
+      line->bus().publish(PressureSample{"PG1", 2e-3, "torr", t0 + 1s});
+      QTRY_VERIFY(window.reading_history().revision("PG1") >= 2);
+      QVERIFY(window.gauge_window(QStringLiteral("IG1")) == nullptr);
+
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      ui::GaugeWindow* ig = window.gauge_window(QStringLiteral("IG1"));
+      QVERIFY(ig != nullptr);
+      QVERIFY(ig->isVisible());
+      QVERIFY(ig->isWindow());
+      QCOMPARE(ig->windowTitle(), QStringLiteral("IG1"));
+      QCOMPARE(ig->chart()->guide_count(), 1);
+      QCOMPARE(ig->chart()->point_count(), 2);
+
+      ig->close();
+      QVERIFY(!ig->isVisible());
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      QCOMPARE(window.gauge_window(QStringLiteral("IG1")), ig);
+      QVERIFY(ig->isVisible());
+
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("PG1"));
+      ui::GaugeWindow* pg = window.gauge_window(QStringLiteral("PG1"));
+      QVERIFY(pg != nullptr);
+      QVERIFY(pg != ig);
+      QCOMPARE(pg->windowTitle(), QStringLiteral("PG1"));
+      QCOMPARE(pg->chart()->guide_count(), 0);
+
+      // A name the line does not define opens nothing.
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("XX9"));
+      QVERIFY(window.gauge_window(QStringLiteral("XX9")) == nullptr);
+      line->stop();
+    }
+  }
+
+  // Readings published from another thread, as the line's scan does, are
+  // drawn in the window that is open.
+  void aGaugeWindowFollowsNewReadings() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      ui::GaugeWindow* ig = window.gauge_window(QStringLiteral("IG1"));
+      QVERIFY(ig != nullptr);
+      QCOMPARE(ig->chart()->point_count(), 0);
+      const TimePoint t0 = window.bridge().now();
+      std::thread([&line, t0] {
+        for (int i = 0; i < 5; ++i) line->bus().publish(PressureSample{"IG1", 1e-8 * (i + 1), "torr", t0 + i * 1s});
+      }).join();
+      QTRY_COMPARE(ig->chart()->point_count(), 5);
+      std::thread([&line, t0] { line->bus().publish(PressureSample{"IG1", 7e-8, "torr", t0 + 5s}); }).join();
+      QTRY_COMPARE(ig->chart()->point_count(), 6);
+      line->stop();
+    }
+  }
+
+  // Resting the pointer on a gauge shows the popup of its last ten minutes;
+  // moving off hides it; a click hides it and opens the gauge's window.
+  void restingOnAGaugeShowsThePopupAndLeavingHidesIt() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      const TimePoint t0 = window.bridge().now();
+      line->bus().publish(PressureSample{"IG1", 1e-8, "torr", t0 - 2s});
+      line->bus().publish(PressureSample{"IG1", 2e-8, "torr", t0});
+      QTRY_VERIFY(window.reading_history().revision("IG1") >= 2);
+
+      ui::CanvasView* canvas = window.canvas_view();
+      canvas->set_gauge_rest_ms(0);
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      const ui::GaugeLabelItem* ig = canvas->gauge("IG1");
+      QVERIFY(ig != nullptr);
+      const QPoint on = canvas->mapFromScene(ig->mapToScene(ig->chip_rect().center()));
+      const QRectF chip = ig->mapRectToScene(ig->chip_rect());
+      const QPoint off = canvas->mapFromScene(QPointF(chip.center().x(), chip.bottom() + 40));
+      ui::GaugePopup* popup = window.gauge_popup();
+      QVERIFY(popup != nullptr);
+      QVERIFY(!popup->isVisible());
+
+      QTest::mouseMove(canvas->viewport(), off);
+      QTest::mouseMove(canvas->viewport(), on);
+      QTRY_VERIFY(popup->isVisible());
+      QCOMPARE(popup->gauge(), QStringLiteral("IG1"));
+      QCOMPARE(popup->chart()->point_count(), 2);
+      // Kept current while shown.
+      line->bus().publish(PressureSample{"IG1", 3e-8, "torr", t0 + 1s});
+      QTRY_COMPARE(popup->chart()->point_count(), 3);
+
+      QTest::mouseMove(canvas->viewport(), off);
+      QTRY_VERIFY(!popup->isVisible());
+
+      QTest::mouseMove(canvas->viewport(), on);
+      QTRY_VERIFY(popup->isVisible());
+      QTest::mouseClick(canvas->viewport(), Qt::LeftButton, {}, on);
+      QTRY_VERIFY(!popup->isVisible());
+      QVERIFY(window.gauge_window(QStringLiteral("IG1")) != nullptr);
+      QVERIFY(window.gauge_window(QStringLiteral("IG1"))->isVisible());
+      line->stop();
+    }
+  }
+
+  // On a simulated line the window's times are the line's clock's, not today's.
+  void wallTimesAreTheLines() {
+    VirtualClock clock(VirtualClock::Options{});  // outlives the line; its wall time is not today
+    auto line = ui::test::make_example_line({}, &clock);
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      const TimePoint now = clock.now();
+      line->bus().publish(PressureSample{"IG1", 1e-8, "torr", now - 20min});
+      line->bus().publish(PressureSample{"IG1", 2e-8, "torr", now - 10min});
+      line->bus().publish(PressureSample{"IG1", 3e-8, "torr", now});
+      QTRY_VERIFY(window.reading_history().revision("IG1") >= 3);
+
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      ui::GaugeWindow* ig = window.gauge_window(QStringLiteral("IG1"));
+      QVERIFY(ig != nullptr);
+      ig->range_box()->setCurrentIndex(ig->range_box()->findData(qlonglong{3600}));
+      QCOMPARE(ig->range(), std::chrono::seconds(3600));
+
+      const qint64 wall_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(clock.wall_now().time_since_epoch()).count();
+      const QDateTime oldest = QDateTime::fromMSecsSinceEpoch(wall_ms).addSecs(-20 * 60);
+      QVERIFY(oldest.date() != QDate::currentDate());
+      QVERIFY2(ig->header().endsWith(QStringLiteral("since ") + oldest.toString(QStringLiteral("hh:mm"))),
+               qPrintable(ig->header()));
+      const QStringList copied = ig->copy_text().split('\n', Qt::SkipEmptyParts);
+      QCOMPARE(copied.size(), 4);
+      QVERIFY2(copied.at(1).startsWith(oldest.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) + '\t'),
+               qPrintable(copied.at(1)));
+      line->stop();
+    }
+  }
+
+  // Closing the main window closes the gauge windows; destroying it with one
+  // open and the popup shown leaves nothing behind (ASan).
+  void closingTheMainWindowClosesGaugeWindows() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("PG1"));
+      QVERIFY(window.gauge_window(QStringLiteral("IG1"))->isVisible());
+      QVERIFY(window.close());
+      QVERIFY(!window.gauge_window(QStringLiteral("IG1"))->isVisible());
+      QVERIFY(!window.gauge_window(QStringLiteral("PG1"))->isVisible());
+      line->stop();
+    }
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      QVERIFY(line->start().has_value());
+      const TimePoint t0 = window.bridge().now();
+      line->bus().publish(PressureSample{"IG1", 1e-8, "torr", t0 - 1s});
+      line->bus().publish(PressureSample{"IG1", 2e-8, "torr", t0});
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      const ui::GaugeLabelItem* ig = window.canvas_view()->gauge("IG1");
+      const QRect local =
+          window.canvas_view()->mapFromScene(ig->mapRectToScene(ig->chip_rect())).boundingRect();
+      emit window.canvas_view()->gauge_rested(
+          QStringLiteral("IG1"), QRect(window.canvas_view()->viewport()->mapToGlobal(local.topLeft()), local.size()));
+      QVERIFY(window.gauge_popup()->isVisible());
+      QVERIFY(window.gauge_window(QStringLiteral("IG1"))->isVisible());
+      // Readings still on their way to the window when it goes.
+      line->bus().publish(PressureSample{"IG1", 3e-8, "torr", t0 + 1s});
+      line->stop();
+    }
+    QCoreApplication::processEvents();
+  }
+
+  // A gauge window's range is kept in the settings the main window was
+  // given, and the next session's window opens on it.
+  void gaugeWindowsKeepTheirRangeAcrossASession() {
+    auto line = ui::test::make_example_line();
+    QTemporaryDir dir;
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      ui::GaugeWindow* ig = window.gauge_window(QStringLiteral("IG1"));
+      QCOMPARE(ig->range(), ui::GaugeWindow::kDefaultRange);
+      ig->range_box()->setCurrentIndex(ig->range_box()->findData(qlonglong{3600}));
+      QCOMPARE(ig->range(), std::chrono::seconds(3600));
+    }
+    {
+      ui::MainWindow window(*line);
+      window.set_gauge_settings(settings_on(dir));
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("IG1"));
+      QCOMPARE(window.gauge_window(QStringLiteral("IG1"))->range(), std::chrono::seconds(3600));
+      emit window.canvas_view()->gauge_clicked(QStringLiteral("PG1"));
+      QCOMPARE(window.gauge_window(QStringLiteral("PG1"))->range(), ui::GaugeWindow::kDefaultRange);
+    }
+    const QSettings saved(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("gauge_window/%1/IG1/range_s")
+                             .arg(QString::fromStdString(line->config().system.name)))
+                 .toLongLong(),
+             qlonglong{3600});
+  }
+
   // Every window here was given its settings: none fell back to the application's.
   void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };

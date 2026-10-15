@@ -4,7 +4,9 @@
 // alarm docks (and the cryostat's and the heaters', when the line has them),
 // per-transport health chips in the status bar. Owns the CoreBridge; the
 // ExtractionLine must outlive the window. Where the docks are is kept per
-// line (dock_layouts.hpp).
+// line (dock_layouts.hpp). Keeps the history of the line's gauge readings
+// from the moment it exists: resting the pointer on a gauge of the canvas
+// shows its last ten minutes, clicking it opens that gauge's window.
 
 #include <array>
 #include <filesystem>
@@ -33,6 +35,8 @@
 #include "cryo_dock.hpp"
 #include "heater_dock.hpp"
 #include "experiment_window.hpp"
+#include "gauge_popup.hpp"
+#include "gauge_window.hpp"
 #include "health_bar.hpp"
 #include "identifier_source.hpp"
 #include "laser_bridge.hpp"
@@ -42,6 +46,7 @@
 #include "preferences_dialog.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "processing_bridge.hpp"
+#include "reading_history.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -163,6 +168,18 @@ class MainWindow : public QMainWindow {
   // inverse_isochron, spectrum_isochron); null without data or for an unknown kind.
   QWidget* open_figure(const QString& kind, const QStringList& uuids);
 
+  // The gauge windows' range, scale and geometry are kept in the QSettings
+  // `settings` makes (default: the application's); tests pass a temp file.
+  void set_gauge_settings(std::function<std::unique_ptr<QSettings>()> settings);
+  // The readings of the line's gauges since the window was made.
+  const ReadingHistory& reading_history() const noexcept { return history_; }
+  // Opens (or brings to the front) the window of a gauge the line defines;
+  // null for any other name.
+  GaugeWindow* open_gauge_window(const QString& name);
+  // Null until the gauge is first clicked.
+  GaugeWindow* gauge_window(const QString& name) const;
+  GaugePopup* gauge_popup() const noexcept { return gauge_popup_; }
+
   // Help > About pychron; the dialog is null until the action is first triggered.
   QAction* about_action() const noexcept { return about_action_; }
   AboutDialog* about_dialog() const { return findChild<AboutDialog*>(QString(), Qt::FindDirectChildrenOnly); }
@@ -183,9 +200,15 @@ class MainWindow : public QMainWindow {
   QWidget* preferences_parent();
   std::unique_ptr<QSettings> spectrometer_settings() const;
   void default_layout();
+  void on_pressure_sample(const PressureSample& sample);
+  // The wall time of a reading taken at `ts` on the line's clock.
+  QDateTime wall_of(TimePoint ts) const;
 
   std::unique_ptr<QSettings> settings_;  // null: the layout is not kept
   CoreBridge bridge_;
+  // After the bridge: the popup and the gauge windows read it, and
+  // ~MainWindow deletes them before it goes.
+  ReadingHistory history_;
   CanvasView* canvas_;
   LogDock* log_;
   AlarmDock* alarms_;
@@ -227,6 +250,9 @@ class MainWindow : public QMainWindow {
   QPointer<PreferencesDialog> preferences_dialog_;
   std::filesystem::path line_config_file_;
   QString metrics_status_;
+  GaugePopup* gauge_popup_ = nullptr;
+  std::map<QString, GaugeWindow*> gauge_windows_;
+  std::function<std::unique_ptr<QSettings>()> gauge_settings_;
   std::weak_ptr<LogHub> log_hub_;  // the line's, for levels that change at once
 };
 
