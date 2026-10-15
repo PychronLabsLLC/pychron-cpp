@@ -41,6 +41,7 @@ class QCustomPlot;
 class QCPAxisRect;
 class QCPGraph;
 class QCPMarginGroup;
+class QScrollArea;
 class QLabel;
 class QListWidget;
 class QTabBar;
@@ -66,6 +67,9 @@ class EvolutionsView : public QWidget {
 
  public:
   static constexpr int kRefreshMs = 50;
+  // A panel is never shorter: with more panels than the dock's height holds,
+  // the plot grows and its area scrolls.
+  static constexpr int kPanelMinHeight = 80;
 
   // `colors`: detector -> colour (spectrometer config); others use the palette.
   explicit EvolutionsView(std::map<std::string, QColor> colors = {}, QWidget* parent = nullptr);
@@ -88,6 +92,7 @@ class EvolutionsView : public QWidget {
   [[nodiscard]] std::pair<double, double> panel_x_range(int i) const;
   [[nodiscard]] std::pair<double, double> panel_y_range(int i) const;
   [[nodiscard]] bool panel_has_time_labels(int i) const;
+  [[nodiscard]] QScrollArea* scroll_area() const noexcept { return scroll_; }
   std::size_t point_count(experiment::collect::SeriesKind kind) const;  // over every series of `kind`
   QString title_text() const;
   QStringList peak_centers() const;
@@ -130,6 +135,7 @@ class EvolutionsView : public QWidget {
   QLabel* title_;
   QCustomPlot* plot_;
   QCPMarginGroup* margins_;  // lines the panels' y axes up
+  QScrollArea* scroll_;      // holds plot_
   QListWidget* peaks_;
   QTableWidget* intercepts_;
   QTimer refresh_;

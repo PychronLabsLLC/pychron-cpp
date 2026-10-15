@@ -10,6 +10,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
+#include <QScrollArea>
 #include <QTabBar>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -54,6 +55,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
       title_(new QLabel),
       plot_(new QCustomPlot),
       margins_(new QCPMarginGroup(plot_)),
+      scroll_(new QScrollArea),
       peaks_(new QListWidget),
       intercepts_(new QTableWidget) {
   auto* layout = new QVBoxLayout(this);
@@ -65,7 +67,13 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   }
   layout->addWidget(tabs_);
   layout->addWidget(title_);
-  layout->addWidget(plot_, 1);
+  // The panels scroll; they never scroll sideways.
+  scroll_->setWidget(plot_);
+  scroll_->setWidgetResizable(true);
+  scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  scroll_->setFrameShape(QFrame::NoFrame);
+  scroll_->setMinimumHeight(200);
+  layout->addWidget(scroll_, 1);
   layout->addWidget(new QLabel(tr("Intercepts")));
   intercepts_->setColumnCount(7);
   intercepts_->setHorizontalHeaderLabels(
@@ -83,7 +91,6 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
   peaks_->setMaximumHeight(80);
   layout->addWidget(peaks_);
 
-  plot_->setMinimumHeight(200);
   plot_->setPlottingHint(QCP::phFastPolylines, true);
   rebuild();  // no panels yet: the default axis rect goes
   connect(tabs_, &QTabBar::currentChanged, this, [this](int i) {
@@ -220,6 +227,8 @@ void EvolutionsView::rebuild() {
     g.excluded->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCross, theme().muted_text, 9));
     graphs_.push_back(g);
   }
+  constexpr int kTimeAxisHeight = 40;  // the bottom panel's tick labels and title
+  plot_->setMinimumHeight(static_cast<int>(panels.size()) * kPanelMinHeight + kTimeAxisHeight);
   dirty_ = true;
 }
 

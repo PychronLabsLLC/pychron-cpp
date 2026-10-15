@@ -4,6 +4,8 @@
 #include <cmath>
 #include <limits>
 
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QtTest/QtTest>
 
 #include <qcustomplot.h>
@@ -206,6 +208,23 @@ class TestEvolutionsView : public QObject {
     QCOMPARE(view.panel_titles(), shown);
     view.set_kind(SeriesKind::Baseline);
     QCOMPARE(view.panel_titles(), QStringList{"H1"});
+  }
+
+  void manyPanelsScroll() {
+    EvolutionsView view;
+    view.resize(400, 700);  // the plot's area at least its 200 px floor, under tabs, title and tables
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
+    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    QCOMPARE(view.graph_count(), 2);
+    QTRY_COMPARE(view.scroll_area()->verticalScrollBar()->maximum(), 0);  // two fit
+    for (int i = 0; i < 8; ++i)
+      view.on_series(readings({"Ar" + std::to_string(30 + i), "L" + std::to_string(i), SeriesKind::Signal}, {{1, 1}}));
+    QCOMPARE(view.graph_count(), 10);
+    QTRY_VERIFY(view.scroll_area()->verticalScrollBar()->maximum() > 0);
+    QVERIFY(view.plot()->height() >= 10 * EvolutionsView::kPanelMinHeight);
+    QCOMPARE(view.scroll_area()->horizontalScrollBar()->maximum(), 0);
   }
 
   // ---------------------------------------------------------------- panels
