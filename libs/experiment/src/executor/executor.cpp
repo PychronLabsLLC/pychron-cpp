@@ -455,6 +455,8 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
         std::lock_guard lock(mutex_);
         unsafe_ = true;
       } else if (for_a_link && !r.past_no_return) {
+        // Never an overlapped run: one goes in flight only once its inlet has
+        // closed, past its point of no return.
         consumed = false;
         std::lock_guard lock(mutex_);
         retry_ = Retry{slot.row, r.aliquot, r.step, "run " + sum.identifier + " not started: " + sum.error.value_or("")};
@@ -473,7 +475,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
     std::lock_guard lock(mutex_);
     stop_ = true;
   }
-  previous_spec_ = slot.spec;
+  if (consumed) previous_spec_ = slot.spec;  // an attempt started again is not the run before
   out.runs.push_back(sum);
   if (ctx_.services.bus != nullptr) {
     if (edited) ctx_.services.bus->publish(*edited);
@@ -518,14 +520,16 @@ std::optional<CheckFailure> Executor::ready(const RunSpec& next) {
 }
 
 Executor::HoldEnd Executor::hold(const std::string& reason, const RunSpec& next, std::optional<std::size_t> row,
-                                 const ExperimentQueue& queue, const QueueResult& out) {
+                                 const ExperimentQueue& queue, const QueueResult& out,
+                                 std::optional<TimePoint> until_given) {
   const TimePoint since = clock_.now();
-  const TimePoint until = since + options_.hold.limit;
+  const TimePoint until = until_given.value_or(since + options_.hold.limit);
+  last_hold_until_ = until;
   std::vector<std::string> links;
   if (auto w = ready(next)) links = w->links;
   {
     std::lock_guard lock(mutex_);
-    holding_ = Held{reason, since, row};
+    holding_ = Held{reason, since, clock_.wall_now(), row};
     resume_ = skip_ = false;
   }
   set_state(ExecutorState::Holding, reason);
@@ -646,7 +650,8 @@ void Executor::write_state(const ExperimentQueue& queue, std::size_t next_row, c
     std::lock_guard lock(mutex_);
     if (last_failed_row_) j << ",\n  \"last_failed_row\": " << *last_failed_row_;
     if (holding_) {
-      const auto since = std::chrono::duration<double>(holding_->since.time_since_epoch()).count();
+      // Wall time, as every stamp written down (seconds since 1970).
+      const auto since = std::chrono::duration<double>(holding_->since_wall.time_since_epoch()).count();
       j << ",\n  \"holding\": {\"reason\": " << json_string(holding_->reason) << ", \"since\": " << since;
       if (holding_->row) j << ", \"row\": " << *holding_->row;
       j << "}";
@@ -771,6 +776,9 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
   std::optional<std::string> pending_hold;
   std::optional<std::size_t> held;
   std::optional<Retry> again;
+  // The limit of a hold resumed while its links were still down: the next
+  // hold for the same row keeps it, so a resume does not lengthen the hold.
+  std::optional<std::pair<std::optional<std::size_t>, TimePoint>> resumed;
   write_state(queue, row, out);
   while (true) {
     if (ending()) break;
@@ -842,7 +850,13 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
       }
     }
     if (why) {
-      const auto e = hold(*why, spec, held, queue, out);
+      // A run in flight is let finish first: nothing new starts while holding.
+      settle(in_flight);
+      const std::optional<TimePoint> limit =
+          resumed && resumed->first == held ? std::optional<TimePoint>(resumed->second) : std::nullopt;
+      const auto e = hold(*why, spec, held, queue, out, limit);
+      if (e == HoldEnd::Resumed) resumed.emplace(held, last_hold_until_);
+      else resumed.reset();
       held.reset();
       if (e == HoldEnd::Ended) break;
       if (e == HoldEnd::Skipped) {
@@ -874,6 +888,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
       header = queue.spec();
       overlapped = overlaps(queue, row);
     }
+    resumed.reset();
     if (again && again->row == row) {
       // Started again: the aliquot and step it was given, not new ones.
       spec.id.aliquot = again->aliquot;

@@ -1644,3 +1644,48 @@ TEST_F(ExecutorHolding_, InOverlapTheRunInFlightCarriesOn) {
   ASSERT_EQ(h.log.held().size(), 1u);
   EXPECT_EQ(h.log.held()[0].row, std::optional<std::size_t>(1));
 }
+
+// Review of the branch: a resume while the link is still down tries, holds
+// again, and keeps the limit it had.
+TEST_F(ExecutorHolding_, AResumeWhileDownKeepsTheHoldLimit) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  Executor* exec = nullptr;
+  int holds = 0;
+  std::optional<TimePoint> first;
+  auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding& e) {
+    if (!first) first = e.since;
+    if (++holds <= 3) exec->resume();
+  });
+  auto drop = after_first_run(w, [&] { h.wire.down(); });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), w.options());
+  exec = &ex;
+  const auto r = ex.execute(q);
+  EXPECT_EQ(r.end, QueueEnd::Failed);
+  EXPECT_GE(holds, 4);
+  ASSERT_TRUE(first);
+  EXPECT_LE(w.clock.now() - *first, 2h + 1min);
+}
+
+TEST_F(ExecutorHolding_, TheStateFileSaysWhenTheHoldBeganInWallTime) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  Held h(w);
+  std::string while_held;
+  auto sub = w.bus.subscribe<ExecutorHolding>([&](const ExecutorHolding&) {
+    std::ifstream in(w.lab.dir() / "executor_state.json");
+    while_held.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  });
+  auto drop = after_first_run(w, [&] { h.wire.down(2min); });
+  auto q = w.three_runs();
+  Executor ex(h.context(w), w.options());
+  ASSERT_EQ(ex.execute(q).end, QueueEnd::Completed);
+  const auto at = while_held.find("\"since\": ");
+  ASSERT_NE(at, std::string::npos) << while_held;
+  const double since = std::stod(while_held.substr(at + 9));
+  const double epoch = std::chrono::duration<double>(kEpoch.time_since_epoch()).count();
+  EXPECT_GT(since, epoch);  // the session's wall clock, not seconds of uptime
+  EXPECT_LT(since, epoch + 3600);
+}

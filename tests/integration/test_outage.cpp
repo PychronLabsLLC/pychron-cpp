@@ -181,7 +181,8 @@ class World {
       out_.reason = result->reason;
       for (const auto& r : result->runs) out_.runs.emplace_back(r.identifier, r.state);
     }
-    for (const auto& e : fs::recursive_directory_iterator(dir_ / "data" / "records")) {
+    std::error_code ec;  // no records at all: a queue that ended before any was saved
+    for (const auto& e : fs::recursive_directory_iterator(dir_ / "data" / "records", ec)) {
       const auto name = e.path().filename().string();
       if (e.path().extension() != ".json" || name.ends_with(".extraction.json")) continue;
       std::ifstream in(e.path());

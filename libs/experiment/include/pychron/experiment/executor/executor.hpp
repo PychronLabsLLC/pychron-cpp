@@ -255,8 +255,10 @@ class Executor {
   // Holds before `next` (row `row`, when it has not started) until every
   // pre-run check passes and every link it needs has been up for settle, or
   // the operator resumes, skips or stops, or the limit passes.
+  // `until`: the limit of a hold the operator resumed while the links were
+  // still down, kept for the one that follows.
   HoldEnd hold(const std::string& reason, const RunSpec& next, std::optional<std::size_t> row,
-               const ExperimentQueue& queue, const QueueResult& out);
+               const ExperimentQueue& queue, const QueueResult& out, std::optional<TimePoint> until = std::nullopt);
   // Whether `next` may start: nothing when it may; else why, and the links
   // it waits for. A Refuse ends the queue (end_ is set).
   std::optional<CheckFailure> ready(const RunSpec& next);
@@ -292,9 +294,11 @@ class Executor {
   struct Held {
     std::string reason;
     TimePoint since{};
+    WallTime since_wall{};  // for the state file
     std::optional<std::size_t> row;
   };
   std::optional<Held> holding_;
+  TimePoint last_hold_until_{};  // of the last hold (executor thread only)
   std::optional<std::size_t> last_failed_row_;
   bool unsafe_ = false;  // a run left the line unsafe: QueueResult::code
   // Set by finish() for the run loop: hold before the next row, or start the
