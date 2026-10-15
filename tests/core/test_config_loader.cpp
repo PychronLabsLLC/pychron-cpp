@@ -235,12 +235,12 @@ TEST(ConfigLoader, ATransportsRecoveryTableIsRead) {
   const auto& bus = r->transports.at("bus").recovery;
   EXPECT_FALSE(bus.reconnect);
   EXPECT_TRUE(bus.optional);
-  EXPECT_DOUBLE_EQ(bus.call_window_s, 45.0);
+  EXPECT_EQ(bus.call_window_s, 45.0);
   EXPECT_EQ(bus.path, "transports.bus.recovery");
   const auto& cam = r->transports.at("cam").recovery;
   EXPECT_TRUE(cam.reconnect);
   EXPECT_FALSE(cam.optional);
-  EXPECT_DOUBLE_EQ(cam.call_window_s, 0.5);
+  EXPECT_EQ(cam.call_window_s, 0.5);
 }
 
 TEST(ConfigLoader, WithoutARecoveryTableATransportHasTheDefaults) {
@@ -249,7 +249,7 @@ TEST(ConfigLoader, WithoutARecoveryTableATransportHasTheDefaults) {
   const auto& recovery = r->transports.at("bus").recovery;
   EXPECT_TRUE(recovery.reconnect);
   EXPECT_FALSE(recovery.optional);
-  EXPECT_DOUBLE_EQ(recovery.call_window_s, 20.0);
+  EXPECT_FALSE(recovery.call_window_s);  // the lab's default
 }
 
 TEST(ConfigLoader, ARecoveryTableIsRangeChecked) {

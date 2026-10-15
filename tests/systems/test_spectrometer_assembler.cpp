@@ -107,6 +107,26 @@ TEST(SpectrometerAssembler, EveryDriverOnATransportIsGivenItsOneLink) {
   EXPECT_EQ(policies.at("multiplier"), LinkPolicy{});
 }
 
+TEST(SpectrometerAssembler, ALinkTakesTheLabsDefaultsForWhatItsTableDoesNotSay) {
+  auto data = load("spectrometer.sim-legacy.toml");
+  data.config.transports.at("dac").recovery.call_window_s = 5;
+  Env env;
+  std::map<std::string, LinkPolicy> policies;
+  AssemblerOptions options;
+  options.link_defaults.call_window = std::chrono::seconds(90);
+  options.link_defaults.backoff_min = std::chrono::seconds(2);
+  options.make_driver = [&](const cfg::DriverConfig& dc, Transport& t, const SpectrometerContext& ctx,
+                            Link* link) -> Result<std::unique_ptr<Device>> {
+    if (link != nullptr) policies[dc.name] = link->policy();
+    return SpectrometerAssembler::default_driver(dc, t, ctx, link);
+  };
+  (void)SpectrometerAssembler::assemble(std::move(data), env.ctx(), options);
+  ASSERT_TRUE(policies.contains("magnet_dac") && policies.contains("multiplier"));
+  EXPECT_EQ(policies.at("magnet_dac").call_window, std::chrono::seconds(5));
+  EXPECT_EQ(policies.at("magnet_dac").backoff_min, std::chrono::seconds(2));
+  EXPECT_EQ(policies.at("multiplier"), options.link_defaults);
+}
+
 TEST(SpectrometerAssembler, ConfigRulesRunBeforeBuilding) {
   auto data = load("spectrometer.sim-integrated.toml");
   data.config.magnet.native_axis = cfg::Axis::Mass;  // HV correction enabled -> rule violation

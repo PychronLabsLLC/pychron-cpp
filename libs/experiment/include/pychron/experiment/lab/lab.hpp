@@ -35,6 +35,7 @@
 #include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/factory/blocks.hpp"
 #include "pychron/experiment/factory/defaults.hpp"
+#include "pychron/experiment/lab/executor_config.hpp"
 #include "pychron/experiment/lab/notifications.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
@@ -101,6 +102,7 @@ struct Lab {
   DefaultsTable defaults;               // <lab>/defaults.toml: what a new run starts with
   std::map<std::string, Block> blocks;  // <lab>/blocks/*.toml by block name
   NotificationConfig notifications;     // <lab>/notifications.toml; no channels when absent
+  ExecutorConfig executor;              // <lab>/executor.toml; the defaults when absent
   laser::TrayLibrary trays;             // <lab>/tray_maps
   laser::PatternLibrary patterns;       // <lab>/patterns
   laser::CameraLibrary cameras;         // <lab>/cameras.toml

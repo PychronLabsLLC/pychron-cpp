@@ -59,10 +59,11 @@
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/device.hpp"
+#include "pychron/devices/heater.hpp"
+#include "pychron/devices/link.hpp"
+#include "pychron/devices/temperature_controller.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/canvas.hpp"
-#include "pychron/devices/heater.hpp"
-#include "pychron/devices/temperature_controller.hpp"
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/network_graph.hpp"
 #include "pychron/systems/switch_manager.hpp"
@@ -101,6 +102,10 @@ struct ExtractionLineOptions {
   // records go to "extraction_line" and "scheduler"; the line shares
   // ownership, so the hub outlives its transports.
   std::shared_ptr<LogHub> log_hub;
+  // Each transport's link recovers with this where its
+  // [transports.<name>.recovery] does not say otherwise: the lab's
+  // executor.toml [links].
+  LinkPolicy link_defaults;
 };
 
 class ExtractionLine {

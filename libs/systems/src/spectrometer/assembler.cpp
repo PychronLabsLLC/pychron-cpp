@@ -211,7 +211,7 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
     by_name[name] = t->get();
     transport_ptrs.emplace_back(name, t->get());
     if (tc.kind != cfg::TransportKind::Link) {
-      links.push_back(std::make_unique<Link>(**t, context.clock, link_policy(tc.recovery), &context.bus));
+      links.push_back(std::make_unique<Link>(**t, context.clock, link_policy(tc.recovery, options.link_defaults), &context.bus));
       link_of[name] = links.back().get();
     }
     transports.push_back(std::move(*t));

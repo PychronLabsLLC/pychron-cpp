@@ -122,4 +122,19 @@ TEST(LabDescribe, NamesTheRunOrTheQueue) {
 }
 
 }  // namespace
+
+// <lab>/executor.toml (executor hardening, 4.10): read with the lab; a file
+// that does not load is a lab problem and leaves the defaults.
+TEST_F(LabTest, TheExecutorFileIsReadWithTheLab) {
+  EXPECT_EQ(load_lab(paths()).executor.hold.limit_s, 7200);  // the example's: all commented out
+  std::ofstream(dir_ / "executor.toml") << "[hold]\nlimit_s = 600\n[measurement]\nmax_gap_s = 30\n";
+  const Lab lab = load_lab(paths());
+  EXPECT_EQ(lab.executor.hold.limit_s, 600);
+  EXPECT_EQ(lab.executor.max_gap(), std::chrono::seconds(30));
+  std::ofstream(dir_ / "executor.toml") << "[hold]\nlimit_s = -1\n";
+  const Lab bad = load_lab(paths());
+  EXPECT_EQ(bad.executor.hold.limit_s, 7200);
+  ASSERT_FALSE(bad.problems.empty());
+  EXPECT_NE(bad.problems.back().find("hold.limit_s"), std::string::npos) << bad.problems.back();
+}
 }  // namespace pychron::experiment::lab

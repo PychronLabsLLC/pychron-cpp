@@ -173,6 +173,22 @@ TEST(ExtractionLine, ATransportsLinkTakesItsRecoveryTable) {
   EXPECT_EQ((*line)->link("bus")->policy(), LinkPolicy{});
 }
 
+// executor.toml [links], given to the line, is every link's policy where the
+// transport's own table does not say otherwise.
+TEST(ExtractionLine, ALinkTakesTheLabsDefaultsForWhatItsTableDoesNotSay) {
+  const std::string toml = std::string(kSystem) + "\n[transports.gnet.recovery]\ncall_window_s = 45\n";
+  ManualClock clock;
+  auto options = manual(clock);
+  options.link_defaults.call_window = std::chrono::seconds(90);
+  options.link_defaults.backoff_max = std::chrono::seconds(10);
+  auto line = ExtractionLine::create(system_config(toml.c_str()), canvas_model(), options);
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_EQ((*line)->link("bus")->policy(), options.link_defaults);
+  const LinkPolicy& gnet = (*line)->link("gnet")->policy();
+  EXPECT_EQ(gnet.call_window, std::chrono::seconds(45));
+  EXPECT_EQ(gnet.backoff_max, std::chrono::seconds(10));
+}
+
 TEST(ExtractionLine, ALinkTransportHasNoLinkOfItsOwn) {
   // Its drivers are recovered by the connection it names, where that is owned.
   const std::string toml = std::string(kSystem) + "\n[transports.shared]\nkind = \"link\"\nlink = \"ngx\"\n";

@@ -1,0 +1,41 @@
+# executor.toml: how a queue rides out links that drop (optional).
+#
+# Every key is shown with its default, commented out: a lab without this
+# file, or with every line commented, has these values. Uncomment a line to
+# change it. Times are in seconds.
+
+# How one call to an instrument recovers when its link drops: it is tried
+# again, reconnecting with a backoff that doubles from backoff_min_s to
+# backoff_max_s, for up to call_window_s. A transport may set its own
+# call_window_s in [transports.<name>.recovery]. A call that must get through
+# (a valve during a measurement, a step of the safe state after a failed
+# run) keeps trying for critical_window_s.
+# [links]
+# call_window_s = 20
+# critical_window_s = 600
+# backoff_min_s = 1
+# backoff_max_s = 30
+
+# While a link the next run needs is down, the queue holds: it starts the
+# run once every such link has been up for settle_s, asks each one every
+# probe_interval_s, and ends (failed) after limit_s. After a run fails for a
+# link, after_link_failure says whether the queue holds and goes on
+# ("hold_then_continue") or ends ("end").
+# [hold]
+# settle_s = 30
+# probe_interval_s = 15
+# limit_s = 7200
+# after_link_failure = "hold_then_continue"
+
+# A measurement whose readings stop waits up to max_gap_s for them; after a
+# gap, a main block with fewer than min_counts_fraction of its planned counts
+# fails its run.
+# [measurement]
+# max_gap_s = 120
+# min_counts_fraction = 0.2
+
+# The queue waits while the spool's disk has under min_free_mb free, or more
+# than max_pending records wait to be sent.
+# [spool]
+# min_free_mb = 500
+# max_pending = 200

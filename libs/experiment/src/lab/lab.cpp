@@ -144,6 +144,8 @@ Lab load_lab(const LabPaths& paths) {
     if (d) lab.defaults = std::move(*d);
     else lab.problems.push_back(d.error().what);
   }
+  if (auto e = ExecutorConfig::load(dir / "executor.toml"); e) lab.executor = *e;
+  else lab.problems.push_back(e.error().what);
   if (fs::exists(dir / "notifications.toml", ec)) {
     auto n = NotificationConfig::load(dir / "notifications.toml");
     if (n) lab.notifications = std::move(*n);

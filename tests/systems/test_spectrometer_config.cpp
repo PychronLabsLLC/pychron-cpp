@@ -333,7 +333,7 @@ TEST(SpectrometerConfig, ATransportsRecoveryTableIsRead) {
   const auto& recovery = r.config->transports.at("qtegra").recovery;
   EXPECT_FALSE(recovery.reconnect);
   EXPECT_TRUE(recovery.optional);
-  EXPECT_DOUBLE_EQ(recovery.call_window_s, 45.5);
+  EXPECT_EQ(recovery.call_window_s, 45.5);
 }
 
 TEST(SpectrometerConfig, WithoutARecoveryTableATransportHasTheDefaults) {
@@ -342,7 +342,7 @@ TEST(SpectrometerConfig, WithoutARecoveryTableATransportHasTheDefaults) {
   const auto& recovery = r.config->transports.at("qtegra").recovery;
   EXPECT_TRUE(recovery.reconnect);
   EXPECT_FALSE(recovery.optional);
-  EXPECT_DOUBLE_EQ(recovery.call_window_s, 20.0);
+  EXPECT_FALSE(recovery.call_window_s);  // the lab's default
 }
 
 TEST(SpectrometerConfig, ARecoveryTableIsRangeChecked) {
@@ -398,7 +398,7 @@ TEST(SpectrometerConfig, TheExampleRecoveryTableIsTheDefaults) {
   const config::RecoveryConfig defaults;
   EXPECT_EQ(shown.reconnect, defaults.reconnect);
   EXPECT_EQ(shown.optional, defaults.optional);
-  EXPECT_DOUBLE_EQ(shown.call_window_s, defaults.call_window_s);
+  EXPECT_EQ(shown.call_window_s.value_or(-1), 20.0);  // the default, shown
 }
 
 TEST(SpectrometerConfig, ParseChannelRef) {

@@ -8,12 +8,13 @@
 
 namespace pychron {
 
-LinkPolicy link_policy(const config::RecoveryConfig& recovery) {
-  LinkPolicy policy;
+LinkPolicy link_policy(const config::RecoveryConfig& recovery, const LinkPolicy& defaults) {
+  LinkPolicy policy = defaults;
   policy.reconnect = recovery.reconnect;
   policy.optional = recovery.optional;
-  policy.call_window =
-      std::chrono::duration_cast<Duration>(std::chrono::duration<double>(recovery.call_window_s));
+  if (recovery.call_window_s)
+    policy.call_window =
+        std::chrono::duration_cast<Duration>(std::chrono::duration<double>(*recovery.call_window_s));
   return policy;
 }
 

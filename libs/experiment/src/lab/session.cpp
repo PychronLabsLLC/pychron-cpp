@@ -69,6 +69,11 @@ struct LabSession::Services {
     s.plans = lab.plans.get();
     s.conditionals = lab.conditionals.get();
     s.aliquots = &aliquots;
+    // executor.toml: how a measurement and a failed run ride out a link.
+    s.engine.max_gap = lab.executor.max_gap();
+    s.engine.min_counts_fraction = lab.executor.measurement.min_counts_fraction;
+    s.engine.critical_window = lab.executor.critical_window();
+    s.critical_window = lab.executor.critical_window();
     s.persister = given != nullptr ? given : &files;
     s.save = &save;
     ctx.pre_run_metrics = &instrument;

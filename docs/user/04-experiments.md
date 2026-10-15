@@ -809,7 +809,9 @@ unfinished run may also end Failed, Cancelled or Aborted.
    planned counts (and never fewer than its fit needs) fails the run (saved
    as failed, section 8.2); with more, the run is truncated. During a
    measurement, closing the inlet and unprotecting a detector keep trying
-   through a dropped link for 10 minutes, with an alarm after 20 s.
+   through a dropped link for 10 minutes, with an alarm after 20 s. These
+   limits are the lab's to change, in `executor.toml`
+   ([Configuration reference](07-configuration-reference.md)).
 6. **PostMeasuring.** The post-measurement script runs. A failure here is
    logged but the run still saves.
 7. **Saving.** The record is written (section 8.5), and then the `post_run`

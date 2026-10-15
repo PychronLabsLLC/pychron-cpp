@@ -201,6 +201,19 @@ Plus, by kind:
 | `sim` | nothing: a simulated device (a drivers' own simulator answers) |
 | `link` | `link` (required): the name of a connection another config owns, so one socket is shared (an NGX spectrometer and its valves) |
 
+A transport may say how its link recovers when it drops, in
+`[transports.<name>.recovery]` (optional; the same table in a spectrometer
+file):
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `reconnect` | true/false | true | false: a failed call is not tried again, the link not reopened |
+| `optional` | true/false | false | a run may start while this link is down (a camera, a gauge that only watches) |
+| `call_window_s` | seconds, 0 to 3600 | the lab's (`executor.toml`, 20) | how long one call keeps reconnecting and trying again |
+
+A transport of kind `link` has no table of its own: it recovers as the
+connection it names.
+
 ### [drivers.\<name\>]
 
 A device. The name is what valves, gauges, heaters and (for lasers) a queue's
@@ -522,6 +535,7 @@ validate`, and stops only what depends on it.
   defaults.toml             what a new run starts with (optional)
   blocks/*.toml             reusable run sequences (optional)
   notifications.toml        email, webhook, command messages (optional)
+  executor.toml             how a queue rides out links that drop (optional)
   tray_maps/*.txt           sample trays (optional)
   patterns/*.toml           laser patterns (optional)
   cameras.toml              the camera of each laser (optional)
@@ -652,6 +666,28 @@ Example: `configs/examples/peak_center.toml`.
 | `peak_shift_threshold` | number >= 0 | 0 (no limit) | refuse a centre this far from the start |
 | `update_table` | true/false | true | write the centre into the field table |
 | `propagate` | true/false | true | and into the other detectors' columns |
+
+### executor.toml
+
+How a queue rides out links that drop (optional; without it, the defaults
+below). The example lab's file lists every key with its default, commented
+out. Times are in seconds.
+
+| Key | Range | Default | Meaning |
+|---|---|---|---|
+| `[links] call_window_s` | 0 to 3600 | 20 | how long one call keeps trying, where its transport does not say |
+| `[links] critical_window_s` | 0 to 86400 | 600 | how long a call that must get through keeps trying: a valve during a measurement, a step of the safe state |
+| `[links] backoff_min_s`, `backoff_max_s` | over 0, to 3600 | 1, 30 | the wait between reconnects doubles from the one to the other |
+| `[hold] settle_s` | 0 to 3600 | 30 | a link is back once it has been up this long |
+| `[hold] probe_interval_s` | over 0, to 3600 | 15 | how often each link is asked while the queue holds |
+| `[hold] limit_s` | 0 to 604800 | 7200 | a hold this long ends the queue |
+| `[hold] after_link_failure` | `hold_then_continue`, `end` | `hold_then_continue` | after a run fails for a link, hold and go on, or end the queue |
+| `[measurement] max_gap_s` | 0 to 3600 | 120 | how long a measurement waits for its readings to resume |
+| `[measurement] min_counts_fraction` | 0 to 1 | 0.2 | after a gap, a main block with fewer of its planned counts fails |
+| `[spool] min_free_mb` | 0 to 10000000 | 500 | the queue waits while the spool's disk has less free |
+| `[spool] max_pending` | whole number, 0 to 1000000 | 200 | the queue waits while more records wait to be sent |
+
+An unknown key or table, or a value out of range, is an error naming it.
 
 ### blocks/*.toml
 

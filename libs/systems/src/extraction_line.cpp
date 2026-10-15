@@ -231,7 +231,7 @@ Result<void> ExtractionLine::build() {
     // not own.
     if (tc.kind != config::TransportKind::Link) {
       links_.emplace_back(name,
-                          std::make_unique<Link>(**transport, *clock_, link_policy(tc.recovery), &bus_));
+                          std::make_unique<Link>(**transport, *clock_, link_policy(tc.recovery, options_.link_defaults), &bus_));
     }
     transports_.emplace_back(name, std::move(*transport));
   }

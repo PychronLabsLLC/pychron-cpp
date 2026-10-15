@@ -84,6 +84,9 @@ struct RunServices {
   const MetricContext* instrument_metrics = nullptr;
   std::function<SpectrometerInfo()> spectrometer_info;
   measurement::EngineOptions engine;  // sleep injection, timeouts
+  // How long a step of the safe state keeps trying (executor.toml
+  // [links] critical_window_s; the spec's 10 min by default).
+  pychron::Duration critical_window = measurement::kCriticalWindow;
 
   const plan::PlanLibrary* plans = nullptr;
   const ConditionalLibrary* conditionals = nullptr;
@@ -194,7 +197,8 @@ class Run {
   // Puts the line in a safe state after a failed run (spec 4.7): the
   // extraction device ended and disabled, the plan's inlet closed, the
   // detectors the plan protects unprotected. Each step keeps trying through
-  // transient failures (backoff on the run's clock) for kSafeStateWindow,
+  // transient failures (backoff on the run's clock) for
+  // RunServices::critical_window (kSafeStateWindow by default),
   // with a warning Alarm at kSafeStateAlarmAfter and a critical one when it
   // gives up; a definite error gives up at once. Steps after a failed one
   // still run. Idempotent: every target is absolute. execute() calls it;
@@ -220,7 +224,7 @@ class Run {
                           std::function<void()> on_pump_time_start = {});
   scripting::ScriptContext script_context() const;
   void end_extraction();
-  // `op` until it succeeds, a definite error, or kSafeStateWindow (above).
+  // `op` until it succeeds, a definite error, or the critical window (above).
   Result<void> keep_trying(const std::string& step, const std::function<Result<void>()>& op);
   void alarm(AlarmSeverity severity, std::string message);
   void record_cryo();

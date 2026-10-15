@@ -275,6 +275,7 @@ class Exp {
     systems::ExtractionLine::Options line_options;
     line_options.clock = sim_clock.get();
     line_options.force_sim = g_.sim;
+    line_options.link_defaults = lab_.executor.link_defaults();  // executor.toml [links]
     std::optional<fs::path> canvas;
     if (!a_.canvas.empty()) canvas = a_.canvas;
     else if (fs::exists(g_.config.parent_path() / "canvas.toml")) canvas = g_.config.parent_path() / "canvas.toml";
@@ -330,8 +331,11 @@ class Exp {
         beam_guard.registered = true;  // before the registry and the drivers have one
         sim::BeamModelRegistry::global().set("default", sim_beam);
       }
+      spectrometer::SpectrometerAssembler::Options assembly;
+      assembly.link_defaults = lab_.executor.link_defaults();
       auto assembled = spectrometer::SpectrometerAssembler::assemble(
-          std::move(data), spectrometer::SpectrometerContext{clock, (*line)->scheduler(), (*line)->bus()});
+          std::move(data), spectrometer::SpectrometerContext{clock, (*line)->scheduler(), (*line)->bus()},
+          std::move(assembly));
       if (!assembled) {
         complain("error: " + assembled.error().what);
         return kFailed;

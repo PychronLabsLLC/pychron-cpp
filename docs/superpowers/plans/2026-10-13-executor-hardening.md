@@ -322,10 +322,10 @@ The functions that need contiguous points are the series functions that take `wi
 
 Model: `libs/sim/src/sim_config.cpp` (`number()` with a range, `:175-196`) and `SimConfig.TheExampleFileIsTheDefaults` (`tests/sim/test_sim_config.cpp:772`).
 
-- [ ] Failing tests: every key of spec 4.10 loads; each is range-checked with a message naming key, value and range; an unknown key or table is an error; a missing file is the defaults; `ExecutorConfig.TheExampleFileIsTheDefaults` (every key present, commented out, equal to the default); `after_link_failure` takes only its two values.
-- [ ] Read `libs/setup/AGENTS.md`: whether a profile ships the file, and which test must list it.
-- [ ] `LabSession` loads it and hands the values to the executor, the engine (`max_gap`, `min_counts_fraction`), the run (`critical_window`) and each `Link` (`call_window`, backoff) not overridden per transport.
-- [ ] Commit: `feat(experiment): executor.toml holds the limits of link recovery`.
+- [x] Failing tests: every key of spec 4.10 loads; each is range-checked with a message naming key, value and range; an unknown key or table is an error; a missing file is the defaults; `ExecutorConfig.TheExampleFileIsTheDefaults` (every key present, commented out, equal to the default); `after_link_failure` takes only its two values.
+- [x] Read `libs/setup/AGENTS.md`: whether a profile ships the file, and which test must list it.
+- [x] `LabSession` loads it and hands the values to the executor, the engine (`max_gap`, `min_counts_fraction`), the run (`critical_window`) and each `Link` (`call_window`, backoff) not overridden per transport. Built: `Lab::executor` (`load_lab`; a file that does not load is a lab problem and leaves the defaults). `LabSession` sets `RunServices::engine.{max_gap, min_counts_fraction, critical_window}` and `RunServices::critical_window` (the safe state). The `[hold]` and `[spool]` values reach the executor in Tasks 16 and 17. Links: `[transports.<name>.recovery] call_window_s` is now optional, and `link_policy(recovery, defaults)` fills what it does not say from `ExecutorConfig::link_defaults()`, which `ExtractionLineOptions::link_defaults`, `AssemblerOptions::link_defaults` and `SpectrometerBringup::link_defaults` carry; `elctl exp` takes it from the lab, `pychron-ui` reads `<lab>/executor.toml` before it builds the line (the lab is loaded later and reports the file). No install profile ships the file: it is optional and the example lab documents it. User guide: chapter 7 (`executor.toml`, the recovery table).
+- [x] Commit: `feat(experiment): executor.toml holds the limits of link recovery`.
 
 ### Task 16: Which links a run needs, and the pre-run checks
 

@@ -17,6 +17,7 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/devices/device.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/systems/spectrometer/config.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
@@ -35,6 +36,9 @@ struct AssemblerOptions {
   TransportMaker make_transport;  // default: pychron::make_transport
   DriverMaker make_driver;        // default: DriverRegistry::global()
   Spectrometer::Options spectrometer;
+  // What a transport's [transports.<name>.recovery] does not say: the lab's
+  // executor.toml [links].
+  LinkPolicy link_defaults;
 };
 
 class SpectrometerAssembler {

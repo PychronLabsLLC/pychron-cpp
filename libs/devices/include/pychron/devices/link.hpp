@@ -37,7 +37,9 @@ struct LinkPolicy {
 
 // The policy a `[transports.<name>.recovery]` table gives; the backoff is not
 // configured per transport and keeps LinkPolicy's. No table: LinkPolicy{}.
-[[nodiscard]] LinkPolicy link_policy(const config::RecoveryConfig& recovery);
+// `defaults` is the lab's (executor.toml [links]): what the transport's table
+// does not say.
+[[nodiscard]] LinkPolicy link_policy(const config::RecoveryConfig& recovery, const LinkPolicy& defaults = {});
 
 // The window of a call that must get through while the line is in a state
 // that is not safe to leave it in: a stop after a fire whose outcome is

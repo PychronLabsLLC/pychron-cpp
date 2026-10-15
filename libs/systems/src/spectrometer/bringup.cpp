@@ -114,7 +114,9 @@ Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(cfg::Spectromete
     beam = std::make_shared<sim::BeamModel>(ctx.clock, beam_settings_from_config(data));
     sim::BeamModelRegistry::global().set("default", beam);
   }
-  auto spec = SpectrometerAssembler::assemble(std::move(data), ctx);
+  SpectrometerAssembler::Options assembly;
+  assembly.link_defaults = options.link_defaults;
+  auto spec = SpectrometerAssembler::assemble(std::move(data), ctx, std::move(assembly));
   // The line's gas and baselines, now that the drivers have given the beam
   // its detectors.
   if (spec && beam && options.line_sim != nullptr) {

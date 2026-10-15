@@ -127,6 +127,25 @@ TEST(LinkPolicyConfig, ARecoveryTableSetsItsThreeKeysAndKeepsTheBackoff) {
   EXPECT_EQ(policy.backoff_max, LinkPolicy{}.backoff_max);
 }
 
+// The lab's defaults (executor.toml [links]) fill what the transport's table
+// does not say; what it says wins.
+TEST(LinkPolicyConfig, TheLabsDefaultsFillWhatTheTransportDoesNotSay) {
+  LinkPolicy lab;
+  lab.call_window = std::chrono::seconds(45);
+  lab.backoff_min = std::chrono::milliseconds(500);
+  lab.backoff_max = std::chrono::seconds(10);
+  config::RecoveryConfig none;
+  EXPECT_EQ(link_policy(none, lab), lab);
+  config::RecoveryConfig own;
+  own.call_window_s = 5;
+  own.optional = true;
+  const LinkPolicy p = link_policy(own, lab);
+  EXPECT_EQ(p.call_window, std::chrono::seconds(5));
+  EXPECT_TRUE(p.optional);
+  EXPECT_EQ(p.backoff_min, lab.backoff_min);
+  EXPECT_EQ(p.backoff_max, lab.backoff_max);
+}
+
 TEST_F(Link, ASafeCallIsRepeatedUntilTheLinkReturns) {
   auto t = sim();
   ::pychron::Link link(*t, clock);

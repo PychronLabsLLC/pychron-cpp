@@ -51,6 +51,9 @@ struct SpectrometerBringup {
   // fed, for a caller that tells its user of a spectrometer not joined to
   // the line. Null: nobody asks. Not written when nothing was fed.
   BeamFeed* fed = nullptr;
+  // The lab's link recovery (executor.toml [links]) where a transport's
+  // [transports.<name>.recovery] does not say otherwise.
+  LinkPolicy link_defaults{};
 };
 
 // True when nothing in the config can reach hardware: every declared

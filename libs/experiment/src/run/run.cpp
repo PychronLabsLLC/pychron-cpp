@@ -414,7 +414,7 @@ Result<void> Run::keep_trying(const std::string& step, const std::function<Resul
                                       return true;
                                     },
                                     [this](const std::string& message) { note(message); },
-                                    kSafeStateWindow, kSafeStateAlarmAfter};
+                                    s_.critical_window, kSafeStateAlarmAfter};
   return measurement::keep_trying(how, step, op);
 }
 

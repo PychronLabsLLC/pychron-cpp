@@ -90,6 +90,7 @@
 #include "setup_wizard.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "pychron/experiment/lab/executor_config.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #ifdef PYCHRON_EXPERIMENT_HAS_METRICS
@@ -383,6 +384,14 @@ int main(int argc, char** argv) {
     if (files.size() > 1) canvas_file = files[1];
   }
 
+  const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
+  // How the links recover (executor.toml [links]) is wanted before they are
+  // made; the lab, which reports a file that does not load, comes later.
+  const auto executor_config = pychron::experiment::lab::ExecutorConfig::load(lab_dir / "executor.toml");
+  const pychron::LinkPolicy link_defaults =
+      executor_config ? executor_config->link_defaults() : pychron::LinkPolicy{};
+  options.link_defaults = link_defaults;
+
   splash.status(QStringLiteral("Loading the extraction line: %1").arg(QString::fromStdString(system_file.filename().string())));
   auto line = pychron::systems::ExtractionLine::load(system_file, canvas_file, options);
   if (!line) {
@@ -403,7 +412,6 @@ int main(int argc, char** argv) {
   // table-following sim beam; --sim only demands it (require_sim).
   bool simulation = false;
   // The experiment session is built once the line has started (below).
-  const fs::path lab_dir = cli->lab ? *cli->lab : install ? install->root : system_file.parent_path();
   if (cli->laser) {
     const int laser_rc = run_laser(**line, *cli, lab_dir, system_file, splash);
     (*line)->stop();
@@ -426,7 +434,11 @@ int main(int argc, char** argv) {
           pychron::spectrometer::SpectrometerContext{(*line)->clock(), (*line)->scheduler(), (*line)->bus()},
           // A simulated spectrometer measures the simulated line's gas.
           pychron::spectrometer::SpectrometerBringup{
-              .sim_beam_from_table = simulation, .require_sim = sim, .line_sim = (*line)->sim(), .fed = &fed});
+              .sim_beam_from_table = simulation,
+              .require_sim = sim,
+              .line_sim = (*line)->sim(),
+              .fed = &fed,
+              .link_defaults = link_defaults});
     }();
     if (loaded && fed == pychron::spectrometer::BeamFeed::FixedGas) {
       std::fprintf(stderr, "pychron-ui: the simulated spectrometer is not joined to the line: %s\n",
