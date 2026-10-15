@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -23,7 +24,9 @@ namespace pychron::persistence {
 // The catalog tables that have a natural key, for IStore::find_catalog_row,
 // and the tables a catalog edit may name. The key of each, in the order its
 // parts are given:
-//   PrincipalInvestigator  last_name, first_initial
+//   PrincipalInvestigator  family_name, given_name: a lookup, not a key (two
+//                          PIs may share a name; a catalog edit knows a PI
+//                          by its uuid alone). Of namesakes, the oldest.
 //   Project                name, principal investigator (uuid, or none)
 //   Material               name, grainsize
 //   Sample                 name, project (uuid), material (uuid)
@@ -65,10 +68,24 @@ using CatalogKeyPart = std::variant<std::monostate, std::string, int, Uuid>;
 
 // ---------------------------------------------------------------- reads (5.1)
 
+// A PI is a person or an organisation (PI spec, section 4). Stored as
+// "person" / "organisation" in principal_investigator.kind.
+enum class PiKind { Person, Organisation };
+
+std::string_view pi_kind_name(PiKind kind) noexcept;
+std::optional<PiKind> parse_pi_kind(std::string_view name) noexcept;
+
 struct PrincipalInvestigatorRow {
   Uuid uuid;
-  std::string last_name, first_initial;
-  std::string display_name;  // "Last, F" or "Last"
+  PiKind kind = PiKind::Person;
+  // A person's family and given name(s) in full, or what is known of the
+  // given name (an initial); an organisation's name, with no given name.
+  std::string family_name, given_name;
+  // "Given Family" ("Jake Ross", "J Ross"); the family name alone without a
+  // given name; an organisation's name (PI spec 5.1).
+  std::string display_name;
+  std::optional<std::string> orcid;  // 0000-0002-1825-0097 form; persons only
+  std::optional<std::string> ror;    // the affiliation's, or the organisation's own
   std::optional<std::string> affiliation, email;
   friend bool operator==(const PrincipalInvestigatorRow&, const PrincipalInvestigatorRow&) = default;
 };

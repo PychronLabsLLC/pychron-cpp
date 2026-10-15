@@ -90,7 +90,7 @@ TEST_F(ExportCmd, WritesTheCsvReportForTheUnknowns) {
   EXPECT_TRUE(contains(csv, "77000-01B"));
   EXPECT_FALSE(contains(csv, "66574"));  // the air is not an unknown
   // The catalog's sample row, the flux monitor and the reactor.
-  EXPECT_TRUE(contains(csv, "77000,FC-2,sanidine,Fish Canyon,\"Doe, A\",37.75,-106.9,2850,ash-flow tuff,,,IEFC20001,NM-300,A,3,Triga,"))
+  EXPECT_TRUE(contains(csv, "77000,FC-2,sanidine,Fish Canyon,A Doe,37.75,-106.9,2850,ash-flow tuff,,,IEFC20001,NM-300,A,3,Triga,"))
       << csv;
   EXPECT_TRUE(contains(csv, "FC-2,sanidine,28.201,0.046,0.001,2e-06"));
   // Two heating steps of one aliquot: a step-heated group with an integrated age.

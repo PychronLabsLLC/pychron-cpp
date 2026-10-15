@@ -15,7 +15,9 @@ TEST(Names, PrincipalInvestigator) {
   EXPECT_FALSE(parse_pi("R"));
   EXPECT_FALSE(parse_pi("NMGRL lab"));
   EXPECT_EQ(*parse_pi("NMGRL lab", {"NMGRL lab"}), (PiName{"NMGRL lab", ""}));
-  EXPECT_EQ(display_name({"Ross", "J"}), "Ross, J");
+  EXPECT_EQ(sheet_name({"Ross", "J"}), "Ross, J");
+  EXPECT_EQ(sheet_name({"Ross", ""}), "Ross");
+  EXPECT_EQ(display_name({"Ross", "J"}), "J Ross");  // as the store shows it (PI spec 5.1)
   EXPECT_EQ(display_name({"Ross", ""}), "Ross");
 }
 

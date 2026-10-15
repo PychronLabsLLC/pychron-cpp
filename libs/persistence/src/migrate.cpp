@@ -84,7 +84,7 @@ std::vector<std::string> split_sql(std::string_view sql) {
   return out;
 }
 
-Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
+Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply, std::optional<int> up_to) {
   const char* dialect_dir = db.dialect() == Dialect::PostgreSql ? "pg" : "sqlite";
 
   struct Pending {
@@ -100,6 +100,7 @@ Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply) {
     Pending p{};
     if (!parse_file_name(m.file, p.version, p.description))
       return fail(ErrorKind::Config, std::string("migration file name must be NNNN_<name>.sql: ") + m.file);
+    if (up_to && p.version > *up_to) continue;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): the embedded file's bytes as text
     p.text = std::string_view(reinterpret_cast<const char*>(m.data), m.size);
     p.checksum = sha256(p.text);

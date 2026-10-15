@@ -117,11 +117,14 @@ struct IdentifierSpec {
   std::optional<Uuid> uuid = std::nullopt;
 };
 
+// A PI as PrincipalInvestigatorRow has it, less display_name (generated).
 struct PrincipalInvestigatorSpec {
-  std::string last_name;
-  std::string first_initial{};
+  std::string family_name;
+  std::string given_name{};
   std::optional<std::string> affiliation = std::nullopt, email = std::nullopt;
   std::optional<Uuid> uuid = std::nullopt;
+  PiKind kind = PiKind::Person;
+  std::optional<std::string> orcid = std::nullopt, ror = std::nullopt;
 };
 
 struct ProjectSpec {
@@ -611,6 +614,9 @@ class IStore {
   virtual Result<Uuid> add_mass_spectrometer(Uuid client, const MassSpectrometerSpec& spec) = 0;
   virtual Result<Uuid> add_identifier(Uuid client, const IdentifierSpec& spec) = 0;
   virtual Result<Uuid> add_extract_device(Uuid client, const std::string& name) = 0;
+  // Ensures a PI by family and given name: the oldest row with both, or a new
+  // one. Two PIs may share a name; legacy import's choice among them is
+  // spec 8 of the PI design (2026-10-13-pi-person-organisation-design.md).
   virtual Result<Uuid> add_principal_investigator(Uuid client, const PrincipalInvestigatorSpec& spec) = 0;
   virtual Result<Uuid> add_project(Uuid client, const ProjectSpec& spec) = 0;
   virtual Result<Uuid> add_material(Uuid client, const MaterialSpec& spec) = 0;

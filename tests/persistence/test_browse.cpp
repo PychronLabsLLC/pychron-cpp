@@ -92,7 +92,7 @@ TEST_P(BrowseTest, RowsCarrySampleAndCatalogColumns) {
   EXPECT_EQ(it->sample, "FC-2");
   EXPECT_EQ(it->project, "Fish Canyon");
   EXPECT_EQ(it->material, "sanidine");
-  EXPECT_EQ(it->principal_investigator, "Ross, J");
+  EXPECT_EQ(it->principal_investigator, "J Ross");
   EXPECT_EQ(it->extract_device, "co2");
   EXPECT_EQ(it->irradiation, "NM-300");
   EXPECT_EQ(it->level, "A");
@@ -115,7 +115,7 @@ TEST_P(BrowseTest, Filters) {
   EXPECT_EQ(uuids(browse(sample)), (std::vector<Uuid>{a2_, a1_}));
   BrowseFilter project;
   project.projects = {"Fish Canyon"};
-  project.principal_investigators = {"Ross, J"};
+  project.principal_investigators = {"J Ross"};
   project.materials = {"sanidine"};
   EXPECT_EQ(browse(project).rows.size(), 2u);
 
@@ -166,7 +166,7 @@ TEST_P(BrowseTest, FacetsIgnoreTheirOwnFilter) {
   EXPECT_EQ(*store_->facet(BrowseFacet::Sample, {}), (std::vector<std::string>{"FC-2"}));
   EXPECT_EQ(*store_->facet(BrowseFacet::Repository, {}), (std::vector<std::string>{"FishCanyon"}));
   EXPECT_TRUE(store_->facet(BrowseFacet::Repository, f)->empty());
-  EXPECT_EQ(*store_->facet(BrowseFacet::PrincipalInvestigator, {}), (std::vector<std::string>{"Ross, J"}));
+  EXPECT_EQ(*store_->facet(BrowseFacet::PrincipalInvestigator, {}), (std::vector<std::string>{"J Ross"}));
   EXPECT_EQ(*store_->facet(BrowseFacet::Level, {}), (std::vector<std::string>{"A"}));
 }
 

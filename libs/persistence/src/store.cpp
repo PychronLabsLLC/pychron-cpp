@@ -208,13 +208,16 @@ class TinyStore final : public IStore {
 
   Result<Uuid> add_principal_investigator(Uuid client, const PrincipalInvestigatorSpec& spec) override {
     Row row;
-    row["last_name"] = qv(spec.last_name);
-    row["first_initial"] = qv(spec.first_initial);
+    row["kind"] = qv(std::string(pi_kind_name(spec.kind)));
+    row["family_name"] = qv(spec.family_name);
+    row["given_name"] = qv(spec.given_name);
+    row["orcid"] = qv(spec.orcid);
+    row["ror"] = qv(spec.ror);
     row["affiliation"] = qv(spec.affiliation);
     row["email"] = qv(spec.email);
     return ensure_catalog_row(client, "principal_investigator",
-                              {{"last_name", qv(spec.last_name)}, {"first_initial", qv(spec.first_initial)}}, spec.uuid,
-                              row, json_created({{"last_name", spec.last_name}, {"first_initial", spec.first_initial}}));
+                              {{"family_name", qv(spec.family_name)}, {"given_name", qv(spec.given_name)}}, spec.uuid,
+                              row, json_created({{"family_name", spec.family_name}, {"given_name", spec.given_name}}));
   }
 
   Result<Uuid> add_project(Uuid client, const ProjectSpec& spec) override {
@@ -403,7 +406,7 @@ class TinyStore final : public IStore {
     };
     const auto columns = [](CatalogTable t) -> Columns {
       switch (t) {
-        case CatalogTable::PrincipalInvestigator: return {"principal_investigator", {"last_name", "first_initial"}};
+        case CatalogTable::PrincipalInvestigator: return {"principal_investigator", {"family_name", "given_name"}};
         case CatalogTable::Project: return {"project", {"name", "pi_uuid"}};
         case CatalogTable::Material: return {"material", {"name", "grainsize"}};
         case CatalogTable::Sample: return {"sample", {"name", "project_uuid", "material_uuid"}};
@@ -710,6 +713,8 @@ class TinyStore final : public IStore {
         bindings.push_back(key[i].second);
       }
     }
+    // A PI's name is no key (migration 0006): of namesakes, the oldest.
+    if (std::string_view(table) == "principal_investigator") sql += QStringLiteral(" ORDER BY created_utc, uuid");
     auto found = db_->select_one(sql, bindings);
     if (!found) return fail(found.error());
     if (!*found) return std::optional<Uuid>{};

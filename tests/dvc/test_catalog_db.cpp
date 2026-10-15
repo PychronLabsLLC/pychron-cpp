@@ -183,8 +183,8 @@ std::vector<std::string> snapshot_of(World& w) {
     std::sort(lines.begin(), lines.end());
     out.insert(out.end(), lines.begin(), lines.end());
   };
-  rows("pi", "SELECT uuid, last_name, first_initial, affiliation, email FROM principal_investigator",
-       {"uuid", "last_name", "first_initial", "affiliation", "email"});
+  rows("pi", "SELECT uuid, kind, family_name, given_name, orcid, ror, affiliation, email FROM principal_investigator",
+       {"uuid", "kind", "family_name", "given_name", "orcid", "ror", "affiliation", "email"});
   rows("project",
        "SELECT p.uuid AS uuid, p.name AS name, p.pi_uuid AS pi_uuid, p.checkin_date AS checkin_date, "
        "p.comment AS comment, p.lab_contact AS lab_contact, p.institution AS institution FROM project p",
@@ -360,7 +360,7 @@ TEST_P(CatalogDb, ImportsInForeignKeyOrder) {
   for (const auto& [table, n] : want) EXPECT_EQ(world_->count(table.c_str()), n) << table;
 
   // A sample is linked to its project (and that to its investigator) and its material.
-  auto r = world_->one("SELECT p.name AS project, i.last_name AS pi, m.name AS material, m.grainsize AS grainsize "
+  auto r = world_->one("SELECT p.name AS project, i.family_name AS pi, m.name AS material, m.grainsize AS grainsize "
                        "FROM sample s JOIN project p ON p.uuid = s.project_uuid "
                        "JOIN principal_investigator i ON i.uuid = p.pi_uuid "
                        "JOIN material m ON m.uuid = s.material_uuid WHERE s.name = 'HH-1'");
@@ -455,11 +455,12 @@ TEST_P(CatalogDb, ProjectKeepsLegacyColumns) {
   EXPECT_EQ(pd::to_std(r.value("institution")), "NMT");
   // MySQL's zero date is no date.
   EXPECT_TRUE(world_->is_null("SELECT checkin_date AS v FROM project WHERE name = 'J-Curve'"));
-  EXPECT_EQ(world_->text("SELECT i.last_name AS v FROM project p JOIN principal_investigator i ON i.uuid = p.pi_uuid "
+  EXPECT_EQ(world_->text("SELECT i.family_name AS v FROM project p JOIN principal_investigator i ON i.uuid = p.pi_uuid "
                          "WHERE p.name = 'J-Curve'"),
             "Heizler");
-  const auto pi = world_->one("SELECT * FROM principal_investigator WHERE last_name = 'Ross'");
-  EXPECT_EQ(pd::to_std(pi.value("first_initial")), "J");
+  const auto pi = world_->one("SELECT * FROM principal_investigator WHERE family_name = 'Ross'");
+  EXPECT_EQ(pd::to_std(pi.value("given_name")), "J");
+  EXPECT_EQ(pd::to_std(pi.value("kind")), "person");
   EXPECT_EQ(pd::to_std(pi.value("affiliation")), "NMT");
   EXPECT_EQ(pd::to_std(pi.value("email")), "ross@nmt.edu");
 }

@@ -269,7 +269,7 @@ Result<ps::CatalogEditBatch> SampleTableModel::to_batch(const entry::CatalogSnap
   std::vector<ps::CatalogEdit> pis, projects, materials, samples;
   std::map<std::pair<std::string, std::string>, ps::Uuid> pi_ids, material_ids;
   std::map<std::pair<std::string, ps::Uuid>, ps::Uuid> project_ids;
-  for (const auto& p : catalog.principal_investigators) pi_ids[{p.last_name, p.first_initial}] = p.uuid;
+  for (const auto& p : catalog.principal_investigators) pi_ids.try_emplace({p.family_name, p.given_name}, p.uuid);
   for (const auto& p : catalog.projects)
     if (p.principal_investigator) project_ids[{p.name, *p.principal_investigator}] = p.uuid;
   for (const auto& m : catalog.materials) material_ids[{m.name, m.grainsize}] = m.uuid;
@@ -286,7 +286,7 @@ Result<ps::CatalogEditBatch> SampleTableModel::to_batch(const entry::CatalogSnap
       const ps::Uuid id = ps::Uuid::v7();
       p = pi_ids.emplace(std::make_pair(pi->last_name, pi->first_initial), id).first;
       pis.emplace_back(ps::CatalogInsert{ps::CatalogTable::PrincipalInvestigator, id,
-                                      {{"last_name", pi->last_name}, {"first_initial", pi->first_initial}}});
+                                      {{"family_name", pi->last_name}, {"given_name", pi->first_initial}}});
     }
     auto j = project_ids.find({n.project, p->second});
     if (j == project_ids.end()) {

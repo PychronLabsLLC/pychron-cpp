@@ -8,6 +8,7 @@
 
 #include "migrate.hpp"
 #include "sql/browse.hpp"
+#include "sql/catalog.hpp"
 #include "sql/statements.hpp"
 #include "store_fixture.hpp"
 
@@ -135,7 +136,7 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     ASSERT_TRUE(store);
     auto status = store->schema_status();
     ASSERT_TRUE(status) << to_string(status.error());
-    ASSERT_EQ(status->size(), 5u);
+    ASSERT_EQ(status->size(), 6u);
     EXPECT_EQ((*status)[0].version, 1);
     EXPECT_EQ((*status)[0].description, "init");
     EXPECT_EQ((*status)[0].checksum_hex.size(), 64u);
@@ -147,6 +148,8 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     EXPECT_EQ((*status)[3].description, "sample_geometry");
     EXPECT_EQ((*status)[4].version, 5);
     EXPECT_EQ((*status)[4].description, "ref_scope_indexes");
+    EXPECT_EQ((*status)[5].version, 6);
+    EXPECT_EQ((*status)[5].description, "pi_identity");
   }
   // Reopen: nothing pending, so migrate = false opens fine.
   auto again = open_store(StoreConfig{tdb.url(), false});
@@ -202,6 +205,22 @@ TEST(SchemaIndexes, TheLastAnalysisOfAnIdentifierIsASeek) {
   EXPECT_NE(all.find("identifier_uuid=?"), std::string::npos) << all;
   EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
   EXPECT_EQ(all.find("TEMP B-TREE"), std::string::npos) << all;
+}
+
+// A PI given by its ORCID (an entry sheet's principal_investigator_orcid
+// column) is found by the partial unique index on it, not by reading every PI.
+TEST(SchemaIndexes, APiIsFoundByOrcid) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const std::vector<std::string> plan = column(*db, QStringLiteral("EXPLAIN QUERY PLAN ") + pd::sql::kPrincipalInvestigatorByOrcid,
+                                               "detail", {QStringLiteral("0000-0002-1825-0097")});
+  ASSERT_FALSE(plan.empty());
+  std::string all;
+  for (const auto& step : plan) all += step + "\n";
+  EXPECT_NE(all.find("principal_investigator_orcid"), std::string::npos) << all;
+  EXPECT_EQ(all.find("SCAN"), std::string::npos) << all;
 }
 
 // The age sink reads the cached fingerprints of a batch before it writes:

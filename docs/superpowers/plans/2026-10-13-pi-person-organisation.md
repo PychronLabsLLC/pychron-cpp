@@ -51,16 +51,16 @@ Read from `develop` `358eb184`.
 
 **Files:** `libs/persistence/migrations/pg/0006_pi_identity.sql`, `migrations/sqlite/0006_pi_identity.sql` (generated), `store.hpp`, `catalog.hpp`, `store.cpp`, `catalog.cpp`, `sql/catalog.hpp`, `tests/persistence/test_schema.cpp`, `test_catalog_import.cpp`, `test_catalog_edit.cpp`, a new `tests/persistence/test_pi_migration.cpp`; and every caller listed above, moved mechanically (same behaviour: `family_name = last`, `given_name = initial`; entry, ingest and UI keep their old matching by (family, given) for now). This is the one wide commit: the tree does not build with half of it.
 
-- [ ] Step 1: read how migrations open the connection (`migrate.cpp`, `tiny/db.cpp`): foreign keys on or off; write down in the migration file's head comment what the SQLite rebuild relies on.
-- [ ] Step 2: failing tests:
+- [x] Step 1: read how migrations open the connection (`migrate.cpp`, `tiny/db.cpp`): foreign keys on or off; write down in the migration file's head comment what the SQLite rebuild relies on.
+- [x] Step 2: failing tests:
   - `PiMigration.KeepsEveryPiAndEveryProjectsPi` (both engines): a store migrated to 0005 with three PIs (one without initial) and two projects, then 0006: same uuids, `family_name`/`given_name`/`kind` as spec 4 says, projects point at the same PIs, `display_name` "J Ross", "Ross", and an organisation's name.
   - `PiMigration.NamesakesAreAllowed`, `PiMigration.AnOrcidIsUniqueWhenPresent` (two rows without ORCID fine; two with one refused), `PiMigration.AnOrganisationHasNoOrcidOrGivenName` (the `CHECK`).
   - `SchemaIndexes.APiIsFoundByOrcid`: plan of the ORCID lookup uses `principal_investigator_orcid`.
   - `SchemaTest.MigrateIsIdempotentAndRecordsChecksums` lists 0006.
-- [ ] Step 3: the migration (spec 4): PostgreSQL by `ALTER TABLE`; SQLite by `-- @sqlite exec` rebuild. `display_name` generated: `CASE WHEN kind = 'organisation' OR given_name = '' THEN family_name ELSE given_name || ' ' || family_name END`. `python3 tools/ddl_sqlite.py`, then `--check`.
-- [ ] Step 4: `PrincipalInvestigatorRow`, `PrincipalInvestigatorSpec` and `PiKind` as spec 5; catalog field table (`catalog.cpp:75-79`) with the new fields; the PI's catalog key is its uuid; listing ordered by `family_name, given_name, uuid`.
-- [ ] Step 5: callers moved; `ctest --preset dev` whole (persistence, entry, ingest, dvc, elctl) and `ctest --preset dev-ui -R '^ui\.test_entry'`; PostgreSQL run of `pychron_persistence_tests`.
-- [ ] Commit `feat(persistence)!: a PI is a person or an organisation, keyed by its uuid` with the footer.
+- [x] Step 3: the migration (spec 4): PostgreSQL by `ALTER TABLE`; SQLite by `-- @sqlite exec` rebuild. `display_name` generated: `CASE WHEN kind = 'organisation' OR given_name = '' THEN family_name ELSE given_name || ' ' || family_name END`. `python3 tools/ddl_sqlite.py`, then `--check`.
+- [x] Step 4: `PrincipalInvestigatorRow`, `PrincipalInvestigatorSpec` and `PiKind` as spec 5; catalog field table (`catalog.cpp:75-79`) with the new fields; the PI's catalog key is its uuid; listing ordered by `family_name, given_name, uuid`.
+- [x] Step 5: callers moved; `ctest --preset dev` whole (persistence, entry, ingest, dvc, elctl) and `ctest --preset dev-ui -R '^ui\.test_entry'`; PostgreSQL run of `pychron_persistence_tests`.
+- [x] Commit `feat(persistence)!: a PI is a person or an organisation, keyed by its uuid` with the footer.
 
 ### Task 3: Finding a PI by name and by ORCID
 

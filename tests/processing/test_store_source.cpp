@@ -259,7 +259,7 @@ TEST_F(StoreSourceTest, BrowsePagesNewestFirstWithCatalogColumns) {
   EXPECT_EQ(s.runid, "77000-01");
   EXPECT_EQ(s.sample, "FC-2");
   EXPECT_EQ(s.project, "Fish Canyon");
-  EXPECT_EQ(s.principal_investigator, "Ross, J");
+  EXPECT_EQ(s.principal_investigator, "J Ross");
   EXPECT_EQ(s.irradiation, "NM-300");
   EXPECT_EQ(s.level, "A");
   EXPECT_EQ(s.load, "load-1");

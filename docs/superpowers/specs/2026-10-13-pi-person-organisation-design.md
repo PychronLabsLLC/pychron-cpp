@@ -80,12 +80,18 @@ CREATE UNIQUE INDEX principal_investigator_orcid ON principal_investigator (orci
   `last_name`, `first_initial` gone.
 - Data: `family_name = last_name`, `given_name = first_initial`, `kind =
   'person'`, uuids kept (projects point at them unchanged).
-- PostgreSQL: `ALTER TABLE` (add columns, backfill, drop constraint and old
-  columns, drop and re-add generated `display_name`). SQLite cannot drop a
-  constraint: new table, copy, drop old, rename, inside the migration's
-  transaction with foreign keys deferred; `project.pi_uuid` keeps pointing
-  at same uuids (`-- @sqlite exec` lines). Test proves `project` rows and
-  their PI survive on both engines.
+- PostgreSQL: `ALTER TABLE` (drop generated `display_name` and the
+  `UNIQUE`, rename `last_name`/`first_initial`, add columns, re-add
+  generated `display_name`). SQLite cannot drop a constraint: rows copied
+  aside, old table dropped, new table created under same name, rows
+  inserted back, copy dropped, inside the migration's transaction with
+  `PRAGMA defer_foreign_keys = ON` (`-- @sqlite exec` lines). No `ALTER
+  TABLE ... RENAME`: with foreign keys on (store opens SQLite so),
+  references of `project` and `repository` follow a renamed table. Drop
+  leaves each child row a deferred violation; reinsert of same uuids
+  resolves them before commit. `project.pi_uuid`, `repository.pi_uuid`
+  keep pointing at same uuids. Test proves `project` rows and their PI
+  survive on both engines.
 - Old builds cannot open a migrated store: accepted (owner, way B). Commit
   carries `BREAKING CHANGE:` footer naming `elctl db migrate --db <url>`.
 - `python3 tools/ddl_sqlite.py`; `SchemaTest.MigrateIsIdempotentAndRecords

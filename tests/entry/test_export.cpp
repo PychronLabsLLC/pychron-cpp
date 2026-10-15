@@ -17,7 +17,7 @@ class ExportTest : public EntryTest {};
 TEST_P(ExportTest, ExportImportRoundTrip) {
   auto sheets = *package_sheets(*store_, cat_.nm301);
   const std::string csv = export_package_csv(sheets);
-  EXPECT_NE(csv.find("A,1,,FC-2,Alpha,\"Ross, J\",sanidine,,,P1,,,"), std::string::npos) << csv;
+  EXPECT_NE(csv.find("A,1,,FC-2,Alpha,J Ross,sanidine,,,P1,,,"), std::string::npos) << csv;
 
   // Import the exported rows into a fresh package with the same levels.
   const Uuid pkg = *store_->add_irradiation(client(), "NM-400");

@@ -16,8 +16,13 @@ namespace {
 CatalogSnapshot snapshot() {
   CatalogSnapshot c;
   const Uuid ross = Uuid::v7(), alpha = Uuid::v7(), san = Uuid::v7(), bio = Uuid::v7();
-  c.principal_investigators = {{ross, "Ross", "J", "Ross, J", std::nullopt, std::nullopt}};
-  c.projects = {{alpha, "Alpha", ross, "Ross, J", std::nullopt, std::nullopt, std::nullopt, std::nullopt, 1}};
+  PrincipalInvestigatorRow pi;
+  pi.uuid = ross;
+  pi.family_name = "Ross";
+  pi.given_name = "J";
+  pi.display_name = "J Ross";
+  c.principal_investigators = {pi};
+  c.projects = {{alpha, "Alpha", ross, "J Ross", std::nullopt, std::nullopt, std::nullopt, std::nullopt, 1}};
   c.materials = {{san, "sanidine", "", 1}, {bio, "biotite", "20-40", 0}};
   SampleRow fc2;
   fc2.uuid = Uuid::v7();
@@ -26,7 +31,7 @@ CatalogSnapshot snapshot() {
   fc2.material = san;
   fc2.principal_investigator = ross;
   fc2.project_name = "Alpha";
-  fc2.principal_investigator_name = "Ross, J";
+  fc2.principal_investigator_name = "J Ross";
   fc2.material_name = "sanidine";
   fc2.fields.lat = 34.0;
   fc2.fields.lon = -106.0;

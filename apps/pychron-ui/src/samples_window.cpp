@@ -14,6 +14,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "pychron/entry/names.hpp"
 #include "sample_import_dialog.hpp"
 #include "theme.hpp"
 
@@ -196,7 +197,7 @@ void SamplesWindow::apply_loaded(entry::CatalogSnapshot catalog, std::vector<ps:
   QStringList pi_names, project_names, material_names;
   for (const auto& p : catalog_.principal_investigators) {
     pis.emplace_back(QString::fromStdString(p.display_name), p.uuid);
-    pi_names << QString::fromStdString(p.display_name);
+    pi_names << QString::fromStdString(entry::sheet_name({p.family_name, p.given_name}));  // what parse_pi reads
   }
   for (const auto& p : catalog_.projects) {
     projects.emplace_back(QStringLiteral("%1 (%2)").arg(QString::fromStdString(p.name),

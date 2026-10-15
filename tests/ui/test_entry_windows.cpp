@@ -176,8 +176,32 @@ class EntryWindowsTest : public QObject {
     auto rows = *store_->samples(q);
     QCOMPARE(rows.size(), std::size_t{1});
     QCOMPARE(QString::fromStdString(rows[0].project_name), QStringLiteral("Delta"));
-    QCOMPARE(QString::fromStdString(rows[0].principal_investigator_name), QStringLiteral("Doe, A"));
+    QCOMPARE(QString::fromStdString(rows[0].principal_investigator_name), QStringLiteral("A Doe"));
     QCOMPARE(QString::fromStdString(rows[0].grainsize), QStringLiteral("20-40"));
+  }
+
+  // The store shows the PI "J Ross"; the form takes it as "Ross, J" and finds
+  // that row by family and given name: no second PI.
+  void samples_new_under_an_existing_pi() {
+    auto b = bridge();
+    pychron::ui::SamplesWindow w(*b);
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy(), kWaitMs);
+    pychron::ui::NewSample s;
+    s.name = "new-2";
+    s.principal_investigator = "Ross, J";
+    s.project = "Alpha";
+    s.material = "sanidine";
+    w.set_form(s);
+    QVERIFY(w.add_from_form());
+    w.save();
+    QTRY_VERIFY_WITH_TIMEOUT(!w.busy() && !w.model()->dirty(), kWaitMs);
+    ps::SampleQuery q;
+    q.text = "new-2";
+    auto rows = *store_->samples(q);
+    QCOMPARE(rows.size(), std::size_t{1});
+    QCOMPARE(rows[0].principal_investigator, std::optional<ps::Uuid>{seeded_.ross});
+    QCOMPARE(QString::fromStdString(rows[0].principal_investigator_name), QStringLiteral("J Ross"));
+    QCOMPARE(store_->principal_investigators()->size(), std::size_t{1});
   }
 
   void import_pasted_rows() {

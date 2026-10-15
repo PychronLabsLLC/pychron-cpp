@@ -26,7 +26,9 @@ struct PiName {
 // name ("NMGRL"). "Jake Ross" and "ross" are errors (legacy
 // sample_entry.py:60-83).
 Result<PiName> parse_pi(std::string_view text, const std::vector<std::string>& allowed = {});
-// "Last, F" or "Last", as the database's display_name.
+// "Last, F" or "Last": the form parse_pi reads.
+std::string sheet_name(const PiName& name);
+// "F Last" or "Last", as the store's display_name (PI spec 5.1).
 std::string display_name(const PiName& name);
 
 // An ORCID iD in its bare form ("0000-0002-1825-0097"): four groups of four

@@ -88,7 +88,7 @@ TEST_F(EntryCmd, ImportThenReimport) {
   ASSERT_EQ(o.code, elctl::kOk) << o.out << o.err;
   EXPECT_TRUE(contains(o.out, "0 to create, 0 differing, 3 stored")) << o.out;
   o = entry({"samples", "list", "--project", "Alpha"});
-  EXPECT_TRUE(contains(o.out, "bt-1\tAlpha\tRoss, J\tbiotite\t20-40")) << o.out;
+  EXPECT_TRUE(contains(o.out, "bt-1\tAlpha\tJ Ross\tbiotite\t20-40")) << o.out;
   EXPECT_FALSE(contains(o.out, "FC-2"));
 }
 

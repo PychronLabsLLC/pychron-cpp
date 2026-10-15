@@ -227,7 +227,7 @@ SampleImportPlan plan_sample_import(const CsvTable& table, const ColumnMapping& 
       auto parsed = parse_pi(pi_text, options.pi_names_allowed);
       if (parsed) {
         pi = *parsed;
-        row.principal_investigator = display_name(*pi);
+        row.principal_investigator = sheet_name(*pi);
       } else {
         row.messages.push_back(parsed.error().what);
         row.principal_investigator = pi_text;
@@ -289,7 +289,7 @@ SampleImportPlan plan_sample_import(const CsvTable& table, const ColumnMapping& 
     // Resolve against the catalog.
     const ps::PrincipalInvestigatorRow* pi_row = nullptr;
     for (const auto& p : catalog.principal_investigators)
-      if (p.last_name == pi->last_name && p.first_initial == pi->first_initial) pi_row = &p;
+      if (!pi_row && p.family_name == pi->last_name && p.given_name == pi->first_initial) pi_row = &p;
     const ps::ProjectRow* project_row = nullptr;
     if (pi_row)
       for (const auto& p : catalog.projects)
@@ -341,7 +341,7 @@ ps::CatalogEditBatch to_batch(const SampleImportPlan& plan, const CatalogSnapsho
   std::map<std::pair<std::string, std::string>, ps::Uuid> pi_ids;
   std::map<std::pair<std::string, ps::Uuid>, ps::Uuid> project_ids;
   std::map<std::pair<std::string, std::string>, ps::Uuid> material_ids;
-  for (const auto& p : catalog.principal_investigators) pi_ids[{p.last_name, p.first_initial}] = p.uuid;
+  for (const auto& p : catalog.principal_investigators) pi_ids.try_emplace({p.family_name, p.given_name}, p.uuid);
   for (const auto& p : catalog.projects)
     if (p.principal_investigator) project_ids[{p.name, *p.principal_investigator}] = p.uuid;
   for (const auto& m : catalog.materials) material_ids[{m.name, m.grainsize}] = m.uuid;
@@ -369,7 +369,7 @@ ps::CatalogEditBatch to_batch(const SampleImportPlan& plan, const CatalogSnapsho
       const ps::Uuid id = ps::Uuid::v7();
       pi_it = pi_ids.emplace(std::make_pair(pi.last_name, pi.first_initial), id).first;
       pis.emplace_back(ps::CatalogInsert{ps::CatalogTable::PrincipalInvestigator, id,
-                                      {{"last_name", pi.last_name}, {"first_initial", pi.first_initial}}});
+                                      {{"family_name", pi.last_name}, {"given_name", pi.first_initial}}});
     }
     auto project_it = project_ids.find({row.project, pi_it->second});
     if (project_it == project_ids.end()) {

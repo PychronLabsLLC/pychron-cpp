@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +31,8 @@ std::vector<std::string> split_sql(std::string_view sql);
 // version, description and SHA-256 checksum in schema_version (section 11.4).
 // A recorded checksum that differs from the embedded file is a Config error.
 // With apply = false, any pending migration is a Config error instead.
-Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply);
+// up_to stops after that version (a test that needs a store as an older build
+// left it); unset, every migration this build carries.
+Result<std::vector<AppliedMigration>> migrate(Db& db, bool apply, std::optional<int> up_to = std::nullopt);
 
 }  // namespace pychron::persistence::detail

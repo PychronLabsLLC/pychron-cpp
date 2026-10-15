@@ -61,8 +61,12 @@ Result<PiName> parse_pi(std::string_view text, const std::vector<std::string>& a
   return PiName{m[1].str(), m[2].matched ? m[2].str() : std::string()};
 }
 
-std::string display_name(const PiName& name) {
+std::string sheet_name(const PiName& name) {
   return name.first_initial.empty() ? name.last_name : name.last_name + ", " + name.first_initial;
+}
+
+std::string display_name(const PiName& name) {
+  return name.first_initial.empty() ? name.last_name : name.first_initial + " " + name.last_name;
 }
 
 Result<std::string> parse_orcid(std::string_view text) {

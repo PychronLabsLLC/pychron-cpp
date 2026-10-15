@@ -9,9 +9,16 @@
 
 namespace pychron::persistence::detail::sql {
 
+// Sorted by name, not by how it is shown (PI spec 5.1). A lab has tens to
+// hundreds of PIs: read whole.
 inline const QString kPrincipalInvestigators = QStringLiteral(
-    "SELECT uuid, last_name, first_initial, display_name, affiliation, email FROM principal_investigator "
-    "ORDER BY last_name, first_initial, uuid");
+    "SELECT uuid, kind, family_name, given_name, display_name, orcid, ror, affiliation, email "
+    "FROM principal_investigator ORDER BY family_name, given_name, uuid");
+
+// The PI an ORCID names: the partial unique index principal_investigator_orcid.
+inline const QString kPrincipalInvestigatorByOrcid = QStringLiteral(
+    "SELECT uuid, kind, family_name, given_name, display_name, orcid, ror, affiliation, email "
+    "FROM principal_investigator WHERE orcid = ?");
 
 inline const QString kProjects = QStringLiteral(
     "SELECT p.uuid, p.name, p.pi_uuid, pi.display_name AS pi_name, p.checkin_date, p.comment, p.lab_contact, "

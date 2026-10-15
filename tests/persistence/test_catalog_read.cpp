@@ -29,14 +29,14 @@ TEST_P(CatalogReadTest, PrincipalInvestigatorsProjectsMaterials) {
   auto pis = store_->principal_investigators();
   ASSERT_TRUE(pis);
   ASSERT_EQ(pis->size(), 2u);
-  EXPECT_EQ((*pis)[0].display_name, "Ross, J");
+  EXPECT_EQ((*pis)[0].display_name, "J Ross");
   EXPECT_EQ((*pis)[1].display_name, "Smith");
 
   auto all = store_->projects(std::nullopt);
   ASSERT_TRUE(all);
   ASSERT_EQ(all->size(), 3u);
   EXPECT_EQ((*all)[0].name, "Alpha");
-  EXPECT_EQ((*all)[0].principal_investigator_name, "Ross, J");
+  EXPECT_EQ((*all)[0].principal_investigator_name, "J Ross");
   EXPECT_EQ((*all)[0].n_samples, 2);
   auto ross = store_->projects(cat_.ross);
   ASSERT_TRUE(ross);
@@ -90,7 +90,7 @@ TEST_P(CatalogReadTest, SamplesFilterAndCount) {
   EXPECT_EQ(r.n_positions, 1);
   EXPECT_EQ(r.n_analyses, 1);
   EXPECT_EQ(r.project_name, "Alpha");
-  EXPECT_EQ(r.principal_investigator_name, "Ross, J");
+  EXPECT_EQ(r.principal_investigator_name, "J Ross");
   EXPECT_EQ(r.material_name, "sanidine");
   EXPECT_EQ(r.principal_investigator, cat_.ross);
 }
@@ -255,7 +255,7 @@ TEST_P(CatalogReadTest, LevelSheetJoinsEverything) {
   EXPECT_EQ(a1.position, 1);
   EXPECT_EQ(a1.sample_name, "FC-2");
   EXPECT_EQ(a1.project, "Alpha");
-  EXPECT_EQ(a1.principal_investigator, "Ross, J");
+  EXPECT_EQ(a1.principal_investigator, "J Ross");
   EXPECT_EQ(a1.material, "sanidine");
   EXPECT_EQ(a1.identifier, "70001");
   EXPECT_EQ(a1.n_analyses, 1);
