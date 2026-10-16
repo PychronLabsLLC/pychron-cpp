@@ -47,8 +47,9 @@ Preferences load_preferences(const QSettings& settings);
 void save_preferences(QSettings& settings, const Preferences& preferences);
 
 // The application-wide part: interface and code font sizes, for every window
-// open now and opened later, and the live plots' style (plot_style.hpp) for
-// plots made from now on. Windows apply the rest (MainWindow,
+// open now and opened later, and the live plots' style (plot_style.hpp), which
+// restyles open plots through PlotStyleHub::changed and is used by plots made
+// later. Windows apply the rest (MainWindow,
 // DataMainWindow::apply_preferences).
 void apply_application_preferences(const Preferences& preferences);
 

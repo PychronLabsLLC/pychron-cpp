@@ -529,8 +529,8 @@ pages (below).
 | Appearance | **Interface font size** | 6 to 32 pt; "Default" uses the system's size | Text size of every window, open now and opened later. Window titles change in windows opened afterwards. |
 | Appearance | **Script editor font size** | 6 to 32 pt; "Default" follows the interface size | Font of the script editors. |
 | Data | **Browser page size** | 20 to 5000 analyses; default 200 (steps of 50) | How many analyses the data browser loads at a time; **Load more** fetches the next page. |
-| Plots | **Plot background** | Any color; default white | Background of the live plots: the spectrometer's scan, the experiment window's evolutions, peak centers, gauge history, the cryostat and heater docks. Open plots change at once on OK or Apply. |
-| Plots | **Series colors** | 12 colors; default the figures' 12 group colors | Color of series 1 to 12 in the live plots (a 13th series takes color 1 again). A detector given a color in the spectrometer's config keeps that color. Open plots change at once on OK or Apply. |
+| Plots | **Plot background** | Any color; default white | Background of the live plots: the spectrometer's scan, the experiment window's evolutions, peak centers, gauge history, the cryostat and heater docks, and the pattern maker's preview. Open plots change at once on OK or Apply. |
+| Plots | **Series colors** | 12 colors; default the figures' 12 group colors | Color of series 1 to 12 in the live plots, and of the projects in the sample holder view (a 13th series takes color 1 again). A detector given a color in the spectrometer's config keeps that color. Open plots change at once on OK or Apply. |
 | Plots | **Reset colors** | | Puts the background and the 12 series colors back to their defaults in the dialog; OK or Apply keeps it. |
 | Spectrometer | **Ask before moving the magnet more than** | 0 to 300 amu, steps of 0.5; 0 shows "Never ask" | A magnet move bigger than this change of mass on the reference detector asks for confirmation. A move from an unknown position always asks. Kept separately for each spectrometer. The page appears only when a spectrometer is loaded. |
 
