@@ -58,9 +58,12 @@ std::string color_hex(const Color& c) {
   return buf;
 }
 
+std::span<const Color> default_palette() noexcept { return kPalette; }
+
 Color palette_color(int index) {
-  constexpr int n = static_cast<int>(std::size(kPalette));
-  return kPalette[((index % n) + n) % n];
+  const auto palette = default_palette();
+  const int n = static_cast<int>(palette.size());
+  return palette[static_cast<std::size_t>(((index % n) + n) % n)];
 }
 
 std::string_view to_string(MarkerShape s) noexcept {

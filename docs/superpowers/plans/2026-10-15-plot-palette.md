@@ -45,7 +45,7 @@
 **Interfaces:**
 - Produces: `std::span<const pychron::processing::Color> pychron::processing::default_palette();` 12 entries. `Color palette_color(int index)` unchanged in signature: `default_palette()[((index % 12) + 12) % 12]`.
 
-- [ ] **Step 1: Write the failing tests** in `tests/processing/test_scene.cpp`:
+- [x] **Step 1: Write the failing tests** in `tests/processing/test_scene.cpp`:
 
 ```cpp
 TEST(Palette, DefaultHasTwelveInOrder) {
@@ -68,17 +68,17 @@ TEST(Palette, NegativeIndexWrapsFromTheEnd) {
 }
 ```
 
-- [ ] **Step 2: Run, expect a compile failure** (`default_palette` undeclared):
+- [x] **Step 2: Run, expect a compile failure** (`default_palette` undeclared):
 `cmake --build --preset dev --target pychron_processing_tests`
 
-- [ ] **Step 3: Declare `default_palette()` in `scene.hpp`** (add `#include <span>`), define it in `scene.cpp` over `kPalette`; `palette_color` reads it.
+- [x] **Step 3: Declare `default_palette()` in `scene.hpp`** (add `#include <span>`), define it in `scene.cpp` over `kPalette`; `palette_color` reads it.
 
-- [ ] **Step 4: Run, expect PASS:**
+- [x] **Step 4: Run, expect PASS:**
 `build/dev/tests/processing/pychron_processing_tests --gtest_filter='Palette.*:TimeSeries.*:FluxView.*'`
 
-- [ ] **Step 5: Checks:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 5: Checks:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed`.
 
-- [ ] **Step 6: Commit:** `feat(processing): default_palette() exposes the 12 group colors`
+- [x] **Step 6: Commit:** `feat(processing): default_palette() exposes the 12 group colors`
 
 ---
 

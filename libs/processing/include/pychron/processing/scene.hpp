@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -21,7 +22,10 @@ struct Color {
 // "#rrggbb", "#rrggbbaa" or a palette name; nullopt if malformed.
 std::optional<Color> parse_color(std::string_view text);
 std::string color_hex(const Color& c);  // "#rrggbb" or "#rrggbbaa" when a != 255
-// The default group palette: 12 distinguishable colours.
+// The default group palette: 12 distinguishable colours, readable on white.
+// One palette for every plot, figure or live (plot palette spec).
+[[nodiscard]] std::span<const Color> default_palette() noexcept;
+// default_palette()[index] cycled; a negative index wraps from the end.
 Color palette_color(int index);
 
 enum class MarkerShape { Circle, Square, Diamond, Triangle, Cross, Plus, Star };
