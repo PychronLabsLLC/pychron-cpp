@@ -29,7 +29,9 @@ embedded Python for the new script.
   plans, queues and field tables: not edited.
 - Tests reading the example: edits only to counts, name lists and the `bone` rename; none retuned, none removed.
   Exception, from owner's item 5: the two "no dock on the example line" assertions move to a line without a heater
-  (or cryostat) (Task 4).
+  (or cryostat) (Task 4). Exception, owner 2026-10-16: the two `test_docks` cases that measure the window's layout
+  (`mainWindowResetGivesThePanelsTheirSizesBack`, `mainWindowHasItsSizeAndKeepsTheOneItWasClosedWith`) run on
+  `make_example_line_without_docks()`, numbers unchanged (Task 4).
 - If an install e2e or `LabSim` number moves, the element that moved it starts isolated; the test is not retuned.
 - `libs/setup/AGENTS.md`: a profile or shipped file change that `tests/setup/test_profiles.cpp` checks is edited in
   the same commit as that test.
@@ -345,7 +347,11 @@ TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
   config-only rule is lifted for this change alone. Spec section 8 item 7.
 - Test: `tests/systems/test_canvas_cross_validate.cpp` (`TheExampleHasEveryElementKind` gains heater and cryo
   asserts), `tests/ui/test_heater_dock.cpp:110-118`, `tests/ui/test_cryo_dock.cpp:123-131`,
-  `tests/ui/test_docks.cpp` (new `mainWindowTabsTheCryostatAndHeatersTogether`)
+  `tests/ui/test_docks.cpp` (new `mainWindowTabsTheCryostatAndHeatersTogether` and
+  `theExampleLinesWindowFitsItsInstalledSize`; the two layout-size cases moved to
+  `make_example_line_without_docks()`, new in `tests/ui/ui_fixture.hpp`: tabbed, the cryo dock still keeps the
+  example's window at 685 px or more, over their 640), `tests/ui/test_run_factory_panel.cpp` (script list gains
+  `sim_cocktail`, missed in Task 3)
 
 - [x] **Step 1: Failing tests.** In `TheExampleHasEveryElementKind`: `sys->heaters.size() == 1u`,
   `sys->cryo.has_value()`, its setpoints' keys `{"Ar_freeze", "Ar_release"}`. In the UI: new

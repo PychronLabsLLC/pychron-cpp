@@ -214,8 +214,14 @@ Found building it (2026-10-16):
 - `tests/ui` `test_canvas_view`: element counts; heater and cryo docks show
   for example line.
 - `tests/ui` `test_docks`: example line's cryo and heater docks share one
-  tab stack, cryo in front, and again after a reset of the layout; the
-  existing window-size and panel-size cases pass unchanged.
+  tab stack, cryo in front, and again after a reset of the layout; its
+  window fits its installed 1200 x 850. The two cases that measure the
+  layout's own sizes (`mainWindowResetGivesThePanelsTheirSizesBack`,
+  `mainWindowHasItsSizeAndKeepsTheOneItWasClosedWith`) run, numbers
+  unchanged, on `make_example_line_without_docks()` (`tests/ui/ui_fixture.hpp`:
+  example line less `[cryo]` and `[[heaters]]`): tabbed, the cryo dock
+  alone keeps the example's window at least 685 px tall, so it cannot be
+  shrunk to their 640 px (owner, 2026-10-16).
 - Full `ctest --preset dev-ui`.
 
 ## 8. Owner, 2026-10-15

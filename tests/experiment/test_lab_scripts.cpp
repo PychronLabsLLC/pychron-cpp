@@ -39,7 +39,7 @@ TEST_F(LabScriptsTest, ListsScriptsWithQueueNamesAndPaths) {
   for (const auto& f : files) names.push_back(std::string(scripting::to_string(f.kind)) + "/" + f.name);
   EXPECT_EQ(names, (std::vector<std::string>{"extraction/co2:degas", "extraction/laser_extract",
                                              "extraction/sim_air", "extraction/sim_blank",
-                                             "extraction/sim_extract", "post_measurement/sim_pump",
+                                             "extraction/sim_cocktail", "extraction/sim_extract", "post_measurement/sim_pump",
                                              "extraction/lib:pump"}));
   EXPECT_TRUE(fs::is_regular_file(files[1].path));
   auto p = script_path(lab_, ScriptKind::Extraction, "co2:degas");

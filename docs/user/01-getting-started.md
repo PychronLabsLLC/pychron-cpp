@@ -629,7 +629,7 @@ valves (R1, R2), two manual valves (M1, M2), four gauges (IG1, IG2, PG1,
 CG1), 13 stages (among them a CO2 laser chamber, `stage1`, `prep`, two
 getters, a cryo trap and two tanks), two pipettes (`air` and `cocktail`), a
 pump power switch, a bakeout heater and a cryostat. Every valve starts
-closed and the example scripts move only B, C, P1 and P2; the rest is there
+closed and the example queue's scripts move only B, C, P1 and P2; the rest is there
 to look at and try. The example queue has three runs: a blank (`bu`) and two
 unknowns (`66001`) of the sample FC-2.
 

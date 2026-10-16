@@ -17,10 +17,11 @@
 #                  |                                                   |
 #               turbo2 ---------------------------------- R2 ----------+
 #
-# Every valve but A, B, C, P1 and P2 starts closed and no shipped script opens
-# it: the getters, the cryo trap, the second turbo, the ion pump, the laser
-# chamber and the cocktail pipette are there to be seen and tried, and leave
-# the shipped queue's gas where it is. The roughing pump is reached only
+# Every valve starts closed, and the shipped queue's scripts move only B, C,
+# P1 and P2 (sim_cocktail.py, in no queue, moves Q1 and Q2): the getters, the
+# cryo trap, the second turbo, the ion pump, the laser chamber and the
+# cocktail pipette are there to be seen and tried, and leave the shipped
+# queue's gas where it is. The roughing pump is reached only
 # through a manual valve (M1 or M2).
 
 [canvas]

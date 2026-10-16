@@ -12,7 +12,7 @@ choices = ["starter", "import", "legacy"]
 labels = ["Start with the example line", "Use extraction-line files I already have", "Convert a legacy Pychron setupfiles folder"]
 default = "starter"
 group = "Extraction line"
-help = "The example line shows one of every element pychron-cpp draws (valves, rough and manual valves, gauges on two controllers, two pipettes with their tanks, getters, a cryo trap, a laser, pumps), all on simulated controllers: describe your own valves and gauges in it later. Files you already have (extraction_line.toml and canvas.toml from another computer or an earlier install) are checked before anything is written, then copied in. A legacy Pychron setupfiles folder (extractionline/valves.yaml or valves.xml, canvas2D/, devices/) is converted: the Ready page lists what could not be carried over."
+help = "The example line shows most of what pychron-cpp draws (valves, rough and manual valves, gauges on two controllers, two pipettes with their tanks, getters, a cryo trap, a laser, pumps), all on simulated controllers: describe your own valves and gauges in it later. Files you already have (extraction_line.toml and canvas.toml from another computer or an earlier install) are checked before anything is written, then copied in. A legacy Pychron setupfiles folder (extractionline/valves.yaml or valves.xml, canvas2D/, devices/) is converted: the Ready page lists what could not be carried over."
 
 [[questions]]
 id = "line_file"

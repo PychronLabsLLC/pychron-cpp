@@ -196,7 +196,7 @@ TEST(FactoryForm, TheExampleLabsDefaultsBlocksAndListings) {
   ASSERT_TRUE(lab.problems.empty()) << lab.problems.front();
   EXPECT_EQ(lab.plans->names(), std::vector<std::string>{"sim_multicollect"});
   EXPECT_EQ(lab.scripts->names(scripting::ScriptKind::Extraction),
-            (std::vector<std::string>{"laser_extract", "sim_air", "sim_blank", "sim_extract"}));
+            (std::vector<std::string>{"laser_extract", "sim_air", "sim_blank", "sim_cocktail", "sim_extract"}));
   EXPECT_EQ(lab.scripts->names(scripting::ScriptKind::PostMeasurement), std::vector<std::string>{"sim_pump"});
   EXPECT_TRUE(lab.scripts->names(scripting::ScriptKind::PostEquilibration).empty());
   ASSERT_TRUE(lab.blocks.contains("blank_pair"));
