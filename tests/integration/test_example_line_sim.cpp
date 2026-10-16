@@ -4,13 +4,15 @@
 // with interlocks enforced and gauges scan, with SimSystem standing in for
 // the physical lab.
 //
-// Example plumbing (canvas.toml):
-//   stage1 --A-- prep --B-- spec
-//               |   |
-//              P1   C --+-- turbo --+-- M1 -- rough
-//                       |           |
-//                      IG1         PG1
-// A and C interlock each other; IG1 has alarm_high = 1e-4.
+// Example plumbing (canvas.toml; the whole drawing is at its head):
+//   laser --L-- stage1 --A-- prep --B-- spec --I-- ion
+//                 |              |   |
+//                 D             P1   C --+-- turbo --+-- R1 -- M1 -- rough
+//                 |                      |           |
+//               turbo2                  IG1         PG1
+// A and C, and A and D, interlock each other, as do the pipettes' valves;
+// IG1 has alarm_high = 1e-4. Every valve but the ones these tests open
+// starts closed.
 
 #include <atomic>
 #include <chrono>
@@ -151,10 +153,12 @@ class ExampleLineSim : public ::testing::Test {
 
 TEST_F(ExampleLineSim, StartsClosedAndQuiet) {
   const auto snap = line->snapshot();
-  for (const char* v : {"A", "B", "C", "P1", "P2", "pump_power"}) {
+  for (const char* v : {"A", "B", "C", "P1", "P2", "L", "D", "G1", "G2", "Y", "I", "Q1", "Q2", "R1", "R2",
+                        "pump_power"}) {
     EXPECT_EQ(snap.valves.at(v), ValveState::Closed) << v;
   }
   EXPECT_EQ(snap.valves.at("M1"), ValveState::Unknown);
+  EXPECT_EQ(snap.valves.at("M2"), ValveState::Unknown);
   EXPECT_NEAR(snap.pressures.at("IG1"), 1e-8, 1e-12);
   EXPECT_NEAR(snap.pressures.at("PG1"), 1e-8, 1e-12);
 
@@ -165,10 +169,11 @@ TEST_F(ExampleLineSim, StartsClosedAndQuiet) {
 }
 
 TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
-  // Expand furnace gas into prep: stage1 (12.5 cc) + prep (1 cc).
+  // Expand furnace gas into prep: stage1 (12.5 cc) and its gauge IG2 (1 cc,
+  // joined to it with no valve) + prep (1 cc).
   ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "test"));
   clock.advance(100us);  // long for the valve, nothing to the pump
-  const double expanded = (12.5 * 1e-3 + 1e-8) / 13.5;
+  const double expanded = (12.5 * 1e-3 + 2 * 1e-8) / 14.5;
   EXPECT_NEAR(*line->sim()->pressure("prep"), expanded, expanded * 1e-9);
   EXPECT_TRUE(line->sim()->valve_open("A"));
 
@@ -227,6 +232,32 @@ TEST_F(ExampleLineSim, PipetteValvesNeverOpenTogether) {
   ASSERT_FALSE(second);
   EXPECT_EQ(second.error().kind, ErrorKind::Interlock);
   EXPECT_FALSE(line->sim()->valve_open("P2"));
+}
+
+TEST_F(ExampleLineSim, CocktailPipetteValvesNeverOpenTogether) {
+  ASSERT_TRUE(line->actuate("Q1", SwitchOp::Open, "test"));
+  auto second = line->actuate("Q2", SwitchOp::Open, "test");
+  ASSERT_FALSE(second);
+  EXPECT_EQ(second.error().kind, ErrorKind::Interlock);
+  EXPECT_FALSE(line->sim()->valve_open("Q2"));
+  EXPECT_EQ(line->snapshot().valves.at("Q2"), ValveState::Closed);
+}
+
+// D would expose stage 1 to the second turbo while A joins it to prep: each
+// is refused while the other is open, as C is with A.
+TEST_F(ExampleLineSim, DAndANeverOpenTogether) {
+  ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "test"));
+  auto d = line->actuate("D", SwitchOp::Open, "test");
+  ASSERT_FALSE(d);
+  EXPECT_EQ(d.error().kind, ErrorKind::Interlock);
+  EXPECT_FALSE(line->sim()->valve_open("D"));
+
+  ASSERT_TRUE(line->actuate("A", SwitchOp::Close, "test"));
+  ASSERT_TRUE(line->actuate("D", SwitchOp::Open, "test"));
+  auto a = line->actuate("A", SwitchOp::Open, "test");
+  ASSERT_FALSE(a);
+  EXPECT_EQ(a.error().kind, ErrorKind::Interlock);
+  EXPECT_FALSE(line->sim()->valve_open("A"));
 }
 
 // The scheduler's own threads and the example files exactly as committed

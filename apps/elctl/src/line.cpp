@@ -1,6 +1,7 @@
 #include "line.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <deque>
 #include <memory>
@@ -8,6 +9,7 @@
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
+#include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"
 #include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
@@ -44,6 +46,13 @@ struct Line::Sims {
       MaxiGaugeSimModel model;
       model.pressure = [](int channel) -> std::optional<double> { return channel * 1e-9; };
       return maxigauge_sim_hook(std::move(model));
+    }
+    if (driver_kind == "gp_microion") {
+      // As the MaxiGauge: sensor n reads n * 1e-9, at the driver's address.
+      MicroIonSimModel model;
+      model.address = static_cast<int>(driver.options["address"].value<std::int64_t>().value_or(1));
+      model.pressure = [](int channel) -> std::optional<double> { return channel * 1e-9; };
+      return microion_sim_hook(std::move(model));
     }
     return {};  // silent wire: the driver sees timeouts
   }

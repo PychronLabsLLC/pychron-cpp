@@ -98,14 +98,14 @@ of that box (`aValveUnderAGaugeChipStillTakesItsClick`).
 | valve `C` | [700, 300] | |
 | gauge `IG1` | [780, 380] | |
 | stage `turbo` | [850, 300] | |
-| rough valve `R1` | [960, 300] | |
-| gauge `PG1` | [1010, 380] | |
-| manual `M1` | [1160, 300] | |
+| rough valve `R1` | [1060, 300] | |
+| gauge `PG1` | [960, 380] | |
+| manual `M1` | [1180, 300] | |
 | stage `rough` | [1300, 420] | |
 | gauge `CG1` | [1300, 520] | |
 | rough valve `R2` | [1000, 720] | |
 | manual `M2` | [1150, 420] | |
-| labels | "Extraction" [100, 50] (was "Furnace side"), "Cleanup" [560, 20], "Roughing" [1150, 640] | |
+| labels | "Extraction" [100, 50] (was "Furnace side"), "Cleanup" [560, 20], "Roughing" [1200, 640] | |
 | legend | [20, 750] | |
 
 Connections (offsets are `start_offset` from the stage centre):
@@ -115,9 +115,11 @@ Connections (offsets are `start_offset` from the stage centre):
   `G2`-`getter2`; `prep`-`Y` [80, 0], `Y`-`cryo`.
 - Below, `orientation = "v"`: `stage1`-`D` [30, 0], `D`-`turbo2`; `prep`-`P1` [-60, 0], `P1`-`air`, `air`-`P2`,
   `P2`-`air_tank`; `prep`-`Q1` [40, 0], `Q1`-`cocktail`, `cocktail`-`Q2`, `Q2`-`cocktail_tank`; `prep`-`C` [100, 0].
-- Roughing: tee `C`/`turbo`/`IG1` (as now); `turbo`-`R1`; tee `R1`/`M1`/`PG1`; elbow `M1`-`rough` (bend at
-  [1300, 300]); `rough`-`CG1` `orientation = "v"`; `turbo2`-`R2`; elbow `R2`-`M2` (bend at [1150, 720]);
-  `M2`-`rough`.
+- Roughing: tee `C`/`turbo`/`IG1` (as now); tee `turbo`/`R1`/`PG1` (PG1 stays in turbo's region, so the
+  region `C` opens to is unchanged: Task 2 found a tee `R1`/`M1`/`PG1` puts PG1 behind closed `R1` and fails
+  `ExampleLineSim`); `R1`-`M1` (valve to valve: the simulator puts a pipe volume between); elbow `M1`-`rough`
+  (bend at [1300, 300]); `rough`-`CG1` `orientation = "v"`; `turbo2`-`R2`; elbow `R2`-`M2` (bend at
+  [1150, 720]); `M2`-`rough`.
 
 ## Review Focus
 
@@ -169,6 +171,12 @@ Connections (offsets are `start_offset` from the stage centre):
 - Test: `tests/systems/test_canvas_cross_validate.cpp`, `tests/integration/test_example_line_sim.cpp`,
   `tests/ui/test_core_bridge.cpp:39`, `tests/ui/test_canvas_view.cpp:108-120`
 - Modify: spec 5.1 (sketch, `laser` and `M2` rows: decisions 1 to 3)
+- Found while building (spec 5.1, "Found building it"): `apps/elctl/src/line.cpp` (its quiet simulator answers
+  `gp_microion`; test `ElctlTest.ReadsAGaugeOnTheMicroIon`, `ProbePrintsHealthTable` lists `cg_controller`),
+  `tests/setup/test_connection.cpp` (renames D's interlock on A too), `profiles/instrument-common/CALIBRATE.md`
+  ("five-valve example"), `tests/ui/test_canvas_view.cpp` coordinates of the example in
+  `orientedConnectionsAreDrawnSquare`, `elbowsTurnOneSquareCorner`,
+  `pipesAreBorderedAndBreakTheBorderOfVolumesTheyEnter`.
 
 **Interfaces:**
 - Produces: example names `L D G1 G2 Y I Q1 Q2` (`[[valves]]`, `actuator1`, addresses `"10"` to `"17"` in that
@@ -180,7 +188,7 @@ Connections (offsets are `start_offset` from the stage centre):
 - New transport `[transports.cg_controller] kind = "sim"`, driver `[drivers.cg_controller] kind = "gp_microion"`,
   `address = 1`, `channels = [2]`.
 
-- [ ] **Step 1: Write the failing count test** in `tests/systems/test_canvas_cross_validate.cpp`:
+- [x] **Step 1: Write the failing count test** in `tests/systems/test_canvas_cross_validate.cpp`:
 
 ```cpp
 TEST(ExampleConfigs, TheExampleHasEveryElementKind) {
@@ -209,22 +217,22 @@ TEST(ExampleConfigs, TheExampleHasEveryElementKind) {
   `source_kind` is declared in `canvas.hpp:103`. Extend
   `LoadCrossValidateAndBuildGraph` (rename only): `stage1` not joined to `rough` with every `[[valves]]` entry open;
   joined once `M1` opens; `connected_volumes(open).size() == 1` holds.
-- [ ] **Step 2:** Run `pychron_systems_tests --gtest_filter='ExampleConfigs.*'`: FAIL on the counts.
-- [ ] **Step 3: Interlock tests** in `tests/integration/test_example_line_sim.cpp` beside
+- [x] **Step 2:** Run `pychron_systems_tests --gtest_filter='ExampleConfigs.*'`: FAIL on the counts.
+- [x] **Step 3: Interlock tests** in `tests/integration/test_example_line_sim.cpp` beside
   `PipetteValvesNeverOpenTogether`: `CocktailPipetteValvesNeverOpenTogether` (`Q1` open, opening `Q2` refused, `Q2`
   stays closed) and `DAndANeverOpenTogether` (both orders). Extend the closed-at-start list (154-157) with
   `L D G1 G2 Y I Q1 Q2 R1 R2`, `M2` unknown as `M1`. Run: FAIL (names unknown).
-- [ ] **Step 4:** Write `extraction_line.toml` and `canvas.toml` per Interfaces and Layout. Laser stage carries a
+- [x] **Step 4:** Write `extraction_line.toml` and `canvas.toml` per Interfaces and Layout. Laser stage carries a
   comment: "the chamber of driver `co2`". New sketch at the head of `canvas.toml` shows the drawing.
-- [ ] **Step 5:** Run `pychron_systems_tests --gtest_filter='ExampleConfigs.*:ExtractionLine.*Example*:SpectrometerBringup*'`
+- [x] **Step 5:** Run `pychron_systems_tests --gtest_filter='ExampleConfigs.*:ExtractionLine.*Example*:SpectrometerBringup*'`
   and `pychron_integration_tests --gtest_filter='ExampleLineSim*'`. Expected: PASS, and `expect_the_example_lab`
   sees no warning and `valves_without_physics()` empty.
-- [ ] **Step 6:** UI counts: `test_core_bridge.cpp:39` becomes `std::size_t{18}` (comment "13 valves, 2 rough, M1,
+- [x] **Step 6:** UI counts: `test_core_bridge.cpp:39` becomes `std::size_t{18}` (comment "13 valves, 2 rough, M1,
   M2, pump_power"); `buildsItemsFromCanvas` lists every new valve, stage and gauge, `connection_count() >= 30`.
   `cmake --build --preset dev-ui --target pychron_ui_test_canvas_view pychron_ui_test_core_bridge`; run both
   binaries. Expected: PASS, including `aValveUnderAGaugeChipStillTakesItsClick` (move an added element, not a
   test, if a chip covers a valve).
-- [ ] **Step 7: Install profiles.** Recheck decision 6 against the tree as it is then:
+- [x] **Step 7: Install profiles.** Recheck decision 6 against the tree as it is then:
   `rg -n 'canvas\.toml|extraction_line\.toml|sim\.toml|@examples/scripts' profiles` (expected: only
   `extraction-line-starter/profile.toml` copies the three, only `lab-common/profile.toml` the scripts) and
   `rg -n 'includes' profiles/*/profile.toml` (expected: `argus`, `helix`, `ngx` reach `extraction-line-starter`
@@ -236,9 +244,9 @@ TEST(ExampleConfigs, TheExampleHasEveryElementKind) {
   (`*Profile*` takes in `InstrumentProfile.InstallsLoadsAndPassesDoctor/*`, which installs argus, helix and ngx with
   the new line and runs doctor on it). Expected: PASS. A failure there is fixed in the shipped file, or the test
   edited, in this task's commit.
-- [ ] **Step 8:** Shipped numbers did not move: `pychron_integration_tests --gtest_filter='LabSim.*'`. Expected: PASS
+- [x] **Step 8:** Shipped numbers did not move: `pychron_integration_tests --gtest_filter='LabSim.*'`. Expected: PASS
   untouched. If one fails, find which added element carries gas at start and isolate it.
-- [ ] **Step 9:** Edit spec 5.1 for decisions 1 to 3. `quality_check.py`, `compiler_sweep.py --changed` (both
+- [x] **Step 9:** Edit spec 5.1 for decisions 1 to 3. `quality_check.py`, `compiler_sweep.py --changed` (both
   build dirs). Commit `feat(setup): example line gains a laser, cleanup, second pipette and roughing side`.
 
 ### Task 3: Cocktail tank and its script

@@ -14,7 +14,7 @@ namespace {
 TEST_F(ElctlTest, ProbePrintsHealthTable) {
   auto o = run({"probe"});
   EXPECT_EQ(o.code, 0) << o.out << o.err;
-  for (const char* name : {"valve_bus", "gauge_net", "actuator1", "ig_controller"}) {
+  for (const char* name : {"valve_bus", "gauge_net", "actuator1", "ig_controller", "cg_controller"}) {
     EXPECT_TRUE(contains(o.out, name)) << name << "\n" << o.out;
   }
   EXPECT_TRUE(contains(o.out, "connected")) << o.out;
@@ -40,6 +40,15 @@ TEST_F(ElctlTest, ProbeReportsUnreachableHardware) {
   // --sim runs the identical config against simulated hardware.
   auto sim = run({"--sim", "probe"});
   EXPECT_EQ(sim.code, 0) << sim.out << sim.err;
+}
+
+// The example's second gauge controller is another make (a Micro-Ion): its
+// simulated wire answers too.
+TEST_F(ElctlTest, ReadsAGaugeOnTheMicroIon) {
+  auto o = run({"read", "CG1"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "CG1")) << o.out;
+  EXPECT_TRUE(contains(o.out, "torr")) << o.out;
 }
 
 TEST_F(ElctlTest, StateReadsEverySwitchBack) {

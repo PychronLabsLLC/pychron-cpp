@@ -54,6 +54,11 @@ timeout_ms = 500
 kind = "sim"
 timeout_ms = 500
 
+# A second gauge controller, of another make: the roughing side's Convectron.
+[transports.cg_controller]
+kind = "sim"
+timeout_ms = 500
+
 # The laser PC. With kind = "sim" the Chromium driver talks to a simulated
 # Chromium; a real one is kind = "tcp" (see laser.chromium.toml.example).
 [transports.laser_pc]
@@ -67,7 +72,13 @@ transport = "valve_bus"
 [drivers.ig_controller]
 kind = "pfeiffer_maxigauge"
 transport = "gauge_net"
-channels = [1, 2]
+channels = [1, 2, 3]
+
+[drivers.cg_controller]
+kind = "gp_microion"
+transport = "cg_controller"
+address = 1
+channels = [2]               # 1 is the Micro-Ion's ion gauge, 2 and 3 its Convectrons
 
 # An extraction device: a queue's extract_device = "co2" means this driver.
 # Trays are in tray_maps/, their place on this stage in stage_calibrations/.
@@ -80,7 +91,7 @@ name = "A"
 description = "Stage 1 to prep"
 actuator = "actuator1"
 address = "1"
-interlocks = ["C"]           # never expose stage 1 to an open turbo line
+interlocks = ["C", "D"]      # never expose stage 1 to an open turbo line
 settle_ms = 500
 
 [[valves]]
@@ -110,9 +121,77 @@ actuator = "actuator1"
 address = "5"
 interlocks = ["P1"]
 
+[[valves]]
+name = "L"
+description = "Laser chamber to stage 1"
+actuator = "actuator1"
+address = "10"
+
+[[valves]]
+name = "D"
+description = "Stage 1 to turbo 2"
+actuator = "actuator1"
+address = "11"
+interlocks = ["A"]           # as C: stage 1 is never open to prep and a turbo at once
+
+[[valves]]
+name = "G1"
+description = "Getter 1 isolation"
+actuator = "actuator1"
+address = "12"
+
+[[valves]]
+name = "G2"
+description = "Getter 2 isolation"
+actuator = "actuator1"
+address = "13"
+
+[[valves]]
+name = "Y"
+description = "Cryo trap isolation"
+actuator = "actuator1"
+address = "14"
+
+[[valves]]
+name = "I"
+description = "Spectrometer to ion pump"
+actuator = "actuator1"
+address = "15"
+
+[[valves]]
+name = "Q1"
+description = "Cocktail pipette inner"
+actuator = "actuator1"
+address = "16"
+interlocks = ["Q2"]
+
+[[valves]]
+name = "Q2"
+description = "Cocktail pipette outer"
+actuator = "actuator1"
+address = "17"
+interlocks = ["Q1"]
+
+# Drawn as [[rough_valve]] on the canvas: to the line they are valves.
+[[valves]]
+name = "R1"
+description = "Turbo foreline"
+actuator = "actuator1"
+address = "18"
+
+[[valves]]
+name = "R2"
+description = "Turbo 2 foreline"
+actuator = "actuator1"
+address = "19"
+
 [[manual_valves]]
 name = "M1"
 description = "Turbo to roughing pump"
+
+[[manual_valves]]
+name = "M2"
+description = "Turbo 2 foreline to roughing pump"
 
 [[switches]]
 name = "pump_power"
@@ -133,10 +212,27 @@ driver = "ig_controller"
 channel = 2
 units = "torr"
 
+[[gauges]]
+name = "IG2"
+driver = "ig_controller"
+channel = 3
+units = "torr"
+
+[[gauges]]
+name = "CG1"
+driver = "cg_controller"
+channel = 2
+units = "torr"
+
 [[pipettes]]
 name = "air"
 inner = "P1"
 outer = "P2"
+
+[[pipettes]]
+name = "cocktail"
+inner = "Q1"
+outer = "Q2"
 
 # Lab-specific names measurement plans reference as '@key' (experiment spec
 # 4.1), so one shipped template serves every line of an instrument family.

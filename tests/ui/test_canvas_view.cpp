@@ -106,17 +106,22 @@ class TestCanvasView : public QObject {
   }
 
   void buildsItemsFromCanvas() {
-    for (const char* name : {"A", "B", "C", "P1", "P2", "M1", "pump_power"}) {
+    for (const char* name : {"A", "B", "C", "P1", "P2", "L", "D", "G1", "G2", "Y", "I", "Q1", "Q2", "R1", "R2", "M1",
+                             "M2", "pump_power"}) {
       QVERIFY2(view_->valve(name) != nullptr, name);
     }
-    for (const char* name : {"stage1", "prep", "spec", "turbo", "rough", "air_tank", "air"}) {
+    for (const char* name : {"laser", "stage1", "prep", "spec", "ion", "getter1", "getter2", "cryo", "turbo2", "turbo",
+                             "rough", "air_tank", "cocktail_tank", "air", "cocktail"}) {
       QVERIFY2(view_->stage(name) != nullptr, name);
     }
-    QVERIFY(view_->gauge("IG1") != nullptr);
-    QVERIFY(view_->gauge("PG1") != nullptr);
-    QVERIFY(view_->connection_count() >= 10);
+    for (const char* name : {"IG1", "PG1", "IG2", "CG1"}) {
+      QVERIFY2(view_->gauge(name) != nullptr, name);
+    }
+    QVERIFY(view_->connection_count() >= 30);
     QCOMPARE(view_->valve("A")->kind(), canvas::ValveKind::Valve);
     QCOMPARE(view_->valve("M1")->kind(), canvas::ValveKind::Manual);
+    QCOMPARE(view_->valve("M2")->kind(), canvas::ValveKind::Manual);
+    QCOMPARE(view_->valve("R1")->kind(), canvas::ValveKind::Rough);
   }
 
   void snapshotPaintsValvesAndGauges() {
@@ -448,10 +453,10 @@ class TestCanvasView : public QObject {
     QTemporaryDir tmp;
     const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
-    // B (550, 200) and turbo (650, 300; 60 x 40) do not line up either way.
+    // B (780, 200) and turbo (850, 300; 60 x 40) do not line up either way.
     std::ofstream(canvas, std::ios::app) << "\n[[connection]]\nstart = \"B\"\nend = \"turbo\"\norientation = \"v\"\n";
-    // offsets move where a pipe meets its element: A (250, 200) to the top
-    // edge of stage1 (100, 200; 80 x 40), 30 left of its center
+    // offsets move where a pipe meets its element: A (420, 200) to the top
+    // edge of stage1 (300, 200; 80 x 40), 30 left of its center
     std::ofstream(canvas, std::ios::app)
         << "\n[[connection]]\nstart = \"A\"\nend = \"stage1\"\nstart_offset = [0, -15]\nend_offset = [-30, -20]\n";
     auto line = ui::test::make_example_line(canvas);
@@ -467,10 +472,10 @@ class TestCanvasView : public QObject {
       return points;
     };
     // down first, then across
-    QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{550, 200}, {550, 300}, {650, 300}}));
-    QCOMPARE(route("A", "stage1"), (std::vector<QPointF>{{250, 185}, {70, 180}}));
-    // the example's own: P1 straight under prep
-    QCOMPARE(route("prep", "P1"), (std::vector<QPointF>{{400, 200}, {400, 330}}));
+    QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{780, 200}, {780, 300}, {850, 300}}));
+    QCOMPARE(route("A", "stage1"), (std::vector<QPointF>{{420, 185}, {270, 180}}));
+    // the example's own: P1 straight under prep, 60 left of its center
+    QCOMPARE(route("prep", "P1"), (std::vector<QPointF>{{540, 200}, {540, 330}}));
     line->stop();
   }
 
@@ -481,7 +486,7 @@ class TestCanvasView : public QObject {
     QTemporaryDir tmp;
     const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
-    // B (550, 200), A (250, 200), turbo (650, 300), P2 (400, 510).
+    // B (780, 200), A (420, 200), turbo (850, 300), P1 (540, 330), P2 (540, 510).
     std::ofstream(canvas, std::ios::app) << "\n[[elbow]]\nstart = \"B\"\nend = \"turbo\"\ncorner = \"ur\"\n"
                                          << "\n[[elbow]]\nstart = \"A\"\nend = \"turbo\"\ncorner = \"ul\"\n"
                                          << "\n[[elbow]]\nstart = \"P1\"\nend = \"P2\"\ncorner = \"ll\"\n";
@@ -498,9 +503,9 @@ class TestCanvasView : public QObject {
       }
       return points;
     };
-    QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{550, 200}, {650, 200}, {650, 300}}));
-    QCOMPARE(route("A", "turbo"), (std::vector<QPointF>{{250, 200}, {250, 300}, {650, 300}}));
-    QCOMPARE(route("P1", "P2"), (std::vector<QPointF>{{400, 330}, {400, 510}}));  // lined up
+    QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{780, 200}, {850, 200}, {850, 300}}));
+    QCOMPARE(route("A", "turbo"), (std::vector<QPointF>{{420, 200}, {420, 300}, {850, 300}}));
+    QCOMPARE(route("P1", "P2"), (std::vector<QPointF>{{540, 330}, {540, 510}}));  // lined up
     line->stop();
   }
 
@@ -526,10 +531,10 @@ class TestCanvasView : public QObject {
     QVERIFY(gap->scene() == pipe->scene());
     QVERIFY(gap->zValue() > view_->stage("prep")->zValue());
     QVERIFY(gap->zValue() < view_->valve("P1")->zValue());
-    // it straddles prep's bottom edge, on the pipe (x = 400)
+    // it straddles prep's bottom edge, on the pipe (x = 540)
     const QRectF prep = view_->stage("prep")->sceneBoundingRect().adjusted(1, 1, -1, -1);
     const QRectF across = gap->path().boundingRect();
-    QCOMPARE(across.center().x(), 400.0);
+    QCOMPARE(across.center().x(), 540.0);
     QVERIFY(across.top() < prep.bottom() && across.bottom() > prep.bottom());
     QCOMPARE(gap->pen().widthF(), pipe->pen().widthF());
 
@@ -544,7 +549,7 @@ class TestCanvasView : public QObject {
   // A pipe that lands in a volume's rounded corner: the border curves in
   // from the edge there, and the gap reaches in as far as it does.
   void gapReachesRoundAVolumesCorner() {
-    const QRectF box(60, 180, 80, 40);  // the example's stage1: radius 8
+    const QRectF box(60, 180, 80, 40);  // as big as the example's stage1: radius 8
     const ui::BoxEntry mid{{140, 200}, {-1, 0}};
     QCOMPARE(ui::StageItem::border_inset(box, mid, 6), 0.0);
     // 4 below the top-right corner, 6 wide: its upper side is 1 from the corner

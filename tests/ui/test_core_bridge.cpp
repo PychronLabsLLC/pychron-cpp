@@ -36,7 +36,7 @@ class TestCoreBridge : public QObject {
     QVERIFY(line_->start().has_value());
     QTRY_COMPARE(snapshots, 1);
     const auto& state = bridge_->state();
-    QCOMPARE(state.valves.size(), std::size_t{7});  // 5 valves, M1, pump_power
+    QCOMPARE(state.valves.size(), std::size_t{18});  // 13 valves, 2 rough, M1, M2, pump_power
     QVERIFY(state.valves.count("A") == 1);
     QVERIFY(state.pressures.count("IG1") == 1);
     QVERIFY(state.switches.count("A") == 1);

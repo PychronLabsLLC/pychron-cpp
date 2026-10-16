@@ -73,20 +73,36 @@ fixture's example line (`tests/ui` 17, `tests/systems` 12, `tests/integration`
 ### 5.1 The line
 
 ```
- laser --L-- stage1 --A-- prep --B-- spec --I-- ion
-               |  \        | | \
-              G1   D      G2 Y  C --+-- turbo --R1-- M1 -- rough
-               |    \      | |      |              |
-           getter1   \ getter2 cryo IG1           PG1
-                      \
-                       +--(to turbo2)--R2--+ (same rough)
- prep also: P1/air/P2 -- air_tank ;  Q1/cocktail/Q2 -- cocktail_tank
- gauges: IG1 (prep turbo), IG2 (stage1), PG1 (foreline), CG1 (rough manifold)
+                    getter1         getter2  cryo        pump_power
+                       |               |       |
+                      G1   IG2        G2       Y
+                       |   |           |       |
+  laser --L-- stage1 --+---+--A-- [     prep     ] --B-- spec --I-- ion
+                 |                  |    |     |
+                 D                 P1   Q1     C --+-- turbo --+-- R1 -- M1 --+
+                 |                  |    |         |           |              |
+                 |                 air  cocktail  IG1         PG1   M2 --- rough
+                 |                  |    |                           |        |
+                 |                 P2   Q2                           |       CG1
+                 |                  |    |                           |
+                 |           air_tank  cocktail_tank                 |
+                 |                                                   |
+              turbo2 ---------------------------------- R2 ----------+
 ```
+
+Drawn (plan decision 3): cleanup above main row, pipettes below `prep`, no
+pipe crossing another; canvas 1450 x 800. Gauges: IG1 (prep turbo), IG2
+(stage1, joined to it with no valve), PG1 (turbo foreline, ahead of `R1`),
+CG1 (on `rough`). `R1`-`M1` and `R2`-`M2` are valve to valve: simulator puts
+a pipe volume between each pair, so every valve joins two volumes
+(`valves_without_physics()` empty). PG1 stays in turbo's region (tee
+`turbo`/`R1`/`PG1`): with `R1` closed, region `C` opens to is the one it was
+(prep, turbo, IG1, PG1), so `ExampleLineSim` and shipped numbers hold.
+Roughing pump reached only through a manual valve (`M1` or `M2`).
 
 | Added | Name | Kind | In line config as |
 |---|---|---|---|
-| stage | `laser` | `kind = "laser"`, symbol | region of driver `co2`; display "CO2 laser" |
+| stage | `laser` | `kind = "laser"`, `symbol = "laser"` | chamber of driver `co2`: canvas stage names no driver (`loader.cpp`), so tie is name and comment only; display "CO2 laser" |
 | stage | `stage1` | plain | replaces `bone` (owner, 2026-10-15) |
 | valve | `L` | valve | laser chamber to `stage1` |
 | valve | `D` | valve | `stage1` to second turbo |
@@ -100,8 +116,8 @@ fixture's example line (`tests/ui` 17, `tests/systems` 12, `tests/integration`
 | stage | `cocktail_tank` | `tank` | `[volumes.cocktail_tank] composition = "cocktail"` |
 | pipette | `cocktail` | pipette | `[[pipettes]]` inner `Q1`, outer `Q2`, interlocked as `P1`/`P2` |
 | rough valves | `R1`, `R2` | `rough_valve` | turbo and turbo2 forelines |
-| manual valve | `M2` | manual | rough manifold vent |
-| gauges | `IG2`, `CG1` | gauge | `IG2` on `ig_controller` channel 3; `CG1` on a second controller `cg_controller` (`gp_microion`, sim) |
+| manual valve | `M2` | manual | turbo 2 foreline (behind `R2`) to `rough`. Not a vent: a dead-end valve joins one volume, has no physics in simulator |
+| gauges | `IG2`, `CG1` | gauge | `IG2` on `ig_controller` channel 3; `CG1` on a second controller `cg_controller` (`gp_microion`, sim, address 1, channel 2) |
 | heater | `bakeout` | `[[heaters]]` | driver `bakeout_plc` (`plc2000_heater`, sim), units C |
 | labels | "Cleanup", "Roughing" | label | |
 
@@ -114,6 +130,24 @@ prep", `B` inlet, `C` prep to turbo.
 
 Interlocks added: `Q1`/`Q2` mutual; `D` with `A` (as `C` with `A`); `L`
 none.
+
+Addresses on `actuator1`: `L D G1 G2 Y I Q1 Q2` `"10"` to `"17"`, `R1 R2`
+`"18"`, `"19"` (`"9"` is `pump_power`). Rough valves are `[[valves]]` in
+line config, `[[rough_valve]]` on canvas.
+
+Found building it (2026-10-16):
+
+- IG2 joined to `stage1` with no valve adds its gauge volume to `stage1`'s
+  region: `ExampleLineSim.GasFlowsThroughOpenValvesAndInterlocksHold`
+  expands into 14.5 cc, not 13.5 (stage1 12.5, IG2 1, prep 1). No shipped
+  script opens `A`; shipped numbers unchanged.
+- `elctl`'s own quiet simulator (`apps/elctl/src/line.cpp`, used by `probe`,
+  `read`, `state`) answered only `proxr_relay`, `pfeiffer_maxigauge`,
+  `plc2000_heater`: a `gp_microion` wire stayed silent and `elctl probe` on
+  the example failed. It now answers `gp_microion` as the MaxiGauge (sensor n
+  reads n * 1e-9), at the driver's address. No new driver or physics.
+- `tests/setup/test_connection.cpp` renames valve A out of a copied line:
+  `D` now interlocks with A too, so both references are renamed.
 
 ### 5.2 Simulator
 

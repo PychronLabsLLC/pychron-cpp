@@ -224,9 +224,9 @@ TEST(ExtractionLine, TheStarterLineOrTheLabsOwnFilesAreCheckedBeforeAnythingIsWr
   EXPECT_EQ(read(tmp.dir / "own" / "extraction_line.toml"), line);
   EXPECT_EQ(read(tmp.dir / "own" / "canvas.toml"), read(examples / "canvas.toml"));
 
-  // A line without valve A, which the canvas draws.
+  // A line without valve A, which the canvas draws (C and D interlock with it).
   std::string renamed = line;
-  for (const std::string from : {"name = \"A\"", "interlocks = [\"A\"]"}) {
+  for (const std::string from : {"name = \"A\"", "interlocks = [\"A\"]", "interlocks = [\"A\"]"}) {
     const auto at = renamed.find(from);
     ASSERT_NE(at, std::string::npos) << from;
     renamed.replace(at, from.size(), from == "name = \"A\"" ? "name = \"Z\"" : "interlocks = [\"Z\"]");
