@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <sstream>
 
@@ -41,6 +42,7 @@
 #include "logging_page.hpp"
 #include "main_window.hpp"
 #include "metrics_page.hpp"
+#include "plot_style.hpp"
 #include "preferences.hpp"
 #include "preferences_dialog.hpp"
 #include "pychron/core/config/loader.hpp"
@@ -178,6 +180,50 @@ class TestPreferences : public QObject {
       s->setValue(QStringLiteral("preferences/browser_type_colors/nonsense"), QStringLiteral("#000000"));
     }
     QCOMPARE(ui::load_preferences(*settings()), Preferences{});
+  }
+
+  // Plot palette spec 4.3: the live plots' colours, kept where they differ
+  // from the default.
+  void plot_colors_round_trip() {
+    Preferences p;
+    p.plot_background = "#202020";
+    p.plot_series_colors = {{1, "#abcdef"}, {12, "#123456"}};
+    ui::save_preferences(*settings(), p);
+    QCOMPARE(ui::load_preferences(*settings()), p);
+    // A slot given back to the default is no longer kept.
+    p.plot_series_colors.erase(12);
+    ui::save_preferences(*settings(), p);
+    QCOMPARE(ui::load_preferences(*settings()), p);
+    QVERIFY(!settings()->contains(QStringLiteral("preferences/plot_series/12")));
+  }
+
+  void a_default_color_is_not_written() {
+    ui::PlotStyle s = ui::default_plot_style();
+    s.series[2] = QColor(QStringLiteral("#010203"));
+    Preferences p;
+    ui::store_plot_style(s, p);
+    QCOMPARE(p.plot_series_colors, (std::map<int, std::string>{{3, "#010203"}}));
+    QVERIFY(p.plot_background.empty());
+    ui::save_preferences(*settings(), p);
+    auto saved = settings();
+    QVERIFY(!saved->contains(QStringLiteral("preferences/plot_background")));
+    saved->beginGroup(QStringLiteral("preferences/plot_series"));
+    QCOMPARE(saved->childKeys(), QStringList{QStringLiteral("3")});
+    saved->endGroup();
+  }
+
+  void bad_plot_values_read_as_default() {
+    {
+      auto s = settings();
+      s->setValue(QStringLiteral("preferences/plot_background"), QStringLiteral("pink"));
+      s->setValue(QStringLiteral("preferences/plot_series/1"), QStringLiteral("#12345"));
+      s->setValue(QStringLiteral("preferences/plot_series/0"), QStringLiteral("#000000"));
+      s->setValue(QStringLiteral("preferences/plot_series/13"), QStringLiteral("#000000"));
+      s->setValue(QStringLiteral("preferences/plot_series/2"), QStringLiteral("#ABCDEF"));
+    }
+    const Preferences p = ui::load_preferences(*settings());
+    QVERIFY(p.plot_background.empty());
+    QCOMPARE(p.plot_series_colors, (std::map<int, std::string>{{2, "#abcdef"}}));
   }
 
   void dialog_opens_with_room_and_a_margin() {

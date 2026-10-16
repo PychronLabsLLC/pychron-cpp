@@ -10,11 +10,14 @@
 #include <qcustomplot.h>
 
 #include "plot_style.hpp"
+#include "preferences.hpp"
 #include "strip_chart_model.hpp"
 #include "strip_chart_view.hpp"
 
 using pychron::ui::default_plot_style;
 using pychron::ui::DetectorSeries;
+using pychron::ui::PlotStyle;
+using pychron::ui::Preferences;
 using pychron::ui::plot_series_color;
 using pychron::ui::plot_style;
 using pychron::ui::StripChartModel;
@@ -31,6 +34,8 @@ class TestPlotStyle : public QObject {
   Q_OBJECT
 
  private slots:
+  void cleanup() { pychron::ui::apply_application_preferences(Preferences{}); }
+
   void default_series_are_the_figure_palette() {
     const auto style = default_plot_style();
     const auto palette = pp::default_palette();
@@ -63,6 +68,49 @@ class TestPlotStyle : public QObject {
     StripChartModel model({d});
     const StripChartView view(model);
     QCOMPARE(view.plot()->axisRect()->backgroundBrush().color(), plot_style().plot_background);
+  }
+
+  // Spec 4.3: a kept colour replaces its slot and nothing else.
+  void style_from_preferences_overrides_only_named_slots() {
+    Preferences p;
+    p.plot_series_colors = {{7, "#00ff00"}};
+    const PlotStyle style = pychron::ui::plot_style_from(p);
+    const PlotStyle defaults = default_plot_style();
+    QCOMPARE(style.series.size(), std::size_t{12});
+    QCOMPARE(style.series[6].name(), QStringLiteral("#00ff00"));
+    QCOMPARE(style.series[7], defaults.series[7]);
+    QCOMPARE(style.plot_background, defaults.plot_background);
+  }
+
+  void store_then_read_is_identity() {
+    PlotStyle style = default_plot_style();
+    style.plot_background = QColor(QStringLiteral("#202020"));
+    style.series[0] = QColor(QStringLiteral("#111111"));
+    style.series[5] = QColor(QStringLiteral("#222222"));
+    style.series[11] = QColor(QStringLiteral("#333333"));
+    Preferences p;
+    pychron::ui::store_plot_style(style, p);
+    QCOMPARE(p.plot_series_colors.size(), std::size_t{3});
+    QVERIFY(pychron::ui::plot_style_from(p) == style);
+  }
+
+  void applying_preferences_sets_the_current_style() {
+    Preferences p;
+    p.plot_background = "#202020";
+    pychron::ui::apply_application_preferences(p);
+    QCOMPARE(plot_style().plot_background.name(), QStringLiteral("#202020"));
+    pychron::ui::apply_application_preferences(Preferences{});
+    QVERIFY(plot_style() == default_plot_style());
+  }
+
+  void a_short_style_is_filled_from_the_default() {
+    PlotStyle style;
+    style.series = {QColor(QStringLiteral("#010101"))};
+    style.plot_background = QColor(QStringLiteral("#ffffff"));
+    pychron::ui::set_plot_style(style);
+    QCOMPARE(plot_style().series.size(), std::size_t{12});
+    QCOMPARE(plot_style().series[0].name(), QStringLiteral("#010101"));
+    QCOMPARE(plot_style().series[1], default_plot_style().series[1]);
   }
 };
 

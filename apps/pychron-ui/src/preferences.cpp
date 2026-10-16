@@ -1,12 +1,15 @@
 #include "preferences.hpp"
 
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include <QApplication>
 #include <QSettings>
 #include <QWidget>
 
 #include "code_editor.hpp"
+#include "plot_style.hpp"
 #include "row_colors.hpp"
 #include "theme.hpp"
 
@@ -19,6 +22,17 @@ const QString kCodeFont = QStringLiteral("preferences/code_font_pt");
 const QString kPageSize = QStringLiteral("preferences/browser_page_size");
 const QString kGapHours = QStringLiteral("preferences/browser_gap_hours");
 const QString kTypeColors = QStringLiteral("preferences/browser_type_colors");
+const QString kPlotBackground = QStringLiteral("preferences/plot_background");
+const QString kPlotSeries = QStringLiteral("preferences/plot_series");
+
+QString plot_series_key(int slot) { return kPlotSeries + QLatin1Char('/') + QString::number(slot); }
+
+// A kept plot colour: "#rrggbb", read lower case; empty for none or invalid.
+std::string read_plot_color(const QSettings& settings, const QString& key) {
+  if (!settings.contains(key)) return {};
+  const QString text = settings.value(key).toString().trimmed().toLower();
+  return !text.isEmpty() && is_type_color_text(text) ? text.toStdString() : std::string{};
+}
 
 QString type_color_key(std::string_view type_class) {
   return kTypeColors + QLatin1Char('/') + QString::fromUtf8(type_class.data(), static_cast<qsizetype>(type_class.size()));
@@ -53,6 +67,11 @@ Preferences load_preferences(const QSettings& settings) {
     const QString text = settings.value(key).toString().trimmed().toLower();
     if (is_type_color_text(text)) p.browser_type_colors[std::string(type_class)] = text.toStdString();
   }
+  p.plot_background = read_plot_color(settings, kPlotBackground);
+  for (int slot = 1; slot <= Preferences::kPlotSeriesSlots; ++slot) {
+    std::string text = read_plot_color(settings, plot_series_key(slot));
+    if (!text.empty()) p.plot_series_colors[slot] = std::move(text);
+  }
   return p;
 }
 
@@ -64,11 +83,19 @@ void save_preferences(QSettings& settings, const Preferences& preferences) {
   settings.remove(kTypeColors);  // a class no longer named is back to the theme's colour
   for (const auto& [type_class, text] : preferences.browser_type_colors)
     settings.setValue(type_color_key(type_class), QString::fromStdString(text));
+  // As the type colours: what is no longer named is back to the default.
+  settings.remove(kPlotBackground);
+  settings.remove(kPlotSeries);
+  if (!preferences.plot_background.empty())
+    settings.setValue(kPlotBackground, QString::fromStdString(preferences.plot_background));
+  for (const auto& [slot, text] : preferences.plot_series_colors)
+    settings.setValue(plot_series_key(slot), QString::fromStdString(text));
   settings.sync();
 }
 
 void apply_application_preferences(const Preferences& preferences) {
   style::set_font_sizes(preferences.font_pt, preferences.code_font_pt);
+  set_plot_style(plot_style_from(preferences));
   for (QWidget* widget : QApplication::allWidgets()) {
     if (auto* editor = qobject_cast<CodeEditor*>(widget)) editor->setFont(style::mono_font());
   }

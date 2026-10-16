@@ -152,20 +152,20 @@ QColor plot_series_color(std::size_t slot);  // plot_style().series[slot % size]
     ```
   - `apply_application_preferences(p)` calls `set_plot_style(plot_style_from(p))`.
 
-- [ ] **Step 1: Write the failing tests** in `test_preferences.cpp`:
+- [x] **Step 1: Write the failing tests** in `test_preferences.cpp`:
   - `plot_colors_round_trip`: `p.plot_background = "#202020"; p.plot_series_colors = {{1, "#abcdef"}, {12, "#123456"}};` save, load, `QCOMPARE(load, p)`; then erase key 12, save, load equal again (key `preferences/plot_series/12` gone).
   - `a_default_color_is_not_written`: `PlotStyle s = default_plot_style(); s.series[2] = QColor("#010203"); Preferences p; store_plot_style(s, p);` → `p.plot_series_colors == {{3, "#010203"}}`, `p.plot_background.empty()`; after `save_preferences`, `settings()->contains("preferences/plot_background") == false`, `childKeys` of group `preferences/plot_series` is `{"3"}`.
   - `bad_plot_values_read_as_default`: set `preferences/plot_background` = `"pink"`, `preferences/plot_series/1` = `"#12345"`, `/0` and `/13` = `"#000000"`, `/2` = `"#ABCDEF"`; load → `plot_background.empty()`, `plot_series_colors == {{2, "#abcdef"}}` (upper case read lower, as `browser_type_colors`).
   - `nothing_saved_reads_as_the_defaults` (existing) still passes: defaults of the two new fields are empty.
-- [ ] **Step 2: Write the failing tests** in `test_plot_style.cpp`:
+- [x] **Step 2: Write the failing tests** in `test_plot_style.cpp`:
   - `style_from_preferences_overrides_only_named_slots`: `plot_series_colors = {{7, "#00ff00"}}` → `series[6] == "#00ff00"`, `series[7]` default, size 12.
   - `store_then_read_is_identity` for a style with background and 3 series changed.
   - `applying_preferences_sets_the_current_style`: `apply_application_preferences(p)` with background `#202020` → `plot_style().plot_background.name() == "#202020"`; `apply_application_preferences(Preferences{})` → `plot_style() == default_plot_style()` (also the `cleanup()`).
-- [ ] **Step 3: Run, expect build failure.** `cmake --build --preset dev-ui --target pychron_ui_test_preferences pychron_ui_test_plot_style`
-- [ ] **Step 4: Implement.** Keys `preferences/plot_background`, `preferences/plot_series/<n>`; save removes the `preferences/plot_series` group and `plot_background` key before writing what is set (as `kTypeColors`). Valid text: `#rrggbb` (reuse `is_type_color_text`, non-empty), lower-cased; slot outside 1..12 ignored.
-- [ ] **Step 5: Run both binaries, expect PASS.**
-- [ ] **Step 6: Checks** (as Task 2 Step 6).
-- [ ] **Step 7: Commit:** `feat(ui): plot colors kept in preferences`
+- [x] **Step 3: Run, expect build failure.** `cmake --build --preset dev-ui --target pychron_ui_test_preferences pychron_ui_test_plot_style`
+- [x] **Step 4: Implement.** Keys `preferences/plot_background`, `preferences/plot_series/<n>`; save removes the `preferences/plot_series` group and `plot_background` key before writing what is set (as `kTypeColors`). Valid text: `#rrggbb` (reuse `is_type_color_text`, non-empty), lower-cased; slot outside 1..12 ignored.
+- [x] **Step 5: Run both binaries, expect PASS.**
+- [x] **Step 6: Checks** (as Task 2 Step 6).
+- [x] **Step 7: Commit:** `feat(ui): plot colors kept in preferences`
 
 ---
 

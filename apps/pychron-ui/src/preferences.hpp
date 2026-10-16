@@ -34,6 +34,11 @@ struct Preferences {
   // ("unknown", "blank", "air", "cocktail", "detector_ic", "other") to
   // "#rrggbb", or to empty text for no colour (row_colors.hpp).
   std::map<std::string, std::string> browser_type_colors;
+  // Live plots (plot_style.hpp), where they differ from the default:
+  // "#rrggbb"; empty plot_background: the default.
+  static constexpr int kPlotSeriesSlots = 12;
+  std::string plot_background;
+  std::map<int, std::string> plot_series_colors;  // 1..12 -> "#rrggbb"
 
   bool operator==(const Preferences&) const = default;
 };
@@ -42,7 +47,8 @@ Preferences load_preferences(const QSettings& settings);
 void save_preferences(QSettings& settings, const Preferences& preferences);
 
 // The application-wide part: interface and code font sizes, for every window
-// open now and opened later. Windows apply the rest (MainWindow,
+// open now and opened later, and the live plots' style (plot_style.hpp) for
+// plots made from now on. Windows apply the rest (MainWindow,
 // DataMainWindow::apply_preferences).
 void apply_application_preferences(const Preferences& preferences);
 
