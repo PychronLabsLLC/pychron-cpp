@@ -565,13 +565,12 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
     return Exp(std::move(a), globals, io).run();
   }
   if (a.queue_file.empty()) return usage("needs an experiment.toml");
-  // With an install, a queue named relative to its folder is found there.
-  if (!globals.lab.empty() && a.queue_file.is_relative() && !fs::exists(a.queue_file) &&
-      fs::exists(globals.lab / a.queue_file))
-    a.queue_file = globals.lab / a.queue_file;
+  // With an install, a queue named relative to its folder is found in its
+  // queues/ directory, then in the folder itself.
+  if (!globals.lab.empty()) a.queue_file = lab::find_queue(a.queue_file, globals.lab);
   if (a.resume && a.from) return usage("--from and --resume are exclusive");
   if (a.sim_speed > 0 && !globals.sim) return usage("--sim-speed needs --sim");
-  if (a.lab.empty()) a.lab = a.queue_file.has_parent_path() ? a.queue_file.parent_path() : fs::path(".");
+  if (a.lab.empty()) a.lab = lab::lab_for_queue(a.queue_file);
   if (a.data.empty()) a.data = a.lab / "data";
   if (a.spectrometer.empty() && fs::exists(a.lab / "spectrometer.toml")) a.spectrometer = a.lab / "spectrometer.toml";
   return Exp(std::move(a), globals, io).run();

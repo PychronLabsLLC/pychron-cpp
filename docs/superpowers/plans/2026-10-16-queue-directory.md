@@ -117,30 +117,30 @@ git commit -m "feat(experiment): queue paths, lab_for_queue and find_queue"
 **Interfaces:**
 - Consumes: `lab_for_queue`, `find_queue` (Task 1).
 
-- [ ] **Step 1: Write the failing tests** in `test_exp_commands.cpp`
+- [x] **Step 1: Write the failing tests** in `test_exp_commands.cpp`
 
 - `ElctlExpTest.ALabDefaultsToTheParentOfItsQueuesDirectory`: copy the test's example lab (`dir_ / "lab"`) to `dir_ / "q"`, create `q/queues/` and move `q/experiment.toml` into it (the example lab moves only in Task 3). `exp({"validate", (q/"queues"/"experiment.toml").string(), "--spectrometer", (q/"spectrometer.sim-integrated.toml").string()})` exits 0 (plans and scripts found, so the lab is `q`, not `q/queues`).
 - `ElctlExpTest.ItsDataGoesToTheLabNotTheQueuesDirectory`: same `q`; `exp run` of that queue with `--spectrometer` and no `--data`, as the existing run tests do (`--sim-speed max` where they use it); exit 0, `fs::exists(q / "data" / "records")`, `!fs::exists(q / "queues" / "data")`.
 - `ElctlInstallExpTest` (the fixture with `root_`, an `init argus` install named `lab`), `AQueueByNameIsFoundInQueues`: move `root_/experiment.toml` to `root_/queues/experiment.toml`; `run_raw({"--install", "lab", "--sim", "exp", "validate", "experiment.toml"})` exits 0. (The old-way install, root `experiment.toml`, stays covered by `ElctlSetupTest.AnInstrumentInstallsChecksAndRunsByName`, line 54.) If the install fixture exists only under one persistence branch of the file, put the test where both builds compile it, using `run_raw({"init", ...})` as `WithoutPersistenceAnInstallsRunsAreFilesAndItSaysSo` does.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev --target pychron_elctl_tests && build/dev/apps/elctl/tests/pychron_elctl_tests --gtest_filter='*ALabDefaultsToTheParentOfItsQueuesDirectory:*ItsDataGoesToTheLabNotTheQueuesDirectory:*AQueueByNameIsFoundInQueues'`
 Expected: the first two FAIL (unknown plan/script: lab taken as `q/queues`), the third FAIL (queue not found).
 
-- [ ] **Step 3: Implement** in `exp.cpp`
+- [x] **Step 3: Implement** in `exp.cpp`
 
 Replace the install lookup block with `if (!globals.lab.empty()) a.queue_file = lab::find_queue(a.queue_file, globals.lab);` and the `--lab` default with `if (a.lab.empty()) a.lab = lab::lab_for_queue(a.queue_file);`. `a.data = a.lab / "data"` stays as is. Help and `exp.hpp` comment: "default: the queue file's directory, or its parent when that is `queues/`". Same words in `08-elctl-reference.md`.
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: same as Step 2, then the whole binary `build/dev/apps/elctl/tests/pychron_elctl_tests`. Expected: all PASS.
 
-- [ ] **Step 5: Static analysis**
+- [x] **Step 5: Static analysis**
 
 Run: `python3 tools/quality_check.py` and `python3 tools/compiler_sweep.py --changed`. Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/elctl/src/exp.cpp apps/elctl/src/exp.hpp apps/elctl/src/cli.cpp apps/elctl/tests/test_exp_commands.cpp docs/user/08-elctl-reference.md

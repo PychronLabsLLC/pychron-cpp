@@ -7,7 +7,7 @@
 //
 // Options:
 //   --lab <dir>             plans/, scripts/, conditionals/, identifiers.toml
-//                           (default: the queue file's directory)
+//                           (default: the queue file's directory, or its parent when that is queues/)
 //   --data <dir>            records/, spool/, executor_state.json (default: <lab>/data)
 //   --spectrometer <file>   spectrometer.toml (default: <lab>/spectrometer.toml if present)
 //   --canvas <file>         canvas.toml (default: next to the -c config, if present)

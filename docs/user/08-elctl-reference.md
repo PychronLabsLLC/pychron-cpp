@@ -71,9 +71,10 @@ by `-c` / `--install`.
   is the install's folder, the spectrometer config is the install's, the canvas
   is the install's, and the data folder is the install's data folder (default
   `data`). A queue file named relatively is also looked for in the install's
-  folder.
-- Without an install, the **lab** folder for `exp` is the folder holding the
-  queue file (or, for `laser`, the folder holding the line config), the data
+  `queues/` folder, then in the install's folder itself.
+- Without an install, the **lab** folder for `exp` is the queue file's
+  directory, or its parent when that is `queues/` (for `laser`, the folder
+  holding the line config), the data
   folder is `<lab>/data`, and `<lab>/spectrometer.toml` is used as the
   spectrometer config if it exists. Command-line flags always win.
 - The environment variable `PYCHRON_SITE_CONFIG` overrides the path of the site

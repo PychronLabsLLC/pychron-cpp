@@ -529,6 +529,48 @@ TEST_F(ElctlExpTest, UsageErrors) {
 }
 
 
+// A copy of the example lab whose queue sits under <lab>/queues/ (the shipped
+// example moves there separately).
+fs::path lab_with_queues_dir(const fs::path& from, const fs::path& to) {
+  fs::copy(from, to, fs::copy_options::recursive);
+  fs::create_directories(to / "queues");
+  fs::rename(to / "experiment.toml", to / "queues" / "experiment.toml");
+  return to;
+}
+
+TEST_F(ElctlExpTest, ALabDefaultsToTheParentOfItsQueuesDirectory) {
+  const auto q = lab_with_queues_dir(dir_ / "lab", dir_ / "q");
+  // Plans and scripts are found only when the lab is q, not q/queues.
+  auto o = run_raw({"-c", (q / "extraction_line.toml").string(), "exp", "validate",
+                    (q / "queues" / "experiment.toml").string(), "--spectrometer",
+                    (q / "spectrometer.sim-integrated.toml").string()});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+}
+
+TEST_F(ElctlExpTest, ItsDataGoesToTheLabNotTheQueuesDirectory) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto q = lab_with_queues_dir(dir_ / "lab", dir_ / "q");
+  auto o = run_raw({"-c", (q / "extraction_line.toml").string(), "--sim", "exp", "run",
+                    (q / "queues" / "experiment.toml").string(), "--spectrometer",
+                    (q / "spectrometer.sim-integrated.toml").string(), "--sim-speed", "max"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(q / "data" / "records"));
+  EXPECT_FALSE(fs::exists(q / "queues" / "data"));
+}
+
+// An install's queue named by its file name alone is found in <install>/queues/.
+// (A queue at the install's root stays covered by
+// ElctlSetupTest.AnInstrumentInstallsChecksAndRunsByName.)
+TEST_F(ElctlExpTest, AQueueByNameIsFoundInQueues) {
+  const auto root = path("install");
+  const auto made = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
+  ASSERT_EQ(made.code, 0) << made.out << made.err;
+  fs::create_directories(root / "queues");
+  fs::rename(root / "experiment.toml", root / "queues" / "experiment.toml");
+  const auto o = run_raw({"--install", "lab", "--sim", "exp", "validate", "experiment.toml"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+}
+
 #ifndef PYCHRON_ELCTL_HAS_STORE
 
 TEST_F(ElctlExpTest, WithoutPersistenceADatabaseIsRefused) {
