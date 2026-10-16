@@ -51,14 +51,14 @@ struct GitWho {
 //   RefObjectItem before a revision whose subject is its RefObjectKey.
 
 struct PiItem {
-  std::string last_name, first_initial;
+  std::string family_name, given_name;
   std::optional<std::string> affiliation, email;
 };
 
 // A project's natural key is (name, principal investigator).
 struct ProjectItem {
   std::string name;
-  std::optional<std::string> pi_last_name, pi_first_initial;
+  std::optional<std::string> pi_family_name, pi_given_name;
   std::optional<std::string> checkin_date = std::nullopt;  // "YYYY-MM-DD"
   std::optional<std::string> comment = std::nullopt, lab_contact = std::nullopt, institution = std::nullopt;
 };
@@ -76,7 +76,7 @@ struct SampleItem {
   // name, the descriptive columns and the two times; project, material and uuid are ignored
   persistence::SampleSpec fields;
   std::string project, material, grainsize;
-  std::optional<std::string> pi_last_name, pi_first_initial;  // of the project
+  std::optional<std::string> pi_family_name, pi_given_name;  // of the project
 };
 
 struct IrradiationItem {
@@ -98,7 +98,7 @@ struct PositionItem {
   int position = 0;
   std::string identifier;
   std::optional<std::string> sample, project, material, grainsize;
-  std::optional<std::string> pi_last_name, pi_first_initial;  // of the project
+  std::optional<std::string> pi_family_name, pi_given_name;  // of the project
   std::optional<double> weight = std::nullopt;
   std::optional<std::string> packet = std::nullopt, note = std::nullopt;
 };

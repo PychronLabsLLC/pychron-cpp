@@ -74,6 +74,18 @@ missing from the store except those values, which the conflict keeps. An
 irradiation position keeps the identifier of its first row; a second
 identifier for the same hole is reported this way and is not created.
 
+A principal investigator is a person or an organisation in the store, and a
+name is not its key: two PIs may share one. The dump names a PI by last name
+and first initial (`Ross`, `J`). The importer takes the PI of the store whose
+family name is `Ross` (case ignored) and whose given name starts with `J`;
+one without an initial is matched only by a PI without a given name. When
+none matches, a person is made with family name `Ross` and given name `J`
+(shown "J Ross"); a later import finds it again and makes no second one.
+When several match, nobody is there to ask: the oldest is taken, and an
+`identity_clash` warning (`imported`, reason `pi_namesakes_oldest_taken`) at
+`catalog-namesakes/principal_investigator/<last name>/<initial>` names the PI
+taken and the others. Rows of the dump that repeat one PI are one PI.
+
 ## 2. The recommended order
 
 1. **Catalog** (`legacy_db`), if you have a dump. It gives the importer the
@@ -222,7 +234,7 @@ now keeps), and rewrites a pending one whose reason is no longer the reason.
 |---|---|
 | `unparseable` | A file could not be read (the reason is in the detail: invalid JSON, a chronology line that cannot be read, content the reader did not expect), a path is not a file of a legacy repository, or a spectrometer file appeared after the analysis it belongs to. Blocking. A file that could not be read is superseded by the next run that imports a later commit with a readable version of that file, or one that deletes it; an unreadable version that follows a readable one is not. So the conflict stays, and `verify` stays not ok, for as long as the file is unreadable at the head of the branch: mend it in the source repository and run again. The other two reasons are never superseded: an unknown path and a late spectrometer file stay as they are. |
 | `unknown_analysis` | A file was refused because its analysis is not in the store. Blocking. The detail says which case it is: (1) the catalog has no such identifier, or names no such spectrometer or extraction device: fix the catalog and `run --replay`; (2) the analysis was refused for another reason (its run id is taken: see its `identity_clash`): mend that, then `run --replay`; (3) the record of the analysis cannot be read: superseded, without a replay, by the run that imports a commit with a readable record (the analysis then starts at that commit); (4) the repository has files for an analysis but never its record: superseded by the run that imports the record, if one is ever committed; (5) a membership or a revision of an analysis another source has not imported yet: import that source, then `run --replay`. |
-| `identity_clash` | Two things claim the same identity (a run id or position already holding another analysis). Blocking when something was refused. A warning when the row was imported without a broken optional link, or a sample under the placeholder material `unknown`, or a repeat of an earlier dump row without the values that row gave otherwise, or when a catalog row that already exists could not take the values a source brings for it (`imported`; path `catalog-fill/<table>/<key>`, the store's reason in the detail), when the catalog row was made from the repositories (`synthesized`), or when an older version could not be placed behind a newer one (`late_revision_not_applied`). The last is blocking instead when the stored revision it is behind comes from a commit the repository no longer has (`"cause": "stored_commit_unknown"`): the history was rewritten after it was imported. |
+| `identity_clash` | Two things claim the same identity (a run id or position already holding another analysis). Blocking when something was refused. A warning when the row was imported without a broken optional link, or a sample under the placeholder material `unknown`, or a repeat of an earlier dump row without the values that row gave otherwise, or when a catalog row that already exists could not take the values a source brings for it (`imported`; path `catalog-fill/<table>/<key>`, the store's reason in the detail), or when a PI the dump names matched several PIs of the store and the oldest was taken (`imported`, reason `pi_namesakes_oldest_taken`; path `catalog-namesakes/principal_investigator/<last name>/<initial>`, the PI taken and the others in the detail), when the catalog row was made from the repositories (`synthesized`), or when an older version could not be placed behind a newer one (`late_revision_not_applied`). The last is blocking instead when the stored revision it is behind comes from a commit the repository no longer has (`"cause": "stored_commit_unknown"`): the history was rewritten after it was imported. |
 | `value_mismatch` | The age verify recomputed does not match the legacy age (the detail has both values and what was used). Blocking. |
 | `hand_edit` | Reserved: a published repository changed by hand. Not written yet. |
 | `provisional_renumber` | Reserved; the importer does not write it. |

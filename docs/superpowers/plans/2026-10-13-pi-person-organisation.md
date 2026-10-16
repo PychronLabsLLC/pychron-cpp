@@ -73,8 +73,8 @@ Read from `develop` `358eb184`.
 
 **Files:** `libs/ingest/src/catalog.cpp`, `catalog_find.cpp`, `libs/ingest/include/pychron/ingest/batch.hpp`, `libs/dvc/src/catalog_adapter.cpp`, `tests/ingest/test_batch_writer.cpp`, `test_verifier.cpp`, `tests/dvc/test_catalog_db.cpp`.
 
-- [ ] Failing tests: one match uses it; none makes a person with `given_name` = the initial; two Ross, J in the store: the older one, and the import report names the other; the three legacy "Ross, J" rows of `test_catalog_db.cpp:1537` give one PI; a re-import adds nothing.
-- [ ] Rename `pi_last_name`/`pi_first_initial` to `pi_family_name`/`pi_given_name` in the batch items. Commit `feat(ingest): a legacy PI is matched by family name and initial, the oldest of several`.
+- [x] Failing tests: one match uses it; none makes a person with `given_name` = the initial; two Ross, J in the store: the older one, and the import report names the other; the three legacy "Ross, J" rows of `test_catalog_db.cpp:1537` give one PI; a re-import adds nothing.
+- [x] Rename `pi_last_name`/`pi_first_initial` to `pi_family_name`/`pi_given_name` in the batch items. Commit `feat(ingest): a legacy PI is matched by family name and initial, the oldest of several`.
 
 ### Task 5: Entry sheets: "Family, Given", kind, ORCID, uuid, and a namesake stops
 

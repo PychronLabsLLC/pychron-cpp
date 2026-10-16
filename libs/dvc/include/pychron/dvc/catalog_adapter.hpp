@@ -21,6 +21,11 @@
 //   LoadTbl                    LoadItem             name
 //   LoadPositionTbl            LoadPositionItem     load, position, identifier
 //
+// A PI's last_name and first_initial become PiItem's family_name and
+// given_name. They are no key in the store: the writer takes the row of that
+// family name whose given name starts with the initial, the oldest of
+// several (PI spec 8).
+//
 // Rows name their parents by legacy id; items name them by natural key. A
 // table name is matched without regard to case (MySQL on Windows lower-cases
 // them); column names are matched as written. A string key (a user, load or

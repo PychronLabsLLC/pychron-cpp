@@ -54,8 +54,8 @@ std::vector<CatalogItem> lab_catalog() {
   sample.fields.lon = -106.9;  // a location is one point: both halves or neither
   sample.project = "Henry Hill";
   sample.material = "sanidine";
-  sample.pi_last_name = "Ross";
-  sample.pi_first_initial = "J";
+  sample.pi_family_name = "Ross";
+  sample.pi_given_name = "J";
   PositionItem position;
   position.irradiation = "NM-300";
   position.level = "A";
@@ -64,8 +64,8 @@ std::vector<CatalogItem> lab_catalog() {
   position.sample = "HH-1";
   position.project = "Henry Hill";
   position.material = "sanidine";
-  position.pi_last_name = "Ross";
-  position.pi_first_initial = "J";
+  position.pi_family_name = "Ross";
+  position.pi_given_name = "J";
   return {PiItem{"Ross", "J", "NMT", std::nullopt},
           ProjectItem{"Henry Hill", "Ross", "J"},
           MaterialItem{"sanidine", ""},
@@ -435,6 +435,123 @@ TEST_P(BatchWriterTest, CatalogRowsGetDerivedIds) {
   EXPECT_EQ(world_->count("project"), 1);
   EXPECT_EQ(world_->count("sample"), 1);
   EXPECT_EQ(world_->count("irradiation_position"), 1);
+}
+
+// ------------------------------------------------ a legacy PI (PI spec 8)
+
+namespace {
+
+// The PI of project Henry Hill.
+std::optional<Uuid> henry_hill_pi(P::IStore& store) {
+  auto projects = store.projects(std::nullopt);
+  EXPECT_TRUE(projects);
+  if (!projects) return std::nullopt;
+  for (const auto& p : *projects)
+    if (p.name == "Henry Hill") return p.principal_investigator;
+  ADD_FAILURE() << "no project Henry Hill";
+  return std::nullopt;
+}
+
+Uuid add_pi(World& w, const char* family, const char* given, std::optional<std::string> affiliation = std::nullopt) {
+  auto made = w.store->add_principal_investigator(
+      w.client, {.family_name = family, .given_name = given, .affiliation = std::move(affiliation), .uuid = Uuid::v7()});
+  EXPECT_TRUE(made) << (made ? "" : to_string(made.error()));
+  return made ? *made : Uuid{};
+}
+
+}  // namespace
+
+// Legacy's "Ross, J" is the one PI of family name Ross whose given name
+// starts with J; what it lacks is filled, its name is kept.
+TEST_P(BatchWriterTest, ALegacyPiIsTheOneOfItsFamilyNameAndInitial) {
+  const Uuid jake = add_pi(*world_, "Ross", "Jake");
+  add_pi(*world_, "Ross", "Kate");
+  add_pi(*world_, "Rossi", "Jo");
+  FakeAdapter adapter(description(), {single_batch()});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 0);
+
+  EXPECT_EQ(world_->count("principal_investigator"), 3);
+  EXPECT_EQ(henry_hill_pi(store()), std::optional<Uuid>{jake});
+  auto named = store().principal_investigators_named("Ross", "J");
+  ASSERT_TRUE(named);
+  ASSERT_EQ(named->size(), 1u);
+  EXPECT_EQ(named->front().display_name, "Jake Ross");
+  EXPECT_EQ(named->front().affiliation, std::optional<std::string>{"NMT"});
+}
+
+// None matches: a new person, its given name the initial, under the id derived
+// from the name; a re-import finds it and makes no second one.
+TEST_P(BatchWriterTest, ALegacyPiThatNoneMatchesIsANewPerson) {
+  add_pi(*world_, "Ross", "Kate");
+  FakeAdapter adapter(description(), {single_batch()});
+  ASSERT_TRUE(run_all(*world_, adapter));
+
+  auto named = store().principal_investigators_named("Ross", "J");
+  ASSERT_TRUE(named);
+  ASSERT_EQ(named->size(), 1u);
+  const auto& made = named->front();
+  EXPECT_EQ(made.uuid, catalog_id("principal_investigator", "Ross\nJ"));
+  EXPECT_EQ(made.kind, P::PiKind::Person);
+  EXPECT_EQ(made.family_name, "Ross");
+  EXPECT_EQ(made.given_name, "J");
+  EXPECT_EQ(made.display_name, "J Ross");
+  EXPECT_EQ(henry_hill_pi(store()), std::optional<Uuid>{made.uuid});
+
+  const auto before = world_->counts();
+  FakeAdapter again(description(), {single_batch()});
+  auto replayed = run_all(*world_, again, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(world_->counts(), before);
+  EXPECT_EQ(world_->count("principal_investigator"), 2);
+}
+
+// Several match and nobody is there to ask: the oldest is taken, and a
+// warning in the import report names it and the others, once however often
+// the import meets the name.
+TEST_P(BatchWriterTest, OfSeveralNamesakesTheOldestIsTakenAndTheOthersReported) {
+  const Uuid jake = add_pi(*world_, "Ross", "Jake", "NMT");
+  const Uuid john = add_pi(*world_, "ross", "John", "UNM");
+  FakeAdapter adapter(description(), {single_batch()});
+  auto stats = run_all(*world_, adapter);
+  ASSERT_TRUE(stats) << err(stats.error());
+  EXPECT_EQ(stats->conflicts, 1);
+
+  EXPECT_EQ(world_->count("principal_investigator"), 2);
+  EXPECT_EQ(henry_hill_pi(store()), std::optional<Uuid>{jake});
+  auto sample = world_->db->select_one(QStringLiteral(
+      "SELECT p.pi_uuid AS pi FROM sample s JOIN project p ON p.uuid = s.project_uuid WHERE s.name = 'HH-1'"));
+  ASSERT_TRUE(sample && *sample);
+  EXPECT_EQ(pd::to_std((*sample)->value("pi")), jake.str());
+
+  auto conflicts = store().import_conflicts({std::nullopt, std::nullopt, std::nullopt});
+  ASSERT_TRUE(conflicts);
+  ASSERT_EQ(conflicts->size(), 1u);
+  const auto& conflict = conflicts->front();
+  EXPECT_EQ(conflict.path, "catalog-namesakes/principal_investigator/Ross/J");
+  EXPECT_EQ(conflict.uuid, conflict_id(kUrl, "", conflict.path));
+  EXPECT_EQ(conflict.kind, P::ConflictKind::IdentityClash);
+  EXPECT_TRUE(is_warning_conflict(conflict));
+  const auto detail = nlohmann::json::parse(conflict.detail_json);
+  EXPECT_EQ(detail.at("reason"), "pi_namesakes_oldest_taken");
+  EXPECT_EQ(detail.at("natural_key"), nlohmann::json::array({"Ross", "J"}));
+  EXPECT_EQ(detail.at("taken").at("uuid"), jake.str());
+  EXPECT_EQ(detail.at("taken").at("name"), "Jake Ross");
+  ASSERT_EQ(detail.at("others").size(), 1u);
+  EXPECT_EQ(detail.at("others")[0].at("uuid"), john.str());
+  EXPECT_EQ(detail.at("others")[0].at("name"), "John ross");
+  EXPECT_EQ(detail.at("others")[0].at("affiliation"), "UNM");
+
+  // Again, from the start: the same conflict and nothing new.
+  const auto before = world_->counts();
+  const auto seq = *store().latest_change_seq();
+  FakeAdapter again(description(), {single_batch()});
+  auto replayed = run_all(*world_, again, replay_config());
+  ASSERT_TRUE(replayed) << err(replayed.error());
+  EXPECT_EQ(replayed->conflicts, 1);
+  EXPECT_EQ(world_->counts(), before);
+  EXPECT_EQ(*store().latest_change_seq(), seq);
 }
 
 TEST_P(BatchWriterTest, LoadAndReferenceObjectItems) {

@@ -644,8 +644,8 @@ TEST_P(VerifierTest, CatalogRowsAreFoundByNaturalKey) {
   sample.fields.name = "HH-1";
   sample.project = "Henry Hill";
   sample.material = "sanidine";
-  sample.pi_last_name = "Ross";
-  sample.pi_first_initial = "J";
+  sample.pi_family_name = "Ross";
+  sample.pi_given_name = "J";
   PositionItem position;
   position.irradiation = "NM-300";
   position.level = "A";
@@ -686,8 +686,8 @@ TEST_P(VerifierTest, CatalogRowsAreFoundByNaturalKey) {
 
   // Rows that are not there: one of each shape of key.
   SampleItem other_sample = sample;
-  other_sample.pi_last_name.reset();  // the project of that name without a PI holds no such sample
-  other_sample.pi_first_initial.reset();
+  other_sample.pi_family_name.reset();  // the project of that name without a PI holds no such sample
+  other_sample.pi_given_name.reset();
   PositionItem other_position = position;
   other_position.position = 2;
   PositionItem other_identifier = position;
@@ -718,6 +718,32 @@ TEST_P(VerifierTest, CatalogRowsAreFoundByNaturalKey) {
   report = check(batches, units);
   EXPECT_FALSE(report.ok());
   EXPECT_EQ(report.unaccounted.size(), absent.size() + 1);
+}
+
+// Verify finds a legacy PI as the writer resolved it (PI spec 8): of the
+// rows of that family name whose given name starts with the initial, the
+// oldest. The namesake report is a warning, not a reason to fail.
+TEST_P(VerifierTest, ALegacyPiIsFoundAsTheWriterResolvedIt) {
+  for (const char* given : {"Jake", "John"})
+    ASSERT_TRUE(store().add_principal_investigator(world_->client,
+                                                   {.family_name = "Ross", .given_name = given, .uuid = Uuid::v7()}));
+  ImportBatch b;
+  b.catalog = {PiItem{"Ross", "J", "NMT", std::nullopt}, ProjectItem{"Henry Hill", "Ross", "J"}};
+  std::vector<ImportBatch> batches{b};
+  seal(batches);
+  run_import(batches);
+
+  std::vector<SourceUnit> units;
+  units.reserve(b.catalog.size());
+  int n = 0;
+  for (const auto& item : b.catalog)
+    units.push_back(unit({"dump", "Tbl.jsonl#" + std::to_string(++n), "line"}, UnitDisposition::Imported,
+                         {{Evidence::Kind::CatalogRow, {}, {}, {}, {}, item}}));
+  const auto report = check(batches, units);
+  EXPECT_TRUE(report.unaccounted.empty());
+  EXPECT_EQ(report.pending_warnings, 1);
+  EXPECT_EQ(report.pending_blocking, 0);
+  EXPECT_TRUE(report.ok());
 }
 
 // An analysis the writer refused has a conflict per file: accounted for, and

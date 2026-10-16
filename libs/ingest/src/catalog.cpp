@@ -104,10 +104,10 @@ Result<void> CatalogResolver::write(const CatalogItem& item) {
   return std::visit(
       Overloaded{
           [&](const PiItem& i) { return done(principal_investigator(i)); },
-          [&](const ProjectItem& i) { return done(project({i.name, i.pi_last_name, i.pi_first_initial}, &i)); },
+          [&](const ProjectItem& i) { return done(project({i.name, i.pi_family_name, i.pi_given_name}, &i)); },
           [&](const MaterialItem& i) { return done(material(i.name, i.grainsize)); },
           [&](const SampleItem& i) {
-            return done(sample(i.fields, {i.project, i.pi_last_name, i.pi_first_initial}, i.material, i.grainsize));
+            return done(sample(i.fields, {i.project, i.pi_family_name, i.pi_given_name}, i.material, i.grainsize));
           },
           [&](const IrradiationItem& i) { return done(irradiation(i.name, i.created)); },
           [&](const LevelItem& i) { return done(level(i)); },
@@ -250,25 +250,42 @@ Result<Uuid> CatalogResolver::interpreted_age(const InterpretedAgeItem& item) {
   });
 }
 
+// A name is no key of a PI (PI spec 8): legacy's "Last, F" is the row whose
+// family name is Last (case ignored) and whose given name starts with F; of
+// several, the oldest, the others reported (take_namesakes). None: a new
+// person, given name the initial, under the id derived from the name, so a
+// re-import finds it and makes no second one. The row found is ensured under
+// its own name and uuid, which fills what it lacks as any catalog row is.
 Result<Uuid> CatalogResolver::principal_investigator(const PiItem& item) {
   const std::string values = Values()("affiliation", item.affiliation)("email", item.email).text();
-  return cached("principal_investigator", join({item.last_name, item.first_initial}), values, [&](Uuid id) {
-    return store_.add_principal_investigator(client_,
-                                             {item.last_name, item.first_initial, item.affiliation, item.email, id});
+  const std::string key = join({item.family_name, item.given_name});
+  return cached("principal_investigator", key, values, [&](Uuid id) -> Result<Uuid> {
+    auto named = store_.principal_investigators_named(item.family_name, item.given_name);
+    if (!named) return fail(named.error());
+    P::PrincipalInvestigatorSpec spec{item.family_name, item.given_name, item.affiliation, item.email, id};
+    if (!named->empty()) {
+      const P::PrincipalInvestigatorRow& oldest = named->front();
+      spec.family_name = oldest.family_name;
+      spec.given_name = oldest.given_name;
+      spec.uuid = oldest.uuid;
+      if (named->size() > 1 && reported_.insert(key).second)
+        namesakes_.push_back({item.family_name, item.given_name, oldest, {named->begin() + 1, named->end()}});
+    }
+    return store_.add_principal_investigator(client_, spec);
   });
 }
 
 Result<Uuid> CatalogResolver::project(const ProjectKey& key, const ProjectItem* full) {
-  const std::string last = key.pi_last_name.value_or("");
-  const std::string first = key.pi_first_initial.value_or("");
+  const std::string family = key.pi_family_name.value_or("");
+  const std::string given = key.pi_given_name.value_or("");
   Values values;
   if (full)
     values("checkin_date", full->checkin_date)("comment", full->comment)("lab_contact", full->lab_contact)(
         "institution", full->institution);
-  return cached("project", join({key.name, last, first}), values.text(), [&](Uuid id) -> Result<Uuid> {
+  return cached("project", join({key.name, family, given}), values.text(), [&](Uuid id) -> Result<Uuid> {
     std::optional<Uuid> pi;
-    if (key.pi_last_name) {
-      auto found = principal_investigator({last, first, std::nullopt, std::nullopt});
+    if (key.pi_family_name) {
+      auto found = principal_investigator({family, given, std::nullopt, std::nullopt});
       if (!found) return fail(found.error());
       pi = *found;
     }
@@ -290,8 +307,8 @@ Result<Uuid> CatalogResolver::material(const std::string& name, const std::strin
 
 Result<Uuid> CatalogResolver::sample(P::SampleSpec fields, const ProjectKey& project_key, const std::string& material_name,
                                      const std::string& grainsize) {
-  const std::string key = join({fields.name, project_key.name, project_key.pi_last_name.value_or(""),
-                                project_key.pi_first_initial.value_or(""), material_name, grainsize});
+  const std::string key = join({fields.name, project_key.name, project_key.pi_family_name.value_or(""),
+                                project_key.pi_given_name.value_or(""), material_name, grainsize});
   const std::string values =
       Values()("note", fields.note)("igsn", fields.igsn)("lat", fields.lat)("lon", fields.lon)(
           "elevation", fields.elevation)("storage_location", fields.storage_location)("location", fields.location)(
@@ -343,7 +360,7 @@ Result<Uuid> CatalogResolver::position(const PositionItem& item) {
   values("weight", item.weight)("packet", item.packet)("note", item.note);
   if (item.sample)
     values("sample", item.sample)("project", item.project)("material", item.material)("grainsize", item.grainsize)(
-        "pi_last_name", item.pi_last_name)("pi_first_initial", item.pi_first_initial);
+        "pi_family_name", item.pi_family_name)("pi_given_name", item.pi_given_name);
   auto position = cached("irradiation_position", key, values.text(), [&](Uuid id) -> Result<Uuid> {
     auto lvl = level({item.irradiation, item.level, std::nullopt, std::nullopt, std::nullopt});
     if (!lvl) return fail(lvl.error());
@@ -360,7 +377,7 @@ Result<Uuid> CatalogResolver::position(const PositionItem& item) {
                                              "' needs a project and a material");
       P::SampleSpec fields;
       fields.name = *item.sample;
-      auto s = sample(std::move(fields), {*item.project, item.pi_last_name, item.pi_first_initial}, *item.material,
+      auto s = sample(std::move(fields), {*item.project, item.pi_family_name, item.pi_given_name}, *item.material,
                       item.grainsize.value_or(""));
       if (!s) return fail(s.error());
       spec.sample = *s;

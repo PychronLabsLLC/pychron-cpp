@@ -53,6 +53,18 @@ class CatalogResolver {
   };
   std::optional<RefusedFill> take_refused_fill() { return std::exchange(refused_, std::nullopt); }
 
+  // A PI legacy names by family name and initial that several rows of the
+  // store match (PI spec 8). Nobody is there to ask, so the oldest was taken;
+  // `others` are the rest, oldest first. Each name is reported once in the
+  // resolver's lifetime, by the write() that first resolved it. Asking clears
+  // the list.
+  struct Namesakes {
+    std::string family_name, given_name;
+    persistence::PrincipalInvestigatorRow taken;
+    std::vector<persistence::PrincipalInvestigatorRow> others;
+  };
+  std::vector<Namesakes> take_namesakes() { return std::exchange(namesakes_, {}); }
+
   // The uuid of a reference object without touching the store: the one
   // resolved earlier, else the id this importer would create it with.
   // An unknown ref_type is an error.
@@ -62,7 +74,7 @@ class CatalogResolver {
   using Uuid = persistence::Uuid;
   struct ProjectKey {
     std::string name;
-    std::optional<std::string> pi_last_name, pi_first_initial;
+    std::optional<std::string> pi_family_name, pi_given_name;
   };
 
   // `values`: the optional values the call brings (catalog.cpp, Values);
@@ -92,6 +104,8 @@ class CatalogResolver {
   std::map<std::string, Uuid> known_;  // "<table>\n<natural key>" -> uuid
   std::set<std::string> sent_;         // "<table>\n<natural key>\n\n<values>" the store has seen
   std::optional<RefusedFill> refused_;  // of the write() under way: the innermost row
+  std::vector<Namesakes> namesakes_;    // not yet taken
+  std::set<std::string> reported_;      // "<family>\n<given>" whose namesakes were reported
 };
 
 }  // namespace pychron::ingest::detail

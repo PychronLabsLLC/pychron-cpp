@@ -694,6 +694,7 @@ class BatchWriter::Impl final : public IImportState {
   // meets it. A new row the store refuses is an error, as before.
   Result<void> write_catalog(const CatalogItem& item, Staged& staged, RunStats& stats) {
     auto written = catalog_.write(item);
+    if (auto r = stage_namesakes(staged, stats); !r) return r;
     if (written) return written;
     const auto refused = catalog_.take_refused_fill();
     if (!refused || !P::is_refused_catalog_fill(written.error())) return written;
@@ -708,6 +709,39 @@ class BatchWriter::Impl final : public IImportState {
                            std::nullopt, sha256(std::string_view{path}),
                            detail.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), kPending},
                           staged, stats);
+  }
+
+  // A PI legacy names by family name and initial that several rows match was
+  // taken as the oldest (PI spec 8): nobody is there to ask. A warning in the
+  // import report names the PI taken and the others, keyed by the name, so
+  // there is one however often the import meets it.
+  Result<void> stage_namesakes(Staged& staged, RunStats& stats) {
+    const auto pi = [](const P::PrincipalInvestigatorRow& row) {
+      nlohmann::json out{{"uuid", row.uuid.str()}, {"name", row.display_name}};
+      if (row.affiliation) out["affiliation"] = *row.affiliation;
+      if (row.orcid) out["orcid"] = *row.orcid;
+      return out;
+    };
+    for (const auto& found : catalog_.take_namesakes()) {
+      const std::string path =
+          "catalog-namesakes/principal_investigator/" + found.family_name + "/" + found.given_name;
+      nlohmann::json detail;
+      detail["table"] = "principal_investigator";
+      detail["natural_key"] = nlohmann::json::array({found.family_name, found.given_name});
+      detail[kMarkerImported] = true;
+      detail[kDetailReason] = kReasonPiNamesakesOldestTaken;
+      detail["taken"] = pi(found.taken);
+      nlohmann::json others = nlohmann::json::array();
+      for (const auto& other : found.others) others.push_back(pi(other));
+      detail["others"] = std::move(others);
+      if (auto r = stage_conflict({conflict_id(url_, "", path), path, std::nullopt, P::ConflictKind::IdentityClash,
+                                   std::nullopt, sha256(std::string_view{path}),
+                                   detail.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), kPending},
+                                  staged, stats);
+          !r)
+        return r;
+    }
+    return {};
   }
 
   Result<void> commit(Staged staged, const P::ImportProgress* next) {

@@ -34,21 +34,30 @@ class Finder {
 
   Found named(CatalogTable table, const std::string& name) { return store_.find_catalog_row(table, {name}); }
 
-  Found project(const std::string& name, const std::optional<std::string>& pi_last,
-                const std::optional<std::string>& pi_first) {
+  // The PI the writer resolves legacy's name to (catalog.cpp): of the rows of
+  // that family name whose given name starts with the initial, the oldest.
+  Found principal_investigator(const std::string& family_name, const std::string& given_name) {
+    auto named = store_.principal_investigators_named(family_name, given_name);
+    if (!named) return fail(named.error());
+    if (named->empty()) return std::optional<Uuid>{};
+    return std::optional<Uuid>{named->front().uuid};
+  }
+
+  Found project(const std::string& name, const std::optional<std::string>& pi_family,
+                const std::optional<std::string>& pi_given) {
     P::CatalogKeyPart investigator;  // none
-    if (pi_last) {
-      auto pi = store_.find_catalog_row(CatalogTable::PrincipalInvestigator, {*pi_last, pi_first.value_or("")});
+    if (pi_family) {
+      auto pi = principal_investigator(*pi_family, pi_given.value_or(""));
       if (!pi || !*pi) return pi;
       investigator = **pi;
     }
     return store_.find_catalog_row(CatalogTable::Project, {name, investigator});
   }
 
-  Found sample(const std::string& name, const std::string& project_name, const std::optional<std::string>& pi_last,
-               const std::optional<std::string>& pi_first, const std::string& material,
+  Found sample(const std::string& name, const std::string& project_name, const std::optional<std::string>& pi_family,
+               const std::optional<std::string>& pi_given, const std::string& material,
                const std::string& grainsize) {
-    auto in = project(project_name, pi_last, pi_first);
+    auto in = project(project_name, pi_family, pi_given);
     if (!in || !*in) return in;
     auto of = store_.find_catalog_row(CatalogTable::Material, {material, grainsize});
     if (!of || !*of) return of;
@@ -90,14 +99,14 @@ Result<bool> catalog_row_exists(P::IStore& store, const CatalogItem& item) {
   return std::visit(
       Overloaded{
           [&](const PiItem& i) {
-            return present(store.find_catalog_row(CatalogTable::PrincipalInvestigator, {i.last_name, i.first_initial}));
+            return present(find.principal_investigator(i.family_name, i.given_name));
           },
-          [&](const ProjectItem& i) { return present(find.project(i.name, i.pi_last_name, i.pi_first_initial)); },
+          [&](const ProjectItem& i) { return present(find.project(i.name, i.pi_family_name, i.pi_given_name)); },
           [&](const MaterialItem& i) {
             return present(store.find_catalog_row(CatalogTable::Material, {i.name, i.grainsize}));
           },
           [&](const SampleItem& i) {
-            return present(find.sample(i.fields.name, i.project, i.pi_last_name, i.pi_first_initial, i.material,
+            return present(find.sample(i.fields.name, i.project, i.pi_family_name, i.pi_given_name, i.material,
                                        i.grainsize));
           },
           [&](const IrradiationItem& i) { return present(find.named(CatalogTable::Irradiation, i.name)); },

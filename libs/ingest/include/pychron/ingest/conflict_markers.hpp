@@ -17,7 +17,9 @@
 //                        an earlier row gave otherwise
 //                        (false on the refusal of a row: blocking)
 //                        and the writer: values a catalog row that exists
-//                        could not be filled with (spec 10.42)
+//                        could not be filled with (spec 10.42), and a PI
+//                        that several rows match, the oldest taken (PI
+//                        spec 8, kReasonPiNamesakesOldestTaken)
 //   kMarkerSynthesized   the project adapter with catalog_from_repos: a
 //                        catalog row made from repository contents
 //   kMarkerLate          the writer: a revision not written behind a stored
@@ -38,5 +40,8 @@ inline constexpr char kReasonLateRevisionNotApplied[] = "late_revision_not_appli
 // A spectrometer settings file that arrives after an analysis naming it was
 // folded (spec 10.29). Never superseded by a later version of the file.
 inline constexpr char kReasonSpectrometerFileAfterCollection[] = "spectrometer_file_after_collection";
+// A PI legacy names by family name and initial matched several rows of the
+// store; the oldest was taken, and the detail names it and the others.
+inline constexpr const char* kReasonPiNamesakesOldestTaken = "pi_namesakes_oldest_taken";
 
 }  // namespace pychron::ingest

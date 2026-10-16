@@ -464,7 +464,7 @@ struct Unit {
 // ---------------------------------------------------------------- the catalog
 
 struct PiKey {
-  std::string last, first;
+  std::string family, given;  // legacy last_name, first_initial
 };
 struct ProjectKey {
   std::string name;
@@ -482,7 +482,7 @@ struct LevelKey {
   std::string irradiation, name;
 };
 
-std::string natural(const PiKey& k) { return k.last + "\n" + k.first; }
+std::string natural(const PiKey& k) { return k.family + "\n" + k.given; }
 std::string natural(const ProjectKey& k) { return k.name + "\n" + (k.pi ? natural(*k.pi) : std::string("\n")); }
 std::string natural(const MaterialKey& k) { return k.name + "\n" + k.grainsize; }
 std::string natural(const SampleKey& k) { return k.name + "\n" + natural(k.project) + "\n" + natural(k.material); }
@@ -728,12 +728,12 @@ class Reader {
   ingest::CatalogItem pi(const Json&, Fields& f, const std::string& legacy_id) {
     ingest::PiItem item;
     const auto id = f.integer("id");
-    item.last_name = f.required("last_name");
-    item.first_initial = f.text("first_initial").value_or("");
+    item.family_name = f.required("last_name");
+    item.given_name = f.text("first_initial").value_or("");
     item.affiliation = f.optional_text("affiliation");
     item.email = f.optional_text("email");
     if (f.ok() && id) {
-      const PiKey key{item.last_name, item.first_initial};
+      const PiKey key{item.family_name, item.given_name};
       pis_.emplace(*id, key);
       Values values;
       carry(values, "affiliation", item.affiliation);
@@ -756,8 +756,8 @@ class Reader {
       ProjectKey key{item.name, std::nullopt};
       if (investigator) {
         key.pi = *investigator;
-        item.pi_last_name = investigator->last;
-        item.pi_first_initial = investigator->first;
+        item.pi_family_name = investigator->family;
+        item.pi_given_name = investigator->given;
       }
       projects_.emplace(*id, key);
       Values values;
@@ -833,8 +833,8 @@ class Reader {
       item.material = of->name;
       item.grainsize = of->grainsize;
       if (in->pi) {
-        item.pi_last_name = in->pi->last;
-        item.pi_first_initial = in->pi->first;
+        item.pi_family_name = in->pi->family;
+        item.pi_given_name = in->pi->given;
       }
       const SampleKey key{s.name, *in, *of};
       samples_.emplace(*id, key);
@@ -923,19 +923,19 @@ class Reader {
         item.material = of->material.name;
         item.grainsize = of->material.grainsize;
         if (of->project.pi) {
-          item.pi_last_name = of->project.pi->last;
-          item.pi_first_initial = of->project.pi->first;
+          item.pi_family_name = of->project.pi->family;
+          item.pi_given_name = of->project.pi->given;
         }
         Json named{{"sample", of->name}, {"project", of->project.name}, {"material", of->material.name}};
         if (!of->material.grainsize.empty()) named["grainsize"] = of->material.grainsize;
-        if (of->project.pi) named["principal_investigator"] = of->project.pi->last + ", " + of->project.pi->first;
+        if (of->project.pi) named["principal_investigator"] = of->project.pi->family + ", " + of->project.pi->given;
         values.push_back({"sampleID", std::move(named), [&] {
                             item.sample.reset();
                             item.project.reset();
                             item.material.reset();
                             item.grainsize.reset();
-                            item.pi_last_name.reset();
-                            item.pi_first_initial.reset();
+                            item.pi_family_name.reset();
+                            item.pi_given_name.reset();
                           }});
       }
       const std::string where = natural(*in) + "\n" + std::to_string(*hole);

@@ -1070,6 +1070,43 @@ TEST_P(CatalogDb, RepeatedRowsAreOneRowWithTheUnionOfTheirValues) {
   EXPECT_TRUE(cut == before) << first_difference(cut, before);
 }
 
+// Legacy repeats a PI under several rows (and affiliations). A name is no
+// key of a PI in the store (PI spec 8), yet they are one PI: the first is
+// made, the others match it by family name and initial. A re-import adds
+// nothing.
+TEST_P(CatalogDb, LegacyRowsOfOnePiAreOnePi) {
+  DumpDir dir;
+  dir.table("PrincipalInvestigatorTbl",
+            {
+                R"({"id":1,"affiliation":"NMT","email":null,"last_name":"Ross","first_initial":"J"})",
+                R"({"id":2,"affiliation":"NMT","email":null,"last_name":"Ross","first_initial":"J"})",
+                R"({"id":3,"affiliation":"UNM","email":null,"last_name":"Ross","first_initial":"J"})",
+            })
+      .table("ProjectTbl",
+             {
+                 R"({"id":1,"name":"P","principal_investigatorID":1})",
+                 R"({"id":2,"name":"P","principal_investigatorID":2})",
+                 R"({"id":3,"name":"Q","principal_investigatorID":3})",
+             })
+      .done();
+  auto stats = run_import(*world_, adapter_config(dir.path()));
+  ASSERT_TRUE(stats) << err(stats.error());
+  ASSERT_TRUE(stats->finished);
+
+  EXPECT_EQ(world_->count("principal_investigator"), 1);
+  EXPECT_EQ(world_->text("SELECT display_name AS v FROM principal_investigator"), "J Ross");
+  EXPECT_EQ(world_->text("SELECT affiliation AS v FROM principal_investigator"), "NMT");
+  EXPECT_EQ(world_->count("project"), 2);
+  EXPECT_EQ(world_->text("SELECT count(DISTINCT pi_uuid) AS v FROM project"), "1");
+
+  const auto before = snapshot_of(*world_);
+  auto again = run_import(*world_, adapter_config(dir.path()));
+  ASSERT_TRUE(again) << err(again.error());
+  EXPECT_TRUE(again->finished);
+  EXPECT_EQ(snapshot_of(*world_), before);
+  EXPECT_EQ(world_->count("principal_investigator"), 1);
+}
+
 TEST_P(CatalogDb, ResumeFromToken) {
   auto first = run_import(*world_, adapter_config(kFixture, 2), 1);
   ASSERT_TRUE(first) << err(first.error());
@@ -1575,8 +1612,8 @@ TEST(CatalogDbAdapter, RepeatedNaturalKeys) {
   const auto projects = items_of<ingest::ProjectItem>(batch);
   ASSERT_EQ(projects.size(), 3u);
   EXPECT_EQ(projects[2].name, "Q");
-  EXPECT_EQ(projects[2].pi_last_name, std::optional<std::string>{"Ross"});
-  EXPECT_EQ(projects[2].pi_first_initial, std::optional<std::string>{"J"});
+  EXPECT_EQ(projects[2].pi_family_name, std::optional<std::string>{"Ross"});
+  EXPECT_EQ(projects[2].pi_given_name, std::optional<std::string>{"J"});
   const auto spectrometers = items_of<ingest::MassSpecItem>(batch);
   ASSERT_EQ(spectrometers.size(), 3u);
   for (const auto& spectrometer : spectrometers) EXPECT_EQ(spectrometer.spec.name, "jan");
@@ -1700,9 +1737,9 @@ TEST(CatalogDbAdapter, BrokenOptionalLinkGivesTheItemAndAConflict) {
   const auto projects = items_of<ingest::ProjectItem>(batch);
   ASSERT_EQ(projects.size(), 2u);
   EXPECT_EQ(projects[0].name, "dangling");
-  EXPECT_EQ(projects[0].pi_last_name, std::nullopt);
+  EXPECT_EQ(projects[0].pi_family_name, std::nullopt);
   EXPECT_EQ(projects[1].name, "refused parent");
-  EXPECT_EQ(projects[1].pi_last_name, std::nullopt);
+  EXPECT_EQ(projects[1].pi_family_name, std::nullopt);
   const auto positions = items_of<ingest::PositionItem>(batch);
   ASSERT_EQ(positions.size(), 1u);
   EXPECT_EQ(positions[0].identifier, "100");
