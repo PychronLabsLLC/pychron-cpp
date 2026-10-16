@@ -165,6 +165,23 @@ Lab load_lab(const LabPaths& paths) {
   return lab;
 }
 
+std::filesystem::path lab_for_queue(const std::filesystem::path& queue) {
+  auto parent = queue.parent_path();
+  if (parent.empty()) return ".";
+  if (parent.filename() != "queues") return parent;
+  auto lab = parent.parent_path();
+  return lab.empty() ? std::filesystem::path(".") : lab;
+}
+
+std::filesystem::path find_queue(const std::filesystem::path& queue, const std::filesystem::path& lab) {
+  std::error_code ec;
+  if (queue.is_absolute() || lab.empty() || std::filesystem::exists(queue, ec)) return queue;
+  for (const auto& candidate : {lab / "queues" / queue, lab / queue}) {
+    if (std::filesystem::exists(candidate, ec)) return candidate;
+  }
+  return queue;
+}
+
 bool LabCheck::ok() const {
   if (!report.ok()) return false;
   for (const auto& d : extra)

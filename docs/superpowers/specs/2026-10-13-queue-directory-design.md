@@ -54,9 +54,11 @@ comment-preserving writer). Nothing built.
 - Only `*.toml` directly in `queues/` are queues; `queues/blocks/` and
   `queues/step_heats/` are not queue directories. No further subdirectories are read (a lab may make its
   own, for its own filing; Open dialog shows them, nothing lists them).
-- `LabPaths` gains `queues` (`<lab>/queues`) and `blocks`
-  (`<lab>/queues/blocks`): one place says where they are; UI, `elctl` and
-  setup take them from there.
+- `LabPaths` gains `queues()` (`<lab>/queues`) and `blocks()`
+  (`<lab>/queues/blocks`): member functions, not fields (`LabPaths`
+  aggregate-initialised at ~20 sites; derived field would need keeping in
+  step at each). One place says where they are; UI, `elctl` and setup take
+  them from there.
 
 ## 3. Rules
 

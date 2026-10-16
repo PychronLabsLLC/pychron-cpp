@@ -49,7 +49,7 @@
   - `std::filesystem::path lab_for_queue(const std::filesystem::path& queue)` (namespace `pychron::experiment::lab`)
   - `std::filesystem::path find_queue(const std::filesystem::path& queue, const std::filesystem::path& lab)`
 
-- [ ] **Step 1: Write the failing tests** in `tests/experiment/test_lab.cpp`
+- [x] **Step 1: Write the failing tests** in `tests/experiment/test_lab.cpp`
 
 ```cpp
 TEST(LabPathsTest, QueuesAndBlocksAreUnderTheLab) {
@@ -74,12 +74,12 @@ TEST(LabForQueueTest, AQueuesDirectoryBelongsToItsParent) {
 - `AnAbsolutePathIsLeftAlone`: `find_queue(t / "queues" / "x.toml", t)` returns its argument even when only `t/x.toml` exists.
 - `NoLabNoLookup`: `find_queue("t041-a.toml", fs::path()) == fs::path("t041-a.toml")`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev --target pychron_experiment_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='LabPathsTest.*:LabForQueueTest.*:FindQueueTest.*'`
 Expected: compile error, `queues` / `lab_for_queue` / `find_queue` not declared.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `queues()` and `blocks()` are inline member functions of `LabPaths`, not fields: `LabPaths` is aggregate-initialised as `{dir, line, spectrometer}` at about 20 sites, and a derived field would have to be kept in step by each. Change the spec's section 2 bullet to "`LabPaths` gains `queues()` (`<lab>/queues`) and `blocks()` (`<lab>/queues/blocks`)" in this commit (AGENTS.md: spec and code never disagree).
 
@@ -89,15 +89,15 @@ Expected: compile error, `queues` / `lab_for_queue` / `find_queue` not declared.
 
 Add both declarations under `load_lab` with a comment naming the spec rule. Do not touch the blocks loader yet (Task 3).
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: same command as Step 2. Expected: all PASS.
 
-- [ ] **Step 5: Static analysis**
+- [x] **Step 5: Static analysis**
 
 Run: `python3 tools/quality_check.py` and `python3 tools/compiler_sweep.py --changed`. Expected: exit 0, no warnings.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add libs/experiment/include/pychron/experiment/lab/lab.hpp libs/experiment/src/lab/lab.cpp tests/experiment/test_lab.cpp docs/superpowers/specs/2026-10-13-queue-directory-design.md

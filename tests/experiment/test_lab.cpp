@@ -121,6 +121,59 @@ TEST(LabDescribe, NamesTheRunOrTheQueue) {
   EXPECT_EQ(describe({Severity::Error, -1, "queue.queue_conditionals", "unknown"}), "queue.queue_conditionals: unknown");
 }
 
+TEST(LabPathsTest, QueuesAndBlocksAreUnderTheLab) {
+  const LabPaths p{fs::path("/l"), {}, {}};
+  EXPECT_EQ(p.queues(), fs::path("/l/queues"));
+  EXPECT_EQ(p.blocks(), fs::path("/l/queues/blocks"));
+}
+
+TEST(LabForQueueTest, AQueuesDirectoryBelongsToItsParent) {
+  EXPECT_EQ(lab_for_queue("/l/queues/x.toml"), fs::path("/l"));
+  EXPECT_EQ(lab_for_queue("/l/x.toml"), fs::path("/l"));
+  EXPECT_EQ(lab_for_queue("x.toml"), fs::path("."));
+  EXPECT_EQ(lab_for_queue("queues/x.toml"), fs::path("."));
+  EXPECT_EQ(lab_for_queue("/l/queues/sub/x.toml"), fs::path("/l/queues/sub"));  // no walk past one level
+}
+
+// find_queue against a lab in a fresh temporary directory. The working
+// directory is not changed; the names are unique so nothing in it matches.
+class FindQueueTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    t_ = pychron::testing::unique_temp_path("pychron-find-queue-");
+    fs::create_directories(t_ / "queues");
+  }
+  void TearDown() override { fs::remove_all(t_); }
+  static void touch(const fs::path& p) { std::ofstream(p) << "\n"; }
+
+  fs::path t_;
+};
+
+TEST_F(FindQueueTest, QueuesComesFirst) {
+  touch(t_ / "queues" / "t041-a.toml");
+  touch(t_ / "t041-a.toml");
+  EXPECT_EQ(find_queue("t041-a.toml", t_), t_ / "queues" / "t041-a.toml");
+}
+
+TEST_F(FindQueueTest, TheLabRootIsTheFallback) {
+  touch(t_ / "t041-b.toml");
+  EXPECT_EQ(find_queue("t041-b.toml", t_), t_ / "t041-b.toml");
+}
+
+TEST_F(FindQueueTest, NotFoundIsReturnedAsGiven) {
+  EXPECT_EQ(find_queue("t041-c.toml", t_), fs::path("t041-c.toml"));
+}
+
+TEST_F(FindQueueTest, AnAbsolutePathIsLeftAlone) {
+  touch(t_ / "x.toml");
+  EXPECT_EQ(find_queue(t_ / "queues" / "x.toml", t_), t_ / "queues" / "x.toml");
+}
+
+TEST_F(FindQueueTest, NoLabNoLookup) {
+  touch(t_ / "queues" / "t041-a.toml");
+  EXPECT_EQ(find_queue("t041-a.toml", fs::path()), fs::path("t041-a.toml"));
+}
+
 }  // namespace
 
 // <lab>/executor.toml (executor hardening, 4.10): read with the lab; a file

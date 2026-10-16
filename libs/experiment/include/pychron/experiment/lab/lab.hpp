@@ -57,6 +57,11 @@ struct LabPaths {
   std::filesystem::path dir;
   std::filesystem::path line_config;   // extraction_line.toml; empty: none
   std::filesystem::path spectrometer;  // spectrometer config; empty: none
+
+  // Queue directory (queue-directory design, section 2): the lab's queues
+  // and, below them, its blocks. Derived from `dir`, so not fields.
+  [[nodiscard]] std::filesystem::path queues() const { return dir / "queues"; }
+  [[nodiscard]] std::filesystem::path blocks() const { return dir / "queues" / "blocks"; }
 };
 
 // A script name exists in any of the script directories (queue validation
@@ -121,6 +126,18 @@ struct Lab {
 
 // Never fails: whatever does not load is reported in Lab::problems.
 Lab load_lab(const LabPaths& paths);
+
+// The lab a queue file belongs to (queue-directory design, section 3): the
+// directory holding the file, or its parent when that directory is named
+// `queues`. One level only: `<lab>/queues/sub/x.toml` gives
+// `<lab>/queues/sub`. A bare file name gives ".".
+[[nodiscard]] std::filesystem::path lab_for_queue(const std::filesystem::path& queue);
+
+// Where a queue named on the command line is (queue-directory design,
+// section 3): `queue` itself when it is absolute, when `lab` is empty or when
+// it exists as given; else `<lab>/queues/<queue>`, then `<lab>/<queue>`, the
+// first that exists; else `queue` unchanged, for the caller to report.
+[[nodiscard]] std::filesystem::path find_queue(const std::filesystem::path& queue, const std::filesystem::path& lab);
 
 struct LabCheck {
   QueueReport report;             // check_queue against the lab's resolvers
