@@ -17,8 +17,8 @@ comment-preserving writer). Nothing built.
   directory (`apps/pychron-ui/src/run_factory_panel.cpp:320`); layout list
   `libs/experiment/include/pychron/experiment/lab/lab.hpp:14`.
 - `elctl exp`: `--lab` defaults to queue file's directory
-  (`apps/elctl/src/exp.cpp:570`); with `--install`, a relative queue name
-  not found from cwd is looked up in install's lab (`exp.cpp:565`).
+  (`apps/elctl/src/exp.cpp:574`); with `--install`, a relative queue name
+  not found from cwd is looked up in install's lab (`exp.cpp:568-571`).
 - UI: Open and Save As start from last queue path
   (`experiment_window/last_queue`, `experiment_window.cpp:544`, `:553`),
   filter `*.toml`; `--queue <file>` at start (`apps/pychron-ui/src/main.cpp`).

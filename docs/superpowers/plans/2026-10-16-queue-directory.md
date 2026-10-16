@@ -109,7 +109,7 @@ git commit -m "feat(experiment): queue paths, lab_for_queue and find_queue"
 ### Task 2: `elctl exp` finds the lab and the queue through the library
 
 **Files:**
-- Modify: `apps/elctl/src/exp.cpp:564-572` (argument resolution)
+- Modify: `apps/elctl/src/exp.cpp:568-574` (argument resolution: the install lookup at 568-571, the `--lab` default at 574). Line 557 (`a.lab = globals.lab` for an install, when no `--lab` is given) stays, so `lab_for_queue` applies only when neither `--lab` nor an install is given.
 - Modify: `apps/elctl/src/exp.hpp:9-10` (`--lab` default in the comment), `apps/elctl/src/cli.cpp:68-71` (help: `--lab` default)
 - Modify: `docs/user/08-elctl-reference.md` (`--lab` default)
 - Test: `apps/elctl/tests/test_exp_commands.cpp` (target `pychron_elctl_tests`)
@@ -160,6 +160,7 @@ One commit (spec section 7, item 5): once the old place is not read, the shipped
 - Move (`git mv`): `configs/examples/experiment.toml`, `experiment.laser.toml`, `experiment.sim-air.toml` → `configs/examples/queues/`; `configs/examples/blocks/blank_pair.toml` → `configs/examples/queues/blocks/blank_pair.toml`. Update the run command in each moved queue's header comment to `exp run queues/<file>`.
 - Modify (paths only, `experiment*.toml` → `queues/experiment*.toml` for the example lab or a rendered install): `tests/experiment/test_lab.cpp:30`, `tests/experiment/test_lab_extraction.cpp:58`, `tests/integration/test_lab_session.cpp:170,193`, `tests/integration/test_outage.cpp:98`, `tests/integration/test_lab_sim.cpp:166`, `tests/integration/test_install_e2e.cpp:241`, `tests/setup/test_profiles.cpp:81,127,217`, `tests/ui/experiment_fixture.hpp:45`, `tests/ui/test_experiment_window.cpp:683`, `tests/ui/test_run_factory_panel.cpp:1` (comment), `apps/elctl/tests/test_exp_commands.cpp` (every `lab("experiment*.toml")` and every `root / "experiment.toml"` / `root_ / "experiment.toml"`; `test_setup_commands.cpp:54` stays: it is the by-name lookup). Tests that write their own `experiment.toml` at a temp lab's root (`test_queue_file.cpp:144`) stay: a queue outside `queues/` is legal.
 - Modify docs (spec section 5): `docs/user/01-getting-started.md`, `04-experiments.md` (layout at `:25`-`:32`, blocks at `:510`-`:511`, commands at `:200`, `:1034`, `:1054`-`:1070`), `07-configuration-reference.md` (`:124`, `:534`-`:553`, `:692`, setup section `:953`, `:1032`), `03-spectrometer.md:218,526` and `05-laser.md:215` where they name an example path, `11-glossary.md` (Block and Queue entries).
+- Modify other docs and comments that name the example lab's queues or the old layout (spec section 4: every test and doc line in the same commit as the move): `README.md:116` (`--queue configs/examples/queues/experiment.toml`), `:139`, `:143` (run from `configs/examples`: `exp run queues/experiment.toml`, `queues/experiment.sim-air.toml`); `docs/dev_setup.md:150` (`queues/blocks/*.toml`), `:160`, `:413`-`:420`, `:514`-`:518`, `:613`; `docs/simulator.md:446`-`:641` (every `experiment*.toml` of the example lab, in commands and prose, becomes `queues/experiment*.toml`; `:638`, the install's queue, becomes `queues/experiment.toml` in the install); `configs/examples/sim.toml:105` (comment); `tests/experiment/test_plan_parameters.cpp:155` (comment); `libs/setup/AGENTS.md:8` (shipped `queues/experiment.toml`; kept compressed, as that file is). `README.md:89` and `docs/dev_setup.md:857` (`elctl --install argus ... exp run experiment.toml`) stay: the by-name lookup of Task 2 finds the queue in `queues/`.
 - Test: `tests/experiment/test_lab.cpp`, `tests/setup/test_profiles.cpp`, `tests/integration/test_install_e2e.cpp`
 
 **Interfaces:**
@@ -183,8 +184,9 @@ Expected: `AnOldBlocksDirectoryIsNotRead` FAIL (old dir read), profile test FAIL
 
 Loader reads `paths.blocks()` in place of `dir / "blocks"`, otherwise unchanged (sorted, `*.toml`, a block that does not load is a problem line). Header comment line becomes `<lab>/queues/*.toml  queue files (any name; the program looks and saves here first)` and `<lab>/queues/blocks/*.toml  reusable run sequences for the run factory (optional)`; member comment `// <lab>/queues/blocks/*.toml by block name`. Tooltip: `lab_.paths.blocks().string()`. Profile `to` lines. `git mv` the example files. Update every path listed under Files, then confirm nothing is left:
 
-Run: `git grep -nE '(examples|root_?|dir_|site_\.root|sim\.dir)[^"]*"?/?[" ]*experiment(\.laser|\.sim-air)?\.toml|"blocks"|/blocks/' -- tests apps libs configs profiles docs/user`
-Expected: only lines that are about a queue the test wrote itself, the profile's `template =` lines, and `test_setup_commands.cpp:54`.
+Run: `git grep -nE '(examples|root_?|dir_|site_\.root|sim\.dir)[^"]*"?/?[" ]*experiment(\.laser|\.sim-air)?\.toml|"blocks"|/blocks/' -- . ':!docs/superpowers'`
+and `git grep -nE 'configs/examples/(experiment|blocks)|<lab>/blocks|exp (run|validate) experiment|--queue experiment' -- . ':!docs/superpowers'`
+Expected: only lines that are about a queue the test wrote itself, the profile's `template =` lines, `test_setup_commands.cpp:54`, and the `--install` by-name commands (`README.md:89`, `docs/dev_setup.md:857`).
 
 - [ ] **Step 4: Build and run what the move reaches**
 
@@ -197,12 +199,10 @@ build/dev/tests/setup/pychron_setup_tests
 build/dev/tests/integration/pychron_integration_tests --gtest_filter='*LabSession*:*LabSim*'
 build/dev/tests/integration/pychron_install_e2e_tests
 build/dev/tests/integration/pychron_outage_tests
-cmake --build --preset dev-ui --target pychron_ui_test_experiment_window pychron_ui_test_run_factory_panel
-build/dev-ui/tests/ui/pychron_ui_test_experiment_window
-build/dev-ui/tests/ui/pychron_ui_test_run_factory_panel
-ctest --preset dev-quick
+cmake --build --preset dev-ui
+ctest --preset dev-ui
 ```
-(`pychron_install_e2e_tests` exists only with persistence; check the binaries' paths under `build/dev` and the suite names in the integration sources before filtering.) Expected: all PASS.
+(`pychron_install_e2e_tests` exists only with persistence; check the binaries' paths under `build/dev` and the suite names in the integration sources before filtering.) `tests/ui/experiment_fixture.hpp` is shared by many UI test targets and its `sim.dir / "experiment*.toml"` paths change with the move, so this commit runs the whole `dev-ui` suite (which covers everything `dev-quick` runs) rather than two UI binaries. Expected: all PASS.
 
 - [ ] **Step 5: Static analysis**
 
@@ -211,7 +211,7 @@ Run: `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --change
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A libs/experiment apps/pychron-ui/src/run_factory_panel.cpp profiles/instrument-common configs/examples tests apps/elctl/tests docs/user
+git add -A libs/experiment apps/pychron-ui/src/run_factory_panel.cpp profiles/instrument-common configs/examples tests apps/elctl/tests docs/user README.md docs/dev_setup.md docs/simulator.md libs/setup/AGENTS.md
 git commit -m "feat(experiment)!: queues and blocks live under <lab>/queues" -m "Blocks are read from <lab>/queues/blocks only. The instrument profile renders its queue and block there, and the example lab's queues and block move there.
 
 BREAKING CHANGE: a lab's old <lab>/blocks/ directory is no longer read; move its files to <lab>/queues/blocks/ by hand."
