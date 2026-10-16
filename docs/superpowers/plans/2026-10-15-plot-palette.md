@@ -110,20 +110,20 @@ const PlotStyle& plot_style();                // current; GUI thread
 QColor plot_series_color(std::size_t slot);  // plot_style().series[slot % size]
 ```
 
-- [ ] **Step 1: Write the failing tests** in `tests/ui/test_plot_style.cpp` (Qt Test, class `TestPlotStyle`):
+- [x] **Step 1: Write the failing tests** in `tests/ui/test_plot_style.cpp` (Qt Test, class `TestPlotStyle`):
   - `default_series_are_the_figure_palette`: `default_plot_style().series.size() == 12`; for each i, `series[i] == QColor(c.r, c.g, c.b)` of `processing::default_palette()[i]`.
   - `default_background_is_white`: `default_plot_style().plot_background == QColor(QStringLiteral("#ffffff"))`.
   - `current_style_starts_as_default`: `plot_style() == default_plot_style()`.
   - `series_color_cycles_twelve`: `plot_series_color(12) == plot_series_color(0)`, `plot_series_color(6).name() == "#e377c2"`.
   - `a_live_plot_and_a_figure_draw_series_n_alike` (spec 5, rule 1): for n in 0..11, `StripChartModel::palette_color(n)` equals the `QColor` of `processing::palette_color(n)`.
   - `strip_chart_background_is_the_plot_style`: a `StripChartView` over a one-detector model; `plot()->axisRect()->backgroundBrush().color() == plot_style().plot_background`. (If `StripChartView` has no plot accessor, add `QCustomPlot* plot() const noexcept` "for tests", as other views have.)
-- [ ] **Step 2: Change `test_strip_chart_model.cpp:267`** to `QCOMPARE(StripChartModel::palette_color(12), StripChartModel::palette_color(0));` and add `QVERIFY(StripChartModel::palette_color(8) != StripChartModel::palette_color(0));`.
+- [x] **Step 2: Change `test_strip_chart_model.cpp:267`** to `QCOMPARE(StripChartModel::palette_color(12), StripChartModel::palette_color(0));` and add `QVERIFY(StripChartModel::palette_color(8) != StripChartModel::palette_color(0));`.
 - [ ] **Step 3: Run, expect build failure** (`plot_style.hpp` missing): `cmake --build --preset dev-ui --target pychron_ui_test_plot_style`
-- [ ] **Step 4: Implement `plot_style.{hpp,cpp}`** (white is the one colour literal here) and rewire every file listed above; remove `Theme::series`, `Theme::plot_bg`.
-- [ ] **Step 5: Run, expect PASS:**
+- [x] **Step 4: Implement `plot_style.{hpp,cpp}`** (white is the one colour literal here) and rewire every file listed above; remove `Theme::series`, `Theme::plot_bg`.
+- [x] **Step 5: Run, expect PASS:**
 `cmake --build --preset dev-ui --target pychron_ui_test_plot_style pychron_ui_test_strip_chart_model pychron_ui_test_theme pychron_ui_test_evolutions_view pychron_ui_test_peak_center_view pychron_ui_test_history_chart pychron_ui_test_pattern_maker pychron_ui_test_laser_views pychron_ui_test_spectrometer_window`, then run each binary under `build/dev-ui/tests/ui/` with `QT_QPA_PLATFORM=offscreen`. A test that named `theme().series` or 8 colours is changed to the 12, not removed (spec 6).
-- [ ] **Step 6: Checks:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
-- [ ] **Step 7: Commit:** `feat(ui): live plots use the figure palette on white`
+- [x] **Step 6: Checks:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
+- [x] **Step 7: Commit:** `feat(ui): live plots use the figure palette on white`
 
 ---
 

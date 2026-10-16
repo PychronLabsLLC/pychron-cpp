@@ -1,5 +1,5 @@
 #include "strip_chart_model.hpp"
-#include "theme.hpp"
+#include "plot_style.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,8 +20,7 @@ constexpr std::chrono::milliseconds kAutoscaleInterval{500};
 }  // namespace
 
 QColor StripChartModel::palette_color(std::size_t index) {
-  const auto& series = theme().series;
-  return series[index % series.size()];
+  return plot_series_color(index);
 }
 
 StripChartModel::StripChartModel(std::vector<DetectorSeries> detectors)

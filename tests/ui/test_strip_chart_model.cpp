@@ -264,7 +264,8 @@ class TestStripChartModel : public QObject {
     QCOMPARE(m.detectors()[0].color, StripChartModel::palette_color(0));
     QCOMPARE(m.detectors()[1].color, QColor(1, 2, 3));
     QVERIFY(StripChartModel::palette_color(0) != StripChartModel::palette_color(1));
-    QCOMPARE(StripChartModel::palette_color(8), StripChartModel::palette_color(0));
+    QCOMPARE(StripChartModel::palette_color(12), StripChartModel::palette_color(0));
+    QVERIFY(StripChartModel::palette_color(8) != StripChartModel::palette_color(0));
   }
 
   // IntensitiesModel

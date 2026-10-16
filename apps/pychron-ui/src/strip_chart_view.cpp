@@ -1,5 +1,5 @@
 #include "strip_chart_view.hpp"
-#include "theme.hpp"
+#include "plot_style.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -42,7 +42,7 @@ StripChartView::StripChartView(StripChartModel& model, QWidget* parent)
   layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(plot_);
 
-  plot_->axisRect()->setBackground(QBrush(theme().plot_bg));
+  plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
   plot_->xAxis->setLabel(tr("Time (s)"));
   plot_->yAxis->setLabel(tr("Signal"));
   plot_->legend->setVisible(false);  // the intensities table is the legend

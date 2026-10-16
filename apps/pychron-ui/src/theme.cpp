@@ -1,5 +1,6 @@
 #include "theme.hpp"
 
+#include <array>
 #include <initializer_list>
 #include <utility>
 
@@ -43,7 +44,6 @@ Theme light() {
   t.base = rgb(0xffffff);
   t.alt_base = rgb(0xf6f8fa);
   t.gutter = rgb(0xf1f4f7);
-  t.plot_bg = rgb(0xfafad2);
   t.overlay = QColor(255, 255, 255, 215);
   t.grid = rgb(0xc9d1da);
   t.outline = rgb(0x4a5563);
@@ -88,8 +88,6 @@ Theme light() {
   t.syntax.comment = rgb(0x808080);
   t.syntax.header = rgb(0x9c27b0);
 
-  t.series = {rgb(0x1f77b4), rgb(0xd62728), rgb(0x2ca02c), rgb(0xff7f0e),
-              rgb(0x9467bd), rgb(0x8c564b), rgb(0x17becf), rgb(0x000000)};
   t.sources.pump = rgb(0x8fd3ff);
   t.sources.pipette = rgb(0xe3b6e0);
   t.sources.laser = rgb(0xffb3a7);
@@ -339,14 +337,14 @@ QTreeView[sidebar="true"]::branch:has-children:open { image: url(@arrows/branch-
 QTreeView#PackageTree { background: @window; border: none; padding: 4px 0; outline: 0;
   selection-background-color: transparent; show-decoration-selected: 0; }
 )");
-  const std::pair<const char*, QColor> colors[] = {
+  const auto colors = std::to_array<std::pair<const char*, QColor>>({
       {"accent_strong", t.accent_strong}, {"accent_soft", t.accent_soft}, {"accent_wash", t.accent_wash},
       {"strong_border", t.strong_border}, {"scroll_handle", t.scroll_handle}, {"muted_text", t.muted_text},
       {"faint_text", t.faint_text},       {"header_bg", t.header_bg},     {"on_chrome", t.on_chrome},
       {"alt_base", t.alt_base},           {"outline", t.outline},         {"border", t.border},
       {"chrome", t.chrome},               {"accent", t.accent},           {"window", t.window},
       {"base", t.base},                   {"text", t.text},
-  };
+  });
   s.replace(QStringLiteral("@arrows"), arrow_dir(t));
   // Longer names first, so @accent never eats the start of @accent_soft.
   for (const auto& [name, color] : colors) s.replace(QLatin1Char('@') + QLatin1String(name), color.name());

@@ -20,6 +20,7 @@
 
 #include "peak_center_view.hpp"
 #include "strip_chart_model.hpp"
+#include "plot_style.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -29,7 +30,6 @@ namespace {
 using experiment::collect::SeriesKey;
 using experiment::collect::SeriesKind;
 
-constexpr std::size_t kPaletteSize = 8;  // StripChartModel::palette_color cycles 8
 constexpr SeriesKind kKinds[] = {SeriesKind::Signal, SeriesKind::Baseline, SeriesKind::Sniff};
 constexpr int kPeakCenterTab = static_cast<int>(std::size(kKinds));  // after the kinds
 
@@ -179,7 +179,7 @@ void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpda
         line.color = c != colors_.end() && !used.contains(c->second.rgb()) ? c->second : QColor();
         if (!line.color.isValid()) {
           line.color = StripChartModel::palette_color(used.size());  // every palette colour taken: cycle
-          for (std::size_t i = 0; i < kPaletteSize; ++i) {
+          for (std::size_t i = 0; i < plot_style().series.size(); ++i) {
             if (!used.contains(StripChartModel::palette_color(i).rgb())) {
               line.color = StripChartModel::palette_color(i);
               break;
@@ -249,7 +249,7 @@ void EvolutionsView::rebuild() {
     const Line& line = lines_.at(panels[i].key);
     auto* rect = new QCPAxisRect(plot_);  // owned by the layout
     plot_->plotLayout()->addElement(static_cast<int>(i), 0, rect);
-    rect->setBackground(QBrush(theme().plot_bg));
+    rect->setBackground(QBrush(plot_style().plot_background));
     rect->setMarginGroup(QCP::msLeft | QCP::msRight, margins_);
     QCPAxis* x = rect->axis(QCPAxis::atBottom);
     QCPAxis* y = rect->axis(QCPAxis::atLeft);

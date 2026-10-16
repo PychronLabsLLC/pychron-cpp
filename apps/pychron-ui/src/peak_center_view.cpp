@@ -14,6 +14,7 @@
 
 #include "peak_center_scale.hpp"
 #include "strip_chart_model.hpp"
+#include "plot_style.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -61,7 +62,7 @@ PeakCenterView::PeakCenterView(std::map<std::string, QColor> colors, QWidget* pa
   layout->addWidget(plot_, 1);
 
   plot_->setMinimumHeight(200);
-  plot_->axisRect()->setBackground(QBrush(theme().plot_bg));
+  plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
   plot_->xAxis->setLabel(tr("Magnet position"));
   plot_->yAxis->setLabel(tr("Intensity"));
   plot_->legend->setVisible(true);

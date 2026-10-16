@@ -53,6 +53,9 @@ class StripChartView : public QWidget {
   AxisRange shown_x() const;
   AxisRange shown_y() const;
 
+  // For tests.
+  QCustomPlot* plot() const noexcept { return plot_; }
+
  private:
   void apply_scale();
   void replot();

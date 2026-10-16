@@ -1,4 +1,5 @@
 #include "history_chart.hpp"
+#include "plot_style.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -45,11 +46,11 @@ HistoryChart::HistoryChart(QWidget* parent)
   stack_->addWidget(empty_);  // the stack owns both
   stack_->addWidget(plot_);
 
-  plot_->axisRect()->setBackground(QBrush(theme().plot_bg));
+  plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
   plot_->legend->setVisible(false);
   plot_->setPlottingHint(QCP::phFastPolylines, true);  // as StripChartView: a day of points is many
   QCPGraph* graph = plot_->addGraph();
-  graph->setPen(QPen(theme().series[0], 1.5));
+  graph->setPen(QPen(plot_style().series[0], 1.5));
   redraw();
 }
 

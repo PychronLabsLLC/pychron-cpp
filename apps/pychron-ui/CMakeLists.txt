@@ -69,6 +69,7 @@ add_library(pychron_ui_lib STATIC
   src/preset_bar.cpp
   src/isotope_evolution_window.cpp
   src/theme.cpp
+  src/plot_style.cpp
   src/data_workspace.cpp
   src/data_main_window.cpp
   src/setup_wizard.cpp

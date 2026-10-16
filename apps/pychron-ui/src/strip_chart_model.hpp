@@ -42,7 +42,7 @@ struct AxisRange {
 
 class StripChartModel {
  public:
-  static QColor palette_color(std::size_t index);  // 8 fixed colours, cycled
+  static QColor palette_color(std::size_t index);  // the live palette, cycled
 
   explicit StripChartModel(std::vector<DetectorSeries> detectors);
 

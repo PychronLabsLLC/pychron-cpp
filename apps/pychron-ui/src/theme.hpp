@@ -1,7 +1,7 @@
 #pragma once
 
 // Theme: the one place pychron-ui gets its colours, fonts and widget styling.
-// Widgets ask for a colour by meaning (theme().error, theme().plot_bg), never
+// Widgets ask for a colour by meaning (theme().error, theme().grid), never
 // by value, and mark state with the helpers below (set_tone, set_invalid,
 // make_banner, set_chip), which the application style sheet turns into looks.
 // apply() installs the style, palette, font and style sheet; without it the
@@ -12,7 +12,8 @@
 // selection and the primary action. Status colours are kept for status.
 //
 // Colours that are data stay where the data is: detector and canvas colours
-// from config, figure colours from pp::SceneStyle.
+// from config, figure colours from pp::SceneStyle, live plot colours from
+// plot_style().
 
 #include <array>
 #include <cstddef>
@@ -51,7 +52,6 @@ struct Theme {
   QColor base;
   QColor alt_base;      // alternate rows
   QColor gutter;        // code editor line numbers
-  QColor plot_bg;       // pychron's light yellow
   QColor overlay;       // translucent backing for legends and annotations
   QColor grid;
   QColor outline;       // input hover border, scroll handle hover
@@ -103,7 +103,6 @@ struct Theme {
     QColor header;
   } syntax;
 
-  std::array<QColor, 8> series;   // detector traces without a configured colour
   // Canvas regions take the colour of the source they are connected to.
   struct Sources {
     QColor pump, pipette, laser, spectrometer, getter;

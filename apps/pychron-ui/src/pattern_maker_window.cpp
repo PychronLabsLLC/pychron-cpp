@@ -19,6 +19,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include "plot_style.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -99,7 +100,7 @@ class PatternPreview : public QWidget {
   void paintEvent(QPaintEvent*) override {
     const Theme& t = theme();
     QPainter p(this);
-    p.fillRect(rect(), t.plot_bg);
+    p.fillRect(rect(), plot_style().plot_background);
     p.setRenderHint(QPainter::Antialiasing, true);
     // the extent, always about the center
     double reach = perimeter_;

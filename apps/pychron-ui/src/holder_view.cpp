@@ -6,6 +6,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 
+#include "plot_style.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -64,12 +65,12 @@ void HolderView::paint_holder(QPainter& p, const QRectF& rect, const ps::HolderV
   if (holder.holes.empty()) return;
   const Frame f = frame_for(rect, holder);
   const double r0 = holder.radius.value_or(0.05);
-  // One colour per project, in name order, from the theme's series.
+  // One colour per project, in name order, from the live palette.
   std::map<std::string, QColor> colours;
   for (const auto& [pos, project] : projects)
     if (!project.empty()) colours.emplace(project, QColor());
   std::size_t i = 0;
-  for (auto& [project, colour] : colours) colour = theme().series[i++ % theme().series.size()];
+  for (auto& [project, colour] : colours) colour = plot_series_color(i++);
   p.save();
   p.setRenderHint(QPainter::Antialiasing);
   QFont font = p.font();
