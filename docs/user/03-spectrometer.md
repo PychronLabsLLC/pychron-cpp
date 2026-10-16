@@ -215,7 +215,7 @@ a plan is meant for the analysis types in its `analysis_types`). Edit plan files
 with the program closed or at least not mid-run, and check them with:
 
 ```bash
-elctl exp validate experiment.toml --lab <lab dir> --spectrometer spectrometer.toml
+elctl exp validate queues/experiment.toml --lab <lab dir> --spectrometer spectrometer.toml
 ```
 
 ### Reading a plan
@@ -523,7 +523,7 @@ Things worth knowing:
 Run the same check outside the program:
 
 ```bash
-elctl exp validate experiment.toml --lab <lab dir> --spectrometer spectrometer.toml
+elctl exp validate queues/experiment.toml --lab <lab dir> --spectrometer spectrometer.toml
 elctl doctor --install <name>     # checks an installation, lists leftover placeholders
 elctl conditionals-check <file> --spectrometer spectrometer.toml
 ```
