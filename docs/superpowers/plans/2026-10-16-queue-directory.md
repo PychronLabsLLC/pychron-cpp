@@ -337,20 +337,24 @@ git commit -m "feat(ui): File > Open Recent for queues"
 
 No new code. Run once, after Tasks 1 to 5 are committed.
 
-- [ ] **Step 1: Full build and tests**
+- [x] **Step 1: Full build and tests**
 
 Run: `cmake --build --preset dev-ui` then `ctest --preset dev-ui` (covers everything `dev` runs, and the UI tests). Expected: 100% tests passed. A failure is fixed at its cause in the task it belongs to, never skipped.
 
-- [ ] **Step 2: Whole-tree sweep and static analysis**
+Done 2026-10-16: 100% of 5255 passed; the skipped ones are gated on the environment (no Postgres URL, no live camera, no EarthBank credentials), none from this branch.
+
+- [x] **Step 2: Whole-tree sweep and static analysis**
 
 Run: `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`. Expected: exit 0, no warnings.
 
-- [ ] **Step 3: Nothing left at the old paths**
+Done 2026-10-16: all three exit 0, 0 findings, 0 warnings. The `dev-ui` sweep leaves 16 sources not checked because Qt's `qopenglcontext_platform.h` does not parse under `g++-16`; none of them is touched by this branch.
+
+- [x] **Step 3: Nothing left at the old paths**
 
 Run: `git grep -nE 'configs/examples/(experiment|blocks)|<lab>/blocks' -- . ':!docs/superpowers'`
-Expected: no output.
+Expected: no output except the lines that say the old `<lab>/blocks/` is not read (spec, rule 2): `docs/user/04-experiments.md`, `docs/user/07-configuration-reference.md` (tell the user to move the files by hand) and the comment over `LabTest.BlocksAreReadFromQueuesBlocks` in `tests/experiment/test_lab.cpp`. Those three are what was found on 2026-10-16.
 
-- [ ] **Step 4: Commit** only if Steps 1 to 3 needed a fix, with the scope of what was fixed.
+- [x] **Step 4: Commit** only if Steps 1 to 3 needed a fix, with the scope of what was fixed.
 
 ## Open questions
 
