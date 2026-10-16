@@ -122,7 +122,7 @@ class TestCryoDock : public QObject {
   }
 
   void aLineWithoutACryostatAnswersEveryCommandWithAnError() {
-    auto plain = ui::test::make_example_line();
+    auto plain = ui::test::make_heater_line();
     CoreBridge bridge(*plain);
     QVERIFY(bridge.cryo_inputs().empty());
     QCOMPARE(bridge.cryo_outputs(), 0);
@@ -144,9 +144,15 @@ class TestCryoDock : public QObject {
       ui::MainWindow window(*line_);
       QVERIFY(window.cryo_dock() != nullptr);
     }
-    auto plain = ui::test::make_example_line();
+    auto plain = ui::test::make_heater_line();
     ui::MainWindow window(*plain);
     QVERIFY(window.cryo_dock() == nullptr);
+  }
+
+  void theExampleLineHasTheDock() {
+    auto example = ui::test::make_example_line();
+    ui::MainWindow window(*example);
+    QVERIFY(window.cryo_dock() != nullptr);
   }
 
  private:

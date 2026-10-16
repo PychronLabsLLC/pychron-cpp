@@ -65,6 +65,8 @@ fixture's example line (`tests/ui` 17, `tests/systems` 12, `tests/integration`
 
 - NMGRL's layout or names. Two spectrometers, furnace, diode.
 - New element kinds, canvas features, drivers, simulator physics.
+- UI changes, but one: `MainWindow::default_layout()` tabs cryo and heater
+  docks together (owner, 2026-10-16; section 8 item 7).
 - Changing shipped plans, queue, field tables.
 - `configs/examples/nmgrl`: stays as converted.
 
@@ -211,6 +213,9 @@ Found building it (2026-10-16):
   and no detector (plan decision 4).
 - `tests/ui` `test_canvas_view`: element counts; heater and cryo docks show
   for example line.
+- `tests/ui` `test_docks`: example line's cryo and heater docks share one
+  tab stack, cryo in front, and again after a reset of the layout; the
+  existing window-size and panel-size cases pass unchanged.
 - Full `ctest --preset dev-ui`.
 
 ## 8. Owner, 2026-10-15
@@ -224,6 +229,12 @@ Found building it (2026-10-16):
 5. Heater and cryo in the example line: wanted, so their docks show for
    every user of the example (5.1, tests 7).
 6. `CG1` on a second controller of another make (`gp_microion`) (5.1).
+7. (2026-10-16) Stacked one above other, cryo and heater docks' minimum
+   heights (322 + 247 px, under alarms' 138) make main window at least
+   907 px tall: over its 850 px default, so it cannot be shrunk, and
+   `test_docks` window-size cases fail. Owner chose: tab them together in
+   `MainWindow::default_layout()`, cryo in front. Not chosen: shorter
+   charts, taller window. Applies to every line with both docks.
 
 ## Open questions
 

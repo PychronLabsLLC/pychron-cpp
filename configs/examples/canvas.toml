@@ -191,6 +191,7 @@ use_symbol = true
 symbol = "getter"
 kind = "getter"
 
+# The cryo trap: its cryostat is [cryo] in extraction_line.toml.
 [[stage]]
 name = "cryo"
 pos = [680, 80]

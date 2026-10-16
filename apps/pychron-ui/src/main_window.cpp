@@ -325,12 +325,21 @@ void MainWindow::default_layout() {
   place(alarms_, Qt::RightDockWidgetArea);
   place(cryo_, Qt::RightDockWidgetArea);
   place(heaters_, Qt::RightDockWidgetArea);
+  // A line with both shares one tab stack: stacked, their charts' minimum
+  // heights make the window taller than a laptop screen.
+  QDockWidget* tabbed = nullptr;
+  if (cryo_ != nullptr && heaters_ != nullptr) {
+    tabifyDockWidget(cryo_, heaters_);
+    cryo_->raise();
+    tabbed = heaters_;
+  }
   // And the sizes they ask for, not the ones they were dragged to.
   QList<QDockWidget*> side;
   QList<int> widths;
   QList<int> heights;
   for (QDockWidget* dock : {static_cast<QDockWidget*>(alarms_), static_cast<QDockWidget*>(cryo_),
                             static_cast<QDockWidget*>(heaters_)}) {
+    if (dock == tabbed) continue;
     if (dock == nullptr) continue;
     side.append(dock);
     widths.append(dock->sizeHint().width());

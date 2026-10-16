@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <ranges>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
@@ -227,6 +229,11 @@ TEST(ExampleConfigs, TheExampleHasEveryElementKind) {
   EXPECT_EQ(sys->manual_valves.size(), 2u);
   EXPECT_EQ(sys->gauges.size(), 4u);
   EXPECT_EQ(sys->pipettes.size(), 2u);
+  EXPECT_EQ(sys->heaters.size(), 1u);
+  ASSERT_TRUE(sys->cryo.has_value());
+  const auto setpoint_names = std::views::keys(sys->cryo->setpoints);
+  EXPECT_EQ(std::vector<std::string>(setpoint_names.begin(), setpoint_names.end()),
+            (std::vector<std::string>{"Ar_freeze", "Ar_release"}));
   // every stage kind the canvas offers
   for (const auto k : {SourceKind::Pump, SourceKind::Laser, SourceKind::Tank, SourceKind::Spectrometer,
                        SourceKind::Getter}) {

@@ -6,7 +6,8 @@
 (13 valves, 2 manual, 2 rough, 4 gauges, 13 stages, 2 pipettes, 1 switch, 1 heater, a cryostat with 2 setpoints)
 without moving a single number the shipped queue measures.
 
-**Architecture:** Config and test change only: no library code. `canvas.toml` and `extraction_line.toml` change
+**Architecture:** Config and test change only: no library code, and one UI change the owner asked for on
+2026-10-16 (Task 4: `MainWindow::default_layout()` tabs the cryo and heater docks together). `canvas.toml` and `extraction_line.toml` change
 together (`cross_validate` holds them to each other); `sim.toml` gains one tank; one new extraction script drives
 the second pipette. Every added valve starts closed, which is what keeps the shipped queue's gas where it is.
 
@@ -338,20 +339,25 @@ TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
   `[cryo] driver = "cryostat"`, `tolerance_k = 1.0`, `timeout_s = 600`, `[cryo.setpoints] Ar_freeze = [70.0, 0.0]`,
   `Ar_release = [300.0, 0.0]`; `[[heaters]] name = "bakeout"`, `driver = "bakeout_plc"`, `description = "Line
   bakeout tape"`, `units = "C"`. The `cryo` stage's comment names `[cryo]`.
+- Modify: `apps/pychron-ui/src/main_window.cpp` (`default_layout()`: when the line has both docks, the heater
+  dock is tabified with the cryo dock, cryo raised, and only the stack's front dock is sized). Owner, 2026-10-16:
+  stacked, the two docks' minimum heights forced the window to 907 px and failed `test_docks`; the plan's
+  config-only rule is lifted for this change alone. Spec section 8 item 7.
 - Test: `tests/systems/test_canvas_cross_validate.cpp` (`TheExampleHasEveryElementKind` gains heater and cryo
-  asserts), `tests/ui/test_heater_dock.cpp:110-118`, `tests/ui/test_cryo_dock.cpp:123-131`
+  asserts), `tests/ui/test_heater_dock.cpp:110-118`, `tests/ui/test_cryo_dock.cpp:123-131`,
+  `tests/ui/test_docks.cpp` (new `mainWindowTabsTheCryostatAndHeatersTogether`)
 
-- [ ] **Step 1: Failing tests.** In `TheExampleHasEveryElementKind`: `sys->heaters.size() == 1u`,
+- [x] **Step 1: Failing tests.** In `TheExampleHasEveryElementKind`: `sys->heaters.size() == 1u`,
   `sys->cryo.has_value()`, its setpoints' keys `{"Ar_freeze", "Ar_release"}`. In the UI: new
   `theExampleLineHasTheDock` in each dock test (`make_example_line()`, `MainWindow`, dock not null); the "plain"
   half of `theMainWindowHasTheDockOnlyWithHeaters` uses `make_cryo_line()`, of `...WithACryostat` uses
   `make_heater_line()`.
-- [ ] **Step 2:** Run `pychron_systems_tests --gtest_filter='ExampleConfigs.*'` and the two dock binaries: FAIL.
-- [ ] **Step 3:** Write the config.
-- [ ] **Step 4:** Run the two dock binaries, `pychron_ui_test_docks`, `pychron_ui_test_core_bridge`,
+- [x] **Step 2:** Run `pychron_systems_tests --gtest_filter='ExampleConfigs.*'` and the two dock binaries: FAIL.
+- [x] **Step 3:** Write the config.
+- [x] **Step 4:** Run the two dock binaries, `pychron_ui_test_docks`, `pychron_ui_test_core_bridge`,
   `pychron_ui_test_canvas_view`, and `ctest --preset dev-ui -R '^ui\.'`; `pychron_systems_tests --gtest_filter='ExampleConfigs.*:ExtractionLine.*'`;
   `pychron_integration_tests --gtest_filter='LabSim.*:ExampleLineSim*'`. Expected: PASS.
-- [ ] **Step 5:** `quality_check.py`, `compiler_sweep.py --changed --build-dir build/dev-ui`. Commit
+- [x] **Step 5:** `quality_check.py`, `compiler_sweep.py --changed --build-dir build/dev-ui`. Commit
   `feat(setup): example line has a bakeout heater and a cryostat`.
 
 ### Task 5: User guide
@@ -361,8 +367,8 @@ gauges (IG1, PG1) and a pipette": the new counts and names), `docs/user/02-extra
 stage list, excerpt at 427-470 gains one heater and `[cryo]`), `docs/simulator.md` (the example sketch at 331 and
 the volumes paragraph at 403-416: new tank, closed getters).
 
-- [ ] **Step 1:** Write; check every name against the two config files.
-- [ ] **Step 2:** Commit `docs(setup): user guide follows the fuller example line`. Docs only: no build.
+- [x] **Step 1:** Write; check every name against the two config files.
+- [x] **Step 2:** Commit `docs(setup): user guide follows the fuller example line`. Docs only: no build.
 
 ### Task 6: Whole branch
 

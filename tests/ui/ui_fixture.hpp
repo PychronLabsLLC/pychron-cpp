@@ -14,19 +14,16 @@
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/loader.hpp"
+#include "pychron/systems/canvas/loader.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "temp_path.hpp"
 
 namespace pychron::ui::test {
 
-// `canvas`: another drawing of the example line (default: the example's own).
-// `clock`: the line's clock, which must outlive it (default: real time).
-// `line_file`: a line file of the test's own in place of the example's.
-inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {},
-                                                                  const Clock* clock = nullptr,
-                                                                  const std::filesystem::path& line_file = {}) {
+// The options every example line here is made with: every transport simulated,
+// the scheduler stopped, the line's state file a temporary one.
+inline systems::ExtractionLine::Options example_line_options(const Clock* clock = nullptr) {
   using namespace std::chrono_literals;
-  const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   systems::ExtractionLine::Options options;
   options.force_sim = true;
   options.run_scheduler = false;
@@ -41,11 +38,44 @@ inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::fil
   // Locks persist beside the config by default; keep tests out of the repo
   // and independent of each other.
   options.state_file = pychron::testing::unique_temp_path("pychron-ui-test-", ".state.toml");
+  return options;
+}
+
+// `canvas`: another drawing of the example line (default: the example's own).
+// `clock`: the line's clock, which must outlive it (default: real time).
+// `line_file`: a line file of the test's own in place of the example's.
+inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::filesystem::path& canvas = {},
+                                                                  const Clock* clock = nullptr,
+                                                                  const std::filesystem::path& line_file = {}) {
+  const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   auto line =
       systems::ExtractionLine::load(line_file.empty() ? dir / "extraction_line.toml" : line_file,
-                                    canvas.empty() ? dir / "canvas.toml" : canvas, options);
+                                    canvas.empty() ? dir / "canvas.toml" : canvas, example_line_options(clock));
   if (!line) {
     qFatal("cannot load example line: %s", to_string(line.error()).c_str());
+  }
+  return std::move(*line);
+}
+
+// The example line without its cryostat and heater, so without their docks:
+// for the tests of the main window's own layout, which the two docks' minimum
+// heights would otherwise decide (the example's window cannot be made shorter
+// than they are).
+inline std::unique_ptr<systems::ExtractionLine> make_example_line_without_docks() {
+  const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
+  auto cfg = config::load_system_config(dir / "extraction_line.toml");
+  if (!cfg) {
+    qFatal("cannot load example line: %s", to_string(cfg.error()).c_str());
+  }
+  cfg->cryo.reset();
+  cfg->heaters.clear();
+  auto canvas = canvas::load_canvas(dir / "canvas.toml");
+  if (!canvas) {
+    qFatal("cannot load example canvas: %s", to_string(canvas.error()).c_str());
+  }
+  auto line = systems::ExtractionLine::create(std::move(*cfg), std::move(*canvas), example_line_options());
+  if (!line) {
+    qFatal("cannot create example line: %s", to_string(line.error()).c_str());
   }
   return std::move(*line);
 }

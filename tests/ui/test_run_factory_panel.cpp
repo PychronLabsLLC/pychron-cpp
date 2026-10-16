@@ -117,7 +117,7 @@ class TestRunFactoryPanel : public QObject {
     QCOMPARE(panel_->plan_choices(), QStringList{QStringLiteral("sim_multicollect")});
     QCOMPARE(panel_->script_choices(),
              (QStringList{QStringLiteral("laser_extract"), QStringLiteral("sim_air"), QStringLiteral("sim_blank"),
-                          QStringLiteral("sim_extract")}));
+                          QStringLiteral("sim_cocktail"), QStringLiteral("sim_extract")}));
     QCOMPARE(panel_->block_choices(), QStringList{QStringLiteral("blank_pair")});
     // No identifier yet: nothing to add.
     QVERIFY(!panel_->add_enabled());

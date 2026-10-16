@@ -65,6 +65,15 @@ timeout_ms = 500
 kind = "sim"
 timeout_ms = 2000
 
+# The cryo trap's Lake Shore controller and the line's bakeout PLC.
+[transports.cryostat]
+kind = "sim"
+timeout_ms = 2000
+
+[transports.bakeout_plc]
+kind = "sim"
+timeout_ms = 2000
+
 [drivers.actuator1]
 kind = "proxr_relay"
 transport = "valve_bus"
@@ -85,6 +94,31 @@ channels = [2]               # 1 is the Micro-Ion's ion gauge, 2 and 3 its Conve
 [drivers.co2]
 kind = "chromium"
 transport = "laser_pc"
+
+# The cryo trap's controller ([cryo] below). Simulated, it is a Lake Shore 335
+# whose inputs follow their outputs' setpoints.
+[drivers.cryostat]
+kind = "lakeshore"
+transport = "cryostat"
+model = "335"
+inputs = ["A", "B"]
+# The heater range each setpoint needs, per output; range 0 is the heater off.
+ranges = [
+  { output = 1, range = 0, min = 0.0, max = 1.0 },
+  { output = 1, range = 1, min = 1.0, max = 30.0 },
+  { output = 1, range = 3, min = 30.0, max = 325.0 },
+  { output = 2, range = 0, min = 0.0, max = 1.0 },
+  { output = 2, range = 2, min = 1.0, max = 325.0 },
+]
+
+# 1-based coils and registers, as in a legacy PLC2000Heater device file.
+[drivers.bakeout_plc]
+kind = "plc2000_heater"
+transport = "bakeout_plc"
+enable = 1
+use_pid = 2
+setpoint = 11
+readback = 21
 
 [[valves]]
 name = "A"
@@ -233,6 +267,23 @@ outer = "P2"
 name = "cocktail"
 inner = "Q1"
 outer = "Q2"
+
+# The cryo trap (stage "cryo" on the canvas, behind Y). A script's set_cryo
+# takes kelvin per output, or a name from [cryo.setpoints].
+[cryo]
+driver = "cryostat"
+tolerance_k = 1.0            # "at setpoint" band for a blocking set_cryo
+timeout_s = 600              # a blocking set_cryo not there by then fails
+
+[cryo.setpoints]
+Ar_freeze = [70.0, 0.0]      # kelvin for outputs 1 and 2
+Ar_release = [300.0, 0.0]
+
+[[heaters]]
+name = "bakeout"
+driver = "bakeout_plc"
+description = "Line bakeout tape"
+units = "C"
 
 # Lab-specific names measurement plans reference as '@key' (experiment spec
 # 4.1), so one shipped template serves every line of an instrument family.

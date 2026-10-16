@@ -425,6 +425,33 @@ class TestDocks : public QObject {
     for (QDockWidget* dock : docks.mid(1)) QCOMPARE(window.dockWidgetArea(dock), Qt::RightDockWidgetArea);
   }
 
+  void theExampleLinesWindowFitsItsInstalledSize() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    QVERIFY(window.cryo_dock() != nullptr);
+    QVERIFY(window.heater_dock() != nullptr);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QVERIFY2(window.minimumSizeHint().height() <= 850,
+             qPrintable(QStringLiteral("%1").arg(window.minimumSizeHint().height())));
+    QCOMPARE(window.size(), QSize(1200, 850));
+  }
+
+  void mainWindowTabsTheCryostatAndHeatersTogether() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QVERIFY(window.cryo_dock() != nullptr);
+    QVERIFY(window.heater_dock() != nullptr);
+    QVERIFY(window.tabifiedDockWidgets(window.cryo_dock()).contains(window.heater_dock()));
+    QVERIFY(!window.cryo_dock()->visibleRegion().isEmpty());  // the cryostat's tab is the one in front
+
+    window.heater_dock()->setFloating(true);
+    window.dock_layouts()->reset();
+    QVERIFY(window.tabifiedDockWidgets(window.cryo_dock()).contains(window.heater_dock()));
+  }
+
   void mainWindowKeepsItsLayoutAcrossInstances() {
     QTemporaryDir dir;
     const QString file = dir.filePath(QStringLiteral("s.ini"));
@@ -450,7 +477,7 @@ class TestDocks : public QObject {
   }
 
   void mainWindowResetGivesThePanelsTheirSizesBack() {
-    auto line = ui::test::make_example_line();
+    auto line = ui::test::make_example_line_without_docks();
     ui::MainWindow window(*line);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
@@ -473,7 +500,7 @@ class TestDocks : public QObject {
   void mainWindowHasItsSizeAndKeepsTheOneItWasClosedWith() {
     QTemporaryDir dir;
     const QString file = dir.filePath(QStringLiteral("s.ini"));
-    auto line = ui::test::make_example_line();
+    auto line = ui::test::make_example_line_without_docks();
     {
       ui::MainWindow window(*line, std::make_unique<QSettings>(file, QSettings::IniFormat));
       QCOMPARE(window.size(), QSize(1200, 850));  // as installed

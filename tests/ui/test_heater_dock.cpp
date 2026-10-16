@@ -130,9 +130,15 @@ class TestHeaterDock : public QObject {
       ui::MainWindow window(*line_);
       QVERIFY(window.heater_dock() != nullptr);
     }
-    auto plain = ui::test::make_example_line();
+    auto plain = ui::test::make_cryo_line();
     ui::MainWindow window(*plain);
     QVERIFY(window.heater_dock() == nullptr);
+  }
+
+  void theExampleLineHasTheDock() {
+    auto example = ui::test::make_example_line();
+    ui::MainWindow window(*example);
+    QVERIFY(window.heater_dock() != nullptr);
   }
 
  private:
