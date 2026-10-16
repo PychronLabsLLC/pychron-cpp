@@ -1,6 +1,6 @@
 # One plot palette, one plot background: design
 
-Status: draft, 2026-10-13 (nightly). Not agreed. Open points: section 8.
+Status: agreed 2026-10-15 (owner settled section 8). Written 2026-10-13 (nightly).
 Task T050 (from T016). Owner 2026-10-13: share one palette and one
 background, white by default; all colours adjustable; live plots get
 preferences in Preferences window.
@@ -76,7 +76,7 @@ const PlotStyle& plot_style();     // current; GUI thread
   `plot_style().plot_background`.
 - Grid and axis colours stay theme's (`grid`, `outline`): readable on white
   and on light yellow. A plot background darker than mid grey is accepted
-  as given; no contrast correction (section 8, point 3).
+  as given; no contrast correction (owner, 2026-10-15).
 - Apply: the main window and the data window each have
   `apply_preferences(const Preferences&)` (`main_window.hpp:155`,
   `data_main_window.hpp:37`, `data_workspace.hpp:52`), called when the
@@ -112,9 +112,8 @@ const PlotStyle& plot_style();     // current; GUI thread
 
 - Defaults unchanged in value: `background` and `plot_background`
   `#ffffff`, groups from the 12.
-- Decision needed (section 8, point 1): whether a figure whose options
-  never set them follows the Plots page too. Draft says no: a figure's
-  look is its preset's, a preset travels between workstations and with a
+- A figure whose options never set them does not follow the Plots page
+  (owner, 2026-10-15): a figure's look is its preset's, a preset travels between workstations and with a
   publication, and QSettings of one machine must not change it. "Shared"
   then means same defaults from one definition, each side adjustable in
   its own place.
@@ -150,17 +149,16 @@ const PlotStyle& plot_style();     // current; GUI thread
 4. Open views follow an applied change.
 5. Docs (`docs/user`), `apps/pychron-ui/AGENTS.md` rule.
 
-## 8. Open points for owner
+## 8. Owner, 2026-10-15
 
-1. Figures follow Plots page when their options are untouched, or keep own
-   defaults (draft: keep; 4.4)?
-2. Series 7 and 8 of live plots change colour (cyan to pink, black to
-   grey). Acceptable, or reorder the 12 so that first 8 are today's 8?
-   Reordering changes figures' groups 7 to 12 instead.
-3. Dark plot background chosen by user: leave axis and grid as theme's
-   (draft), or pick contrasting ones?
-4. Pattern maker's canvas uses `plot_bg` too
-   (`pattern_maker_window.cpp:102`): white with the rest (draft), or its own
-   colour?
-5. Holder view's project colours: same palette (draft), or leave on a
-   separate 8?
+1. Figures keep their own defaults; they do not follow the Plots page
+   (4.4).
+2. Series 7 and 8 of live plots changing colour (cyan to pink, black to
+   grey) is accepted; the 12 are not reordered (4.1).
+3. A dark plot background keeps the theme's axis and grid colours (4.2).
+4. Pattern maker's canvas turns white with the rest (4.2).
+5. Holder view's project colours use the same palette (4.1).
+
+## Open questions
+
+None.
