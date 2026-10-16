@@ -147,7 +147,7 @@ records go to `--data <dir>` (default: `<lab>/data`), or to the database when
 there is one (`--db`, or an instrument install's own). The Run Factory dock
 adds runs: fill in an identifier and position (a range such as `1-4` gives one
 run per hole), check the preview, then Add (Ctrl+Return); new runs start from
-the lab's `defaults.toml`, and `blocks/*.toml` are reusable sequences. The
+the lab's `defaults.toml`, and `queues/blocks/*.toml` are reusable sequences. The
 Measurement tab beside it edits the selected row's plan and its exposed
 parameters (overridden values are bold with a ● badge; Advanced allows any
 value of the plan). Experiment > Scripts > Script Editor (Ctrl+Shift+K) edits the lab's
@@ -157,7 +157,7 @@ up for simulation), `--sim-speed <x>` runs the whole app on simulated time x tim
 real time:
 
 ```bash
-build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
+build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/queues/experiment.toml
 ```
 
 View > Data browses the records under `<data>/records`. With
@@ -410,14 +410,14 @@ to resume it.
 ## 5. Run the example experiment
 
 `configs/examples` doubles as an example lab: `plans/`, `scripts/`,
-`conditionals/` and a three-run `experiment.toml` for the simulated line and
-spectrometer.
+`conditionals/` and, under `queues/`, a three-run `experiment.toml` for the
+simulated line and spectrometer.
 
 ```bash
 cd configs/examples
-../../build/dev/apps/elctl/elctl -c extraction_line.toml exp validate experiment.toml \
+../../build/dev/apps/elctl/elctl -c extraction_line.toml exp validate queues/experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml
-../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run experiment.toml \
+../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run queues/experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
@@ -511,11 +511,11 @@ calibrated for the device. A calibration made before the tray map file was
 edited is stale and must be made again. A fitted scale more than 2% from 1 is
 refused (stage and map are both millimetres, so it means a wrong hole).
 
-`configs/examples` has a simulated laser: `experiment.laser.toml` heats two
+`configs/examples` has a simulated laser: `queues/experiment.laser.toml` heats two
 holes of `tray_maps/example-9.txt` with `scripts/extraction/laser_extract.py`.
 
 ```bash
-elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/experiment.laser.toml --spectrometer configs/examples/spectrometer.sim-integrated.toml --sim-speed 50
+elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/queues/experiment.laser.toml --spectrometer configs/examples/spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
 `elctl laser goto` stops the stage on Ctrl-C and when `--timeout` runs out. A
@@ -610,7 +610,7 @@ forgets them; `look` says what the finder sees and moves nothing.
 
 A pattern is a path the beam is moved along while it heats. A run names one
 (`pattern = "hexagon"` in its extraction) and its script runs it with
-`execute_pattern()`; `configs/examples/experiment.laser.toml` does so on its
+`execute_pattern()`; `configs/examples/queues/experiment.laser.toml` does so on its
 second run. Patterns are files in the lab, `patterns/<name>.toml`:
 
 ```toml
@@ -874,7 +874,7 @@ what was not carried over (legacy extraction-line survey,
 An instrument install has a database (`data/pychron.db` unless the lab's
 server was named), seeded from the install's `seed.toml` with the reference
 samples and their identifiers, the mass spectrometer and a reactor. Its
-shipped `experiment.toml` is three air shots between two blanks (`ba`, `a`,
+shipped `queues/experiment.toml` is three air shots between two blanks (`ba`, `a`,
 `a`, `a`, `ba`; about 19 minutes of simulated time, though `exp run`'s `ETA`
 line, an estimate, reads `0:08:50`), and names only what the
 seed made. `exp run` and `pychron-ui` write each finished run to that

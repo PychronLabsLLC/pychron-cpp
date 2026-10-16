@@ -167,7 +167,7 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
 
     lab_ = load_lab({dir_, dir_ / "extraction_line.toml", dir_ / "spectrometer.sim-integrated.toml"});
     ASSERT_TRUE(lab_.problems.empty()) << lab_.problems.front();
-    auto q = load_queue_file((dir_ / "experiment.toml").string(), lab_.ids);
+    auto q = load_queue_file((dir_ / "queues" / "experiment.toml").string(), lab_.ids);
     ASSERT_TRUE(q) << q.error().what;
     queue_ = *q;
     // Without embedded Python the example scripts cannot run.
@@ -190,7 +190,7 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
   virtual SessionHardware hardware() { return SessionHardware{*line_, spec_.get(), scan_.get(), {}}; }
 
   QueueSpec laser_queue() {
-    auto q = load_queue_file((dir_ / "experiment.laser.toml").string(), lab_.ids);
+    auto q = load_queue_file((dir_ / "queues" / "experiment.laser.toml").string(), lab_.ids);
     EXPECT_TRUE(q) << q.error().what;
     return q ? *q : QueueSpec{};
   }

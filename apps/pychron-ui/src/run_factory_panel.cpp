@@ -317,7 +317,7 @@ QWidget* RunFactoryPanel::build_block() {
   form->addRow(QString(), insert);
   connect(insert, &QPushButton::clicked, this, [this] { insert_block(); });
   if (lab_.blocks.empty()) {
-    box->setToolTip(tr("No blocks in %1").arg(q((lab_.paths.dir / "blocks").string())));
+    box->setToolTip(tr("No blocks in %1").arg(q(lab_.paths.blocks().string())));
     box->setEnabled(false);
   }
   return box;

@@ -443,7 +443,7 @@ Its `sim.toml` sets six numbers, so that the signals are of a lab's size:
 
 ### Running the air queue
 
-`experiment.sim-air.toml` is five analyses: blank, air, air, air, blank.
+`queues/experiment.sim-air.toml` is five analyses: blank, air, air, air, blank.
 
 Every command here is run from `configs/examples`, and calls the programs by
 their names, `elctl` and `pychron-ui`: have them on your `PATH`, or write
@@ -454,7 +454,7 @@ the path out. In a build tree, from that folder, `elctl` is
 macOS).
 
 ```bash
-elctl -c extraction_line.toml --sim exp validate experiment.sim-air.toml \
+elctl -c extraction_line.toml --sim exp validate queues/experiment.sim-air.toml \
     --spectrometer spectrometer.sim-integrated.toml
 ```
 
@@ -465,7 +465,7 @@ queue sim-air: 5 run(s), ETA 0:39:30
     2  a           air            sim_multicollect    0:07:45
     3  a           air            sim_multicollect    0:07:45
     4  ba          blank_air      sim_multicollect    0:07:45
-ok: experiment.sim-air.toml
+ok: queues/experiment.sim-air.toml
 ```
 
 The ETA adds up what the queue file and the plan state: the queue's delays,
@@ -475,7 +475,7 @@ where the scripts wait (the pipette, the pump-out) and for the peak center
 after each measurement, which the estimate leaves out.
 
 ```bash
-elctl -c extraction_line.toml --sim exp run experiment.sim-air.toml \
+elctl -c extraction_line.toml --sim exp run queues/experiment.sim-air.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed max \
     --data ~/pychron-sim-data
 ```
@@ -523,7 +523,7 @@ In the window, from `configs/examples` again:
 
 ```bash
 pychron-ui --examples --sim --sim-speed 50 --data ~/pychron-sim-data \
-    --queue experiment.sim-air.toml
+    --queue queues/experiment.sim-air.toml
 ```
 
 `--examples` is the example lab wherever the program finds it, which in a
@@ -533,7 +533,7 @@ are in. In a copy of the lab, name its files instead:
 ```bash
 pychron-ui extraction_line.toml canvas.toml --sim --sim-speed 50 \
     --spectrometer spectrometer.sim-integrated.toml \
-    --queue experiment.sim-air.toml
+    --queue queues/experiment.sim-air.toml
 ```
 
 Open the experiment window (View > Experiment), start the queue there, and
@@ -626,7 +626,7 @@ Things to try, each by editing a copy of the example:
 
 ### The stock queues
 
-`experiment.toml` and `experiment.laser.toml` are the example's ordinary
+`queues/experiment.toml` and `queues/experiment.laser.toml` are the example's ordinary
 queues: a blank and two unknowns, written as record files like every run of
 the example lab. The simulator has no sample gas, so their
 extraction scripts (`sim_extract.py`, `laser_extract.py`) let in one pipette
@@ -635,10 +635,10 @@ reads about 9.5e4 fA of Ar40 with the 40/36 of air, and the blank about
 7 fA. It is not a sample.
 
 An instrument install made with the example line has a queue of its own,
-`experiment.toml` in the install: five runs, `ba`, `a`, `a`, `a`, `ba` (a
+`queues/experiment.toml` in the install: five runs, `ba`, `a`, `a`, `a`, `ba` (a
 blank, three air shots, a blank), about 19 minutes of simulated time. It runs
 the same scripts and the same air and blank physics as
-`experiment.sim-air.toml` above, with the install's own `multicollect` plan in
+`queues/experiment.sim-air.toml` above, with the install's own `multicollect` plan in
 place of the example's. It names only samples and a mass spectrometer that
 the install's `seed.toml` put in its database.
 

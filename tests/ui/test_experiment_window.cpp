@@ -712,7 +712,7 @@ class TestExperimentWindow : public QObject {
     ExperimentBridge bridge(*sim.session, sim.line->bus());
     ExperimentWindow window(bridge, true, settings());
     QString error;
-    QVERIFY2(window.load_queue(sim.dir / "experiment.laser.toml", &error), qPrintable(error));
+    QVERIFY2(window.load_queue(sim.dir / "queues" / "experiment.laser.toml", &error), qPrintable(error));
     auto* pane = window.executor();
     pane->request_start();
     QVERIFY(pane->running());

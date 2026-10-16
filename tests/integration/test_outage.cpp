@@ -95,7 +95,7 @@ class World {
     scan_ = std::make_unique<spectrometer::ScanService>(*spec_, line_->bus(), clock_);
     lab_ = load_lab({dir_, dir_ / "extraction_line.toml", dir_ / "spectrometer.sim-integrated.toml"});
     EXPECT_TRUE(lab_.problems.empty()) << (lab_.problems.empty() ? "" : lab_.problems.front());
-    auto q = load_queue_file((dir_ / "experiment.toml").string(), lab_.ids);
+    auto q = load_queue_file((dir_ / "queues" / "experiment.toml").string(), lab_.ids);
     EXPECT_TRUE(q) << q.error().what;
     queue_ = *q;
     if (!scripting::make_script_host()->available()) {

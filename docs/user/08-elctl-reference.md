@@ -537,15 +537,15 @@ usage error (including `--sim-speed` without `--sim`, and `--from` together with
 
 ```bash
 cd configs/examples
-elctl -c extraction_line.toml --sim exp validate experiment.toml
-elctl -c extraction_line.toml --sim exp run experiment.toml \
+elctl -c extraction_line.toml --sim exp validate queues/experiment.toml
+elctl -c extraction_line.toml --sim exp run queues/experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
-elctl -c extraction_line.toml --sim exp run experiment.toml --resume \
+elctl -c extraction_line.toml --sim exp run queues/experiment.toml --resume \
     --spectrometer spectrometer.sim-integrated.toml
 ```
 
 On an instrument install, a queue named without a folder is looked for in the
-install's folder:
+install's `queues/` folder, then in the install's folder:
 
 ```bash
 elctl --install argus --sim exp run experiment.toml --sim-speed max

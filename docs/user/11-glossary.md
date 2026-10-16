@@ -8,7 +8,7 @@ Terms as pychron uses them. Longer explanations are linked.
 | **Analysis** | The saved result of one run: intensities, baselines, metadata, and tags. |
 | **Age spectrum** | Figure of apparent age against cumulative 39Ar released, per heating step. |
 | **Air / blank / cocktail / unknown** | Run types. Unknowns are samples; air and cocktail are standards; blanks are gas-free extractions. See [experiments](04-experiments.md). |
-| **Block** | Reusable group of runs in a queue (for example a blank pair). |
+| **Block** | Reusable group of runs in a queue (for example a blank pair), a file in `<lab>/queues/blocks/`. |
 | **Canvas** | The drawn diagram of the extraction line in `pychron-ui`. See [extraction line](02-extraction-line.md). |
 | **Conditional** | A rule checked during a run (terminate, truncate, cancel, ...). See [experiments](04-experiments.md). |
 | **Detector IC** | Intercalibration factor between detectors. |
@@ -28,7 +28,7 @@ Terms as pychron uses them. Longer explanations are linked.
 | **Package** | Set of levels and positions holding samples; kind `irradiation` or `package`. |
 | **Peak center** | Finding the magnet position that centers a peak on a detector. |
 | **Preset** | Saved named set of figure options. |
-| **Queue** | A list of runs to execute, in `experiment.toml`. |
+| **Queue** | A list of runs to execute, in a queue file such as `<lab>/queues/experiment.toml`. |
 | **Recall** | Re-opening a saved analysis. |
 | **Run** | One extraction plus measurement. |
 | **Spool** | Local holding area for records that could not yet be saved to the store. |

@@ -27,7 +27,7 @@ class LabTest : public ::testing::Test {
 
   LabPaths paths() const { return {dir_, dir_ / "extraction_line.toml", dir_ / "spectrometer.sim-integrated.toml"}; }
   QueueSpec example(const Lab& lab) const {
-    auto q = load_queue_file((dir_ / "experiment.toml").string(), lab.ids);
+    auto q = load_queue_file((dir_ / "queues" / "experiment.toml").string(), lab.ids);
     EXPECT_TRUE(q) << q.error().what;
     return q ? *q : QueueSpec{};
   }
@@ -189,5 +189,32 @@ TEST_F(LabTest, TheExecutorFileIsReadWithTheLab) {
   EXPECT_EQ(bad.executor.hold.limit_s, 7200);
   ASSERT_FALSE(bad.problems.empty());
   EXPECT_NE(bad.problems.back().find("hold.limit_s"), std::string::npos) << bad.problems.back();
+}
+// Blocks (queue-directory design, section 2): read from <lab>/queues/blocks
+// only. A lab's old <lab>/blocks/ is not read, and its absence is no problem.
+TEST_F(LabTest, BlocksAreReadFromQueuesBlocks) {
+  const Lab lab = load_lab(paths());
+  EXPECT_TRUE(lab.blocks.contains("blank_pair"));
+  EXPECT_TRUE(lab.problems.empty()) << lab.problems.front();
+}
+
+TEST_F(LabTest, AnOldBlocksDirectoryIsNotRead) {
+  std::ifstream in(dir_ / "queues" / "blocks" / "blank_pair.toml");
+  std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const auto at = text.find("name = \"blank_pair\"");
+  ASSERT_NE(at, std::string::npos);
+  text.replace(at, 19, "name = \"old_pair\"");
+  fs::create_directories(dir_ / "blocks");
+  std::ofstream(dir_ / "blocks" / "old_pair.toml") << text;
+  const Lab lab = load_lab(paths());
+  EXPECT_FALSE(lab.blocks.contains("old_pair"));
+  EXPECT_TRUE(lab.problems.empty()) << lab.problems.front();
+}
+
+TEST_F(LabTest, NoBlocksDirectoryIsNoProblem) {
+  fs::remove_all(dir_ / "queues" / "blocks");
+  const Lab lab = load_lab(paths());
+  EXPECT_TRUE(lab.blocks.empty());
+  EXPECT_TRUE(lab.problems.empty()) << lab.problems.front();
 }
 }  // namespace pychron::experiment::lab

@@ -22,14 +22,15 @@ directory**, a folder of plain files that every program in the package reads:
 
 ```
 <lab>/
-  experiment.toml            a queue (any name, you choose where to keep queues)
+  queues/*.toml              queues (any name; the program looks and saves here first,
+                             but a queue may be kept anywhere)
   plans/*.toml               measurement plans (how the spectrometer measures)
   scripts/                   extraction, post_equilibration, post_measurement, measurement_hooks;
                              safe_state.py, the lab's safe state (optional)
   conditionals/*.toml        named sets of conditionals (system.toml is always applied)
   identifiers.toml           special identifiers such as "bu" (optional)
   defaults.toml              what the run factory starts a new run with (optional)
-  blocks/*.toml              reusable run sequences for the run factory (optional)
+  queues/blocks/*.toml       reusable run sequences for the run factory (optional)
   notifications.toml         email / webhook / command messages (optional)
   tray_maps/*.txt            laser sample trays (see the laser chapter)
   patterns/*.toml            laser patterns
@@ -60,7 +61,7 @@ Experiment window and save it. The window writes a canonical form of the file:
 keys in a fixed order, defaults left out, **comments removed**. If you keep
 notes in a hand-written queue, keep them in the `comment` field of each run.
 
-Here is the example queue shipped in `configs/examples/experiment.toml`:
+Here is the example queue shipped in `configs/examples/queues/experiment.toml`:
 
 ```toml
 [queue]
@@ -197,7 +198,7 @@ Every time you load or edit a queue it is checked, all problems at once:
 A queue with an error will not start. From a terminal:
 
 ```bash
-elctl -c extraction_line.toml exp validate experiment.toml --lab .
+elctl -c extraction_line.toml exp validate queues/experiment.toml --lab .
 ```
 
 prints the queue, the estimated time (`ETA`) and every problem.
@@ -572,8 +573,10 @@ banner.
 ## 6. Blocks
 
 A **block** is a short reusable sequence of runs, for example a blank, an air
-and a second blank. Put a file in `<lab>/blocks/`; its runs use the same keys
-as `[[runs]]` in a queue. From `configs/examples/blocks/blank_pair.toml`:
+and a second blank. Put a file in `<lab>/queues/blocks/`; its runs use the same keys
+as `[[runs]]` in a queue. A lab's old `<lab>/blocks/` folder is not read: move
+its files to `<lab>/queues/blocks/`. From
+`configs/examples/queues/blocks/blank_pair.toml`:
 
 ```toml
 [block]
@@ -1100,7 +1103,7 @@ the next row to run, so a queue can be resumed after a crash (a run that has
 started counts as consumed and is never repeated):
 
 ```bash
-elctl -c extraction_line.toml exp run experiment.toml --resume
+elctl -c extraction_line.toml exp run queues/experiment.toml --resume
 ```
 
 `--from <row>` starts at a given row instead.
@@ -1120,7 +1123,7 @@ every channel.
 Without an instrument you can try everything above on a simulated lab:
 
 ```bash
-pychron-ui --sim --lab configs/examples --queue configs/examples/experiment.toml
+pychron-ui --sim --lab configs/examples --queue configs/examples/queues/experiment.toml
 ```
 
 `--sim` forces every transport in the extraction line to the built-in
@@ -1130,13 +1133,13 @@ example run takes minutes, mostly waiting. **`--sim-speed <x>`** (with
 time:
 
 ```bash
-pychron-ui --sim --sim-speed 400 --lab configs/examples --queue configs/examples/experiment.toml
+pychron-ui --sim --sim-speed 400 --lab configs/examples --queue configs/examples/queues/experiment.toml
 ```
 
 The same options exist at the command line, which needs no window:
 
 ```bash
-elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/experiment.toml \
+elctl -c configs/examples/extraction_line.toml --sim exp run configs/examples/queues/experiment.toml \
       --spectrometer configs/examples/spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
@@ -1164,7 +1167,7 @@ The simulation uses the same queues, scripts, plans and conditionals as the
 real instrument, but its spectrometer, valves and lasers are models, so
 signal sizes and timings are not those of your instrument. The signals do
 follow the valves: gas goes from the example's air tank through the pipette
-and the inlet into the spectrometer, and `experiment.sim-air.toml` is a queue
+and the inlet into the spectrometer, and `queues/experiment.sim-air.toml` is a queue
 of air shots and blanks that shows it. A laser or furnace releases no gas in
 simulation. [The simulated lab](../simulator.md) has the details and the
 figures.

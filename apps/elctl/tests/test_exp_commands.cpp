@@ -1,5 +1,5 @@
 // elctl exp validate / run against a scratch copy of configs/examples, which
-// doubles as an example lab (plans/, scripts/, conditionals/, experiment.toml).
+// doubles as an example lab (plans/, scripts/, conditionals/, queues/experiment.toml).
 
 #include <atomic>
 #include <chrono>
@@ -62,7 +62,7 @@ class ElctlExpTest : public ElctlTest {
 
   // The example queue on the sim at unlimited speed, records under <dir>/out.
   Outcome run_example_queue() const {
-    return exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+    return exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
                 (dir_ / "out").string(), "--sim-speed", "max"},
                true);
   }
@@ -89,7 +89,7 @@ class ElctlExpTest : public ElctlTest {
 };
 
 TEST_F(ElctlExpTest, ValidateTheExampleQueue) {
-  auto o = exp({"validate", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml")});
+  auto o = exp({"validate", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml")});
   EXPECT_EQ(o.code, 0) << o.err;
   EXPECT_TRUE(contains(o.out, "queue sim-example: 3 run(s), ETA")) << o.out;
   EXPECT_TRUE(contains(o.out, "blank_unknown")) << o.out;
@@ -120,7 +120,7 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   // The example queue names extraction scripts, which only the CPython host runs.
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const auto data = (dir_ / "out").string();
-  auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+  auto o = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
                 data, "--sim-speed", "max"},
                true);
   ASSERT_EQ(o.code, 0) << o.out << o.err;
@@ -138,14 +138,14 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   }
 
   // Everything ran, so a resume has nothing left to do.
-  auto again = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+  auto again = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
                     "--data", data, "--sim-speed", "max", "--resume"},
                    true);
   EXPECT_EQ(again.code, 0) << again.err;
   EXPECT_TRUE(contains(again.out, "0/0 run(s)")) << again.out;
 
   // --from skips rows.
-  auto from = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+  auto from = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
                    "--data", data, "--sim-speed", "max", "--from", "2"},
                   true);
   EXPECT_EQ(from.code, 0) << from.err;
@@ -255,7 +255,7 @@ TEST_F(ElctlExpTest, AnInterruptStopsAPacedQueueInRealTime) {
     }
   });
   const auto began = std::chrono::steady_clock::now();
-  auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+  auto o = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
                 (dir_ / "out").string(), "--sim-speed", "0.001"},
                true);
   const auto took = std::chrono::steady_clock::now() - began;
@@ -307,12 +307,12 @@ TEST_F(ElctlExpTest, ARunThatFailsEarlyLeavesTheNextOneClean) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const auto data = (dir_ / "out").string();
   // Nothing has run into this directory, so there is nothing to resume.
-  auto failed = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+  auto failed = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
                      "--data", data, "--sim-speed", "max", "--resume"},
                     true);
   EXPECT_EQ(failed.code, 1) << failed.out;
   EXPECT_TRUE(contains(failed.err, "error: --resume: ")) << failed.err;
-  auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
+  auto o = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data",
                 data, "--sim-speed", "max"},
                true);
   ASSERT_EQ(o.code, 0) << o.out << o.err;
@@ -323,7 +323,7 @@ TEST_F(ElctlExpTest, ARunThatFailsEarlyLeavesTheNextOneClean) {
 // the example laser queue was centered, and by how much.
 TEST_F(ElctlExpTest, ARunsLogIsPrinted) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
-  auto o = exp({"run", lab("experiment.laser.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+  auto o = exp({"run", lab("queues/experiment.laser.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
                 "--data", (dir_ / "out").string(), "--sim-speed", "max"},
                true);
   ASSERT_EQ(o.code, 0) << o.out << o.err;
@@ -343,7 +343,7 @@ TEST_F(ElctlExpTest, ARunsLogIsPrinted) {
 }
 
 TEST_F(ElctlExpTest, DryRunTouchesNothing) {
-  auto o = exp({"run", lab("experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--dry-run"},
+  auto o = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--dry-run"},
                true);
   EXPECT_EQ(o.code, 0) << o.err;
   EXPECT_TRUE(contains(o.out, "ok: ")) << o.out;
@@ -503,43 +503,34 @@ TEST_F(ElctlExpTest, NotifySendsATestOnEachChannel) {
   auto broken = exp({"notify", "--lab", (dir_ / "lab").string()});
   EXPECT_EQ(broken.code, 1);
   EXPECT_TRUE(contains(broken.err, "command[0].argv")) << broken.err;
-  EXPECT_EQ(exp({"notify", lab("experiment.toml")}).code, 2);
+  EXPECT_EQ(exp({"notify", lab("queues/experiment.toml")}).code, 2);
 }
 
 TEST_F(ElctlExpTest, UsageErrors) {
   EXPECT_EQ(exp({}).code, 2);
-  EXPECT_EQ(exp({"launch", lab("experiment.toml")}).code, 2);
+  EXPECT_EQ(exp({"launch", lab("queues/experiment.toml")}).code, 2);
   EXPECT_EQ(exp({"run"}).code, 2);
-  EXPECT_EQ(exp({"run", lab("experiment.toml"), "--sim-speed", "10"}).code, 2);  // needs --sim
-  EXPECT_EQ(exp({"run", lab("experiment.toml"), "--sim-speed", "max"}).code, 2);  // so does max
+  EXPECT_EQ(exp({"run", lab("queues/experiment.toml"), "--sim-speed", "10"}).code, 2);  // needs --sim
+  EXPECT_EQ(exp({"run", lab("queues/experiment.toml"), "--sim-speed", "max"}).code, 2);  // so does max
   for (const char* bad : {"fast", "nan", "inf", "infinity", "4x", "maximum", ""}) {
-    auto o = exp({"run", lab("experiment.toml"), "--sim-speed", bad}, true);
+    auto o = exp({"run", lab("queues/experiment.toml"), "--sim-speed", bad}, true);
     EXPECT_EQ(o.code, 2) << bad;
     EXPECT_TRUE(contains(o.err, "--sim-speed needs a number")) << bad << ": " << o.err;
   }
   for (const char* bad : {"0", "-2"}) {
-    auto o = exp({"run", lab("experiment.toml"), "--sim-speed", bad}, true);
+    auto o = exp({"run", lab("queues/experiment.toml"), "--sim-speed", bad}, true);
     EXPECT_EQ(o.code, 2) << bad;
     EXPECT_TRUE(contains(o.err, "--sim-speed must be positive")) << bad << ": " << o.err;
   }
-  EXPECT_EQ(exp({"run", lab("experiment.toml"), "--from", "1", "--resume"}).code, 2);
-  EXPECT_EQ(exp({"run", lab("experiment.toml"), "--from", "x"}).code, 2);
+  EXPECT_EQ(exp({"run", lab("queues/experiment.toml"), "--from", "1", "--resume"}).code, 2);
+  EXPECT_EQ(exp({"run", lab("queues/experiment.toml"), "--from", "x"}).code, 2);
   auto missing = exp({"validate", lab("nope.toml")});
   EXPECT_EQ(missing.code, 1);
 }
 
 
-// A copy of the example lab whose queue sits under <lab>/queues/ (the shipped
-// example moves there separately).
-fs::path lab_with_queues_dir(const fs::path& from, const fs::path& to) {
-  fs::copy(from, to, fs::copy_options::recursive);
-  fs::create_directories(to / "queues");
-  fs::rename(to / "experiment.toml", to / "queues" / "experiment.toml");
-  return to;
-}
-
 TEST_F(ElctlExpTest, ALabDefaultsToTheParentOfItsQueuesDirectory) {
-  const auto q = lab_with_queues_dir(dir_ / "lab", dir_ / "q");
+  const auto q = dir_ / "lab";
   // Plans and scripts are found only when the lab is q, not q/queues.
   auto o = run_raw({"-c", (q / "extraction_line.toml").string(), "exp", "validate",
                     (q / "queues" / "experiment.toml").string(), "--spectrometer",
@@ -549,7 +540,7 @@ TEST_F(ElctlExpTest, ALabDefaultsToTheParentOfItsQueuesDirectory) {
 
 TEST_F(ElctlExpTest, ItsDataGoesToTheLabNotTheQueuesDirectory) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
-  const auto q = lab_with_queues_dir(dir_ / "lab", dir_ / "q");
+  const auto q = dir_ / "lab";
   auto o = run_raw({"-c", (q / "extraction_line.toml").string(), "--sim", "exp", "run",
                     (q / "queues" / "experiment.toml").string(), "--spectrometer",
                     (q / "spectrometer.sim-integrated.toml").string(), "--sim-speed", "max"});
@@ -558,15 +549,14 @@ TEST_F(ElctlExpTest, ItsDataGoesToTheLabNotTheQueuesDirectory) {
   EXPECT_FALSE(fs::exists(q / "queues" / "data"));
 }
 
-// An install's queue named by its file name alone is found in <install>/queues/.
-// (A queue at the install's root stays covered by
-// ElctlSetupTest.AnInstrumentInstallsChecksAndRunsByName.)
-TEST_F(ElctlExpTest, AQueueByNameIsFoundInQueues) {
+// An install's queue named by its file name alone is found at the install's
+// root when it is not in <install>/queues/. (The shipped queue, in queues/, is
+// covered by ElctlSetupTest.AnInstrumentInstallsChecksAndRunsByName.)
+TEST_F(ElctlExpTest, AQueueByNameIsFoundAtTheInstallsRoot) {
   const auto root = path("install");
   const auto made = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
   ASSERT_EQ(made.code, 0) << made.out << made.err;
-  fs::create_directories(root / "queues");
-  fs::rename(root / "experiment.toml", root / "queues" / "experiment.toml");
+  fs::rename(root / "queues" / "experiment.toml", root / "experiment.toml");
   const auto o = run_raw({"--install", "lab", "--sim", "exp", "validate", "experiment.toml"});
   EXPECT_EQ(o.code, 0) << o.out << o.err;
 }
@@ -574,7 +564,7 @@ TEST_F(ElctlExpTest, AQueueByNameIsFoundInQueues) {
 #ifndef PYCHRON_ELCTL_HAS_STORE
 
 TEST_F(ElctlExpTest, WithoutPersistenceADatabaseIsRefused) {
-  auto o = exp({"run", lab("experiment.toml"), "--db", "sqlite:" + path("x.db").string()}, true);
+  auto o = exp({"run", lab("queues/experiment.toml"), "--db", "sqlite:" + path("x.db").string()}, true);
   EXPECT_NE(o.code, 0);
   EXPECT_TRUE(contains(o.err, "built without the DVC store")) << o.err;
 }
@@ -585,13 +575,13 @@ TEST_F(ElctlExpTest, WithoutPersistenceAnInstallsRunsAreFilesAndItSaysSo) {
   const auto root = path("install");
   const auto made = run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"});
   ASSERT_EQ(made.code, 0) << made.out << made.err;
-  const auto o = run_raw({"--install", "lab", "--sim", "exp", "run", (root / "experiment.toml").string(), "--dry-run"});
+  const auto o = run_raw({"--install", "lab", "--sim", "exp", "run", (root / "queues" / "experiment.toml").string(), "--dry-run"});
   EXPECT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(contains(o.err, "warning: built without the DVC store: runs are written to " +
                                   (root / "data" / "records").string() + ", not to the installation's database\n"))
       << o.err;
   // Only exp run says it.
-  const auto v = run_raw({"--install", "lab", "--sim", "exp", "validate", (root / "experiment.toml").string()});
+  const auto v = run_raw({"--install", "lab", "--sim", "exp", "validate", (root / "queues" / "experiment.toml").string()});
   EXPECT_FALSE(contains(v.err, "built without")) << v.err;
 }
 
@@ -618,7 +608,7 @@ class ElctlExpStoreTest : public ElctlTest {
 
   // The queue file with `from` (first occurrence) replaced by `to`.
   fs::path queue_with(const std::string& from, const std::string& to) const {
-    std::ifstream in(root_ / "experiment.toml");
+    std::ifstream in(root_ / "queues" / "experiment.toml");
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const auto at = text.find(from);
     EXPECT_NE(at, std::string::npos);
@@ -666,7 +656,7 @@ class ElctlExpStoreTest : public ElctlTest {
 TEST_F(ElctlExpStoreTest, AnInstallsQueueGoesToItsDatabase) {
   if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
   const auto began = std::chrono::steady_clock::now();
-  const auto o = run_queue(root_ / "experiment.toml");
+  const auto o = run_queue(root_ / "queues" / "experiment.toml");
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::seconds(60));
   EXPECT_TRUE(contains(o.out, "5/5 run(s) succeeded; in " + install_db() + "\n")) << o.out;
@@ -699,7 +689,7 @@ TEST_F(ElctlExpStoreTest, RunsTheDatabaseDidNotTakeAreSaidWithTheReason) {
   }
   QSqlDatabase::removeDatabase(QStringLiteral("exp-refuse-test"));
 
-  const auto o = run_queue(root_ / "experiment.toml");
+  const auto o = run_queue(root_ / "queues" / "experiment.toml");
   EXPECT_EQ(o.code, 0) << o.out << o.err;  // the queue ran and every record is kept
   EXPECT_TRUE(contains(o.out, "run 0 ba-1: success (not saved)")) << o.out;
   EXPECT_TRUE(contains(o.out, "  ba: not saved to the data store, kept in the spool: ")) << o.out;
@@ -723,7 +713,7 @@ TEST_F(ElctlExpStoreTest, ASimulatedSessionSavesToADatabaseGivenByDbOnlyWhenAske
   const auto seeded = run_raw({"entry", "seed", (root_ / "seed.toml").string(), "--db", other});
   ASSERT_EQ(seeded.code, 0) << seeded.out << seeded.err;
 
-  const auto kept_out = run_queue(root_ / "experiment.toml", {"--db", other});
+  const auto kept_out = run_queue(root_ / "queues" / "experiment.toml", {"--db", other});
   ASSERT_EQ(kept_out.code, 0) << kept_out.out << kept_out.err;
   const std::string note = "note: simulated runs are written to " + (root_ / "data" / "records").string() +
                            ", not to " + other + "; pass --sim-save to save them there\n";
@@ -740,7 +730,7 @@ TEST_F(ElctlExpStoreTest, ASimulatedSessionSavesToADatabaseGivenByDbOnlyWhenAske
     EXPECT_TRUE(contains(record, "\"simulated\" : true")) << record.substr(0, 600);  // the file says so too
   }
 
-  const auto asked = run_queue(root_ / "experiment.toml", {"--db", other, "--sim-save"});
+  const auto asked = run_queue(root_ / "queues" / "experiment.toml", {"--db", other, "--sim-save"});
   ASSERT_EQ(asked.code, 0) << asked.out << asked.err;
   EXPECT_FALSE(contains(asked.err, "note: simulated runs")) << asked.err;
   EXPECT_TRUE(contains(asked.out, "; in " + other + "\n")) << asked.out;
@@ -756,7 +746,7 @@ TEST_F(ElctlExpStoreTest, ASimulatedSessionSavesToADatabaseGivenByDbOnlyWhenAske
 // --sim-save asks for a database to save to.
 TEST_F(ElctlExpStoreTest, SimSaveWithoutADatabaseIsRefused) {
   const auto o = run_raw({"-c", (root_ / "extraction_line.toml").string(), "--sim", "exp", "run",
-                          (root_ / "experiment.toml").string(), "--sim-save", "--dry-run"});
+                          (root_ / "queues" / "experiment.toml").string(), "--sim-save", "--dry-run"});
   EXPECT_NE(o.code, 0) << o.out;
   EXPECT_TRUE(contains(o.err, "error: --sim-save: there is no database to save to")) << o.err;
 }
@@ -777,7 +767,7 @@ TEST_F(ElctlExpStoreTest, DryRunSaysWhatTheDatabaseLacks) {
   EXPECT_TRUE(contains(o.err, "error: identifier 'zz9' is not in the database")) << o.err;
   EXPECT_TRUE(runids(install_db()).empty());
   // A queue the database can take is just checked.
-  const auto fine = run_queue(root_ / "experiment.toml", {"--dry-run"});
+  const auto fine = run_queue(root_ / "queues" / "experiment.toml", {"--dry-run"});
   EXPECT_EQ(fine.code, 0) << fine.out << fine.err;
 }
 
@@ -804,7 +794,7 @@ TEST_F(ElctlExpStoreTest, TheCheckIsOfTheRowsThatWillRun) {
 
 TEST_F(ElctlExpStoreTest, ADatabaseThatCannotBeOpenedIsFatal) {
   // --sim-save: without it a simulated session would not open a database given with --db at all.
-  const auto o = run_queue(root_ / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db", "--sim-save"});
+  const auto o = run_queue(root_ / "queues" / "experiment.toml", {"--db", "sqlite:/nonexistent/dir/x.db", "--sim-save"});
   EXPECT_TRUE(contains(o.err, "x.db") || contains(o.err, "unable to open database")) << o.err;
   EXPECT_NE(o.code, 0);
   EXPECT_FALSE(contains(o.out, "queue ")) << o.out;
@@ -832,7 +822,7 @@ class ElctlExpUnreadableDatabaseTest : public ElctlExpStoreTest {
 
 TEST_F(ElctlExpUnreadableDatabaseTest, AnInstallWhosePasswordCannotBeReadIsNotRun) {
   for (const char* extra : {"", "--dry-run"}) {
-    const auto o = run_queue(root_ / "experiment.toml", extra[0] != '\0' ? std::vector<std::string>{extra} : std::vector<std::string>{});
+    const auto o = run_queue(root_ / "queues" / "experiment.toml", extra[0] != '\0' ? std::vector<std::string>{extra} : std::vector<std::string>{});
     EXPECT_NE(o.code, 0) << o.out;
     EXPECT_TRUE(contains(o.err, "error: the installation's database:")) << o.err;
     EXPECT_FALSE(contains(o.err, "s3cret")) << o.err;
@@ -840,7 +830,7 @@ TEST_F(ElctlExpUnreadableDatabaseTest, AnInstallWhosePasswordCannotBeReadIsNotRu
   }
   EXPECT_FALSE(fs::exists(root_ / "data" / "records"));
   // Only exp run minds.
-  const auto v = run_raw({"--install", "lab", "--sim", "exp", "validate", (root_ / "experiment.toml").string()});
+  const auto v = run_raw({"--install", "lab", "--sim", "exp", "validate", (root_ / "queues" / "experiment.toml").string()});
   EXPECT_EQ(v.code, 0) << v.out << v.err;
   EXPECT_FALSE(contains(v.err, "installation's database")) << v.err;
 }
@@ -851,7 +841,7 @@ TEST_F(ElctlExpUnreadableDatabaseTest, DbOverridesAnUnreadableInstallDatabase) {
   ASSERT_TRUE(pychron::persistence::open_store(pychron::persistence::StoreConfig{other, true}));
   const auto seeded = run_raw({"entry", "seed", (root_ / "seed.toml").string(), "--db", other});
   ASSERT_EQ(seeded.code, 0) << seeded.out << seeded.err;
-  const auto o = run_queue(root_ / "experiment.toml", {"--db", other, "--sim-save"});
+  const auto o = run_queue(root_ / "queues" / "experiment.toml", {"--db", other, "--sim-save"});
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_EQ(runids(other).size(), 5U);
 }
@@ -870,7 +860,7 @@ TEST_F(ElctlExpStoreTest, ASchemaThatIsBehindSaysWhatToRun) {
     d.close();
   }
   QSqlDatabase::removeDatabase(QStringLiteral("exp-store-test"));
-  const auto o = run_queue(root_ / "experiment.toml");
+  const auto o = run_queue(root_ / "queues" / "experiment.toml");
   EXPECT_NE(o.code, 0);
   EXPECT_TRUE(contains(o.err, "elctl db migrate --db")) << o.err;
   EXPECT_FALSE(contains(o.out, "queue ")) << o.out;

@@ -78,7 +78,7 @@ void expect_no_failures(const SiteInstall& site) {
 void expect_queue_checks(const SiteInstall& site) {
   auto lab = experiment::lab::load_lab({site.root, site.path(site.line), site.path(site.spectrometer)});
   ASSERT_TRUE(lab.problems.empty()) << lab.problems.front();
-  auto queue = experiment::load_queue_file((site.root / "experiment.toml").string(), lab.ids);
+  auto queue = experiment::load_queue_file((site.root / "queues" / "experiment.toml").string(), lab.ids);
   ASSERT_TRUE(queue) << queue.error().what;
   const auto check = experiment::lab::check_lab_queue(lab, *queue);
   for (const auto& d : check.all())
@@ -124,8 +124,12 @@ TEST_P(InstrumentProfile, InstallsLoadsAndPassesDoctor) {
   EXPECT_EQ(site.kind, "instrument");
   EXPECT_EQ(site.simulation, simulation);
   for (const char* f : {"extraction_line.toml", "canvas.toml", "spectrometer.toml", "plans/multicollect.toml",
-                        "plans/detector_ic.toml", "plans/multicollect_hop_ar39.toml", "peak_center.toml", "experiment.toml", "CALIBRATE.md", "scripts/extraction/sim_extract.py", "sim.toml"})
+                        "plans/detector_ic.toml", "plans/multicollect_hop_ar39.toml", "peak_center.toml", "queues/experiment.toml",
+                        "queues/blocks/blank_pair.toml", "CALIBRATE.md", "scripts/extraction/sim_extract.py", "sim.toml"})
     EXPECT_TRUE(fs::exists(root / f)) << name << ": " << f;
+  // Queues and blocks live under queues/ (queue-directory design, section 2).
+  EXPECT_FALSE(fs::exists(root / "experiment.toml")) << name;
+  EXPECT_FALSE(fs::exists(root / "blocks")) << name;
   // The example line comes with the example lab's numbers, as they are.
   EXPECT_EQ(read_file(root / "sim.toml"), read_file(kExamples / "sim.toml")) << name;
   // And with what its laser (co2) needs: tray maps, the example tray's place
@@ -214,7 +218,7 @@ TEST_P(InstrumentProfile, ShipsASeedThatTheDefaultsAndTheExampleQueueAgreeWith) 
   }
   auto ids = experiment::IdentifierRules::load((root / "identifiers.toml").string());
   ASSERT_TRUE(ids) << ids.error().what;
-  auto queue = experiment::load_queue_file((root / "experiment.toml").string(), *ids);
+  auto queue = experiment::load_queue_file((root / "queues" / "experiment.toml").string(), *ids);
   ASSERT_TRUE(queue) << queue.error().what;
   // The queue is three air shots between two blanks, and every part of it is something the install has.
   std::map<std::string, std::pair<std::string, std::string>> seeded;  // identifier -> sample, material

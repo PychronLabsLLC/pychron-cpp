@@ -212,7 +212,7 @@ post_measurement = "sim_pump"
 
 Use `units = "percent"` with a Chromium. The queue's tray is set on the laser
 before any script runs, and a script moves with `move_to_position()`
-([Scripting](09-scripting.md)). See `configs/examples/experiment.laser.toml`.
+([Scripting](09-scripting.md)). See `configs/examples/queues/experiment.laser.toml`.
 
 ### 5.3 What stops a queue from starting
 

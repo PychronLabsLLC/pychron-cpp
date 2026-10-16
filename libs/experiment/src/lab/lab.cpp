@@ -151,9 +151,9 @@ Lab load_lab(const LabPaths& paths) {
     if (n) lab.notifications = std::move(*n);
     else lab.problems.push_back(n.error().what);
   }
-  if (fs::is_directory(dir / "blocks", ec)) {
+  if (const auto blocks = paths.blocks(); fs::is_directory(blocks, ec)) {
     std::vector<fs::path> files;
-    for (const auto& e : fs::directory_iterator(dir / "blocks", ec))
+    for (const auto& e : fs::directory_iterator(blocks, ec))
       if (e.path().extension() == ".toml") files.push_back(e.path());
     std::sort(files.begin(), files.end());
     for (const auto& f : files) {

@@ -166,7 +166,7 @@ One commit (spec section 7, item 5): once the old place is not read, the shipped
 **Interfaces:**
 - Consumes: `LabPaths::blocks()` (Task 1); Task 2's `elctl` lookup (keeps `ElctlSetupTest` line 54 and the release smoke command working against the new install layout).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/experiment/test_lab.cpp` (on the scratch copy of `configs/examples`, before the move, so they fail for the right reason):
 - `LabTest.BlocksAreReadFromQueuesBlocks`: `load_lab(paths())` has `blocks.contains("blank_pair")` and `problems.empty()` (after the move the example's block is only in `queues/blocks/`).
@@ -175,12 +175,12 @@ In `tests/experiment/test_lab.cpp` (on the scratch copy of `configs/examples`, b
 
 In `tests/setup/test_profiles.cpp`, in the rendered-files test at `:127`: list `"queues/experiment.toml"` and `"queues/blocks/blank_pair.toml"` in place of `"experiment.toml"`, and add `EXPECT_FALSE(fs::exists(root / "experiment.toml"))` and `EXPECT_FALSE(fs::exists(root / "blocks"))`. In `tests/integration/test_install_e2e.cpp:241` load `site_.root / "queues" / "experiment.toml"`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev --target pychron_experiment_tests pychron_setup_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='LabTest.*'; build/dev/tests/setup/pychron_setup_tests`
 Expected: `AnOldBlocksDirectoryIsNotRead` FAIL (old dir read), profile test FAIL (root `experiment.toml` rendered).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Loader reads `paths.blocks()` in place of `dir / "blocks"`, otherwise unchanged (sorted, `*.toml`, a block that does not load is a problem line). Header comment line becomes `<lab>/queues/*.toml  queue files (any name; the program looks and saves here first)` and `<lab>/queues/blocks/*.toml  reusable run sequences for the run factory (optional)`; member comment `// <lab>/queues/blocks/*.toml by block name`. Tooltip: `lab_.paths.blocks().string()`. Profile `to` lines. `git mv` the example files. Update every path listed under Files, then confirm nothing is left:
 
@@ -188,7 +188,7 @@ Run: `git grep -nE '(examples|root_?|dir_|site_\.root|sim\.dir)[^"]*"?/?[" ]*exp
 and `git grep -nE 'configs/examples/(experiment|blocks)|<lab>/blocks|exp (run|validate) experiment|--queue experiment' -- . ':!docs/superpowers'`
 Expected: only lines that are about a queue the test wrote itself, the profile's `template =` lines, `test_setup_commands.cpp:54`, and the `--install` by-name commands (`README.md:89`, `docs/dev_setup.md:857`).
 
-- [ ] **Step 4: Build and run what the move reaches**
+- [x] **Step 4: Build and run what the move reaches**
 
 Run:
 ```
@@ -204,11 +204,11 @@ ctest --preset dev-ui
 ```
 (`pychron_install_e2e_tests` exists only with persistence; check the binaries' paths under `build/dev` and the suite names in the integration sources before filtering.) `tests/ui/experiment_fixture.hpp` is shared by many UI test targets and its `sim.dir / "experiment*.toml"` paths change with the move, so this commit runs the whole `dev-ui` suite (which covers everything `dev-quick` runs) rather than two UI binaries. Expected: all PASS.
 
-- [ ] **Step 5: Static analysis**
+- [x] **Step 5: Static analysis**
 
 Run: `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`, and `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui` (run factory panel and UI tests changed). Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A libs/experiment apps/pychron-ui/src/run_factory_panel.cpp profiles/instrument-common configs/examples tests apps/elctl/tests docs/user README.md docs/dev_setup.md docs/simulator.md libs/setup/AGENTS.md

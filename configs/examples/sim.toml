@@ -102,7 +102,7 @@
 # baseline_drift_per_h = 0   # the same, per hour
 
 # ---------------------------------------------------------------------------
-# What this example lab sets, so that experiment.sim-air.toml (blank, air,
+# What this example lab sets, so that queues/experiment.sim-air.toml (blank, air,
 # air, air, blank) reads like a lab: an air shot of about 9.5e4 fA of Ar40
 # that the source uses up at 1.9 fA/s, a blank of about 10 fA, an inlet whose
 # rise can be seen, a source that pumps back to nothing, and a second tank

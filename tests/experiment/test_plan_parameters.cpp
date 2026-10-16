@@ -152,7 +152,7 @@ TEST(PlanParameters, InfoFamiliesAndMatching) {
   EXPECT_EQ(matching_plans(lib, "", AnalysisType::Unknown), (std::vector<std::string>{"argus_hop", "sim_multicollect"}));
   EXPECT_EQ(matching_plans(lib, "argus", AnalysisType::Unknown), std::vector<std::string>{"argus_hop"});
   EXPECT_EQ(matching_plans(lib, "", AnalysisType::Air), std::vector<std::string>{"sim_multicollect"});
-  // The example's air queue (experiment.sim-air.toml) runs its blanks on it.
+  // The example's air queue (queues/experiment.sim-air.toml) runs its blanks on it.
   EXPECT_EQ(matching_plans(lib, "", AnalysisType::BlankAir), std::vector<std::string>{"sim_multicollect"});
   EXPECT_TRUE(matching_plans(lib, "", AnalysisType::Cocktail).empty());
 }

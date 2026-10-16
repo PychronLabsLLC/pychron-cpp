@@ -1,4 +1,4 @@
-// RunFactoryPanel against the example lab (its defaults.toml and blocks/) and a
+// RunFactoryPanel against the example lab (its defaults.toml and queues/blocks/) and a
 // QueueTableModel holding the example queue. No hardware.
 
 #include <filesystem>

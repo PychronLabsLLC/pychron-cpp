@@ -238,7 +238,7 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
 
     lab_ = lab::load_lab({site_.root, site_.path(site_.line), site_.path(site_.spectrometer)});
     ASSERT_TRUE(lab_.problems.empty()) << lab_.problems.front();
-    auto queue = load_queue_file((site_.root / "experiment.toml").string(), lab_.ids);
+    auto queue = load_queue_file((site_.root / "queues" / "experiment.toml").string(), lab_.ids);
     ASSERT_TRUE(queue) << queue.error().what;
     queue_ = *queue;
   }

@@ -81,7 +81,7 @@ pychron-ui --install argus --sim-speed 20
 ```
 
 opens it. In the experiment window (View > Experiment) open the install's
-`experiment.toml` and start it: three air shots between two blanks, about 19
+`queues/experiment.toml` and start it: three air shots between two blanks, about 19
 minutes of simulated time. In the data window (View > Data) each run appears
 when it ends.
 
@@ -113,7 +113,7 @@ Run the example experiment queue in the experiment window (View >
 Experiment, then Start or F5); `--sim-speed` runs simulated time faster:
 
 ```bash
-build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/experiment.toml
+build/dev-ui/apps/pychron-ui/pychron-ui --sim --sim-speed 50 --queue configs/examples/queues/experiment.toml
 ```
 
 Browse and plot the records a queue wrote (View > Data): filter, double-click
@@ -136,11 +136,11 @@ Run the example experiment queue from the command line:
 
 ```bash
 cd configs/examples
-../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run experiment.toml \
+../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run queues/experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
 
-`experiment.sim-air.toml` there is a queue of air shots and blanks: the
+`queues/experiment.sim-air.toml` there is a queue of air shots and blanks: the
 simulated line carries gas by species from the tank through the valves into
 the spectrometer's source, so the signals follow what the scripts did. What
 is modelled, how to give the simulated lab your own numbers (`sim.toml`) and

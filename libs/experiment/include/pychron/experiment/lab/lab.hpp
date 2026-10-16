@@ -12,7 +12,8 @@
 //   <lab>/identifiers.toml        identifier rules (default rules if absent)
 //   <lab>/peak_center.toml        named peak-center configs (optional)
 //   <lab>/defaults.toml           run factory defaults per (analysis type, device) (optional)
-//   <lab>/blocks/*.toml           reusable run sequences for the run factory (optional)
+//   <lab>/queues/*.toml           queue files (any name; the program looks and saves here first)
+//   <lab>/queues/blocks/*.toml    reusable run sequences for the run factory (optional)
 //   <lab>/notifications.toml      email, webhook and command notifications (optional)
 //   <lab>/tray_maps/*.txt         sample trays, in legacy pychron's format (optional)
 //   <lab>/patterns/*.toml         laser patterns a run may name (optional)
@@ -105,7 +106,7 @@ struct Lab {
   std::unique_ptr<LabConditionals> condition_names;
   std::map<std::string, jobs::PeakCenterConfig> peak_centers;
   DefaultsTable defaults;               // <lab>/defaults.toml: what a new run starts with
-  std::map<std::string, Block> blocks;  // <lab>/blocks/*.toml by block name
+  std::map<std::string, Block> blocks;  // <lab>/queues/blocks/*.toml by block name
   NotificationConfig notifications;     // <lab>/notifications.toml; no channels when absent
   ExecutorConfig executor;              // <lab>/executor.toml; the defaults when absent
   laser::TrayLibrary trays;             // <lab>/tray_maps

@@ -1,7 +1,7 @@
 // The example lab's physics, end to end (lab simulator spec section 8): a
 // scratch copy of configs/examples run on a VirtualClock at unlimited speed
 // through LabSession, with the example's own scripts, queue
-// (experiment.sim-air.toml), measurement plan and sim.toml. What a run
+// (queues/experiment.sim-air.toml), measurement plan and sim.toml. What a run
 // measured is read back from its saved record.
 //
 // What is expected is worked out from the lab's own numbers (the simulator's
@@ -163,7 +163,7 @@ class ScratchLab {
 
   // The example's air queue: blank, air, air, air, blank.
   QueueSpec air_queue() {
-    auto q = load_queue_file((dir_ / "experiment.sim-air.toml").string(), lab_.ids);
+    auto q = load_queue_file((dir_ / "queues" / "experiment.sim-air.toml").string(), lab_.ids);
     if (!q) {
       ADD_FAILURE() << q.error().what;
       return {};

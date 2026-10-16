@@ -1,5 +1,5 @@
 # Air shots and blanks on the simulated lab: blank, air, air, air, blank.
-#   elctl -c extraction_line.toml --sim exp run experiment.sim-air.toml \
+#   elctl -c extraction_line.toml --sim exp run queues/experiment.sim-air.toml \
 #         --spectrometer spectrometer.sim-integrated.toml --sim-speed max
 #
 # What the lab is like (the tank, the pipette, the inlet, the walls) is in

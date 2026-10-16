@@ -65,11 +65,11 @@ to = "seed.toml"
 
 [[files]]
 template = "blocks/blank_pair.toml"
-to = "blocks/blank_pair.toml"
+to = "queues/blocks/blank_pair.toml"
 
 [[files]]
 template = "experiment.toml"
-to = "experiment.toml"
+to = "queues/experiment.toml"
 
 [[files]]
 template = "conditionals/system.toml"

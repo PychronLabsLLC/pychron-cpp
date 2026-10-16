@@ -1,7 +1,7 @@
 # Example laser queue for the simulated lab: two unknowns on holes 3 and 7 of
 # the example-9 tray (the second with the beam moved along patterns/hexagon.toml), heated with the simulated Chromium CO2 laser ("co2" in
 # extraction_line.toml).
-#   elctl -c extraction_line.toml --sim exp run experiment.laser.toml \
+#   elctl -c extraction_line.toml --sim exp run queues/experiment.laser.toml \
 #         --spectrometer spectrometer.sim-integrated.toml
 # The tray map is tray_maps/example-9.txt; where it sits on the stage is
 # stage_calibrations/co2.example-9.toml (see `elctl laser`).

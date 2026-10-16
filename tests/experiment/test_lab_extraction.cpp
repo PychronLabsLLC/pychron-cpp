@@ -55,7 +55,7 @@ class LabExtractionTest : public ::testing::Test {
   }
   // The example queue on co2 and the small tray; run 1 (the unknown) on hole 3.
   QueueSpec queue(const Lab& lab) const {
-    auto q = load_queue_file((dir_ / "experiment.toml").string(), lab.ids);
+    auto q = load_queue_file((dir_ / "queues" / "experiment.toml").string(), lab.ids);
     EXPECT_TRUE(q) << q.error().what;
     QueueSpec out = q ? *q : QueueSpec{};
     out.extract_device = "co2";

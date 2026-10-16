@@ -1,8 +1,8 @@
 # Example queue for the simulated lab:
-#   elctl -c extraction_line.toml --sim exp run experiment.toml \
+#   elctl -c extraction_line.toml --sim exp run queues/experiment.toml \
 #         --spectrometer spectrometer.sim-integrated.toml
-# Plans, scripts and conditionals are found under this directory (the lab);
-# records, the spool and executor_state.json go to ./data.
+# Plans, scripts and conditionals are found in the lab, the directory above
+# queues/; records, the spool and executor_state.json go to ./data.
 #
 # In the simulated lab nothing gives gas off when it is heated, so for each
 # run that is not a blank the extraction script (sim_extract.py) lets in one

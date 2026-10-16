@@ -41,7 +41,7 @@ in a database. No instrument is needed and nothing is typed in by hand.
    ```
 
    This writes the install to `~/Pychron/argus`: an example extraction line, a
-   simulated spectrometer, plans, scripts, a first queue (`experiment.toml`),
+   simulated spectrometer, plans, scripts, a first queue (`queues/experiment.toml`),
    and a SQLite database (`data/pychron.db`) that already holds what the queue
    names. The output ends with a list of checks, each `[OK]`, among them
    `[OK] database: sqlite:<install>/data/pychron.db (schema version N)`.
@@ -53,7 +53,7 @@ in a database. No instrument is needed and nothing is typed in by hand.
    ```
 
    Open the Experiment window (**View > Experiment**), load the install's
-   `experiment.toml` (**File > Open > Open Queue…**) and start it
+   `queues/experiment.toml` (**File > Open > Open Queue…**) and start it
    (**Experiment > Executor > Start**). The queue is three air shots between
    two blanks, about 19 minutes of simulated time, so about a minute here.
    (The `ETA` that `elctl exp run` prints is an estimate and reads lower for
@@ -131,7 +131,7 @@ a measurement (a *plan* that says which isotopes are measured and how), and a
 post-measurement script.
 
 **Queue.** An ordered list of runs, with delays between them. A queue is a
-file (for example `experiment.toml`). You open it in the Experiment window,
+file (for example `experiment.toml`), kept in the lab's `queues/` folder. You open it in the Experiment window,
 check it, and start it. The *executor* runs the rows in order and can be
 stopped, cancelled or aborted.
 
@@ -640,7 +640,7 @@ installer is not needed). From the repository root:
 mkdir -p ~/pychron-sim-data
 build/dev-ui/apps/pychron-ui/pychron-ui --examples --sim --sim-speed 50 \
     --data ~/pychron-sim-data \
-    --queue configs/examples/experiment.toml
+    --queue configs/examples/queues/experiment.toml
 ```
 
 On macOS the program is inside the application bundle: write
@@ -675,7 +675,7 @@ simulated time run 50 times faster than the clock on the wall.
 **Minutes 6 to 11: run the example queue.**
 
 6. Press **Ctrl+Shift+E** (or View > Experiment). The three rows of
-   `experiment.toml` are loaded. Use **Experiment > Queue > Revalidate** to re-check them
+   `queues/experiment.toml` are loaded. Use **Experiment > Queue > Revalidate** to re-check them
    against the lab's plans and scripts.
 7. Try **Experiment > Rows > Toggle Skip** (Ctrl+K) on the first row, then toggle it back.
 8. Start the queue: **Experiment > Executor > Start** (F5). Watch the rows change state, the
@@ -700,7 +700,7 @@ To do the same without the window, from the example folder:
 
 ```bash
 cd configs/examples
-../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run experiment.toml \
+../../build/dev/apps/elctl/elctl -c extraction_line.toml --sim exp run queues/experiment.toml \
     --spectrometer spectrometer.sim-integrated.toml --sim-speed 50
 ```
 

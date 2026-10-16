@@ -42,7 +42,7 @@ inline experiment::lab::LabPaths lab_paths(const std::filesystem::path& dir) {
 
 // The example queue; without embedded Python its scripts are dropped.
 inline experiment::QueueSpec example_queue(const std::filesystem::path& dir, const experiment::IdentifierRules& ids) {
-  auto q = experiment::load_queue_file((dir / "experiment.toml").string(), ids);
+  auto q = experiment::load_queue_file((dir / "queues" / "experiment.toml").string(), ids);
   if (!q) qFatal("cannot load the example queue: %s", q.error().what.c_str());
   if (!scripting::make_script_host()->available()) {
     for (auto& r : q->runs) {

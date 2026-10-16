@@ -121,7 +121,7 @@ elctl validate extraction_line.toml
 elctl canvas-check canvas.toml
 elctl list-drivers
 elctl conditionals-check conditionals/system.toml --spectrometer spectrometer.toml
-elctl exp validate experiment.toml --lab . --spectrometer spectrometer.toml
+elctl exp validate queues/experiment.toml --lab . --spectrometer spectrometer.toml
 elctl doctor            # a whole install; add --probe to reach the instrument
 elctl --install argus-lab doctor --strict
 ```
@@ -526,6 +526,8 @@ validate`, and stops only what depends on it.
 
 ```
 <lab>/
+  queues/*.toml             queues (any name; looked for and saved here first)
+  queues/blocks/*.toml      reusable run sequences (optional)
   plans/*.toml              measurement plans
   scripts/extraction/  post_equilibration/  post_measurement/  measurement_hooks/    (.py files)
   scripts/safe_state.py     the lab's safe state after a failed run (optional)
@@ -533,7 +535,6 @@ validate`, and stops only what depends on it.
   identifiers.toml          what an identifier means (optional)
   peak_center.toml          named peak-center settings (optional)
   defaults.toml             what a new run starts with (optional)
-  blocks/*.toml             reusable run sequences (optional)
   notifications.toml        email, webhook, command messages (optional)
   executor.toml             how a queue rides out links that drop (optional)
   tray_maps/*.txt           sample trays (optional)
@@ -549,8 +550,11 @@ validate`, and stops only what depends on it.
 ### Queue files (experiment.toml)
 
 A queue is a list of runs. Any file name works; `experiment.toml` is the
-convention and what the setup wizard writes (`elctl exp run experiment.toml`).
-Example: `configs/examples/experiment.toml`, `experiment.laser.toml`. Only
+convention and what the setup wizard writes, as `queues/experiment.toml`
+(`elctl --install <name> exp run experiment.toml` finds it there). A queue
+kept anywhere else runs too; its lab is the folder it is in, or the folder
+above when that folder is `queues/`.
+Example: `configs/examples/queues/experiment.toml`, `experiment.laser.toml`. Only
 `queue` and `runs` exist at top level; an unknown key anywhere is an error.
 
 `[queue]`:
@@ -689,10 +693,11 @@ out. Times are in seconds.
 
 An unknown key or table, or a value out of range, is an error naming it.
 
-### blocks/*.toml
+### queues/blocks/*.toml
 
 A reusable run sequence the run factory can insert (a blank, an air shot, a
-blank). The `[[runs]]` are exactly as in a queue.
+blank). Blocks are read from `<lab>/queues/blocks/` only; a lab's old
+`<lab>/blocks/` folder is not read, so move its files by hand. The `[[runs]]` are exactly as in a queue.
 
 | Key | Meaning |
 |---|---|
@@ -950,7 +955,7 @@ only write one to add an instrument. An instrument
 install gets its own `tables/` (`qtegra` and `ngx` each ship placeholder field
 tables, laid out so the installed `multicollect` plan puts each isotope on its
 detector, not the example lab's), the example line's `sim.toml` when it takes
-the example line, and the `seed.toml` and `experiment.toml` described below
+the example line, and the `seed.toml` and `queues/experiment.toml` described below
 and in [Queue files](#queue-files-experimenttoml).
 
 | Key | Type | Meaning |
@@ -1029,7 +1034,7 @@ it has two optional lists of names:
 An empty name or a name given twice in one list is refused. A queue's
 `mass_spectrometer` and `extract_device` (and a run's own extraction device)
 must be in the database, or the queue is not started. The queue that setup
-writes, `experiment.toml` in the install, names only what the seed made.
+writes, `queues/experiment.toml` in the install, names only what the seed made.
 
 ### references.toml (records folders)
 
