@@ -139,21 +139,23 @@ Connections (offsets are `start_offset` from the stage centre):
   (commented `[volumes.bone]`), `configs/examples/extraction_line.toml` (`A` description "Stage 1 to prep",
   comment "never expose stage 1 to an open turbo line")
 - Modify tests: `tests/integration/test_example_line_sim.cpp` (8, 47, 168, 208), `tests/ui/ui_fixture.hpp:35`,
-  `tests/ui/test_canvas_view.cpp` (112, 373, 376, 410, 436, 547, 557, 693-732, 744; not 454-471 or 860, which are
-  the tests' own), `tests/systems/test_canvas_cross_validate.cpp:195-199`, `tests/sim/test_sim_config.cpp:775`
+  `tests/ui/test_canvas_view.cpp` (112, 373, 376, 410, 436, 454-471, 547, 557, 693-732, 744, 860: 454-471 and
+  860 append to a copy of the example canvas, so they connect to its stage; their gauge `Bone IG` becomes
+  `Stage1 IG`), `tests/systems/test_canvas_cross_validate.cpp:195-199`, `tests/sim/test_sim_config.cpp:775, 819, 859`
+  (all three in `TheExampleFileIsTheDefaults`)
 - Modify docs: `docs/user/02-extraction-line.md:48, 460`, `docs/simulator.md:331, 403, 414`
 
-- [ ] **Step 1:** `rg -n '\bbone\b' configs/examples tests apps docs/user docs/simulator.md -g '!configs/examples/nmgrl/**'`;
+- [x] **Step 1:** `rg -n '\bbone\b' configs/examples tests apps docs/user docs/simulator.md -g '!configs/examples/nmgrl/**'`;
   rename each hit that names the example's stage; leave fixtures of the tests' own (`test_sim_system.cpp`,
   `test_network_graph.cpp`, `test_canvas_loader.cpp`, ...).
-- [ ] **Step 2:** Build and run: `cmake --build --preset dev --target pychron_systems_tests pychron_sim_tests pychron_integration_tests`;
+- [x] **Step 2:** Build and run: `cmake --build --preset dev --target pychron_systems_tests pychron_sim_tests pychron_integration_tests`;
   `build/dev/tests/systems/pychron_systems_tests --gtest_filter='ExampleConfigs.*:ExtractionLine.*Example*'`,
   `build/dev/tests/sim/pychron_sim_tests --gtest_filter='SimConfig.TheExampleFileIsTheDefaults'`,
   `build/dev/tests/integration/pychron_integration_tests --gtest_filter='ExampleLineSim*'`. Expected: PASS.
-- [ ] **Step 3:** `cmake --build --preset dev-ui --target pychron_ui_test_canvas_view`;
+- [x] **Step 3:** `cmake --build --preset dev-ui --target pychron_ui_test_canvas_view`;
   `build/dev-ui/tests/ui/pychron_ui_test_canvas_view`. Expected: PASS.
-- [ ] **Step 4:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
-- [ ] **Step 5:** Commit `refactor(setup): rename the example line's bone stage to stage1`.
+- [x] **Step 4:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
+- [x] **Step 5:** Commit `refactor(setup): rename the example line's bone stage to stage1`.
 
 ### Task 2: Valves, stages, gauges and the second pipette
 

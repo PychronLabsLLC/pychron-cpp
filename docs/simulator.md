@@ -328,7 +328,7 @@ there are more than twelve). From the example lab:
 
 ```
 error: sim.toml:3:defaults.noise: value -1 out of range, must be from 0 to 10 as a fraction of the reading
-sim.toml:5:volumes.perp: unknown volume 'perp'; known: IG1, PG1, air, air_tank, bone, prep, rough, spec, turbo
+sim.toml:5:volumes.perp: unknown volume 'perp'; known: IG1, PG1, air, air_tank, prep, rough, spec, stage1, turbo
 sim.toml:9:valves.B.conductence: unknown key; known: conductance
 sim.toml:12:spectrometer.sensitivity: value 0 out of range, must be above 0 to 1e+30 fA per mbar
 ```
@@ -400,18 +400,18 @@ simulated.
 `configs/examples` is a small lab that runs air shots and blanks:
 
 ```
-bone --A-- prep --B-- spec
-            |  \
-           P1   C -- turbo (IG1, PG1) -- M1 -- rough
-            |
-           air        (the pipette, 0.1 cc)
-            |
-           P2
-            |
-         air_tank
+stage1 --A-- prep --B-- spec
+              |  \
+             P1   C -- turbo (IG1, PG1) -- M1 -- rough
+              |
+             air        (the pipette, 0.1 cc)
+              |
+             P2
+              |
+           air_tank
 ```
 
-`prep`, `spec` and `air_tank` are 50 cc, `bone` 12.5 cc. `B` is the inlet to
+`prep`, `spec` and `air_tank` are 50 cc, `stage1` 12.5 cc. `B` is the inlet to
 the spectrometer and `C` the valve to the turbo. `P1` and `P2` are
 interlocked: never both open.
 

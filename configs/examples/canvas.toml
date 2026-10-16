@@ -1,15 +1,15 @@
 # Example canvas for extraction_line.toml (spec section 6). Presentation and
 # connectivity only; valve state and gauge readings arrive via the SignalBus.
 #
-#   bone --A-- prep --B-- spec
-#               |  \
-#              P1   C --+-- turbo --+-- M1 -- rough
-#               |       |           |
-#              air     IG1         PG1
-#               |
-#              P2
-#               |
-#            air_tank
+#   stage1 --A-- prep --B-- spec
+#                 |  \
+#                P1   C --+-- turbo --+-- M1 -- rough
+#                 |       |           |
+#                air     IG1         PG1
+#                 |
+#                P2
+#                 |
+#              air_tank
 
 [canvas]
 origin = [0, 0]
@@ -62,9 +62,9 @@ pos = [650, 380]
 # and a pipette wears the colour of the tank across its valve (`tank = "<name>"`
 # on the pipette names it outright; `tank = ""` gives the pipette its own). `kind` says what a stage is
 # (a `symbol` says it too); `precedence` and `color = "#rrggbb"` override.
-# A plain stage, like bone, is not a source and has no colour of its own.
+# A plain stage, like stage1, is not a source and has no colour of its own.
 [[stage]]
-name = "bone"
+name = "stage1"
 pos = [100, 200]
 size = [80, 40]
 volume = 12.5
@@ -108,7 +108,7 @@ pos = [400, 420]
 vlabel = "Air Pipette"
 
 [[connection]]
-start = "bone"
+start = "stage1"
 end = "A"
 
 [[connection]]

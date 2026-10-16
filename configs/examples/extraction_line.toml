@@ -77,10 +77,10 @@ transport = "laser_pc"
 
 [[valves]]
 name = "A"
-description = "Furnace to prep"
+description = "Stage 1 to prep"
 actuator = "actuator1"
 address = "1"
-interlocks = ["C"]           # never expose the furnace to an open turbo line
+interlocks = ["C"]           # never expose stage 1 to an open turbo line
 settle_ms = 500
 
 [[valves]]

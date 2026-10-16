@@ -67,7 +67,7 @@
 # [volumes.prep]
 # pressure = 1e-8            # mbar in all, as air
 
-# [volumes.bone]
+# [volumes.stage1]
 # leak = 0                   # mbar L / s of Ar40, as air: a leaking stage is a blank that will not come down
 
 # [volumes.air]

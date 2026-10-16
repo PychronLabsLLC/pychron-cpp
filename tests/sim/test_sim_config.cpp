@@ -772,7 +772,7 @@ TEST_F(SimConfig, AMessageNamesWhatIsKnownAndTheUnit) {
 TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   const std::filesystem::path example = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "sim.toml";
   SimTopology canvas;  // the example canvas's names
-  canvas.volumes = {{"bone"}, {"prep"}, {"spec"}, {"turbo"}, {"rough"}, {"air_tank"}, {"air"}, {"IG1"}, {"PG1"}};
+  canvas.volumes = {{"stage1"}, {"prep"}, {"spec"}, {"turbo"}, {"rough"}, {"air_tank"}, {"air"}, {"IG1"}, {"PG1"}};
   canvas.volumes[5].role = SimRole::Tank;
   canvas.valves = {"A", "B", "C", "P1", "P2", "M1"};
 
@@ -816,7 +816,7 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   base.named["cocktail"] = Composition{1, 2, 3, 4, 5, 6};
   base.compositions["air_tank"] = sim::with_ar40(sim::cocktail_ratios(), 1e-6);
   base.initial_pressures["prep"] = 2e-5;
-  base.leaks["bone"] = 3e-12;
+  base.leaks["stage1"] = 3e-12;
   base.sizes["air"] = 0.7;
   base.conductances["B"] = 0.6;
   base.pumps["turbo"] = {3e-6, 2s};
@@ -856,7 +856,7 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   expected.named["cocktail"] = sim::cocktail_ratios();
   expected.compositions["air_tank"] = sim::with_ar40(sim::air_ratios(), defaults.tank_argon40);
   expected.initial_pressures["prep"] = defaults.default_pressure;
-  expected.leaks["bone"] = 0.0;
+  expected.leaks["stage1"] = 0.0;
   expected.sizes["air"] = defaults.pipette_cc;
   expected.conductances["B"] = defaults.valve_conductance;
   expected.pumps["turbo"] = sim::SimPump{defaults.pump_base, sim::SimPump{}.tau};

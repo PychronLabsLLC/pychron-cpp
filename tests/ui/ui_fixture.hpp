@@ -32,7 +32,7 @@ inline std::unique_ptr<systems::ExtractionLine> make_example_line(const std::fil
   options.run_scheduler = false;
   options.clock = clock;
   options.sim.default_pressure = 1e-8;
-  options.sim.initial_pressures = {{"bone", 1e-3}};
+  options.sim.initial_pressures = {{"stage1", 1e-3}};
   options.sim.pumps = {{"turbo", {1e-9, 5s}}};
   options.sim.noise = 0.0;
   // These numbers and no others: named and empty, there is no sim file, so

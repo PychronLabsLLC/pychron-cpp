@@ -5,7 +5,7 @@
 // the physical lab.
 //
 // Example plumbing (canvas.toml):
-//   bone --A-- prep --B-- spec
+//   stage1 --A-- prep --B-- spec
 //               |   |
 //              P1   C --+-- turbo --+-- M1 -- rough
 //                       |           |
@@ -44,7 +44,7 @@ const std::filesystem::path kDir = PYCHRON_EXAMPLE_CONFIGS_DIR;
 sim::SimSettings lab() {
   sim::SimSettings s;
   s.default_pressure = 1e-8;
-  s.initial_pressures = {{"bone", 1e-3}};  // gas released into the furnace
+  s.initial_pressures = {{"stage1", 1e-3}};  // gas released into the furnace
   s.pumps = {{"turbo", {1e-9, 5s}}};
   s.noise = 0.0;
   // These tests are about valves, interlocks, scans and alarms, and state
@@ -165,7 +165,7 @@ TEST_F(ExampleLineSim, StartsClosedAndQuiet) {
 }
 
 TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
-  // Expand furnace gas into prep: bone (12.5 cc) + prep (1 cc).
+  // Expand furnace gas into prep: stage1 (12.5 cc) + prep (1 cc).
   ASSERT_TRUE(line->actuate("A", SwitchOp::Open, "test"));
   clock.advance(100us);  // long for the valve, nothing to the pump
   const double expanded = (12.5 * 1e-3 + 1e-8) / 13.5;
@@ -205,7 +205,7 @@ TEST_F(ExampleLineSim, GasFlowsThroughOpenValvesAndInterlocksHold) {
   scan_after(240s);
   EXPECT_LT(latest("IG1"), 1e-8);
   // Isolated behind A at the expanded pressure.
-  EXPECT_NEAR(*line->sim()->pressure("bone"), expanded, expanded * 1e-9);
+  EXPECT_NEAR(*line->sim()->pressure("stage1"), expanded, expanded * 1e-9);
 
   std::vector<std::string> changed;
   for (const auto& e : events->valves) changed.push_back(e.valve);

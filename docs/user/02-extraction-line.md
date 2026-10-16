@@ -45,7 +45,7 @@ Related pages: [getting started](01-getting-started.md),
 | Valve flashes yellow | The last command was refused or failed. Hover for the reason. |
 | A rounded chip with a small dial and `IG1: 1.20e-08 torr` | A gauge and its latest reading. The chip text turns red while the reading is outside `alarm_high` / `alarm_low`. Rest the pointer on it for 3 seconds and a small chart of its last 10 minutes appears beside it (it goes when the pointer moves off, the canvas scrolls or a button is pressed). Click it to open the gauge's own window (see [Gauges](#gauges)). |
 | A gauge chip that shows only its name | The canvas draws a gauge that `extraction_line.toml` does not define; it is decoration and never shows a reading. Resting on it or clicking it does nothing. |
-| Boxes (stages) | Volumes: prep line, bone, turbo, spectrometer, tanks. Some carry a glyph (turbo, ion pump, getter, spectrometer, laser, quadrupole). |
+| Boxes (stages) | Volumes: prep line, stage1, turbo, spectrometer, tanks. Some carry a glyph (turbo, ion pump, getter, spectrometer, laser, quadrupole). |
 | Pipes | Connections between boxes and valves. |
 
 The canvas is a fixed drawing; it does not zoom. Its size and scale come from
@@ -457,7 +457,7 @@ channels = [1, 2]
 
 [[valves]]                  # an actuated valve
 name = "A"
-description = "Furnace to prep"
+description = "Stage 1 to prep"
 actuator = "actuator1"      # which driver moves it
 address = "1"               # the driver's own address (relay number, coil, ...)
 interlocks = ["C"]          # cannot open while C is open or unknown (both ways)

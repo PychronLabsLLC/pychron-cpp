@@ -192,11 +192,11 @@ TEST(ExampleConfigs, LoadCrossValidateAndBuildGraph) {
     EXPECT_TRUE(g.is_valve(v.name)) << v.name;
     open[v.name] = ValveState::Open;
   }
-  EXPECT_FALSE(g.connected_to("bone", {}).contains("spec"));
-  EXPECT_TRUE(g.connected_to("bone", {{"A", ValveState::Open}, {"B", ValveState::Open}}).contains("spec"));
+  EXPECT_FALSE(g.connected_to("stage1", {}).contains("spec"));
+  EXPECT_TRUE(g.connected_to("stage1", {{"A", ValveState::Open}, {"B", ValveState::Open}}).contains("spec"));
   // Every actuated valve open joins every volume except those behind the
   // manual valve.
-  EXPECT_FALSE(g.connected_to("bone", open).contains("rough"));
+  EXPECT_FALSE(g.connected_to("stage1", open).contains("rough"));
   open["M1"] = ValveState::Open;
   EXPECT_EQ(g.connected_volumes(open).size(), 1u);
 }

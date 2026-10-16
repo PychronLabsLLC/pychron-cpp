@@ -109,7 +109,7 @@ class TestCanvasView : public QObject {
     for (const char* name : {"A", "B", "C", "P1", "P2", "M1", "pump_power"}) {
       QVERIFY2(view_->valve(name) != nullptr, name);
     }
-    for (const char* name : {"bone", "prep", "spec", "turbo", "rough", "air_tank", "air"}) {
+    for (const char* name : {"stage1", "prep", "spec", "turbo", "rough", "air_tank", "air"}) {
       QVERIFY2(view_->stage(name) != nullptr, name);
     }
     QVERIFY(view_->gauge("IG1") != nullptr);
@@ -370,10 +370,10 @@ class TestCanvasView : public QObject {
   // A valve joining volumes with no source among them has no colour to take.
   void inheritModeLeavesAValveInASourcelessRegionGreen() {
     view_->set_open_valve_color(canvas::OpenValveColor::Inherit);
-    bridge_->actuate("A", SwitchOp::Open);  // bone to prep: two plain volumes
+    bridge_->actuate("A", SwitchOp::Open);  // stage1 to prep: two plain volumes
     QTRY_COMPARE_WITH_TIMEOUT(view_->valve("A")->state(), ValveState::Open, 5000);
     QCOMPARE(view_->valve("A")->fill_color(), ui::valve_color(ValveState::Open));
-    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());
+    QCOMPARE(view_->stage("stage1")->region_color(), CanvasView::isolated_color());
   }
 
   void inheritModeLeavesIsolatedOpenValveGreen() {
@@ -407,7 +407,7 @@ class TestCanvasView : public QObject {
     QTRY_COMPARE_WITH_TIMEOUT(view_->valve("B")->state(), ValveState::Open, 5000);
     QCOMPARE(prep->region_color(), spectrometer);
     QCOMPARE(spec->region_color(), spectrometer);
-    QCOMPARE(view_->stage("bone")->region_color(), CanvasView::isolated_color());  // behind the closed A
+    QCOMPARE(view_->stage("stage1")->region_color(), CanvasView::isolated_color());  // behind the closed A
   }
 
   void pipesInheritRegionColour() {
@@ -433,7 +433,7 @@ class TestCanvasView : public QObject {
         ++coloured;
       }
       // A pipe on the far side of the closed valve A never takes the colour.
-      if (touches(pipe, "bone")) {
+      if (touches(pipe, "stage1")) {
         QVERIFY(pipe->region_color() != region);
       }
     }
@@ -451,9 +451,9 @@ class TestCanvasView : public QObject {
     // B (550, 200) and turbo (650, 300; 60 x 40) do not line up either way.
     std::ofstream(canvas, std::ios::app) << "\n[[connection]]\nstart = \"B\"\nend = \"turbo\"\norientation = \"v\"\n";
     // offsets move where a pipe meets its element: A (250, 200) to the top
-    // edge of bone (100, 200; 80 x 40), 30 left of its center
+    // edge of stage1 (100, 200; 80 x 40), 30 left of its center
     std::ofstream(canvas, std::ios::app)
-        << "\n[[connection]]\nstart = \"A\"\nend = \"bone\"\nstart_offset = [0, -15]\nend_offset = [-30, -20]\n";
+        << "\n[[connection]]\nstart = \"A\"\nend = \"stage1\"\nstart_offset = [0, -15]\nend_offset = [-30, -20]\n";
     auto line = ui::test::make_example_line(canvas);
     CoreBridge bridge(*line);
     CanvasView view(bridge);
@@ -468,7 +468,7 @@ class TestCanvasView : public QObject {
     };
     // down first, then across
     QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{550, 200}, {550, 300}, {650, 300}}));
-    QCOMPARE(route("A", "bone"), (std::vector<QPointF>{{250, 185}, {70, 180}}));
+    QCOMPARE(route("A", "stage1"), (std::vector<QPointF>{{250, 185}, {70, 180}}));
     // the example's own: P1 straight under prep
     QCOMPARE(route("prep", "P1"), (std::vector<QPointF>{{400, 200}, {400, 330}}));
     line->stop();
@@ -544,7 +544,7 @@ class TestCanvasView : public QObject {
   // A pipe that lands in a volume's rounded corner: the border curves in
   // from the edge there, and the gap reaches in as far as it does.
   void gapReachesRoundAVolumesCorner() {
-    const QRectF box(60, 180, 80, 40);  // the example's bone: radius 8
+    const QRectF box(60, 180, 80, 40);  // the example's stage1: radius 8
     const ui::BoxEntry mid{{140, 200}, {-1, 0}};
     QCOMPARE(ui::StageItem::border_inset(box, mid, 6), 0.0);
     // 4 below the top-right corner, 6 wide: its upper side is 1 from the corner
@@ -554,7 +554,7 @@ class TestCanvasView : public QObject {
     // through the top edge, by the left corner
     QVERIFY(std::abs(ui::StageItem::border_inset(box, {{64, 180}, {0, 1}}, 6) - inset) < 1e-9);
 
-    ui::ConnectionItem pipe({{250, 184}, {100, 184}}, 6, {"A", "bone"});
+    ui::ConnectionItem pipe({{250, 184}, {100, 184}}, 6, {"A", "stage1"});
     const QGraphicsPathItem* gap = pipe.add_gap(corner, inset);
     const QRectF across = gap->path().boundingRect();
     QCOMPARE(across.right(), 140 + ui::ConnectionItem::kBorderWidth);
@@ -690,7 +690,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("air_tank"), tank);
     QCOMPARE(colour("air"), tank);  // the pipette wears its tank's colour, valve open or not
     QCOMPARE(colour("spec"), spectrometer);
-    QCOMPARE(colour("bone"), none);
+    QCOMPARE(colour("stage1"), none);
     QCOMPARE(colour("prep"), none);
 
     // tank to pipette (P2): what is open to a tank is the tank's colour
@@ -698,11 +698,11 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("air_tank"), tank);
     QCOMPARE(colour("air"), tank);
 
-    // prep to the spectrometer (B), then bone joins (A): all the spectrometer's
+    // prep to the spectrometer (B), then stage1 joins (A): all the spectrometer's
     open("B", true);
     QCOMPARE(colour("prep"), spectrometer);
     open("A", true);
-    QCOMPARE(colour("bone"), spectrometer);
+    QCOMPARE(colour("stage1"), spectrometer);
     QCOMPARE(colour("prep"), spectrometer);
     QCOMPARE(colour("spec"), spectrometer);
     // other regions were not touched by that
@@ -710,9 +710,9 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("turbo"), pump);
 
     // prep to the turbo (C; A must be closed for it): the pump's 120 takes the
-    // region, spectrometer included, and bone is cut off again
+    // region, spectrometer included, and stage1 is cut off again
     open("A", false);
-    QCOMPARE(colour("bone"), none);
+    QCOMPARE(colour("stage1"), none);
     open("C", true);
     for (const char* stage : {"prep", "spec", "turbo"}) QCOMPARE(colour(stage), pump);
     QCOMPARE(colour("air"), tank);
@@ -729,7 +729,7 @@ class TestCanvasView : public QObject {
     open("A", true);
     open("P2", true);
     open("B", true);
-    QCOMPARE(colour("bone"), spectrometer);
+    QCOMPARE(colour("stage1"), spectrometer);
     QCOMPARE(colour("prep"), spectrometer);
     QCOMPARE(colour("air_tank"), tank);
     QCOMPARE(colour("air"), tank);
@@ -741,7 +741,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(colour("air"), tank);
     // the aliquot let into prep is still the tank's gas, and shows as it
     open("P1", true);
-    for (const char* stage : {"bone", "prep", "spec", "air"}) QCOMPARE(colour(stage), tank);
+    for (const char* stage : {"stage1", "prep", "spec", "air"}) QCOMPARE(colour(stage), tank);
   }
 
   // Each tank has a colour of its own, so the gas of one is never taken for
@@ -856,15 +856,15 @@ class TestCanvasView : public QObject {
     QTemporaryDir tmp;
     const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
-    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Bone IG\"\npos = [100, 120]\n"
-                                         << "\n[[connection]]\nstart = \"bone\"\nend = \"Bone IG\"\n";
+    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Stage1 IG\"\npos = [100, 120]\n"
+                                         << "\n[[connection]]\nstart = \"stage1\"\nend = \"Stage1 IG\"\n";
     auto line = ui::test::make_example_line(canvas);
     CoreBridge bridge(*line);
     CanvasView view(bridge);
-    const ui::GaugeLabelItem* gauge = view.gauge("Bone IG");
+    const ui::GaugeLabelItem* gauge = view.gauge("Stage1 IG");
     QVERIFY(gauge != nullptr);
     QVERIFY(!gauge->wired());
-    QCOMPARE(gauge->text(), QStringLiteral("Bone IG"));
+    QCOMPARE(gauge->text(), QStringLiteral("Stage1 IG"));
     QVERIFY(view.gauge("IG1")->wired());
     line->stop();
   }
@@ -913,7 +913,7 @@ class TestCanvasView : public QObject {
     QTemporaryDir tmp;
     const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
-    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Bone IG\"\npos = [100, 120]\n";
+    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Stage1 IG\"\npos = [100, 120]\n";
     auto line = ui::test::make_example_line(canvas);
     CoreBridge bridge(*line);
     CanvasView view(bridge);
@@ -921,7 +921,7 @@ class TestCanvasView : public QObject {
     view.show();
     QVERIFY(QTest::qWaitForWindowExposed(&view));
     QSignalSpy clicked(&view, &CanvasView::gauge_clicked);
-    const ui::GaugeLabelItem* gauge = view.gauge("Bone IG");
+    const ui::GaugeLabelItem* gauge = view.gauge("Stage1 IG");
     QTest::mouseClick(view.viewport(), Qt::LeftButton, {}, view.mapFromScene(gauge->mapToScene(gauge->chip_rect().center())));
     QCOMPARE(clicked.count(), 0);
     line->stop();
@@ -1020,7 +1020,7 @@ class TestCanvasView : public QObject {
     QTemporaryDir tmp;
     const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
-    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Bone IG\"\npos = [100, 120]\n";
+    std::ofstream(canvas, std::ios::app) << "\n[[gauge]]\nname = \"Stage1 IG\"\npos = [100, 120]\n";
     auto line = ui::test::make_example_line(canvas);
     CoreBridge bridge(*line);
     CanvasView view(bridge);
@@ -1029,7 +1029,7 @@ class TestCanvasView : public QObject {
     view.show();
     QVERIFY(QTest::qWaitForWindowExposed(&view));
     QSignalSpy rested(&view, &CanvasView::gauge_rested);
-    const ui::GaugeLabelItem* gauge = view.gauge("Bone IG");
+    const ui::GaugeLabelItem* gauge = view.gauge("Stage1 IG");
     const QPoint on = view.mapFromScene(gauge->mapToScene(gauge->chip_rect().center()));
     QTest::mouseMove(view.viewport(), on + QPoint(0, 80));
     QTest::mouseMove(view.viewport(), on);
