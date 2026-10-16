@@ -1,6 +1,6 @@
 # A fuller example extraction line: design
 
-Status: draft, 2026-10-13 (nightly). Not agreed. Open points: section 8.
+Status: agreed 2026-10-15 (owner settled section 8). Written 2026-10-13 (nightly).
 Task T076. Owner: add more elements to example extraction line canvas; more
 similar to NMGRL, not 1:1, no NMGRL names (bone, jan, ...); example should
 represent what pychron-cpp has available.
@@ -87,7 +87,7 @@ fixture's example line (`tests/ui` 17, `tests/systems` 12, `tests/integration`
 | Added | Name | Kind | In line config as |
 |---|---|---|---|
 | stage | `laser` | `kind = "laser"`, symbol | region of driver `co2`; display "CO2 laser" |
-| stage | `stage1` | plain | replaces `bone` (section 8, point 1) |
+| stage | `stage1` | plain | replaces `bone` (owner, 2026-10-15) |
 | valve | `L` | valve | laser chamber to `stage1` |
 | valve | `D` | valve | `stage1` to second turbo |
 | stage | `turbo2` | `pump` | |
@@ -122,8 +122,8 @@ none.
   `valves.B`, `air_tank`, `pumps.turbo` untouched. Install e2e and `LabSim`
   numbers do not move; if one does, the element that moved it starts
   isolated, the test is not retuned.
-- Getters start behind closed `G1`, `G2` for that reason (section 8,
-  point 2).
+- Getters start behind closed `G1`, `G2` for that reason (owner,
+  2026-10-15).
 - `sim.toml` gains only: `[volumes.cocktail_tank]`, and comment lines for
   the new names where it lists examples (its commented `[volumes.bone]`
   follows the rename).
@@ -132,7 +132,7 @@ none.
 
 ### 5.3 Scripts
 
-- Shipped scripts unchanged (section 8, point 3). One new example script,
+- Shipped scripts unchanged (owner, 2026-10-15). One new example script,
   not in shipped queue: `scripts/extraction/sim_cocktail.py`, `sim_extract`
   with `Q1`/`Q2`, so the second pipette is not decoration.
 
@@ -175,20 +175,18 @@ none.
   for example line.
 - Full `ctest --preset dev-ui`.
 
-## 8. Open points for owner
+## 8. Owner, 2026-10-15
 
-1. `bone` is an NMGRL name and is the example's first stage, named in about
-   19 test files and user guide. Rename to `stage1` (draft), another name,
-   or keep?
-2. Getters behind valves closed at start (draft, keeps every number), or
-   open on the line as in a real lab, with tests' expected values measured
-   again?
-3. Shipped scripts stay on `A B C P1 P2` only (draft), or should
-   `sim_extract` use the new elements (getter time, cryo), which changes
-   what the shipped queue does?
-4. Laser chamber on canvas as its own stage `laser` (draft), or is `stage1`
-   the laser chamber?
-5. Heater and cryo in the example line mean heater and cryo docks appear
-   for every new user of the example. Wanted?
-6. Second gauge controller of another make (`gp_microion`) to show two
-   kinds (draft), or all four gauges on the one MaxiGauge?
+1. `bone` renamed `stage1` everywhere it is named (tests, user guide,
+   `sim.toml` comment).
+2. Getters behind `G1`, `G2`, closed at start; no expected value measured
+   again (5.2).
+3. Shipped scripts stay on `A B C P1 P2` (5.3).
+4. Laser chamber is its own stage `laser`, behind valve `L` (5.1).
+5. Heater and cryo in the example line: wanted, so their docks show for
+   every user of the example (5.1, tests 7).
+6. `CG1` on a second controller of another make (`gp_microion`) (5.1).
+
+## Open questions
+
+None.
