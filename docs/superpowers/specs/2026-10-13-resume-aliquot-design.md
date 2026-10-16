@@ -1,9 +1,8 @@
 # A resumed step heat keeps its aliquot
 
-Status: draft 2026-10-13, not agreed. Written by unattended run for T091.
-Builds on branch `fix/step-heat-aliquot` (T090, `f56e037f`, not on
-`develop`): this spec assumes that change. Nothing built. Questions:
-section 7.
+Status: agreed 2026-10-15 (owner answered section 7). Written by unattended
+run for T091 on 2026-10-13. Builds on T090 (`f56e037f`, on `develop`).
+Nothing built.
 
 ## 1. Problem
 
@@ -31,7 +30,7 @@ T090 fixed, on the resume path only.
   for the highest aliquot (`persister.cpp:64`). Same truth the numbering
   comes from, whatever queue or session made the run.
 
-Proposed: B. (Question 1.)
+Chosen: B (owner, 2026-10-15).
 
 ## 3. Interface
 
@@ -77,14 +76,16 @@ class IAnalysisPersister {
    `0 <= t < s`: reuse its aliquot and remember it. Otherwise
    `next_aliquot()` as now.
 3. An error from `last_run`: the allocation fails with it (run does not
-   start), as an error from `next_aliquot` does. (Question 2.)
+   start), as an error from `next_aliquot` does (owner, 2026-10-15). No
+   fallback to a new aliquot.
 
 - Step A or no step: never asks `last_run` (always a new aliquot), as now.
 - Asked once per identifier per session: after it, memory answers.
 - Holds after a restart, in another queue, and on another day: a heating
   whose B, C ... come in a later queue joins the aliquot whose last saved
   step is before them. Same rule as within a session (T090): a step after
-  the last saved step of the identifier's newest aliquot.
+  the last saved step of the identifier's newest aliquot (owner,
+  2026-10-15).
 
 ## 5. Rules
 
@@ -111,15 +112,12 @@ class IAnalysisPersister {
   allocator over the same persister resumes at B: B and C get A's aliquot.
 - `elctl` `--resume` test of the same shape (`apps/elctl/tests/test_exp_commands.cpp`).
 
-## 7. Questions for owner
+## 7. Owner, 2026-10-15
 
-1. Source: the persister (proposed, B) or `executor_state.json` (A)?
-2. `last_run` failing (store down at a run's start): fail the run
-   (proposed, as `next_aliquot` failing does), or fall back to a new
-   aliquot with a warning?
+1. Source: the persister (B), not `executor_state.json` (2).
+2. `last_run` failing: the run fails, as when `next_aliquot` fails (4).
 3. A heating continued on another day or in another queue joins the old
-   aliquot (proposed, follows from B), or only within the queue that
-   started it?
+   aliquot (4).
 
 ## 8. Out of scope
 
@@ -127,3 +125,7 @@ class IAnalysisPersister {
   this keeps assignment at run start.
 - `NoDatabasePersister`, which refuses to run anything.
 - Changing T090's in-session rule.
+
+## Open questions
+
+None.
