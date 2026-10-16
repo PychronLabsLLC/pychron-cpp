@@ -54,8 +54,13 @@ QString outcome(const jobs::PeakCenterResult& r) {
 
 }  // namespace
 
-PeakCenterView::PeakCenterView(std::map<std::string, QColor> colors, QWidget* parent)
-    : QWidget(parent), colors_(std::move(colors)), title_(new QLabel), plot_(new QCustomPlot) {
+PeakCenterView::PeakCenterView(std::map<std::string, QColor> colors,
+                               std::map<std::string, std::size_t> palette_slots, QWidget* parent)
+    : QWidget(parent),
+      colors_(std::move(colors)),
+      palette_slots_(std::move(palette_slots)),
+      title_(new QLabel),
+      plot_(new QCustomPlot) {
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(title_);
@@ -69,6 +74,10 @@ PeakCenterView::PeakCenterView(std::map<std::string, QColor> colors, QWidget* pa
   plot_->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignLeft);
   plot_->setPlottingHint(QCP::phFastPolylines, true);
   connect(plot_, &QCustomPlot::mouseMove, this, &PeakCenterView::on_mouse_move);
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, [this] {
+    plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
+    redraw();  // the pens, from plot_style()
+  });
   title_->setText(tr("No peak center"));
 }
 
@@ -146,7 +155,9 @@ QCustomPlot* PeakCenterView::plot() const { return plot_; }
 
 QColor PeakCenterView::color_of(const std::string& detector, std::size_t index) const {
   auto it = colors_.find(detector);
-  return it != colors_.end() && it->second.isValid() ? it->second : StripChartModel::palette_color(index);
+  if (it != colors_.end() && it->second.isValid()) return it->second;
+  auto slot = palette_slots_.find(detector);
+  return StripChartModel::palette_color(slot != palette_slots_.end() ? slot->second : index);
 }
 
 std::vector<PeakCenterView::Drawn> PeakCenterView::build() const {

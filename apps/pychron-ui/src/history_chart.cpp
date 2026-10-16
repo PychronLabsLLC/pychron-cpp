@@ -46,11 +46,18 @@ HistoryChart::HistoryChart(QWidget* parent)
   stack_->addWidget(empty_);  // the stack owns both
   stack_->addWidget(plot_);
 
-  plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
   plot_->legend->setVisible(false);
   plot_->setPlottingHint(QCP::phFastPolylines, true);  // as StripChartView: a day of points is many
-  QCPGraph* graph = plot_->addGraph();
-  graph->setPen(QPen(plot_style().series[0], 1.5));
+  plot_->addGraph();
+  const auto style = [this] {
+    plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
+    plot_->graph(0)->setPen(QPen(plot_style().series[0], 1.5));
+  };
+  style();
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, [this, style] {
+    style();
+    plot_->replot();
+  });
   redraw();
 }
 

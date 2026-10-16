@@ -7,6 +7,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "plot_style.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -15,7 +17,7 @@ std::vector<DetectorSeries> series_for(const config::SystemConfig& config) {
   std::vector<DetectorSeries> out;
   for (std::size_t i = 0; i < config.heaters.size(); ++i) {
     const auto& h = config.heaters[i];
-    out.push_back({h.name, StripChartModel::palette_color(i), QString::fromStdString(h.units), {}, true});
+    out.push_back({h.name, StripChartModel::palette_color(i), QString::fromStdString(h.units), {}, true, i});
   }
   return out;
 }
@@ -41,8 +43,9 @@ HeaterDock::HeaterDock(CoreBridge& bridge, QWidget* parent)
     const QString units = QString::fromStdString(h.units);
     Row row;
     auto* name = new QLabel(QString::fromStdString(h.name), body);
+    name->setObjectName(QStringLiteral("heater_name_") + QString::fromStdString(h.name));
     name->setToolTip(QString::fromStdString(h.description));
-    name->setStyleSheet(QStringLiteral("color: %1").arg(StripChartModel::palette_color(static_cast<std::size_t>(r)).name()));
+    names_.push_back(name);
     row.power = new QPushButton(QStringLiteral("Off"), body);
     row.power->setCheckable(true);
     row.power->setToolTip(QStringLiteral("Switch the heater on or off"));
@@ -80,6 +83,13 @@ HeaterDock::HeaterDock(CoreBridge& bridge, QWidget* parent)
     if (auto it = bridge_.state().heaters.find(heater); it != bridge_.state().heaters.end()) show_sample(it->second);
     ++r;
   }
+
+  const auto color_names = [this] {
+    for (std::size_t i = 0; i < names_.size(); ++i)
+      names_[i]->setStyleSheet(QStringLiteral("color: %1").arg(StripChartModel::palette_color(i).name()));
+  };
+  color_names();
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, color_names);
 
   status_ = new QLabel(body);
   status_->setWordWrap(true);

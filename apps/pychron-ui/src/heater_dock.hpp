@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <QCheckBox>
 #include <QDockWidget>
@@ -70,6 +71,7 @@ class HeaterDock : public QDockWidget {
   std::unique_ptr<StripChartModel> model_;
   StripChartView* chart_ = nullptr;
   std::map<std::string, Row> rows_;
+  std::vector<QLabel*> names_;  // a heater's, in config order: coloured as its line
   QLabel* status_ = nullptr;
 };
 

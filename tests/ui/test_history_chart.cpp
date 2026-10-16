@@ -11,6 +11,7 @@
 #include <qcustomplot.h>
 
 #include "history_chart.hpp"
+#include "plot_style.hpp"
 #include "reading_history.hpp"
 
 using namespace std::chrono_literals;
@@ -46,6 +47,22 @@ class TestHistoryChart : public QObject {
   Q_OBJECT
 
  private slots:
+  void cleanup() { pychron::ui::set_plot_style(pychron::ui::default_plot_style()); }
+
+  void background_and_pen_follow_a_palette_change() {
+    HistoryChart chart;
+    chart.set_series(series_of({{-30, 1.0}, {0, 3.0}}), 600s, QDateTime());
+    auto* plot = chart.findChild<QCustomPlot*>();
+    QCOMPARE(plot->axisRect()->backgroundBrush().color(), pychron::ui::plot_style().plot_background);
+    pychron::ui::PlotStyle style = pychron::ui::default_plot_style();
+    style.plot_background = QColor("#fafad2");
+    style.series[0] = QColor("#123456");
+    pychron::ui::set_plot_style(style);
+    QCOMPARE(plot->axisRect()->backgroundBrush().color().name(), QStringLiteral("#fafad2"));
+    QCOMPARE(graph_of(chart)->pen().color().name(), QStringLiteral("#123456"));
+    QCOMPARE(chart.point_count(), 2);  // the data stays
+  }
+
   void drawsThePointsOfTheRange() {
     HistoryChart chart;
     chart.set_series(series_of({{-30, 1.0}, {-20, 2.0}, {-15, kNaN}, {0, 3.0}}), 600s, QDateTime());

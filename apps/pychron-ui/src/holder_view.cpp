@@ -45,7 +45,11 @@ Frame frame_for(const QRectF& rect, const ps::HolderValue& holder) {
 
 }  // namespace
 
-HolderView::HolderView(QWidget* parent) : QWidget(parent) { setMinimumSize(200, 200); }
+HolderView::HolderView(QWidget* parent) : QWidget(parent) {
+  setMinimumSize(200, 200);
+  // Project colours are the live palette's: painted again when it changes.
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, [this] { update(); });
+}
 
 void HolderView::set_holder(std::optional<ps::HolderValue> holder) {
   holder_ = std::move(holder);

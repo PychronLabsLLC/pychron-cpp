@@ -11,6 +11,7 @@
 #include <QtTest/QtTest>
 
 #include "intensities_model.hpp"
+#include "plot_style.hpp"
 #include "strip_chart_model.hpp"
 #include "theme.hpp"
 
@@ -21,6 +22,7 @@ using pychron::spectrometer::Value;
 using pychron::ui::AxisRange;
 using pychron::ui::DetectorSeries;
 using pychron::ui::IntensitiesModel;
+using pychron::ui::PlotStyle;
 using pychron::ui::StripChartModel;
 using pychron::ui::YScale;
 
@@ -60,6 +62,8 @@ class TestStripChartModel : public QObject {
   Q_OBJECT
 
  private slots:
+  void cleanup() { ui::set_plot_style(ui::default_plot_style()); }
+
   void xIsSecondsSinceFirstReading() {
     StripChartModel m(two());
     m.append(row(100.0, {{"H1", 1.0}}));
@@ -268,7 +272,47 @@ class TestStripChartModel : public QObject {
     QVERIFY(StripChartModel::palette_color(8) != StripChartModel::palette_color(0));
   }
 
+  void restyle_recolors_palette_series_only() {
+    StripChartModel m({{"H1", QColor("#123456"), {}, {}, true}, {"AX", {}, {}, {}, true}});
+    QVERIFY(!m.detectors()[0].palette_slot);
+    QCOMPARE(m.detectors()[1].palette_slot, std::optional<std::size_t>(1));
+    PlotStyle style = ui::default_plot_style();
+    style.series[0] = QColor("#ff0000");
+    style.series[1] = QColor("#00ff00");
+    ui::set_plot_style(style);
+    m.restyle();
+    QCOMPARE(m.detectors()[0].color.name(), QStringLiteral("#123456"));
+    QCOMPARE(m.detectors()[1].color.name(), QStringLiteral("#00ff00"));
+  }
+
   // IntensitiesModel
+
+  void intensities_restyle_recolors_palette_rows_only() {
+    IntensitiesModel m({{"H1", QColor("#123456"), {}, {}, true}, {"AX", {}, {}, {}, true}});
+    QSignalSpy spy(&m, &QAbstractItemModel::dataChanged);
+    PlotStyle style = ui::default_plot_style();
+    style.series[0] = QColor("#ff0000");
+    style.series[1] = QColor("#00ff00");
+    ui::set_plot_style(style);
+    QVERIFY(spy.count() >= 1);  // the model follows the hub by itself
+    const auto swatch = [&m](int r) {
+      return m.data(m.index(r, IntensitiesModel::ColColour), Qt::BackgroundRole).value<QBrush>().color().name();
+    };
+    QCOMPARE(swatch(0), QStringLiteral("#123456"));
+    QCOMPARE(swatch(1), QStringLiteral("#00ff00"));
+  }
+
+  void hub_signals_only_a_change() {
+    QSignalSpy spy(&ui::PlotStyleHub::instance(), &ui::PlotStyleHub::changed);
+    ui::set_plot_style(ui::default_plot_style());
+    QCOMPARE(spy.count(), 0);
+    PlotStyle style = ui::default_plot_style();
+    style.plot_background = QColor("#fafad2");
+    ui::set_plot_style(style);
+    QCOMPARE(spy.count(), 1);
+    ui::set_plot_style(style);
+    QCOMPARE(spy.count(), 1);
+  }
 
   void sigmaOverElevenValuesMatchesHandCalc() {
     IntensitiesModel m(two());

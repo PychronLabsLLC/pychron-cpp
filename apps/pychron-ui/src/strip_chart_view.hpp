@@ -8,6 +8,9 @@
 // draws as a break in the line. On a log axis non-positive values are turned
 // into NaN as well, and the axis is never handed a non-positive or non-finite
 // range.
+//
+// It follows PlotStyleHub::changed: the background, and the pens of the
+// model's palette series (StripChartModel::restyle), are set again.
 
 #include <vector>
 
@@ -59,6 +62,7 @@ class StripChartView : public QWidget {
  private:
   void apply_scale();
   void replot();
+  void restyle();
 
   StripChartModel& model_;
   QCustomPlot* plot_;

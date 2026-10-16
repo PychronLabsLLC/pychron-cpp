@@ -27,10 +27,17 @@ StripChartModel::StripChartModel(std::vector<DetectorSeries> detectors)
     : detectors_(std::move(detectors)) {
   rings_.reserve(detectors_.size());
   for (std::size_t i = 0; i < detectors_.size(); ++i) {
-    if (!detectors_[i].color.isValid()) detectors_[i].color = palette_color(i);
+    auto& d = detectors_[i];
+    if (!d.color.isValid() && !d.palette_slot) d.palette_slot = i;
+    if (d.palette_slot) d.color = palette_color(*d.palette_slot);
     rings_.emplace_back(kRingFactor * scan_width_);
     index_[detectors_[i].name] = i;
   }
+}
+
+void StripChartModel::restyle() {
+  for (auto& d : detectors_)
+    if (d.palette_slot) d.color = palette_color(*d.palette_slot);
 }
 
 void StripChartModel::append(const spectrometer::IntensityReading& r) {

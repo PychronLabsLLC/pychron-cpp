@@ -5,6 +5,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "plot_style.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -13,8 +15,9 @@ QString kelvin_text(double kelvin) { return QStringLiteral("%1 K").arg(kelvin, 0
 
 std::vector<DetectorSeries> series_for(const std::vector<std::string>& inputs) {
   std::vector<DetectorSeries> out;
+  out.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
-    out.push_back({inputs[i], StripChartModel::palette_color(i), QStringLiteral("K"), {}, true});
+    out.push_back({inputs[i], StripChartModel::palette_color(i), QStringLiteral("K"), {}, true, i});
   }
   return out;
 }
@@ -41,10 +44,17 @@ CryoDock::CryoDock(CoreBridge& bridge, QWidget* parent)
       label->setText(kelvin_text(it->second));
     }
     auto* name = new QLabel(QStringLiteral("Input %1").arg(QString::fromStdString(input)), body);
-    name->setStyleSheet(QStringLiteral("color: %1").arg(StripChartModel::palette_color(i).name()));
+    name->setObjectName(QStringLiteral("cryo_name_") + QString::fromStdString(input));
     form->addRow(name, label);
     temperatures_[input] = label;
+    names_.push_back(name);
   }
+  const auto color_names = [this] {
+    for (std::size_t i = 0; i < names_.size(); ++i)
+      names_[i]->setStyleSheet(QStringLiteral("color: %1").arg(StripChartModel::palette_color(i).name()));
+  };
+  color_names();
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, color_names);
 
   for (int output = 1; output <= bridge_.cryo_outputs(); ++output) {
     Loop loop;

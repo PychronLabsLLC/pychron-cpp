@@ -26,6 +26,10 @@
 // Cleared when a run starts; the peak center graph and its kept results only
 // when a queue starts (clear_peak_centers). Points arrive in the bridge's
 // SeriesUpdated batches; repaints are capped at 20 Hz.
+//
+// A series' colour is its detector's config colour, or else a slot of the
+// live palette; on PlotStyleHub::changed the panels take the new background
+// and the palette series their slot's new colour. A config colour stays.
 
 #include <map>
 #include <string>
@@ -82,8 +86,12 @@ class EvolutionsView : public QWidget {
   // the plot grows and its area scrolls.
   static constexpr int kPanelMinHeight = 80;
 
-  // `colors`: detector -> colour (spectrometer config); others use the palette.
-  explicit EvolutionsView(std::map<std::string, QColor> colors = {}, QWidget* parent = nullptr);
+  // `colors`: detector -> colour, the spectrometer config's only.
+  // `palette_slots`: detector -> palette slot, for a detector without one
+  // (its index in the config); a detector in neither takes the first slot
+  // no series of its kind has.
+  explicit EvolutionsView(std::map<std::string, QColor> colors = {},
+                          std::map<std::string, std::size_t> palette_slots = {}, QWidget* parent = nullptr);
 
   void on_run_started(const experiment::executor::RunStarted& e);
   void on_series(const std::vector<experiment::collect::SeriesUpdated>& batch);
@@ -124,6 +132,7 @@ class EvolutionsView : public QWidget {
   struct Line {
     QVector<double> t, v;
     QColor color;
+    std::optional<std::size_t> palette_slot;  // set: color follows the palette
     std::optional<reduction::Intercept> fit;
     double time_zero = 0;  // seconds since the epoch, as t
   };
@@ -141,8 +150,10 @@ class EvolutionsView : public QWidget {
   void on_peak_line(const QListWidgetItem* item);
   void rebuild();  // graphs for the shown kind
   void refresh();  // push data, rescale, replot
+  void restyle();  // PlotStyleHub::changed
 
   std::map<std::string, QColor> colors_;
+  std::map<std::string, std::size_t> palette_slots_;
   std::map<experiment::collect::SeriesKey, Line> lines_;
   std::vector<experiment::collect::SeriesKey> arrived_;  // every key, in the order its first point came
   std::vector<Graphs> graphs_;                          // a panel a series of the shown kind

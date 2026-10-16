@@ -5,12 +5,16 @@
 #include <memory>
 #include <optional>
 
+#include <QLabel>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
+
+#include <qcustomplot.h>
 
 #include "core_bridge.hpp"
 #include "heater_dock.hpp"
 #include "main_window.hpp"
+#include "plot_style.hpp"
 #include "ui_fixture.hpp"
 
 using namespace pychron;
@@ -27,9 +31,23 @@ class TestHeaterDock : public QObject {
   }
 
   void cleanup() {
+    ui::set_plot_style(ui::default_plot_style());
     line_->stop();
     bridge_.reset();
     line_.reset();
+  }
+
+  void name_labels_follow_a_palette_change() {
+    HeaterDock dock(*bridge_);
+    auto* name = dock.findChild<QLabel*>(QStringLiteral("heater_name_bake"));
+    QVERIFY(name != nullptr);
+    QVERIFY(name->styleSheet().contains(ui::plot_series_color(1).name()));
+    ui::PlotStyle style = ui::default_plot_style();
+    style.plot_background = QColor("#fafad2");
+    for (std::size_t i = 0; i < style.series.size(); ++i) style.series[i] = QColor::fromHsv(static_cast<int>(i) * 25, 200, 150);
+    ui::set_plot_style(style);
+    QVERIFY(name->styleSheet().contains(QColor::fromHsv(25, 200, 150).name()));
+    QCOMPARE(dock.chart()->plot()->graph(1)->pen().color().name(), QColor::fromHsv(25, 200, 150).name());
   }
 
   void aRowPerHeaterFilledByTheFirstScan() {

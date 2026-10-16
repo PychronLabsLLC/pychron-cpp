@@ -21,6 +21,10 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <qcustomplot.h>
+
+#include "plot_style.hpp"
+#include "preferences.hpp"
 #include "spectrometer_bridge.hpp"
 #include "spectrometer_fixture.hpp"
 #include "settings_guard.hpp"
@@ -115,9 +119,39 @@ class TestSpectrometerWindow : public QObject {
   }
 
   void cleanup() {
+    ui::set_plot_style(ui::default_plot_style());
     window_.reset();
     bridge_.reset();
     sim_.reset();
+  }
+
+  void a_config_color_survives_a_palette_change() {
+    // H1 keeps a colour of its own; AX has none, so it takes palette slot 2.
+    bridge_.reset();
+    sim_ = ui::test::make_sim_spectrometer([](spectrometer::cfg::SpectrometerData& data) {
+      data.config.detectors[std::size_t{kH1}].color = "#123456";
+      data.config.detectors[std::size_t{kAX}].color.clear();
+    });
+    bridge_ = std::make_unique<SpectrometerBridge>(*sim_->spec, *sim_->scan, sim_->bus);
+    open();
+    const auto pen = [this](int d) { return window_->chart_view()->plot()->graph(d)->pen().color().name(); };
+    const auto swatch = [this](int d) {
+      return window_->intensities()->index(d, IntensitiesModel::ColColour).data(Qt::BackgroundRole).value<QBrush>().color().name();
+    };
+    QCOMPARE(pen(kAX), ui::plot_series_color(std::size_t{kAX}).name());
+
+    ui::Preferences preferences;
+    preferences.plot_background = "#fafad2";
+    for (int slot = 1; slot <= ui::Preferences::kPlotSeriesSlots; ++slot)
+      preferences.plot_series_colors[slot] = QColor::fromHsv(slot * 25, 200, 150).name().toStdString();
+    ui::apply_application_preferences(preferences);
+
+    const QString slot_color = QColor::fromHsv((kAX + 1) * 25, 200, 150).name();
+    QCOMPARE(pen(kH1), QStringLiteral("#123456"));
+    QCOMPARE(swatch(kH1), QStringLiteral("#123456"));
+    QCOMPARE(pen(kAX), slot_color);
+    QCOMPARE(swatch(kAX), slot_color);
+    QCOMPARE(window_->chart_view()->plot()->axisRect()->backgroundBrush().color().name(), QStringLiteral("#fafad2"));
   }
 
   void openingStartsScanAndLinesGainPoints() {

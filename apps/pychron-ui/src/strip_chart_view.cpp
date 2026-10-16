@@ -58,7 +58,17 @@ StripChartView::StripChartView(StripChartModel& model, QWidget* parent)
 
   deferred_.setSingleShot(true);
   connect(&deferred_, &QTimer::timeout, this, [this] { replot(); });
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, [this] { restyle(); });
   refresh();
+}
+
+void StripChartView::restyle() {
+  model_.restyle();
+  plot_->axisRect()->setBackground(QBrush(plot_style().plot_background));
+  const auto& detectors = model_.detectors();
+  for (std::size_t i = 0; i < detectors.size(); ++i)
+    plot_->graph(static_cast<int>(i))->setPen(QPen(detectors[i].color, 1.5));
+  replot();
 }
 
 void StripChartView::set_y_label(const QString& label) { plot_->yAxis->setLabel(label); }

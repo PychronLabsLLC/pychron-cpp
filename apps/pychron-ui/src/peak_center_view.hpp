@@ -39,7 +39,11 @@ class PeakCenterView : public QWidget {
   static constexpr std::size_t kKept = 20;
 
   // `colors`: a colour per detector, as the spectrometer config gives them.
-  explicit PeakCenterView(std::map<std::string, QColor> colors = {}, QWidget* parent = nullptr);
+  // `palette_slots`: the live palette's slot of a detector without one; a
+  // detector in neither takes its place in the sweep. Background and palette
+  // colours follow PlotStyleHub::changed.
+  explicit PeakCenterView(std::map<std::string, QColor> colors = {},
+                          std::map<std::string, std::size_t> palette_slots = {}, QWidget* parent = nullptr);
 
   void on_try_started(const jobs::PeakCenterTryStarted& e);
   void on_point(const jobs::PeakCenterPoint& e);
@@ -90,6 +94,7 @@ class PeakCenterView : public QWidget {
   [[nodiscard]] QString heading() const;
 
   std::map<std::string, QColor> colors_;
+  std::map<std::string, std::size_t> palette_slots_;
   QLabel* title_;
   QCustomPlot* plot_;
 

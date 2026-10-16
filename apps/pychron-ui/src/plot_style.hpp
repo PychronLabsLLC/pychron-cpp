@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <QColor>
+#include <QObject>
 
 namespace pychron::ui {
 
@@ -36,6 +37,24 @@ struct Preferences;
 void store_plot_style(const PlotStyle& style, Preferences& preferences);
 // Makes `style` the current one. Series short of 12 (or none) are filled from
 // the default; an invalid background reads as the default. GUI thread.
+// PlotStyleHub::changed is emitted when the result differs from the style
+// that was current.
 void set_plot_style(PlotStyle style);
+
+// Tells the open live plots that plot_style() changed. Each connects to
+// changed() when it is made and, on it, sets its background and the pens of
+// its palette series again; a colour configured for one detector stays.
+class PlotStyleHub : public QObject {
+  Q_OBJECT
+
+ public:
+  static PlotStyleHub& instance();  // GUI thread
+
+ signals:
+  void changed();
+
+ private:
+  PlotStyleHub() = default;
+};
 
 }  // namespace pychron::ui

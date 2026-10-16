@@ -78,7 +78,14 @@ void set_plot_style(PlotStyle style) {
     if (!style.series[i].isValid()) style.series[i] = defaults.series[i];
   for (std::size_t i = style.series.size(); i < defaults.series.size(); ++i) style.series.push_back(defaults.series[i]);
   if (!style.plot_background.isValid()) style.plot_background = defaults.plot_background;
+  if (style == current_style()) return;
   current_style() = std::move(style);
+  emit PlotStyleHub::instance().changed();
+}
+
+PlotStyleHub& PlotStyleHub::instance() {
+  static auto* hub = new PlotStyleHub;  // lives for the whole process
+  return *hub;
 }
 
 }  // namespace pychron::ui

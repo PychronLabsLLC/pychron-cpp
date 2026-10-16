@@ -104,13 +104,15 @@ std::vector<DetectorSeries> SpectrometerBridge::detectors() const {
   for (std::size_t i = 0; i < configured.size(); ++i) {
     const auto& d = configured[i];
     QColor color(QString::fromStdString(d.color));  // invalid when empty
+    std::optional<std::size_t> slot;
     if (!color.isValid()) {
+      slot = i;  // none configured: the palette's, and it follows a change of it
       color = StripChartModel::palette_color(i);
     }
     auto isotope = state_.isotopes.find(d.name);
     out.push_back(DetectorSeries{d.name, color, QString::fromStdString(d.units),
                                  QString::fromStdString(isotope != state_.isotopes.end() ? isotope->second : d.isotope),
-                                 true});
+                                 true, slot});
   }
   return out;
 }

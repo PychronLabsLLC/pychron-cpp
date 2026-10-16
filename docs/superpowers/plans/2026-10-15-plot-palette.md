@@ -217,18 +217,18 @@ Departs from spec 4.2 wording ("each window hands the new style to its live plot
   - `EvolutionsView(std::map<std::string, QColor> colors = {}, std::map<std::string, std::size_t> palette_slots = {}, QWidget* parent = nullptr)`: `colors` only config colours; `palette_slots` detector → index for detectors without one (`experiment_window.cpp` `detector_colors` split into the two maps). `Line` gains `std::optional<std::size_t> palette_slot`; the first-unused-colour search records the slot it picked.
   - Each view connects to `PlotStyleHub::changed` in its constructor and, on it, sets the axis-rect background(s), re-pens slotted graphs and replots: `StripChartView`, `EvolutionsView`, `PeakCenterView`, `HistoryChart`; `PatternMakerWindow`'s canvas and `HolderView` call `update()`; heater / cryo docks refresh their name labels' colour.
 
-- [ ] **Step 1: Write the failing tests** (each restores `set_plot_style(default_plot_style())` in `cleanup()`):
+- [x] **Step 1: Write the failing tests** (each restores `set_plot_style(default_plot_style())` in `cleanup()`):
   - `test_strip_chart_model`: `restyle_recolors_palette_series_only`: model over `{{"H1", QColor("#123456")}, {"AX", {}}}`; `set_plot_style` with `series[1] = "#00ff00"`; `restyle()`; `detectors()[0].color.name() == "#123456"`, `detectors()[1].color.name() == "#00ff00"`.
   - `test_spectrometer_window`: `a_config_color_survives_a_palette_change`: a fixture detector given `color = "#123456"` in config, another without; `apply_application_preferences` with every series slot changed; the configured trace pen and intensities swatch still `#123456`, the other is the new slot colour; `plot()->axisRect()->backgroundBrush().color()` the new background.
   - `test_evolutions_view`: `palette_change_recolors_open_panels` (background and unconfigured line pen follow); `a_config_color_survives_a_palette_change`; `palette_change_keeps_peak_hop_lines_apart` (two isotopes on one detector stay different colours after the change).
   - `test_peak_center_view`, `test_history_chart`: background and series pen follow a `set_plot_style`.
   - `test_cryo_dock`, `test_heater_dock`: name label colour follows (`styleSheet()` contains the new `name()`).
-- [ ] **Step 2: Run, expect FAIL** (build the seven targets; run each).
-- [ ] **Step 3: Implement** the hub, slots and restyle per the Interfaces block. Every view's background and series pens come from `plot_style()`; no literal.
-- [ ] **Step 4: Run the seven binaries plus `pychron_ui_test_experiment_window`, `pychron_ui_test_spectrometer_bridge`, `pychron_ui_test_laser_views`, `pychron_ui_test_pattern_maker`; expect PASS.**
-- [ ] **Step 5: Amend spec 4.2** ("Apply" bullet): style set by `apply_application_preferences`; views listen to `PlotStyleHub::changed`; list of views as above; config-colour rule unchanged.
-- [ ] **Step 6: Checks** (as Task 2 Step 6).
-- [ ] **Step 7: Commit:** `feat(ui): open live plots follow a change of plot colors`
+- [x] **Step 2: Run, expect FAIL** (build the seven targets; run each).
+- [x] **Step 3: Implement** the hub, slots and restyle per the Interfaces block. Every view's background and series pens come from `plot_style()`; no literal.
+- [x] **Step 4: Run the seven binaries plus `pychron_ui_test_experiment_window`, `pychron_ui_test_spectrometer_bridge`, `pychron_ui_test_laser_views`, `pychron_ui_test_pattern_maker`; expect PASS.**
+- [x] **Step 5: Amend spec 4.2** ("Apply" bullet): style set by `apply_application_preferences`; views listen to `PlotStyleHub::changed`; list of views as above; config-colour rule unchanged.
+- [x] **Step 6: Checks** (as Task 2 Step 6).
+- [x] **Step 7: Commit:** `feat(ui): open live plots follow a change of plot colors`
 
 ---
 

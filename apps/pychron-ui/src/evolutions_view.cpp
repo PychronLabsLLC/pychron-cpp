@@ -53,9 +53,11 @@ std::vector<EvolutionPanel> evolution_panels(const std::vector<SeriesKey>& arriv
   return out;
 }
 
-EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* parent)
+EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors,
+                               std::map<std::string, std::size_t> palette_slots, QWidget* parent)
     : QWidget(parent),
       colors_(colors),
+      palette_slots_(palette_slots),
       tabs_(new QTabBar),
       title_(new QLabel),
       plot_(new QCustomPlot),
@@ -65,7 +67,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
       intercepts_(new QTableWidget),
       pages_(new QStackedWidget),
       kind_page_(new QWidget),
-      peak_view_(new PeakCenterView(std::move(colors))) {
+      peak_view_(new PeakCenterView(std::move(colors), std::move(palette_slots))) {
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
   for (auto k : kKinds) {
@@ -115,7 +117,15 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors, QWidget* pa
     if (dirty_) refresh();
   });
   refresh_.start();
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, &EvolutionsView::restyle);
   title_->setText(tr("No run"));
+}
+
+void EvolutionsView::restyle() {
+  for (auto& [key, line] : lines_)
+    if (line.palette_slot) line.color = StripChartModel::palette_color(*line.palette_slot);
+  rebuild();  // the panels again: background and pens from plot_style()
+  refresh();
 }
 
 void EvolutionsView::on_tab(int index) {
@@ -178,13 +188,21 @@ void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpda
         auto c = colors_.find(key.detector);
         line.color = c != colors_.end() && !used.contains(c->second.rgb()) ? c->second : QColor();
         if (!line.color.isValid()) {
-          line.color = StripChartModel::palette_color(used.size());  // every palette colour taken: cycle
-          for (std::size_t i = 0; i < plot_style().series.size(); ++i) {
-            if (!used.contains(StripChartModel::palette_color(i).rgb())) {
-              line.color = StripChartModel::palette_color(i);
-              break;
+          // The detector's slot, else the first slot no series has; every
+          // palette colour taken: cycle.
+          auto s = palette_slots_.find(key.detector);
+          if (s != palette_slots_.end() && !used.contains(StripChartModel::palette_color(s->second).rgb())) {
+            line.palette_slot = s->second;
+          } else {
+            line.palette_slot = used.size();
+            for (std::size_t i = 0; i < plot_style().series.size(); ++i) {
+              if (!used.contains(StripChartModel::palette_color(i).rgb())) {
+                line.palette_slot = i;
+                break;
+              }
             }
           }
+          line.color = StripChartModel::palette_color(*line.palette_slot);
         }
         it = lines_.emplace(key, std::move(line)).first;
         arrived_.push_back(key);

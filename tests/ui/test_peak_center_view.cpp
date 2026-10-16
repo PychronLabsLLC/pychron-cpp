@@ -12,6 +12,7 @@
 #include <qcustomplot.h>
 
 #include "peak_center_view.hpp"
+#include "plot_style.hpp"
 
 using pychron::jobs::SweepPoint;
 using pychron::ui::PeakCenterView;
@@ -101,6 +102,28 @@ class TestPeakCenterView : public QObject {
   Q_OBJECT
 
  private slots:
+  void cleanup() { pychron::ui::set_plot_style(pychron::ui::default_plot_style()); }
+
+  void background_and_pens_follow_a_palette_change() {
+    PeakCenterView view({{"AX", QColor("#654321")}});
+    feed_live(view, two_tries());
+    QCOMPARE(view.plot()->axisRect()->backgroundBrush().color(), pychron::ui::plot_style().plot_background);
+    pychron::ui::PlotStyle style = pychron::ui::default_plot_style();
+    style.plot_background = QColor("#fafad2");
+    style.series[0] = QColor("#123456");
+    pychron::ui::set_plot_style(style);
+    QCOMPARE(view.plot()->axisRect()->backgroundBrush().color().name(), QStringLiteral("#fafad2"));
+    QCOMPARE(view.plot()->graph(0)->pen().color().name(), QStringLiteral("#123456"));  // H1: the palette's
+    QCOMPARE(view.plot()->graph(1)->pen().color().name(), QStringLiteral("#654321"));  // AX: its own
+    QCOMPARE(view.series().size(), std::size_t{4});  // both tries still drawn
+  }
+
+  void a_palette_slot_gives_an_unconfigured_detector_its_colour() {
+    PeakCenterView view({}, {{"H1", 3}});
+    feed_live(view, two_tries());
+    QCOMPARE(view.plot()->graph(0)->pen().color(), pychron::ui::plot_series_color(3));
+  }
+
   void pointsFedOneByOneGrowTheReferenceSeries() {
     PeakCenterView view;
     view.on_try_started(try_started(0, 2, {}));

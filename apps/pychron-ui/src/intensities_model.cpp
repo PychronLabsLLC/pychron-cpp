@@ -1,4 +1,5 @@
 #include "intensities_model.hpp"
+#include "plot_style.hpp"
 #include "theme.hpp"
 
 #include <cmath>
@@ -15,9 +16,19 @@ QString dash() { return QStringLiteral("—"); }
 IntensitiesModel::IntensitiesModel(std::vector<DetectorSeries> detectors, QObject* parent)
     : QAbstractTableModel(parent) {
   for (std::size_t i = 0; i < detectors.size(); ++i) {
-    if (!detectors[i].color.isValid()) detectors[i].color = StripChartModel::palette_color(i);
-    rows_.push_back(Row{std::move(detectors[i]), std::nullopt, {}});
+    auto& d = detectors[i];
+    if (!d.color.isValid() && !d.palette_slot) d.palette_slot = i;
+    if (d.palette_slot) d.color = StripChartModel::palette_color(*d.palette_slot);
+    rows_.push_back(Row{std::move(d), std::nullopt, {}});
   }
+  connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, &IntensitiesModel::restyle);
+}
+
+void IntensitiesModel::restyle() {
+  for (auto& row : rows_)
+    if (row.series.palette_slot) row.series.color = StripChartModel::palette_color(*row.series.palette_slot);
+  if (!rows_.empty())
+    emit dataChanged(index(0, ColColour), index(static_cast<int>(rows_.size()) - 1, ColColour), {Qt::BackgroundRole});
 }
 
 void IntensitiesModel::update(const spectrometer::IntensityReading& r) {

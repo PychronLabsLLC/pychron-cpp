@@ -74,6 +74,8 @@ class PatternPreview : public QWidget {
     setObjectName(QStringLiteral("preview"));
     setMinimumSize(260, 260);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Painted in plot_style()'s background: again when that changes.
+    connect(&PlotStyleHub::instance(), &PlotStyleHub::changed, this, [this] { update(); });
   }
   void set_path(std::vector<laser::StageXY> path) {
     path_ = std::move(path);

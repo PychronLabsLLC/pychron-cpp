@@ -4,7 +4,8 @@
 // chosen range that ends at the series' newest reading. It owns a copy of what
 // it was last given and redraws it when the scale, the guides or the
 // compactness change. A reading that is no finite number is a break in the line;
-// on a log axis a reading that is not positive is a break too.
+// on a log axis a reading that is not positive is a break too. Background and
+// pen are plot_style()'s, set again on PlotStyleHub::changed.
 
 #include <chrono>
 #include <optional>

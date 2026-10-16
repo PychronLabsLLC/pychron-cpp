@@ -77,14 +77,29 @@ const PlotStyle& plot_style();     // current; GUI thread
 - Grid and axis colours stay theme's (`grid`, `outline`): readable on white
   and on light yellow. A plot background darker than mid grey is accepted
   as given; no contrast correction (owner, 2026-10-15).
-- Apply: the main window and the data window each have
-  `apply_preferences(const Preferences&)` (`main_window.hpp:155`,
-  `data_main_window.hpp:37`, `data_workspace.hpp:52`), called when the
-  dialog is applied. Same path: each window hands the new style to its live
-  plots, which set background and series pens again and replot. Which other
-  windows hold a live plot and have no such method yet (experiment,
-  spectrometer) is for the plan to list. Rule: a colour that came from config or from the user for one
-  detector is not overwritten by a palette change.
+- Apply: main window and data window `apply_preferences(const Preferences&)`
+  (`main_window.hpp:155`, `data_main_window.hpp:37`) stay the path; they call
+  `apply_application_preferences`, which sets style (`set_plot_style`).
+  No window hands style to its plots: `PlotStyleHub::instance()` (QObject,
+  `plot_style.hpp`) emits `changed()` when `set_plot_style` makes style
+  differ; each live view connects in its constructor; view opened later reads
+  `plot_style()` anyway. On `changed()`:
+  - `StripChartView` (spectrometer window, cryo dock, heater dock):
+    `StripChartModel::restyle()`, background, pens, replot.
+  - `IntensitiesModel`: `restyle()`, `dataChanged` on colour column.
+  - `EvolutionsView` (experiment window): palette lines recoloured, panels
+    rebuilt (background, pens).
+  - `PeakCenterView`: background, redraw.
+  - `HistoryChart` (gauge history): background, pen, replot.
+  - `PatternMakerWindow` canvas, `HolderView`: `update()`.
+  - cryo, heater docks: name labels recoloured.
+- Rule: a colour that came from config for one detector is not overwritten
+  by a palette change. `DetectorSeries::palette_slot` set means colour is
+  `plot_series_color(slot)` and follows palette; unset means config colour,
+  never changed. `EvolutionsView` / `PeakCenterView` take config colours and
+  detector → slot map apart (`experiment_window.cpp` `detector_colors`); a
+  line on a detector whose slot is taken (peak hopping) gets first free slot,
+  kept on change, so lines stay apart.
 - New views that draw live (`PeakCenterView`, gauge history, rise rate
   marks) take series colours and background from `plot_style()`, never
   literals. Stated in `apps/pychron-ui/AGENTS.md`.

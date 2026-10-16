@@ -38,15 +38,31 @@ namespace {
 
 namespace exec = experiment::executor;
 
-std::map<std::string, QColor> detector_colors(const experiment::lab::Lab& lab) {
-  std::map<std::string, QColor> out;
+// The config's detector colours, and the palette slot (the config index) of
+// each detector without one: that colour follows a change of the palette.
+struct DetectorColors {
+  std::map<std::string, QColor> colors;
+  std::map<std::string, std::size_t> palette_slots;
+};
+
+DetectorColors detector_colors(const experiment::lab::Lab& lab) {
+  DetectorColors out;
   if (!lab.spectrometer) return out;
   const auto& detectors = lab.spectrometer->config.detectors;
   for (std::size_t i = 0; i < detectors.size(); ++i) {
     QColor c(QString::fromStdString(detectors[i].color));
-    out[detectors[i].name] = c.isValid() ? c : StripChartModel::palette_color(i);
+    if (c.isValid()) {
+      out.colors[detectors[i].name] = c;
+    } else {
+      out.palette_slots[detectors[i].name] = i;
+    }
   }
   return out;
+}
+
+EvolutionsView* make_evolutions(const experiment::lab::Lab& lab) {
+  auto [colors, palette_slots] = detector_colors(lab);
+  return new EvolutionsView(std::move(colors), std::move(palette_slots));  // the window's layout takes it
 }
 
 }  // namespace
@@ -61,7 +77,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
       table_(new QTableView),
       diagnostics_(new QLabel),
       pane_(new ExecutorPane(bridge)),
-      evolutions_(new EvolutionsView(detector_colors(bridge.lab()))),
+      evolutions_(make_evolutions(bridge.lab())),
       factory_(new RunFactoryPanel(bridge.lab(), model_, [this] { return selected_rows(); })),
       measurement_(new MeasurementPanel(bridge.lab(), model_, [this] { return selected_rows(); })) {
   setObjectName(QStringLiteral("ExperimentWindow"));

@@ -28,6 +28,9 @@ class IntensitiesModel : public QAbstractTableModel {
   explicit IntensitiesModel(std::vector<DetectorSeries> detectors, QObject* parent = nullptr);
 
   void update(const spectrometer::IntensityReading& r);
+  // Palette rows take the current plot_style()'s colours again (dataChanged
+  // on the colour column). Called on PlotStyleHub::changed.
+  void restyle();
   void set_isotope(const std::string& detector, const QString& isotope);
   // Whether the detector's line is drawn in the strip chart. A row that does
   // not exist is ignored (and is shown).

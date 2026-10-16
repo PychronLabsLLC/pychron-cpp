@@ -31,6 +31,10 @@ struct DetectorSeries {
   QString units;
   QString isotope;
   bool visible = true;
+  // Set: the colour is the live palette's slot (plot_series_color) and
+  // follows a change of it (restyle). Unset: the colour is the config's and is
+  // never changed. A model given an invalid colour sets it to the index.
+  std::optional<std::size_t> palette_slot = std::nullopt;
 };
 
 enum class YScale { Linear, Log };
@@ -47,6 +51,8 @@ class StripChartModel {
   explicit StripChartModel(std::vector<DetectorSeries> detectors);
 
   const std::vector<DetectorSeries>& detectors() const { return detectors_; }
+  // The palette series take the current plot_style()'s colours again.
+  void restyle();
   const TimeSeriesRing& series(std::size_t i) const { return rings_[i]; }
 
   // A timestamp earlier than the previous row's resets the chart. Detector

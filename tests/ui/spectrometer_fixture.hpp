@@ -5,6 +5,7 @@
 // follow the config's field table. Nothing scans until a test starts it.
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 
 #include <QtTest/QtTest>
@@ -43,14 +44,21 @@ struct SimSpectrometer {
   }
 };
 
-inline std::unique_ptr<SimSpectrometer> make_sim_spectrometer() {
+// `edit`, when given, changes the loaded config before the spectrometer is
+// built from it (a detector's colour, say).
+inline std::unique_ptr<SimSpectrometer> make_sim_spectrometer(
+    const std::function<void(spectrometer::cfg::SpectrometerData&)>& edit = {}) {
   const std::filesystem::path dir = PYCHRON_EXAMPLE_CONFIGS_DIR;
   sim::BeamModelRegistry::global().clear();
+  auto data = spectrometer::cfg::load_spectrometer(dir / "spectrometer.sim-integrated.toml");
+  if (!data) {
+    qFatal("cannot load sim spectrometer config: %s", to_string(data.error()).c_str());
+  }
+  if (edit) edit(*data);
   auto sim = std::make_unique<SimSpectrometer>();
   sim->scheduler.start();
   auto spec = spectrometer::load_spectrometer_for_app(
-      dir / "spectrometer.sim-integrated.toml",
-      spectrometer::SpectrometerContext{sim->clock, sim->scheduler, sim->bus},
+      std::move(*data), spectrometer::SpectrometerContext{sim->clock, sim->scheduler, sim->bus},
       spectrometer::SpectrometerBringup{.sim_beam_from_table = true});
   if (!spec) {
     qFatal("cannot load sim spectrometer: %s", to_string(spec.error()).c_str());

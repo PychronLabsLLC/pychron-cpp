@@ -15,6 +15,7 @@
 
 #include "evolutions_view.hpp"
 #include "peak_center_view.hpp"
+#include "plot_style.hpp"
 
 using pychron::experiment::collect::FitsUpdated;
 using pychron::experiment::collect::SeriesFit;
@@ -160,6 +161,56 @@ class TestEvolutionsView : public QObject {
     return out;
   }
   static bool holds(std::pair<double, double> range, double v) { return range.first <= v && v <= range.second; }
+
+  // ---------------------------------------------------------------- plot colours
+  void cleanup() { pychron::ui::set_plot_style(pychron::ui::default_plot_style()); }
+
+  static pychron::ui::PlotStyle changed_style() {
+    pychron::ui::PlotStyle style = pychron::ui::default_plot_style();
+    style.plot_background = QColor("#fafad2");
+    for (std::size_t i = 0; i < style.series.size(); ++i) style.series[i] = QColor::fromHsv(static_cast<int>(i) * 25, 200, 150);
+    return style;
+  }
+  // The pen of panel `i`'s points: a panel is four graphs, points first.
+  static QColor panel_pen(const EvolutionsView& view, int i) { return view.plot()->graph(4 * i)->pen().color(); }
+
+  void palette_change_recolors_open_panels() {
+    EvolutionsView view({}, {{"AX", 2}});
+    const SeriesKey ar39{"Ar39", "AX", SeriesKind::Signal};
+    view.on_series(readings(ar39, {{1, 5}, {2, 6}}));
+    QCOMPARE(view.series_color(ar39), pychron::ui::plot_series_color(2));
+    pychron::ui::set_plot_style(changed_style());
+    QCOMPARE(view.series_color(ar39).name(), QColor::fromHsv(50, 200, 150).name());
+    QCOMPARE(panel_pen(view, 0).name(), QColor::fromHsv(50, 200, 150).name());
+    QCOMPARE(view.plot()->axisRect(0)->backgroundBrush().color().name(), QStringLiteral("#fafad2"));
+    QCOMPARE(view.point_count(SeriesKind::Signal), std::size_t{2});  // the points stay
+  }
+
+  void a_config_color_survives_a_palette_change() {
+    EvolutionsView view({{"H1", QColor("#123456")}}, {{"AX", 2}});
+    const SeriesKey ar40{"Ar40", "H1", SeriesKind::Signal};
+    const SeriesKey ar39{"Ar39", "AX", SeriesKind::Signal};
+    view.on_series(readings(ar40, {{1, 10}}));
+    view.on_series(readings(ar39, {{1, 5}}));
+    pychron::ui::set_plot_style(changed_style());
+    QCOMPARE(view.series_color(ar40).name(), QStringLiteral("#123456"));
+    QCOMPARE(panel_pen(view, 0).name(), QStringLiteral("#123456"));
+    QCOMPARE(view.series_color(ar39).name(), QColor::fromHsv(50, 200, 150).name());
+  }
+
+  void palette_change_keeps_peak_hop_lines_apart() {
+    EvolutionsView view({}, {{"H1", 0}});
+    const SeriesKey ar40{"Ar40", "H1", SeriesKind::Signal};
+    const SeriesKey ar36{"Ar36", "H1", SeriesKind::Signal};
+    view.on_series(readings(ar40, {{1, 10}}));
+    view.on_series(readings(ar36, {{2, 1}}));
+    QVERIFY(view.series_color(ar40) != view.series_color(ar36));
+    pychron::ui::set_plot_style(changed_style());
+    QVERIFY(view.series_color(ar40) != view.series_color(ar36));
+    QCOMPARE(view.series_color(ar40).name(), QColor::fromHsv(0, 200, 150).name());
+    QCOMPARE(panel_pen(view, 0), view.series_color(ar40));
+    QCOMPARE(panel_pen(view, 1), view.series_color(ar36));
+  }
 
   void onePanelPerSeriesOfTheShownKind() {
     EvolutionsView view;

@@ -62,6 +62,7 @@ class CryoDock : public QDockWidget {
   std::unique_ptr<StripChartModel> model_;
   StripChartView* chart_ = nullptr;
   std::map<std::string, QLabel*> temperatures_;
+  std::vector<QLabel*> names_;  // an input's, in order: coloured as its line
   std::map<int, Loop> loops_;
   QLabel* status_ = nullptr;
 };
