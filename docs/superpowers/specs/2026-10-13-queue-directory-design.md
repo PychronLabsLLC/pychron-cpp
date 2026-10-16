@@ -1,10 +1,11 @@
 # Queue directory: queues under `<lab>/queues/`, blocks under `queues/blocks/`
 
-Status: draft 2026-10-13, not agreed. Written by unattended run for T041.
+Status: agreed 2026-10-15 (owner answered section 8). Written by unattended
+run for T041 on 2026-10-13.
 Follows owner's decisions in `2026-10-13-queue-format-survey.md` section 7
 (format A: TOML stays; queues under `<lab>/queues/`, blocks under
 `queues/blocks/`; no `.txt` importer, no autosave, no `rem`/`ex` copies, no
-comment-preserving writer). Nothing built. Questions: section 8.
+comment-preserving writer). Nothing built.
 
 ## 1. What is there now
 
@@ -59,12 +60,10 @@ comment-preserving writer). Nothing built. Questions: section 8.
 
 ## 3. Rules
 
-- Blocks are read from `<lab>/queues/blocks/`. A lab that still has
-  `<lab>/blocks/` (installs made before this change, hand-made labs): its
-  blocks are read too, and the lab reports one problem line, `blocks/ is
-  read from its old place; move it to queues/blocks/`. When both hold a
-  block of one name, the one in `queues/blocks/` is used and the problem
-  line names it. Nothing is moved by the program. (Question 1.)
+- Blocks are read from `<lab>/queues/blocks/` only. Old `<lab>/blocks/` is
+  dropped (owner, 2026-10-15): not read, not moved, no problem line. A lab
+  that still has one moves it by hand; until then its blocks are not in the
+  run factory, and a queue naming one fails as any unknown block does.
 - A queue may live anywhere; `queues/` is where the program looks and
   saves first, not a requirement. A queue outside it runs as today.
 - Lab of a queue, when not given (`--lab`, `--install`, UI's lab): queue's
@@ -81,6 +80,14 @@ comment-preserving writer). Nothing built. Questions: section 8.
   `<lab>/queues/<name>.toml` and makes the directory if missing.
   `last_queue` setting unchanged.
 - Run factory's empty Block tooltip names `<lab>/queues/blocks`.
+- File > Open Recent in the experiment window (owner, 2026-10-15): queue
+  files opened or saved there, newest first, at most 10, absolute paths in
+  QSettings `experiment_window/recent_queues` (UI state of this
+  workstation, as `last_queue`; not the line's override file). Opening or
+  saving a queue puts it first and drops its older entry. A path that no
+  longer exists is left out when the menu is built and removed from the
+  list. Ends with "Clear Menu". Empty list: submenu disabled. Same rule as
+  Open for unsaved changes in the open queue.
 - Queue file format unchanged: no `schema_version` change, no key added.
 
 ## 4. Setup and example lab
@@ -89,12 +96,13 @@ comment-preserving writer). Nothing built. Questions: section 8.
   "queues/experiment.toml"`, `to = "queues/blocks/blank_pair.toml"`.
   Rules of `libs/setup/AGENTS.md` apply (read before changing; shipped
   queue `ba, a, a, a, ba` unchanged).
-- Existing installs are not rewritten: rule 3's fallbacks cover them.
+- Existing installs are not rewritten. Their root queue is still found
+  (rule 3's lookup); their `blocks/` is not read (rule 3, first item).
 - Example lab: `configs/examples/queues/experiment.toml`,
   `experiment.laser.toml`, `experiment.sim-air.toml`,
   `configs/examples/queues/blocks/blank_pair.toml` (moved with `git mv`).
   Every test and doc line of section 1 updated to the new paths in the same
-  commit as the move. (Question 2.)
+  commit as the move (owner, 2026-10-15: move).
 - Tests that build a lab in a temp directory and write `experiment.toml`
   at its root keep doing so where the test is about something else: a
   queue outside `queues/` is legal.
@@ -109,9 +117,9 @@ commands at `:199`, `:884`, `:904`–`:920`), `07-configuration-reference.md`
 
 ## 6. Tests
 
-- `tests/experiment/test_lab.cpp`: blocks from `queues/blocks/`; old
-  `blocks/` read with its problem line; same name in both, new wins and is
-  named; no `blocks` directory at all is no problem.
+- `tests/experiment/test_lab.cpp`: blocks from `queues/blocks/`; a block
+  in old `blocks/` only is not loaded and gives no problem line; no
+  `blocks` directory at all is no problem.
 - `lab_for_queue` table: `<lab>/queues/x.toml` → `<lab>`;
   `<lab>/x.toml` → `<lab>`; `x.toml` → `.`; `<lab>/queues/sub/x.toml` →
   `<lab>/queues/sub` (no walk past one level).
@@ -124,36 +132,44 @@ commands at `:199`, `:884`, `:904`–`:920`), `07-configuration-reference.md`
   `queues/blocks/blank_pair.toml`, no root `experiment.toml`.
 - `tests/ui`: Open's start directory is `<lab>/queues/` with no last queue;
   Save of a new queue creates `queues/`; `--queue experiment.toml` relative
-  to the lab.
+  to the lab; Open Recent lists opened and saved queues newest first,
+  keeps 10, moves a reopened one to the top, leaves out a deleted file,
+  Clear Menu empties it, choosing an entry opens it.
 
 ## 7. Order of work (for the plan)
 
-1. `LabPaths::queues`/`blocks`, `lab_for_queue`, blocks from both places
-   with the problem line (library, tests).
+1. `LabPaths::queues`/`blocks`, `lab_for_queue`, blocks from
+   `queues/blocks/` only (library, tests).
 2. `elctl`: `--lab` default and install lookup through them (tests).
 3. UI: dialogs' start directory, new queue save, tooltip, `--queue` lookup
    (UI tests).
-4. Setup profile and install tests; example lab moved, tests and docs
-   updated.
+4. UI: File > Open Recent (UI tests).
+5. Setup profile and install tests; example lab moved, tests and docs
+   updated. Lands with 1, in one commit: once the old place is not read,
+   the example's and the profile's block must already be in
+   `queues/blocks/`.
 
 Each lands alone with the tree building and `ctest --preset dev` (or
-`dev-ui` for 3) passing.
+`dev-ui` for 3 and 4) passing.
 
-## 8. Questions for owner
+## 8. Owner, 2026-10-15
 
-1. Old `<lab>/blocks/`: read with a problem line and never moved
-   (proposed), or moved once by the program (`elctl setup` or at lab load),
-   or refused?
-2. Example lab: move its queues into `configs/examples/queues/` (proposed:
-   it is what new labs copy), or leave the example as it is?
-3. UI: a list of the lab's queues (File > Open Recent, or a Queues pane
-   from `queues/`) wanted now, or Open dialog only?
+1. Old `<lab>/blocks/`: dropped. Not read, not moved, no problem line
+   (section 3).
+2. Example lab: its queues and block move into `configs/examples/queues/`
+   (section 4).
+3. UI: File > Open Recent now (section 3); no Queues pane.
 
 ## 9. Out of scope
 
 - Queue format (decided: TOML, section 7 of the survey).
 - Legacy `.txt` queue import, autosave, `rem`/`ex` copies, comment-keeping
   writer (owner: not wanted).
-- Step heat templates (`2026-10-13-step-heat-template-design.md`, draft:
-  proposes `<lab>/step_heats/`, not under `queues/`).
+- Step heat templates (`2026-10-13-step-heat-template-design.md`, agreed:
+  `<lab>/queues/step_heats/`, built by that spec).
+- A Queues pane listing `queues/`; reading or moving old `<lab>/blocks/`.
 - Moving `data/` or `executor_state.json`.
+
+## Open questions
+
+None.
