@@ -181,18 +181,18 @@ QColor plot_series_color(std::size_t slot);  // plot_style().series[slot % size]
   - `ColorField::set_can_be_none(bool)`: false hides `none()` and `color()` is never invalid. Plot fields use it.
   - `PreferencesDialog` accessors for tests: `ColorField* plot_background() const noexcept;`, `ColorField* plot_series(std::size_t slot) const;` (0..11, null past the end), `QPushButton* reset_plot_colors() const noexcept;`.
 
-- [ ] **Step 1: Write the failing tests** in `test_preferences.cpp`:
-  - `plots_page_follows_data`: `pages()->item(2)->text() == "Plots"`; without spectrometer `count() == 4`.
+- [x] **Step 1: Write the failing tests** in `test_preferences.cpp`:
+  - `plots_page_comes_after_the_data_page` (a Qt Test slot ending in `_data` is taken for a data function and never runs): `pages()->item(2)->text() == "Plots"`; without spectrometer `count() == 4`.
   - `plots_page_shows_and_gives_back_the_colors`: dialog over `Preferences` with `plot_series_colors = {{4, "#445566"}}`, `plot_background = "#eeeeee"`; `plot_series(3)->color().name() == "#445566"`, `plot_background()->color().name() == "#eeeeee"`, `!plot_series(0)->none()->isVisible()`; `plot_series(12) == nullptr`; set `plot_series(0)` to `#000001`, `values().preferences.plot_series_colors == {{1, "#000001"}, {4, "#445566"}}`.
   - `reset_plot_colors_gives_the_default_palette`: after reset, every `plot_series(i)->color() == default_plot_style().series[i]`, background white, `values().preferences.plot_series_colors.empty()`, `plot_background.empty()`.
   - `reset_changes_fields_only_until_applied`: open via `MainWindow` preferences path with a background set and applied; press Reset colors, then Cancel; `plot_style().plot_background` still the applied one.
   - `restore_defaults` case (existing `dialog_shows_the_values_and_restores_defaults`) extended: plot fields back to default.
   - Note text present on page: `"Used by the live plots (scan, evolutions, cryostat, heaters). A figure has its own colors in its options."`
-- [ ] **Step 2: Run, expect FAIL** (`pychron_ui_test_preferences`).
-- [ ] **Step 3: Implement the page**: `QFormLayout`; row "Plot background:" ColorField; label "Series colors:" then 12 rows "1:" .. "12:" each a ColorField; "Reset colors" button (`reset_plot_colors_`, separate from the Data page's `reset_colors_`); then `preferences_note(...)` with the text above. Update the page counts in existing tests.
-- [ ] **Step 4: Run `pychron_ui_test_preferences` and `pychron_ui_test_earthbank_preferences`, expect PASS.**
-- [ ] **Step 5: Checks** (as Task 2 Step 6).
-- [ ] **Step 6: Commit:** `feat(ui): Plots page in Preferences`
+- [x] **Step 2: Run, expect FAIL** (`pychron_ui_test_preferences`).
+- [x] **Step 3: Implement the page**: `QFormLayout`; row "Plot background:" ColorField; label "Series colors:" then 12 rows "1:" .. "12:" each a ColorField; "Reset colors" button (`reset_plot_colors_`, separate from the Data page's `reset_colors_`); then `preferences_note(...)` with the text above. Update the page counts in existing tests.
+- [x] **Step 4: Run `pychron_ui_test_preferences` and `pychron_ui_test_earthbank_preferences`, expect PASS.**
+- [x] **Step 5: Checks** (as Task 2 Step 6).
+- [x] **Step 6: Commit:** `feat(ui): Plots page in Preferences`
 
 ---
 

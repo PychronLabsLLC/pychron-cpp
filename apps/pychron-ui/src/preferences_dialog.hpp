@@ -1,7 +1,7 @@
 #pragma once
 
-// File > Preferences…: a page list on the left (Appearance, Data, with a
-// spectrometer Spectrometer, with a line Logging and Metrics, and EarthBank),
+// File > Preferences…: a page list on the left (Appearance, Data, Plots, with
+// a spectrometer Spectrometer, with a line Logging and Metrics, and EarthBank),
 // the page on the right. OK and Apply hand the values to the window's `apply`, which
 // saves and applies them; Restore Defaults only resets the fields; Cancel
 // drops what was not applied.
@@ -14,6 +14,8 @@
 // reads (earthbank_preferences_page.hpp). It is written before anything else,
 // and a row that is wrong likewise leaves the dialog open with nothing applied.
 
+#include <array>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
@@ -25,6 +27,7 @@
 #include <QWidget>
 
 #include "line_settings.hpp"
+#include "plot_style.hpp"
 #include "preferences.hpp"
 #include "row_colors.hpp"
 
@@ -43,8 +46,8 @@ class EarthbankPreferencesPage;
 class LoggingPage;
 class MetricsPage;
 
-// One colour of the Data page: a button showing it that opens the colour
-// dialog, and a box for "no colour".
+// One colour of the Data or Plots page: a button showing it that opens the
+// colour dialog, and a box for "no colour".
 class ColorField : public QWidget {
   Q_OBJECT
 
@@ -52,7 +55,11 @@ class ColorField : public QWidget {
   explicit ColorField(QWidget* parent = nullptr);
   // Invalid: no colour.
   QColor color() const;
+  // An invalid colour is "no colour", or ignored when there can be none.
   void set_color(const QColor& color);
+  // False: the "no colour" box is hidden and color() is a colour once one
+  // was set. A plot colour is never none.
+  void set_can_be_none(bool can);
   QPushButton* button() const noexcept { return button_; }
   QCheckBox* none() const noexcept { return none_; }
   // The colour dialog; tests replace it. Invalid: cancelled.
@@ -62,6 +69,7 @@ class ColorField : public QWidget {
   void show_color();
 
   QColor color_;  // the last one chosen, kept while "no colour" is ticked
+  bool can_be_none_ = true;
   QPushButton* button_;
   QCheckBox* none_;
 };
@@ -116,6 +124,11 @@ class PreferencesDialog : public QDialog {
   // The colour of an analysis type class (row_colors.hpp); null for no class.
   ColorField* type_color(const std::string& type_class) const;
   QPushButton* reset_colors() const noexcept { return reset_colors_; }
+  // The Plots page: the live plots' background and series 0..11 (null past
+  // the last), and its own Reset colors.
+  ColorField* plot_background() const noexcept { return plot_background_; }
+  ColorField* plot_series(std::size_t slot) const;
+  QPushButton* reset_plot_colors() const noexcept { return reset_plot_colors_; }
   QDoubleSpinBox* confirm_move() const noexcept { return confirm_move_; }  // null without a spectrometer
   LoggingPage* logging_page() const noexcept { return logging_; }          // null without a line
   MetricsPage* metrics_page() const noexcept { return metrics_; }          // null without a line
@@ -124,7 +137,11 @@ class PreferencesDialog : public QDialog {
   QDialogButtonBox* buttons() const noexcept { return buttons_; }
 
  private:
+  static constexpr std::size_t kPlotSeries = 12;  // as default_plot_style()
+
   void add_page(const QString& name, QWidget* page);
+  QWidget* make_plots_page();
+  void show_plot_style(const PlotStyle& style);
   // Saves and applies what the fields hold; false (and a word in problem())
   // when a field is wrong or the line's settings could not be saved.
   bool commit();
@@ -141,6 +158,9 @@ class PreferencesDialog : public QDialog {
   QDoubleSpinBox* gap_hours_;
   std::map<std::string, ColorField*> type_colors_;
   QPushButton* reset_colors_;
+  ColorField* plot_background_;
+  std::array<ColorField*, kPlotSeries> plot_series_{};
+  QPushButton* reset_plot_colors_;
   QDoubleSpinBox* confirm_move_ = nullptr;
   LoggingPage* logging_ = nullptr;
   MetricsPage* metrics_ = nullptr;

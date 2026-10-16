@@ -69,7 +69,14 @@ QColor ColorField::color() const { return none_->isChecked() ? QColor() : color_
 
 void ColorField::set_color(const QColor& color) {
   if (color.isValid()) color_ = color;
-  none_->setChecked(!color.isValid());
+  none_->setChecked(can_be_none_ && !color.isValid());
+  show_color();
+}
+
+void ColorField::set_can_be_none(bool can) {
+  can_be_none_ = can;
+  none_->setVisible(can);
+  if (!can) none_->setChecked(false);
   show_color();
 }
 
@@ -101,6 +108,8 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
       page_size_(new QSpinBox),
       gap_hours_(new QDoubleSpinBox),
       reset_colors_(new QPushButton(tr("Reset colors"))),
+      plot_background_(new ColorField),
+      reset_plot_colors_(new QPushButton(tr("Reset colors"))),
       problem_(new QLabel),
       buttons_(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply |
                                     QDialogButtonBox::RestoreDefaults)) {
@@ -151,6 +160,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
     for (const auto& [type_class, field] : type_colors_) field->set_color(*defaults.find(type_class));
   });
   add_page(tr("Data"), data_page);
+  add_page(tr("Plots"), make_plots_page());
 
   if (current.confirm_move_amu) {
     confirm_move_ = new QDoubleSpinBox;
@@ -207,6 +217,41 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
           [this] { restore_defaults(); });
 
   set_values(current);
+}
+
+QWidget* PreferencesDialog::make_plots_page() {
+  auto* page = new QWidget;
+  auto* form = new QFormLayout(page);
+  auto plot_field = [](ColorField* field) {
+    field->set_can_be_none(false);
+    field->ask = [field](const QColor& current) {
+      return QColorDialog::getColor(current, field, tr("Plot color"));
+    };
+  };
+  plot_field(plot_background_);
+  form->addRow(tr("Plot background:"), plot_background_);
+  form->addRow(new QLabel(tr("Series colors:")));
+  for (std::size_t i = 0; i < plot_series_.size(); ++i) {
+    auto* field = new ColorField;
+    plot_field(field);
+    plot_series_[i] = field;
+    form->addRow(tr("%1:").arg(i + 1), field);
+  }
+  form->addRow(QString(), reset_plot_colors_);
+  form->addRow(preferences_note(tr("Used by the live plots (scan, evolutions, cryostat, heaters). "
+                                   "A figure has its own colors in its options.")));
+  connect(reset_plot_colors_, &QPushButton::clicked, this, [this] { show_plot_style(default_plot_style()); });
+  return page;
+}
+
+void PreferencesDialog::show_plot_style(const PlotStyle& style) {
+  plot_background_->set_color(style.plot_background);
+  for (std::size_t i = 0; i < plot_series_.size() && i < style.series.size(); ++i)
+    plot_series_[i]->set_color(style.series[i]);
+}
+
+ColorField* PreferencesDialog::plot_series(std::size_t slot) const {
+  return slot < plot_series_.size() ? plot_series_[slot] : nullptr;
 }
 
 bool PreferencesDialog::commit() {
@@ -287,6 +332,10 @@ PreferencesDialog::Values PreferencesDialog::values() const {
   TypeColors colors;
   for (const auto& [type_class, field] : type_colors_) *colors.find(type_class) = field->color();
   v.preferences.browser_type_colors = type_color_overrides(colors, theme());
+  PlotStyle plots;
+  plots.plot_background = plot_background_->color();
+  for (const ColorField* field : plot_series_) plots.series.push_back(field->color());
+  store_plot_style(plots, v.preferences);
   if (confirm_move_ != nullptr) v.confirm_move_amu = confirm_move_->value();
   if (line_ && logging_ != nullptr && metrics_ != nullptr) {
     v.line = line_;
@@ -303,6 +352,7 @@ void PreferencesDialog::set_values(const Values& values) {
   gap_hours_->setValue(values.preferences.browser_gap_hours);
   const TypeColors colors = ui::type_colors(values.preferences.browser_type_colors, theme());
   for (const auto& [type_class, field] : type_colors_) field->set_color(*colors.find(type_class));
+  show_plot_style(plot_style_from(values.preferences));
   if (confirm_move_ != nullptr && values.confirm_move_amu) confirm_move_->setValue(*values.confirm_move_amu);
   if (values.line && logging_ != nullptr && metrics_ != nullptr) {
     line_ = values.line;

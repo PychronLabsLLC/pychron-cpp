@@ -241,7 +241,7 @@ class TestPreferences : public QObject {
     p.font_pt = 13;
     p.browser_page_size = 300;
     PreferencesDialog d({p, std::nullopt}, {});
-    QCOMPARE(d.pages()->count(), 3);  // no spectrometer page without one
+    QCOMPARE(d.pages()->count(), 4);  // no spectrometer page without one
     QVERIFY(d.confirm_move() == nullptr);
     QCOMPARE(d.font_size()->value(), 13);
     QCOMPARE(d.code_font_size()->text(), QStringLiteral("Default"));
@@ -273,15 +273,87 @@ class TestPreferences : public QObject {
     d.pages()->setCurrentRow(1);
     QCOMPARE(d.stack()->currentIndex(), 1);
 
+    d.plot_series(5)->set_color(QColor(QStringLiteral("#010101")));
+    d.plot_background()->set_color(QColor(QStringLiteral("#020202")));
     click(d.buttons(), QDialogButtonBox::RestoreDefaults);
     QCOMPARE(d.values().preferences, Preferences{});
     QCOMPARE(d.font_size()->text(), QStringLiteral("Default"));
+    QCOMPARE(d.plot_series(5)->color(), ui::default_plot_style().series[5]);
+    QCOMPARE(d.plot_background()->color(), ui::default_plot_style().plot_background);
+  }
+
+  // ---- Plots: the live plots' colours (plot palette spec 4.3) -------------------
+
+  void plots_page_comes_after_the_data_page() {
+    PreferencesDialog d({Preferences{}, std::nullopt}, {});
+    QCOMPARE(d.pages()->item(2)->text(), QStringLiteral("Plots"));
+    QCOMPARE(d.pages()->count(), 4);
+    bool noted = false;
+    for (const auto* l : d.stack()->widget(2)->findChildren<QLabel*>())
+      noted = noted || l->text() == QStringLiteral("Used by the live plots (scan, evolutions, cryostat, heaters). "
+                                                   "A figure has its own colors in its options.");
+    QVERIFY(noted);
+  }
+
+  void plots_page_shows_and_gives_back_the_colors() {
+    Preferences p;
+    p.plot_series_colors = {{4, "#445566"}};
+    p.plot_background = "#eeeeee";
+    PreferencesDialog d({p, std::nullopt}, {});
+    QCOMPARE(d.plot_series(3)->color().name(), QStringLiteral("#445566"));
+    QCOMPARE(d.plot_background()->color().name(), QStringLiteral("#eeeeee"));
+    QCOMPARE(d.plot_series(0)->color(), ui::default_plot_style().series[0]);
+    // A plot colour is never "no colour".
+    QVERIFY(d.plot_series(0)->none()->isHidden());
+    QVERIFY(d.plot_background()->none()->isHidden());
+    QVERIFY(d.plot_series(11) != nullptr);
+    QVERIFY(d.plot_series(12) == nullptr);
+    QCOMPARE(d.values().preferences, p);
+
+    d.plot_series(0)->ask = [](const QColor&) { return QColor(QStringLiteral("#000001")); };
+    d.plot_series(0)->button()->click();
+    QCOMPARE(d.values().preferences.plot_series_colors,
+             (std::map<int, std::string>{{1, "#000001"}, {4, "#445566"}}));
+    QCOMPARE(d.values().preferences.plot_background, std::string("#eeeeee"));
+  }
+
+  void reset_plot_colors_gives_the_default_palette() {
+    Preferences p;
+    p.plot_series_colors = {{1, "#000001"}, {12, "#000012"}};
+    p.plot_background = "#202020";
+    p.browser_type_colors = {{"air", "#102030"}};
+    PreferencesDialog d({p, std::nullopt}, {});
+    d.reset_plot_colors()->click();
+    const ui::PlotStyle defaults = ui::default_plot_style();
+    for (std::size_t i = 0; i < defaults.series.size(); ++i) QCOMPARE(d.plot_series(i)->color(), defaults.series[i]);
+    QCOMPARE(d.plot_background()->color(), QColor(Qt::white));
+    QVERIFY(d.values().preferences.plot_series_colors.empty());
+    QVERIFY(d.values().preferences.plot_background.empty());
+    // The Data page's colours are another button's.
+    QCOMPARE(d.values().preferences.browser_type_colors, p.browser_type_colors);
+  }
+
+  // Reset colors, as Restore Defaults, changes the fields only: Cancel leaves
+  // the plots as last applied.
+  void reset_changes_fields_only_until_applied() {
+    auto line = ui::test::make_example_line();
+    ui::MainWindow window(*line);
+    window.set_preferences_settings(factory());
+    PreferencesDialog* d = window.open_preferences();
+    d->plot_background()->set_color(QColor(QStringLiteral("#303030")));
+    click(d->buttons(), QDialogButtonBox::Apply);
+    QCOMPARE(ui::plot_style().plot_background.name(), QStringLiteral("#303030"));
+    d->reset_plot_colors()->click();
+    QCOMPARE(d->plot_background()->color(), QColor(Qt::white));
+    click(d->buttons(), QDialogButtonBox::Cancel);
+    QCOMPARE(ui::plot_style().plot_background.name(), QStringLiteral("#303030"));
+    QCOMPARE(ui::load_preferences(*settings()).plot_background, std::string("#303030"));
   }
 
   void spectrometer_page_holds_the_move_threshold() {
     PreferencesDialog d({Preferences{}, 2.5}, {});
-    QCOMPARE(d.pages()->count(), 4);
-    QCOMPARE(d.pages()->item(2)->text(), QStringLiteral("Spectrometer"));
+    QCOMPARE(d.pages()->count(), 5);
+    QCOMPARE(d.pages()->item(3)->text(), QStringLiteral("Spectrometer"));
     QVERIFY(d.confirm_move() != nullptr);
     QCOMPARE(d.confirm_move()->value(), 2.5);
     d.confirm_move()->setValue(0.0);
@@ -370,7 +442,7 @@ class TestPreferences : public QObject {
     PreferencesDialog* d = window.open_preferences();  // the open one again
     QVERIFY(d != nullptr);
     QCOMPARE(window.findChildren<PreferencesDialog*>().size(), 1);
-    QCOMPARE(d->pages()->count(), 3);  // no spectrometer
+    QCOMPARE(d->pages()->count(), 4);  // no spectrometer
     d->page_size()->setValue(120);
     click(d->buttons(), QDialogButtonBox::Ok);
 
@@ -390,7 +462,7 @@ class TestPreferences : public QObject {
 
       // No spectrometer window yet: straight to its saved settings.
       PreferencesDialog* d = window.open_preferences();
-      QCOMPARE(d->pages()->count(), 4);
+      QCOMPARE(d->pages()->count(), 5);
       QCOMPARE(d->confirm_move()->value(), SpectrometerWindow::kDefaultConfirmMoveAmu);
       d->confirm_move()->setValue(2.5);
       click(d->buttons(), QDialogButtonBox::Ok);
@@ -435,7 +507,7 @@ class TestPreferences : public QObject {
     QVERIFY(window.preferences_action()->isVisible());
     QCOMPARE(window.browser()->model()->rowCount(), Preferences::kDefaultPageSize);
     PreferencesDialog* d = window.open_preferences();
-    QCOMPARE(d->pages()->count(), 3);
+    QCOMPARE(d->pages()->count(), 4);
     d->page_size()->setValue(60);
     click(d->buttons(), QDialogButtonBox::Ok);
     QCOMPARE(ui::load_preferences(*settings()).browser_page_size, 60);
@@ -499,14 +571,14 @@ class TestPreferences : public QObject {
 
   void line_pages_are_there_only_with_a_line() {
     PreferencesDialog without({Preferences{}, std::nullopt, std::nullopt}, {});
-    QCOMPARE(without.pages()->count(), 3);
+    QCOMPARE(without.pages()->count(), 4);
     QVERIFY(without.logging_page() == nullptr);
     QVERIFY(without.metrics_page() == nullptr);
 
     PreferencesDialog with({Preferences{}, std::nullopt, line_settings()}, {});
-    QCOMPARE(with.pages()->count(), 5);
-    QCOMPARE(with.pages()->item(2)->text(), QStringLiteral("Logging"));
-    QCOMPARE(with.pages()->item(3)->text(), QStringLiteral("Metrics"));
+    QCOMPARE(with.pages()->count(), 6);
+    QCOMPARE(with.pages()->item(3)->text(), QStringLiteral("Logging"));
+    QCOMPARE(with.pages()->item(4)->text(), QStringLiteral("Metrics"));
     QVERIFY(with.logging_page() != nullptr);
     QVERIFY(with.metrics_page() != nullptr);
   }
@@ -740,7 +812,7 @@ class TestPreferences : public QObject {
     ui::MainWindow window(*line);
     window.set_preferences_settings(factory());
     PreferencesDialog* d = window.open_preferences();
-    QCOMPARE(d->pages()->count(), 3);
+    QCOMPARE(d->pages()->count(), 4);
     d->close();
   }
 
@@ -757,7 +829,7 @@ class TestPreferences : public QObject {
     window.set_line_config_file(main_file_);
     window.set_metrics_status(QStringLiteral("Off"));
     PreferencesDialog* d = window.open_preferences();
-    QCOMPARE(d->pages()->count(), 5);
+    QCOMPARE(d->pages()->count(), 6);
     QVERIFY(d->metrics_page()->status()->text().contains(QStringLiteral("Off")));
 
     d->logging_page()->default_level()->setCurrentText(QStringLiteral("debug"));
