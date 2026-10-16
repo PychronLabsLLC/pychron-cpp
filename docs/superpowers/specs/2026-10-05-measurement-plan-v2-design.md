@@ -1,7 +1,7 @@
 # Measurement plan v2: segments, positions, gases
 
 Date: 2026-10-05
-Status: Draft
+Status: Agreed 2026-10-15 (owner settled section 10; staged gas release folded in as section 11, item 6b)
 Owner: Jake Ross
 Builds on: `2026-09-29-experiment-system-design.md` §4 (the v1 plan schema
 and engine), §3 (run lifecycle and overlap), §8 (collector and
@@ -90,7 +90,11 @@ plan
 | `at` | Positioning target, independent of `collect`: `{ label, detector }`, `{ mass, detector }`, `{ dac }` or `{ hv, detector }`. Default: the reference detector's label in `collect`; if the reference detector is not in `collect`, `at` is required (the v1 `position` rule). |
 | `kind` | `signal` (default) or `baseline`. A baseline position inside a signal segment is the legacy `bs:` hop. |
 | `counts` | Readings per cycle at this position. Required. |
-| `settle_s` | Wait after the move. The engine uses the larger of this and the spectrometer's `settle_after_large_beam_s` for any detector whose last reading exceeded its `large_beam_threshold`. The move and settle are skipped when the position, optics, table and deflections are unchanged. |
+| `settle_s` | Wait after the move. The engine uses the larger of this and the spectrometer's `settle_after_large_beam_s` for any detector whose last signal reading exceeded its
+`large_beam_threshold`. That includes the move out of a baseline position:
+a baseline reading does not clear the detector's large-beam state (owner,
+2026-10-15). Threshold and settle are per detector, not per amplifier
+type. The move and settle are skipped when the position, optics, table and deflections are unchanged. |
 | `integration_s` | Defaults to the segment's. |
 | `optics` | Named preset from `spectrometer.toml [optics.<name>]`: Qtegra sub-cup configuration, Noblesse zoom and source tune, Helix HR collector position. Part of the position's identity in the record so IC factors match the optics they were measured under. |
 | `table` | Named field table (legacy `mftable=`), including a per-run table written by an earlier `peak_center` step. |
@@ -159,6 +163,8 @@ In `spectrometer.toml`, not in plans:
 ### 3.7 Validation (additions to v1)
 
 - a detector at most once per position; `active = false` entries count;
+- an `active = false` entry carries a `label` like any other (mass table
+  check); no bare `{ detector, protect = true }` form (owner, 2026-10-15);
 - every label resolves to a mass through the mass table, or the position has
   `at.mass`;
 - `at` resolves; `optics` and `table` names exist, a `table` written by a
@@ -166,7 +172,8 @@ In `spectrometer.toml`, not in plans:
 - `deflection` only on detectors whose driver supports it; `optics` only on
   instrument families that declare presets;
 - a `during_extraction` segment only in plans whose analysis types have an
-  extraction, and no `signal` segment there;
+  extraction, and no `signal` or `sniff` segment there (owner, 2026-10-15:
+  no leak watch while heating);
 - `time_zero` at most once per gas unless as a step;
 - `[main]` and `[[segment]]` may not both appear at top level; `[[gas]]` and
   top-level segments may not both appear;
@@ -286,8 +293,11 @@ least as capable as the plan.
   measured detector so existing conditionals work; `Ar40@H1` selects one.
 - `Results.baselines` is keyed `(detector, segment index, position index)`
   and records `when`, the magnet position and the deflection in force.
-- `time_zero` per gas; `SpectrometerRec` per gas, with per-position
-  deflection, integration and optics on the series that used them.
+- `time_zero` per gas; `SpectrometerRec` per gas holds a table of the
+  states used in that gas (deflections, integration, optics), each distinct
+  state once; each series refers to its state by index. Record size then
+  grows with distinct states, not with series. (Owner left to the author,
+  2026-10-15; chosen over the state copied onto every series.)
 - `Results.baseline_modifiers` is added so ingest's `baseline_modifiers_json`
   has a producer.
 
@@ -300,8 +310,11 @@ single implicit gas and segment.
   machinery directly: `reference_fit.hpp` gains a same-run source, and the
   IC factor is stored with the `optics` it was measured under.
 - With several baselines per detector the reduction picks by rule: the
-  baseline position whose `at` matches, else the nearest in time; the rule
-  is recorded on the baseline value.
+  baseline position whose `at` matches, else the nearest in time; when two
+  baselines bracket the signal and neither is decisive, their average
+  (owner, 2026-10-15), errors propagated as a mean of two. The rule used
+  (`at`, `nearest`, `bracketing_average`) is recorded on the baseline
+  value.
 - `[interferences]` drives the `Ar40++` and `CO2` corrections for Ne and
   the hydride and `HCl` monitors for Ar as reduction metadata; the
   calculations themselves are a separate spec.
@@ -639,23 +652,135 @@ Each item is a spec unit of its own.
 5. `when` phases; executor change for `during_extraction`; baseline
    modifier in the record.
 6. Gases: per-gas inlet, time zero, snapshot; `source_dark_phase`.
+   6b. Staged gas release (section 11): `prepare` and `pump_out` on a gas.
 7. `optics` presets and `[interferences]` in the spectrometer config;
    Qtegra and Noblesse driver support.
 8. Legacy converter and conversion report.
 
-## 10. Open decisions
+## 10. Decisions (owner, 2026-10-15)
 
-- Whether `active = false` entries should also be allowed to carry a
-  `label` that is not positioned (today they need one for the mass table
-  check); a bare `{ detector, protect = true }` form may be clearer.
-- Whether the large-beam settle should also apply after a baseline position
-  (the beam was off-peak, so probably not) and whether the threshold is per
-  amplifier type rather than per detector.
-- Reduction rule for choosing among several baselines per detector when
-  neither `at` matches nor time is decisive (two baselines bracket the
-  signal): bracketing average, or both kept and the reducer chooses.
-- Whether a `during_extraction` segment may also be `sniff` kind to watch
-  for leaks while heating.
-- Record size: per-position deflection and optics on every series is
-  verbose; a per-gas table of states with a reference per series is the
-  alternative.
+- `active = false` entries keep a `label`; no bare form (3.7).
+- Large-beam settle applies after a baseline position too; threshold per
+  detector (3.2 `settle_s`).
+- Two bracketing baselines with nothing decisive: their average (6.2).
+- No `sniff` segment `during_extraction` (3.7).
+- Record: per-gas table of states, series refer to it (6.1).
+
+## 11. Staged gas release (item 6b)
+
+Folded in 2026-10-15 from `2026-10-13-staged-gas-release-design.md` (owner).
+Task T027.
+
+### 11.1 Problem
+
+Owner's case: extract gas from sample; freeze noble gases on cryotrap; warm
+cryo to release one species, equilibrate with mass spectrometer, measure;
+warm more, release next species, measure it on the quadrupole; and so on.
+One run, several gas fractions; between fractions the extraction line does
+work (cryo setpoint, wait for temperature, getter exposure, pump out the
+spectrometer) that depends on which fraction comes next.
+
+Section 3.4 gives several gases in one run, each with own inlet and time
+zero. Not given there: what the line does between gases (gas names an
+inlet and an outlet valve, nothing else; release has no place but a Python
+hook), and a gas measured on another spectrometer.
+
+Built today (v1): one extraction script, then one plan with one inlet.
+`cryo_temp` is a run variable handed to the extraction script
+(`docs/user/04-experiments.md:160`); script vocabulary has `set_cryo`,
+`get_cryo_temp` (experiment spec; host implementation checked by the plan).
+
+Goal: owner's case on one spectrometer as one plan file, no Python,
+validated before the queue starts, every fraction's data in one analysis
+record under its gas.
+
+### 11.2 `prepare` on a gas
+
+`[[gas]]` gains optional `prepare`: an extraction script (`scripts/extraction`,
+same resolution as a run's `extraction.script`) run after the previous gas's
+last segment and pump-out, before this gas's inlet opens.
+
+```toml
+[[gas]]
+name = "He"
+prepare = { script = "cryo:release", variables = { cryo_temp = 35, hold_s = 300 } }
+inlet = "@valves.inlet"
+...
+[[gas]]
+name = "Ne"
+prepare = { script = "cryo:release", variables = { cryo_temp = 75, hold_s = 300 } }
+```
+
+- A script, not a declarative `release = { ... }` table (owner, 2026-10-15):
+  the steps differ by line. Same script kind, host and cancel token as the
+  run's extraction script: valves, waits, `set_cryo`, under the line's
+  clock rules.
+- `variables`: table handed to the script, over the run's own extraction
+  variables. Plan parameters (`parameters.expose`) reach them, so a run in
+  a queue can change a release temperature without a new plan.
+- First gas's `prepare` runs after the run's extraction script (extract and
+  trap), before first inlet. A plan whose gases have no `prepare` behaves as
+  without this section.
+- Failure of a `prepare`: run ends as an extraction failure does today;
+  data of gases already measured is kept and saved.
+
+### 11.3 `pump_out` on a gas
+
+Optional `pump_out = { valve = "@valves.ion_pump", time_s = 120 }`: after
+the gas's last segment, open, wait, close, before the next gas's `prepare`.
+Absent: outlet handling as 3.4. Declarative because every multi-gas method
+needs it.
+
+### 11.4 Run phases
+
+No new run states (owner, 2026-10-15). `prepare` and `pump_out` run inside
+Measuring as engine blocks (`Block::Prepare`, `Block::PumpOut`, published
+with the gas's name and named on the timeline), so executor, overlap and
+resources see one measurement phase holding both the spectrometer and the
+extraction line for the whole run.
+
+- Consequence: such a run cannot overlap with the next run's extraction
+  (line busy until the last gas). Queue validation says so when a queue
+  asks for overlap with such a plan, rather than failing at run time.
+
+### 11.5 Record
+
+Per gas (6.1): the `prepare` script name, the variables it ran with, start
+and end time; `pump_out` valve and time.
+
+### 11.6 Rules
+
+- A `prepare` script is an extraction script: no measurement host calls.
+- Nothing here changes a plan without `prepare` or `pump_out`.
+- Time: scripts and waits on the line's clock; no real sleeps (AGENTS.md,
+  Time).
+- A gas already measured is saved whatever happens to a later gas.
+
+### 11.7 Out of scope
+
+- A gas measured on another spectrometer. The quadrupole is on another
+  install; the two installs coordinate (owner, 2026-10-15). How two installs
+  hand a run's gas between them is its own spec, after a Quadera driver spec
+  (legacy: `pychron/spectrometer/pfeiffer/spectrometer/quadera.py`,
+  `hardware/quadera_spectrometer_controller.py`,
+  `pyscripts/measurement/quadera_measurement_pyscript.py`). No
+  `spectrometer` key on a gas in this spec.
+- Reduction of non-argon gases (He, Ne, Kr, Xe ages or abundances).
+- Conditionals that choose the next release temperature from the fraction
+  just measured.
+
+### 11.8 Tests
+
+- Plan parse: `prepare` and `pump_out` accepted on a gas; unknown keys and
+  unknown script refused at validation with the gas's name.
+- Engine, fakes: two gases, each with `prepare`: order is prepare, inlet,
+  segments, pump out, prepare, inlet, segments; variables reach the script;
+  a failing second `prepare` ends the run failed with the first gas's
+  series in the result.
+- Simulated lab: cryo warmed in two steps releases two fractions; each
+  gas's signal appears only after its release.
+- Queue validation refuses overlap with a staged plan.
+
+## Open questions
+
+None.
