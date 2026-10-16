@@ -43,14 +43,15 @@ comment-preserving writer). Nothing built. Questions: section 8.
 <lab>/
   queues/                 queue files (*.toml), any name
     blocks/               reusable run sequences (*.toml)
+    step_heats/           step heat templates (*.toml; 2026-10-13-step-heat-template-design.md)
   plans/ scripts/ conditionals/ ...   unchanged
   data/                   unchanged (records, spool, executor_state.json)
 ```
 
 - `lab.hpp` layout comment: `<lab>/queues/*.toml` and
   `<lab>/queues/blocks/*.toml` replace `<lab>/blocks/*.toml`.
-- Only `*.toml` directly in `queues/` are queues; `queues/blocks/` is not a
-  queue directory. No further subdirectories are read (a lab may make its
+- Only `*.toml` directly in `queues/` are queues; `queues/blocks/` and
+  `queues/step_heats/` are not queue directories. No further subdirectories are read (a lab may make its
   own, for its own filing; Open dialog shows them, nothing lists them).
 - `LabPaths` gains `queues` (`<lab>/queues`) and `blocks`
   (`<lab>/queues/blocks`): one place says where they are; UI, `elctl` and

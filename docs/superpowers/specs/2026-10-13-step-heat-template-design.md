@@ -1,8 +1,7 @@
 # Step heat templates: named heating schedules and their editor
 
-Status: draft 2026-10-13, not agreed. Written by unattended run for T022
-("need a step heat template editor"). Nothing built. Questions for owner:
-section 9.
+Status: agreed 2026-10-15 (owner answered section 9). Written by unattended
+run for T022 ("need a step heat template editor"). Nothing built.
 
 ## 1. Problem
 
@@ -33,7 +32,8 @@ Legacy had named templates and an editor for them.
   Duration, Cleanup [, Beam diameter]; Save (current file), Save As (name
   dialog). No delete row, no move.
 - Use: factory combo "Step Heat Template". Add with template picked = one
-  run per step per hole of position (`_render_template`, `:832`). Apply
+  run per step per hole of position (`_render_template`, `:832`): whole
+  schedule for first hole, then whole schedule for next. Apply
   arrow = template applied to selected queue rows: row becomes step A, later
   steps inserted after it at same position (`do_apply_stepheat`, `:541`).
   Aliquot set to greatest + 1 per selected row.
@@ -55,12 +55,14 @@ Legacy had named templates and an editor for them.
 
 ### 4.1 Where
 
-`<lab>/step_heats/<name>.toml`, beside `plans/`, `conditionals/`,
-`patterns/` (lab setup, not queue files). Name = file stem; `[a-z0-9_-]`,
-same rule as a block's name. Directory optional. Added to the layout list
-in `libs/experiment` `lab/lab.hpp`. (Owner decided 2026-10-13 that blocks
-move under `queues/blocks/`; templates are not run sequences, so not
-there. Question 1.)
+`<lab>/queues/step_heats/<name>.toml`, beside `queues/blocks/` (owner,
+2026-10-15). Name = file stem; `[a-z0-9_-]`, same rule as a block's name.
+Directory optional. Added to the layout list in `libs/experiment`
+`lab/lab.hpp`; `LabPaths` gains `step_heats` (`<lab>/queues/step_heats`),
+next to `queues` and `blocks` of the queue directory spec
+(`2026-10-13-queue-directory-design.md`). If that spec is not built first,
+this one adds `LabPaths::queues` itself. Not a queue directory: no `*.toml`
+in it is read as a queue. No old location to read: templates are new.
 
 ### 4.2 Format
 
@@ -148,13 +150,23 @@ StepHeatTemplate template_from_values(const std::vector<double>& values, const F
   error; unknown name is an error; same "type must heat" rule as the text.
 - Queue rows do not record which template made them: after Add they are
   ordinary rows. Changing a template never changes a queue already made.
+- Multi-hole position with a template (owner, 2026-10-15: as legacy): with
+  one run per hole set and a position of more than one hole, Add makes the
+  whole schedule for each hole in turn (hole 1 steps A to N, then hole 2
+  steps A to N), each hole's runs as `expand_positions` makes them today
+  (identifier step applied per hole). Without one run per hole, the holes
+  stay one position on every step, as a typed step heat today.
+- Text field path unchanged: a typed step heat still takes precedence over
+  holes (`form.cpp:118`), so `test_run_factory.cpp` cases stay as they are.
+  The owner's answer was about templates; extending it to the text field is
+  a later change, not this one.
 - Units checked against extraction device as a typed value is today (no new
   rule). `percent` on a device that does not take it: same check as a row.
 
 ## 6. Run factory panel (`apps/pychron-ui` `run_factory_panel`)
 
-- Step heat row becomes: combo of the lab's templates ("none" first, then by
-  name) + the existing text field + Edit... button. Picking a template
+- Step heat row becomes: combo of the lab's templates ("none" first, then
+  alphabetical by name; no per-user ordering by use count, owner 2026-10-15) + the existing text field + Edit... button. Picking a template
   clears and disables the text; text typed clears the combo.
 - Preview line, as today, says what Add makes: "12 runs, steps A to L,
   0.5 to 6 W, 21 min extraction".
@@ -203,21 +215,15 @@ at a time.
 - Rows made from a template are indistinguishable from rows made by hand:
   queue file format unchanged, `schema_version` unchanged.
 
-## 9. Questions for owner
+## 9. Owner, 2026-10-15
 
-1. Location: `<lab>/step_heats/` (proposed) or under `queues/` beside
-   blocks?
-2. Apply to selected rows (legacy's arrow: selected row becomes A, steps
-   inserted after it): wanted in first cut, or Add only?
-3. Multi-hole position with a template: one schedule per hole (legacy) or
-   refused as today (text field takes precedence over holes,
-   `form.cpp:118`)?
-4. Import legacy `incremental_heat_templates/*.txt` (`elctl exp
-   import-step-heat`, or the lab setup's legacy import)? Owner refused a
-   legacy queue `.txt` importer (queue format survey section 7); templates
-   are small and a lab may have dozens.
-5. Per-user ordering of the combo by use count (legacy): wanted? Proposed
-   no; alphabetical.
+1. Location: under `queues/`, beside blocks: `<lab>/queues/step_heats/`
+   (4.1).
+2. Add only. Applying a template to selected queue rows (legacy's arrow) is
+   out of scope (section 11).
+3. Multi-hole position: as legacy, one schedule per hole (5).
+4. No importer for legacy `incremental_heat_templates/*.txt` (section 11).
+5. Combo alphabetical; no ordering by use count (6).
 
 ## 10. Seen while reading, not part of this spec
 
@@ -238,6 +244,11 @@ confirmed before templates make more step heats.
 - Furnace setpoint programs, per-step scripts or plans.
 - Staged gas release within one run (T027,
   `2026-10-13-staged-gas-release-design.md`).
+- Applying a template to selected queue rows (legacy's apply arrow): Add
+  only (owner, 2026-10-15).
+- Import of legacy `incremental_heat_templates/*.txt`, by `elctl` or lab
+  setup (owner, 2026-10-15).
+- Ordering the template combo by use count.
 - `elctl` commands to edit templates; `elctl exp validate` checks them with
   the lab.
 
@@ -248,12 +259,18 @@ confirmed before templates make more step heats.
   `make_step_heat` from template gives letters, values and per-step
   durations; text path through `template_from_values` gives today's runs
   (`test_run_factory.cpp` cases unchanged); `build_runs` refuses template
-  plus text, unknown name, non-heating type; lab loads `step_heats/` and
-  reports a bad file as a diagnostic.
-- `tests/ui`: factory combo lists templates, picking one disables text,
+  plus text, unknown name, non-heating type; template with one run per hole
+  and a three-hole position gives three whole schedules in hole order,
+  without one run per hole one schedule over the position; lab loads
+  `queues/step_heats/` and reports a bad file as a diagnostic.
+- `tests/ui`: factory combo lists templates alphabetically, picking one disables text,
   preview says count and time, Add inserts N rows; editor: add, insert,
   move, delete, fill, save, revert, a bad value blocks save; Save as
   template from text.
 - Example lab: one template in `configs/examples` and the setup profile
   that renders it (`libs/setup/AGENTS.md` rules), checked by
   `tests/integration/test_install_e2e.cpp`.
+
+## Open questions
+
+None.
