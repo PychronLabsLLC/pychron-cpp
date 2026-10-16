@@ -1,12 +1,13 @@
 # Experiment window: Executed and Queue tables (option A)
 
-Status: draft 2026-10-13, not agreed. Written by unattended run for T024.
+Status: agreed 2026-10-15 (owner answered section 9). Written by unattended
+run for T024 on 2026-10-13.
 Builds on `2026-10-13-queue-tables-survey.md` and its owner's decisions
 (section 6): option A, one `QueueTableModel` through two views; a run
 moves to Executed when it starts; Executed shows every executed run and is
-collapsible; no `rem`/`ex` files; window offers resume after a crash from
-`executor_state.json`; Reset, Clear executed and Repeat last run as menu
-actions. Nothing built. Questions: section 9.
+collapsible; no `rem`/`ex` files; window offers resume after a crash (and,
+owner 2026-10-15, after a deliberate Stop) from `executor_state.json`;
+Reset, Clear executed and Repeat last run as menu actions. Nothing built.
 
 ## 1. Now
 
@@ -40,18 +41,19 @@ Executed.
 - When the queue ends (`end_live()`), `executed_rows()` keeps its value:
   finished runs stay in Executed. `frozen_rows()` goes to 0 as now (rows
   editable again).
-- Set to 0 by: Reset (4.1), Clear executed (4.2, after removing), `set_queue`
-  (Open, New), and Start from row 0. Start from row N sets it to N
-  (`set_live(from)`): rows before N move to Executed with no status, shown
-  "not run" (question 2).
+- Set to 0 by: Reset (4.1), Clear executed (4.2, after removing) and
+  `set_queue` (Open, New). Start never moves it backwards: a queue starts
+  at `executed_rows()`, the first row of the Queue view (3). No start from
+  an arbitrary row N in this round (owner, 2026-10-15), so no row is ever
+  in Executed without having been reached by the executor.
 - Signal `executedChanged(int)`. Rows never move in the model: numbers
   (`#` column) stay the queue's, every operation that addresses rows by
   index (edits, versions, `insert_position`, selection → start row) is
   unchanged.
 - Rule: rows `< executed_rows()` are never editable (they are frozen while
-  live; after the queue ends, editing them means Reset first).
+  live; after the queue ends, they stay read-only until Reset, owner
+  2026-10-15).
   `row_editable(row) = !locked_ && row >= max(frozen_rows(), executed_rows())`.
-  (Question 3.)
 
 ## 3. Views
 
@@ -84,9 +86,10 @@ Window (`experiment_window.cpp:60`–`128`):
   After, Set Conditionals, edit scripts) act on the Queue view only.
   Executed view's context menu: Repeat (4.3), Open script (read-only, as
   now for frozen rows).
-- Start from selected row: Queue view's first selected row, else
-  `executed_rows()` (first not executed), else 0. (Before: first selected,
-  else 0.)
+- Start: always from `executed_rows()`, the Queue view's first row; the
+  selection is not read (owner, 2026-10-15: no start from row N this
+  round). Before: first selected row, else 0. To run executed rows again:
+  Reset, then Start. `elctl exp run --from` and `--resume` unchanged.
 - Run factory (`run_factory_panel.cpp:453`) inserts after the Queue view's
   selection; with none, appends (unchanged: `insert_position` clamps).
 - `select_rows` and `scrollTo` after an insert or move map source rows to
@@ -107,7 +110,7 @@ Removes rows `< executed_rows()` from the queue (one model operation,
 `executed_rows()` 0. Asks first ("Remove N executed runs from the
 queue?"). Refused while running: executor and live edits address rows by
 index from frozen (`executor.cpp:432`–`447`, `replace_from`); removing rows
-before the frontier would shift them. (Question 1.)
+before the frontier would shift them (owner, 2026-10-15: refused).
 
 ### 4.3 Repeat last run
 
@@ -118,22 +121,31 @@ the frontier is an ordinary live edit, refused like any other when stale.
 Legacy repeated `executed_runs[0]` (oldest, a defect: survey section 1);
 here the newest.
 
-## 5. Resume after a crash
+## 5. Resume after a crash or a Stop
 
 - When the window has a queue and is not running (after Open, at start-up
   with `--queue`, and on the Experiment menu's Resume...), it reads the
   data dir's `executor_state.json`.
-- Offered when: file's `queue` equals the open queue's `name`, its `state`
-  is one the executor writes only while working (`preparing`, `running`,
-  `stopping`, `cancelling`, `aborting`: it did not reach the end), and
-  `0 < next_row <` row count. Every end, clean or stopped, writes
-  `finalizing` last (`executor.cpp:679`–`681`, then `Idle` is set but not
-  written), so a queue the operator stopped is not offered. (Question 5.)
+- Offered when: file's `queue` equals the open queue's `name` and
+  `0 < next_row <` row count, whatever its `state` (owner, 2026-10-15:
+  after a deliberate Stop too, not only after a crash). A crash leaves a
+  working state (`preparing`, `running`, `stopping`, `cancelling`,
+  `aborting`); every end, clean or stopped, writes `finalizing` last
+  (`executor.cpp:679`–`681`, then `Idle` is set but not written). A queue
+  that ran to its end has `next_row` equal to the row count and is not
+  offered.
   Dialog: "The queue *name* stopped at row N (*identifier*) at
-  *time of file*. Resume from row N?" Resume / Not now.
-- Resume: `start(next_row)` as Start does, and statuses of rows in the
+  *time of file*. Resume from row N?" Resume / Not now. Line under it says
+  how it stopped: "It was stopped." for `finalizing`, "It did not finish
+  (the program ended while it ran)." for a working state.
+- Not offered right after a Stop in the same window: there the executed
+  rows are still in Executed and Start continues from `executed_rows()`
+  (2). Offered on Open, at start-up with `--queue`, and from Resume....
+- Resume: `executed_rows()` set to `next_row`, statuses of rows in the
   file's `runs[]` filled from it (success, failed, …) so Executed shows what
-  ran before the crash. Not now: nothing changes; Resume... stays in menu.
+  ran before, then Start as usual (it starts at `executed_rows()`). This is
+  the one way rows reach Executed other than by the executor; they are
+  rows it did reach, in the run the file records. Not now: nothing changes; Resume... stays in menu.
 - Library: `Executor::read_state(path)` → `Result<ExecutorStateFile>`
   {queue, state, next_row, runs{row, identifier, run_id, state}}, parsing
   the file with nlohmann_json (already linked by `libs/experiment`), not a
@@ -143,7 +155,8 @@ here the newest.
 - A queue changed since the crash (rows inserted or removed before
   `next_row`) is not detected beyond name and row identifier: dialog shows
   the row's identifier now and in the file; when they differ, Resume is
-  disabled with that reason. (Question 4.)
+  disabled with that reason. No path or hash of runs compared (owner,
+  2026-10-15).
 
 ## 6. Rules
 
@@ -158,44 +171,44 @@ here the newest.
 ## 7. Tests (`tests/ui`, `tests/experiment`)
 
 - Model: `executed_rows` follows frontier while live, survives
-  `end_live`, is 0 after Reset, `set_queue`, Start from 0, N after Start
-  from N; rows below it not editable after end.
+  `end_live`, is 0 after Reset and `set_queue`; rows below it not editable
+  after end.
 - Proxies: row counts and source rows on boundary change; status change
   does not refilter.
 - Window: a run moves to Executed at `RunStarted` in `runsTheExampleQueue`;
   fold state and splitter kept across a reopen; row actions use Queue
-  selection; Start with nothing selected starts at first not executed; Reset
+  selection; Start starts at first not executed whatever is selected; Reset
   and Clear executed refused while running; Clear executed removes and
   marks modified; Repeat inserts at the front of Queue, live and not.
-- Resume: dialog offered for a matching non-idle state file, not for idle,
-  another queue name, or `next_row` 0 or past the end; Resume starts at
+- Resume: dialog offered for a matching state file in a working state and
+  in `finalizing` (each with its line), not for another queue name, or
+  `next_row` 0, equal to the row count or past it; not offered in the
+  window that just stopped; Resume starts at
   `next_row` with earlier statuses filled; identifier mismatch disables it.
 - `tests/experiment`: `read_state` round trip of a file written by
   `write_state`; a file with only `next_row` (older) still gives it.
 - Existing tests that read the one table (`editsTheQueueWhileItRuns`,
   `cancelAsksFirstAndStartsFromTheSelectedRow`, `rowsOpenTheirScriptsInTheEditor`,
   `ExperimentWindow::table()` users) switch to the Queue view; none dropped.
+  `cancelAsksFirstAndStartsFromTheSelectedRow` keeps its cancel half; its
+  start half asserts the first not executed row instead of the selection.
 
 ## 8. Docs
 
 `docs/user/04-experiments.md` section 3 (window, 204), 3.2 row operations
 (243), 3.3 editing while running (260–273), 8.1 Start (654): two tables,
-Reset, Clear executed, Repeat, resume. Experiment window spec
+Reset, Clear executed, Repeat, resume; Start no longer starts from the
+selected row. Experiment window spec
 (`2026-10-02-experiment-window-design.md` 5.2, 5.5) gets a pointer here.
 
-## 9. Questions for owner
+## 9. Owner, 2026-10-15
 
-1. Clear executed while a queue runs: refused (proposed, rows are
-   addressed by index), or wanted (needs an executor edit that drops rows
-   before the frontier)?
-2. Start from row N: rows before N shown in Executed as "not run"
-   (proposed: they are behind the frontier), or left in Queue?
-3. After a queue ends, executed rows stay read-only until Reset
-   (proposed), or editable in place?
-4. Resume match: queue name plus row identifier (proposed), or also the
-   queue file's path or a hash of its runs?
-5. Offer resume after a deliberate Stop too (file says `finalizing`,
-   `next_row` short of the end), or only after a crash (proposed)?
+1. Clear executed while a queue runs: refused (4.2).
+2. No start from row N this round: Start always begins at the first not
+   executed row (2, 3).
+3. After a queue ends, executed rows stay read-only until Reset (2).
+4. Resume match: queue name plus row identifier only (5).
+5. Resume offered after a deliberate Stop too, not only after a crash (5).
 
 ## 10. Out of scope
 
@@ -204,5 +217,11 @@ Reset, Clear executed, Repeat, resume. Experiment window spec
 - `rem`/`ex` files, autosave (owner: no).
 - Seeding aliquots on resume (T091): a resumed step heat with no fixed
   aliquot gives its remaining steps a new aliquot until that lands.
+- Start from an arbitrary row (UI); selection-based start returns, if
+  wanted, as its own change.
 - Changing row colours or the status column (survey's spec/code gap on
   skipped rows stays its own item).
+
+## Open questions
+
+None.
