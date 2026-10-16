@@ -54,6 +54,20 @@ Each is written back into the spec in the task that makes it, so the two never d
    on the detector the plan names goes in `tests/integration/test_lab_sim.cpp` (`LabSim`), which runs the example
    lab, its scripts and `sim_multicollect`. Spec section 7 edited (Task 3).
 5. **Cross and image.** Not in spec 5.1's table; not added.
+6. **Install profiles (spec 5.5), checked 2026-10-16.** `profiles/extraction-line-starter/profile.toml` copies
+   `@examples/extraction_line.toml`, `@examples/canvas.toml` and `@examples/sim.toml` (and `cameras.toml`,
+   `stage_calibrations/`) when `line_source == "starter"`, the default. No instrument profile copies them itself:
+   `instrument-common` includes `extraction-line-starter` (and `lab-common`, which copies all of `@examples/scripts/`,
+   so `sim_cocktail.py` ships too), and `argus`, `helix` (through `qtegra`) and `ngx` include `instrument-common`.
+   So every instrument install gets the new line. `tests/setup/test_profiles.cpp` reads them in
+   `InstrumentProfile.InstallsLoadsAndPassesDoctor` (files exist; `sim.toml` byte-equal to the example's; doctor
+   passes, which loads and cross-validates the installed line; `expect_queue_checks`), `AnImportedLineComesWithout
+   TheExampleLabsSimToml` (copies the two example files as a lab's own) and `EveryInstalledPlanPutsItsIsotopesOnIts
+   Detectors`. None lists valve names or counts, so none needs an edit for the new elements; they are run in Tasks 2
+   to 4. If one fails, the cause is found and the test edited in the same commit as the file (`libs/setup/AGENTS.md`).
+   The profile `version` (5) is not raised: a raise makes doctor tell every install its profile is newer, and running
+   setup again would rewrite a line the lab has made its own; the files are the same files with more in them.
+   The profile's `summary` and `help` text, which name "five valves, two gauges", are edited (Task 2).
 
 ## Layout (canvas 1450 x 800, centres, y down)
 
@@ -147,7 +161,9 @@ Connections (offsets are `start_offset` from the stage centre):
 - Modify: `configs/examples/extraction_line.toml`, `configs/examples/canvas.toml` (layout table above, new sketch at
   file head, `size = [1450, 800]`)
 - Modify: `profiles/extraction-line-starter/profile.toml` (`summary`, `help`: no longer "five valves, two gauges and a
-  pipette")
+  pipette"; `version` stays 5, decision 6). No other profile file names the example's valves (decision 6).
+- Run, edited only if they fail for a cause found: `tests/setup/test_profiles.cpp` (`InstrumentProfile.*`,
+  `Profiles.AnImportedLineComesWithoutTheExampleLabsSimToml`, `*EveryInstalledPlan*`)
 - Test: `tests/systems/test_canvas_cross_validate.cpp`, `tests/integration/test_example_line_sim.cpp`,
   `tests/ui/test_core_bridge.cpp:39`, `tests/ui/test_canvas_view.cpp:108-120`
 - Modify: spec 5.1 (sketch, `laser` and `M2` rows: decisions 1 to 3)
@@ -206,9 +222,18 @@ TEST(ExampleConfigs, TheExampleHasEveryElementKind) {
   `cmake --build --preset dev-ui --target pychron_ui_test_canvas_view pychron_ui_test_core_bridge`; run both
   binaries. Expected: PASS, including `aValveUnderAGaugeChipStillTakesItsClick` (move an added element, not a
   test, if a chip covers a valve).
-- [ ] **Step 7:** `cmake --build --preset dev --target pychron_elctl_tests pychron_setup_tests`; run
-  `pychron_elctl_tests --gtest_filter='*Line*:*Canvas*'`, `pychron_setup_tests --gtest_filter='*Profile*:*Connection*'`.
-  Expected: PASS.
+- [ ] **Step 7: Install profiles.** Recheck decision 6 against the tree as it is then:
+  `rg -n 'canvas\.toml|extraction_line\.toml|sim\.toml|@examples/scripts' profiles` (expected: only
+  `extraction-line-starter/profile.toml` copies the three, only `lab-common/profile.toml` the scripts) and
+  `rg -n 'includes' profiles/*/profile.toml` (expected: `argus`, `helix`, `ngx` reach `extraction-line-starter`
+  through `instrument-common`). A profile found copying them that decision 6 does not name is added to this task's
+  files with its test. `rg -n 'five valves|two gauges|"P1"|"IG1"|"bone"' tests/setup` (expected: no
+  hit naming the example's valves or counts). Edit `profile.toml` `summary` and `help`.
+  `cmake --build --preset dev --target pychron_elctl_tests pychron_setup_tests`; run
+  `pychron_elctl_tests --gtest_filter='*Line*:*Canvas*'`, `pychron_setup_tests --gtest_filter='*Profile*:*Connection*'`
+  (`*Profile*` takes in `InstrumentProfile.InstallsLoadsAndPassesDoctor/*`, which installs argus, helix and ngx with
+  the new line and runs doctor on it). Expected: PASS. A failure there is fixed in the shipped file, or the test
+  edited, in this task's commit.
 - [ ] **Step 8:** Shipped numbers did not move: `pychron_integration_tests --gtest_filter='LabSim.*'`. Expected: PASS
   untouched. If one fails, find which added element carries gas at start and isolate it.
 - [ ] **Step 9:** Edit spec 5.1 for decisions 1 to 3. `quality_check.py`, `compiler_sweep.py --changed` (both
@@ -225,15 +250,48 @@ TEST(ExampleConfigs, TheExampleHasEveryElementKind) {
   `cocktail_tank` role `Tank`; the in-force list gains the cocktail line), `tests/integration/test_lab_sim.cpp`
 - Modify: spec section 7 (decision 4)
 
-- [ ] **Step 1: Failing test** in `test_lab_sim.cpp`:
+What the test leans on, checked 2026-10-16 in `tests/integration/test_lab_sim.cpp`:
+
+- `lab.rows({1})` is an air row: `ScratchLab::air_queue()` loads `experiment.sim-air.toml`, blank, air, air, air,
+  blank (rows 0 to 4); `AScriptThatSkipsThePipetteMeasuresABlank` (line 710) takes `rows({1, 2})` and asserts
+  `queue.runs[0].extraction.script == "sim_air"`. The new test asserts the same before it changes it.
+- `extraction.script` is a plain settable field of a `QueueSpec` run: line 717 sets it to `"sim_blank"`, line 766 to
+  `"sim_air_both"`, and the run takes the script of that name from the scratch copy's `scripts/extraction/`
+  (`ScratchLab` copies all of `configs/examples`, so the new `sim_cocktail.py` is there).
+- `sim_multicollect.toml` measures `{ Ar40 = "H1", Ar39 = "H2" }` (its line 49).
+
+Figures, all derived, none tuned. The cocktail tank sets only `composition = "cocktail"` (spec 5.1), so it holds Ar40
+at `SimSettings::tank_argon40` (`sim_system.hpp:147`, 3e-5 mbar; `sim_config.cpp:297` uses it for a listed volume
+with no `argon40`) and the other species in `cocktail_ratios()` (`gas.hpp:63`: Ar36 1, Ar37 0.5, Ar38 0.1885, Ar39
+20, Ar40 298.56). One shot, as `LabNumbers::first_shot()` computes it for air (tank 50 cc, pipette 0.1 cc, prep and
+source 50 cc each, sensitivity 1e12 fA/mbar): 3e-5 x 50/50.1 x 0.1/50.1 x 50/100 x 1e12 = about 2.99e4 fA of Ar40,
+and Ar39 that times 20/298.56: about 2.0e3 fA. The existing air test holds its Ar40 within 1 % of `first_shot()`
+(line 652); H2's field-table peak is flat within 0.02 (`libs/setup/AGENTS.md`). The test computes its expectations
+from `lab.settings()`, so no figure above is written into it.
+
+These figures are provisional: Step 4 records what the run gives (`record_value`) and reports it in the commit
+message. A measured value outside its band is a cause to find (the tank's Ar40, the pipette's volume, the field
+table, fractionation, the blank), not a band to widen; a band is changed only when the cause shows the derivation
+above was wrong, and the derivation in this plan and the test's comment are changed with it.
+
+- [ ] **Step 1: Failing test** in `test_lab_sim.cpp`. First generalise `numbers_of(const sim::SimSettings&)` to
+  `numbers_of(const sim::SimSettings&, std::string_view tank = kTank, std::string_view pipette = kPipette)` (callers
+  unchanged; `n.tank`, `n.pipette` and `n.tank_ar40` read the given names). Then:
 
 ```cpp
 // The second pipette carries the built-in cocktail: Ar39, which air has none
-// of, on H2 where sim_multicollect puts it.
+// of, on H2 where sim_multicollect puts it. One shot is the cocktail tank's
+// pressure in one pipette spread over prep and the source, as an air shot is
+// the air tank's (first_shot); its Ar39 is that times the cocktail's 20/298.56.
 TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
   ScratchLab lab;
   ASSERT_TRUE(lab.problem().empty()) << lab.problem();
+  const LabNumbers cocktail = numbers_of(lab.settings(), "cocktail_tank", "cocktail");
+  const auto ratios = sim::cocktail_ratios();
+  const double ar39_per_ar40 = ratios[sim::index(sim::Species::Ar39)] / ratios[kAr40];
   QueueSpec queue = lab.rows({1});
+  ASSERT_EQ(queue.runs.size(), 1u);
+  ASSERT_EQ(queue.runs[0].extraction.script, "sim_air");  // row 1 is an air shot
   queue.runs[0].extraction.script = "sim_cocktail";
   const auto runs = lab.run(queue);
   ASSERT_EQ(runs.size(), 1u);
@@ -241,13 +299,18 @@ TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
   const auto ar40 = measured(runs[0].record, "Ar40", kFaraday);
   ASSERT_TRUE(ar39);
   ASSERT_TRUE(ar40);
-  EXPECT_GT(ar39->value(), 1e3);  // 3e-5 mbar tank: about 2.0e3 fA
-  EXPECT_LT(ar39->value(), 4e3);
-  EXPECT_NEAR(ar40->value() / ar39->value(), 298.56 / 20.0, 0.03 * 298.56 / 20.0);
+  record_value("cocktail_ar40_fA", ar40->value());
+  record_value("cocktail_ar39_fA", ar39->value());
+  record_value("cocktail_expected_ar40_fA", cocktail.first_shot());
+  EXPECT_NEAR(ar40->value(), cocktail.first_shot(), 0.01 * cocktail.first_shot());  // as the air shot (line 652)
+  const double ar39_expected = cocktail.first_shot() * ar39_per_ar40;
+  EXPECT_NEAR(ar39->value(), ar39_expected, 0.03 * ar39_expected);  // H2's peak flat within 0.02, and noise
+  EXPECT_NEAR(ar40->value() / ar39->value(), 1 / ar39_per_ar40, 0.03 / ar39_per_ar40);
 }
 ```
 
-  Skips as the other `LabSim` cases do without embedded Python.
+  `sim::cocktail_ratios()` and `sim::index` come from `pychron/sim/gas.hpp`, which the file already reaches for
+  `kAr40`. Skips as the other `LabSim` cases do without embedded Python.
 - [ ] **Step 2:** Run `pychron_integration_tests --gtest_filter='LabSim.ACocktail*'`: FAIL (no script).
 - [ ] **Step 3:** Write `sim.toml` lines and `sim_cocktail.py`; update `TheExampleFileIsTheDefaults`.
 - [ ] **Step 4:** Run `pychron_sim_tests --gtest_filter='SimConfig.*'`, `pychron_integration_tests --gtest_filter='LabSim.*:ExampleLineSim*'`,
@@ -283,7 +346,8 @@ TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
 
 ### Task 5: User guide
 
-**Files:** `docs/user/02-extraction-line.md` (a short tour of the example: what each part shows, the `stage1`
+**Files:** `docs/user/01-getting-started.md:618-620` ("five valves (A, B, C, P1, P2), a manual valve (M1), ... two
+gauges (IG1, PG1) and a pipette": the new counts and names), `docs/user/02-extraction-line.md` (a short tour of the example: what each part shows, the `stage1`
 stage list, excerpt at 427-470 gains one heater and `[cryo]`), `docs/simulator.md` (the example sketch at 331 and
 the volumes paragraph at 403-416: new tank, closed getters).
 
