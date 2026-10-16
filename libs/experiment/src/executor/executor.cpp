@@ -481,6 +481,7 @@ void Executor::finish(ExperimentQueue& queue, Slot& slot, QueueResult& out) {
     if (edited) ctx_.services.bus->publish(*edited);
     ctx_.services.bus->publish(RunFinished{sum});
   }
+  if (ctx_.flusher != nullptr) ctx_.flusher->flush_now();
   write_state(queue, consumed ? at + 1 : slot.row, out);
 }
 
@@ -722,7 +723,11 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     if (kept) set_state(*kept, "requested before the queue began");
   }
 
-  if (ctx_.services.save != nullptr) (void)ctx_.services.save->recover();
+  if (ctx_.flusher != nullptr) {
+    ctx_.flusher->flush_now();  // what an earlier session left, off this thread
+  } else if (ctx_.services.save != nullptr) {
+    (void)ctx_.services.save->recover();
+  }
   ConditionalSet queue_level;
   if (ctx_.services.conditionals != nullptr) {
     auto set = ctx_.services.conditionals->for_queue(queue.spec());

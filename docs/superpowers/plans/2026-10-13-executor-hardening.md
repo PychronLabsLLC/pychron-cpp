@@ -401,10 +401,11 @@ Result<void> Executor::skip();   // only a row that has not started
 
 **Files:** `libs/experiment/src/persist/persister.cpp` (`SavePipeline`, `:164-212`), `include/pychron/experiment/persist/persister.hpp`, `src/executor/executor.cpp`, `tests/experiment/test_persist.cpp`, `tests/experiment/failing_store.hpp`.
 
-- [ ] Failing tests (`VirtualTimeTest`): `flush()` runs after every run; while `pending > 0` it runs every 5 min, backing off (doubling) to 30 min while it keeps failing and returning to 5 min after a success; `SpoolStatus{pending, last_error}` is published on each change; a persister that fails for an hour holds no run (the queue's timing equals the fault-free one); with nothing pending no job is scheduled.
-- [ ] Implement as a scheduler job, not a thread. The aliquot rule of spec 4.8 is a constraint on a later store-backed allocator: add it to `libs/experiment/AGENTS.md`, build nothing.
-- [ ] TSan run.
-- [ ] Commit: `feat(experiment): the spool is flushed after each run and while anything is pending`.
+- [x] Failing tests (`VirtualTimeTest`): `flush()` runs after every run; while `pending > 0` it runs every 5 min, backing off (doubling) to 30 min while it keeps failing and returning to 5 min after a success; `SpoolStatus{pending, last_error}` is published on each change; a persister that fails for an hour holds no run (the queue's timing equals the fault-free one); with nothing pending no job is scheduled.
+- [x] Implement as a scheduler job, not a thread. The aliquot rule of spec 4.8 is a constraint on a later store-backed allocator: add it to `libs/experiment/AGENTS.md`, build nothing.
+- [x] TSan run.
+- [x] Commit: `feat(experiment): the spool is flushed after each run and while anything is pending`.
+- Built: `persist::SpoolFlusher` and `persist::SpoolStatus` (`persister.hpp`); `ExecutorContext::flusher` (`executor.hpp`), asked for a flush at the queue's start (instead of the inline `recover()`) and after every run; `LabSession` builds one on the line's scheduler and bus. Every flush is a one-shot job; a flush asked for while a timed one waits replaces it, one asked for while one runs follows it at once. `SavePipeline::hand_off` takes a record that has left the spool meanwhile (sent by a save or flush on another thread) as sent, not as a failure (`Spool::contains`). Tests: `SpoolFlusherTest.*` in `test_persist.cpp`; `ExecutorVirtual.AStoreDownForAnHourHoldsNoRun` in `test_executor.cpp` (not `failing_store.hpp`, which is an `IStore` for the store suites: the outage is a persister wrapper in the test). `test_store_persister.cpp`'s steady-clock alias renamed `RealClock`: `persister.hpp` now brings `pychron::Clock` in. TSan: a `-DPYCHRON_SANITIZE=thread` tree, `pychron_experiment_tests --gtest_filter='SpoolFlusherTest.*:PersistTest.*:Lab*:Executor*'`, clean.
 
 ### Task 20: Notifications wait on disk
 

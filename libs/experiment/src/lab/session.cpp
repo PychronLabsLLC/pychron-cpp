@@ -40,6 +40,7 @@ struct LabSession::Services {
         files(data / "records"),
         spool(data / "spool"),
         save(spool, given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)),
+        flusher(save, hw.line.scheduler(), hw.line.clock(), &hw.line.bus()),
         aliquots(given != nullptr ? *given : static_cast<persist::IAnalysisPersister&>(files)),
         // The links each run needs (spec 4.3), and a spool the queue can rely on (4.6).
         links_up([line = &hw.line, spec = hw.spectrometer](const RunSpec& run) {
@@ -89,6 +90,7 @@ struct LabSession::Services {
     s.critical_window = lab.executor.critical_window();
     s.persister = given != nullptr ? given : &files;
     s.save = &save;
+    ctx.flusher = &flusher;
     ctx.pre_run_metrics = &instrument;
     ctx.checks = {&links_up, &spool_writable};
     ctx.links = [line = &hw.line, spec = hw.spectrometer](const RunSpec& run) {
@@ -109,6 +111,7 @@ struct LabSession::Services {
   persist::FilePersister files;
   persist::Spool spool;
   persist::SavePipeline save;
+  persist::SpoolFlusher flusher;  // spec 4.8: after every run, and while anything is pending
   persist::AliquotAllocator aliquots;
   executor::LinksUp links_up;
   executor::SpoolWritable spool_writable;

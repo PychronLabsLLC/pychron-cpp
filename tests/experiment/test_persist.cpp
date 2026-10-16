@@ -4,14 +4,20 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
+#include "pychron/core/scheduler.hpp"
+#include "pychron/core/signal_bus.hpp"
+#include "pychron/core/virtual_clock.hpp"
 #include "temp_path.hpp"
+#include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -280,6 +286,171 @@ TEST_F(PersistTest, AliquotAllocatorKeepsTheStepsOfAHeatingTogether) {
     ASSERT_TRUE(a) << r.identifier << r.step;
     EXPECT_EQ(a->aliquot, r.expected) << r.identifier << " step '" << r.step << "'";
   }
+}
+
+// ---- SpoolFlusher (executor hardening spec 4.8) ----------------------------------
+
+using namespace std::chrono_literals;
+
+// A persister that refuses the records named in `refused` (all of them while
+// `down`), and notes on the clock when it is asked to flush, which the
+// pipeline does once per flush. Called from the scheduler's worker.
+class ClockedPersister final : public IAnalysisPersister {
+ public:
+  explicit ClockedPersister(const Clock& clock) : clock_(clock) {}
+  Result<int> next_aliquot(const std::string&) override { return 1; }
+  Result<void> begin_run(const RunIdentity&, const QueueSpec&) override { return {}; }
+  Result<void> save_extraction(const record::AnalysisRecord&) override { return {}; }
+  Result<void> save_analysis(const record::AnalysisRecord& r) override {
+    const std::lock_guard lock(mutex_);
+    if (down_ || refused_.contains(r.identity.uuid)) return fail(ErrorKind::Io, "database down");
+    return {};
+  }
+  Result<void> save_artifact(const std::string&, const std::string&, const std::vector<std::uint8_t>&) override {
+    return {};
+  }
+  Result<void> flush() override {
+    const std::lock_guard lock(mutex_);
+    flushes_.push_back(clock_.now());
+    return {};
+  }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
+
+  void set_down(bool down) {
+    const std::lock_guard lock(mutex_);
+    down_ = down;
+  }
+  void refuse(std::set<std::string> uuids) {
+    const std::lock_guard lock(mutex_);
+    refused_ = std::move(uuids);
+  }
+  // When each flush came, as offsets from `t0`.
+  std::vector<pychron::Duration> flushes_since(TimePoint t0) const {
+    const std::lock_guard lock(mutex_);
+    std::vector<pychron::Duration> out;
+    out.reserve(flushes_.size());
+    for (const auto t : flushes_) out.push_back(t - t0);
+    return out;
+  }
+
+ private:
+  const Clock& clock_;
+  mutable std::mutex mutex_;
+  bool down_ = false;
+  std::set<std::string> refused_;
+  std::vector<TimePoint> flushes_;
+};
+
+class SpoolFlusherTest : public pychron::testing::VirtualTimeTest {
+ protected:
+  void SetUp() override {
+    dir_ = pychron::testing::unique_temp_path("spool_flush_");
+    fs::create_directories(dir_);
+  }
+  void TearDown() override {
+    std::error_code ec;
+    fs::remove_all(dir_, ec);
+  }
+  fs::path dir_;
+};
+
+// What a flusher works on, declared in the order it is torn down safely: the
+// flusher before the scheduler, the scheduler before what its jobs touch.
+struct FlushWorld {
+  explicit FlushWorld(const fs::path& dir) : spool(dir / "spool") {
+    subs.push_back(bus.subscribe<SpoolStatus>([this](const SpoolStatus& s) {
+      const std::lock_guard lock(mutex);
+      statuses.push_back(s);
+    }));
+    scheduler.start();
+  }
+  std::vector<SpoolStatus> published() {
+    const std::lock_guard lock(mutex);
+    return statuses;
+  }
+
+  VirtualClock clock;
+  Clock::Participant me{clock, "test"};
+  SignalBus bus;
+  std::mutex mutex;
+  std::vector<SpoolStatus> statuses;
+  std::vector<SignalBus::Subscription> subs;
+  ClockedPersister db{clock};
+  Spool spool;
+  SavePipeline pipe{spool, db};
+  Scheduler scheduler{clock, &bus, Scheduler::Options{1}};
+  SpoolFlusher flusher{pipe, scheduler, clock, &bus};
+};
+
+TEST_F(SpoolFlusherTest, AFlushRunsAfterEveryRunAndNothingIsLeftScheduledWhenNothingIsPending) {
+  FlushWorld w(dir_);
+  const TimePoint t0 = w.clock.now();
+  w.flusher.flush_now();  // a run has finished
+  w.clock.sleep_for(10min);
+  w.flusher.flush_now();  // and another
+  w.clock.sleep_for(1h);
+  EXPECT_EQ(w.db.flushes_since(t0), (std::vector<pychron::Duration>{0min, 10min}));
+  EXPECT_EQ(w.scheduler.job_count(), 0u);
+  EXPECT_EQ(w.published(), std::vector<SpoolStatus>{});  // nothing pending, as it was
+}
+
+TEST_F(SpoolFlusherTest, WhileARecordIsPendingItRetriesEveryFiveMinutesBackingOffToThirty) {
+  FlushWorld w(dir_);
+  ASSERT_TRUE(w.spool.put(rec("u1")));
+  w.db.set_down(true);
+  const TimePoint t0 = w.clock.now();
+  w.flusher.flush_now();
+  w.clock.sleep_for(100min);
+  EXPECT_EQ(w.db.flushes_since(t0), (std::vector<pychron::Duration>{0min, 5min, 15min, 35min, 65min, 95min}));
+  w.db.set_down(false);
+  w.clock.sleep_for(1h);  // the flush at 125 min sends it, and none follows
+  EXPECT_EQ(w.db.flushes_since(t0), (std::vector<pychron::Duration>{0min, 5min, 15min, 35min, 65min, 95min, 125min}));
+  EXPECT_EQ(w.pipe.pending(), 0u);
+  EXPECT_EQ(w.scheduler.job_count(), 0u);
+}
+
+TEST_F(SpoolFlusherTest, AFlushThatSendsSomethingBringsTheWaitBackToFiveMinutes) {
+  FlushWorld w(dir_);
+  ASSERT_TRUE(w.spool.put(rec("u1")));
+  ASSERT_TRUE(w.spool.put(rec("u2")));
+  w.db.set_down(true);
+  const TimePoint t0 = w.clock.now();
+  w.flusher.flush_now();
+  w.clock.sleep_for(20min);  // flushes at 0, 5 and 15 min failed
+  w.db.set_down(false);
+  w.db.refuse({"u2"});  // u1 goes at 35 min; u2 still does not
+  w.clock.sleep_for(40min);
+  EXPECT_EQ(w.db.flushes_since(t0), (std::vector<pychron::Duration>{0min, 5min, 15min, 35min, 40min, 45min, 55min}));
+  EXPECT_EQ(w.pipe.pending(), 1u);
+}
+
+TEST_F(SpoolFlusherTest, ItsStatusIsPublishedOnEachChange) {
+  FlushWorld w(dir_);
+  ASSERT_TRUE(w.spool.put(rec("u1")));
+  w.db.set_down(true);
+  w.flusher.flush_now();
+  w.clock.sleep_for(1h);  // several failed flushes, one status
+  const SpoolStatus failing{1, "u1: database down"};
+  EXPECT_EQ(w.published(), std::vector<SpoolStatus>{failing});
+  EXPECT_EQ(w.flusher.status(), failing);
+  w.db.set_down(false);
+  w.clock.sleep_for(1h);
+  EXPECT_EQ(w.published(), (std::vector<SpoolStatus>{failing, SpoolStatus{}}));
+  EXPECT_EQ(w.flusher.status(), SpoolStatus{});
+}
+
+TEST_F(SpoolFlusherTest, AFlushAskedForWhileATimedOneWaitsReplacesIt) {
+  FlushWorld w(dir_);
+  ASSERT_TRUE(w.spool.put(rec("u1")));
+  w.db.set_down(true);
+  const TimePoint t0 = w.clock.now();
+  w.flusher.flush_now();
+  w.clock.sleep_for(2min);
+  w.flusher.flush_now();  // the run after: the timed flush at 5 min is not also kept
+  // It failed too: the back-off goes on from it (5, then 10 min).
+  w.clock.sleep_for(11min);
+  EXPECT_EQ(w.db.flushes_since(t0), (std::vector<pychron::Duration>{0min, 2min, 12min}));
+  EXPECT_EQ(w.scheduler.job_count(), 1u);
 }
 
 }  // namespace

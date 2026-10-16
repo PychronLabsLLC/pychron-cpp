@@ -463,13 +463,13 @@ TEST_P(AcquisitionTest, ServesCallsFromOtherThreads) {
 }
 
 namespace {
-using Clock = std::chrono::steady_clock;
+using RealClock = std::chrono::steady_clock;
 // A real-time upper bound: it only tells "done" from "stuck".
 constexpr auto kBound = std::chrono::seconds(30);
 }  // namespace
 
 TEST_P(AcquisitionTest, ServesTwoCallersAtOnce) {
-  const auto begin = Clock::now();
+  const auto begin = RealClock::now();
   auto acquisition = open();
   ASSERT_TRUE(acquisition);
   auto& persister = acquisition->persister();
@@ -484,7 +484,7 @@ TEST_P(AcquisitionTest, ServesTwoCallersAtOnce) {
   }
   EXPECT_EQ(failures.load(), 0);
   EXPECT_EQ(analyses_of("66573"), 40U);
-  EXPECT_LT(Clock::now() - begin, kBound);
+  EXPECT_LT(RealClock::now() - begin, kBound);
 }
 
 // A writer saves through the acquisition while another handle, on this
@@ -498,7 +498,7 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
   std::atomic<bool> done{false};
   std::string write_error, read_error;
   int reads = 0;
-  const auto deadline = Clock::now() + kBound;
+  const auto deadline = RealClock::now() + kBound;
   {
     Joined writer(std::thread([&] {
       for (int i = 1; i <= kRuns; ++i)
@@ -509,7 +509,7 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
       done = true;
     }));
     while (!done) {
-      if (Clock::now() > deadline) {
+      if (RealClock::now() > deadline) {
         read_error = "the writer was still not done after 30 s";
         break;
       }
@@ -529,7 +529,7 @@ TEST_P(AcquisitionTest, AReaderDoesNotLockOutTheWriter) {
 }
 
 TEST_P(AcquisitionTest, ServesManyCallersThenCloses) {
-  const auto begin = Clock::now();
+  const auto begin = RealClock::now();
   auto acquisition = open();
   ASSERT_TRUE(acquisition);
   std::atomic<int> failures{0};
@@ -545,7 +545,7 @@ TEST_P(AcquisitionTest, ServesManyCallersThenCloses) {
   acquisition.reset();
   EXPECT_EQ(failures.load(), 0);
   EXPECT_EQ(analyses_of("66573"), 60U);
-  EXPECT_LT(Clock::now() - begin, kBound);
+  EXPECT_LT(RealClock::now() - begin, kBound);
 }
 
 // The Qt application a store needs is made by the caller of open_acquisition,

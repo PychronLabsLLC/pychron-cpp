@@ -9,10 +9,15 @@
 //                       a persister failure never blocks the next run, is
 //                       told to the caller (Saved::pending) and is retried by
 //                       flush() and on startup (recover())
+//   SpoolFlusher        flushes the pipeline after every run and, while
+//                       anything is pending, on a timer (a scheduler job; no
+//                       run waits on it); publishes SpoolStatus
 //   AliquotAllocator    one source of truth for aliquot numbers
 //
 // Record files are deterministic JSON (record/serialize.hpp).
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -23,7 +28,10 @@
 #include <string>
 #include <vector>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/scheduler.hpp"
+#include "pychron/core/signal_bus.hpp"
 #include "pychron/experiment/model/run_spec.hpp"
 #include "pychron/experiment/record/types.hpp"
 
@@ -90,6 +98,8 @@ class Spool {
   // Uuids of pending records, oldest first.
   Result<std::vector<std::string>> pending() const;
   Result<record::AnalysisRecord> get(const std::string& uuid) const;
+  // Whether the record is still pending (false once it has been sent).
+  bool contains(const std::string& uuid) const;
   const std::filesystem::path& dir() const noexcept { return dir_; }
 
  private:
@@ -129,13 +139,79 @@ class SavePipeline {
   std::optional<std::string> last_error() const;
 
  private:
-  Result<void> hand_off(const std::string& uuid);
+  // True when this call sent the record; false when it had already left the
+  // spool (sent by a flush or a save on another thread meanwhile).
+  Result<bool> hand_off(const std::string& uuid);
 
   Spool& spool_;
   IAnalysisPersister& persister_;
   Post post_;
   mutable std::mutex mutex_;
   std::optional<std::pair<std::string, std::string>> last_error_;  // record uuid, why
+};
+
+// What the spool holds (executor hardening spec 4.8). Published on the bus
+// whenever it changes, by the SpoolFlusher.
+struct SpoolStatus {
+  std::size_t pending = 0;
+  // "<record uuid>: <why>" for the last record that could not be sent (or why
+  // the flush failed as a whole); nothing once it has gone.
+  std::optional<std::string> last_error;
+  bool operator==(const SpoolStatus&) const = default;
+};
+
+// Flushes a SavePipeline off the control path: once after every run
+// (flush_now()), then, while anything is pending, every `interval`. While the
+// flushes keep failing the wait doubles up to `max_interval`; a flush that
+// succeeds brings it back to `interval`. With nothing pending no job is left
+// scheduled. Every flush is a one-shot job on the scheduler, never on the
+// caller's thread, and no two run at once.
+//
+// Borrowed: pipeline, scheduler, clock and bus outlive the flusher. The
+// destructor cancels the job waiting and waits (in the clock) for one that is
+// running.
+class SpoolFlusher {
+ public:
+  struct Options {
+    pychron::Duration interval = std::chrono::minutes(5);
+    pychron::Duration max_interval = std::chrono::minutes(30);
+  };
+
+  SpoolFlusher(SavePipeline& pipeline, Scheduler& scheduler, const Clock& clock, SignalBus* bus)
+      : SpoolFlusher(pipeline, scheduler, clock, bus, Options{}) {}
+  SpoolFlusher(SavePipeline& pipeline, Scheduler& scheduler, const Clock& clock, SignalBus* bus, Options options);
+  ~SpoolFlusher();
+  SpoolFlusher(const SpoolFlusher&) = delete;
+  SpoolFlusher& operator=(const SpoolFlusher&) = delete;
+  SpoolFlusher(SpoolFlusher&&) = delete;
+  SpoolFlusher& operator=(SpoolFlusher&&) = delete;
+
+  // A flush as soon as the scheduler can run it (after a run, at the start of
+  // a queue). Returns at once.
+  void flush_now();
+  // The status last published.
+  SpoolStatus status() const;
+
+ private:
+  void run(std::uint64_t seq);
+  void schedule_locked(pychron::Duration delay);  // caller holds mutex_
+
+  SavePipeline& pipeline_;
+  Scheduler& scheduler_;
+  const Clock& clock_;
+  SignalBus* bus_;
+  Options options_;
+
+  mutable std::mutex mutex_;  // the fields below; never held across a flush
+  std::condition_variable idle_;  // running_ went false; waited on through clock_
+  // Jobs scheduled whose run() has not yet taken mutex_, by sequence number.
+  std::map<std::uint64_t, JobId> jobs_;
+  std::uint64_t next_seq_ = 0;
+  pychron::Duration delay_;                // wait before the next timed flush
+  bool running_ = false;          // a flush is in progress
+  bool again_ = false;            // flush_now() while one was running
+  bool closing_ = false;
+  SpoolStatus status_;
 };
 
 struct Allocation {

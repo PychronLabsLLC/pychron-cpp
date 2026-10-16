@@ -307,6 +307,14 @@ Rule: no run waits on network service. Each has local durable buffer.
   `last_error` published (`SpoolStatus`). Applies unchanged when database
   persister and git mirror arrive (experiment spec 8.4): they sit behind
   spool.
+  As built (Task 19): `persist::SpoolFlusher` (`persister.hpp`), one-shot
+  scheduler jobs, at most one flush at once. Also at queue start, replacing
+  inline `recover()` when executor has flusher. First retry after failure
+  5 min, then 10, 20, 30, 30. Flush succeeds when `SavePipeline::flush()`
+  returns ok (something sent, or nothing failed). `SpoolStatus` published on
+  change only; `last_error` is pipeline's, else error of failed flush. A
+  record already gone from spool when hand-off reads it was sent by another
+  thread: not a failure.
 - Aliquots: allocator answers from local knowledge (`FilePersister` today).
   When store-backed allocation lands it must answer offline from last known
   highest and reconcile on flush; conflict is flagged, never renumbered

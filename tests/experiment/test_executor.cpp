@@ -897,6 +897,79 @@ TEST_F(ExecutorVirtual, QueueOfThreeRunsTakesNoRealTime) {
   EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
 }
 
+// A store that refuses every record for its first hour (spec 4.8).
+class HourLongOutage final : public persist::IAnalysisPersister {
+ public:
+  HourLongOutage(persist::IAnalysisPersister& to, const Clock& clock) : to_(to), clock_(clock) {}
+  Result<int> next_aliquot(const std::string& identifier) override { return to_.next_aliquot(identifier); }
+  Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override { return to_.begin_run(id, queue); }
+  Result<void> save_extraction(const record::AnalysisRecord& record) override { return to_.save_extraction(record); }
+  Result<void> save_analysis(const record::AnalysisRecord& record) override {
+    if (clock_.now() < kStart + 1h) return fail(ErrorKind::Io, "store unreachable");
+    return to_.save_analysis(record);
+  }
+  Result<void> save_artifact(const std::string& uuid, const std::string& name,
+                             const std::vector<std::uint8_t>& bytes) override {
+    return to_.save_artifact(uuid, name, bytes);
+  }
+  Result<void> flush() override { return to_.flush(); }
+  Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override { return to_.check_queue(queue); }
+
+ private:
+  persist::IAnalysisPersister& to_;
+  const Clock& clock_;
+};
+
+// When each run started, from the start of the queue.
+std::vector<pychron::Duration> start_offsets(World& w) {
+  std::vector<pychron::Duration> out;
+  for (const auto& s : w.starts()) out.push_back(s.ts - kStart);
+  return out;
+}
+
+TEST_F(ExecutorVirtual, AStoreDownForAnHourHoldsNoRun) {
+  std::vector<pychron::Duration> fault_free;
+  {
+    World w({});
+    Clock::Participant me(w.clock, "test");
+    Scheduler scheduler(w.clock, &w.bus, Scheduler::Options{1});
+    scheduler.start();
+    persist::SpoolFlusher flusher(w.lab.save, scheduler, w.clock, &w.bus);
+    auto q = w.three_runs();
+    ExecutorContext c = w.context();
+    c.flusher = &flusher;
+    Executor ex(std::move(c), w.options());
+    const auto r = ex.execute(q);
+    ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+    fault_free = start_offsets(w);
+  }
+  ASSERT_EQ(fault_free.size(), 3u);
+
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  HourLongOutage store(w.lab.files, w.clock);
+  persist::SavePipeline save(w.lab.spool, store);
+  Scheduler scheduler(w.clock, &w.bus, Scheduler::Options{1});
+  scheduler.start();
+  persist::SpoolFlusher flusher(save, scheduler, w.clock, &w.bus);
+  auto q = w.three_runs();
+  ExecutorContext c = w.context();
+  c.services.save = &save;
+  c.flusher = &flusher;
+  Executor ex(std::move(c), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(start_offsets(w), fault_free);
+  for (const auto& run : r.runs) EXPECT_TRUE(run.save_error) << run.identifier;
+  EXPECT_LT(w.clock.now(), kStart + 1h);  // the whole queue ran during the outage
+  EXPECT_EQ(save.pending(), 3u);
+  // Its records follow once the store is back, with no run to prompt them.
+  w.clock.sleep_for(kStart + 2h - w.clock.now());
+  EXPECT_EQ(save.pending(), 0u);
+  EXPECT_EQ(flusher.status(), persist::SpoolStatus{});
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
 TEST_F(ExecutorVirtual, RunTimestampsFollowTheClock) {
   World w({});
   Clock::Participant me(w.clock, "test");

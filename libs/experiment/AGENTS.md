@@ -52,6 +52,17 @@ only this component's. Kept compressed, as that file is.
     before the run (a step that is not letters) is refused there too.
   - A record leaves the spool only after the store has acknowledged it, and
     the store is written before `RunFinished` is published.
+  - Spool flushed off control path (executor hardening spec 4.8):
+    `persist::SpoolFlusher`, one-shot scheduler jobs, never a thread of its
+    own, never on executor's thread. Flush at queue start and after every
+    run (`ExecutorContext::flusher`); while pending > 0 every 5 min, wait
+    doubling to 30 min while flushes fail, back to 5 min after one that
+    succeeds; nothing scheduled with nothing pending. `SpoolStatus` published
+    on change only. No run waits on it.
+  - Aliquots, constraint on a later store-backed allocator (spec 4.8; not
+    built): it answers offline from last known highest aliquot per
+    identifier, and reconciles with store on flush. A conflict found there is
+    flagged to operator; a record is never renumbered silently.
   - A store handle works only on the thread that opened it. Programs use
     `store::Acquisition` (`open_acquisition`, called from main thread),
     which owns that thread. It is declared before the session that saves

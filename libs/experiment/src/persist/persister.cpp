@@ -154,6 +154,11 @@ Result<std::vector<std::string>> Spool::pending() const {
   return out;
 }
 
+bool Spool::contains(const std::string& uuid) const {
+  std::error_code ec;
+  return fs::exists(dir_ / (uuid + ".json"), ec) && !ec;
+}
+
 Result<record::AnalysisRecord> Spool::get(const std::string& uuid) const {
   auto text = read_text(dir_ / (uuid + ".json"));
   if (!text) return fail(text.error());
@@ -162,17 +167,22 @@ Result<record::AnalysisRecord> Spool::get(const std::string& uuid) const {
 
 // ---- SavePipeline ---------------------------------------------------------------
 
-Result<void> SavePipeline::hand_off(const std::string& uuid) {
+Result<bool> SavePipeline::hand_off(const std::string& uuid) {
   auto rec = spool_.get(uuid);
+  // A record that has left the spool since it was listed was sent by a flush
+  // or a save on another thread: sending it twice would be harmless (a
+  // persister takes a record again as the same analysis), reading what is no
+  // longer there is not a failure.
+  if (!rec && !spool_.contains(uuid)) return false;
   Result<void> r = rec ? persister_.save_analysis(*rec) : Result<void>(fail(rec.error()));
   if (r) r = spool_.remove(uuid);
   std::lock_guard lock(mutex_);
   if (!r) {
     last_error_ = std::make_pair(uuid, r.error().what);
-  } else if (last_error_ && last_error_->first == uuid) {
-    last_error_.reset();  // the record it spoke of has been sent
+    return fail(r.error());
   }
-  return r;
+  if (last_error_ && last_error_->first == uuid) last_error_.reset();  // the record it spoke of has been sent
+  return true;
 }
 
 Result<Saved> SavePipeline::save(const record::AnalysisRecord& record) {
@@ -193,10 +203,10 @@ Result<std::size_t> SavePipeline::flush() {
   std::size_t done = 0;
   std::optional<Error> first;
   for (const auto& u : *uuids) {
-    if (auto r = hand_off(u); r) {
+    if (auto r = hand_off(u); !r) {
+      if (!first) first = r.error();
+    } else if (*r) {
       ++done;
-    } else if (!first) {
-      first = r.error();
     }
   }
   if (auto r = persister_.flush(); !r && !first) first = r.error();
@@ -213,6 +223,92 @@ std::optional<std::string> SavePipeline::last_error() const {
   std::lock_guard lock(mutex_);
   if (!last_error_) return std::nullopt;
   return last_error_->first + ": " + last_error_->second;
+}
+
+// ---- SpoolFlusher ---------------------------------------------------------------
+
+SpoolFlusher::SpoolFlusher(SavePipeline& pipeline, Scheduler& scheduler, const Clock& clock, SignalBus* bus,
+                           Options options)
+    : pipeline_(pipeline),
+      scheduler_(scheduler),
+      clock_(clock),
+      bus_(bus),
+      options_(options),
+      delay_(options.interval) {}
+
+SpoolFlusher::~SpoolFlusher() {
+  std::vector<JobId> waiting;
+  {
+    const std::lock_guard lock(mutex_);
+    closing_ = true;
+    for (const auto& [seq, id] : jobs_) waiting.push_back(id);
+  }
+  // A job that has begun and not yet taken mutex_ is waited for here; it
+  // sees closing_ and returns.
+  for (const JobId id : waiting) (void)scheduler_.cancel_and_wait(id);
+  std::unique_lock lock(mutex_);
+  while (running_) clock_.wait(idle_, lock);
+}
+
+void SpoolFlusher::schedule_locked(pychron::Duration delay) {
+  const std::uint64_t seq = next_seq_++;
+  auto id = scheduler_.after("spool.flush", delay, [this, seq] { run(seq); });
+  if (id) jobs_.emplace(seq, *id);
+}
+
+void SpoolFlusher::flush_now() {
+  const std::lock_guard lock(mutex_);
+  if (closing_) return;
+  if (running_) {
+    again_ = true;  // the flush in progress schedules the next one at once
+    return;
+  }
+  // A timed flush still waiting is replaced by this one. One that has begun
+  // and not yet reached run()'s lock is not stopped by cancel(): it finds
+  // this one's flush running, or done, and asks for no more than again_.
+  for (const auto& [seq, id] : jobs_) (void)scheduler_.cancel(id);
+  jobs_.clear();
+  schedule_locked(pychron::Duration::zero());
+}
+
+SpoolStatus SpoolFlusher::status() const {
+  const std::lock_guard lock(mutex_);
+  return status_;
+}
+
+void SpoolFlusher::run(std::uint64_t seq) {
+  {
+    const std::lock_guard lock(mutex_);
+    jobs_.erase(seq);
+    if (closing_) return;
+    if (running_) {
+      again_ = true;
+      return;
+    }
+    running_ = true;
+    again_ = false;
+  }
+  const auto flushed = pipeline_.flush();
+  SpoolStatus now{pipeline_.pending(), pipeline_.last_error()};
+  if (!flushed && !now.last_error) now.last_error = flushed.error().what;  // the spool or the persister's flush
+  bool changed = false;
+  {
+    const std::lock_guard lock(mutex_);
+    if (flushed) delay_ = options_.interval;
+    const pychron::Duration next = again_ ? pychron::Duration::zero() : delay_;
+    if (!flushed) delay_ = std::min(delay_ * 2, options_.max_interval);
+    if (!closing_ && (again_ || now.pending > 0)) schedule_locked(next);
+    again_ = false;
+    changed = now != status_;
+    if (changed) status_ = now;
+  }
+  if (changed && bus_ != nullptr) bus_->publish(now);
+  // Notified under the lock: once it is released the destructor may run.
+  const std::lock_guard lock(mutex_);
+  if (again_ && !closing_) schedule_locked(pychron::Duration::zero());  // asked for while it published
+  again_ = false;
+  running_ = false;
+  clock_.notify_all(idle_);
 }
 
 // ---- AliquotAllocator -----------------------------------------------------------

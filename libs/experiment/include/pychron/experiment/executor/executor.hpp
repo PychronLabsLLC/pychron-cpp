@@ -14,6 +14,8 @@
 // run is still measuring (overlap).
 //
 // After a run:
+//   - the spool is flushed (ExecutorContext::flusher, a scheduler job: no run
+//     waits on it);
 //   - modification trips' queue actions and post_run conditionals are
 //     applied to the queue (after the last started row);
 //   - a cancelation trip, a pre_run trip, a post_run cancel, a cancelled or
@@ -176,6 +178,10 @@ struct ExecutorContext {
   // waited for to be up and stable. None: a hold waits on the checks alone.
   std::function<std::vector<Link*>(const RunSpec&)> links;
   BlankFactory blank = default_blank_factory(IdentifierRules::defaults());
+  // Flushes services.save off the executor's thread (spec 4.8): asked for a
+  // flush as a queue starts and after every run. None: the queue's start
+  // re-sends what an earlier session left (services.save->recover()) inline.
+  persist::SpoolFlusher* flusher = nullptr;
 };
 
 struct ExecutorOptions {
