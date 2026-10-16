@@ -239,8 +239,8 @@ Departs from spec 4.2 wording ("each window hands the new style to its live plot
 - Modify: `apps/pychron-ui/AGENTS.md` (compressed): new live view takes series colours and background from `plot_style()` and listens to `PlotStyleHub::changed`, never a literal or `theme()`; a colour from config carries no `palette_slot`
 - Modify: `docs/user/03-spectrometer.md` only if it states the light yellow background or 8 colours (`grep -n "yellow\|8 colo" docs/user`)
 
-- [ ] **Step 1: Edit the three files.** Docs only: no build.
-- [ ] **Step 2: Commit:** `docs(ui): Plots preferences page and the live palette rule`
+- [x] **Step 1: Edit the three files.** Docs only: no build.
+- [x] **Step 2: Commit:** `docs(ui): Plots preferences page and the live palette rule`
 
 ---
 
