@@ -378,12 +378,12 @@ the volumes paragraph at 403-416: new tank, closed getters).
 
 ### Task 6: Whole branch
 
-- [ ] **Step 1:** `cmake --build --preset dev-ui` (builds what `dev` builds) and `ctest --preset dev-ui`.
+- [x] **Step 1:** `cmake --build --preset dev-ui` (builds what `dev` builds) and `ctest --preset dev-ui`.
   Expected: all pass, `pychron_install_e2e_tests` included (persistence on).
-- [ ] **Step 2:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --build-dir build/dev-ui`.
-- [ ] **Step 3:** Review the branch against the spec with `cavecrew-reviewer` on `model: sonnet`; fix findings,
+- [x] **Step 2:** `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --build-dir build/dev-ui`.
+- [x] **Step 3:** Review the branch against the spec with `cavecrew-reviewer` on `model: sonnet`; fix findings,
   rerun what they touch.
-- [ ] **Step 4:** Spec and code agree (decisions 1 to 4 written in); spec status line notes "built".
+- [x] **Step 4:** Spec and code agree (decisions 1 to 4 written in); spec status line notes "built".
 
 ## Open questions
 

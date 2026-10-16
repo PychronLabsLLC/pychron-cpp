@@ -1,6 +1,6 @@
 # A fuller example extraction line: design
 
-Status: agreed 2026-10-15 (owner settled section 8). Written 2026-10-13 (nightly).
+Status: agreed 2026-10-15 (owner settled section 8); built 2026-10-16. Written 2026-10-13 (nightly).
 Task T076. Owner: add more elements to example extraction line canvas; more
 similar to NMGRL, not 1:1, no NMGRL names (bone, jan, ...); example should
 represent what pychron-cpp has available.
