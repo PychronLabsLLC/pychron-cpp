@@ -6,9 +6,10 @@
 #   file = "sim.toml"
 #
 # What each stage of canvas.toml is to the gas comes from its `kind`: a pump
-# pumps, a getter takes active gas, a tank starts full of air, a pipette is a
-# small volume between its two valves, and the spectrometer is the source the
-# beam reads. This file only changes numbers, for the whole line or by name.
+# pumps, a getter takes active gas, a tank starts full of air (or of the
+# composition named for it below), a pipette is a small volume between its two
+# valves, and the spectrometer is the source the beam reads. This file only
+# changes numbers, for the whole line or by name.
 #
 # Every key is below with its unit, what it means and its default, each
 # commented out; the few numbers this example lab sets for itself are at the
@@ -63,6 +64,8 @@
 # [volumes.air_tank]
 # composition = "air"
 # argon40 = 3e-5             # mbar of Ar40: what a tank starts with unasked
+#                            # (cocktail_tank, the second tank, holds the same Ar40
+#                            # of the cocktail: see the end of this file)
 
 # [volumes.prep]
 # pressure = 1e-8            # mbar in all, as air
@@ -102,8 +105,9 @@
 # What this example lab sets, so that experiment.sim-air.toml (blank, air,
 # air, air, blank) reads like a lab: an air shot of about 9.5e4 fA of Ar40
 # that the source uses up at 1.9 fA/s, a blank of about 10 fA, an inlet whose
-# rise can be seen, and a source that pumps back to nothing. Everything above
-# is commented out; these are in force.
+# rise can be seen, a source that pumps back to nothing, and a second tank
+# that holds the cocktail, Ar39 and all. Everything above is commented out;
+# these are in force.
 
 [defaults]
 pressure = 1e-10           # the lab starts pumped down: every volume at the turbo's base,
@@ -118,6 +122,13 @@ argon40 = 9.5e-5           # one 0.1 cc pipette of it, spread over prep and the 
                            # (50 cc each), is 9.5e-8 mbar: 9.5e4 fA of Ar40 on a Faraday
                            # and 317 fA (cps) of Ar36 on the counter. Each shot leaves
                            # the 50 cc tank at 50 / 50.1 of what it was
+
+[volumes.cocktail_tank]
+composition = "cocktail"   # the built-in cocktail at a tank's unasked 3e-5 mbar of Ar40. One
+                           # 0.1 cc pipette of it (scripts/extraction/sim_cocktail.py,
+                           # not in the queue) spread over prep and the source is about
+                           # 3.0e4 fA of Ar40 and, at 20 / 298.56 of that, 2.0e3 fA of
+                           # Ar39: what an air shot has none of
 
 [valves.B]
 conductance = 0.02         # the inlet: prep and the source equilibrate with

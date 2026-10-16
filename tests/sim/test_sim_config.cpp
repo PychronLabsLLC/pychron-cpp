@@ -772,9 +772,12 @@ TEST_F(SimConfig, AMessageNamesWhatIsKnownAndTheUnit) {
 TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   const std::filesystem::path example = std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "sim.toml";
   SimTopology canvas;  // the example canvas's names
-  canvas.volumes = {{"stage1"}, {"prep"}, {"spec"}, {"turbo"}, {"rough"}, {"air_tank"}, {"air"}, {"IG1"}, {"PG1"}};
+  canvas.volumes = {{"stage1"},  {"prep"},    {"spec"},    {"turbo"},         {"rough"},    {"air_tank"}, {"air"},
+                    {"IG1"},     {"PG1"},     {"laser"},   {"ion"},           {"getter1"},  {"getter2"},  {"cryo"},
+                    {"turbo2"},  {"cocktail_tank"},        {"cocktail"},      {"IG2"},      {"CG1"}};
   canvas.volumes[5].role = SimRole::Tank;
-  canvas.valves = {"A", "B", "C", "P1", "P2", "M1"};
+  canvas.volumes[15].role = SimRole::Tank;
+  canvas.valves = {"A", "B", "C", "P1", "P2", "M1", "L", "I", "G1", "G2", "Y", "D", "Q1", "Q2", "R1", "R2", "M2"};
 
   // As shipped: comments, then what the example sets; a base that is
   // nobody's default comes back as it went in but for those.
@@ -829,12 +832,15 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   // What the example lab sets (the reasons are in the file, and
   // tests/integration/test_lab_sim.cpp holds the lab to them).
   EXPECT_EQ(in_force, (std::vector<std::string>{"[defaults]", "pressure = 1e-10", "outgassing = 1.5e-13",
-                                                "[volumes.air_tank]", "argon40 = 9.5e-5", "[valves.B]",
+                                                "[volumes.air_tank]", "argon40 = 9.5e-5", "[volumes.cocktail_tank]",
+                                                "composition = \"cocktail\"", "[valves.B]",
                                                 "conductance = 0.02", "[pumps.turbo]", "base = 1e-10"}));
   SimSettings tuned = base;
   tuned.default_pressure = 1e-10;
   tuned.outgassing = 1.5e-13;
   tuned.compositions["air_tank"] = sim::with_ar40(sim::air_ratios(), 9.5e-5);
+  // The base's cocktail, at the base's unasked Ar40 of a tank.
+  tuned.compositions["cocktail_tank"] = sim::with_ar40(base.named.at("cocktail"), base.tank_argon40);
   tuned.conductances["B"] = 0.02;
   tuned.pumps["turbo"].base = 1e-10;
   expect_same(*shipped, tuned);

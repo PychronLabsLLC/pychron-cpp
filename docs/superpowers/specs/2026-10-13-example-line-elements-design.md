@@ -201,10 +201,14 @@ Found building it (2026-10-16):
 
 - `tests/systems`: example line and canvas load with no diagnostic; counts
   of section 5.1.
-- `tests/sim`: example `sim.toml` loads; `cocktail` shot gives Ar39 on the
-  detector the plan puts it on (new case).
+- `tests/sim`: example `sim.toml` loads (`TheExampleFileIsTheDefaults`:
+  new canvas names, `cocktail_tank` a tank, its line in force).
 - `tests/integration`: `ExampleLineSim`, `LabSim`, install e2e unchanged and
-  passing.
+  passing. New `LabSim` case: `cocktail` shot (`sim_cocktail` in place of an
+  air row's `sim_air`) gives Ar39 on detector `sim_multicollect` puts it on
+  (`H2`), Ar40 within 1 % of one shot of the cocktail tank, Ar39 that times
+  20/298.56 within 3 %. There, not in `tests/sim`: `tests/sim` knows no plan
+  and no detector (plan decision 4).
 - `tests/ui` `test_canvas_view`: element counts; heater and cryo docks show
   for example line.
 - Full `ctest --preset dev-ui`.

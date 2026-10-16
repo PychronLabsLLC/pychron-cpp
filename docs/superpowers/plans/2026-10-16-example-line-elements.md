@@ -284,7 +284,7 @@ message. A measured value outside its band is a cause to find (the tank's Ar40, 
 table, fractionation, the blank), not a band to widen; a band is changed only when the cause shows the derivation
 above was wrong, and the derivation in this plan and the test's comment are changed with it.
 
-- [ ] **Step 1: Failing test** in `test_lab_sim.cpp`. First generalise `numbers_of(const sim::SimSettings&)` to
+- [x] **Step 1: Failing test** in `test_lab_sim.cpp`. First generalise `numbers_of(const sim::SimSettings&)` to
   `numbers_of(const sim::SimSettings&, std::string_view tank = kTank, std::string_view pipette = kPipette)` (callers
   unchanged; `n.tank`, `n.pipette` and `n.tank_ar40` read the given names). Then:
 
@@ -321,12 +321,12 @@ TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
 
   `sim::cocktail_ratios()` and `sim::index` come from `pychron/sim/gas.hpp`, which the file already reaches for
   `kAr40`. Skips as the other `LabSim` cases do without embedded Python.
-- [ ] **Step 2:** Run `pychron_integration_tests --gtest_filter='LabSim.ACocktail*'`: FAIL (no script).
-- [ ] **Step 3:** Write `sim.toml` lines and `sim_cocktail.py`; update `TheExampleFileIsTheDefaults`.
-- [ ] **Step 4:** Run `pychron_sim_tests --gtest_filter='SimConfig.*'`, `pychron_integration_tests --gtest_filter='LabSim.*:ExampleLineSim*'`,
+- [x] **Step 2:** Run `pychron_integration_tests --gtest_filter='LabSim.ACocktail*'`: FAIL (no script).
+- [x] **Step 3:** Write `sim.toml` lines and `sim_cocktail.py`; update `TheExampleFileIsTheDefaults`.
+- [x] **Step 4:** Run `pychron_sim_tests --gtest_filter='SimConfig.*'`, `pychron_integration_tests --gtest_filter='LabSim.*:ExampleLineSim*'`,
   `pychron_setup_tests --gtest_filter='*Profile*'` (byte-equal `sim.toml`). Expected: PASS; a ratio off by more than
   3 % is a cause to find (fractionation, blank), not a tolerance to widen.
-- [ ] **Step 5:** Edit spec 7. `quality_check.py`, `compiler_sweep.py --changed`. Commit
+- [x] **Step 5:** Edit spec 7. `quality_check.py`, `compiler_sweep.py --changed`. Commit
   `feat(setup): a cocktail tank and pipette script for the example lab`.
 
 ### Task 4: Heater and cryostat

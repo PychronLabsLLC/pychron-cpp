@@ -366,12 +366,14 @@ struct LabNumbers {
   }
 };
 
-LabNumbers numbers_of(const sim::SimSettings& s) {
+// The lab's numbers for a shot from `tank` through `pipette` (the air tank
+// and its pipette unless named).
+LabNumbers numbers_of(const sim::SimSettings& s, std::string_view tank = kTank, std::string_view pipette = kPipette) {
   LabNumbers n;
   n.prep = litres(s, kPrep, s.default_volume_cc);
   n.source = litres(s, kSource, s.default_volume_cc);
-  n.tank = litres(s, kTank, s.default_volume_cc);
-  n.pipette = litres(s, kPipette, s.pipette_cc);
+  n.tank = litres(s, std::string(tank), s.default_volume_cc);
+  n.pipette = litres(s, std::string(pipette), s.pipette_cc);
   const auto own = s.conductances.find(kInlet);
   n.inlet = own == s.conductances.end() ? s.valve_conductance : own->second;
   n.sensitivity = s.source.sensitivity;
@@ -379,7 +381,7 @@ LabNumbers numbers_of(const sim::SimSettings& s) {
   // Per litre of wall, into that litre: mbar/s whatever the size.
   n.rise = s.outgassing * s.source.sensitivity + s.source.memory_fa_per_s;
   n.pumped = s.default_pressure * sim::air_ratios()[kAr40] / sim::total(sim::air_ratios()) * s.source.sensitivity;
-  const auto held = s.compositions.find(kTank);
+  const auto held = s.compositions.find(std::string(tank));
   n.tank_ar40 = held == s.compositions.end() ? s.tank_argon40 : held->second[kAr40];
   return n;
 }
@@ -729,6 +731,35 @@ TEST_F(LabSim, AScriptThatSkipsThePipetteMeasuresABlank) {
   EXPECT_GT(skipped->value(), 5.0);
   EXPECT_LT(skipped->value(), 200.0);
   EXPECT_GT(air->value(), 1e4);
+}
+
+// The second pipette carries the built-in cocktail: Ar39, which air has none
+// of, on H2 where sim_multicollect puts it. One shot is the cocktail tank's
+// pressure in one pipette spread over prep and the source, as an air shot is
+// the air tank's (first_shot); its Ar39 is that times the cocktail's 20/298.56.
+TEST_F(LabSim, ACocktailShotPutsAr39WhereThePlanSays) {
+  ScratchLab lab;
+  ASSERT_TRUE(lab.problem().empty()) << lab.problem();
+  const LabNumbers cocktail = numbers_of(lab.settings(), "cocktail_tank", "cocktail");
+  const auto ratios = sim::cocktail_ratios();
+  const double ar39_per_ar40 = ratios[sim::index(sim::Species::Ar39)] / ratios[kAr40];
+  QueueSpec queue = lab.rows({1});
+  ASSERT_EQ(queue.runs.size(), 1u);
+  ASSERT_EQ(queue.runs[0].extraction.script, "sim_air");  // row 1 is an air shot
+  queue.runs[0].extraction.script = "sim_cocktail";
+  const auto runs = lab.run(queue);
+  ASSERT_EQ(runs.size(), 1u);
+  const auto ar39 = measured(runs[0].record, "Ar39", "H2");
+  const auto ar40 = measured(runs[0].record, "Ar40", kFaraday);
+  ASSERT_TRUE(ar39);
+  ASSERT_TRUE(ar40);
+  record_value("cocktail_ar40_fA", ar40->value());
+  record_value("cocktail_ar39_fA", ar39->value());
+  record_value("cocktail_expected_ar40_fA", cocktail.first_shot());
+  EXPECT_NEAR(ar40->value(), cocktail.first_shot(), 0.01 * cocktail.first_shot());  // as the air shot
+  const double ar39_expected = cocktail.first_shot() * ar39_per_ar40;
+  EXPECT_NEAR(ar39->value(), ar39_expected, 0.03 * ar39_expected);  // H2's peak flat within 0.02, and noise
+  EXPECT_NEAR(ar40->value() / ar39->value(), 1 / ar39_per_ar40, 0.03 / ar39_per_ar40);
 }
 
 // A pipette with both its valves open is no pipette: the tank empties into
