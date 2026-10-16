@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <system_error>
 
 #include <QAction>
 #include <QCloseEvent>
@@ -213,6 +214,12 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
     return QMessageBox::question(this, tr("Queue running"),
                                  tr("A queue is running. Stop it after the current run? (No keeps it running.)"),
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+  };
+  pick_open_file_ = [this](const QString& start) {
+    return QFileDialog::getOpenFileName(this, tr("Open queue"), start, tr("Experiment queues (*.toml)"));
+  };
+  pick_save_file_ = [this](const QString& start) {
+    return QFileDialog::getSaveFileName(this, tr("Save queue"), start, tr("Experiment queues (*.toml)"));
   };
 
   ask_clear_executed_ = [this](int runs) {
@@ -869,8 +876,16 @@ void ExperimentWindow::open_dialog() {
     QMessageBox::information(this, tr("Open"), tr("A queue is running."));
     return;
   }
+  // The directory of the last queue opened while it is still there, else
+  // the lab's queues/ (queue-directory design, section 3).
+  std::filesystem::path start = bridge_.lab().paths.queues();
   const QString last = settings_->value(QStringLiteral("experiment_window/last_queue")).toString();
-  const QString file = QFileDialog::getOpenFileName(this, tr("Open queue"), last, tr("Experiment queues (*.toml)"));
+  if (!last.isEmpty()) {
+    const std::filesystem::path dir = std::filesystem::path(last.toStdString()).parent_path();
+    std::error_code ec;
+    if (!dir.empty() && std::filesystem::is_directory(dir, ec)) start = dir;
+  }
+  const QString file = pick_open_file_(QString::fromStdString(start.string()));
   if (file.isEmpty()) return;
   QString error;
   if (!load_queue(file.toStdString(), &error)) {
@@ -881,8 +896,20 @@ void ExperimentWindow::open_dialog() {
 }
 
 void ExperimentWindow::save_as_dialog() {
-  const QString start = path_ ? QString::fromStdString(path_->string()) : QString();
-  const QString file = QFileDialog::getSaveFileName(this, tr("Save queue"), start, tr("Experiment queues (*.toml)"));
+  // A queue with a file starts at that file; a new one in the lab's queues/,
+  // made first when missing (the dialog still opens, at the lab, when it
+  // cannot be made).
+  QString start;
+  if (path_) {
+    start = QString::fromStdString(path_->string());
+  } else {
+    const auto& paths = bridge_.lab().paths;
+    std::error_code ec;
+    std::filesystem::create_directories(paths.queues(), ec);
+    const bool made = std::filesystem::is_directory(paths.queues(), ec);
+    start = QString::fromStdString((made ? paths.queues() : paths.dir).string());
+  }
+  const QString file = pick_save_file_(start);
   if (file.isEmpty()) return;
   QString error;
   if (!save_as(file.toStdString(), &error)) QMessageBox::warning(this, tr("Save"), error);

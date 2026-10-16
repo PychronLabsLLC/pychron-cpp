@@ -1814,6 +1814,103 @@ class TestExperimentWindow : public QObject {
     main.set_experiment(nullptr, false);
   }
 
+  // ---- where the queue dialogs start (queue-directory design, section 3) ------
+
+  void openStartsInTheLabsQueuesWithNoLastQueue() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    ExperimentWindow window(bridge, true,
+                            std::make_unique<QSettings>(dir.filePath(QStringLiteral("s.ini")), QSettings::IniFormat));
+    QString start;
+    window.set_pick_open_file([&](const QString& s) {
+      start = s;
+      return QString();
+    });
+    window.open_dialog();
+    QCOMPARE(start, QString::fromStdString((sim.dir / "queues").string()));
+  }
+
+  void openStartsWhereTheLastQueueWas() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    ExperimentWindow window(bridge, true,
+                            std::make_unique<QSettings>(dir.filePath(QStringLiteral("s.ini")), QSettings::IniFormat));
+    fs::create_directories(sim.dir / "elsewhere");
+    const fs::path q = sim.dir / "elsewhere" / "q.toml";
+    QVERIFY(pychron::experiment::save_queue_file(q.string(), sim.queue()));
+    QString error;
+    QVERIFY2(window.load_queue(q, &error), qPrintable(error));
+    QString start;
+    window.set_pick_open_file([&](const QString& s) {
+      start = s;
+      return QString();
+    });
+    window.open_dialog();
+    QCOMPARE(start, QString::fromStdString((sim.dir / "elsewhere").string()));
+  }
+
+  void openFallsBackWhenTheLastQueuesDirectoryIsGone() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    ExperimentWindow window(bridge, true,
+                            std::make_unique<QSettings>(dir.filePath(QStringLiteral("s.ini")), QSettings::IniFormat));
+    fs::create_directories(sim.dir / "elsewhere");
+    const fs::path q = sim.dir / "elsewhere" / "q.toml";
+    QVERIFY(pychron::experiment::save_queue_file(q.string(), sim.queue()));
+    QString error;
+    QVERIFY2(window.load_queue(q, &error), qPrintable(error));
+    fs::remove_all(sim.dir / "elsewhere");
+    QString start;
+    window.set_pick_open_file([&](const QString& s) {
+      start = s;
+      return QString();
+    });
+    window.open_dialog();
+    QCOMPARE(start, QString::fromStdString((sim.dir / "queues").string()));
+  }
+
+  void savingANewQueueMakesQueues() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    ExperimentWindow window(bridge, true,
+                            std::make_unique<QSettings>(dir.filePath(QStringLiteral("s.ini")), QSettings::IniFormat));
+    fs::remove_all(sim.dir / "queues");
+    QString error;
+    QVERIFY2(window.new_queue(&error), qPrintable(error));
+    QString start;
+    bool made = false;
+    const fs::path out = sim.dir / "queues" / "new.toml";
+    window.set_pick_save_file([&](const QString& s) {
+      start = s;
+      made = fs::is_directory(sim.dir / "queues");
+      return QString::fromStdString(out.string());
+    });
+    window.save_as_dialog();
+    QVERIFY(made);
+    QCOMPARE(start, QString::fromStdString((sim.dir / "queues").string()));
+    QVERIFY(window.path().has_value());
+    QCOMPARE(*window.path(), out);
+    QVERIFY(fs::exists(out));
+  }
+
+  void aQueueNamedAtStartIsFoundInTheLab() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    const fs::path in_lab = sim.dir / "queues" / "t041-start.toml";
+    QVERIFY(pychron::experiment::save_queue_file(in_lab.string(), sim.queue()));
+    pychron::ui::MainWindow main(*sim.line);
+    main.set_experiment(&bridge, true, fs::path("t041-start.toml"), [this] { return settings(); });
+    main.experiment_action()->trigger();
+    QVERIFY(main.experiment_window() != nullptr);
+    QVERIFY(main.experiment_window()->path().has_value());
+    QCOMPARE(*main.experiment_window()->path(), in_lab);
+    main.set_experiment(nullptr, false);
+  }
+
   // Every window here was given its settings: none fell back to the application's.
   void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };

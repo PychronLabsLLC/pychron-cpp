@@ -238,7 +238,7 @@ BREAKING CHANGE: a lab's old <lab>/blocks/ directory is no longer read; move its
 
 Start directory, as settled from spec section 3: Open starts in the directory of `last_queue` when the setting is set and that directory exists, else in `<lab>/queues/`. Save As of a queue that has a file starts at that file, as now. Save As of a new queue (no file yet, also reached by Save) creates `<lab>/queues/` if missing, then starts there; the user types the name.
 
-- [ ] **Step 1: Write the failing tests** (private slots of the existing test class, each with its own `QTemporaryDir` settings file as the layout tests use)
+- [x] **Step 1: Write the failing tests** (private slots of the existing test class, each with its own `QTemporaryDir` settings file as the layout tests use)
 
 - `openStartsInTheLabsQueuesWithNoLastQueue`: hook records `start` and returns `QString()`; `open_dialog()`; `QCOMPARE(start, QString::fromStdString((sim.dir / "queues").string()))`.
 - `openStartsWhereTheLastQueueWas`: save the sim queue to `sim.dir / "elsewhere" / "q.toml"`, `load_queue` it, then `open_dialog()`: start is `sim.dir / "elsewhere"`.
@@ -246,24 +246,24 @@ Start directory, as settled from spec section 3: Open starts in the directory of
 - `savingANewQueueMakesQueues`: `fs::remove_all(sim.dir / "queues")`, `new_queue()`; save hook records `start` and `QVERIFY(fs::is_directory(sim.dir / "queues"))` inside the hook, returns `(sim.dir/"queues"/"new.toml")`; `save_as_dialog()`; start is `sim.dir / "queues"`, `window.path() == sim.dir / "queues" / "new.toml"`, the file exists.
 - `aQueueNamedAtStartIsFoundInTheLab`: `save_queue_file((sim.dir/"queues"/"t041-start.toml").string(), sim.queue())`; `main.set_experiment(&bridge, true, fs::path("t041-start.toml"), …)` as the test at `:969` does; open the experiment window; its `path()` is `sim.dir / "queues" / "t041-start.toml"`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev-ui --target pychron_ui_test_experiment_window && build/dev-ui/tests/ui/pychron_ui_test_experiment_window openStartsInTheLabsQueuesWithNoLastQueue openStartsWhereTheLastQueueWas openFallsBackWhenTheLastQueuesDirectoryIsGone savingANewQueueMakesQueues aQueueNamedAtStartIsFoundInTheLab`
 Expected: compile error (hooks missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Hooks stored as members, defaults set in the constructor. `open_dialog` computes the start as above and calls the open hook; `save_as_dialog` creates `bridge_.lab().paths.queues()` (`fs::create_directories` with `std::error_code`; on failure the dialog still opens, at the lab) only when `path_` is empty. `MainWindow::ensure_experiment_window` loads `lab::find_queue(*experiment_queue_, experiment_->lab().paths.dir)`. `last_queue` is written as today (on load only).
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: same as Step 2, then the whole binary. Expected: all PASS.
 
-- [ ] **Step 5: Static analysis**
+- [x] **Step 5: Static analysis**
 
 Run: `python3 tools/quality_check.py` and `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`. Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/pychron-ui/src/experiment_window.hpp apps/pychron-ui/src/experiment_window.cpp apps/pychron-ui/src/main_window.cpp apps/pychron-ui/src/main.cpp tests/ui/test_experiment_window.cpp docs/user/04-experiments.md

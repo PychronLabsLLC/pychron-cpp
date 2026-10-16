@@ -283,7 +283,12 @@ Comment.
 
 **File > Open > Open Queue…** (Ctrl+O) loads a queue; **File > Save Queue**
 (Ctrl+S) and **Save Queue As…** write it; **File > New > New Queue** (Ctrl+N)
-starts an empty one with no file. Open and New work from any window and
+starts an empty one with no file. Open starts in the folder of the last queue
+you opened, or in the lab's `queues/` folder when there is none (or that folder
+is gone). Saving a queue that has no file yet starts in `queues/`, which is
+made if missing; you type the name. `--queue` at start takes a name in that
+folder too: `--queue experiment.toml` finds `<lab>/queues/experiment.toml`,
+then `<lab>/experiment.toml`. Open and New work from any window and
 bring the Experiment window up. **Experiment > Queue > Revalidate** checks the queue again. You
 cannot open or start another queue while one is running. Closing the window asks about unsaved changes and,
 if a queue is running, whether to stop it after the current run. If you

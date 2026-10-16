@@ -22,6 +22,9 @@
 #include <QPixmap>
 #include <QStatusBar>
 
+#include "experiment_bridge.hpp"
+#include "pychron/experiment/lab/lab.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -405,7 +408,10 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
     give_references();
     if (experiment_queue_) {
       QString error;
-      if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
+      // A name given at start is looked for in the lab's queues/, then the
+      // lab (queue-directory design, section 3).
+      const auto queue = experiment::lab::find_queue(*experiment_queue_, experiment_->lab().paths.dir);
+      if (!experiment_window_->load_queue(queue, &error)) {
         log_->append_line(QStringLiteral("ERROR [ui] queue not opened: ") + error);
       } else {
         experiment_window_->offer_resume();

@@ -21,7 +21,8 @@
 //
 // View > Experiment runs queues against the lab directory (--lab, default
 // the install folder or the line config's directory; records under --data,
-// default <lab>/data). --queue opens a queue there. --sim-speed (with --sim,
+// default <lab>/data). --queue opens a queue there: a relative name not found
+// as given is looked up in <lab>/queues/, then <lab>/. --sim-speed (with --sim,
 // or an install set up for simulation) puts the whole app on simulated time
 // running that many times faster than real time, from the real time of day.
 // It takes a number: unlimited speed (elctl's --sim-speed max) would finish a

@@ -135,6 +135,8 @@ class ExperimentWindow : public QMainWindow {
   // of a file asked for; each says so when a queue is running.
   void new_dialog();
   void open_dialog();
+  // File > Save Queue As… (and Save of a queue with no file yet).
+  void save_as_dialog();
   bool save(QString* error = nullptr);  // to the current path; false if none
   bool save_as(const std::filesystem::path& path, QString* error = nullptr);
   const std::optional<std::filesystem::path>& path() const noexcept { return path_; }
@@ -185,6 +187,12 @@ class ExperimentWindow : public QMainWindow {
   void set_confirm(ExecutorPane::Confirm confirm);
   void set_ask_unsaved(std::function<Unsaved()> ask) { ask_unsaved_ = std::move(ask); }
   void set_ask_stop(std::function<bool()> ask) { ask_stop_ = std::move(ask); }
+  // The file asked for by Open and Save As, given the directory or file the
+  // dialog starts at (queue-directory design, section 3); empty on cancel.
+  // Defaults are the file dialogs.
+  using PickFile = std::function<QString(const QString& start)>;
+  void set_pick_open_file(PickFile pick) { pick_open_file_ = std::move(pick); }
+  void set_pick_save_file(PickFile pick) { pick_save_file_ = std::move(pick); }
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -214,7 +222,6 @@ class ExperimentWindow : public QMainWindow {
   // The Executed section follows the boundary: its count, whether it shows,
   // and its newest row unless the operator scrolled up.
   void on_executed_changed();
-  void save_as_dialog();
   void sync_queue_conditionals();  // the combo follows the queue and the lab's files
   std::optional<QList<Qt::CheckState>> pick_conditionals_dialog(const QStringList& names,
                                                                 const QList<Qt::CheckState>& states);
@@ -264,6 +271,8 @@ class ExperimentWindow : public QMainWindow {
   std::function<bool(int)> ask_clear_executed_;
   std::function<bool(const ResumeOffer&)> ask_resume_;
   std::function<void(const QString&)> inform_;
+  PickFile pick_open_file_;
+  PickFile pick_save_file_;
 
   QAction* open_ = nullptr;
   QAction* save_ = nullptr;
