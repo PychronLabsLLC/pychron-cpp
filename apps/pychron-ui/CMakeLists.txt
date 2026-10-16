@@ -34,6 +34,7 @@ add_library(pychron_ui_lib STATIC
   src/queue_table_model.cpp
   src/queue_views.cpp
   src/resume_offer.cpp
+  src/recent_queues.cpp
   src/executor_pane.cpp
   src/timeline.cpp
   src/evolutions_view.cpp

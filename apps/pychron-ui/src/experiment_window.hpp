@@ -42,6 +42,7 @@
 #include "queue_table_model.hpp"
 #include "queue_views.hpp"
 #include "resume_offer.hpp"
+#include "recent_queues.hpp"
 #include "measurement_panel.hpp"
 #include "run_factory_panel.hpp"
 #include "script_editor_window.hpp"
@@ -50,6 +51,7 @@ class QAction;
 class QComboBox;
 class QDockWidget;
 class QLabel;
+class QMenu;
 class QSplitter;
 class QTableView;
 class QToolBar;
@@ -140,6 +142,10 @@ class ExperimentWindow : public QMainWindow {
   bool save(QString* error = nullptr);  // to the current path; false if none
   bool save_as(const std::filesystem::path& path, QString* error = nullptr);
   const std::optional<std::filesystem::path>& path() const noexcept { return path_; }
+  // File > Open Recent: the queues opened or saved last, newest first, then
+  // Clear Menu. Rebuilt when shown and after each change of the list; its
+  // action is greyed while the list is empty.
+  QMenu* recent_menu() const noexcept { return recent_menu_; }
   bool modified() const noexcept { return modified_; }
   QString queue_diagnostics_text() const;
 
@@ -222,6 +228,8 @@ class ExperimentWindow : public QMainWindow {
   // The Executed section follows the boundary: its count, whether it shows,
   // and its newest row unless the operator scrolled up.
   void on_executed_changed();
+  void rebuild_recent();
+  void open_recent(const QString& file);
   void sync_queue_conditionals();  // the combo follows the queue and the lab's files
   std::optional<QList<Qt::CheckState>> pick_conditionals_dialog(const QStringList& names,
                                                                 const QList<Qt::CheckState>& states);
@@ -229,6 +237,7 @@ class ExperimentWindow : public QMainWindow {
   ExperimentBridge& bridge_;
   bool simulation_;
   std::unique_ptr<QSettings> settings_;
+  RecentQueues recent_;  // on *settings_
   DockLayouts* layouts_ = nullptr;
   QDockWidget* executor_dock_ = nullptr;
   QDockWidget* evolutions_dock_ = nullptr;
@@ -279,6 +288,7 @@ class ExperimentWindow : public QMainWindow {
   QAction* save_as_ = nullptr;
   QAction* revalidate_ = nullptr;
   QAction* resume_ = nullptr;
+  QMenu* recent_menu_ = nullptr;
   std::vector<QAction*> row_actions_;
 };
 

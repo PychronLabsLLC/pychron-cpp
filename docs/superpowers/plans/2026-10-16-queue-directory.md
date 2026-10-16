@@ -290,7 +290,7 @@ git commit -m "feat(ui): queue dialogs start in the lab's queues directory"
   - `void clear();`
   - `QMenu* ExperimentWindow::recent_menu() const noexcept;` the File > Open Recent submenu (tests read it)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `test_recent_queues.cpp` (`QTEST_MAIN`, a `QSettings` on a `QTemporaryDir` ini file, queue files touched in that directory):
 - `newestFirst`: add `a`, `b`; `entries() == {b, a}` (absolute).
@@ -307,24 +307,24 @@ git commit -m "feat(ui): queue dialogs start in the lab's queues directory"
 - `clearMenuEmptiesIt`: trigger "Clear Menu"; menu disabled; setting empty.
 - `anEntryAsksAboutUnsavedEdits`: modify the queue, `set_ask_unsaved` returns `Cancel`, trigger an entry; path unchanged (same rule as Open, through `load_queue`).
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev-ui --target pychron_ui_test_recent_queues pychron_ui_test_experiment_window`
 Expected: compile error (`recent_queues.hpp` missing, `recent_menu` not declared).
 
-- [ ] **Step 3: Implement `RecentQueues`, then the menu**
+- [x] **Step 3: Implement `RecentQueues`, then the menu**
 
 `ExperimentWindow` owns a `RecentQueues` on `*settings_`. `load_queue` and `save_as` call `add(path)` on success. A `QAction` "Open &Recent" with a `QMenu` (`recent_menu()`) is contributed to `MenuHub::Menu::File` with `Scope::Window` beside the window's other contributions (`experiment_window.cpp:388`). The menu is rebuilt from `entries()` on `aboutToShow` and after each `add`/`clear`, so the enabled state is right before it is shown: one action per entry (text: file name, tooltip and data: full path), a separator, "Clear Menu". An entry while a queue runs says so, as `open_dialog` does; otherwise `load_queue`, warning on error other than "cancelled", as `open_dialog` does.
 
-- [ ] **Step 4: Run the tests to see them pass**
+- [x] **Step 4: Run the tests to see them pass**
 
 Run: `build/dev-ui/tests/ui/pychron_ui_test_recent_queues` and `build/dev-ui/tests/ui/pychron_ui_test_experiment_window`, and `build/dev-ui/tests/ui/pychron_ui_test_menu_hub` (File menu contents are pinned there: the contribution comes after the four commands, which `file_has_the_four_commands_once` checks with `mid(0, 4)`). Expected: all PASS.
 
-- [ ] **Step 5: Static analysis**
+- [x] **Step 5: Static analysis**
 
 Run: `python3 tools/quality_check.py` and `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`. Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/pychron-ui/src/recent_queues.hpp apps/pychron-ui/src/recent_queues.cpp apps/pychron-ui/CMakeLists.txt apps/pychron-ui/src/experiment_window.hpp apps/pychron-ui/src/experiment_window.cpp tests/ui/test_recent_queues.cpp tests/ui/test_experiment_window.cpp docs/user/04-experiments.md

@@ -161,6 +161,25 @@ class TestExperimentWindow : public QObject {
     if (!pychron::experiment::save_queue_file(p.string(), sim.queue())) qFatal("cannot write the queue");
     return p;
   }
+  // Settings of their own, for a test that needs a list nothing else wrote to.
+  static std::unique_ptr<QSettings> settings_in(const QTemporaryDir& dir) {
+    return std::make_unique<QSettings>(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+  }
+  static QString canonical(const fs::path& p) { return QString::fromStdString(fs::weakly_canonical(p).string()); }
+  // Shows `window` and brings it in front: its Window-scope actions are
+  // enabled only then. False where the platform does not activate windows.
+  static bool shown_active(QWidget& window) {
+    window.show();
+    window.activateWindow();
+    return QTest::qWaitForWindowActive(&window);
+  }
+  // The File > Open Recent action with `text`, after the menu is rebuilt.
+  static QAction* recent_entry(const ExperimentWindow& window, const QString& text) {
+    emit window.recent_menu()->aboutToShow();
+    for (QAction* a : window.recent_menu()->actions())
+      if (a->text() == text) return a;
+    return nullptr;
+  }
   // The title of the dock in front among those tabbed with `title`, or empty.
   static QString in_front_of(const QMainWindow& window, const QString& title) {
     for (const QTabBar* bar : window.findChildren<QTabBar*>(QString(), Qt::FindDirectChildrenOnly))
@@ -1356,6 +1375,100 @@ class TestExperimentWindow : public QObject {
     QVERIFY(!window->model().queue().runs[0].skip);
     QVERIFY(!window->modified());
     window.reset();
+  }
+
+  // ---- File > Open Recent -------------------------------------------------------
+
+  void openRecentListsOpenedAndSavedQueues() {
+    pychron::ui::test::SimLab sim;
+    const QTemporaryDir own;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings_in(own));
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim, "a.toml"), &error), qPrintable(error));
+    QVERIFY2(window.save_as(sim.dir / "b.toml", &error), qPrintable(error));
+    QMenu* menu = window.recent_menu();
+    QVERIFY(menu != nullptr);
+    emit menu->aboutToShow();
+    const QList<QAction*> actions = menu->actions();
+    QCOMPARE(actions.size(), 4);
+    QCOMPARE(actions.at(0)->text(), QStringLiteral("b.toml"));
+    QCOMPARE(actions.at(1)->text(), QStringLiteral("a.toml"));
+    QCOMPARE(actions.at(0)->data().toString(), canonical(sim.dir / "b.toml"));
+    QCOMPARE(actions.at(0)->toolTip(), canonical(sim.dir / "b.toml"));
+    QVERIFY(actions.at(2)->isSeparator());
+    QCOMPARE(actions.at(3)->text(), QStringLiteral("Clear Menu"));
+    // Window scope: enabled only while the window is in front.
+    if (!shown_active(window)) QSKIP("this platform does not activate windows");
+    QVERIFY(menu->menuAction()->isEnabled());
+  }
+
+  void openRecentIsDisabledWhenEmpty() {
+    pychron::ui::test::SimLab sim;
+    const QTemporaryDir own;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings_in(own));
+    QVERIFY(window.recent_menu() != nullptr);
+    QVERIFY(!window.recent_menu()->menuAction()->isEnabled());
+    if (!shown_active(window)) QSKIP("this platform does not activate windows");
+    QVERIFY(!window.recent_menu()->menuAction()->isEnabled());
+    // In front, with something to open, it is.
+    QVERIFY(window.load_queue(queue_file(sim, "a.toml")));
+    QVERIFY(window.recent_menu()->menuAction()->isEnabled());
+  }
+
+  void choosingAnEntryOpensIt() {
+    pychron::ui::test::SimLab sim;
+    const QTemporaryDir own;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings_in(own));
+    QVERIFY(window.load_queue(queue_file(sim, "a.toml")));
+    QVERIFY(window.load_queue(queue_file(sim, "b.toml")));
+    QVERIFY(window.path()->filename() == "b.toml");
+    QAction* a = recent_entry(window, QStringLiteral("a.toml"));
+    QVERIFY(a != nullptr);
+    a->trigger();
+    QVERIFY(window.path().has_value());
+    QVERIFY(window.path()->filename() == "a.toml");
+  }
+
+  void clearMenuEmptiesIt() {
+    pychron::ui::test::SimLab sim;
+    const QTemporaryDir own;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    auto settings = settings_in(own);
+    const QString file = settings->fileName();
+    ExperimentWindow window(bridge, true, std::move(settings));
+    QVERIFY(window.load_queue(queue_file(sim, "a.toml")));
+    QAction* clear = recent_entry(window, QStringLiteral("Clear Menu"));
+    QVERIFY(clear != nullptr);
+    clear->trigger();
+    QVERIFY(!window.recent_menu()->menuAction()->isEnabled());  // whether in front or not
+    const QSettings stored(file, QSettings::IniFormat);
+    QVERIFY(stored.value(QStringLiteral("experiment_window/recent_queues")).toStringList().isEmpty());
+  }
+
+  void anEntryAsksAboutUnsavedEdits() {
+    pychron::ui::test::SimLab sim;
+    const QTemporaryDir own;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings_in(own));
+    QVERIFY(window.load_queue(queue_file(sim, "a.toml")));
+    QVERIFY(window.load_queue(queue_file(sim, "b.toml")));
+    QVERIFY(window.model().toggle_skip({0}));
+    QVERIFY(window.modified());
+    int asked = 0;
+    window.set_ask_unsaved([&] {
+      ++asked;
+      return ExperimentWindow::Unsaved::Cancel;
+    });
+    QAction* a = recent_entry(window, QStringLiteral("a.toml"));
+    QVERIFY(a != nullptr);
+    a->trigger();
+    QCOMPARE(asked, 1);
+    QVERIFY(window.path()->filename() == "b.toml");
+    QVERIFY(window.modified());
+    window.set_ask_unsaved([] { return ExperimentWindow::Unsaved::Discard; });
   }
 
   // File > New: an empty queue with no file, after the usual question.

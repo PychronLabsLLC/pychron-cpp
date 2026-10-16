@@ -78,6 +78,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
       bridge_(bridge),
       simulation_(simulation),
       settings_(settings ? std::move(settings) : std::make_unique<QSettings>()),
+      recent_(*settings_),
       model_(bridge.lab().ids, [&bridge](const experiment::QueueSpec& q) { return bridge.check(q); }),
       queue_table_(new QTableView),
       diagnostics_(new QLabel),
@@ -497,12 +498,52 @@ void ExperimentWindow::build_actions() {
   add(run, tr("Cancel..."), [this] { pane_->request_cancel(); });
   add(run, tr("Abort..."), [this] { pane_->request_abort(); });
   add(run, tr("Truncate"), [this] { pane_->request_truncate(); });
+  // File > Open Recent, after the hub's own four File commands.
+  recent_menu_ = new QMenu(tr("Open &Recent"), this);
+  connect(recent_menu_, &QMenu::aboutToShow, this, [this] { rebuild_recent(); });
+  into[Menu::File].append(recent_menu_->menuAction());
+  rebuild_recent();
+
   auto& menus = MenuHub::instance();
   for (const auto& [menu, actions] : into) menus.contribute(this, menu, actions, MenuHub::Scope::Window);
   // The test notification is apart from the run controls.
   auto* notify = new QAction(tr("Send Test Notification"), this);
   connect(notify, &QAction::triggered, this, [this] { bridge_.session().notify_test(); });
   menus.contribute(this, run, {notify}, MenuHub::Scope::Window);
+}
+
+void ExperimentWindow::rebuild_recent() {
+  if (recent_menu_ == nullptr) return;  // not built yet
+  // Rebuilt from inside an entry's own triggered() (opening or clearing
+  // changes the list): the old actions go later, not under their signal.
+  for (QAction* old : recent_menu_->actions()) {
+    recent_menu_->removeAction(old);
+    old->deleteLater();
+  }
+  const QStringList entries = recent_.entries();
+  for (const QString& file : entries) {
+    const QString name = QString::fromStdU16String(std::filesystem::path(file.toStdU16String()).filename().u16string());
+    QAction* a = recent_menu_->addAction(name);
+    a->setToolTip(file);
+    a->setData(file);
+    connect(a, &QAction::triggered, this, [this, file] { open_recent(file); });
+  }
+  recent_menu_->addSeparator();
+  connect(recent_menu_->addAction(tr("Clear Menu")), &QAction::triggered, this, [this] {
+    recent_.clear();
+    rebuild_recent();
+  });
+  recent_menu_->menuAction()->setEnabled(!entries.isEmpty());
+}
+
+void ExperimentWindow::open_recent(const QString& file) {
+  if (bridge_.running()) {
+    QMessageBox::information(this, tr("Open"), tr("A queue is running."));
+    return;
+  }
+  QString error;
+  if (!load_queue(std::filesystem::path(file.toStdU16String()), &error) && error != tr("cancelled"))
+    QMessageBox::warning(this, tr("Open"), error);
 }
 
 // Source rows of the Queue table's selection: the rows row actions act on.
@@ -827,6 +868,8 @@ bool ExperimentWindow::load_queue(const std::filesystem::path& path, QString* er
   path_ = path;
   set_modified(false);
   settings_->setValue(QStringLiteral("experiment_window/last_queue"), QString::fromStdString(path.string()));
+  recent_.add(path);
+  rebuild_recent();
   return true;
 }
 
@@ -860,6 +903,8 @@ bool ExperimentWindow::save_as(const std::filesystem::path& path, QString* error
   }
   path_ = path;
   set_modified(false);
+  recent_.add(path);
+  rebuild_recent();
   return true;
 }
 

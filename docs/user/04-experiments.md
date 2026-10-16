@@ -289,7 +289,16 @@ is gone). Saving a queue that has no file yet starts in `queues/`, which is
 made if missing; you type the name. `--queue` at start takes a name in that
 folder too: `--queue experiment.toml` finds `<lab>/queues/experiment.toml`,
 then `<lab>/experiment.toml`. Open and New work from any window and
-bring the Experiment window up. **Experiment > Queue > Revalidate** checks the queue again. You
+bring the Experiment window up.
+
+**File > Open Recent**, while the Experiment window is in front, lists the
+last ten queues you opened or saved, newest first; the menu shows each file's
+name, and hovering shows its full path. Choosing one opens it as Open does,
+asking first about unsaved changes. A queue whose file has been deleted or
+moved drops out of the list. **Clear Menu** at the bottom empties it; the
+submenu is greyed while it is empty.
+
+**Experiment > Queue > Revalidate** checks the queue again. You
 cannot open or start another queue while one is running. Closing the window asks about unsaved changes and,
 if a queue is running, whether to stop it after the current run. If you
 simply hide the window the queue keeps running.
