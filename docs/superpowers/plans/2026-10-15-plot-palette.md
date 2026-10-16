@@ -246,12 +246,12 @@ Departs from spec 4.2 wording ("each window hands the new style to its live plot
 
 ### Task 7: Whole-branch verification
 
-- [ ] **Step 1:** Rebase on `origin/develop` if it moved.
-- [ ] **Step 2:** `python3 tools/quality_check.py` → exit 0.
-- [ ] **Step 3:** `python3 tools/compiler_sweep.py --build-dir build/dev-ui` (whole tree) → no warnings.
-- [ ] **Step 4:** `cmake --build --preset dev-ui` then `ctest --preset dev-ui` (timeout 3600000 ms) → all pass. A failure is root-caused, never skipped.
-- [ ] **Step 5:** `grep -rn "plot_bg\|theme().series\|kPaletteSize" apps tests` → nothing.
-- [ ] **Step 6:** Whole-branch review on Sonnet (root `AGENTS.md`, Delegated reviews) against the spec; fix findings in their own commits.
+- [x] **Step 1:** Rebase on `origin/develop` if it moved.
+- [x] **Step 2:** `python3 tools/quality_check.py` → exit 0.
+- [x] **Step 3:** `python3 tools/compiler_sweep.py --build-dir build/dev-ui` (whole tree) → no warnings.
+- [x] **Step 4:** `cmake --build --preset dev-ui` then `ctest --preset dev-ui` (timeout 3600000 ms) → all pass. A failure is root-caused, never skipped.
+- [x] **Step 5:** `grep -rn "plot_bg\|theme().series\|kPaletteSize" apps tests` → nothing.
+- [x] **Step 6:** Whole-branch review on Sonnet (root `AGENTS.md`, Delegated reviews) against the spec; fix findings in their own commits.
 
 ## Open questions
 
