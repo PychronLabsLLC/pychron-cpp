@@ -71,6 +71,37 @@ tank across its valve unless the canvas gives it a color of its own.
 If `open_valve_color = "inherit"` is set in `[canvas]`, open valves take the
 color of the region they join instead of green. By default they stay green.
 
+### A tour of the example line
+
+The example line in `configs/examples` (what `--examples` and `--sim` open
+with nothing installed) has one of nearly everything this page describes,
+so each can be tried on the simulator:
+
+- **Main row**, left to right: the CO2 laser chamber (`laser`), valve `L`,
+  `stage1`, valve `A`, the prep line (`prep`), the inlet `B`, the
+  spectrometer (`spec`), valve `I` and the ion pump (`ion`).
+- **Cleanup**, above: `getter1` behind `G1` (on `stage1`), `getter2` behind
+  `G2` and the cryo trap (`cryo`) behind `Y` (both on `prep`). Gauge `IG2`
+  sits on `stage1` with no valve between them.
+- **Pipettes**, below `prep`: `air` between `P1` and `P2`, filled from
+  `air_tank`, and `cocktail` between `Q1` and `Q2`, filled from
+  `cocktail_tank`. Each pair is interlocked.
+- **Pumping and roughing**: `C` joins `prep` to `turbo` (gauges `IG1` and
+  `PG1`), and `D` joins `stage1` to `turbo2`. Their forelines go through the
+  rough valves `R1` and `R2` and the manual valves `M1` and `M2` to the
+  roughing pump (`rough`, gauge `CG1`, on a second gauge controller).
+- **Elsewhere**: the `pump_power` switch, a heater named `bakeout` in the
+  [heaters dock](#heaters-dock) and a cryostat in the
+  [cryo dock](#cryo-dock) with the setpoints `Ar_freeze` and `Ar_release`.
+
+Its 13 stages are `laser`, `stage1`, `prep`, `spec`, `ion`, `getter1`,
+`getter2`, `cryo`, `turbo`, `turbo2`, `rough`, `air_tank` and
+`cocktail_tank`. Every valve starts closed and the example queues' scripts
+move only B, C, P1 and P2, so the getters, the cryo trap, the second turbo
+and the cocktail pipette leave the queue's gas alone until you open them.
+The extraction script `sim_cocktail.py` (not in any shipped queue) takes a
+shot from the cocktail pipette.
+
 ## Working a valve
 
 | Action | What happens |
@@ -453,14 +484,14 @@ transport = "valve_bus"
 [drivers.ig_controller]
 kind = "pfeiffer_maxigauge"
 transport = "gauge_net"
-channels = [1, 2]
+channels = [1, 2, 3]
 
 [[valves]]                  # an actuated valve
 name = "A"
 description = "Stage 1 to prep"
 actuator = "actuator1"      # which driver moves it
 address = "1"               # the driver's own address (relay number, coil, ...)
-interlocks = ["C"]          # cannot open while C is open or unknown (both ways)
+interlocks = ["C", "D"]     # cannot open while C or D is open or unknown (both ways)
 settle_ms = 500             # wait this long before reading it back
 
 [[valves]]
@@ -490,6 +521,21 @@ alarm_high = 1e-4           # raises a critical alarm once when crossed
 name = "air"
 inner = "P1"
 outer = "P2"
+
+[cryo]                      # the cryo trap's temperature controller
+driver = "cryostat"         # a [drivers.cryostat] of kind "lakeshore"
+tolerance_k = 1.0           # "at setpoint" band for a blocking set_cryo
+timeout_s = 600             # a blocking set_cryo not there by then fails
+
+[cryo.setpoints]            # names a script's set_cryo may use
+Ar_freeze = [70.0, 0.0]     # kelvin for outputs 1 and 2
+Ar_release = [300.0, 0.0]
+
+[[heaters]]                 # a row in the Heaters dock
+name = "bakeout"
+driver = "bakeout_plc"      # a [drivers.bakeout_plc] of kind "plc2000_heater"
+description = "Line bakeout tape"
+units = "C"                 # shown beside the readback
 
 # Names that measurement plans use as '@valves.inlet', '@extraction.eqtime'.
 [aliases]

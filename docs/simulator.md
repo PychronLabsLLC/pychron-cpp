@@ -397,31 +397,47 @@ simulated.
 
 ## The example lab
 
-`configs/examples` is a small lab that runs air shots and blanks:
+`configs/examples` is a small lab that runs air shots and blanks. Its main
+row, pipettes and turbo are:
 
 ```
 stage1 --A-- prep --B-- spec
-              |  \
-             P1   C -- turbo (IG1, PG1) -- M1 -- rough
-              |
-             air        (the pipette, 0.1 cc)
-              |
-             P2
-              |
-           air_tank
+            /  |  \
+          Q1   P1  C -- turbo (IG1, PG1) -- R1 -- M1 -- rough
+          |    |
+   cocktail    air      (the pipettes, 0.1 cc each)
+          |    |
+          Q2   P2
+          |    |
+ cocktail_tank air_tank
 ```
 
-`prep`, `spec` and `air_tank` are 50 cc, `stage1` 12.5 cc. `B` is the inlet to
-the spectrometer and `C` the valve to the turbo. `P1` and `P2` are
-interlocked: never both open.
+Every valve starts closed, and the shipped queues' scripts move only `B`,
+`C`, `P1` and `P2`. Off the sketch, and closed off at start, are the
+CO2 laser chamber (`laser`, behind `L` on `stage1`), the two getters
+(`getter1` behind `G1` on `stage1`, `getter2` behind `G2` on `prep`), the
+cryo trap (`cryo`, behind `Y` on `prep`), the second turbo (`turbo2`, behind
+`D` on `stage1`, roughed through `R2` and `M2`) and the ion pump (`ion`,
+behind `I` on `spec`). A getter takes active gas from whatever it is open to, so the
+getters stay shut to leave the shipped numbers as they are. The cocktail
+pipette is used only by `scripts/extraction/sim_cocktail.py`, which no
+shipped queue names.
 
-Its `sim.toml` sets five numbers, so that the signals are of a lab's size:
+`prep`, `spec`, `air_tank` and `cocktail_tank` are 50 cc, `stage1` 12.5 cc;
+every other stage is the default 50 cc. `B` is the inlet to the spectrometer
+and `C` the valve to the turbo. `P1` and `P2` are interlocked, never both
+open, and so are `Q1` and `Q2`. `air_tank` holds air, `cocktail_tank` the
+built-in `cocktail` (Ar36 to Ar40 with Ar39 twenty times Ar36): one shot of
+it is about 3.0e4 fA of Ar40 and 2.0e3 fA of Ar39.
+
+Its `sim.toml` sets six numbers, so that the signals are of a lab's size:
 
 | Key | Value | Default | What it does |
 |---|---|---|---|
 | `[defaults] pressure` | 1e-10 | 1e-8 | the lab starts pumped down |
 | `[defaults] outgassing` | 1.5e-13 | 5e-13 | a static volume rises 0.15 fA/s of Ar40: a blank of about 10 fA |
 | `[volumes.air_tank] argon40` | 9.5e-5 | 3e-5 | one pipette of it, spread over prep and the source, is 9.5e-8 mbar: 9.5e4 fA of Ar40 |
+| `[volumes.cocktail_tank] composition` | `"cocktail"` | `"air"` | the second tank holds the cocktail at a tank's default 3e-5 mbar of Ar40 |
 | `[valves.B] conductance` | 0.02 | 0.1 | the inlet equilibrates with a time constant of 1.25 s, slow enough to see |
 | `[pumps.turbo] base` | 1e-10 | 1e-9 | a pumped source reads about 1 fA of Ar40, inside a Faraday's noise |
 

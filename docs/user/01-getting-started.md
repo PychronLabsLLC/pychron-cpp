@@ -624,9 +624,13 @@ Double-clicking an install opens it. Run `elctl doctor` (or `elctl doctor
 ## 11. A 15-minute tour on the simulator
 
 This uses the example lab in `configs/examples`. Nothing here needs hardware.
-The example line is five valves (A, B, C, P1, P2), a manual valve (M1), a
-pump power switch, two gauges (IG1, PG1) and a pipette on simulated
-transports. The example queue has three runs: a blank (`bu`) and two
+The example line, all on simulated transports, is 13 valves, two rough
+valves (R1, R2), two manual valves (M1, M2), four gauges (IG1, IG2, PG1,
+CG1), 13 stages (among them a CO2 laser chamber, `stage1`, `prep`, two
+getters, a cryo trap and two tanks), two pipettes (`air` and `cocktail`), a
+pump power switch, a bakeout heater and a cryostat. Every valve starts
+closed and the example scripts move only B, C, P1 and P2; the rest is there
+to look at and try. The example queue has three runs: a blank (`bu`) and two
 unknowns (`66001`) of the sample FC-2.
 
 You need a built `pychron-ui` (see [dev_setup.md](../dev_setup.md); the release
@@ -650,7 +654,8 @@ simulated time run 50 times faster than the clock on the wall.
 
 1. The main window opens, titled `pychron — example`, with "(Simulation)" shown
    on the splash screen. Look at the status bar: one health chip per
-   simulated transport (`valve_bus`, `gauge_net`, `laser_pc`).
+   simulated transport (`valve_bus`, `gauge_net`, `cg_controller`,
+   `laser_pc`, `cryostat`, `bakeout_plc`).
 2. Click a valve, for example **P1**. It changes state (or is refused if an
    interlock applies; the reason appears in the Log dock). Click it again.
 3. Right-click a valve and choose **Lock valve**, then try clicking it; the
