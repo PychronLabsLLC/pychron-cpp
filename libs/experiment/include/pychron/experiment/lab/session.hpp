@@ -14,7 +14,8 @@
 // queue and joins it.
 //
 // The lab's notifications (Lab::notifications) go out from a session-owned
-// Notifier: a failed run as it finishes, the queue's end after QueueEnded.
+// Notifier: a failed run as it finishes, a hold and the return from it, the
+// queue's end after QueueEnded. What cannot be sent waits in <data>/outbox.
 // Each delivery is published as NotificationSent.
 
 #include <condition_variable>
@@ -65,7 +66,7 @@ struct SessionHardware {
 };
 
 struct SessionOptions {
-  std::filesystem::path data;            // records/, spool/, executor_state.json
+  std::filesystem::path data;            // records/, spool/, outbox/, executor_state.json
   executor::ExecutorOptions executor;    // state_file defaults to <data>/executor_state.json
   ProcessRunner notify;                  // runs the notification programs; empty: run_process
   persist::IAnalysisPersister* persister = nullptr;  // not owned; nullptr: files under <data>/records

@@ -16,12 +16,6 @@ namespace pychron::experiment::lab {
 
 namespace {
 
-std::optional<NotifyEvent> parse_event(std::string_view s) {
-  if (s == "run_failed") return NotifyEvent::RunFailed;
-  if (s == "queue_ended") return NotifyEvent::QueueEnded;
-  return std::nullopt;
-}
-
 class Parser {
  public:
   explicit Parser(std::string_view name) : name_(name) {}
@@ -75,8 +69,8 @@ class Parser {
     if (t.get("on") == nullptr) return fallback;
     std::set<NotifyEvent> out;
     for (const auto& s : strings(t, where, "on")) {
-      if (auto e = parse_event(s)) out.insert(*e);
-      else add(where + ".on", "unknown event '" + s + "' (run_failed, queue_ended)");
+      if (auto e = parse_notify_event(s)) out.insert(*e);
+      else add(where + ".on", "unknown event '" + s + "' (run_failed, queue_ended, queue_holding, queue_resumed, unsafe)");
     }
     return out;
   }
@@ -381,8 +375,17 @@ std::string_view to_string(NotifyEvent e) noexcept {
     case NotifyEvent::RunFailed: return "run_failed";
     case NotifyEvent::QueueEnded: return "queue_ended";
     case NotifyEvent::Test: return "test";
+    case NotifyEvent::QueueHolding: return "queue_holding";
+    case NotifyEvent::QueueResumed: return "queue_resumed";
+    case NotifyEvent::Unsafe: return "unsafe";
   }
   return "?";
+}
+
+std::optional<NotifyEvent> parse_notify_event(std::string_view s) noexcept {
+  for (const NotifyEvent e : kDefaultNotifyEvents)
+    if (s == to_string(e)) return e;
+  return std::nullopt;
 }
 
 std::vector<std::string> NotificationConfig::channel_names() const {
@@ -542,6 +545,50 @@ Notification queue_ended_notification(const std::string& queue, const executor::
   return n;
 }
 
+Notification queue_holding_notification(const std::string& queue, const executor::ExecutorHolding& hold) {
+  Notification n;
+  n.event = NotifyEvent::QueueHolding;
+  n.subject = "pychron: queue " + queue + " holding";
+  std::string links;
+  for (const auto& l : hold.links) links += (links.empty() ? "" : ", ") + l;
+  const auto limit = std::chrono::duration_cast<std::chrono::minutes>(hold.until - hold.since).count();
+  std::ostringstream b;
+  b << "Queue " << queue << " is holding: " << hold.reason << ".\n\n";
+  if (!links.empty()) b << "Waiting for: " << links << "\n";
+  if (hold.row) b << "Next row:    " << *hold.row << "\n";
+  b << "The queue ends if it is still holding in " << limit << " min.\n";
+  b << "It goes on by itself when what it waits for is back; Resume or Skip in Experiment > Executor.\n";
+  n.body = b.str();
+  n.fields = {{"queue", queue},
+              {"reason", hold.reason},
+              {"links", links},
+              {"row", hold.row ? std::to_string(*hold.row) : std::string()},
+              {"limit_min", std::to_string(limit)}};
+  return n;
+}
+
+Notification queue_resumed_notification(const std::string& queue, const std::string& reason) {
+  Notification n;
+  n.event = NotifyEvent::QueueResumed;
+  n.subject = "pychron: queue " + queue + " running again";
+  n.body = "Queue " + queue + " is running again" + (reason.empty() ? std::string() : ": " + reason) + ".\n";
+  n.fields = {{"queue", queue}, {"reason", reason}};
+  return n;
+}
+
+Notification unsafe_notification(const std::string& queue, const executor::QueueResult& result) {
+  Notification n;
+  n.event = NotifyEvent::Unsafe;
+  n.subject = "pychron: queue " + queue + " ended, line unsafe";
+  std::ostringstream b;
+  b << "A failed run left the line in a state that is not safe, and queue " << queue << " ended";
+  if (!result.reason.empty()) b << ": " << result.reason;
+  b << ".\n\nThe line needs a person before anything else runs.\n";
+  n.body = b.str();
+  n.fields = {{"queue", queue}, {"reason", result.reason}, {"end", std::string(executor::to_string(result.end))}};
+  return n;
+}
+
 Notification test_notification(const std::string& lab) {
   Notification n;
   n.event = NotifyEvent::Test;
@@ -553,14 +600,35 @@ Notification test_notification(const std::string& lab) {
 
 std::vector<Delivery> deliver(const NotificationConfig& config, const Notification& n, const ProcessRunner& run) {
   std::vector<Delivery> out;
-  auto wants = [&](const std::set<NotifyEvent>& on) { return n.event == NotifyEvent::Test || on.contains(n.event); };
-  for (const auto& e : config.email)
-    if (wants(e.on)) out.push_back(send_email(config, e, n, run));
-  for (const auto& w : config.webhooks)
-    if (wants(w.on)) out.push_back(send_webhook(config, w, n, run));
-  for (const auto& c : config.commands)
-    if (wants(c.on)) out.push_back(send_command(config, c, n, run));
+  for (std::size_t i = 0; i < channel_count(config); ++i)
+    if (channel_wants(config, i, n.event)) out.push_back(deliver_to(config, i, n, run));
   return out;
+}
+
+std::size_t channel_count(const NotificationConfig& config) noexcept {
+  return config.email.size() + config.webhooks.size() + config.commands.size();
+}
+
+bool is_command_channel(const NotificationConfig& config, std::size_t index) noexcept {
+  return index >= config.email.size() + config.webhooks.size() && index < channel_count(config);
+}
+
+bool channel_wants(const NotificationConfig& config, std::size_t index, NotifyEvent event) {
+  if (index >= channel_count(config)) return false;
+  if (event == NotifyEvent::Test) return true;
+  if (index < config.email.size()) return config.email[index].on.contains(event);
+  index -= config.email.size();
+  if (index < config.webhooks.size()) return config.webhooks[index].on.contains(event);
+  return config.commands[index - config.webhooks.size()].on.contains(event);
+}
+
+Delivery deliver_to(const NotificationConfig& config, std::size_t index, const Notification& n, const ProcessRunner& run) {
+  if (index < config.email.size()) return send_email(config, config.email[index], n, run);
+  index -= config.email.size();
+  if (index < config.webhooks.size()) return send_webhook(config, config.webhooks[index], n, run);
+  index -= config.webhooks.size();
+  if (index < config.commands.size()) return send_command(config, config.commands[index], n, run);
+  return {{}, false, "no such channel"};
 }
 
 std::vector<std::pair<std::string, std::string>> unset_secrets(const NotificationConfig& config) {

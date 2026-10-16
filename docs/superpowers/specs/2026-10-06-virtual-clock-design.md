@@ -404,6 +404,11 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
 - the notifier (`lab/notifier.cpp`, and the `Date:` of a mail in
   `lab/notifications.cpp`): it runs programs outside, on its own thread, and
   is not a participant;
+- notification retry (`lab/notifier.cpp`, executor hardening spec 4.8): the
+  outbox's retry times (`next_attempt`) are wall times of this computer,
+  kept across restarts, and the notifier's thread waits for the next one on
+  real time (`system_clock`); tests call `deliver_due(now)` with times they
+  choose instead;
 - `CancelToken::remove_on_cancel` waiting for a callback that is running on
   another thread: callbacks are short and do not wait;
 - `elctl exp run` waiting for the queue to end and for an interrupt: a 50 ms

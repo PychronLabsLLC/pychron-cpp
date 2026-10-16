@@ -1,5 +1,6 @@
 #include "pychron/experiment/metrics/experiment_metrics.hpp"
 
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <optional>
@@ -93,8 +94,9 @@ constexpr ConditionalKind kKinds[] = {
     ConditionalKind::Modification, ConditionalKind::Equilibration, ConditionalKind::PreRun,      ConditionalKind::PostRun};
 constexpr ConditionalLevel kLevels[] = {ConditionalLevel::System, ConditionalLevel::Queue, ConditionalLevel::Plan,
                                         ConditionalLevel::Run, ConditionalLevel::Hook};
-constexpr lab::NotifyEvent kNotifyEvents[] = {lab::NotifyEvent::RunFailed, lab::NotifyEvent::QueueEnded,
-                                              lab::NotifyEvent::Test};
+constexpr std::array kNotifyEvents{lab::NotifyEvent::RunFailed,    lab::NotifyEvent::QueueEnded,
+                                   lab::NotifyEvent::Test,         lab::NotifyEvent::QueueHolding,
+                                   lab::NotifyEvent::QueueResumed, lab::NotifyEvent::Unsafe};
 
 constexpr ExecutorState kExecutorStates[] = {
     ExecutorState::Idle,       ExecutorState::Preparing, ExecutorState::Running,   ExecutorState::StoppingAtBoundary,

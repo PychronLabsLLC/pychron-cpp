@@ -135,7 +135,11 @@ LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions 
   if (hardware_.lasers == nullptr) own_lasers_ = std::make_unique<Lasers>(lab_, hardware_.line, hardware_.simulated);
   lasers_ = hardware_.lasers != nullptr ? hardware_.lasers : own_lasers_.get();
   services_ = std::make_unique<Services>(lab_, hardware_, options_.data, *lasers_, options_.persister);
-  notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, options_.notify);
+  NotifierOptions notify;
+  if (!options_.data.empty()) notify.outbox = options_.data / "outbox";
+  notify.runner = options_.notify;
+  notify.clock = &hardware_.line.clock();
+  notifier_ = std::make_unique<Notifier>(hardware_.line.bus(), lab_.notifications, std::move(notify));
 }
 
 LabSession::~LabSession() {

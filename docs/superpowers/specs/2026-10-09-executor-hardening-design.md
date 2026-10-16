@@ -325,6 +325,18 @@ Rule: no run waits on network service. Each has local durable buffer.
   `queue_holding`, `queue_resumed`, `unsafe`. A notification about lost
   network goes out when network returns; `command` channel (local program)
   is how lab gets told meanwhile.
+  Built: retry gaps 1, 2, 4 ... 32 min, then 60 min, from first try
+  (`next_attempt(first_tried, attempts)`, pure); last try at most 24 h after
+  first. Order kept per channel, each channel on its own: a later
+  notification waits behind an earlier one retrying on that channel only.
+  `[[command]]` channels tried first. File (`<seq>.toml`) holds event,
+  subject, body, fields, queue's email, and per channel its place, name,
+  attempts and next try; no password, key, configured address or URL. Test
+  notification never written, tried once. `queue_holding` on
+  `ExecutorHolding`; `queue_resumed` on `ExecutorStateChanged` `Holding` ->
+  `Running`; `unsafe` then `queue_ended` on queue end with `code =
+  "unsafe"`. New events in every channel's default `on`. Retry on real time
+  (virtual clock spec 4.4).
 - Metrics endpoint: pull; no effect on runs.
 
 ### 4.9 Seen and counted

@@ -1,6 +1,11 @@
 # Notifications for this lab: copy to notifications.toml and keep the
-# channels you want. Each sends a message when a run fails (run_failed) and
-# when the queue ends (queue_ended); `on` narrows that.
+# channels you want. Each sends a message when a run fails (run_failed), when
+# the queue holds for a link that is down (queue_holding) and goes on again
+# (queue_resumed), when a failed run leaves the line unsafe (unsafe) and when
+# the queue ends (queue_ended); `on` narrows that.
+# A message that cannot be sent waits in <data>/outbox and is tried again,
+# 1, 2, 4 ... 60 minutes apart, for 24 hours. A [[command]] (a program on this
+# computer) is tried first, so it is how the lab hears while the network is down.
 # Test with:  elctl exp notify --lab <this directory>
 # Step-by-step setup: docs/notifications.md
 
@@ -15,7 +20,7 @@
 # from = "pychron@example.org"             # a sender confirmed with the service
 # to = ["lab-manager@example.org"]
 # queue_user = true                        # also mail the queue's `email`
-# on = ["run_failed", "queue_ended"]
+# on = ["run_failed", "unsafe"]            # only these; leave out for every event
 
 # Email through an SMTP server.
 # [[email]]

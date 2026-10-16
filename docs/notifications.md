@@ -1,6 +1,7 @@
 # Notifications
 
-How to make pychron send a message when a run fails and when a queue ends.
+How to make pychron send a message when a run fails, when the queue waits
+for an instrument that has stopped answering, and when a queue ends.
 Written for the lab manager: no programming is needed, only a text editor, a
 terminal and about twenty minutes.
 
@@ -10,6 +11,9 @@ terminal and about twenty minutes.
 |---|---|---|
 | `run_failed` | A run fails, or its record could not be saved | The run, the queue, the row, the error |
 | `queue_ended` | The queue finishes, is stopped or fails | How it ended, and one line per run |
+| `queue_holding` | The queue waits because something the next run needs (the spectrometer, a laser, a controller) stopped answering | What it waits for, and how long it waits before it ends the queue |
+| `queue_resumed` | The queue goes on again after waiting | That it is running again |
+| `unsafe` | A failed run left the line in a state that is not safe, and the queue ended | That someone must look at the line; a `queue_ended` message follows |
 
 Messages go to the addresses in `to`, and to the `email` written in the
 queue (the person who started it). The recipients can use any mail system:
@@ -166,7 +170,7 @@ Every `[[email]]` entry takes:
 | `from` | The sender address, confirmed with the service | required |
 | `to` | Addresses that always get the messages | none |
 | `queue_user` | Also send to the `email` written in the queue | `true` |
-| `on` | Which events: `"run_failed"`, `"queue_ended"` | both |
+| `on` | Which events: `"run_failed"`, `"queue_ended"`, `"queue_holding"`, `"queue_resumed"`, `"unsafe"` | all five |
 | `name` | What the channel is called in the event list and by `doctor` | `"email"` |
 
 Several entries are allowed, for example failures to the manager only:
@@ -279,6 +283,35 @@ argv = ["/usr/local/bin/notify-lab"]
 Email, webhook and command entries can be mixed in one file. Each is sent
 on its own: one failing does not stop the others, and never stops a queue.
 
+## When a message cannot be sent
+
+A message is written to the `outbox` folder in the data folder (beside
+`records` and `spool`) before it is sent, and removed once every channel it
+is for has taken it. When a channel fails (no network, the mail service
+down) the message stays there and that channel tries it again 1, 2, 4, 8, 16
+and 32 minutes later, then every hour. After 24 hours it is given up: one
+warning in the log names the message and the last error, and the file is
+removed. Each attempt shows in the event list, with when the next one is.
+
+- Messages keep their order on each channel. While the oldest waits for a
+  retry on one channel, the newer ones wait behind it there, and only there:
+  a channel that works is not held up by one that does not.
+- `[[command]]` entries are tried before email and webhooks. A program on
+  the instrument computer (a pager, a light, a local script) is how the lab
+  hears that the network is down; the email saying so arrives when it is
+  back.
+- Closing pychron does not lose what is waiting: the next start, from
+  `elctl` or the window, sends it.
+- The files hold the message, the queue's `email` and the names of its
+  channels, never a key, a password, a server or a webhook URL, nor the
+  addresses in `to`. Those are read from `notifications.toml` and the
+  environment when the message is sent, so a changed key is used for what is
+  already waiting. A channel removed from
+  `notifications.toml` is dropped from waiting messages, with a log line.
+- The test message (`elctl exp notify`, **Send Test Notification**) is tried
+  once and never waits.
+- The retries follow the computer's own clock, also in a simulated session.
+
 ## Troubleshooting
 
 Run `elctl exp notify` and match what follows `failed:`.
@@ -293,6 +326,8 @@ Run `elctl exp notify` and match what follows `failed:`.
 | `error: 400`, `403` or `422` mentioning the sender, `from` or a domain | `from` is not an address the service has confirmed | Step 2. `from` must match exactly |
 | `Could not resolve host`, `Failed to connect`, `timed out` | No route to the internet from the instrument computer | Try `curl https://api.brevo.com` in a terminal. Ask IT to allow outgoing HTTPS to the service |
 | `cannot run curl` or `curl: option --fail-with-body: is unknown` | curl is missing, or older than 7.76 (2021) | Install a current curl, or set `curl = "<path>"` at the top of the file |
+| `...; tried again in N min` | That attempt failed (the rest of the message says why); the message waits in the outbox | Usually nothing: it goes when the network or the service is back. If it keeps failing, fix the cause shown |
+| `...; given up after 24 h` | The message could not be sent for a day and was dropped | Fix the cause shown; the log has the message's subject |
 | `no recipients (the queue has no email)` | `to` is empty and the queue has no `email` | Add `to = [...]` |
 | `sent: email` but nothing arrives | Spam filtering, or a mistyped address | Look in spam. In Brevo, **Transactional > Logs** shows each message and what became of it |
 | Works from `elctl`, not from the window | The window was started without the variable | Step 4. Confirm with **Experiment > Executor > Send Test Notification** |

@@ -6,10 +6,13 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <sstream>
 
+#include "pychron/core/events.hpp"
 #include "pychron/experiment/lab/notifier.hpp"
+#include "temp_path.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -43,6 +46,9 @@ struct FakeRunner {
   std::vector<Call> calls;
   int exit_code = 0;
   std::string output;
+  // Decides the exit code of a call instead of exit_code, when set.
+  std::function<int(const ProcessSpec&)> exit_for;
+  std::function<void()> on_call;  // runs as each call is made
 
   ProcessRunner runner() {
     return [this](const ProcessSpec& spec) -> Result<ProcessResult> {
@@ -53,12 +59,22 @@ struct FakeRunner {
           c.payload = read_file(spec.input.substr(start, spec.input.find('"', start) - start));
         }
       }
+      if (on_call) on_call();
+      const int code = exit_for ? exit_for(spec) : exit_code;
       std::lock_guard lock(mutex);
       calls.push_back(std::move(c));
-      return ProcessResult{exit_code, output};
+      return ProcessResult{code, output};
     };
   }
 };
+
+NotifierOptions options(ProcessRunner runner, std::filesystem::path outbox = {}, bool thread = true) {
+  NotifierOptions o;
+  o.runner = std::move(runner);
+  o.outbox = std::move(outbox);
+  o.thread = thread;
+  return o;
+}
 
 executor::RunSummary failed_run() {
   executor::RunSummary r;
@@ -105,7 +121,10 @@ on = ["queue_ended"]
   EXPECT_EQ(c->email[0].on, std::set<NotifyEvent>{NotifyEvent::RunFailed});
   ASSERT_EQ(c->webhooks.size(), 1u);
   EXPECT_EQ(c->webhooks[0].format, WebhookChannel::Format::Slack);
-  EXPECT_EQ(c->webhooks[0].on, (std::set<NotifyEvent>{NotifyEvent::RunFailed, NotifyEvent::QueueEnded}));
+  EXPECT_EQ(c->webhooks[0].on, kDefaultNotifyEvents);
+  EXPECT_EQ(c->webhooks[0].on, (std::set<NotifyEvent>{NotifyEvent::RunFailed, NotifyEvent::QueueEnded,
+                                                      NotifyEvent::QueueHolding, NotifyEvent::QueueResumed,
+                                                      NotifyEvent::Unsafe}));
   ASSERT_EQ(c->commands.size(), 1u);
   EXPECT_EQ(c->channel_names(), (std::vector<std::string>{"email", "slack", "command"}));
   EXPECT_FALSE(c->empty());
@@ -471,7 +490,7 @@ TEST(Notifier, SendsFailedRunsAndTheQueueEndOffTheBus) {
   });
   FakeRunner fake;
   {
-    Notifier notifier(bus, *c, fake.runner());
+    Notifier notifier(bus, *c, options(fake.runner()));
     notifier.set_queue("q1", "user@example.org");
     executor::RunSummary ok = failed_run();
     ok.state = run::RunState::Success;
@@ -495,7 +514,7 @@ TEST(Notifier, SendsFailedRunsAndTheQueueEndOffTheBus) {
 
   // No channels: a test says so; nothing else is sent.
   sent.clear();
-  Notifier none(bus, NotificationConfig{}, fake.runner());
+  Notifier none(bus, NotificationConfig{}, options(fake.runner()));
   bus.publish(executor::RunFinished{failed_run()});
   none.send_test("/lab");
   none.wait_idle();
@@ -504,4 +523,341 @@ TEST(Notifier, SendsFailedRunsAndTheQueueEndOffTheBus) {
   EXPECT_TRUE(sent[0].channel.empty());
   EXPECT_NE(sent[0].error.find("no notifications are configured"), std::string::npos);
   EXPECT_EQ(fake.calls.size(), 3u);
+}
+
+// --- The outbox (executor hardening spec 4.8) --------------------------------
+//
+// Without its thread (NotifierOptions::thread = false) a notifier sends only
+// when deliver_due() is called, at the time the test gives: no test sleeps.
+
+namespace {
+
+using namespace std::chrono_literals;
+
+// A directory of its own, removed at the end.
+struct OutboxDir {
+  std::filesystem::path dir = pychron::testing::unique_temp_path("pychron-outbox-");
+  OutboxDir() = default;
+  OutboxDir(const OutboxDir&) = delete;
+  OutboxDir& operator=(const OutboxDir&) = delete;
+  OutboxDir(OutboxDir&&) = delete;
+  OutboxDir& operator=(OutboxDir&&) = delete;
+  ~OutboxDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+  }
+  std::vector<std::filesystem::path> files() const {
+    std::vector<std::filesystem::path> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) out.push_back(e.path());
+    std::sort(out.begin(), out.end());
+    return out;
+  }
+};
+
+// What a bus heard: notifications sent and log lines.
+struct Heard {
+  std::mutex m;
+  std::vector<NotificationSent> sent;
+  std::vector<Log> logs;
+  SignalBus::Subscription a, b;
+  explicit Heard(SignalBus& bus)
+      : a(bus.subscribe<NotificationSent>([this](const NotificationSent& e) {
+          std::lock_guard lock(m);
+          sent.push_back(e);
+        })),
+        b(bus.subscribe<Log>([this](const Log& e) {
+          std::lock_guard lock(m);
+          logs.push_back(e);
+        })) {}
+};
+
+NotificationConfig config_of(const std::string& text) {
+  auto c = NotificationConfig::from_toml(text, "n.toml");
+  EXPECT_TRUE(c) << c.error().what;
+  return c ? *c : NotificationConfig{};
+}
+
+executor::RunSummary failed_run_of(const std::string& identifier) {
+  auto r = failed_run();
+  r.identifier = identifier;
+  return r;
+}
+
+const WallTime kT0 = WallTime(std::chrono::hours(24 * 365 * 56));  // some day in 2026
+
+}  // namespace
+
+TEST(NotifierRetry, TheGapDoublesFromAMinuteToAnHourAndEndsAfterADay) {
+  EXPECT_EQ(next_attempt(kT0, 0), kT0);
+  EXPECT_EQ(next_attempt(kT0, 1), kT0 + 1min);
+  EXPECT_EQ(next_attempt(kT0, 2), kT0 + 3min);
+  EXPECT_EQ(next_attempt(kT0, 3), kT0 + 7min);
+  EXPECT_EQ(next_attempt(kT0, 4), kT0 + 15min);
+  EXPECT_EQ(next_attempt(kT0, 6), kT0 + 63min);
+  EXPECT_EQ(next_attempt(kT0, 7), kT0 + 123min);  // the gap stays at an hour
+  EXPECT_EQ(next_attempt(kT0, 8), kT0 + 183min);
+  EXPECT_EQ(next_attempt(kT0, 28), kT0 + 1383min);  // the last one within 24 h
+  EXPECT_FALSE(next_attempt(kT0, 29));
+  EXPECT_FALSE(next_attempt(kT0, 1000));
+}
+
+TEST(NotifierOutbox, ANotificationIsOnDiskBeforeItIsTriedAndGoneOnceSent) {
+  OutboxDir out;
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  fake.exit_code = 1;
+  std::size_t files_at_call = 0;
+  fake.on_call = [&] { files_at_call = out.files().size(); };
+  Notifier notifier(bus, config_of("[[command]]\nargv = [\"notify-lab\"]\n"), options(fake.runner(), out.dir, false));
+  notifier.post(run_failed_notification("q1", failed_run()));
+  ASSERT_EQ(out.files().size(), 1u);
+  EXPECT_EQ(notifier.outbox_size(), 1u);
+  EXPECT_TRUE(fake.calls.empty());  // without the thread nothing is tried until deliver_due
+
+  // Fails: tried again a minute later, not before.
+  EXPECT_EQ(notifier.deliver_due(kT0), kT0 + 1min);
+  EXPECT_EQ(files_at_call, 1u);
+  ASSERT_EQ(fake.calls.size(), 1u);
+  ASSERT_EQ(heard.sent.size(), 1u);
+  EXPECT_FALSE(heard.sent[0].ok);
+  EXPECT_NE(heard.sent[0].error.find("tried again in 1 min"), std::string::npos) << heard.sent[0].error;
+  EXPECT_EQ(notifier.deliver_due(kT0 + 59s), kT0 + 1min);
+  EXPECT_EQ(fake.calls.size(), 1u);
+  EXPECT_EQ(notifier.deliver_due(kT0 + 1min), kT0 + 3min);
+  EXPECT_EQ(fake.calls.size(), 2u);
+  EXPECT_EQ(out.files().size(), 1u);
+
+  // Sent: the file is removed, nothing waits.
+  fake.exit_code = 0;
+  EXPECT_FALSE(notifier.deliver_due(kT0 + 3min));
+  EXPECT_EQ(fake.calls.size(), 3u);
+  EXPECT_TRUE(heard.sent.back().ok);
+  EXPECT_TRUE(out.files().empty());
+  EXPECT_EQ(notifier.outbox_size(), 0u);
+}
+
+TEST(NotifierOutbox, ANewNotifierSendsWhatTheLastOneLeftInOrder) {
+  OutboxDir out;
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  const auto config = config_of("[[command]]\nargv = [\"notify-lab\"]\n[[webhook]]\nurl = \"https://example.org/h\"\n");
+  {
+    Notifier first(bus, config, options(fake.runner(), out.dir, false));
+    for (const char* id : {"66001", "66002", "66003"}) first.post(run_failed_notification("q1", failed_run_of(id)));
+  }
+  EXPECT_EQ(out.files().size(), 3u);
+  EXPECT_TRUE(fake.calls.empty());
+
+  Notifier second(bus, config, options(fake.runner(), out.dir, false));
+  EXPECT_EQ(second.outbox_size(), 3u);
+  second.post(run_failed_notification("q1", failed_run_of("66004")));  // after what was left
+  EXPECT_FALSE(second.deliver_due(kT0));
+  EXPECT_TRUE(out.files().empty());
+  std::vector<std::string> order;
+  order.reserve(heard.sent.size());
+  for (const auto& s : heard.sent) order.push_back(s.channel + " " + s.subject.substr(13, 7));
+  EXPECT_EQ(order, (std::vector<std::string>{"command 66001-3", "command 66002-3", "command 66003-3", "command 66004-3",
+                                             "webhook 66001-3", "webhook 66002-3", "webhook 66003-3",
+                                             "webhook 66004-3"}));
+}
+
+TEST(NotifierOutbox, ADeliveryIsGivenUpAfterADayWithOneLogLine) {
+  OutboxDir out;
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  fake.exit_code = 7;
+  fake.output = "curl: (7) Failed to connect";
+  Notifier notifier(bus, config_of("[[command]]\nargv = [\"notify-lab\"]\n"), options(fake.runner(), out.dir, false));
+  notifier.post(run_failed_notification("q1", failed_run()));
+  std::optional<WallTime> at = kT0;
+  WallTime last = kT0;
+  while (at) {
+    last = *at;
+    at = notifier.deliver_due(*at);
+    ASSERT_LT(fake.calls.size(), 100u);
+  }
+  EXPECT_EQ(fake.calls.size(), 29u);  // the first try and 28 retries
+  EXPECT_EQ(last, kT0 + 1383min);
+  EXPECT_LE(last - kT0, std::chrono::hours(24));
+  EXPECT_TRUE(out.files().empty());
+  EXPECT_EQ(notifier.outbox_size(), 0u);
+  EXPECT_NE(heard.sent.back().error.find("given up after 24 h"), std::string::npos) << heard.sent.back().error;
+  std::size_t gave_up = 0;
+  for (const auto& l : heard.logs) {
+    if (l.message.find("given up") == std::string::npos) continue;
+    ++gave_up;
+    EXPECT_EQ(l.level, LogLevel::Warn);
+    EXPECT_NE(l.message.find("pychron: run 66001-3 failed (queue q1)"), std::string::npos) << l.message;
+  }
+  EXPECT_EQ(gave_up, 1u);
+}
+
+TEST(NotifierOutbox, TheCommandChannelGoesFirstAndDoesNotWaitForAFailingEmail) {
+  OutboxDir out;
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  bool network = false;
+  fake.exit_for = [&](const ProcessSpec& spec) { return spec.argv.front() == "curl" && !network ? 7 : 0; };
+  Notifier notifier(bus, config_of(R"(
+[[email]]
+url = "smtp://relay.example.org"
+from = "pychron@example.org"
+to = ["a@example.org"]
+[[command]]
+argv = ["notify-lab"]
+)"),
+                    options(fake.runner(), out.dir, false));
+  notifier.post(run_failed_notification("q1", failed_run_of("66001")));
+  notifier.post(run_failed_notification("q1", failed_run_of("66002")));
+  EXPECT_EQ(notifier.deliver_due(kT0), kT0 + 1min);
+  // Both commands, then the email of the first; its second waits behind it.
+  ASSERT_EQ(fake.calls.size(), 3u);
+  EXPECT_EQ(fake.calls[0].spec.argv.front(), "notify-lab");
+  EXPECT_EQ(fake.calls[1].spec.argv.front(), "notify-lab");
+  EXPECT_EQ(fake.calls[2].spec.argv.front(), "curl");
+  EXPECT_NE(fake.calls[2].payload.find("66001-3"), std::string::npos);
+  EXPECT_EQ(out.files().size(), 2u);  // each still waits for the email
+
+  // A third notification goes out on the command at once, whatever the email does.
+  notifier.post(run_failed_notification("q1", failed_run_of("66003")));
+  EXPECT_EQ(notifier.deliver_due(kT0 + 10s), kT0 + 1min);
+  ASSERT_EQ(fake.calls.size(), 4u);
+  EXPECT_EQ(fake.calls[3].spec.argv.front(), "notify-lab");
+
+  // The network is back: the emails go, in order.
+  network = true;
+  EXPECT_FALSE(notifier.deliver_due(kT0 + 1min));
+  ASSERT_EQ(fake.calls.size(), 7u);
+  for (std::size_t i = 4; i < 7; ++i) EXPECT_EQ(fake.calls[i].spec.argv.front(), "curl");
+  EXPECT_NE(fake.calls[4].payload.find("66001-3"), std::string::npos);
+  EXPECT_NE(fake.calls[5].payload.find("66002-3"), std::string::npos);
+  EXPECT_NE(fake.calls[6].payload.find("66003-3"), std::string::npos);
+  EXPECT_TRUE(out.files().empty());
+}
+
+TEST(NotifierOutbox, AnOutboxFileHoldsNoSecretOfTheConfig) {
+  set_env("PYCHRON_TEST_OUTBOX_KEY", "k3y-0utb0x-s3cret");
+  OutboxDir out;
+  SignalBus bus;
+  FakeRunner fake;
+  fake.exit_code = 22;
+  const auto config = config_of(R"(
+[[email]]
+provider = "brevo"
+api_key_env = "PYCHRON_TEST_OUTBOX_KEY"
+from = "pychron@example.org"
+to = ["a@example.org"]
+[[webhook]]
+url = "https://hooks.example.org/services/T000/B000/XXXX"
+)");
+  Notifier notifier(bus, config, options(fake.runner(), out.dir, false));
+  notifier.post(run_failed_notification("q1", failed_run()));
+  notifier.deliver_due(kT0);  // fails: the file stays, with its attempts
+  ASSERT_EQ(fake.calls.size(), 2u);
+  EXPECT_NE(fake.calls[0].spec.input.find("k3y-0utb0x-s3cret"), std::string::npos);  // read at delivery
+  ASSERT_EQ(out.files().size(), 1u);
+  const std::string text = read_file(out.files()[0].string());
+  EXPECT_NE(text.find("pychron: run 66001-3 failed (queue q1)"), std::string::npos) << text;
+  for (const char* secret : {"k3y-0utb0x-s3cret", "PYCHRON_TEST_OUTBOX_KEY", "hooks.example.org", "T000/B000",
+                             "a@example.org", "pychron@example.org", "brevo"})
+    EXPECT_EQ(text.find(secret), std::string::npos) << secret << " in\n" << text;
+}
+
+TEST(NotifierOutbox, ATestNotificationIsTriedOnceAndNeverWritten) {
+  OutboxDir out;
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  fake.exit_code = 1;
+  Notifier notifier(bus, config_of("[[command]]\nargv = [\"notify-lab\"]\n"), options(fake.runner(), out.dir, false));
+  notifier.send_test("/lab");
+  EXPECT_TRUE(out.files().empty());
+  EXPECT_FALSE(notifier.deliver_due(kT0));
+  EXPECT_EQ(fake.calls.size(), 1u);
+  ASSERT_EQ(heard.sent.size(), 1u);
+  EXPECT_FALSE(heard.sent[0].ok);
+  EXPECT_EQ(notifier.outbox_size(), 0u);
+}
+
+TEST(NotifierOutbox, HoldsResumesAndAnUnsafeEndAreSent) {
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  Notifier notifier(bus, config_of(R"(
+[[command]]
+name = "all"
+argv = ["notify-lab"]
+[[command]]
+name = "failures"
+argv = ["notify-lab"]
+on = ["run_failed", "unsafe"]
+)"),
+                    options(fake.runner(), {}, false));
+  notifier.set_queue("q1", "user@example.org");
+  executor::ExecutorHolding hold;
+  hold.reason = "link spectrometer is down";
+  hold.links = {"spectrometer"};
+  hold.since = TimePoint{};
+  hold.until = hold.since + std::chrono::minutes(30);
+  hold.row = 3;
+  bus.publish(hold);
+  using executor::ExecutorState;
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Running, ExecutorState::Holding, "held"});  // not a resume
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Holding, ExecutorState::Running, "links are back"});
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Holding, ExecutorState::StoppingAtBoundary, "stop"});
+  executor::QueueResult result;
+  result.end = executor::QueueEnd::Failed;
+  result.reason = "run 66001 failed and the line is not safe";
+  result.code = executor::kUnsafe;
+  notifier.queue_ended(result);
+  EXPECT_FALSE(notifier.deliver_due(kT0));
+
+  std::vector<std::string> got;
+  got.reserve(heard.sent.size());
+  for (const auto& s : heard.sent) got.push_back(s.channel + " " + std::string(to_string(s.event)));
+  EXPECT_EQ(got, (std::vector<std::string>{"all queue_holding", "all queue_resumed", "all unsafe", "all queue_ended",
+                                           "failures unsafe"}));
+  ASSERT_GE(fake.calls.size(), 3u);
+  EXPECT_EQ(fake.calls[0].spec.input.rfind("pychron: queue q1 holding", 0), 0u) << fake.calls[0].spec.input;
+  EXPECT_NE(fake.calls[0].spec.input.find("link spectrometer is down"), std::string::npos);
+  EXPECT_NE(fake.calls[0].spec.input.find("30 min"), std::string::npos) << fake.calls[0].spec.input;
+  EXPECT_EQ(fake.calls[1].spec.input.rfind("pychron: queue q1 running again", 0), 0u) << fake.calls[1].spec.input;
+  EXPECT_EQ(fake.calls[2].spec.input.rfind("pychron: queue q1 ended, line unsafe", 0), 0u) << fake.calls[2].spec.input;
+}
+
+TEST(Notifications, TheNewEventsAreSwitchedPerChannel) {
+  auto c = NotificationConfig::from_toml(R"(
+[[webhook]]
+url = "https://example.org/h"
+on = ["queue_holding", "queue_resumed", "unsafe"]
+)",
+                                         "n.toml");
+  ASSERT_TRUE(c) << c.error().what;
+  EXPECT_EQ(c->webhooks[0].on,
+            (std::set<NotifyEvent>{NotifyEvent::QueueHolding, NotifyEvent::QueueResumed, NotifyEvent::Unsafe}));
+  EXPECT_TRUE(channel_wants(*c, 0, NotifyEvent::QueueHolding));
+  EXPECT_FALSE(channel_wants(*c, 0, NotifyEvent::RunFailed));
+  EXPECT_TRUE(channel_wants(*c, 0, NotifyEvent::Test));
+  auto bad = NotificationConfig::from_toml("[[command]]\nargv = [\"x\"]\non = [\"test\"]\n", "n.toml");
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().what.find("queue_holding, queue_resumed, unsafe"), std::string::npos) << bad.error().what;
+}
+
+// With its thread, a notifier sends what an earlier one left as it starts.
+TEST(NotifierOutbox, TheThreadSendsWhatWasLeftAtOnce) {
+  OutboxDir out;
+  SignalBus bus;
+  FakeRunner fake;
+  const auto config = config_of("[[command]]\nargv = [\"notify-lab\"]\n");
+  { Notifier(bus, config, options(fake.runner(), out.dir, false)).post(run_failed_notification("q1", failed_run())); }
+  ASSERT_EQ(out.files().size(), 1u);
+  Notifier notifier(bus, config, options(fake.runner(), out.dir));
+  notifier.wait_idle();
+  EXPECT_EQ(fake.calls.size(), 1u);
+  EXPECT_TRUE(out.files().empty());
 }
