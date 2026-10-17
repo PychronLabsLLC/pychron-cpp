@@ -1500,6 +1500,7 @@ TEST_F(ExecutorHolding_, ALinkDownBeforeARunHoldsThenStartsThatRunOnce) {
   ASSERT_EQ(held.size(), 1u);
   EXPECT_EQ(held[0].row, std::optional<std::size_t>(1));
   EXPECT_EQ(held[0].links, std::vector<std::string>{"valve_bus"});
+  EXPECT_EQ(held[0].kind, HoldReason::Link);
   EXPECT_EQ(held[0].until - held[0].since, 2h);
   EXPECT_TRUE(h.log.went(ExecutorState::Running, ExecutorState::Holding));
   EXPECT_TRUE(h.log.went(ExecutorState::Holding, ExecutorState::Running));
@@ -1573,6 +1574,7 @@ TEST_F(ExecutorHolding_, ARunThatFailedForALinkHoldsThenGoesOnToTheNextRow) {
   const auto held = h.log.held();
   ASSERT_EQ(held.size(), 1u);
   EXPECT_FALSE(held[0].row);  // held after a run that started
+  EXPECT_EQ(held[0].kind, HoldReason::RunFailed);
   EXPECT_NE(held[0].reason.find("laser link down"), std::string::npos) << held[0].reason;
   EXPECT_EQ(r.runs[0].status, record::RecordStatus::Failed);  // flagged in its summary
   EXPECT_EQ(r.runs[0].failure, "laser link down");
@@ -1658,6 +1660,16 @@ TEST_F(ExecutorHolding_, SkipDropsTheHeldRow) {
   ASSERT_TRUE(skipped && *skipped);
   EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12347:success"}));
   EXPECT_EQ(started_count(w, "12346"), 0);
+  // A check that names no link: counted as the spool's.
+  const auto held = log.held();
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_EQ(held[0].kind, HoldReason::Spool);
+}
+
+TEST(HoldReasonTest, NamesAreLabels) {
+  EXPECT_EQ(to_string(HoldReason::Link), "link");
+  EXPECT_EQ(to_string(HoldReason::Spool), "spool");
+  EXPECT_EQ(to_string(HoldReason::RunFailed), "run_failed");
 }
 
 TEST_F(ExecutorHolding_, SkipIsRefusedForARowThatStarted) {
@@ -1770,6 +1782,7 @@ TEST_F(ExecutorHolding_, ALinkThatDropsDuringPrepareHoldsAndStartsTheRowAgain) {
   const auto held = h.log.held();
   ASSERT_EQ(held.size(), 1u);
   EXPECT_EQ(held[0].row, std::optional<std::size_t>(0));
+  EXPECT_EQ(held[0].kind, HoldReason::RunFailed);  // an attempt that failed for a link, not a pre-run check
   // A definite failure in prepare ends the queue as before.
   World w2({});
   Clock::Participant me2(w2.clock, "test2");

@@ -11,6 +11,7 @@
 #include "pychron/experiment/lab/notifier.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
+#include "pychron/experiment/persist/persister.hpp"
 #include "pychron/systems/jobs/job.hpp"
 
 namespace pychron::experiment::metrics {
@@ -58,6 +59,18 @@ constexpr const char* kJobProgress = "pychron_spectrometer_job_progress_ratio";
 constexpr const char* kJobProgressHelp = "How far the running spectrometer job is, 0 to 1; 0 when none is running.";
 constexpr const char* kJobDuration = "pychron_spectrometer_job_duration_seconds";
 constexpr const char* kJobDurationHelp = "How long spectrometer jobs that ran took, by kind.";
+constexpr const char* kHolds = "pychron_executor_holds_total";
+constexpr const char* kHoldsHelp =
+    "Times the queue held, by why: a link the next run needs was down (link), the spool asked to wait (spool), "
+    "or the run before failed for a link (run_failed).";
+constexpr const char* kHolding = "pychron_executor_holding";
+constexpr const char* kHoldingHelp = "1 while the queue holds.";
+constexpr const char* kGaps = "pychron_measurement_gaps_total";
+constexpr const char* kGapsHelp = "Silences in a measurement's readings that were waited out or ended it.";
+constexpr const char* kSpoolPending = "pychron_spool_pending";
+constexpr const char* kSpoolPendingHelp = "Records in the spool, not yet taken by the store.";
+constexpr const char* kOutbox = "pychron_notifications_outbox";
+constexpr const char* kOutboxHelp = "Notifications in the outbox, not yet taken or given up by every channel.";
 
 // From one second to two hours: an extraction is tens of seconds, a
 // measurement tens of minutes, a save a second or two.
@@ -98,9 +111,12 @@ constexpr std::array kNotifyEvents{lab::NotifyEvent::RunFailed,    lab::NotifyEv
                                    lab::NotifyEvent::Test,         lab::NotifyEvent::QueueHolding,
                                    lab::NotifyEvent::QueueResumed, lab::NotifyEvent::Unsafe};
 
-constexpr ExecutorState kExecutorStates[] = {
-    ExecutorState::Idle,       ExecutorState::Preparing, ExecutorState::Running,   ExecutorState::StoppingAtBoundary,
-    ExecutorState::Cancelling, ExecutorState::Aborting,  ExecutorState::Finalizing};
+constexpr std::array kExecutorStates{ExecutorState::Idle,       ExecutorState::Preparing,
+                                     ExecutorState::Running,    ExecutorState::Holding,
+                                     ExecutorState::StoppingAtBoundary, ExecutorState::Cancelling,
+                                     ExecutorState::Aborting,   ExecutorState::Finalizing};
+constexpr std::array kHoldReasons{executor::HoldReason::Link, executor::HoldReason::Spool,
+                                  executor::HoldReason::RunFailed};
 
 }  // namespace
 
@@ -141,6 +157,11 @@ ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, Signa
   }
   registry.counter(kRunsStarted, kRunsStartedHelp);
   registry.counter(kSaveErrors, kSaveErrorsHelp);
+  for (const executor::HoldReason r : kHoldReasons) registry.counter(kHolds, kHoldsHelp, {{"reason", label_of(to_string(r))}});
+  registry.gauge(kHolding, kHoldingHelp).set(0);
+  registry.counter(kGaps, kGapsHelp);
+  registry.gauge(kSpoolPending, kSpoolPendingHelp).set(0);
+  registry.gauge(kOutbox, kOutboxHelp).set(0);
   for (const RunState s : {RunState::Success, RunState::Failed, RunState::Cancelled, RunState::Aborted}) {
     for (const bool truncated : {false, true}) {
       registry.counter(kRunsFinished, kRunsFinishedHelp,
@@ -179,8 +200,20 @@ ExperimentMetrics::ExperimentMetrics(pychron::metrics::Registry& registry, Signa
     for (const ExecutorState s : kExecutorStates) {
       registry_.gauge(kExecutorState, kExecutorStateHelp, {{"state", label_of(to_string(s))}}).set(s == e.to ? 1.0 : 0.0);
     }
+    registry_.gauge(kHolding, kHoldingHelp).set(e.to == ExecutorState::Holding ? 1.0 : 0.0);
     // An executor driven without a session says nothing else about its queue.
     set_active(e.to != ExecutorState::Idle);
+  }));
+  subscriptions_.push_back(bus.subscribe<executor::ExecutorHolding>([this](const executor::ExecutorHolding& e) {
+    registry_.counter(kHolds, kHoldsHelp, {{"reason", label_of(to_string(e.kind))}}).inc();
+  }));
+  subscriptions_.push_back(bus.subscribe<measurement::MeasurementGap>(
+      [this](const measurement::MeasurementGap&) { registry_.counter(kGaps, kGapsHelp).inc(); }));
+  subscriptions_.push_back(bus.subscribe<persist::SpoolStatus>([this](const persist::SpoolStatus& e) {
+    registry_.gauge(kSpoolPending, kSpoolPendingHelp).set(static_cast<double>(e.pending));
+  }));
+  subscriptions_.push_back(bus.subscribe<lab::NotificationOutbox>([this](const lab::NotificationOutbox& e) {
+    registry_.gauge(kOutbox, kOutboxHelp).set(static_cast<double>(e.size));
   }));
   subscriptions_.push_back(bus.subscribe<lab::QueueStarted>([this](const lab::QueueStarted& e) {
     {

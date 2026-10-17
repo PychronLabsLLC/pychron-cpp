@@ -93,6 +93,15 @@ std::string_view to_string(QueueEnd e) noexcept {
   return "?";
 }
 
+std::string_view to_string(HoldReason r) noexcept {
+  switch (r) {
+    case HoldReason::Link: return "link";
+    case HoldReason::Spool: return "spool";
+    case HoldReason::RunFailed: return "run_failed";
+  }
+  return "?";
+}
+
 // A mutex-like hardware resource a run waits for (cancellable). Held across a
 // whole phase of a run, so a run that waits for it waits through the clock.
 class Executor::Resource {
@@ -521,8 +530,8 @@ std::optional<CheckFailure> Executor::ready(const RunSpec& next) {
   return waiting;
 }
 
-Executor::HoldEnd Executor::hold(const std::string& reason, const RunSpec& next, std::optional<std::size_t> row,
-                                 const ExperimentQueue& queue, const QueueResult& out,
+Executor::HoldEnd Executor::hold(const std::string& reason, HoldReason kind, const RunSpec& next,
+                                 std::optional<std::size_t> row, const ExperimentQueue& queue, const QueueResult& out,
                                  std::optional<TimePoint> until_given) {
   const TimePoint since = clock_.now();
   const TimePoint until = until_given.value_or(since + options_.hold.limit);
@@ -541,7 +550,7 @@ Executor::HoldEnd Executor::hold(const std::string& reason, const RunSpec& next,
     next_row = row.value_or(last_started_row_ + 1);
   }
   write_state(queue, next_row, out);  // before it is said: whoever hears it may read the file
-  if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(ExecutorHolding{reason, links, since, until, row});
+  if (ctx_.services.bus != nullptr) ctx_.services.bus->publish(ExecutorHolding{reason, links, since, until, row, kind});
 
   std::optional<TimePoint> up_since;
   TimePoint next_probe = since;
@@ -873,10 +882,12 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
     // Hold (spec 4.6): after a run that failed for a link, and while a
     // pre-run check asks the queue to wait.
     std::optional<std::string> why = std::exchange(pending_hold, std::nullopt);
+    HoldReason kind = HoldReason::RunFailed;
     if (!why) {
       if (auto w = ready(spec)) {
         if (w->kind == CheckKind::Refuse) break;
         why = w->error.what;
+        kind = w->links.empty() ? HoldReason::Spool : HoldReason::Link;
         held = row;
       }
     }
@@ -885,7 +896,7 @@ QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
       settle(in_flight);
       const std::optional<TimePoint> limit =
           resumed && resumed->first == held ? std::optional<TimePoint>(resumed->second) : std::nullopt;
-      const auto e = hold(*why, spec, held, queue, out, limit);
+      const auto e = hold(*why, kind, spec, held, queue, out, limit);
       if (e == HoldEnd::Resumed) resumed.emplace(held, last_hold_until_);
       else resumed.reset();
       held.reset();

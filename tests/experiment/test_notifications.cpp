@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <sstream>
+#include <vector>
 
 #include "pychron/core/events.hpp"
 #include "pychron/experiment/lab/notifier.hpp"
@@ -662,6 +663,34 @@ TEST(NotifierOutbox, ANewNotifierSendsWhatTheLastOneLeftInOrder) {
   EXPECT_EQ(order, (std::vector<std::string>{"command 66001-3", "command 66002-3", "command 66003-3", "command 66004-3",
                                              "webhook 66001-3", "webhook 66002-3", "webhook 66003-3",
                                              "webhook 66004-3"}));
+}
+
+// For the metrics (pychron_notifications_outbox): the size is said when it changes.
+TEST(NotifierOutbox, ItsSizeIsSaidWhenItChanges) {
+  OutboxDir out;
+  SignalBus bus;
+  std::mutex m;
+  std::vector<std::size_t> sizes;
+  auto sub = bus.subscribe<NotificationOutbox>([&](const NotificationOutbox& e) {
+    std::lock_guard lock(m);
+    sizes.push_back(e.size);
+  });
+  FakeRunner fake;
+  fake.exit_code = 1;
+  const auto config = config_of("[[command]]\nargv = [\"notify-lab\"]\n");
+  {
+    Notifier first(bus, config, options(fake.runner(), out.dir, false));
+    first.post(run_failed_notification("q1", failed_run_of("66001")));
+    first.post(run_failed_notification("q1", failed_run_of("66002")));
+    EXPECT_EQ(first.deliver_due(kT0), kT0 + 1min);  // a failed try: nothing leaves
+  }
+  EXPECT_EQ(sizes, (std::vector<std::size_t>{0, 1, 2}));
+  sizes.clear();
+
+  Notifier second(bus, config, options(fake.runner(), out.dir, false));  // what the first left
+  fake.exit_code = 0;
+  EXPECT_FALSE(second.deliver_due(kT0 + 1min));
+  EXPECT_EQ(sizes, (std::vector<std::size_t>{2, 1, 0}));
 }
 
 TEST(NotifierOutbox, ADeliveryIsGivenUpAfterADayWithOneLogLine) {

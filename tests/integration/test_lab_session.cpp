@@ -28,6 +28,7 @@
 
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/record/serialize.hpp"
@@ -626,6 +627,26 @@ TEST_F(MetricsSessionTest, ASimulatedQueueIsCountedAndNamesNoRun) {
     ASSERT_FALSE(name.empty());
     // As a label's whole value: an identifier may be as short as "bu".
     EXPECT_EQ(body.find("\"" + name + "\""), std::string::npos) << "the scrape names " << name;
+  }
+}
+
+// Every link of the line and of the spectrometer is counted from zero, by
+// its transport's name, before it has reconnected or repeated anything.
+TEST_F(MetricsSessionTest, EveryLinkIsCountedFromZero) {
+  std::vector<Link*> links = line_->links();
+  if (spec_) {
+    const std::vector<Link*> more = spec_->links();
+    links.insert(links.end(), more.begin(), more.end());
+  }
+  ASSERT_FALSE(links.empty());
+  metrics_->watch_links(links);
+  const std::string body = scrape();
+  for (const Link* l : links) {
+    const std::string labels = "{transport=\"" + l->transport().name() + "\"}";
+    EXPECT_TRUE(metrics_text::has(body, "pychron_link_reconnects_total" + labels)) << labels;
+    EXPECT_DOUBLE_EQ(metrics_text::value(body, "pychron_link_reconnects_total" + labels), 0.0) << labels;
+    EXPECT_TRUE(metrics_text::has(body, "pychron_link_repeats_total" + labels)) << labels;
+    EXPECT_DOUBLE_EQ(metrics_text::value(body, "pychron_link_repeats_total" + labels), 0.0) << labels;
   }
 }
 

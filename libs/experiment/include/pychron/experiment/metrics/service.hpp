@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/metrics_config.hpp"
@@ -19,6 +20,10 @@
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/metrics/registry.hpp"
+
+namespace pychron {
+class Link;
+}
 
 namespace pychron::experiment::metrics {
 
@@ -44,6 +49,13 @@ class MetricsService {
   // Why it is not listening; empty when it is.
   const std::string& error() const noexcept;
   pychron::metrics::Registry& registry() noexcept;
+
+  // The links whose reconnects and repeats each scrape reads
+  // (pychron_link_reconnects_total, pychron_link_repeats_total), by their
+  // transport's name: the line's and the spectrometer's. Each transport's
+  // counters exist from this call. Replaces what an earlier call gave. The
+  // links must outlive the service. A link given twice is read once.
+  void watch_links(const std::vector<Link*>& links);
 
  private:
   struct Impl;

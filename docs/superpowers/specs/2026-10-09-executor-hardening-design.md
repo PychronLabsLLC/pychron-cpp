@@ -341,8 +341,9 @@ Rule: no run waits on network service. Each has local durable buffer.
 
 ### 4.9 Seen and counted
 
-- Bus: `LinkReconnected`, `ExecutorHolding`, `MeasurementGap`,
-  `SpoolStatus`; `TransportHealth` as now.
+- Bus: `LinkReconnected`, `ExecutorHolding` (with `kind`, a `HoldReason`:
+  `link`, `spool`, `run_failed`), `MeasurementGap`, `SpoolStatus`,
+  `NotificationOutbox` (outbox size, on change); `TransportHealth` as now.
 - UI: health bar shows hold with reason and countdown to `hold_limit`;
   Resume and Skip in Experiment > Executor. `elctl exp run` prints same
   lines; `SIGUSR1` not used: operator stops and `--resume`s.
@@ -350,9 +351,13 @@ Rule: no run waits on network service. Each has local durable buffer.
   counter born at zero; panel per metric):
   `pychron_link_reconnects_total{transport}`,
   `pychron_link_repeats_total{transport}`,
-  `pychron_executor_holds_total{reason}` (reason: enumeration),
+  `pychron_executor_holds_total{reason}` (reason: enumeration,
+  `HoldReason`),
   `pychron_executor_holding` (0/1), `pychron_measurement_gaps_total`,
-  `pychron_spool_pending`, `pychron_notifications_outbox`.
+  `pychron_spool_pending`, `pychron_notifications_outbox`. Link counters
+  read at scrape from `Link::reconnects()`, `Link::repeats()` through a
+  function given to exporter (`libs/metrics` does not depend on
+  `libs/devices`); no `LinkRepeated` event.
 
 ### 4.10 Configuration
 

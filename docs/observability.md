@@ -15,8 +15,8 @@ fifteen seconds.
 | Dashboard | For | Shows |
 |---|---|---|
 | Instrument health | lab staff | pressures, cryostat temperatures, heaters, valve states, how fresh each reading is, alarms |
-| Run operations | the lab manager | whether a queue is running and how far it is, how runs end, how long each phase takes, conditionals that tripped, notifications sent |
-| Application health | whoever supports the lab | the version running, transports, warnings and errors in the log, the scheduler, how long saving takes |
+| Run operations | the lab manager | whether a queue is running and how far it is, how runs end, how long each phase takes, conditionals that tripped, notifications sent, when and why the queue held, gaps in the readings, records and notifications waiting to be sent |
+| Application health | whoever supports the lab | the version running, transports and how often their links reconnected, warnings and errors in the log, the scheduler, how long saving takes |
 
 And one alert: pychron stopped while a queue was running. Pychron's own alarms
 and [notifications](notifications.md) tell you about everything else; this is
@@ -261,7 +261,7 @@ each.
 | Metric | Labels | Meaning |
 |---|---|---|
 | `pychron_queue_active` | | 1 while a queue is running |
-| `pychron_executor_state` | `state` (`idle`, `preparing`, `running`, `stopping`, `cancelling`, `aborting`, `finalizing`) | 1 for the state the executor is in |
+| `pychron_executor_state` | `state` (`idle`, `preparing`, `running`, `holding`, `stopping`, `cancelling`, `aborting`, `finalizing`) | 1 for the state the executor is in |
 | `pychron_queue_runs` | `status` (`total`, `done`) | the running queue's size and progress |
 | `pychron_queues_ended_total` | `end` | queues ended, by how |
 | `pychron_runs_started_total` | | |
@@ -271,8 +271,13 @@ each.
 | `pychron_measurement_blocks_total` | `block`, `ok` | measurement blocks finished |
 | `pychron_conditional_trips_total` | `kind`, `level` | conditionals that tripped |
 | `pychron_executor_waits_total` | `reason` | times the executor waited, by what for |
+| `pychron_executor_holding` | | 1 while the queue holds: it waits for a link the next run needs, or for the spool, before it starts that run |
+| `pychron_executor_holds_total` | `reason` (`link`, `spool`, `run_failed`) | times the queue held: a link the next run needs was down, the spool asked to wait (its disk nearly full, or too many records not yet sent), or the run before failed for a link |
+| `pychron_measurement_gaps_total` | | silences of the spectrometer during a measurement, waited out or ending the run |
+| `pychron_spool_pending` | | records the store has not taken yet; they are sent again on their own |
 | `pychron_last_run_finished_age_seconds` | | seconds since a run last finished; absent until one has |
 | `pychron_notifications_total` | `channel`, `event`, `ok` | notifications handed to a channel |
+| `pychron_notifications_outbox` | | notifications waiting in the outbox: not yet taken, or given up, by every channel they are for |
 | `pychron_spectrometer_jobs_total` | `kind` (`sweep`, `peak_center`), `state` (`succeeded`, `failed`, `cancelled`) | spectrometer jobs ended, whether a run or the operator asked for them |
 | `pychron_spectrometer_job_active` | | 1 while a spectrometer job is running |
 | `pychron_spectrometer_job_progress_ratio` | | how far the running job is, 0 to 1; 0 when none is running |
@@ -291,6 +296,8 @@ real time they are simulated seconds.
 | `pychron_bus_handler_failures_total` | `event` | parts of pychron that failed while handling an event, by the event. It should stay at zero: anything else is a bug, and the log (`bus`) has what was said |
 | `pychron_transport_connected` | `transport` | 1 while the transport is up, 0 while it is down |
 | `pychron_transport_outages_total` | `transport` | times the transport went down. Single errors are not counted: the log has them |
+| `pychron_link_reconnects_total` | `transport` | times the transport's link reconnected after a failure: each is an outage the line rode out |
+| `pychron_link_repeats_total` | `transport` | commands the link sent a second time after a failure, being safe to send twice (a read, an absolute target) |
 | `pychron_scheduler_job_runs_total`, `_failures_total`, `_skipped_overlaps_total` | `job` | each periodic job's counts |
 | `pychron_scheduler_heartbeat_age_seconds` | | seconds since the scheduler last ran its heartbeat job |
 | `pychron_metrics_scrape_duration_seconds` | | how long the last scrape took to answer |
@@ -303,4 +310,5 @@ increases over a time range, which is unaffected.
 A counter appears when pychron first hears of what it counts: a valve, a
 gauge, a transport, a notification channel. The first alarm from a source
 that has never been read (the line itself, say) is therefore not drawn as an
-increase; every later one is.
+increase; every later one is. A link's counters are there from the start,
+for every transport the line and the spectrometer have.

@@ -146,6 +146,16 @@ struct ExecutorWaiting {
   std::string run_id;   // the run waiting (extraction device, pump time); empty: the queue
 };
 
+// Why the queue holds, as an enumeration (metrics count holds by it; the
+// reason's text is for people). `Link`: before a run starts, a link it needs
+// is down. `Spool`: a pre-run check that names no link asked to wait (the
+// spool's, SpoolWritable, is the one that ships). `RunFailed`: a run failed
+// for a link, whether past its point of no return (the queue goes on with
+// the next row) or before it (the same row is started again). A wait that is
+// both a link's and the spool's is `Link`.
+enum class HoldReason { Link, Spool, RunFailed };
+std::string_view to_string(HoldReason r) noexcept;  // "link", "spool", "run_failed"
+
 // The queue holds (spec 4.6): it waits for the links the next run needs, and
 // for any other pre-run check that asked it to wait, before it goes on.
 struct ExecutorHolding {
@@ -154,6 +164,7 @@ struct ExecutorHolding {
   TimePoint since{};
   TimePoint until{};  // when the hold limit ends the queue
   std::optional<std::size_t> row;  // the row held back, when it has not started
+  HoldReason kind = HoldReason::Link;
 };
 
 enum class QueueEnd { Completed, Stopped, Cancelled, Aborted, Failed };
@@ -282,7 +293,7 @@ class Executor {
   // the operator resumes, skips or stops, or the limit passes.
   // `until`: the limit of a hold the operator resumed while the links were
   // still down, kept for the one that follows.
-  HoldEnd hold(const std::string& reason, const RunSpec& next, std::optional<std::size_t> row,
+  HoldEnd hold(const std::string& reason, HoldReason kind, const RunSpec& next, std::optional<std::size_t> row,
                const ExperimentQueue& queue, const QueueResult& out, std::optional<TimePoint> until = std::nullopt);
   // Whether `next` may start: nothing when it may; else why, and the links
   // it waits for. A Refuse ends the queue (end_ is set).

@@ -38,6 +38,11 @@ constexpr const char* kBusFailuresHelp =
     "Subscribers of the event bus that threw, by the event they were handling. The log has what each said.";
 constexpr const char* kTransportOutages = "pychron_transport_outages_total";
 constexpr const char* kTransportOutagesHelp = "Times a transport went down.";
+constexpr const char* kLinkReconnects = "pychron_link_reconnects_total";
+constexpr const char* kLinkReconnectsHelp = "Times a transport's link reconnected after a failure.";
+constexpr const char* kLinkRepeats = "pychron_link_repeats_total";
+constexpr const char* kLinkRepeatsHelp =
+    "Commands a transport's link sent again after a failure, being safe to send twice.";
 
 constexpr AlarmSeverity kSeverities[] = {AlarmSeverity::Info, AlarmSeverity::Warning, AlarmSeverity::Critical};
 constexpr LogLevel kLevels[] = {LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
@@ -129,6 +134,8 @@ CoreExporter::CoreExporter(Registry& registry, SignalBus& bus, BuildInfo build, 
   registry.declare(MetricType::Counter, kBusFailures, kBusFailuresHelp);
   registry.declare(MetricType::Gauge, kTransportConnected, kTransportConnectedHelp);
   registry.declare(MetricType::Counter, kTransportOutages, kTransportOutagesHelp);
+  registry.declare(MetricType::Counter, kLinkReconnects, kLinkReconnectsHelp);
+  registry.declare(MetricType::Counter, kLinkRepeats, kLinkRepeatsHelp);
 
   registry
       .gauge("pychron_build_info", "Always 1; the labels say which build is running.",
@@ -217,6 +224,21 @@ CoreExporter::~CoreExporter() {
   for (SignalBus::Subscription& s : subscriptions_) s.reset();
 }
 
+void CoreExporter::watch_links(LinkSource source) {
+  const std::lock_guard lock(links_mutex_);
+  links_ = std::move(source);
+  if (links_) read_links(registry_, links_);
+}
+
+// The links count for themselves; a counter follows their totals.
+void CoreExporter::read_links(Registry& registry, const LinkSource& source) {
+  for (const LinkTotals& l : source()) {
+    const Labels labels{{"transport", l.transport}};
+    registry.counter(kLinkReconnects, kLinkReconnectsHelp, labels).set_total(static_cast<double>(l.reconnects));
+    registry.counter(kLinkRepeats, kLinkRepeatsHelp, labels).set_total(static_cast<double>(l.repeats));
+  }
+}
+
 void CoreExporter::on_valve(const std::string& valve, ValveState state, bool count_transition) {
   bool changed = false;
   {
@@ -259,6 +281,10 @@ void CoreExporter::collect(Registry& registry) {
     read_at = read_at_;
   }
   registry.gauge(kUptime, kUptimeHelp).set(now - started_);
+  {
+    const std::lock_guard lock(links_mutex_);
+    if (links_) read_links(registry, links_);
+  }
   for (const auto& [key, at] : read_at) {
     registry.gauge(kLastSampleAge, kLastSampleAgeHelp, {{"kind", key.first}, {"source", key.second}}).set(now - at);
   }

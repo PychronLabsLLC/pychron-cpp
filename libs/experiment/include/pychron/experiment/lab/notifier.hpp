@@ -49,6 +49,16 @@ struct NotificationSent {
   std::string error;  // why it failed, and when it is tried again or that it was given up
 };
 
+// The outbox's size (Notifier::outbox_size()), published when it changes:
+// after a notification is posted, after one leaves (taken or given up by
+// every channel it was for), and once when a notifier is made, for what the
+// last one left. Two threads change it (the poster and the notifier's own):
+// the size is read and published under one mutex, so the last event said is
+// the size as it is. A handler of it must not post a notification.
+struct NotificationOutbox {
+  std::size_t size = 0;
+};
+
 using WallTime = std::chrono::system_clock::time_point;
 
 inline constexpr std::chrono::minutes kNotifyRetryFirst{1};
@@ -122,12 +132,14 @@ class Notifier {
   std::string save(const Entry& e) const;  // under mutex_; what went wrong, empty when written
   static void drop(const Entry& e);  // under mutex_
   void log_warn(std::string message);
+  void say_outbox();  // not under mutex_: publishes NotificationOutbox, under say_mutex_
   void work();
 
   SignalBus& bus_;
   const NotificationConfig config_;
   NotifierOptions options_;
   mutable std::mutex mutex_;
+  std::mutex say_mutex_;  // one NotificationOutbox at a time, read and said together
   std::mutex delivery_mutex_;  // one deliver_due at a time; held across delivery (real programs)
   std::condition_variable cv_;
   std::vector<Entry> entries_;  // by seq

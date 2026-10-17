@@ -626,6 +626,16 @@ int main(int argc, char** argv) {
     metrics = pychron::experiment::metrics::MetricsService::start(
         (*line)->config().metrics, (*line)->bus(), (*line)->scheduler(), (*line)->clock(), (*line)->log_hub(),
         PYCHRON_VERSION);
+    if (metrics) {
+      // Each transport's reconnects and repeats, read from its link at each
+      // scrape: the line's, and the spectrometer's (both outlive `metrics`).
+      std::vector<pychron::Link*> links = (*line)->links();
+      if (spectrometer) {
+        const std::vector<pychron::Link*> more = spectrometer->links();
+        links.insert(links.end(), more.begin(), more.end());
+      }
+      metrics->watch_links(links);
+    }
     // For the Metrics page of File > Preferences.
     if (!metrics) {
       window.set_metrics_status(QStringLiteral("Off"));

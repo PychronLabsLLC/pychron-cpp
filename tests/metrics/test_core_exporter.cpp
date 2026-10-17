@@ -5,9 +5,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "metrics_text.hpp"
 #include "pychron/core/events.hpp"
@@ -231,6 +233,45 @@ TEST_F(CoreExporterTest, ATransportFirstHeardOfAsDownIsOneOutage) {
   EXPECT_DOUBLE_EQ(value(text(), "pychron_transport_outages_total{transport=\"gauge_net\"}"), 1.0);
 }
 
+// A link counts its own reconnects and repeats (libs/devices); the exporter
+// reads them at each scrape, with no event in between.
+TEST_F(CoreExporterTest, EveryLinkReadsZeroOnceWatched) {
+  exporter->watch_links([] {
+    return std::vector<LinkTotals>{{"valve_bus", 0, 0}, {"qtegra", 0, 0}};
+  });
+  const std::string t = text();
+  for (const char* transport : {"valve_bus", "qtegra"}) {
+    const std::string labels = std::string("{transport=\"") + transport + "\"}";
+    EXPECT_TRUE(has(t, "pychron_link_reconnects_total" + labels)) << transport;
+    EXPECT_DOUBLE_EQ(value(t, "pychron_link_reconnects_total" + labels), 0.0) << transport;
+    EXPECT_TRUE(has(t, "pychron_link_repeats_total" + labels)) << transport;
+    EXPECT_DOUBLE_EQ(value(t, "pychron_link_repeats_total" + labels), 0.0) << transport;
+  }
+}
+
+TEST_F(CoreExporterTest, LinkCountersFollowTheLinksTotals) {
+  std::uint64_t reconnects = 0;
+  std::uint64_t repeats = 0;
+  exporter->watch_links([&] { return std::vector<LinkTotals>{{"valve_bus", reconnects, repeats}}; });
+  reconnects = 1;
+  repeats = 3;
+  std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_link_reconnects_total{transport=\"valve_bus\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_link_repeats_total{transport=\"valve_bus\"}"), 3.0);
+  repeats = 4;
+  t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_link_reconnects_total{transport=\"valve_bus\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_link_repeats_total{transport=\"valve_bus\"}"), 4.0);
+}
+
+TEST_F(CoreExporterTest, AnEmptyLinkSourceStopsTheReading) {
+  std::uint64_t reconnects = 1;
+  exporter->watch_links([&] { return std::vector<LinkTotals>{{"valve_bus", reconnects, 0}}; });
+  exporter->watch_links({});
+  reconnects = 5;  // a link that may be gone: not read again
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_link_reconnects_total{transport=\"valve_bus\"}"), 1.0);
+}
+
 // A subscriber that throws is otherwise seen only as something that stopped
 // happening.
 TEST_F(CoreExporterTest, AHandlerThatThrowsIsCountedByItsEvent) {
@@ -264,7 +305,8 @@ TEST_F(CoreExporterTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
         "pychron_heater_enabled", "pychron_valve_state", "pychron_valve_transitions_total",
         "pychron_actuation_failures_total", "pychron_last_sample_age_seconds", "pychron_alarms_total",
         "pychron_build_info", "pychron_process_uptime_seconds", "pychron_log_records_total", "pychron_bus_handler_failures_total",
-        "pychron_transport_connected", "pychron_transport_outages_total"}) {
+        "pychron_transport_connected", "pychron_transport_outages_total", "pychron_link_reconnects_total",
+        "pychron_link_repeats_total"}) {
     EXPECT_NE(std::find(names.begin(), names.end(), expected), names.end()) << expected;
   }
 }

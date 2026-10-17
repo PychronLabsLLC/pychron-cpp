@@ -71,6 +71,7 @@ Notifier::Notifier(SignalBus& bus, NotificationConfig config, NotifierOptions op
     : bus_(bus), config_(std::move(config)), options_(std::move(options)) {
   if (!options_.runner) options_.runner = ProcessRunner(run_process);
   load();
+  say_outbox();
   if (options_.thread) thread_ = std::thread([this] { work(); });
   run_finished_ = bus_.subscribe<executor::RunFinished>([this](const executor::RunFinished& e) {
     const auto& r = e.summary;
@@ -175,7 +176,15 @@ void Notifier::post(Notification n) {
     posted_ = true;
   }
   cv_.notify_all();
+  say_outbox();
   if (!problem.empty()) log_warn(problem + "; the notification is kept in memory only");
+}
+
+void Notifier::say_outbox() {
+  // Every change is followed by a call here; read and said together, the
+  // last event is the size after the last change, whichever thread made it.
+  const std::lock_guard lock(say_mutex_);
+  bus_.publish(NotificationOutbox{outbox_size()});
 }
 
 std::size_t Notifier::outbox_size() const {
@@ -325,6 +334,7 @@ std::optional<WallTime> Notifier::deliver_due(WallTime now) {
 
       NotificationSent sent{d.channel.empty() ? name : d.channel, n.event, n.subject, d.ok, d.error};
       bool retrying = false;
+      bool left = false;  // the notification has left the outbox
       std::string gave_up, problem;
       {
         std::lock_guard lock(mutex_);
@@ -351,11 +361,13 @@ std::optional<WallTime> Notifier::deliver_due(WallTime now) {
         if (e->channels.empty()) {
           drop(*e);
           entries_.erase(e);
+          left = true;
         } else {
           problem = save(*e);
         }
       }
       bus_.publish(sent);
+      if (left) say_outbox();
       if (!gave_up.empty()) log_warn(std::move(gave_up));
       if (!problem.empty()) log_warn(std::move(problem));
       if (retrying) break;  // later notifications on this channel wait for this one

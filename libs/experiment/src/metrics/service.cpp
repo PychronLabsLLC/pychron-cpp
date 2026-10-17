@@ -1,9 +1,12 @@
 #include "pychron/experiment/metrics/service.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "pychron/core/events.hpp"
+#include "pychron/devices/link.hpp"
 #include "pychron/experiment/metrics/experiment_metrics.hpp"
 #include "pychron/metrics/core_exporter.hpp"
 #include "pychron/metrics/scheduler_metrics.hpp"
@@ -85,5 +88,17 @@ const std::string& MetricsService::error() const noexcept { return impl_->error;
 std::uint16_t MetricsService::port() const noexcept { return impl_->server ? impl_->server->port() : 0; }
 
 pychron::metrics::Registry& MetricsService::registry() noexcept { return impl_->registry; }
+
+void MetricsService::watch_links(const std::vector<Link*>& links) {
+  std::vector<Link*> watched;
+  for (Link* l : links)
+    if (l != nullptr && std::find(watched.begin(), watched.end(), l) == watched.end()) watched.push_back(l);
+  impl_->core->watch_links([watched = std::move(watched)] {
+    std::vector<pychron::metrics::LinkTotals> out;
+    out.reserve(watched.size());
+    for (const Link* l : watched) out.push_back({l->transport().name(), l->reconnects(), l->repeats()});
+    return out;
+  });
+}
 
 }  // namespace pychron::experiment::metrics

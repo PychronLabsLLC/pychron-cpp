@@ -132,6 +132,24 @@ TEST(MetricsPackaging, EveryExportedMetricIsOnSomeDashboard) {
   }
 }
 
+// Executor hardening (spec 4.9): link recoveries, holds, gaps and backlogs.
+// The test above holds every metric to a panel; this one names these, so
+// that one dropped from the exporter as well as from its dashboard is seen.
+TEST(MetricsPackaging, LinkRecoveriesHoldsGapsAndBacklogsHaveAPanel) {
+  const std::set<std::string> known = exported();
+  std::set<std::string> shown;
+  for (const auto& [file, names] : used(known)) {
+    if (file.size() > 5 && file.ends_with(".json")) shown.insert(names.begin(), names.end());
+  }
+  for (const char* n :
+       {"pychron_link_reconnects_total", "pychron_link_repeats_total", "pychron_executor_holds_total",
+        "pychron_executor_holding", "pychron_measurement_gaps_total", "pychron_spool_pending",
+        "pychron_notifications_outbox"}) {
+    EXPECT_EQ(known.count(n), 1u) << n << " is not exported";
+    EXPECT_EQ(shown.count(n), 1u) << n << " is on no dashboard";
+  }
+}
+
 TEST(MetricsPackaging, TheAlertNamesBothConditions) {
   const std::string alert = slurp(kRoot / "grafana" / "provisioning" / "alerting" / "pychron-deadman.yml");
   EXPECT_NE(alert.find("last_over_time(pychron_queue_active[24h])"), std::string::npos);

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "metrics_text.hpp"
@@ -15,6 +16,7 @@
 #include "pychron/experiment/lab/notifier.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
+#include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/run/state.hpp"
 #include "pychron/metrics/registry.hpp"
 #include "pychron/systems/jobs/job.hpp"
@@ -75,11 +77,11 @@ TEST_F(ExperimentMetricsTest, BeforeAnyQueueTheExecutorIsIdle) {
   EXPECT_DOUBLE_EQ(value(t, "pychron_queue_active"), 0.0);
 }
 
-TEST_F(ExperimentMetricsTest, ExecutorStateIsOneOfSeven) {
+TEST_F(ExperimentMetricsTest, ExecutorStateIsOneOfEight) {
   bus.publish(executor::ExecutorStateChanged{ExecutorState::Idle, ExecutorState::Running, ""});
   const std::string t = text();
   EXPECT_DOUBLE_EQ(value(t, "pychron_executor_state{state=\"running\"}"), 1.0);
-  for (const char* other : {"idle", "preparing", "stopping", "cancelling", "aborting", "finalizing"}) {
+  for (const char* other : {"idle", "preparing", "holding", "stopping", "cancelling", "aborting", "finalizing"}) {
     EXPECT_DOUBLE_EQ(value(t, std::string("pychron_executor_state{state=\"") + other + "\"}"), 0.0) << other;
   }
 }
@@ -148,6 +150,78 @@ TEST_F(ExperimentMetricsTest, CountersReadZeroBeforeTheFirstRun) {
   for (const char* reason : {"scheduled_start", "delay", "extraction_device", "pump_time", "other"}) {
     EXPECT_DOUBLE_EQ(value(t, std::string("pychron_executor_waits_total{reason=\"") + reason + "\"}"), 0.0) << reason;
   }
+}
+
+// ---- link recovery: holds, gaps and backlogs (executor hardening, spec 4.9) ----
+
+TEST_F(ExperimentMetricsTest, HoldsGapsAndBacklogsReadZeroBeforeAnyEvent) {
+  const std::string t = text();
+  for (const char* reason : {"link", "spool", "run_failed"}) {
+    const std::string series = std::string("pychron_executor_holds_total{reason=\"") + reason + "\"}";
+    EXPECT_TRUE(has(t, series)) << reason;
+    EXPECT_DOUBLE_EQ(value(t, series), 0.0) << reason;
+  }
+  for (const char* series :
+       {"pychron_executor_holding", "pychron_measurement_gaps_total", "pychron_spool_pending",
+        "pychron_notifications_outbox"}) {
+    EXPECT_TRUE(has(t, series)) << series;
+    EXPECT_DOUBLE_EQ(value(t, series), 0.0) << series;
+  }
+}
+
+TEST_F(ExperimentMetricsTest, HoldsAreCountedByReason) {
+  executor::ExecutorHolding h;
+  h.reason = "link down: valve_bus";  // free text: never a label
+  h.links = {"valve_bus"};
+  bus.publish(h);
+  h.kind = executor::HoldReason::RunFailed;
+  bus.publish(h);
+  bus.publish(h);
+  h.kind = executor::HoldReason::Spool;
+  bus.publish(h);
+  const std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_holds_total{reason=\"link\"}"), 1.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_holds_total{reason=\"run_failed\"}"), 2.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_holds_total{reason=\"spool\"}"), 1.0);
+  EXPECT_EQ(t.find("valve_bus"), std::string::npos);
+}
+
+TEST_F(ExperimentMetricsTest, HoldingFollowsTheExecutorsState) {
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Running, ExecutorState::Holding, "link down"});
+  std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_holding"), 1.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_state{state=\"holding\"}"), 1.0);
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Holding, ExecutorState::Running, "holding ended"});
+  t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_holding"), 0.0);
+  EXPECT_DOUBLE_EQ(value(t, "pychron_executor_state{state=\"holding\"}"), 0.0);
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Running, ExecutorState::Holding, ""});
+  bus.publish(executor::ExecutorStateChanged{ExecutorState::Holding, ExecutorState::Cancelling, ""});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_executor_holding"), 0.0);
+}
+
+TEST_F(ExperimentMetricsTest, EachGapIsCounted) {
+  bus.publish(measurement::MeasurementGap{"run-1", measurement::Block::Main, 10.0, 40.0, true, at(40)});
+  bus.publish(measurement::MeasurementGap{"run-1", measurement::Block::BaselineAfter, 50.0, 170.0, false, at(170)});
+  const std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_measurement_gaps_total"), 2.0);
+  EXPECT_EQ(t.find("run-1"), std::string::npos);
+}
+
+TEST_F(ExperimentMetricsTest, SpoolPendingIsTheLastStatus) {
+  bus.publish(persist::SpoolStatus{3, std::string("uuid: store down")});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_spool_pending"), 3.0);
+  bus.publish(persist::SpoolStatus{0, std::nullopt});
+  const std::string t = text();
+  EXPECT_DOUBLE_EQ(value(t, "pychron_spool_pending"), 0.0);
+  EXPECT_EQ(t.find("store down"), std::string::npos);
+}
+
+TEST_F(ExperimentMetricsTest, OutboxIsTheLastSizeSaid) {
+  bus.publish(lab::NotificationOutbox{2});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_notifications_outbox"), 2.0);
+  bus.publish(lab::NotificationOutbox{1});
+  EXPECT_DOUBLE_EQ(value(text(), "pychron_notifications_outbox"), 1.0);
 }
 
 // A channel is known only once it has been used; from then every event and outcome counts from zero.
@@ -337,7 +411,9 @@ TEST_F(ExperimentMetricsTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
         "pychron_run_state_duration_seconds", "pychron_measurement_blocks_total", "pychron_conditional_trips_total",
         "pychron_executor_waits_total", "pychron_last_run_finished_age_seconds",
         "pychron_notifications_total", "pychron_spectrometer_jobs_total", "pychron_spectrometer_job_active",
-        "pychron_spectrometer_job_progress_ratio", "pychron_spectrometer_job_duration_seconds"}) {
+        "pychron_spectrometer_job_progress_ratio", "pychron_spectrometer_job_duration_seconds",
+        "pychron_executor_holds_total", "pychron_executor_holding", "pychron_measurement_gaps_total",
+        "pychron_spool_pending", "pychron_notifications_outbox"}) {
     EXPECT_NE(std::find(names.begin(), names.end(), expected), names.end()) << expected;
   }
 }
