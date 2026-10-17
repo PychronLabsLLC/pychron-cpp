@@ -704,19 +704,25 @@ class TestDataWindows : public QObject {
     QCOMPARE(w.model()->analysis_count(), 5);
     QCOMPARE(w.model()->rows().back().uuid, std::string("uuid-0"));
 
-    // Low above high: nothing is asked and what is shown stays.
+    // Low above high: nothing is asked and what is shown stays, "Load more"
+    // included. A short page leaves rows to load, so the button is live.
+    w.set_page_size(2);
+    QCOMPARE(w.model()->analysis_count(), 2);
+    QVERIFY(w.load_more_button()->isEnabled());
     w.age_min_edit()->setValue(45.0);
     w.age_min_enabled()->setChecked(true);
     QCOMPARE(w.status()->text(), QStringLiteral("Age from is above to"));
-    QCOMPARE(w.model()->analysis_count(), 5);
+    QCOMPARE(w.model()->analysis_count(), 2);
+    QVERIFY(w.load_more_button()->isEnabled());
     QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
-    QCOMPARE(w.model()->analysis_count(), 5);
+    QCOMPARE(w.model()->analysis_count(), 2);
+    QCOMPARE(w.status()->text(), QStringLiteral("Age from is above to"));
 
     // No bound: every analysis, the plain count.
     w.age_min_enabled()->setChecked(false);
     w.age_max_enabled()->setChecked(false);
-    QCOMPARE(w.model()->analysis_count(), 10);
-    QVERIFY(w.status()->text().contains(QStringLiteral("10 of 10 analyses")));
+    QCOMPARE(w.model()->analysis_count(), 2);  // one page of two
+    QVERIFY(w.status()->text().contains(QStringLiteral("2 of 10 analyses")));
     QVERIFY(!w.status()->text().contains(QStringLiteral("cached age")));
   }
 
