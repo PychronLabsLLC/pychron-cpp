@@ -211,11 +211,14 @@ TEST_F(FluxCmd, SaveThenRepeatSaysUnchanged) {
   Outcome o = fit({"--save", "--user", "jsmith"});
   EXPECT_EQ(o.code, elctl::kOk) << o.err;
   EXPECT_TRUE(contains(o.out, "saved 12 positions (0 unchanged)")) << o.out;
+  // Age cache spec 4.5, item 4: the eight monitors' three analyses each.
+  EXPECT_TRUE(contains(o.out, "cached ages of 24 analyses are now out of date; run elctl db derive\n")) << o.out;
   EXPECT_GT(seq(), before);
   const auto after = seq();
   o = fit({"--save", "--user", "jsmith"});
   EXPECT_EQ(o.code, elctl::kOk) << o.err;
   EXPECT_TRUE(contains(o.out, "nothing to save: 12 positions unchanged")) << o.out;
+  EXPECT_FALSE(contains(o.out, "cached age")) << o.out;
   EXPECT_EQ(seq(), after);
   // The saved J now shows, and agrees with the prediction.
   const auto row = table_row(o.out, "Monitors", 1);

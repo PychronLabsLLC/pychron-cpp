@@ -1904,7 +1904,8 @@ class FluxWindowTest : public QObject {
     w.save();  // again while it runs: nothing more
     QVERIFY(settle(w));
 
-    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
     QVERIFY(!w.status_is_error());
     QVERIFY(change_seq() > before);
     for (int hole = 1; hole <= 12; ++hole) {
@@ -1947,7 +1948,8 @@ class FluxWindowTest : public QObject {
     FluxWindow& w = *wp;
     w.save();
     QVERIFY(settle(w));
-    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
 
     QSignalSpy saved(&w, &FluxWindow::saved);
     QSignalSpy changed(r.bridge.get(), &EntryBridge::changed);
@@ -1993,7 +1995,8 @@ class FluxWindowTest : public QObject {
     w.save();
     QVERIFY(settle(w));
     QVERIFY2(w.status().contains(QStringLiteral("1 not saved")), qPrintable(w.status()));
-    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
     const auto after = heads();
     QCOMPARE(after.at(9), before.at(9));
     for (int hole = 1; hole <= 12; ++hole)
@@ -2009,7 +2012,8 @@ class FluxWindowTest : public QObject {
     w.set_in_fit(3, true);
     w.save();
     QVERIFY(settle(w));
-    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
     QCOMPARE(heads().at(9), before.at(9));
     QVERIFY(heads().at(10) != after.at(10));
     QCOMPARE(saved_excluded(3), std::optional<bool>(false));
@@ -2321,7 +2325,8 @@ class FluxWindowTest : public QObject {
     QVERIFY(settle(w));
     drain(*r.bridge);
     QVERIFY(settle(w));
-    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
     QCOMPARE(saved.count(), 1);
     QCOMPARE(w.loads_started(), loads + 1);
     QVERIFY(w.fit());
@@ -2449,6 +2454,12 @@ class FluxWindowTest : public QObject {
     outcome.unchanged = 3;
     outcome.skipped = 2;
     QCOMPARE(FluxWindow::save_text(outcome, "", ""), QStringLiteral("Saved 7 positions (3 unchanged), 2 not saved"));
+    // Age cache spec 4.5, item 4: the analyses of the positions written.
+    outcome.outdated_ages = 21;
+    QCOMPARE(FluxWindow::save_text(outcome, "", ""),
+             QStringLiteral("Saved 7 positions (3 unchanged), 2 not saved; cached ages of 21 analyses are now out of "
+                            "date; run elctl db derive"));
+    outcome.outdated_ages = 0;
     outcome.written = 0;
     outcome.unchanged = 12;
     outcome.skipped = 0;
@@ -2495,7 +2506,8 @@ class FluxWindowTest : public QObject {
     QVERIFY(fitted_at(*w.fit(), 3).excluded);  // fitted first
     const double j1 = fitted_at(*w.fit(), 1).j;
     QVERIFY(settle(w));
-    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 12 positions (0 unchanged)"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
     QCOMPARE(saved_excluded(3), std::optional<bool>(true));
     QCOMPARE(saved_excluded(4), std::optional<bool>(false));
     QCOMPARE(*head_value(1)->j, j1);
@@ -2642,7 +2654,8 @@ class FluxWindowTest : public QObject {
     // Save succeeds now, and writes them.
     w.save();
     QVERIFY(settle(w));
-    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"));
+    QCOMPARE(w.status(), QStringLiteral("Saved 11 positions (0 unchanged), 1 not saved"
+                                        "; cached ages of 24 analyses are now out of date; run elctl db derive"));
     QVERIFY(!w.status_is_error());
     QVERIFY(!head(9).has_value());
     QCOMPARE(saved_excluded(3), std::optional<bool>(true));
@@ -2866,7 +2879,9 @@ class FluxWindowTest : public QObject {
     QVERIFY(!w.status_is_error());
     QVERIFY2(w.status().startsWith(QStringLiteral("plane, unweighted · fit MSWD")), qPrintable(w.status()));
     // What became of A is said after it, in the label, until the next change.
-    QVERIFY2(w.status().endsWith(QStringLiteral(" · Saved 12 positions (0 unchanged)")), qPrintable(w.status()));
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · Saved 12 positions (0 unchanged)"
+                                                "; cached ages of 24 analyses are now out of date; run elctl db derive")),
+             qPrintable(w.status()));
     QVERIFY(w.statusBar()->currentMessage().isEmpty());
     QVERIFY(!head(1, "C").has_value());
 
@@ -2933,7 +2948,9 @@ class FluxWindowTest : public QObject {
     QCOMPARE(w.tree()->currentItem(), item("C"));
     QCOMPARE(w.loads_started(), 2);
     QVERIFY(!w.edited());
-    QVERIFY2(w.status().endsWith(QStringLiteral(" · Saved 12 positions (0 unchanged)")), qPrintable(w.status()));
+    QVERIFY2(w.status().endsWith(QStringLiteral(" · Saved 12 positions (0 unchanged)"
+                                                "; cached ages of 24 analyses are now out of date; run elctl db derive")),
+             qPrintable(w.status()));
 
     // A save that fails: the level picked meanwhile is not gone to.
     w.tree()->setCurrentItem(item("A"));
@@ -3264,7 +3281,8 @@ class FluxWindowTest : public QObject {
     QVERIFY(predicted > 0.0);
     w->save();
     QVERIFY(settle(*w));
-    QCOMPARE(w->status(), QStringLiteral("Saved 12 positions (0 unchanged)"));
+    QCOMPARE(w->status(), QStringLiteral("Saved 12 positions (0 unchanged)"
+                                         "; cached ages of 24 analyses are now out of date; run elctl db derive"));
 
     // The Packages window was told through the bridge, and read the level again.
     QTRY_VERIFY_WITH_TIMEOUT(!p->busy() && p->grid()->has_edit(), kWaitMs);

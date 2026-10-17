@@ -313,6 +313,7 @@ std::string format_flux_save(const pp::FluxSaveOutcome& outcome, std::string_vie
     out << "saved " << outcome.written << " positions (" << outcome.unchanged << " unchanged)";
     if (outcome.skipped > 0) out << ", " << outcome.skipped << " not saved";
     out << '\n';
+    if (const auto outdated = pp::flux_outdated_ages_line(outcome.outdated_ages)) out << *outdated << '\n';
   }
   return out.str();
 }

@@ -1082,6 +1082,8 @@ QString FluxWindow::save_text(const pp::FluxSaveOutcome& outcome, const std::str
                      ? tr("Saved %1 positions (%2 unchanged)").arg(outcome.written).arg(outcome.unchanged)
                      : tr("Nothing to save: %1 positions unchanged").arg(outcome.unchanged);
   if (outcome.skipped > 0) text = tr("%1, %2 not saved").arg(text).arg(outcome.skipped);
+  if (const auto outdated = pp::flux_outdated_ages_line(outcome.outdated_ages))
+    text = tr("%1; %2").arg(text, QString::fromStdString(*outdated));
   return text;
 }
 

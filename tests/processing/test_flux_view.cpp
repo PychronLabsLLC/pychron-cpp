@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -77,6 +78,17 @@ TEST(FluxText, StatusLine) {
   fit.dof = 0;
   EXPECT_EQ(pp::flux_status_line(fit),
             "nearest, 3 neighbors \xC2\xB7 J 1.0012e-03 \xE2\x80\x93 1.0241e-03 (2.24 %)");
+}
+
+// Age cache spec 4.5, item 4: a save that changed the J of positions
+// outdates the cached ages of their analyses; one that changed none says nothing.
+TEST(FluxText, OutdatedAgesLine) {
+  EXPECT_EQ(pp::flux_outdated_ages_line(24),
+            std::optional<std::string>("cached ages of 24 analyses are now out of date; run elctl db derive"));
+  EXPECT_EQ(pp::flux_outdated_ages_line(1),
+            std::optional<std::string>("cached age of 1 analysis is now out of date; run elctl db derive"));
+  EXPECT_EQ(pp::flux_outdated_ages_line(0), std::nullopt);
+  EXPECT_EQ(pp::flux_outdated_ages_line(-1), std::nullopt);
 }
 
 TEST(FluxText, WarningsCoverEveryKind) {

@@ -129,6 +129,12 @@ std::string flux_status_line(const LevelFit& fit) {
   return text;
 }
 
+std::optional<std::string> flux_outdated_ages_line(int analyses) {
+  if (analyses <= 0) return std::nullopt;
+  if (analyses == 1) return "cached age of 1 analysis is now out of date; run elctl db derive";
+  return "cached ages of " + std::to_string(analyses) + " analyses are now out of date; run elctl db derive";
+}
+
 std::vector<std::string> flux_warnings(const LevelInputs& inputs, const LevelFit& fit, const FluxWarningContext& context) {
   std::vector<std::string> out;
   const auto hole = [](const FittedPosition& p) { return "hole " + std::to_string(p.hole); };

@@ -98,6 +98,7 @@ FittedPosition evaluate_position(const LevelPosition& p, const MonitorSet& monit
   fp.x = p.x;
   fp.y = p.y;
   fp.monitor = p.monitor;
+  fp.analysis_count = p.analysis_count;
   if (p.saved) {
     fp.saved_j = p.saved->j;
     fp.saved_j_err = p.saved->j_err;

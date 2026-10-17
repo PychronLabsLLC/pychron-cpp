@@ -291,6 +291,23 @@ Spec 4.5, item 4.
   saved; `apps/elctl/tests`, `elctl flux` prints it.
 - Commit: `feat(processing): saving a flux fit says which cached ages it outdates`.
 
+Done 2026-10-16 on `feat/data-t023`. The level's positions held only the
+monitors' analyses, so the count of an unknown's (whose age a new J changes
+too) was not there to be had: `load_level` now browses every identifier of
+the level in its one browse and counts each position's analyses
+(`LevelPosition::analysis_count`, carried to `FittedPosition`), loading and
+reducing only the monitors' as before. `save_level` sums the count over the
+positions it wrote (`FluxSaveOutcome::outdated_ages`); `flux_view.hpp`'s
+`flux_outdated_ages_line` gives the text (singular for one analysis, nothing
+for none). `elctl flux fit --save` prints it on its own line; the flux
+window's save text gains it after `; ` (its tests' expected texts updated).
+Spec 4.5 item 4 records this and that the blank and IC factor windows say
+nothing. Tests: `FluxText.OutdatedAgesLine`,
+`FluxSaveLevel.ASaveCountsTheAnalysesWhoseCachedAgesItOutdates` (SQLite and
+PostgreSQL), `FluxCmd.SaveThenRepeatSaysUnchanged`,
+`FluxWindowTest::save_outcomes_are_said_verbatim`. `docs/flux.md` states
+the rule.
+
 ## Task 9: the browser
 
 Spec 4.7, browser.

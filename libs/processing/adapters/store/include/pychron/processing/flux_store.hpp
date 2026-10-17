@@ -155,6 +155,10 @@ struct SaveSelection {
 // (`SaveOutcome` is the revision sources' in revisions.hpp.)
 struct FluxSaveOutcome {
   int written = 0, unchanged = 0, skipped = 0;
+  // The analyses of the positions written (FittedPosition::analysis_count):
+  // their cached ages no longer match (age cache spec 4.5, item 4). 0 with a
+  // conflict, or when nothing was written.
+  int outdated_ages = 0;
   std::optional<persistence::Conflict> conflict;  // set: nothing was written
   std::string conflict_position;                  // "hole 7"
   int conflict_hole = 0;                          // 7; 0 without a conflict

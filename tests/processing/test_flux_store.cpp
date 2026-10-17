@@ -1393,6 +1393,38 @@ TEST_P(FluxSaveLevel, AnUnknownsAgeChangesAndAPinnedOneDoesNot) {
   EXPECT_EQ(*pinned_after, *pinned_before);
 }
 
+// Age cache spec 4.5, item 4: a save counts the analyses of the positions it
+// wrote (an unknown's too, counted at load and never loaded): their cached
+// ages are now out of date. Positions unchanged or skipped outdate nothing.
+TEST_P(FluxSaveLevel, ASaveCountsTheAnalysesWhoseCachedAgesItOutdates) {
+  ingest_unknown("66101", "2026-01-01T19:01:00Z");
+  ASSERT_TRUE(testing::seed_ingest_monitor(store(), seeded(), "66101", 2, 30.0, "2026-01-01T19:03:00Z"));
+  ingest_unknown("66102", "2026-01-01T19:02:00Z");
+  auto in = load();
+  ASSERT_TRUE(in) << to_string(in.error());
+  ASSERT_EQ(in->positions.size(), 12u);
+  for (const LevelPosition& p : in->positions) {
+    const int expected = p.monitor ? 3 : p.hole == 9 ? 2 : p.hole == 10 ? 1 : 0;
+    EXPECT_EQ(p.analysis_count, expected) << p.hole;
+    if (!p.monitor) {
+      EXPECT_TRUE(p.analyses.empty()) << p.hole;  // counted, not loaded
+    }
+  }
+
+  const LevelFit fit = fitted();
+  ASSERT_EQ(fit.positions.size(), 12u);
+  EXPECT_EQ(fit.positions[8].analysis_count, 2);
+  const FluxSaveOutcome skipped = save(fit, SaveSelection{{9}});
+  EXPECT_EQ(skipped.written, 11);
+  EXPECT_EQ(skipped.outdated_ages, 8 * 3 + 1);
+  const FluxSaveOutcome rest = save(fit);
+  EXPECT_EQ(rest.written, 1);
+  EXPECT_EQ(rest.outdated_ages, 2);
+  const FluxSaveOutcome same = save(fit);
+  EXPECT_EQ(same.written, 0);
+  EXPECT_EQ(same.outdated_ages, 0);
+}
+
 // R19: a neighbour model can extrapolate to a J that is no J. None is saved.
 TEST_P(FluxSaveLevel, AJThatIsNotPositiveAndFiniteRefusesTheWholeSave) {
   const LevelFit good = fitted();

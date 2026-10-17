@@ -190,6 +190,18 @@ filed under the new fingerprint.
    date; run elctl db derive` only if `n` can be had from what the save
    already knows (flux: positions of the level); else no message. User
    guide states the rule.
+   - Flux: `n` = `FluxSaveOutcome::outdated_ages`, sum of
+     `FittedPosition::analysis_count` over positions written (not unchanged,
+     not skipped; 0 on conflict). `LevelPosition::analysis_count` counts
+     every analysis of position, monitor or unknown, any tag. `load_level`
+     browses all identifiers of level in its one browse (was: monitors
+     only); unknowns' rows counted, never loaded or reduced. Text
+     `flux_outdated_ages_line(n)` (`flux_view.hpp`): nullopt for `n <= 0`;
+     `n == 1` reads `cached age of 1 analysis is now out of date; run elctl db derive`.
+     `elctl flux fit --save`: own line after `saved ...`. Window:
+     save text gains `; cached ages of ...`.
+   - Blank and IC factor fit windows: save through revisions, hold no count
+     of analyses that depend on what they saved: no message.
 
 ### 4.6 Acquisition
 

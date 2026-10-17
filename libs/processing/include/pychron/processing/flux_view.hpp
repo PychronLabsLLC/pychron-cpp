@@ -34,6 +34,10 @@ std::string flux_summary(const LevelFit& fit);
 // "plane, weighted · fit MSWD 1.12 (5 dof) · J 1.0012e-03 – 1.0241e-03 (2.24 %)": the model's first
 // clause, the fit MSWD (left out for a model that has none: dof and MSWD both 0) and the J range.
 std::string flux_status_line(const LevelFit& fit);
+// After a save that wrote positions holding `analyses` analyses (FluxSaveOutcome::outdated_ages):
+// "cached ages of 24 analyses are now out of date; run elctl db derive" (age cache spec 4.5,
+// item 4); nullopt when none. No line break.
+std::optional<std::string> flux_outdated_ages_line(int analyses);
 
 // What was given on the command line decides two warnings: a monitor set named
 // replaces the saved fit's (no "missing" line), and a fit error named replaces

@@ -240,7 +240,13 @@ Not saved: <the error>
 When who and when cannot be read, the conflict line reads `Not saved: hole 7
 was saved by someone else since this level was loaded. Reload and fit again.`
 
-with `, 2 not saved` added when `Save` boxes were unticked. The conflict
+with `, 2 not saved` added when `Save` boxes were unticked. A save that wrote
+positions also says how many analyses sit at them: `; cached ages of 24
+analyses are now out of date; run elctl db derive`. A new J changes the age
+of every analysis of the position, monitor or unknown, but the ages the data
+browser shows and filters by are cached, and are not recomputed at save: they
+stay as they were until those analyses are reduced again or
+`elctl db derive` brings them up to date. The conflict
 line is red; nothing was written and your edits are kept. To go on, press
 `Reload`: it reads the level as it is now and puts your edits back on it (the
 analyses you omitted, the monitors you left out, the options you changed, the
@@ -363,6 +369,9 @@ saved 24 positions (0 unchanged)
 nothing to save: 24 positions unchanged
 not saved: hole 5 was saved by <user> at <time> since this fit was loaded
 ```
+
+and, after a save that wrote positions, `cached ages of <n> analyses are now
+out of date; run elctl db derive` (the window's rule, above).
 
 Other commands:
 

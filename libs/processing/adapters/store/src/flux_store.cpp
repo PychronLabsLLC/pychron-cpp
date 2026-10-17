@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 #include <variant>
 
@@ -259,15 +260,21 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
 
   // 3. Monitors and unknowns. With all_positions the analyses decide.
   std::vector<std::string> identifiers;
+  std::set<std::string> monitors;
   for (const auto& p : (*sheet)->positions) {
     if (!p.identifier) continue;
-    if (out.all_positions || p.sample_name == out.monitor_set.sample) identifiers.push_back(*p.identifier);
+    identifiers.push_back(*p.identifier);
+    if (out.all_positions || p.sample_name == out.monitor_set.sample) monitors.insert(*p.identifier);
   }
-  // 4. The monitor analyses.
+  // 4. The monitor analyses, reduced. An unknown's are only counted: a save
+  // outdates their cached ages (age cache spec 4.5, item 4). One browse for both.
   auto rows = browse_all(source, out.irradiation, out.level, std::move(identifiers));
   if (!rows) return fail(rows.error());
   std::map<std::string, std::vector<LevelAnalysis>> analyses;  // by identifier
+  std::map<std::string, int> counts;                           // by identifier
   for (const auto& row : *rows) {
+    ++counts[row.identifier];
+    if (!monitors.contains(row.identifier)) continue;
     auto analysis = reduce_monitor(source, row);
     if (!analysis) return fail(analysis.error());
     analyses[row.identifier].push_back(std::move(*analysis));
@@ -279,8 +286,14 @@ Result<LevelInputs> load_level(IAnalysisSource& source, ps::IStore& store, std::
     position.position_uuid = p.uuid.str();
     position.identifier = p.identifier.value_or("");
     position.sample = p.sample_name;
-    if (p.identifier)
+    if (p.identifier) {
       if (auto found = analyses.find(*p.identifier); found != analyses.end()) position.analyses = std::move(found->second);
+      // Once, as the analyses above: a second position of the same identifier counts none.
+      if (auto found = counts.find(*p.identifier); found != counts.end()) {
+        position.analysis_count = found->second;
+        counts.erase(found);
+      }
+    }
     if (out.all_positions) {
       // Every position that has analyses is a monitor; there are no unknowns.
       if (position.analyses.empty()) continue;
@@ -406,6 +419,7 @@ Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, co
   auto uow = store.begin(actor);
   if (!uow) return fail(uow.error());
   std::map<ps::Uuid, int> staged;  // reference object -> hole
+  int outdated = 0;                 // analyses of the staged positions
   for (const FittedPosition& p : fit.positions) {
     if (selection.skip_positions.contains(p.hole)) {
       ++out.skipped;
@@ -451,7 +465,7 @@ Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, co
     auto revision =
         (*uow)->add_revision(object, ps::Kind::RefValue, ps::RevisionPayload{ps::RefPayload{std::move(value)}}, expected);
     if (!revision) return fail(revision.error());
-    staged.emplace(object, p.hole);
+    if (staged.emplace(object, p.hole).second) outdated += p.analysis_count;
   }
   if (staged.empty()) return out;
 
@@ -471,6 +485,7 @@ Result<FluxSaveOutcome> save_level(ps::IStore& store, const ps::Actor& actor, co
     return out;
   }
   out.written = static_cast<int>(staged.size());
+  out.outdated_ages = outdated;
   return out;
 }
 

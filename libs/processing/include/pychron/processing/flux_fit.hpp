@@ -74,6 +74,10 @@ struct LevelPosition {
   double x = 0, y = 0;
   bool monitor = false;
   std::vector<LevelAnalysis> analyses;  // monitors only
+  // Every analysis of the position, a monitor's or an unknown's, whatever its
+  // tag: whose cached age a new J outdates (age cache spec 4.5, item 4). An
+  // unknown's are counted, never loaded.
+  int analysis_count = 0;
   std::optional<SavedFlux> saved;
 };
 
@@ -122,6 +126,7 @@ struct FittedPosition {
   double x = 0, y = 0;
   bool monitor = false;
   int n = 0;  // analyses in the mean
+  int analysis_count = 0;  // LevelPosition::analysis_count
   std::optional<double> saved_j, saved_j_err, mean_j, mean_j_err, mean_j_mswd;
   double j = 0, j_err = 0;  // predicted
   std::optional<double> dev_percent;  // (saved - predicted) / predicted * 100
