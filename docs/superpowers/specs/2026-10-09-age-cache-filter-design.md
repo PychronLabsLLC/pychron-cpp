@@ -210,15 +210,31 @@ Store (`libs/persistence`):
 - `BrowseFilter` gains `std::optional<double> age_min, age_max` (Ma,
   inclusive). `BrowseRow` gains `std::optional<double> age, age_err`.
 - `sql/browse.hpp`:
-  - `kBrowseAgeJoin` =
-    `LEFT JOIN derived_value dv ON dv.analysis_uuid = a.uuid AND dv.name = 'age' `
+  - Two joins, one per plan (found on lab's store, 8716 analyses, no
+    statistics):
+    - `kBrowseAgeJoin` =
+      `LEFT JOIN derived_value dv ON dv.analysis_uuid = a.uuid AND dv.name || '' = 'age' `,
+      page with no age bound and `load_analysis_detail`. Written
+      `dv.name = 'age'`, SQLite searched `derived_value_name_ix` and read
+      every cached age per row of page: 0.38 to 0.51 s a page, against 3 ms
+      by PK. Concatenation leaves it PK (same trick as
+      `kDerivedFingerprints`, 4.5).
+    - `kBrowseAgeRangeJoin` =
+      `LEFT JOIN derived_value dv ON dv.analysis_uuid = a.uuid AND dv.name = 'age' `,
+      page, count and facet whenever an age bound is set: bound becomes range
+      on `derived_value_name_ix (name, value)`, which drives statement; each
+      match finds its analysis by PK. With `|| ''` there, SQLite scanned
+      `derived_value` whole instead.
   - `kBrowseSelect` gains `dv.value AS age, dv.error AS age_err`.
   - `kBrowseAgeMin` = `dv.value >= ?`, `kBrowseAgeMax` = `dv.value <= ?`.
-- Page statement always has the join (one PK probe per row of a page).
-  Count and facet statements have it only when an age bound is set: they
+- Page statement always has a join (one PK probe per row of a page).
+  Count and facet statements have one only when an age bound is set: they
   run over every matching analysis and must not pay a probe per row for a
   filter that is off.
-- `load_analysis_detail` uses `kBrowseSelect`: gets the join too.
+- `load_analysis_detail` uses `kBrowseSelect`: gets `kBrowseAgeJoin` too.
+- Statements built by `detail::browse_page_statement`,
+  `browse_count_statement`, `facet_statement` (`store_impl.hpp`); plan
+  tests read those, not a copy of the text.
 - Standard SQL; same text on both engines.
 
 Processing: `BrowseQuery::age_min`, `age_max`; `AnalysisSummary::age`,

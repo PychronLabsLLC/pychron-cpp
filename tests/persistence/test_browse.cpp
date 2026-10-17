@@ -64,6 +64,29 @@ class BrowseTest : public StoreTest {
     return r ? *r : BrowseResult{};
   }
 
+  // Caches an age for the analysis as the age sink would: one `age` row, in
+  // Ma; a null value is an analysis cached as having no age.
+  void cache_age(Uuid analysis, std::optional<double> age, std::optional<double> err) {
+    const auto fp = pychron::sha256(std::string_view{"fingerprint of " + analysis.str()});
+    auto ok = store_->put_derived(analysis, fp, "red-1", {DerivedRow{"age", age, err, std::string("Ma")}});
+    ASSERT_TRUE(ok) << to_string(ok.error());
+  }
+
+  // a1 10 Ma, a2 20 Ma, a3 cached with no age, a4 (invalid) 15 Ma, a5 no row.
+  void cache_ages() {
+    cache_age(a1_, 10.0, 0.1);
+    cache_age(a2_, 20.0, 0.2);
+    cache_age(a3_, std::nullopt, std::nullopt);
+    cache_age(a4_, 15.0, 0.15);
+  }
+
+  static BrowseFilter ages(std::optional<double> min, std::optional<double> max) {
+    BrowseFilter f;
+    f.age_min = min;
+    f.age_max = max;
+    return f;
+  }
+
   Uuid pi_, project_, material_, sample_, a1_, a2_, a3_, a4_, a5_;
 };
 
@@ -207,6 +230,83 @@ TEST_P(BrowseTest, LatestChangeSeqIsTheEndOfTheLog) {
   ASSERT_TRUE(before);
   ASSERT_EQ(before->entries.size(), 1u);
   EXPECT_EQ(before->entries[0].seq, *latest);
+}
+
+TEST_P(BrowseTest, AgeBounds) {
+  cache_ages();
+  EXPECT_EQ(uuids(browse(ages(12.0, std::nullopt))), (std::vector<Uuid>{a4_, a2_}));
+  EXPECT_EQ(uuids(browse(ages(std::nullopt, 15.0))), (std::vector<Uuid>{a4_, a1_}));
+  EXPECT_EQ(uuids(browse(ages(12.0, 18.0))), (std::vector<Uuid>{a4_}));
+  EXPECT_EQ(uuids(browse(ages(10.0, 10.0))), (std::vector<Uuid>{a1_})) << "both ends are inclusive";
+  // Every age there is: a3 (cached as having none) and a5 (never cached) are left out.
+  EXPECT_EQ(uuids(browse(ages(-1e9, std::nullopt))), (std::vector<Uuid>{a4_, a2_, a1_}));
+  EXPECT_EQ(uuids(browse(ages(std::nullopt, 1e9))), (std::vector<Uuid>{a4_, a2_, a1_}));
+  EXPECT_TRUE(browse(ages(30.0, std::nullopt)).rows.empty());
+  // A bound with the other filters.
+  BrowseFilter unknowns = ages(12.0, std::nullopt);
+  unknowns.analysis_types = {"unknown"};
+  EXPECT_EQ(uuids(browse(unknowns)), (std::vector<Uuid>{a2_}));
+}
+
+TEST_P(BrowseTest, RowsCarryTheCachedAge) {
+  cache_ages();
+  const auto r = browse({});
+  ASSERT_EQ(r.rows.size(), 5u);
+  auto row = [](const BrowseResult& in, Uuid u) {
+    const auto it = std::find_if(in.rows.begin(), in.rows.end(), [&](const BrowseRow& x) { return x.summary.uuid == u; });
+    if (it == in.rows.end()) {
+      ADD_FAILURE() << "no row for " << u.str();
+      return BrowseRow{};
+    }
+    return *it;
+  };
+  EXPECT_EQ(row(r, a1_).age, 10.0);
+  EXPECT_EQ(row(r, a1_).age_err, 0.1);
+  EXPECT_EQ(row(r, a2_).age, 20.0);
+  EXPECT_FALSE(row(r, a3_).age) << "cached as having no age";
+  EXPECT_FALSE(row(r, a3_).age_err);
+  EXPECT_FALSE(row(r, a5_).age) << "never cached";
+  auto d = store_->load_analysis_detail(a2_);
+  ASSERT_TRUE(d) << to_string(d.error());
+  ASSERT_TRUE(*d);
+  EXPECT_EQ((*d)->row.age, 20.0);
+  EXPECT_EQ((*d)->row.age_err, 0.2);
+  // A new fingerprint replaces the age: still one row for the analysis.
+  const auto fp = pychron::sha256(std::string_view{"new inputs"});
+  ASSERT_TRUE(store_->put_derived(a1_, fp, "red-1", {DerivedRow{"age", 11.0, 0.3, std::string("Ma")}}));
+  const auto again = browse({});
+  EXPECT_EQ(again.rows.size(), 5u);
+  EXPECT_EQ(row(again, a1_).age, 11.0);
+  EXPECT_EQ(row(again, a1_).age_err, 0.3);
+}
+
+TEST_P(BrowseTest, PagingAndTotalsUnderAnAgeBound) {
+  cache_ages();
+  auto page1 = store_->browse(BrowseRequest{ages(0.0, 100.0), 2, std::nullopt, true});
+  ASSERT_TRUE(page1) << to_string(page1.error());
+  EXPECT_EQ(uuids(*page1), (std::vector<Uuid>{a4_, a2_}));
+  EXPECT_EQ(page1->total, 3);
+  ASSERT_TRUE(page1->next);
+  auto page2 = store_->browse(BrowseRequest{ages(0.0, 100.0), 2, page1->next, true});
+  ASSERT_TRUE(page2) << to_string(page2.error());
+  EXPECT_EQ(uuids(*page2), (std::vector<Uuid>{a1_}));
+  EXPECT_EQ(page2->total, 3) << "the total is of every match, not of what is left";
+  EXPECT_FALSE(page2->next);
+}
+
+TEST_P(BrowseTest, FacetsUnderAnAgeBound) {
+  cache_ages();
+  const BrowseFilter older = ages(12.0, std::nullopt);  // a2 (unknown, FC-2), a4 (air)
+  auto types = store_->facet(BrowseFacet::AnalysisType, older);
+  ASSERT_TRUE(types) << to_string(types.error());
+  EXPECT_EQ(*types, (std::vector<std::string>{"air", "unknown"}));
+  EXPECT_EQ(*store_->facet(BrowseFacet::Sample, older), (std::vector<std::string>{"FC-2"}));
+  EXPECT_EQ(*store_->facet(BrowseFacet::Repository, older), (std::vector<std::string>{"FishCanyon"}));
+  const BrowseFilter middle = ages(14.0, 16.0);  // a4 only
+  EXPECT_EQ(*store_->facet(BrowseFacet::Identifier, middle), (std::vector<std::string>{"66574"}));
+  EXPECT_TRUE(store_->facet(BrowseFacet::Sample, middle)->empty());
+  EXPECT_TRUE(store_->facet(BrowseFacet::Repository, middle)->empty());
+  EXPECT_TRUE(store_->facet(BrowseFacet::AnalysisType, ages(std::nullopt, 5.0))->empty());
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, BrowseTest, ::testing::ValuesIn(engines()), [](const auto& p) { return p.param; });

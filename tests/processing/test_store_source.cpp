@@ -549,6 +549,49 @@ TEST_F(StoreSourceTest, TheSinkFillsTheCache) {
   EXPECT_EQ(idle.written + idle.current + idle.failed, 0u);
 }
 
+// What the sink wrote is what browse shows, and what an age range finds.
+TEST_F(StoreSourceTest, ASummaryCarriesTheAgeTheSinkWrote) {
+  auto& src = source();
+  const DerivedAge d = derived_of(unknown_);
+  ASSERT_TRUE(d.age);
+  src.derived()->put({d, derived_of(air_)});
+  ASSERT_EQ(src.flush_derived().failed, 0u);
+
+  auto page = src.browse(BrowseQuery{});
+  ASSERT_TRUE(page) << to_string(page.error());
+  auto summary = [&](const ps::Uuid& u) -> const AnalysisSummary* {
+    for (const auto& r : page->rows)
+      if (r.uuid == u.str()) return &r;
+    return nullptr;
+  };
+  const AnalysisSummary* unknown = summary(unknown_);
+  ASSERT_NE(unknown, nullptr);
+  ASSERT_TRUE(unknown->age);
+  EXPECT_DOUBLE_EQ(*unknown->age, d.age->nominal());
+  ASSERT_TRUE(unknown->age_err);
+  EXPECT_DOUBLE_EQ(*unknown->age_err, d.age->std_dev());
+  const AnalysisSummary* air = summary(air_);
+  ASSERT_NE(air, nullptr);
+  EXPECT_FALSE(air->age) << "an air is cached as having no age";
+
+  BrowseQuery around;
+  around.age_min = d.age->nominal() - 1e-6;
+  around.age_max = d.age->nominal() + 1e-6;
+  auto found = src.browse(around);
+  ASSERT_TRUE(found) << to_string(found.error());
+  ASSERT_EQ(found->rows.size(), 1u);
+  EXPECT_EQ(found->rows[0].uuid, unknown_.str());
+  EXPECT_EQ(found->total, 1u);
+  auto types = src.facet(Facet::AnalysisType, around);
+  ASSERT_TRUE(types) << to_string(types.error());
+  EXPECT_EQ(*types, (std::vector<std::string>{"unknown"}));
+  BrowseQuery above;
+  above.age_min = d.age->nominal() + 1.0;
+  auto none = src.browse(above);
+  ASSERT_TRUE(none) << to_string(none.error());
+  EXPECT_TRUE(none->rows.empty());
+}
+
 // Opening a figure of analyses whose ages are current costs one read and no write.
 TEST_F(StoreSourceTest, ACurrentAgeIsNotWrittenAgain) {
   auto& src = source();
@@ -1986,8 +2029,24 @@ TEST(StoreSourceMapping, QueryAndCursorRoundTrip) {
   EXPECT_EQ(f.from->micros, 1'700'000'000'250'000);
   EXPECT_EQ(f.samples, q.samples);
   EXPECT_EQ(f.exclude_tags, (std::vector<std::string>{"invalid"}));
+  EXPECT_FALSE(f.age_min);
+  EXPECT_FALSE(f.age_max);
+  q.age_min = 1.5;
+  q.age_max = 28.2;
+  const auto aged = to_store_filter(q);
+  EXPECT_EQ(aged.age_min, 1.5);
+  EXPECT_EQ(aged.age_max, 28.2);
   EXPECT_EQ(to_store_facet(Facet::Repository), ps::BrowseFacet::Repository);
   EXPECT_EQ(to_store_facet(Facet::Load), ps::BrowseFacet::Load);
+
+  ps::BrowseRow row;
+  row.summary.uuid = ps::Uuid::v7();
+  row.age = 28.2;
+  row.age_err = 0.05;
+  const auto s = summary_from_row(row);
+  EXPECT_EQ(s.age, 28.2);
+  EXPECT_EQ(s.age_err, 0.05);
+  EXPECT_FALSE(summary_from_row(ps::BrowseRow{}).age);
 }
 
 }  // namespace

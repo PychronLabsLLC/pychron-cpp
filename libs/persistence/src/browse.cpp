@@ -112,7 +112,26 @@ Result<Where> build_where(Db& db, Dialect dialect, const BrowseFilter& f, std::o
     w.clauses << sql::kBrowseTagNotIn.arg(sql::placeholders(static_cast<qsizetype>(f.exclude_tags.size())));
     for (const auto& t : f.exclude_tags) w.bindings << qv(t);
   }
+  if (f.age_min) {
+    w.clauses << sql::kBrowseAgeMin;
+    w.bindings << *f.age_min;
+  }
+  if (f.age_max) {
+    w.clauses << sql::kBrowseAgeMax;
+    w.bindings << *f.age_max;
+  }
   return w;
+}
+
+bool has_age_bound(const BrowseFilter& f) noexcept { return f.age_min.has_value() || f.age_max.has_value(); }
+
+// The FROM clause of a page (always reads the cached age) or of a count or
+// facet (only when an age bound needs it). See kBrowseAgeJoin.
+QString from_for_page(const BrowseFilter& f) {
+  return sql::kBrowseFrom + (has_age_bound(f) ? sql::kBrowseAgeRangeJoin : sql::kBrowseAgeJoin);
+}
+QString from_for_aggregate(const BrowseFilter& f) {
+  return has_age_bound(f) ? sql::kBrowseFrom + sql::kBrowseAgeRangeJoin : sql::kBrowseFrom;
 }
 
 BrowseRow row_from(const Row& r) {
@@ -142,31 +161,59 @@ BrowseRow row_from(const Row& r) {
   b.position = opt_int(r.value("position"));
   b.extract_value = opt_double(r.value("extract_value"));
   b.extract_units = to_std(r.value("extract_units"));
+  b.age = opt_double(r.value("age"));
+  b.age_err = opt_double(r.value("age_err"));
   return b;
 }
 
 }  // namespace
 
-Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& req) {
-  if (req.limit <= 0) return fail(ErrorKind::Protocol, "browse: limit must be positive");
+Result<BrowseStatement> browse_page_statement(Db& db, Dialect dialect, const BrowseRequest& req) {
   auto where = build_where(db, dialect, req.filter, std::nullopt);
   if (!where) return fail(where.error());
-  BrowseResult out;
-  if (req.count_total) {
-    auto n = db.select_one(sql::kBrowseCount + sql::kBrowseFrom + where->sql(), where->bindings);
-    if (!n) return fail(n.error());
-    if (*n) out.total = (*n)->value("n").toLongLong();
-  }
-  Where paged = *where;
+  Where paged = std::move(*where);
   if (req.after) {
     paged.clauses << sql::kBrowseBefore;
     paged.bindings << qv(req.after->timestamp) << qv(req.after->timestamp) << qv(req.after->uuid);
   }
-  Bindings b = paged.bindings;
-  b << req.limit + 1;
-  auto rows = db.select(sql::kBrowseSelect.arg(sql::ts(dialect, QStringLiteral("a.timestamp_utc"))) + sql::kBrowseFrom +
-                            paged.sql() + sql::kBrowseOrder,
-                        b);
+  BrowseStatement st;
+  st.sql = sql::kBrowseSelect.arg(sql::ts(dialect, QStringLiteral("a.timestamp_utc"))) + from_for_page(req.filter) +
+           paged.sql() + sql::kBrowseOrder;
+  st.bindings = std::move(paged.bindings);
+  st.bindings << req.limit + 1;
+  return st;
+}
+
+Result<BrowseStatement> browse_count_statement(Db& db, Dialect dialect, const BrowseFilter& filter) {
+  auto where = build_where(db, dialect, filter, std::nullopt);
+  if (!where) return fail(where.error());
+  return BrowseStatement{sql::kBrowseCount + from_for_aggregate(filter) + where->sql(), std::move(where->bindings)};
+}
+
+Result<BrowseStatement> facet_statement(Db& db, Dialect dialect, BrowseFacet f, const BrowseFilter& filter) {
+  auto where = build_where(db, dialect, filter, f);
+  if (!where) return fail(where.error());
+  if (f == BrowseFacet::Repository)
+    return BrowseStatement{sql::kRepositoryFacet.arg(from_for_aggregate(filter), where->sql()), std::move(where->bindings)};
+  Where w = std::move(*where);
+  w.clauses << sql::kFacetNotNull.arg(facet_column(f));
+  return BrowseStatement{sql::kFacetSelect.arg(facet_column(f)) + from_for_aggregate(filter) + w.sql() + sql::kFacetTail,
+                         std::move(w.bindings)};
+}
+
+Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& req) {
+  if (req.limit <= 0) return fail(ErrorKind::Protocol, "browse: limit must be positive");
+  BrowseResult out;
+  if (req.count_total) {
+    auto count = browse_count_statement(db, dialect, req.filter);
+    if (!count) return fail(count.error());
+    auto n = db.select_one(count->sql, count->bindings);
+    if (!n) return fail(n.error());
+    if (*n) out.total = (*n)->value("n").toLongLong();
+  }
+  auto page = browse_page_statement(db, dialect, req);
+  if (!page) return fail(page.error());
+  auto rows = db.select(page->sql, page->bindings);
   if (!rows) return fail(rows.error());
   const bool more = std::cmp_greater(rows->size(), req.limit);
   if (more) rows->pop_back();
@@ -177,16 +224,9 @@ Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& req) {
 }
 
 Result<std::vector<std::string>> facet(Db& db, Dialect dialect, BrowseFacet f, const BrowseFilter& filter) {
-  auto where = build_where(db, dialect, filter, f);
-  if (!where) return fail(where.error());
-  Result<std::vector<Row>> rows = std::vector<Row>{};
-  if (f == BrowseFacet::Repository) {
-    rows = db.select(sql::kRepositoryFacet.arg(sql::kBrowseFrom, where->sql()), where->bindings);
-  } else {
-    Where w = *where;
-    w.clauses << sql::kFacetNotNull.arg(facet_column(f));
-    rows = db.select(sql::kFacetSelect.arg(facet_column(f)) + sql::kBrowseFrom + w.sql() + sql::kFacetTail, w.bindings);
-  }
+  auto st = facet_statement(db, dialect, f, filter);
+  if (!st) return fail(st.error());
+  auto rows = db.select(st->sql, st->bindings);
   if (!rows) return fail(rows.error());
   std::vector<std::string> out;
   for (const auto& r : *rows) {
@@ -198,7 +238,7 @@ Result<std::vector<std::string>> facet(Db& db, Dialect dialect, BrowseFacet f, c
 
 Result<std::optional<AnalysisDetail>> load_analysis_detail(Db& db, Dialect dialect, Uuid analysis) {
   auto head = db.select_one(sql::kBrowseSelect.arg(sql::ts(dialect, QStringLiteral("a.timestamp_utc"))) +
-                                sql::kBrowseFrom + QStringLiteral("WHERE a.uuid = ?"),
+                                sql::kBrowseFrom + sql::kBrowseAgeJoin + QStringLiteral("WHERE a.uuid = ?"),
                             {qv(analysis)});
   if (!head) return fail(head.error());
   if (!*head) return std::optional<AnalysisDetail>{};

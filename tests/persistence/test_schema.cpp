@@ -11,6 +11,7 @@
 #include "sql/catalog.hpp"
 #include "sql/statements.hpp"
 #include "store_fixture.hpp"
+#include "store_impl.hpp"
 
 using namespace pychron;
 using namespace pychron::persistence;
@@ -252,30 +253,28 @@ TEST(SchemaIndexes, CachedFingerprintsAreFoundByAnalysis) {
 // index, or a sort of every match in a temp tree, is what a lab pays per run.
 namespace {
 
-struct ReferenceBrowse {
-  QString where;
-  pd::Bindings bindings;
-};
-
-ReferenceBrowse reference_browse(const std::vector<std::string>& types) {
-  ReferenceBrowse out;
-  QStringList clauses;
-  clauses << pd::sql::kBrowseIn.arg(pd::sql::kColAnalysisType, pd::sql::placeholders(static_cast<qsizetype>(types.size())));
-  for (const auto& t : types) out.bindings << pd::qv(t);
-  clauses << pd::sql::kBrowseIn.arg(pd::sql::kColMassSpectrometer, pd::sql::placeholders(1));
-  out.bindings << pd::qv(std::string("jan"));
-  clauses << pd::sql::kBrowseSince;
-  out.bindings << QStringLiteral("2026-10-01T00:00:00.000000Z");
-  clauses << pd::sql::kBrowseTagNotIn.arg(pd::sql::placeholders(1));
-  out.bindings << pd::qv(std::string("invalid"));
-  out.where = QStringLiteral("WHERE ") + clauses.join(QStringLiteral(" AND "));
-  return out;
+BrowseFilter reference_browse(const std::vector<std::string>& types) {
+  BrowseFilter f;
+  f.analysis_types = types;
+  f.mass_spectrometers = {"jan"};
+  f.from = *UtcTime::parse("2026-10-01T00:00:00Z");
+  f.exclude_tags = {"invalid"};
+  return f;
 }
 
 std::string plan_of(pd::Db& db, const QString& sql, const pd::Bindings& bindings) {
   std::string all;
   for (const auto& step : column(db, QStringLiteral("EXPLAIN QUERY PLAN ") + sql, "detail", bindings)) all += step + "\n";
   return all;
+}
+
+std::string plan_of(pd::Db& db, const Result<pd::BrowseStatement>& st) {
+  EXPECT_TRUE(st) << (st ? "" : to_string(st.error()));
+  return st ? plan_of(db, st->sql, st->bindings) : std::string{};
+}
+
+Result<pd::BrowseStatement> page_statement(pd::Db& db, const BrowseFilter& f, int limit = 200) {
+  return pd::browse_page_statement(db, Dialect::Sqlite, BrowseRequest{f, limit, std::nullopt, true});
 }
 
 // A step that reads `analysis a` whole, in no index's order.
@@ -300,14 +299,7 @@ TEST(SchemaIndexes, TheReferenceSeriesBrowseUsesAnIndexAndDoesNotSortInATempTree
   auto db = raw(tdb.url());
   ASSERT_TRUE(db);
   for (const auto& types : {kBlankTypes, std::vector<std::string>{"air"}}) {
-    auto q = reference_browse(types);
-    pd::Bindings paged = q.bindings;
-    paged << 51;
-    const std::string plan =
-        plan_of(*db,
-                pd::sql::kBrowseSelect.arg(pd::sql::ts(Dialect::Sqlite, QStringLiteral("a.timestamp_utc"))) +
-                    pd::sql::kBrowseFrom + q.where + pd::sql::kBrowseOrder,
-                paged);
+    const std::string plan = plan_of(*db, page_statement(*db, reference_browse(types), 50));
     ASSERT_FALSE(plan.empty());
     const bool by_type = plan.find("analysis_ms_type_ts_ix") != std::string::npos;
     const bool by_time = plan.find("analysis_ts_ix") != std::string::npos;
@@ -326,10 +318,94 @@ TEST(SchemaIndexes, TheReferenceSeriesCountDoesNotScanAnalysis) {
   auto db = raw(tdb.url());
   ASSERT_TRUE(db);
   for (const auto& types : {kBlankTypes, std::vector<std::string>{"air"}}) {
-    const auto q = reference_browse(types);
-    const std::string plan = plan_of(*db, pd::sql::kBrowseCount + pd::sql::kBrowseFrom + q.where, q.bindings);
+    const std::string plan = plan_of(*db, pd::browse_count_statement(*db, Dialect::Sqlite, reference_browse(types)));
     ASSERT_FALSE(plan.empty());
     EXPECT_FALSE(scans_analysis_without_an_index(plan)) << types.size() << " type(s):\n" << plan;
+  }
+}
+
+// A browse page shows each row's cached age: one probe of derived_value's
+// primary key (analysis_uuid, fingerprint, name) per row. Found by
+// derived_value_name_ix instead, every cached age of the store was read for
+// each row of the page (0.5 s a page on 8.7 thousand analyses, against 1 ms).
+TEST(SchemaIndexes, ABrowsePageFindsItsAgesByPrimaryKey) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  BrowseFilter valid;
+  valid.exclude_tags = {"invalid"};
+  for (const auto& f : {BrowseFilter{}, valid, reference_browse(kBlankTypes)}) {
+    const std::string plan = plan_of(*db, page_statement(*db, f));
+    ASSERT_FALSE(plan.empty());
+    EXPECT_NE(plan.find("SEARCH dv USING INDEX sqlite_autoindex_derived_value_1 (analysis_uuid=?"), std::string::npos)
+        << plan;
+    EXPECT_EQ(plan.find("derived_value_name_ix"), std::string::npos) << "found by name, across every analysis:\n" << plan;
+    EXPECT_EQ(plan.find("SCAN dv"), std::string::npos) << plan;
+    EXPECT_FALSE(scans_analysis_without_an_index(plan)) << plan;
+  }
+  // An analysis's detail reads its age the same way.
+  const std::string detail = plan_of(*db,
+                                     pd::sql::kBrowseSelect.arg(QStringLiteral("a.timestamp_utc")) + pd::sql::kBrowseFrom +
+                                         pd::sql::kBrowseAgeJoin + QStringLiteral("WHERE a.uuid = ?"),
+                                     {pd::qv(Uuid::v7())});
+  EXPECT_NE(detail.find("sqlite_autoindex_derived_value_1"), std::string::npos) << detail;
+  EXPECT_EQ(detail.find("SCAN"), std::string::npos) << detail;
+}
+
+// A count or a facet runs over every analysis that matches: with no age bound
+// it does not join the cache at all, so a filter that is off costs nothing.
+TEST(SchemaIndexes, ACountWithoutAnAgeBoundLeavesTheCacheAlone) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  for (const auto& f : {BrowseFilter{}, reference_browse(kBlankTypes)}) {
+    auto count = pd::browse_count_statement(*db, Dialect::Sqlite, f);
+    ASSERT_TRUE(count) << to_string(count.error());
+    EXPECT_FALSE(count->sql.contains(QStringLiteral("derived_value"))) << count->sql.toStdString();
+    for (BrowseFacet facet : {BrowseFacet::AnalysisType, BrowseFacet::Sample, BrowseFacet::Identifier,
+                              BrowseFacet::Repository}) {
+      auto st = pd::facet_statement(*db, Dialect::Sqlite, facet, f);
+      ASSERT_TRUE(st) << to_string(st.error());
+      EXPECT_FALSE(st->sql.contains(QStringLiteral("derived_value"))) << st->sql.toStdString();
+    }
+  }
+}
+
+// Under an age bound the bound is a range on derived_value_name_ix (name,
+// value), which drives the statement; each match finds its analysis by primary
+// key. Neither table is read whole: not the count, not a facet, not the page.
+TEST(SchemaIndexes, ACountWithAnAgeBoundScansNeitherTable) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  BrowseFilter both;
+  both.age_min = 25.0;
+  both.age_max = 30.0;
+  both.exclude_tags = {"invalid"};
+  BrowseFilter low;
+  low.age_min = 25.0;
+  BrowseFilter high;
+  high.age_max = 30.0;
+  auto scans_whole = [](const std::string& plan) {
+    return plan.find("SCAN a\n") != std::string::npos || plan.find("SCAN a ") != std::string::npos ||
+           plan.find("SCAN dv") != std::string::npos;
+  };
+  for (const auto& f : {both, low, high}) {
+    std::vector<std::pair<std::string, std::string>> plans;
+    plans.emplace_back("count", plan_of(*db, pd::browse_count_statement(*db, Dialect::Sqlite, f)));
+    plans.emplace_back("page", plan_of(*db, page_statement(*db, f)));
+    plans.emplace_back("sample facet", plan_of(*db, pd::facet_statement(*db, Dialect::Sqlite, BrowseFacet::Sample, f)));
+    for (const auto& [what, plan] : plans) {
+      ASSERT_FALSE(plan.empty()) << what;
+      EXPECT_NE(plan.find("SEARCH dv USING INDEX derived_value_name_ix (name=? AND value"), std::string::npos)
+          << what << ":\n" << plan;
+      EXPECT_NE(plan.find("SEARCH a USING INDEX sqlite_autoindex_analysis_1 (uuid=?)"), std::string::npos)
+          << what << ":\n" << plan;
+      EXPECT_FALSE(scans_whole(plan)) << what << ":\n" << plan;
+    }
   }
 }
 

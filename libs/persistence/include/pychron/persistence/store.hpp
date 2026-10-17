@@ -509,6 +509,9 @@ struct BrowseFilter {
   std::optional<UtcTime> from, to;    // timestamp_utc, inclusive
   std::optional<double> last_hours;   // relative to the newest analysis in the database
   std::vector<std::string> exclude_tags;  // names of the head tag
+  // The cached age (derived_value `age`, Ma), inclusive. An analysis with no
+  // cached age, or one cached as having none, matches no bound.
+  std::optional<double> age_min, age_max;
 };
 
 struct BrowseCursorKey {
@@ -535,6 +538,9 @@ struct BrowseRow {
   // the identifier's own, else its position's. Several samples may share a
   // name, one per project; this says which.
   std::optional<Uuid> sample_uuid = std::nullopt;
+  // The cached age and its 1 sigma error (Ma), when derived_value has one.
+  // It may be out of date: nothing here says whether its inputs changed.
+  std::optional<double> age = std::nullopt, age_err = std::nullopt;
 };
 
 struct BrowseResult {

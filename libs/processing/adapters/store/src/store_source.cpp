@@ -278,6 +278,8 @@ ps::BrowseFilter to_store_filter(const BrowseQuery& q) {
   if (q.to) f.to = utc(*q.to);
   f.last_hours = q.last_hours;
   f.exclude_tags = q.exclude_tags;
+  f.age_min = q.age_min;
+  f.age_max = q.age_max;
   return f;
 }
 
@@ -321,6 +323,8 @@ AnalysisSummary summary_from_row(const ps::BrowseRow& r) {
   s.tag = r.tag.empty() ? "ok" : r.tag;
   s.extract_value = r.extract_value;
   s.extract_units = r.extract_units;
+  s.age = r.age;
+  s.age_err = r.age_err;
   return s;
 }
 

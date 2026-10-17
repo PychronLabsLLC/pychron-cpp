@@ -104,6 +104,15 @@ Result<bool> has_conflict(Db& db, Uuid source, std::string_view path, const Sha2
 Result<std::optional<std::string>> imported_head_blob_sha(Db& db, Uuid source, Uuid subject, Kind kind);
 
 // Browsing reads (browse.cpp).
+// One browse statement and its bindings, as browse() and facet() run it; the
+// plan tests (SchemaIndexes) read these, so they test the real text.
+struct BrowseStatement {
+  QString sql;
+  Bindings bindings;
+};
+Result<BrowseStatement> browse_page_statement(Db& db, Dialect dialect, const BrowseRequest& request);
+Result<BrowseStatement> browse_count_statement(Db& db, Dialect dialect, const BrowseFilter& filter);
+Result<BrowseStatement> facet_statement(Db& db, Dialect dialect, BrowseFacet facet, const BrowseFilter& filter);
 Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& request);
 Result<std::vector<std::string>> facet(Db& db, Dialect dialect, BrowseFacet facet, const BrowseFilter& filter);
 Result<std::optional<AnalysisDetail>> load_analysis_detail(Db& db, Dialect dialect, Uuid analysis);

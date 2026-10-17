@@ -260,6 +260,20 @@ Spec 4.7, store and processing.
   (`PYCHRON_TEST_PG_URL`) before the commit: a new join and a new filter.
 - Commit: `feat(persistence): browse carries the cached age and filters by it`.
 
+Done 2026-10-16 on `feat/data-t023`. One departure, made in the spec too
+(4.7): two joins, not one. The page with no age bound joins on
+`dv.name || '' = 'age'` (`kBrowseAgeJoin`): written `dv.name = 'age'`,
+SQLite searched `derived_value_name_ix` for every row of the page (0.4 to
+0.5 s a page on the lab's store). Under an age bound every statement joins on
+`dv.name = 'age'` (`kBrowseAgeRangeJoin`), so the bound is a range on that
+index. The statements are built by `browse_page_statement`,
+`browse_count_statement` and `facet_statement` in `store_impl.hpp`, which
+the plan tests read; the two reference-series plan tests now read them too.
+The `matches()` test is `MemorySource.AgeBoundsMatchTheCachedAge` in
+`tests/processing/test_units.cpp`; the summary test is
+`StoreSourceTest.ASummaryCarriesTheAgeTheSinkWrote` (its fixture is SQLite
+only; the browse tests in `tests/persistence` ran on PostgreSQL).
+
 ## Task 8: reference saves say when ages go out of date
 
 Spec 4.5, item 4.

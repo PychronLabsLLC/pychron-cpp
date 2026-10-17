@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <set>
 
 namespace pychron::processing {
@@ -109,6 +110,10 @@ bool matches(const BrowseQuery& q, const AnalysisSummary& s, double newest, std:
   if (q.to && s.timestamp > *q.to) return false;
   if (q.last_hours && s.timestamp < newest - *q.last_hours * 3600.0) return false;
   if (std::find(q.exclude_tags.begin(), q.exclude_tags.end(), s.tag) != q.exclude_tags.end()) return false;
+  // An age that is absent, or not a number (no store caches one), matches no bound.
+  if ((q.age_min || q.age_max) && (!s.age || !std::isfinite(*s.age))) return false;
+  if (q.age_min && *s.age < *q.age_min) return false;
+  if (q.age_max && *s.age > *q.age_max) return false;
   if (!q.text.empty()) {
     const std::string t = lower(q.text);
     if (!starts_with_ci(s.runid, t) && !starts_with_ci(s.identifier, t) && !starts_with_ci(s.sample, t)) return false;
@@ -194,22 +199,40 @@ void MemorySource::add(AnalysisPtr analysis, std::optional<RawData> raw) {
   ++generation_;
 }
 
+void MemorySource::set_age(const std::string& uuid, double age, double age_err) {
+  std::lock_guard lock(mutex_);
+  ages_[uuid] = {age, age_err};
+  ++generation_;
+}
+
 std::uint64_t MemorySource::generation() const {
   std::lock_guard lock(mutex_);
   return generation_;
 }
 
+std::vector<AnalysisSummary> MemorySource::summaries() const {
+  std::vector<AnalysisSummary> rows;
+  rows.reserve(analyses_.size());
+  for (const auto& a : analyses_) {
+    AnalysisSummary s = summarize(*a);
+    if (auto it = ages_.find(a->uuid); it != ages_.end()) {
+      s.age = it->second.first;
+      s.age_err = it->second.second;
+    }
+    rows.push_back(std::move(s));
+  }
+  return rows;
+}
+
 Result<BrowsePage> MemorySource::browse(const BrowseQuery& query) {
   std::lock_guard lock(mutex_);
-  std::vector<AnalysisSummary> rows;
-  for (const auto& a : analyses_) rows.push_back(summarize(*a));
+  const std::vector<AnalysisSummary> rows = summaries();
   return browse_summaries(rows, query);
 }
 
 Result<std::vector<std::string>> MemorySource::facet(Facet f, const BrowseQuery& query) {
   std::lock_guard lock(mutex_);
-  std::vector<AnalysisSummary> rows;
-  for (const auto& a : analyses_) rows.push_back(summarize(*a));
+  const std::vector<AnalysisSummary> rows = summaries();
   return facet_values(rows, f, query);
 }
 

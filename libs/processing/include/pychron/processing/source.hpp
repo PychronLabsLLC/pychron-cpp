@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "pychron/core/error.hpp"
@@ -30,6 +31,8 @@ struct BrowseQuery {
   std::optional<double> from, to;     // UTC epoch seconds, inclusive
   std::optional<double> last_hours;   // relative to the newest analysis in the source
   std::vector<std::string> exclude_tags{"invalid"};
+  // Cached age (Ma), inclusive. An analysis without one matches no bound.
+  std::optional<double> age_min, age_max;
   int limit = 200;
   std::optional<BrowseCursor> after;
 };
@@ -42,6 +45,9 @@ struct AnalysisSummary {
   double timestamp = 0.0;
   std::optional<double> extract_value;
   std::string extract_units;
+  // The age cached for the analysis and its 1 sigma error (Ma), where the
+  // source keeps one; never recomputed here, so it may be out of date.
+  std::optional<double> age, age_err;
 };
 
 struct BrowsePage {
@@ -122,6 +128,9 @@ class MemorySource : public IAnalysisSource {
   // Adds, or replaces the analysis with the same uuid (keeping its raw data
   // unless `raw` is given).
   void add(AnalysisPtr analysis, std::optional<RawData> raw = std::nullopt);
+  // Gives the analysis a cached age (Ma) for browse to show and filter by,
+  // as a store's derived_value would (tests, previews).
+  void set_age(const std::string& uuid, double age, double age_err);
 
   std::string name() const override { return "memory"; }
   std::uint64_t generation() const override;
@@ -132,9 +141,14 @@ class MemorySource : public IAnalysisSource {
   Result<RawData> load_raw(const std::string& uuid) override;
 
  private:
+  // Every analysis summarized, with its age where set_age gave one. Called
+  // with mutex_ held.
+  std::vector<AnalysisSummary> summaries() const;
+
   mutable std::mutex mutex_;
   std::vector<AnalysisPtr> analyses_;
   std::map<std::string, RawData> raw_;
+  std::map<std::string, std::pair<double, double>> ages_;  // uuid -> age, error
   std::uint64_t generation_ = 1;
 };
 

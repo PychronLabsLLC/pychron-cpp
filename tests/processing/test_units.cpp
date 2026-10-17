@@ -2,7 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -209,6 +212,65 @@ TEST(Units, ReduceOverASourceWithNoSinkRunsAsBefore) {
   ASSERT_TRUE(out) << out.error().what;
   EXPECT_EQ(dataset(*out).size(), 6u);
   EXPECT_TRUE(runner.diagnostics().empty());
+}
+
+// A MemorySource keeps the ages set_age gives it as a store keeps its cache:
+// browse shows them, and an age bound matches only analyses that have one.
+TEST(MemorySource, AgeBoundsMatchTheCachedAge) {
+  auto src = source();
+  auto all = src->browse(pp::BrowseQuery{});
+  ASSERT_TRUE(all) << all.error().what;
+  ASSERT_EQ(all->rows.size(), 9u);
+  for (const auto& r : all->rows) EXPECT_FALSE(r.age) << r.uuid;
+  std::vector<std::string> unknowns;
+  for (const auto& r : all->rows)
+    if (r.analysis_type == "unknown") unknowns.push_back(r.uuid);
+  ASSERT_EQ(unknowns.size(), 3u);
+  const std::uint64_t before = src->generation();
+  src->set_age(unknowns[0], 10.0, 0.1);
+  src->set_age(unknowns[1], 20.0, 0.2);
+  src->set_age(unknowns[2], 30.0, 0.3);
+  EXPECT_GT(src->generation(), before) << "a browse cached on the generation sees the ages";
+
+  auto uuids = [&](std::optional<double> min, std::optional<double> max) {
+    pp::BrowseQuery q;
+    q.age_min = min;
+    q.age_max = max;
+    auto page = src->browse(q);
+    EXPECT_TRUE(page) << (page ? "" : page.error().what);
+    std::vector<std::string> out;
+    if (page)
+      for (const auto& r : page->rows) out.push_back(r.uuid);
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  auto sorted = [](std::vector<std::string> v) {
+    std::sort(v.begin(), v.end());
+    return v;
+  };
+  EXPECT_EQ(uuids(15.0, std::nullopt), sorted({unknowns[1], unknowns[2]}));
+  EXPECT_EQ(uuids(std::nullopt, 20.0), sorted({unknowns[0], unknowns[1]}));
+  EXPECT_EQ(uuids(20.0, 20.0), sorted({unknowns[1]})) << "both ends are inclusive";
+  // The airs have no age: no bound, however wide, matches them.
+  EXPECT_EQ(uuids(-1e9, 1e9), sorted(unknowns));
+  std::string air;
+  for (const auto& r : all->rows)
+    if (r.analysis_type == "air") air = r.uuid;
+  src->set_age(air, std::nan(""), 0.0);
+  EXPECT_EQ(uuids(-1e9, 1e9), sorted(unknowns)) << "an age that is not a number is no age";
+  EXPECT_EQ(uuids(std::nullopt, std::nullopt).size(), 9u);
+
+  pp::BrowseQuery young;
+  young.age_max = 15.0;
+  auto page = src->browse(young);
+  ASSERT_TRUE(page);
+  ASSERT_EQ(page->rows.size(), 1u);
+  EXPECT_EQ(page->rows[0].age, 10.0);
+  EXPECT_EQ(page->rows[0].age_err, 0.1);
+  EXPECT_EQ(page->total, 1u);
+  auto types = src->facet(pp::Facet::AnalysisType, young);
+  ASSERT_TRUE(types);
+  EXPECT_EQ(*types, (std::vector<std::string>{"unknown"}));
 }
 
 TEST(Units, StatsHonourExclusions) {
