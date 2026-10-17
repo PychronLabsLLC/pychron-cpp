@@ -30,7 +30,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Experiments](#experiments): `exp validate`, `exp run`, `exp notify`
 - [Lasers](#lasers): `laser ...`
 - [Legacy data](#legacy-data): `import ...`
-- [The store's schema](#the-stores-schema): `db status`, `db migrate`
+- [The store's schema](#the-stores-schema): `db status`, `db migrate`, `db derive`
 - [Publication data](#publication-data): `export`
 - [EarthBank workbooks and account](#earthbank-workbooks): `earthbank export-xlsx`, `login`, `account`, `packages`, `preflight`, `upload`, `import-profiles`
 - [Sample and package entry](#sample-and-package-entry): `entry ...`
@@ -742,6 +742,56 @@ set up a data-reduction install.
 
 A copy of the file is a complete backup of a SQLite store; make one first if
 the store is the only copy of its data.
+
+### db derive
+
+```bash
+elctl db derive --db <url> [--all] [--limit N] [--quiet]
+```
+
+Fills the store's cache of ages: the age the data browser shows in its
+**Age (Ma)** column and filters by (see
+[06 Data analysis](06-data-analysis.md#the-age-column-and-the-cached-age)).
+It walks every analysis of the store, newest first and invalid ones
+included, in pages of 200. An analysis whose cached age was computed from
+its inputs as they are now is passed over; any other (no cached age yet, or
+its flux, blanks, IC factors, fits or production changed since) is loaded,
+reduced with the default settings, and its age, age with the error of J,
+and K/Ca are stored, in Ma. A blank or an air is stored as having no age, so
+the next run passes over it too.
+
+Run it after an update that brings a store made before the cache, after an
+import made with `--no-derive`, and after saving a flux fit, blanks or IC
+factors (the flux window says how many cached ages a save left out of
+date). `elctl import run` runs the same pass when an import finishes. The
+application keeps the cache up to date for every analysis it reduces, so
+this is only for the ones nobody has looked at since.
+
+| Flag | Meaning |
+|---|---|
+| `--db URL` | The store (`sqlite:<file>` or `postgresql://...`). Required. Its schema must be up to date (`db migrate`); a store that is behind is refused, never migrated. |
+| `--all` | Reduce and store every analysis walked, current or not. |
+| `--limit N` | Walk no more than `N` analyses (the newest `N`). |
+| `--quiet` | Print only the summary line, not one line a page. |
+
+Output: one line a page, with the counts so far, then a summary, for
+example:
+
+```text
+  200 seen, 37 written (4 without an age), 163 current, 0 failed
+  ...
+derived: 8716 seen, 1210 written (95 without an age), 7506 current, 0 failed
+```
+
+An analysis that could not be loaded is named on stderr
+(`elctl db derive: <run id>: <why>`) and the walk goes on. It is safe to stop
+with Ctrl-C: what earlier pages stored stays, and the next run starts where
+there is work left. Two runs at once on one database do no harm; they write
+the same rows.
+
+Exit code: 0 when every analysis walked is current or was stored, 1 when any
+failed to load, 2 on a usage error or when the store could not be opened,
+read or written.
 
 ## Publication data
 

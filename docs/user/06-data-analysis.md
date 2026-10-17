@@ -124,6 +124,7 @@ The left column filters; the table shows the newest analyses first.
 | Search box | Analyses whose run id, identifier or sample **starts with** the text (not case sensitive). |
 | Date drop-down | Any date, last 24 hours, last week, last month, last year, or **Range…**. "Last" is counted back from the **newest analysis in the source**, not from today. |
 | **From** / **To** (with Range…) | A low and a high date and time, in UTC like the Date column. Each end counts only while its box is ticked, so you can give one end and leave the other open. To includes the whole of the minute it names. They start as the range of the rows shown. If From is after To the status line says so and nothing changes. |
+| **Age from** / **to** | A low and a high age, in Ma, both included. Each end counts only while its box is ticked, and a typed value is applied when you leave the box or press Enter. Only analyses with a **cached** age in the range are kept: one with no cached age, or none at all (a blank, an air), is never matched by a bound. If the low age is above the high one the status line reads `Age from is above to` and nothing changes. See [The Age column and the cached age](#the-age-column-and-the-cached-age). |
 | **Hide invalid** | On by default. Hides analyses tagged `invalid`. |
 | **Color by** | What the rows are tinted by (see below). |
 | Analysis type, Spectrometer, Sample, Identifier, Irradiation, Level | Tick values to keep only those. Within one list, ticks are alternatives (or); between lists they all apply (and). Each list shows only values that exist given the other filters, but a value you ticked stays visible even if nothing matches. |
@@ -135,8 +136,49 @@ matched by its name: with no irradiation ticked, ticking level `A` keeps
 level A of every irradiation.
 
 The table has columns Run ID, Type, Sample, Identifier, Spec., Date (UTC),
-Extract, Tag, Irradiation, and (hidden by default) Project, UUID. Right-click
-a column header to show or hide columns.
+Extract, Age (Ma), Tag, Irradiation, and (hidden by default) Project, UUID.
+Right-click a column header to show or hide columns.
+
+### The Age column and the cached age
+
+**Age (Ma)** shows an analysis's age and its 1-sigma analytical error
+(without the error of J), as `value ± error`, both to the error's fourth
+significant figure. It is empty when the analysis has no cached age. The
+**Age from** / **to** filter reads the same value. Both always speak Ma,
+whatever units your figures show ages in.
+
+This age is **cached**: it is stored in the database next to the analysis,
+so that the browser can show and filter by it without reducing every
+analysis it lists. It is not recomputed when the browser shows it.
+
+- **When it is computed.** Whenever pychron reduces an analysis with the
+  default settings: opening it in Recall (while it has no unsaved fit
+  edits), drawing it in a figure, exporting it. Also by `elctl import run`
+  at the end of an import, and by `elctl db derive`, which fills in every
+  analysis whose cached age is missing or out of date (see
+  [08 elctl reference](08-elctl-reference.md#db-derive)). A figure drawn
+  with other options (another fit, other constants) does not change the
+  cached age.
+- **What it is computed from.** The analysis's saved fits, blanks, IC
+  factors, flux, production ratios and chronology. Analyses reduced to no
+  age (blanks, air, no flux) are recorded as having none.
+- **When it goes out of date.** Saving a flux fit, blanks or IC factors
+  changes the inputs of many analyses at once, and nothing is recomputed at
+  that moment. Their cached ages stay as they were until each analysis is
+  next reduced, or until `elctl db derive` runs. After saving a flux fit the
+  flux window says how many analyses that was: `cached ages of <n> analyses
+  are now out of date; run elctl db derive`. The blank and IC factor windows
+  do not say it.
+- **How to bring it up to date.** Run `elctl db derive --db <url>`. It
+  touches only the analyses whose cached age is missing or stale, so running
+  it again soon after costs little. Until then the browser cannot tell a
+  stale age from a current one, and the age filter works on what is cached.
+- **A figure always recomputes.** Figures, Recall, the data tables and the
+  export reduce each analysis from its data every time; they never use the
+  cached age. The cached age only decides what the browser shows and finds.
+
+An analysis in a records folder (no database) has no cached age: the column
+is empty and an age bound matches nothing.
 
 ### Row colors
 

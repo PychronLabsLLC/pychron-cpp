@@ -344,6 +344,14 @@ Spec 4.7, browser.
   9 written into it in the same branch.
 - Commit: `docs: cached ages, the age filter and elctl db derive`.
 
+Done 2026-10-16 on `feat/data-t023`. `elctl db migrate` is described in
+`docs/user/08-elctl-reference.md` ("The store's schema"), so `db derive` is
+a subsection there; the user guide's new subsection is "The Age column and
+the cached age". The spec records what Tasks 5, 6 and 9 built that its first
+text did not say: the derive API as built (`IDeriveSource`, `page_size`,
+`failures`), the exit status 2, the import pass's rules, and the browser's
+value-alone text, the status line without a total and the spin boxes.
+
 ## Before landing
 
 - `ctest` whole, `python3 tools/quality_check.py`, on the branch rebased on

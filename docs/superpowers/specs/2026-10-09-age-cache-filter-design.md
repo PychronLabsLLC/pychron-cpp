@@ -1,7 +1,8 @@
 # Cached ages and the browser's age filter: design
 
 Date: 2026-10-09. Status: approved 2026-10-09 (acquisition deferred, section
-4.6). Not implemented.
+4.6). Implemented 2026-10-16 (plan `docs/superpowers/plans/2026-10-10-age-cache-filter.md`);
+where code departed from first text, this text was changed to match.
 
 Second of two specs. First:
 `2026-10-09-data-browser-search-display-design.md` (browser's date range,
@@ -158,10 +159,21 @@ filed under the new fingerprint.
 2. **Backfill.** `elctl db derive --db <url> [--all] [--limit N] [--quiet]`.
    `libs/processing/adapters/store` `derive.hpp`:
 
-       struct DeriveOptions { bool all = false; std::optional<int> limit; };
-       struct DeriveStats { int seen, current, written, no_age, failed; };
-       Result<DeriveStats> derive_ages(StoreSource&, const DeriveOptions&,
+       struct DeriveOptions { bool all = false; std::optional<int> limit; int page_size = 200; };
+       struct DeriveStats { int seen, current, written, no_age, failed;
+                            std::vector<std::string> failures; };  // "<run id>: <why>"
+       class IDeriveSource;  // browse, fingerprints, load, write, drop_loaded
+       Result<DeriveStats> derive_ages(IDeriveSource&, const DeriveOptions&,
                                        const std::function<bool(const DeriveStats&)>& keep_going);
+       Result<DeriveStats> derive_ages(StoreSource&, ...);  // same, over StoreSource
+
+   - `IDeriveSource`: what walk needs of a store source, so a test can make
+     one load fail. `StoreSource` behind it gains `fingerprints` (cached and
+     current, one page), `write_derived_now` (the `--all` write, whatever is
+     cached) and `drop_loaded` (walk holds no more than a page of analyses:
+     load cache has no bound).
+   - `written` counts those without an age too; `no_age` says how many.
+     `page_size` lets a test walk pages of one.
 
    - Walks analyses newest first by keyset `(timestamp_utc, uuid)`, pages of
      200 through `browse`.
@@ -173,8 +185,13 @@ filed under the new fingerprint.
      interrupt. One at a time per database is not required: two runs write
      the same rows.
    - An analysis that fails to load is counted `failed`, reported by run
-     id, and does not stop the walk.
-   - Exit status 0; 1 when any failed. Opens store with `migrate = false`.
+     id, and does not stop the walk. A page the store refuses to read or
+     write stops walk with that error; what earlier pages wrote stays.
+   - Exit status 0; 1 when any failed; 2 on usage error or a store that
+     cannot be opened, read or written. Opens store with `migrate = false`.
+   - Output: a line a page unless `--quiet`, then always
+     `derived: <n> seen, <n> written (<n> without an age), <n> current, <n> failed`
+     (`apps/elctl/src/derive_summary.hpp`, shared with import).
    - `elctl db` gains the subcommand in `db.cpp`; `db_stub.cpp` unchanged.
 3. **Import.** `elctl import run` calls `derive_ages` after the walk ends
    (not per batch), unless `--no-derive`. In `apps/elctl`, not `libs/ingest`:
@@ -182,6 +199,12 @@ filed under the new fingerprint.
    at every batch (`same_at_every_cut`, `OneHistoryOneResult`) never see
    `derived_value` written. Flux and production imported later in the same
    walk are in place by then.
+   - Run cut short by `--limit` (import has no `--max-batches`) or an
+     interrupt, and a dry run: no pass. A source that could not be opened
+     does not stop it (walk went through the others; exit code stays 2).
+   - Summary line follows import's, same text as `db derive`. A failed
+     analysis or a failed pass is reported and never changes import's exit
+     code.
 4. **Reference edits.** Saving a flux fit, blanks, IC factors or a
    production changes fingerprints of many analyses at once. Nothing is
    recomputed at save. Their cached ages stay, stale, until those analyses
@@ -257,8 +280,10 @@ fields.
 
 Browser (`apps/pychron-ui`), on top of first spec:
 
-- Table column `Age (Ma)`: `value ± error`, 4 significant figures of the
-  error's scale; empty when none. Shown by default, after Extract.
+- Table column `Age (Ma)`: `value ± error`, both to error's fourth
+  significant figure; value alone (`g`, 6 digits) when error absent, not
+  finite or not above 0; empty when no age. Shown by default, after
+  Extract.
 - Filter column, under the date controls: `[x] Age from [ ] Ma`,
   `[x] to [ ] Ma`, same pattern as the date range (checkbox per end,
   `editingFinished`, low above high = no query and a status message).
@@ -267,7 +292,9 @@ Browser (`apps/pychron-ui`), on top of first spec:
   change of flux, blanks or IC factors it is out of date until then; a
   figure always recomputes.
 - With an age bound set, status line: `<shown> of <total> analyses with a
-  cached age in range`.
+  cached age in range` (`<shown> analyses with a cached age in range` when
+  source gives no total). Ticking or unticking an end reloads, as a date
+  end does. Spin boxes: 4 decimals, -10000 to 10000 Ma.
 
 ## 5. Rules that must hold
 
@@ -299,7 +326,8 @@ Browser (`apps/pychron-ui`), on top of first spec:
   `ReduceUnit` over a store source fills the cache; second run writes
   nothing; a flux change then a reduction replaces the row; non-default
   settings write nothing; summary carries the age.
-- `tests/processing/test_derive.cpp`: fills an empty cache; second run all
+- `tests/processing/test_store_source.cpp` (on its seeded store; no
+  `test_derive.cpp`), backfill: fills an empty cache; second run all
   `current`; after a flux change only that level's analyses are written;
   blank gets a NULL age and is `current` next time; `--limit`; a failing
   load counted and passed over.

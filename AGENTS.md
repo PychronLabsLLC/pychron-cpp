@@ -195,6 +195,20 @@ Inner loop (keep waits short):
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
   appear in its public headers or in any other `libs/` library.
+- Cache of ages (`derived_value`; spec
+  `docs/superpowers/specs/2026-10-09-age-cache-filter-design.md`): browser's
+  Age column and age filter read it, nothing calculates with it. Three rules:
+  - Cache write uses fingerprint analysis was loaded with
+    (`Analysis::input_fingerprint`, set by `StoreSource::load`), never one
+    computed at write time.
+  - At most one fingerprint per analysis after any write (`put_derived_many`
+    deletes other fingerprints' rows first).
+  - Count and facet statements join `derived_value` only when an age bound is
+    set; page statement always joins, by primary key (`dv.name || '' = 'age'`
+    without a bound).
+- `libs/ingest`, `libs/dvc`, `libs/experiment` do not reduce and gain no
+  dependency on `reduction` or `processing`; import's derive pass is in
+  `apps/elctl`, after walk ends.
 - A file the application writes for the user to open elsewhere (report,
   figure, template, sheet) goes through `pychron::mark_as_user_file`
   (`libs/core` `user_file.hpp`) after it is written: downloaded, unsigned
