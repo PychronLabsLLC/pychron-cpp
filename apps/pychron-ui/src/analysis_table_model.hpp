@@ -7,6 +7,7 @@
 // analysis: it cannot be selected and analysis_at() gives null for it.
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,7 +24,7 @@ class AnalysisTableModel : public QAbstractTableModel {
   Q_OBJECT
 
  public:
-  enum Column { RunId, Type, Sample, Identifier, Spectrometer, Date, Extract, Tag, Project, Irradiation, Uuid, ColumnCount };
+  enum Column { RunId, Type, Sample, Identifier, Spectrometer, Date, Extract, Age, Tag, Project, Irradiation, Uuid, ColumnCount };
 
   explicit AnalysisTableModel(QObject* parent = nullptr);
 
@@ -57,6 +58,9 @@ class AnalysisTableModel : public QAbstractTableModel {
   Qt::ItemFlags flags(const QModelIndex& index) const override;
 
   static QString format_time(double utc_seconds);
+  // "value ± error", both to the error's fourth significant figure; the
+  // value alone without an error (absent, zero or not finite).
+  static QString format_age(double age, std::optional<double> age_err);
 
  private:
   struct Entry {

@@ -10,10 +10,12 @@
 #include <filesystem>
 #include <memory>
 #include <set>
+#include <string>
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -642,6 +644,80 @@ class TestDataWindows : public QObject {
     q = w.query();
     QVERIFY(q.last_hours && !q.from && !q.to);
     QCOMPARE(w.model()->analysis_count(), 25);
+  }
+
+  void browser_shows_the_cached_age() {
+    auto src = make_source(3);
+    src->set_age("uuid-2", 28.20113, 0.04613);
+    src->set_age("uuid-1", 1234.5678, 12.34);
+    DataBrowserWindow w(*src);
+    const auto* m = w.model();
+    const int age = AnalysisTableModel::Age;
+    QCOMPARE(age, static_cast<int>(AnalysisTableModel::Extract) + 1);
+    QCOMPARE(m->headerData(age, Qt::Horizontal).toString(), QStringLiteral("Age (Ma)"));
+    QVERIFY(m->headerData(age, Qt::Horizontal, Qt::ToolTipRole).toString().contains(QStringLiteral("cached")));
+    QVERIFY(!w.table()->isColumnHidden(age));
+    // Newest first: uuid-2, uuid-1, uuid-0. The value goes to the error's
+    // fourth significant figure.
+    QCOMPARE(m->data(m->index(0, age)).toString(), QStringLiteral("28.20113 ± 0.04613"));
+    QCOMPARE(m->data(m->index(1, age)).toString(), QStringLiteral("1234.57 ± 12.34"));
+    QVERIFY(m->data(m->index(2, age)).toString().isEmpty());  // no cached age
+    // An age without an error claims no uncertainty.
+    QCOMPARE(AnalysisTableModel::format_age(28.2, std::nullopt), QStringLiteral("28.2"));
+    QCOMPARE(AnalysisTableModel::format_age(28.2, 0.0), QStringLiteral("28.2"));
+    QVERIFY(w.status()->text().contains(QStringLiteral("3 of 3 analyses")));
+    QVERIFY(!w.status()->text().contains(QStringLiteral("cached age")));
+  }
+
+  void browser_age_range() {
+    auto src = make_source(10);
+    for (int i = 0; i < 8; ++i) src->set_age("uuid-" + std::to_string(i), 10.0 * i, 0.5);  // uuid-8, 9: none
+    DataBrowserWindow w(*src);
+    QCOMPARE(w.model()->analysis_count(), 10);
+    auto q = w.query();
+    QVERIFY(!q.age_min && !q.age_max);
+
+    // The low end only: uuid-3 .. uuid-7.
+    w.age_min_edit()->setValue(30.0);
+    w.age_min_enabled()->setChecked(true);
+    QCOMPARE(*w.query().age_min, 30.0);
+    QVERIFY(!w.query().age_max);
+    QCOMPARE(w.model()->analysis_count(), 5);
+    QCOMPARE(w.status()->text(), QStringLiteral("5 of 5 analyses with a cached age in range"));
+
+    // Both ends, inclusive: uuid-3 .. uuid-5.
+    w.age_max_edit()->setValue(50.0);
+    w.age_max_enabled()->setChecked(true);
+    QCOMPARE(*w.query().age_max, 50.0);
+    QCOMPARE(w.model()->analysis_count(), 3);
+    QCOMPARE(w.model()->rows().front().uuid, std::string("uuid-5"));
+    QCOMPARE(w.status()->text(), QStringLiteral("3 of 3 analyses with a cached age in range"));
+
+    // A value typed in counts once its field is left.
+    w.age_max_edit()->setValue(40.0);
+    emit w.age_max_edit()->editingFinished();
+    QCOMPARE(w.model()->analysis_count(), 2);
+
+    // The high end only: uuid-0 .. uuid-4; an analysis with no age is not listed.
+    w.age_min_enabled()->setChecked(false);
+    QVERIFY(!w.query().age_min);
+    QCOMPARE(w.model()->analysis_count(), 5);
+    QCOMPARE(w.model()->rows().back().uuid, std::string("uuid-0"));
+
+    // Low above high: nothing is asked and what is shown stays.
+    w.age_min_edit()->setValue(45.0);
+    w.age_min_enabled()->setChecked(true);
+    QCOMPARE(w.status()->text(), QStringLiteral("Age from is above to"));
+    QCOMPARE(w.model()->analysis_count(), 5);
+    QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
+    QCOMPARE(w.model()->analysis_count(), 5);
+
+    // No bound: every analysis, the plain count.
+    w.age_min_enabled()->setChecked(false);
+    w.age_max_enabled()->setChecked(false);
+    QCOMPARE(w.model()->analysis_count(), 10);
+    QVERIFY(w.status()->text().contains(QStringLiteral("10 of 10 analyses")));
+    QVERIFY(!w.status()->text().contains(QStringLiteral("cached age")));
   }
 
   void browser_filters_by_irradiation_and_level() {

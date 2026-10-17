@@ -39,6 +39,7 @@
 class QComboBox;
 class QCheckBox;
 class QDateTimeEdit;
+class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -100,6 +101,12 @@ class DataBrowserWindow : public QWidget {
   QCheckBox* to_enabled() const noexcept { return to_on_; }
   QDateTimeEdit* from_edit() const noexcept { return from_; }
   QDateTimeEdit* to_edit() const noexcept { return to_; }
+  // The cached age range (Ma), under the dates: each end counts only while
+  // its box is ticked.
+  QCheckBox* age_min_enabled() const noexcept { return age_min_on_; }
+  QCheckBox* age_max_enabled() const noexcept { return age_max_on_; }
+  QDoubleSpinBox* age_min_edit() const noexcept { return age_min_; }
+  QDoubleSpinBox* age_max_edit() const noexcept { return age_max_; }
   QPushButton* load_more_button() const noexcept { return more_; }
   QToolBar* toolbar() const noexcept { return toolbar_; }
   // The toolbar's action for a figure kind; null for a kind it does not offer.
@@ -149,6 +156,10 @@ class DataBrowserWindow : public QWidget {
   void date_preset_changed();
   bool range_chosen() const;
   bool range_is_backwards() const;
+  bool age_bound_set() const;
+  bool age_is_backwards() const;
+  // Either range low above high: nothing can be asked.
+  bool query_is_backwards() const { return range_is_backwards() || age_is_backwards(); }
   void recall_current();
   void request_figure(const QString& kind);
   void request_export();
@@ -164,6 +175,10 @@ class DataBrowserWindow : public QWidget {
   QDateTimeEdit* from_;
   QDateTimeEdit* to_;
   bool range_seeded_ = false;
+  QCheckBox* age_min_on_;
+  QCheckBox* age_max_on_;
+  QDoubleSpinBox* age_min_;
+  QDoubleSpinBox* age_max_;
   QComboBox* color_by_;
   QCheckBox* exclude_invalid_;
   std::map<processing::Facet, FacetBox*> facets_;

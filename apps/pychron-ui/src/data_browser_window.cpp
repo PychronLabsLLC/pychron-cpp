@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTimeEdit>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -84,6 +85,15 @@ QDateTimeEdit* utc_edit() {
   return edit;
 }
 
+QDoubleSpinBox* age_edit() {
+  auto* edit = new QDoubleSpinBox;
+  edit->setRange(-10000.0, 10000.0);
+  edit->setDecimals(4);
+  edit->setSuffix(QStringLiteral(" Ma"));
+  edit->setKeyboardTracking(false);
+  return edit;
+}
+
 }  // namespace
 
 DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* parent)
@@ -123,6 +133,19 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   range_form->setColumnStretch(1, 1);
   range_->setVisible(false);
   fl->addWidget(range_);
+  auto* age_form = new QGridLayout;
+  age_min_on_ = new QCheckBox(tr("Age from"));
+  age_max_on_ = new QCheckBox(tr("to"));
+  age_min_ = age_edit();
+  age_max_ = age_edit();
+  age_min_on_->setToolTip(tr("Analyses whose cached age is at least this"));
+  age_max_on_->setToolTip(tr("Analyses whose cached age is at most this"));
+  age_form->addWidget(age_min_on_, 0, 0);
+  age_form->addWidget(age_min_, 0, 1);
+  age_form->addWidget(age_max_on_, 1, 0);
+  age_form->addWidget(age_max_, 1, 1);
+  age_form->setColumnStretch(1, 1);
+  fl->addLayout(age_form);
   exclude_invalid_ = new QCheckBox(tr("Hide invalid"));
   exclude_invalid_->setChecked(true);
   fl->addWidget(exclude_invalid_);
@@ -243,6 +266,9 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   // One query for a date typed in, not one for each key.
   for (QDateTimeEdit* edit : {from_, to_}) connect(edit, &QDateTimeEdit::editingFinished, this, [this] { reload(); });
   for (QCheckBox* on : {from_on_, to_on_}) connect(on, &QCheckBox::toggled, this, [this] { reload(); });
+  for (QDoubleSpinBox* edit : {age_min_, age_max_})
+    connect(edit, &QDoubleSpinBox::editingFinished, this, [this] { reload(); });
+  for (QCheckBox* on : {age_min_on_, age_max_on_}) connect(on, &QCheckBox::toggled, this, [this] { reload(); });
   connect(color_by_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
     set_color_by(color_by_from_text(color_by_->currentData().toString()));
   });
@@ -278,6 +304,12 @@ bool DataBrowserWindow::range_is_backwards() const {
   return range_chosen() && from_on_->isChecked() && to_on_->isChecked() && from_->dateTime() > to_->dateTime();
 }
 
+bool DataBrowserWindow::age_bound_set() const { return age_min_on_->isChecked() || age_max_on_->isChecked(); }
+
+bool DataBrowserWindow::age_is_backwards() const {
+  return age_min_on_->isChecked() && age_max_on_->isChecked() && age_min_->value() > age_max_->value();
+}
+
 pp::BrowseQuery DataBrowserWindow::query() const {
   pp::BrowseQuery q;
   q.text = search_->text().trimmed().toStdString();
@@ -288,6 +320,8 @@ pp::BrowseQuery DataBrowserWindow::query() const {
   } else if (const double hours = dates_->currentData().toDouble(); hours > 0) {
     q.last_hours = hours;
   }
+  if (age_min_on_->isChecked()) q.age_min = age_min_->value();
+  if (age_max_on_->isChecked()) q.age_max = age_max_->value();
   q.exclude_tags = exclude_invalid_->isChecked() ? std::vector<std::string>{"invalid"} : std::vector<std::string>{};
   q.limit = page_size_;
   for (const auto& [facet, box] : facets_) {
@@ -362,6 +396,11 @@ void DataBrowserWindow::span_breaks(int first) {
 }
 
 void DataBrowserWindow::show_count() {
+  if (age_bound_set()) {
+    status_->setText(total_ ? tr("%1 of %2 analyses with a cached age in range").arg(model_->analysis_count()).arg(*total_)
+                            : tr("%1 analyses with a cached age in range").arg(model_->analysis_count()));
+    return;
+  }
   status_->setText(total_ ? tr("%1 of %2 analyses").arg(model_->analysis_count()).arg(*total_)
                           : tr("%1 analyses").arg(model_->analysis_count()));
 }
@@ -417,7 +456,7 @@ void DataBrowserWindow::showEvent(QShowEvent* event) {
 
 void DataBrowserWindow::refresh_changed() {
   stale_ = false;
-  if (!source_.refresh() || source_.generation() == loaded_generation_ || range_is_backwards()) return;
+  if (!source_.refresh() || source_.generation() == loaded_generation_ || query_is_backwards()) return;
   const Place was = place();
   update_facets();
   // Everything that was loaded, in one query: "Load more" goes on from its end.
@@ -478,6 +517,10 @@ void DataBrowserWindow::reload() {
     status_->setText(tr("From is after To"));
     return;
   }
+  if (age_is_backwards()) {
+    status_->setText(tr("Age from is above to"));
+    return;
+  }
   update_facets();
   auto page = source_.browse(query());
   if (!page) {
@@ -496,7 +539,7 @@ void DataBrowserWindow::reload() {
 }
 
 void DataBrowserWindow::load_more() {
-  if (!next_ || range_is_backwards()) return;
+  if (!next_ || query_is_backwards()) return;
   auto q = query();
   q.after = next_;
   auto page = source_.browse(q);

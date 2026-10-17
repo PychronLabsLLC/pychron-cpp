@@ -2,6 +2,7 @@
 #include "theme.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <set>
 #include <string_view>
@@ -126,6 +127,17 @@ QString AnalysisTableModel::format_time(double t) {
   return QDateTime::fromSecsSinceEpoch(static_cast<qint64>(std::llround(t)), QTimeZone::utc()).toString(QStringLiteral("yyyy-MM-dd hh:mm:ss"));
 }
 
+QString AnalysisTableModel::format_age(double age, std::optional<double> age_err) {
+  // No error, or none that has a scale: the value alone.
+  if (!age_err || !std::isfinite(*age_err) || *age_err <= 0.0) return QString::number(age, 'g', 6);
+  // The error's fourth significant figure sets the last decimal place shown.
+  constexpr int kSignificant = 4;
+  constexpr int kMaxDecimals = 12;
+  const int magnitude = static_cast<int>(std::floor(std::log10(*age_err)));
+  const int decimals = std::clamp(kSignificant - 1 - magnitude, 0, kMaxDecimals);
+  return QStringLiteral("%1 ± %2").arg(QString::number(age, 'f', decimals), QString::number(*age_err, 'f', decimals));
+}
+
 QVariant AnalysisTableModel::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() >= rowCount()) return {};
   const Entry& entry = display_[static_cast<std::size_t>(index.row())];
@@ -153,6 +165,9 @@ QVariant AnalysisTableModel::data(const QModelIndex& index, int role) const {
     case Extract:
       if (!r.extract_value) return {};
       return QString::number(*r.extract_value, 'g', 6) + (r.extract_units.empty() ? QString() : QStringLiteral(" ") + qs(r.extract_units));
+    case Age:
+      if (!r.age) return {};
+      return format_age(*r.age, r.age_err);
     case Tag:
       return qs(r.tag);
     case Project:
@@ -198,10 +213,15 @@ Qt::ItemFlags AnalysisTableModel::flags(const QModelIndex& index) const {
 }
 
 QVariant AnalysisTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
-  if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
-  static const char* names[] = {"Run ID", "Type", "Sample", "Identifier", "Spec.", "Date (UTC)", "Extract", "Tag",
-                                "Project", "Irradiation", "UUID"};
-  return section >= 0 && section < ColumnCount ? tr(names[section]) : QVariant();
+  if (orientation != Qt::Horizontal) return {};
+  if (role == Qt::ToolTipRole && section == Age)
+    return tr("The cached age: computed when the analysis was last reduced, or by elctl db derive. After a change "
+              "of flux, blanks or IC factors it is out of date until then; a figure always recomputes.");
+  if (role != Qt::DisplayRole) return {};
+  static constexpr std::array<const char*, ColumnCount> names = {
+      "Run ID", "Type", "Sample", "Identifier", "Spec.", "Date (UTC)", "Extract", "Age (Ma)", "Tag",
+      "Project", "Irradiation", "UUID"};
+  return section >= 0 && section < ColumnCount ? tr(names[static_cast<std::size_t>(section)]) : QVariant();
 }
 
 }  // namespace pychron::ui
