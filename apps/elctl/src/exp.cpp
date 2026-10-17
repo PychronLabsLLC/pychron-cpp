@@ -1,5 +1,6 @@
 #include "exp.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -22,6 +23,7 @@
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
+#include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/experiment/model/queue_validation.hpp"
@@ -41,6 +43,47 @@ using namespace pychron::experiment;
 std::atomic<int>& interrupt_count() {
   static std::atomic<int> n{0};
   return n;
+}
+
+namespace {
+
+// Seconds, to a tenth below ten ("0.4", "9.5"), whole above ("21").
+std::string seconds_text(double s) {
+  std::ostringstream out;
+  if (s < 9.95) out << std::fixed << std::setprecision(1) << std::max(s, 0.0);
+  else out << std::llround(s);
+  return out.str();
+}
+
+}  // namespace
+
+std::string holding_line(const experiment::executor::ExecutorHolding& hold, std::chrono::system_clock::time_point until) {
+  std::string line = "holding: " + hold.reason;
+  if (!hold.links.empty()) {
+    std::string names;
+    for (const auto& l : hold.links) names += (names.empty() ? "" : ", ") + l;
+    line += " (" + names + ")";
+  }
+  using namespace std::chrono;
+  const auto t = floor<seconds>(until);
+  const auto day = floor<days>(t);
+  const year_month_day ymd{day};
+  const hh_mm_ss hms{t - day};
+  std::ostringstream at;
+  at << std::setfill('0') << static_cast<int>(ymd.year()) << '-' << std::setw(2) << static_cast<unsigned>(ymd.month())
+     << '-' << std::setw(2) << static_cast<unsigned>(ymd.day()) << ' ' << std::setw(2) << hms.hours().count() << ':'
+     << std::setw(2) << hms.minutes().count() << ':' << std::setw(2) << hms.seconds().count() << " UTC";
+  return line + " until " + at.str();
+}
+
+std::string gap_line(const experiment::measurement::MeasurementGap& gap) {
+  return "gap in " + std::string(experiment::measurement::to_string(gap.block)) + ": " +
+         seconds_text(gap.to - gap.from) + " s";
+}
+
+std::string reconnected_line(const pychron::LinkReconnected& link) {
+  return "reconnected " + link.transport + " after " +
+         seconds_text(std::chrono::duration<double>(link.down_for).count()) + " s";
 }
 
 void answer_interrupts(int& handled, int count, const std::function<void(const std::string&)>& say,
@@ -403,6 +446,7 @@ class Exp {
                               r.step + ": " + std::string(run::to_string(r.state));
       if (r.truncated) line_text += " (truncated)";
       if (r.save_error && r.state == run::RunState::Success) line_text += " (not saved)";  // the run said why
+      if (r.status == record::RecordStatus::Failed && !r.save_error) line_text += " (saved)";
       if (r.error) line_text += ": " + *r.error;
       say(line_text);
       for (const auto& c : r.queue_changes) say("  queue: " + c);
@@ -410,6 +454,21 @@ class Exp {
     subs.push_back(bus.subscribe<executor::ExecutorWaiting>([&](const executor::ExecutorWaiting& e) {
       if (e.duration > experiment::Duration::zero()) say("waiting " + clock_text(e.duration) + ": " + e.reason);
     }));
+    subs.push_back(bus.subscribe<executor::ExecutorHolding>([&](const executor::ExecutorHolding& e) {
+      say(holding_line(e, session.wall_now() + std::chrono::duration_cast<WallTime::duration>(e.until - session.now())));
+    }));
+    subs.push_back(bus.subscribe<executor::ExecutorStateChanged>([&](const executor::ExecutorStateChanged& e) {
+      if (e.from == executor::ExecutorState::Holding && e.to == executor::ExecutorState::Running) say("resumed");
+    }));
+    subs.push_back(bus.subscribe<measurement::MeasurementGap>([&](const measurement::MeasurementGap& e) {
+      std::string id;
+      {
+        std::lock_guard lock(names_mutex);
+        id = names[e.run_id];
+      }
+      say("  " + id + ": " + gap_line(e));
+    }));
+    subs.push_back(bus.subscribe<LinkReconnected>([&](const LinkReconnected& e) { say(reconnected_line(e)); }));
     subs.push_back(bus.subscribe<measurement::ConditionalTripped>([&](const measurement::ConditionalTripped& e) {
       say("  conditional " + e.trip.name + " tripped: " + e.trip.check);
     }));

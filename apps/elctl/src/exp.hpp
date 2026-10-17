@@ -20,12 +20,23 @@
 // second cancels it, the third aborts.
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
 
 #include "cli.hpp"
+
+namespace pychron {
+struct LinkReconnected;
+namespace experiment::executor {
+struct ExecutorHolding;
+}
+namespace experiment::measurement {
+struct MeasurementGap;
+}
+}  // namespace pychron
 
 namespace elctl {
 
@@ -57,6 +68,17 @@ struct QueueRequests {
 // queue. Two that arrive together are one request to cancel: a stop asked
 // for first is honoured at once by a queue between runs, which has then
 // ended as stopped before the cancel reaches it.
+// What `exp run` prints of a link's outage (spec 4.9), one line each:
+//   holding: <reason> (<links>) until <time>     the time the hold limit ends the queue, UTC
+//   gap in <block>: <n> s                        the readings stopped for n s
+//   reconnected <transport> after <n> s          a link came back
+// (`resumed` is printed as the queue leaves a hold.) `until` is the
+// hold's end as wall time, on the line's clock.
+std::string holding_line(const pychron::experiment::executor::ExecutorHolding& hold,
+                         std::chrono::system_clock::time_point until);
+std::string gap_line(const pychron::experiment::measurement::MeasurementGap& gap);
+std::string reconnected_line(const pychron::LinkReconnected& link);
+
 void answer_interrupts(int& handled, int count, const std::function<void(const std::string&)>& say,
                        const QueueRequests& queue);
 

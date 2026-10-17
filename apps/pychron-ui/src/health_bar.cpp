@@ -18,15 +18,29 @@ QString age_text(std::chrono::seconds age) {
   return QStringLiteral("%1h").arg(s / 3600);
 }
 
+QString countdown_text(std::chrono::seconds left) {
+  const auto s = std::max<long long>(left.count(), 0);
+  return QStringLiteral("%1:%2:%3")
+      .arg(s / 3600)
+      .arg((s / 60) % 60, 2, 10, QLatin1Char('0'))
+      .arg(s % 60, 2, 10, QLatin1Char('0'));
+}
+
 }  // namespace
 
 HealthBar::HealthBar(QWidget* parent, std::function<TimePoint()> now)
-    : QWidget(parent), now_(std::move(now)), layout_(new QHBoxLayout(this)) {
+    : QWidget(parent), now_(std::move(now)), layout_(new QHBoxLayout(this)), hold_chip_(new QLabel(this)) {
   if (!now_) {
     now_ = [] { return std::chrono::steady_clock::now(); };
   }
   layout_->setContentsMargins(4, 0, 4, 0);
   layout_->setSpacing(6);
+  hold_chip_->setObjectName(QStringLiteral("HoldChip"));
+  hold_chip_->setMargin(2);
+  hold_chip_->setToolTip(tr("The queue holds: it starts the next run once the links it needs are back, "
+                            "and ends when the count reaches zero (Experiment > Executor: Resume, Skip Held Run)"));
+  hold_chip_->hide();
+  layout_->addWidget(hold_chip_);
   ticker_.setInterval(1000);
   connect(&ticker_, &QTimer::timeout, this, &HealthBar::refresh);
   ticker_.start();
@@ -56,6 +70,39 @@ void HealthBar::refresh() {
   for (const auto& [name, chip] : chips_) {
     render(name, chip);
   }
+  render_hold();
+}
+
+void HealthBar::show_hold(const QString& reason, TimePoint until) {
+  hold_ = Hold{reason, until};
+  render_hold();
+}
+
+void HealthBar::clear_hold() {
+  hold_.reset();
+  render_hold();
+}
+
+QString HealthBar::hold_text_at(TimePoint now) const {
+  if (!hold_) {
+    return {};
+  }
+  // Rounded up: a hold with 0.4 s left still has time, and says so.
+  const auto left = std::chrono::ceil<std::chrono::seconds>(hold_->until - now);
+  return tr("holding: %1 · ends in %2").arg(hold_->reason, countdown_text(left));
+}
+
+QString HealthBar::hold_text() const { return hold_chip_->isHidden() ? QString() : hold_chip_->text(); }
+
+void HealthBar::render_hold() {
+  if (!hold_) {
+    hold_chip_->clear();
+    hold_chip_->hide();
+    return;
+  }
+  hold_chip_->setText(hold_text_at(now_()));
+  style::set_chip(hold_chip_, style::Level::Warning);
+  hold_chip_->show();
 }
 
 HealthBar::Status HealthBar::status_of(const TransportHealth& health) {

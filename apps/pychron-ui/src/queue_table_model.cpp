@@ -515,7 +515,7 @@ void QueueTableModel::row_changed(int row) {
 
 void QueueTableModel::on_run_started(const experiment::executor::RunStarted& e) {
   const int row = static_cast<int>(e.row);
-  status_[row] = RowStatus{e.run_id, RunState::Preparing, false, false, 0, {}, {}};
+  status_[row] = RowStatus{e.run_id, RunState::Preparing, false, false, false, 0, {}, {}};
   run_rows_[e.run_id] = row;
   row_changed(row);
 }
@@ -538,6 +538,7 @@ void QueueTableModel::on_run_finished(const experiment::executor::RunFinished& e
   st.state = s.state;
   st.finished = true;
   st.truncated = s.truncated;
+  st.saved_failed = s.status == experiment::record::RecordStatus::Failed && !s.save_error;
   st.aliquot = s.aliquot;
   st.step = s.step;
   st.error = s.error ? q(*s.error) : QString();
@@ -562,6 +563,7 @@ QString QueueTableModel::status_text(int row) const {
   if (it == status_.end()) return {};
   QString t = q(experiment::run::to_string(it->second.state));
   if (it->second.finished && it->second.truncated) t += tr(" (truncated)");
+  if (it->second.finished && it->second.saved_failed) t += tr(" (saved)");
   return t;
 }
 

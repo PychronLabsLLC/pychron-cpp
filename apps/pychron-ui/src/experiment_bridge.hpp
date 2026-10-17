@@ -10,7 +10,7 @@
 // FitsUpdated arrive once per reading, so they are queued under a mutex and
 // delivered as in-order batches per queued call.
 //
-// Commands in: start/stop/cancel/abort/truncate forward to the session, which
+// Commands in: start/stop/cancel/abort/truncate/resume/skip forward to the session, which
 // never blocks (the executor has its own thread). check() validates a queue
 // against the lab on the calling thread; it touches no hardware.
 //
@@ -59,6 +59,9 @@ class ExperimentBridge : public QObject {
   void cancel();
   void abort();
   void truncate(bool quick = false);
+  // While the queue holds (LabSession::resume, LabSession::skip).
+  void resume();
+  Result<void> skip();
   bool running() const;
 
   // Whether the session's runs go to a database (a store persister) rather
@@ -71,6 +74,7 @@ class ExperimentBridge : public QObject {
   void runStarted(const pychron::experiment::executor::RunStarted& event);
   void runFinished(const pychron::experiment::executor::RunFinished& event);
   void executorWaiting(const pychron::experiment::executor::ExecutorWaiting& event);
+  void executorHolding(const pychron::experiment::executor::ExecutorHolding& event);
   void queueEdited(const pychron::experiment::executor::QueueEdited& event);
   void queueFrontier(const pychron::experiment::executor::QueueFrontier& event);
   void notificationSent(const pychron::experiment::lab::NotificationSent& event);
@@ -81,6 +85,7 @@ class ExperimentBridge : public QObject {
   void blockStarted(const pychron::experiment::measurement::BlockStarted& event);
   void blockFinished(const pychron::experiment::measurement::BlockFinished& event);
   void countsProgress(const pychron::experiment::measurement::CountsProgress& event);
+  void measurementGap(const pychron::experiment::measurement::MeasurementGap& event);
   void conditionalTripped(const pychron::experiment::measurement::ConditionalTripped& event);
   void peakCenterDone(const pychron::jobs::PeakCenterDone& event);
   void peakCenterTryStarted(const pychron::jobs::PeakCenterTryStarted& event);

@@ -504,6 +504,15 @@ void ExperimentWindow::build_actions() {
   into[Menu::File].append(recent_menu_->menuAction());
   rebuild_recent();
 
+  // While the queue holds: the pane says when they apply.
+  resume_held_ = add(run, tr("Resume"), [this] { pane_->request_resume(); });
+  skip_held_ = add(run, tr("Skip Held Run..."), [this] { pane_->request_skip(); });
+  const auto follow_hold = [this] {
+    resume_held_->setEnabled(pane_->resume_enabled());
+    skip_held_->setEnabled(pane_->skip_enabled());
+  };
+  follow_hold();
+  connect(pane_, &ExecutorPane::holdChanged, this, follow_hold);
   auto& menus = MenuHub::instance();
   for (const auto& [menu, actions] : into) menus.contribute(this, menu, actions, MenuHub::Scope::Window);
   // The test notification is apart from the run controls.

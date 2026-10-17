@@ -6,7 +6,7 @@
 //   state, runs done n/N, progress over the runnable rows
 //   current run: identifier, run state, block, counts bar
 //   the executor's current wait (reason and duration)
-//   Start / Stop / Cancel / Abort / Truncate
+//   Start / Stop / Cancel / Abort / Truncate / Resume / Skip Held Run
 //   conditionals that tripped; a table of events, each with the time it was
 //   seen on the line's clock: one row per run start/finish, thing a run
 //   said (a script's info(), whether a hole was centered), queue edit,
@@ -15,7 +15,13 @@
 //
 // Start is the window's to carry out (it knows the queue and the selected
 // row): the pane emits startRequested. The other controls go straight to the
-// bridge. Cancel and Abort ask first (default No).
+// bridge. Cancel, Abort and Skip Held Run ask first (default No).
+//
+// While the queue holds (spec 4.6) the events say why, for which links and
+// until when (the hold limit, on the line's clock), and Resume and Skip Held
+// Run are enabled: Resume tries the held row now, without waiting for its
+// links to settle; Skip Held Run drops the held row, only when it has not
+// started (a run that failed past its point of no return is not held for).
 
 #include <cstddef>
 #include <functional>
@@ -65,8 +71,13 @@ class ExecutorPane : public QWidget {
   void request_cancel();
   void request_abort();
   void request_truncate();
+  void request_resume();
+  void request_skip();
   bool start_enabled() const;
   bool stop_enabled() const;
+  bool resume_enabled() const;
+  bool skip_enabled() const;
+  bool holding() const noexcept { return holding_; }
 
   // For tests.
   QString state_text() const;
@@ -98,16 +109,24 @@ class ExecutorPane : public QWidget {
 
  signals:
   void startRequested();
+  // The queue began or stopped holding, or what it holds for changed:
+  // resume_enabled() and skip_enabled() may have changed.
+  void holdChanged();
 
  private:
   void add_event(const QString& line);
   void trim_events();
   void update_buttons();
   void update_progress();
+  void set_holding(bool holding, std::optional<std::size_t> row = std::nullopt);
+  QString wall_text(TimePoint at);  // `at` on the line's clock, as the time of day
 
   ExperimentBridge& bridge_;
   Confirm confirm_;
   bool runnable_ = false, running_ = false;
+  bool holding_ = false;
+  std::optional<std::size_t> held_row_;  // the row held back, when it has not started
+  bool skipping_ = false;                // a skip was asked of this hold: leaving it is not "resumed"
   int rows_ = 0, done_ = 0;
   int event_limit_ = kEventLimit;
   QString run_, run_state_, block_;
@@ -128,6 +147,8 @@ class ExecutorPane : public QWidget {
   QPushButton* cancel_;
   QPushButton* abort_;
   QPushButton* truncate_;
+  QPushButton* resume_;
+  QPushButton* skip_;
   QListWidget* conditionals_;
   QTableWidget* events_;
   TimelineModel timeline_;

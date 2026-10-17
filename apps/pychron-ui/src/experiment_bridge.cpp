@@ -39,6 +39,7 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<exec::RunStarted>(&ExperimentBridge::runStarted);
   relay<exec::RunFinished>(&ExperimentBridge::runFinished);
   relay<exec::ExecutorWaiting>(&ExperimentBridge::executorWaiting);
+  relay<exec::ExecutorHolding>(&ExperimentBridge::executorHolding);
   relay<exec::QueueEdited>(&ExperimentBridge::queueEdited);
   relay<exec::QueueFrontier>(&ExperimentBridge::queueFrontier);
   relay<experiment::lab::NotificationSent>(&ExperimentBridge::notificationSent);
@@ -49,6 +50,7 @@ ExperimentBridge::ExperimentBridge(experiment::lab::LabSession& session, SignalB
   relay<meas::BlockStarted>(&ExperimentBridge::blockStarted);
   relay<meas::BlockFinished>(&ExperimentBridge::blockFinished);
   relay<meas::CountsProgress>(&ExperimentBridge::countsProgress);
+  relay<meas::MeasurementGap>(&ExperimentBridge::measurementGap);
   relay<meas::ConditionalTripped>(&ExperimentBridge::conditionalTripped);
   relay<jobs::PeakCenterDone>(&ExperimentBridge::peakCenterDone);
   relay<jobs::PeakCenterTryStarted>(&ExperimentBridge::peakCenterTryStarted);
@@ -93,6 +95,8 @@ void ExperimentBridge::stop() { session_.stop(); }
 void ExperimentBridge::cancel() { session_.cancel(); }
 void ExperimentBridge::abort() { session_.abort(); }
 void ExperimentBridge::truncate(bool quick) { session_.truncate(quick); }
+void ExperimentBridge::resume() { session_.resume(); }
+Result<void> ExperimentBridge::skip() { return session_.skip(); }
 bool ExperimentBridge::running() const { return session_.running(); }
 
 void ExperimentBridge::flush_series() {

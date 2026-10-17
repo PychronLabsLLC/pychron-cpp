@@ -155,7 +155,9 @@ class QueueTableModel : public QAbstractTableModel {
   void on_run_started(const experiment::executor::RunStarted& e);
   void on_run_state(const experiment::run::RunStateChanged& e);
   void on_run_finished(const experiment::executor::RunFinished& e);
-  QString status_text(int row) const;  // "" when the row has not run
+  // "" when the row has not run; the run's state, then " (truncated)" for a
+  // truncated run and " (saved)" for a failed run whose record was saved.
+  QString status_text(int row) const;
   std::optional<experiment::run::RunState> status(int row) const;
 
   static QColor state_color(experiment::run::RunState state);
@@ -179,6 +181,7 @@ class QueueTableModel : public QAbstractTableModel {
     std::string run_id;
     experiment::run::RunState state = experiment::run::RunState::Pending;
     bool finished = false, truncated = false;
+    bool saved_failed = false;  // the run failed and its record, flagged failed, was saved (spec 4.5)
     int aliquot = 0;
     std::string step;
     QString error;

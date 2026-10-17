@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 #include <QFrame>
 #include <QGridLayout>
@@ -55,6 +56,8 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
       cancel_(new QPushButton(tr("Cancel"))),
       abort_(new QPushButton(tr("Abort"))),
       truncate_(new QPushButton(tr("Truncate"))),
+      resume_(new QPushButton(tr("Resume"))),
+      skip_(new QPushButton(tr("Skip Held Run"))),
       conditionals_(new QListWidget),
       events_(new QTableWidget),
       timeline_view_(new TimelineView(timeline_)) {
@@ -70,8 +73,10 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   cancel_->setToolTip(tr("Cancel the current run and end the queue"));
   abort_->setToolTip(tr("Abort the current run immediately and end the queue"));
   truncate_->setToolTip(tr("End the current measurement block early"));
+  resume_->setToolTip(tr("The queue holds: try the held run now, without waiting for its links to settle"));
+  skip_->setToolTip(tr("The queue holds for a run that has not started: drop it and go on with the next row"));
   auto* buttons = new QHBoxLayout;
-  for (auto* b : {start_, stop_, cancel_, abort_, truncate_}) buttons->addWidget(b);
+  for (auto* b : {start_, stop_, cancel_, abort_, truncate_, resume_, skip_}) buttons->addWidget(b);
   buttons->addStretch(1);
 
   auto* status = new QGridLayout;
@@ -145,6 +150,8 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   connect(cancel_, &QPushButton::clicked, this, [this] { request_cancel(); });
   connect(abort_, &QPushButton::clicked, this, [this] { request_abort(); });
   connect(truncate_, &QPushButton::clicked, this, [this] { request_truncate(); });
+  connect(resume_, &QPushButton::clicked, this, [this] { request_resume(); });
+  connect(skip_, &QPushButton::clicked, this, [this] { request_skip(); });
 
   connect(&bridge_, &ExperimentBridge::notificationSent, this, [this](const experiment::lab::NotificationSent& e) {
     if (e.ok) add_event(tr("notified %1: %2").arg(q(e.channel), q(e.subject)));
@@ -154,6 +161,26 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
   connect(&bridge_, &ExperimentBridge::executorStateChanged, this, [this](const exec::ExecutorStateChanged& e) {
     state_->setText(q(exec::to_string(e.to)));
     if (e.to != exec::ExecutorState::Preparing) wait_->clear();
+    // Leaving a hold for a skipped row is not a resume: the skip was said.
+    if (e.from == exec::ExecutorState::Holding && e.to == exec::ExecutorState::Running && !std::exchange(skipping_, false))
+      add_event(tr("resumed"));
+    if (e.to == exec::ExecutorState::Holding) set_holding(true);  // ExecutorHolding follows with the row
+    else if (holding_) set_holding(false);
+  });
+  connect(&bridge_, &ExperimentBridge::executorHolding, this, [this](const exec::ExecutorHolding& e) {
+    QString line = tr("holding: %1").arg(q(e.reason));
+    if (!e.links.empty()) {
+      QStringList links;
+      for (const auto& l : e.links) links.append(q(l));
+      line += QStringLiteral(" (%1)").arg(links.join(QStringLiteral(", ")));
+    }
+    add_event(line + tr(" until %1").arg(wall_text(e.until)));
+    wait_->setText(tr("holding: %1").arg(q(e.reason)));
+    set_holding(true, e.row);
+  });
+  connect(&bridge_, &ExperimentBridge::measurementGap, this, [this](const meas::MeasurementGap& e) {
+    const auto it = identifiers_.find(e.run_id);
+    add_event(QStringLiteral("  %1: %2").arg(it == identifiers_.end() ? run_ : it->second, q(meas::describe(e))));
   });
   timeline_clock_.setInterval(250);
   connect(&timeline_clock_, &QTimer::timeout, this, [this] {
@@ -216,6 +243,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
                        .arg(s.aliquot)
                        .arg(q(s.step), q(experiment::run::to_string(s.state)));
     if (s.truncated) line += tr(" (truncated)");
+    if (s.status == experiment::record::RecordStatus::Failed && !s.save_error) line += tr(" (saved)");
     if (s.error) line += QStringLiteral(": ") + q(*s.error);
     add_event(line);
     ++done_;
@@ -242,6 +270,7 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     add_event(tr("queue %1%2").arg(q(exec::to_string(r.end)), r.reason.empty() ? QString() : QStringLiteral(": ") + q(r.reason)));
     wait_->clear();
     state_->setText(q(exec::to_string(exec::ExecutorState::Idle)));
+    set_holding(false);
     const auto pending = bridge_.session().pending_saves();
     spool_->setText(pending_text(pending, bridge_.session().last_save_error()));
     spool_->setVisible(pending > 0);
@@ -320,8 +349,52 @@ void ExecutorPane::request_truncate() {
   add_event(tr("truncate requested"));
 }
 
+void ExecutorPane::request_resume() {
+  if (!resume_enabled()) return;
+  bridge_.resume();
+  add_event(tr("resume requested"));
+}
+
+void ExecutorPane::request_skip() {
+  if (!skip_enabled()) return;
+  const std::size_t row = *held_row_;
+  if (!confirm_(tr("Skip Held Run"), tr("Drop row %1, which the queue holds for, and go on with the next row?")
+                                         .arg(static_cast<qulonglong>(row))))
+    return;
+  // The question's own event loop may have heard the hold end, or a hold for another row.
+  if (!skip_enabled() || *held_row_ != row) {
+    add_event(tr("skip not asked: the queue no longer holds for row %1").arg(static_cast<qulonglong>(row)));
+    return;
+  }
+  if (auto r = bridge_.skip(); !r) {
+    add_event(tr("skip refused: %1").arg(q(r.error().what)));
+    return;
+  }
+  skipping_ = true;
+  add_event(tr("skip requested: row %1 is dropped").arg(static_cast<qulonglong>(row)));
+}
+
 bool ExecutorPane::start_enabled() const { return !running_ && runnable_; }
 bool ExecutorPane::stop_enabled() const { return running_; }
+bool ExecutorPane::resume_enabled() const { return running_ && holding_; }
+bool ExecutorPane::skip_enabled() const { return running_ && holding_ && held_row_.has_value(); }
+
+void ExecutorPane::set_holding(bool holding, std::optional<std::size_t> row) {
+  if (!holding) skipping_ = false;
+  holding_ = holding;
+  held_row_ = holding ? row : std::nullopt;
+  update_buttons();
+  emit holdChanged();
+}
+
+QString ExecutorPane::wall_text(TimePoint at) {
+  using namespace std::chrono;
+  auto& session = bridge_.session();
+  // The line's clock, as add_event: a simulated session's hold ends in simulated time.
+  const auto wall = session.wall_now() + duration_cast<WallTime::duration>(at - session.now());
+  return QDateTime::fromMSecsSinceEpoch(duration_cast<milliseconds>(wall.time_since_epoch()).count())
+      .toString(QStringLiteral("HH:mm:ss"));
+}
 
 void ExecutorPane::add_event(const QString& line) {
   using namespace std::chrono;
@@ -353,6 +426,8 @@ void ExecutorPane::set_event_limit(int lines) {
 void ExecutorPane::update_buttons() {
   start_->setEnabled(start_enabled());
   for (auto* b : {stop_, cancel_, abort_, truncate_}) b->setEnabled(running_);
+  resume_->setEnabled(resume_enabled());
+  skip_->setEnabled(skip_enabled());
 }
 
 void ExecutorPane::update_progress() {

@@ -93,6 +93,9 @@ class ExperimentWindow : public QMainWindow {
   bool executed_collapsed() const noexcept { return executed_collapsed_; }
   void set_executed_collapsed(bool collapsed);
   ExecutorPane* executor() const noexcept { return pane_; }
+  // Executor > Resume and Skip Held Run..., enabled only while the queue holds.
+  QAction* resume_held_action() const noexcept { return resume_held_; }
+  QAction* skip_held_action() const noexcept { return skip_held_; }
   EvolutionsView* evolutions() const noexcept { return evolutions_; }
   RunFactoryPanel* factory() const noexcept { return factory_; }
   MeasurementPanel* measurement() const noexcept { return measurement_; }
@@ -287,8 +290,10 @@ class ExperimentWindow : public QMainWindow {
   QAction* save_ = nullptr;
   QAction* save_as_ = nullptr;
   QAction* revalidate_ = nullptr;
-  QAction* resume_ = nullptr;
+  QAction* resume_ = nullptr;       // Queue > Resume...
   QMenu* recent_menu_ = nullptr;
+  QAction* resume_held_ = nullptr;  // Executor > Resume
+  QAction* skip_held_ = nullptr;    // Executor > Skip Held Run...
   std::vector<QAction*> row_actions_;
 };
 

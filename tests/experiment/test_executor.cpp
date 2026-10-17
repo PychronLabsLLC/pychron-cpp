@@ -1500,6 +1500,9 @@ TEST_F(ExecutorHolding_, ALinkDownBeforeARunHoldsThenStartsThatRunOnce) {
   ASSERT_EQ(held.size(), 1u);
   EXPECT_EQ(held[0].row, std::optional<std::size_t>(1));
   EXPECT_EQ(held[0].links, std::vector<std::string>{"valve_bus"});
+  // Named once, though LinksUp and the executor's own look at the links both find it down.
+  EXPECT_NE(held[0].reason.find("valve_bus"), std::string::npos) << held[0].reason;
+  EXPECT_EQ(held[0].reason.find("valve_bus"), held[0].reason.rfind("valve_bus")) << held[0].reason;
   EXPECT_EQ(held[0].kind, HoldReason::Link);
   EXPECT_EQ(held[0].until - held[0].since, 2h);
   EXPECT_TRUE(h.log.went(ExecutorState::Running, ExecutorState::Holding));

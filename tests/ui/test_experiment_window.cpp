@@ -51,6 +51,8 @@
 #include "pychron/experiment/model/queue_toml.hpp"
 #include "pychron/sim/gas.hpp"
 #include "pychron/sim/sim_system.hpp"
+#include "pychron/transport/sim_transport.hpp"
+#include "pychron/transport/trace_recorder.hpp"
 
 using pychron::experiment::run::RunState;
 using pychron::ui::ExperimentBridge;
@@ -208,6 +210,32 @@ class TestExperimentWindow : public QObject {
     for (const auto& l : lines)
       if (l.contains(text)) return true;
     return false;
+  }
+  static int count(const QStringList& lines, const QString& text) {
+    return static_cast<int>(std::count_if(lines.begin(), lines.end(), [&](const QString& l) { return l.contains(text); }));
+  }
+
+  // A held queue (spec 4.6): the session made again with a settle of an hour,
+  // so a link that is back does not end the hold of itself while the test
+  // looks, and the spectrometer's first link closed and kept down, so the
+  // first run is held for. Returns that link's simulated transport.
+  static pychron::SimTransport* hold_the_first_run(pychron::ui::test::SimLab& sim) {
+    namespace lab = pychron::experiment::lab;
+    sim.session.reset();
+    sim.lab.executor.hold.settle_s = 3600;
+    sim.lab.executor.hold.limit_s = 30.0 * 24 * 3600;  // at 400x the default 2 h is 18 s: a slow runner could reach it
+    sim.session = std::make_unique<lab::LabSession>(
+        sim.lab, lab::SessionHardware{*sim.line, sim.spec.get(), sim.scan.get(), {}},
+        lab::SessionOptions{sim.dir / "data", {}, {}, nullptr});
+    const auto links = sim.spec->links();
+    if (links.empty()) return nullptr;
+    pychron::Transport* t = &links.front()->transport();
+    if (auto* recorder = dynamic_cast<pychron::TraceRecorder*>(t)) t = &recorder->inner();
+    auto* down = dynamic_cast<pychron::SimTransport*>(t);
+    if (down == nullptr) return nullptr;
+    down->set_down(true);
+    links.front()->transport().close();
+    return down;
   }
 
  private slots:
@@ -1864,6 +1892,119 @@ class TestExperimentWindow : public QObject {
     QVERIFY(row_set);
     QCOMPARE(window.model().queue().runs[2].conditionals.size(), std::size_t{1});
     QTRY_VERIFY(window.queue_conditionals_combo()->isEnabled());
+  }
+
+  // ---- a held queue -------------------------------------------------------------
+
+  // Resume and Skip Held Run are enabled only while the queue holds; the
+  // health bar says why and counts down; Resume ends the hold.
+  void aHeldQueueIsShownAndResumeEndsTheHold() {
+    pychron::ui::test::SimLab sim;
+    pychron::SimTransport* down = hold_the_first_run(sim);
+    QVERIFY(down != nullptr);
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    pychron::ui::MainWindow main(*sim.line);
+    main.set_experiment(&bridge, true, queue_file(sim), [this] { return settings(); });
+    main.experiment_action()->trigger();
+    ExperimentWindow* window = main.experiment_window();
+    QVERIFY(window != nullptr);
+    window->set_confirm([](const QString&, const QString&) { return true; });
+    auto* pane = window->executor();
+    QVERIFY(!window->resume_held_action()->isEnabled());
+    QVERIFY(!window->skip_held_action()->isEnabled());
+    QVERIFY(!main.health_bar()->holding());
+
+    window->start();
+    QTRY_VERIFY_WITH_TIMEOUT(window->skip_held_action()->isEnabled(), 30000);
+    QVERIFY(pane->holding());
+    QVERIFY(window->resume_held_action()->isEnabled());  // the held row has not started: both
+    QVERIFY(!window->model().status(0).has_value());
+    QVERIFY(main.health_bar()->holding());
+    const QString name = QString::fromStdString(sim.spec->links().front()->transport().name());
+    QVERIFY2(main.health_bar()->hold_text().startsWith(QStringLiteral("holding: ")), qPrintable(main.health_bar()->hold_text()));
+    // The link is named once in the reason.
+    QCOMPARE(main.health_bar()->hold_text().count(name), 1);
+    QVERIFY2(main.health_bar()->hold_text().contains(QStringLiteral(" · ends in ")), qPrintable(main.health_bar()->hold_text()));
+    QVERIFY(contains(pane->events(), QStringLiteral("holding: ")));
+    QVERIFY(contains(pane->events(), QStringLiteral("(%1) until ").arg(name)));
+
+    // Back, and settling for an hour: Resume starts the held run now.
+    down->set_down(false);
+    QTRY_VERIFY_WITH_TIMEOUT(sim.spec->links().front()->transport().health().state != pychron::HealthState::Down, 30000);
+    QVERIFY(pane->holding());
+    window->resume_held_action()->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->holding(), 30000);
+    QVERIFY(!window->resume_held_action()->isEnabled());
+    QVERIFY(!window->skip_held_action()->isEnabled());
+    QVERIFY(!main.health_bar()->holding());
+    QVERIFY(contains(pane->events(), QStringLiteral("resume requested")));
+    QVERIFY(contains(pane->events(), QStringLiteral("resumed")));
+    QTRY_VERIFY_WITH_TIMEOUT(window->model().status(0).has_value(), 30000);
+
+    pane->request_abort();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 30000);
+    QVERIFY(!window->resume_held_action()->isEnabled());
+    main.set_experiment(nullptr, false);
+  }
+
+  // Skip Held Run drops the row held for; with the link still down, the
+  // queue holds again for the next one. Resume while down holds again too.
+  void skipDropsTheHeldRowAndTheQueueHoldsForTheNext() {
+    pychron::ui::test::SimLab sim;
+    QVERIFY(hold_the_first_run(sim) != nullptr);
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    int asked = 0;
+    window.set_confirm([&](const QString&, const QString&) {
+      ++asked;
+      return true;
+    });
+    auto* pane = window.executor();
+    pane->request_skip();  // nothing held: not asked
+    QCOMPARE(asked, 0);
+    window.start();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->skip_enabled(), 30000);
+    pane->request_skip();  // the window is not shown: its menu's actions are not live, the pane's buttons are
+    QCOMPARE(asked, 1);
+    QVERIFY(contains(pane->events(), QStringLiteral("skip requested: row 0 is dropped")));
+    QTRY_VERIFY_WITH_TIMEOUT(count(pane->events(), QStringLiteral("holding: ")) == 2, 30000);
+    QVERIFY(!contains(pane->events(), QStringLiteral("resumed")));  // a skip is not a resume
+    QTRY_VERIFY_WITH_TIMEOUT(pane->skip_enabled(), 30000);
+    QVERIFY(!window.model().status(0).has_value());
+    QVERIFY(!window.model().status(1).has_value());
+
+    pane->request_resume();  // the link is still down: it holds again
+    QTRY_VERIFY_WITH_TIMEOUT(count(pane->events(), QStringLiteral("holding: ")) == 3, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(pane->resume_enabled(), 30000);
+
+    pane->request_abort();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 30000);
+    QVERIFY(!pane->resume_enabled());
+    QVERIFY(!pane->skip_enabled());
+  }
+
+  // The countdown is to the hold limit, on the clock the bar is given (the
+  // line's: CoreBridge::now), at two instants and past the limit.
+  void theHoldCountsDownOnTheLinesClock() {
+    using namespace std::chrono_literals;
+    pychron::VirtualClock clock;
+    const pychron::Clock::Participant self(clock, "test");
+    pychron::ui::HealthBar bar(nullptr, [&clock] { return clock.now(); });
+    QVERIFY(!bar.holding());
+    QVERIFY(bar.hold_text().isEmpty());
+    bar.show_hold(QStringLiteral("link down: spectrometer"), clock.now() + 2h);
+    QCOMPARE(bar.hold_text(), QStringLiteral("holding: link down: spectrometer · ends in 2:00:00"));
+    clock.sleep_for(90s);
+    bar.refresh();
+    QCOMPARE(bar.hold_text(), QStringLiteral("holding: link down: spectrometer · ends in 1:58:30"));
+    QCOMPARE(bar.hold_text_at(clock.now() + 118min + 29s), QStringLiteral("holding: link down: spectrometer · ends in 0:00:01"));
+    clock.sleep_for(3h);
+    bar.refresh();
+    QCOMPARE(bar.hold_text(), QStringLiteral("holding: link down: spectrometer · ends in 0:00:00"));
+    bar.clear_hold();
+    QVERIFY(!bar.holding());
+    QVERIFY(bar.hold_text().isEmpty());
   }
 
   void mainWindowOffersTheExperimentWindow() {

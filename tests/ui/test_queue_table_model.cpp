@@ -610,6 +610,15 @@ class TestQueueTableModel : public QObject {
     m->on_run_finished(exec::RunFinished{s});
     QCOMPARE(cell(*m, 2, QueueTableModel::Status), QStringLiteral("failed"));
     QVERIFY(m->data(m->index(2, QueueTableModel::Status), Qt::ToolTipRole).toString().contains(QStringLiteral("no reading")));
+    // Failed past its point of no return: what it measured was saved, in a record flagged failed.
+    s.status = pychron::experiment::record::RecordStatus::Failed;
+    m->on_run_finished(exec::RunFinished{s});
+    QCOMPARE(cell(*m, 2, QueueTableModel::Status), QStringLiteral("failed (saved)"));
+    s.save_error = true;  // and kept in the spool: not said as saved
+    m->on_run_finished(exec::RunFinished{s});
+    QCOMPARE(cell(*m, 2, QueueTableModel::Status), QStringLiteral("failed"));
+    s.save_error = false;
+    s.status = pychron::experiment::record::RecordStatus::Complete;
 
     // A queue snapshot from the executor keeps the statuses; a new queue drops them.
     auto spec = m->queue();

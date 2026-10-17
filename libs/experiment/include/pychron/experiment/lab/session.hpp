@@ -106,6 +106,12 @@ class LabSession {
   void cancel();
   void abort();
   void truncate(bool quick = false);
+  // While the queue holds (Executor::resume, Executor::skip): try the held
+  // row now, without waiting for its links to settle; or drop the held row,
+  // which has not started, and go on. skip() is refused (Config) when no
+  // queue holds or its run has started.
+  void resume();
+  Result<void> skip();
   // Replaces the running queue's runs with `queue.runs` (Executor::edit:
   // rows the executor has reached must be unchanged, `base` is the version
   // the edit was made against). The whole queue must check against the lab,

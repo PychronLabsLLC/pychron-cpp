@@ -224,7 +224,8 @@ class MainWindow : public QMainWindow {
   std::filesystem::path rise_rate_file_;
   QAction* experiment_action_;
   ExperimentBridge* experiment_ = nullptr;
-  std::array<QMetaObject::Connection, 2> experiment_refreshes_;  // the bridge's signals to refresh_data()
+  // The bridge's signals to refresh_data() and to the health bar's hold chip.
+  std::array<QMetaObject::Connection, 5> experiment_refreshes_;
   bool experiment_simulation_ = false;
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;

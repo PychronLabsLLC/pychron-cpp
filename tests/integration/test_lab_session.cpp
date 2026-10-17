@@ -303,6 +303,33 @@ TEST_F(LabSessionTest, ALinkTheRunNeedsIsHeldForBeforeItStarts) {
   EXPECT_EQ(held[0].row, std::optional<std::size_t>(0));
 }
 
+// Resume and skip reach a held queue's executor; without a queue, resume
+// does nothing and skip is refused.
+TEST_F(LabSessionTest, AHeldRowIsSkippedThroughTheSession) {
+  session_->resume();
+  const auto idle = session_->skip();
+  ASSERT_FALSE(idle);
+  EXPECT_EQ(idle.error().kind, ErrorKind::Config);
+
+  auto links = spec_->links();
+  ASSERT_FALSE(links.empty());
+  links.front()->transport().close();  // nothing reopens it before the first run's check
+  std::atomic<int> held{0};
+  auto sub = line_->bus().subscribe<executor::ExecutorHolding>([&](const executor::ExecutorHolding& h) {
+    if (h.row == std::optional<std::size_t>(0) && held.fetch_add(1) == 0) {
+      EXPECT_TRUE(session_->skip());
+    }
+  });
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  EXPECT_EQ(held.load(), 1);
+  // Row 0 dropped before it started: the other two ran.
+  ASSERT_EQ(result->runs.size(), 2u);
+  EXPECT_EQ(result->runs[0].row, 1u);
+}
+
 TEST_F(LabSessionTest, AQueueThePersisterRefusesIsNotStarted) {
   session_.reset();
   persister_ = std::make_unique<RecordingPersister>(dir_ / "elsewhere",

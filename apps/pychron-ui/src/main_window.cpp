@@ -389,7 +389,21 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
         connect(bridge, &ExperimentBridge::runFinished, this, &MainWindow::refresh_data, Qt::QueuedConnection);
     experiment_refreshes_[1] =
         connect(bridge, &ExperimentBridge::queueStarted, this, &MainWindow::refresh_data, Qt::QueuedConnection);
+    // A held queue is said in the health bar, with the time left before the
+    // hold limit ends it, until the executor moves on or the queue ends.
+    namespace exec = experiment::executor;
+    experiment_refreshes_[2] = connect(bridge, &ExperimentBridge::executorHolding, health_,
+                                       [this](const exec::ExecutorHolding& e) {
+                                         health_->show_hold(QString::fromStdString(e.reason), e.until);
+                                       });
+    experiment_refreshes_[3] = connect(bridge, &ExperimentBridge::executorStateChanged, health_,
+                                       [this](const exec::ExecutorStateChanged& e) {
+                                         if (e.to != exec::ExecutorState::Holding) health_->clear_hold();
+                                       });
+    experiment_refreshes_[4] = connect(bridge, &ExperimentBridge::queueEnded, health_,
+                                       [this](const experiment::lab::QueueEnded&) { health_->clear_hold(); });
   }
+  health_->clear_hold();  // a hold of the old bridge's queue
   experiment_simulation_ = simulation;
   experiment_queue_ = std::move(queue);
   experiment_settings_ = std::move(settings);

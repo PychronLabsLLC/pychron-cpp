@@ -16,6 +16,9 @@
 
 #include "elctl_fixture.hpp"
 #include "exp.hpp"
+#include "pychron/core/events.hpp"
+#include "pychron/experiment/executor/executor.hpp"
+#include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/scripting/script_host.hpp"
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
@@ -299,6 +302,37 @@ TEST(ElctlExpInterrupts, TheStrongestOfThoseThatArriveTogetherIsTheOneAsked) {
   handled = 0;
   for (int count = 1; count <= 3; ++count) elctl::answer_interrupts(handled, count, say, queue);
   EXPECT_EQ(asked, (std::vector<std::string>{"stop", "cancel", "abort"}));
+}
+
+// What `exp run` prints of an outage: the hold with its links and the time
+// the hold limit ends the queue, a gap in the readings, a link back.
+TEST(ElctlExpLines, AHoldAGapAndAReconnectAreOneLineEach) {
+  using namespace std::chrono_literals;
+  pychron::experiment::executor::ExecutorHolding hold;
+  hold.reason = "link down: spec, valves";
+  hold.links = {"spec", "valves"};
+  // 2026-10-16 14:05:09 UTC.
+  const std::chrono::system_clock::time_point until =
+      std::chrono::sys_days{std::chrono::year{2026} / 10 / 16} + 14h + 5min + 9s + 400ms;
+  EXPECT_EQ(elctl::holding_line(hold, until), "holding: link down: spec, valves (spec, valves) until 2026-10-16 14:05:09 UTC");
+  hold.links.clear();
+  hold.reason = "pre-run check 'spool': full";
+  EXPECT_EQ(elctl::holding_line(hold, until), "holding: pre-run check 'spool': full until 2026-10-16 14:05:09 UTC");
+
+  pychron::experiment::measurement::MeasurementGap gap;
+  gap.block = pychron::experiment::measurement::Block::Main;
+  gap.from = 30.0;
+  gap.to = 51.2;
+  EXPECT_EQ(elctl::gap_line(gap), "gap in main: 21 s");
+  gap.to = 30.4;
+  EXPECT_EQ(elctl::gap_line(gap), "gap in main: 0.4 s");
+
+  pychron::LinkReconnected back;
+  back.transport = "spec";
+  back.down_for = std::chrono::duration_cast<pychron::Duration>(12.6s);
+  EXPECT_EQ(elctl::reconnected_line(back), "reconnected spec after 13 s");
+  back.down_for = std::chrono::duration_cast<pychron::Duration>(1500ms);
+  EXPECT_EQ(elctl::reconnected_line(back), "reconnected spec after 1.5 s");
 }
 
 // A run that gives up after the simulated beam is in place leaves nothing

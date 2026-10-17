@@ -518,9 +518,14 @@ std::optional<CheckFailure> Executor::ready(const RunSpec& next) {
     wait_for("pre-run check '" + check->name() + "': " + r->error.what, r->links);
   }
   if (ctx_.links) {
+    // A link a check has already named (LinksUp) is not said twice.
+    const auto named = [&](const std::string& name) {
+      return waiting && std::find(waiting->links.begin(), waiting->links.end(), name) != waiting->links.end();
+    };
     std::vector<std::string> down;
     for (Link* l : ctx_.links(next))
-      if (l->transport().health().state == HealthState::Down) down.push_back(l->transport().name());
+      if (l->transport().health().state == HealthState::Down && !named(l->transport().name()))
+        down.push_back(l->transport().name());
     if (!down.empty()) {
       std::string names;
       for (const auto& d : down) names += (names.empty() ? "" : ", ") + d;

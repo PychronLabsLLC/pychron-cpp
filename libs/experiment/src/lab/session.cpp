@@ -319,6 +319,15 @@ void LabSession::truncate(bool quick) {
   if (auto ex = active()) ex->truncate(quick);
 }
 
+void LabSession::resume() {
+  if (auto ex = active()) ex->resume();
+}
+
+Result<void> LabSession::skip() {
+  if (auto ex = active()) return ex->skip();
+  return fail(ErrorKind::Config, "no queue is running");
+}
+
 std::shared_ptr<executor::Executor> LabSession::active() const {
   std::lock_guard lock(mutex_);
   return running_ ? executor_ : nullptr;
