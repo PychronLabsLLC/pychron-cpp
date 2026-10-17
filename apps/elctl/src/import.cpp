@@ -54,6 +54,7 @@ constexpr const char* kHelp =
     "                            stored unlinked and stays unlinked\n"
     "\n"
     "  run [--source <id|name> | --all] [--batch <n>] [--limit <n>] [--replay] [--dry-run]\n"
+    "      [--no-derive]\n"
     "        Import, resuming where the last run stopped. Without --source: every source,\n"
     "        the database dump first, then meta repositories, repositories of reference\n"
     "        runs, and the other project repositories by url. Ctrl-C finishes the batch\n"
@@ -64,6 +65,11 @@ constexpr const char* kHelp =
     "                            is left alone, analyses refused earlier (unknown_analysis)\n"
     "                            are imported now that the catalog has their identifier\n"
     "        --dry-run           write nothing, fetch nothing; print what a run would write\n"
+    "        --no-derive         leave the cache of ages alone. Without it, a run that\n"
+    "                            walks to the end (not one stopped by --limit or Ctrl-C)\n"
+    "                            then does what 'elctl db derive' does and prints its\n"
+    "                            summary line; a failure there is reported and does not\n"
+    "                            change the exit code\n"
     "\n"
     "  status\n"
     "        One line per source: id kind name status done/total head\n"
@@ -221,7 +227,7 @@ int import_command(const std::vector<std::string>& args, Io io) {
     spec.switches = {"--catalog-from-repos", "--reference-runs"};
   } else if (verb == "run") {
     spec.with_value.insert(spec.with_value.end(), {"--source", "--batch", "--limit"});
-    spec.switches = {"--all", "--replay", "--dry-run"};
+    spec.switches = {"--all", "--replay", "--dry-run", "--no-derive"};
   } else if (verb == "conflicts") {
     spec.with_value.insert(spec.with_value.end(), {"--source", "--kind"});
     spec.switches = {"--all", "--json"};
@@ -239,7 +245,7 @@ int import_command(const std::vector<std::string>& args, Io io) {
   // No exception leaves a library, but std::filesystem and the standard
   // containers used here can throw: a fatal error like any other.
   try {
-    Context ctx{io, {}, nullptr};
+    Context ctx{io, {}, nullptr, *db};
     const auto cache = flags->get("--cache");
     ctx.cache = cache ? fs::path(*cache) : default_cache_dir();
 

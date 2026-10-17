@@ -117,6 +117,7 @@ struct Context {
   Io io;
   fs::path cache;
   std::unique_ptr<P::IStore> store;
+  std::string url;  // of `store`: run's derive pass opens its own source on it
 
   fs::path mirrors() const { return cache / "mirrors"; }
   fs::path scratch() const { return cache / "scratch"; }

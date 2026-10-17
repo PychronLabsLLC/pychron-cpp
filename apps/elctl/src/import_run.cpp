@@ -7,8 +7,11 @@
 #include <ostream>
 #include <utility>
 
+#include "derive_summary.hpp"
 #include "import.hpp"
 #include "import_impl.hpp"
+#include "pychron/processing/derive.hpp"
+#include "pychron/processing/store_source.hpp"
 
 // Last, so that its macros reach nothing but this file.
 #ifdef _WIN32
@@ -104,6 +107,27 @@ const char* units_of(P::ImportSourceKind kind) { return kind == P::ImportSourceK
 
 void print_paused(Io io, const std::string& name, int done, int total) {
   io.out << "paused: " << name << " at " << done << '/' << total << '\n';
+}
+
+// The derive pass that follows a walk to the end (age cache spec 4.5, writer
+// 3): what `elctl db derive --quiet` does, on the same database. Here, not in
+// libs/ingest, so the importer stays free of reduction. Its failure is said
+// on stderr and is no verdict on the import: the caller's exit code stands.
+void derive_after_import(const Context& ctx) {
+  namespace pp = pychron::processing;
+  auto source = pp::StoreSource::open(P::StoreConfig{ctx.url, false});
+  if (!source) {
+    ctx.io.err << "elctl import: derive: " << one_line(source.error().what) << '\n';
+    return;
+  }
+  auto stats = pp::derive_ages(**source, pp::DeriveOptions{},
+                               [](const pp::DeriveStats&) { return !g_interrupted.load(); });
+  if (!stats) {
+    ctx.io.err << "elctl import: derive: " << one_line(stats.error().what) << '\n';
+    return;
+  }
+  for (const auto& f : stats->failures) ctx.io.err << "elctl import: derive: " << f << '\n';
+  ctx.io.out << "derived: " << derive_counts(*stats) << '\n';
 }
 
 }  // namespace
@@ -225,6 +249,9 @@ int import_run(Context& ctx, const Flags& flags) {
                  << source.name << '\n';
     blocking = blocking || pending->blocking_total > 0;
   }
+  // The walk ended with nothing left to do: fill the cache of ages. A run
+  // stopped by --limit or Ctrl-C has more to import, and its next run derives.
+  if (!dry_run && !paused && !g_interrupted.load() && !flags.has("--no-derive")) derive_after_import(ctx);
   if (unusable) return kUsage;
   // A paused run is not a verdict on what it has imported so far.
   return blocking && !paused ? kFailed : kOk;

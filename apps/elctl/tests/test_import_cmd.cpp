@@ -496,6 +496,73 @@ TEST_F(ImportCmd, RunLimitPausesAndResumes) {
   EXPECT_EQ(import({"verify"}).code, elctl::kOk);
 }
 
+// The cache of ages (age cache spec 4.5, writer 3): a run that walks to the
+// end fills it, as `elctl db derive` would; --no-derive and a run cut short
+// by --limit leave it alone.
+class ImportDerive : public ImportCmd {
+ protected:
+  // Whether the fixture analysis has a cached age (a row named age, null or not).
+  bool cached() const {
+    auto s = store();
+    if (!s) return false;
+    const std::vector<Uuid> analyses{kE};
+    auto found = s->derived_fingerprints(analyses);
+    EXPECT_TRUE(found) << (found ? "" : to_string(found.error()));
+    return found && found->contains(kE);
+  }
+};
+
+TEST_F(ImportDerive, ARunToTheEndFillsTheCache) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  ASSERT_EQ(add_project(repo_.path().string()).code, elctl::kOk);
+
+  const Outcome o = import({"run"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  const auto printed = lines(o.out);
+  ASSERT_FALSE(printed.empty());
+  EXPECT_EQ(printed.back(), "derived: 1 seen, 1 written (1 without an age), 0 current, 0 failed") << o.out;
+  EXPECT_TRUE(cached());
+
+  // A second run has nothing to import and finds the age current.
+  const Outcome again = import({"run"});
+  EXPECT_EQ(again.code, elctl::kOk) << again.err;
+  EXPECT_TRUE(contains(again.out, "derived: 1 seen, 0 written (0 without an age), 1 current, 0 failed")) << again.out;
+}
+
+TEST_F(ImportDerive, NoDeriveLeavesTheCacheAlone) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  ASSERT_EQ(add_project(repo_.path().string()).code, elctl::kOk);
+
+  const Outcome o = import({"run", "--no-derive"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "repo: finished 4/4")) << o.out;
+  EXPECT_FALSE(contains(o.out, "derived:")) << o.out;
+  EXPECT_FALSE(cached());
+}
+
+TEST_F(ImportDerive, ARunCutShortByTheLimitDoesNotDerive) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  legacy_.refit(kRunE, "Ar40", 12.5, kReviewed);
+  ASSERT_EQ(add_project(repo_.path().string()).code, elctl::kOk);
+
+  const Outcome o = import({"run", "--batch", "2", "--limit", "1"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_TRUE(contains(o.out, "paused: repo at 2/5")) << o.out;
+  EXPECT_FALSE(contains(o.out, "derived:")) << o.out;
+  EXPECT_FALSE(cached());
+}
+
+TEST_F(ImportDerive, ADryRunDoesNotDerive) {
+  legacy_.collect(kRunE, kE.str(), kCollected);
+  ASSERT_EQ(add_project(repo_.path().string()).code, elctl::kOk);
+  ASSERT_EQ(import({"run", "--no-derive"}).code, elctl::kOk);
+
+  const Outcome o = import({"run", "--dry-run"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_FALSE(contains(o.out, "derived:")) << o.out;
+  EXPECT_FALSE(cached());
+}
+
 // Ctrl-C: the batch being written is finished, the run stops there.
 TEST_F(ImportCmd, RunStopsAfterTheBatchOnInterrupt) {
   legacy_.collect(kRunE, kE.str(), kCollected);

@@ -214,6 +214,12 @@ Spec 4.5, writer 3.
 - `docs/legacy_import.md`: the derive pass and `--no-derive`.
 - Commit: `feat(elctl): import run fills the cache of ages when the walk ends`.
 
+Done 2026-10-16 on `feat/data-t023`. `import run` has no `--max-batches`:
+the flag that cuts a run short is `--limit`, so the test is of that. The
+pass also runs when a source could not be opened (the walk went through the
+others; the exit code stays 2), and not after a dry run. Its summary line is
+the one `db derive` prints (`derive_summary.hpp`, shared by both).
+
 ## Task 7: browse reads and filters by the cached age
 
 Spec 4.7, store and processing.

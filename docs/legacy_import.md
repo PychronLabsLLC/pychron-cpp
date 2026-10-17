@@ -189,6 +189,19 @@ goes to stdout with what was written and the conflicts pending.
 - **`--dry-run`.** Writes nothing and fetches nothing; prints how many rows a
   run would write. It needs an existing database and, for a url source, a
   mirror already in the cache.
+- **The cache of ages.** When the walk reaches the end, with nothing left to
+  import, `run` reduces every analysis whose cached age is missing or out of
+  date and stores its age, as `elctl db derive --quiet` would, so the
+  analysis browser can filter by age. Its summary follows the import's:
+  `derived: <n> seen, <n> written (<n> without an age), <n> current, <n> failed`.
+  A run stopped by `--limit` or Ctrl-C, and a dry run, do not derive; the
+  run that finishes the import does. A source skipped because it could not
+  be opened does not stop the pass. An analysis that cannot be reduced is
+  named on stderr, and neither that nor a pass that fails changes the exit
+  code: the import is what the code reports on. Run `elctl db derive`
+  afterwards to try again.
+- **`--no-derive`** leaves the cache of ages alone (for a large import you
+  would rather derive later, with `elctl db derive`).
 - The conflict count in the progress lines and the summary is what the run
   leaves pending; a conflict it wrote and superseded in the same run is not
   counted.

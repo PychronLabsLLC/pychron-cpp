@@ -7,6 +7,7 @@
 #include <string_view>
 #include <system_error>
 
+#include "derive_summary.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/derive.hpp"
 #include "pychron/processing/store_source.hpp"
@@ -55,11 +56,6 @@ void print_schema(std::ostream& out, const std::vector<ps::AppliedMigration>& ap
 
 namespace pp = pychron::processing;
 
-std::string counts(const pp::DeriveStats& s) {
-  return std::to_string(s.seen) + " seen, " + std::to_string(s.written) + " written (" + std::to_string(s.no_age) +
-         " without an age), " + std::to_string(s.current) + " current, " + std::to_string(s.failed) + " failed";
-}
-
 // elctl db derive: the backfill of the cache of ages (age cache spec 4.5).
 int derive(const std::string& url, bool all, std::optional<int> limit, bool quiet, Io io) {
   // As it is: a store behind its migrations is refused, never migrated here.
@@ -69,12 +65,12 @@ int derive(const std::string& url, bool all, std::optional<int> limit, bool quie
   options.all = all;
   options.limit = limit;
   auto stats = pp::derive_ages(**source, options, [&](const pp::DeriveStats& so_far) {
-    if (!quiet) io.out << "  " << counts(so_far) << '\n' << std::flush;
+    if (!quiet) io.out << "  " << derive_counts(so_far) << '\n' << std::flush;
     return true;
   });
   if (!stats) return fatal(io, stats.error().what);
   for (const auto& f : stats->failures) io.err << "elctl db derive: " << f << '\n';
-  io.out << "derived: " << counts(*stats) << '\n';
+  io.out << "derived: " << derive_counts(*stats) << '\n';
   return stats->failed > 0 ? kFailed : kOk;
 }
 
