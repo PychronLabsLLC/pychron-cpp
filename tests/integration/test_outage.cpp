@@ -75,7 +75,10 @@ struct Fault {
 // The example lab's line and spectrometer, simulated, on a clock of their own.
 class World {
  public:
-  World() : dir_(pychron::testing::unique_temp_path("pychron-outage-")), clock_(clock_options()) {
+  World()
+      : dir_(pychron::testing::unique_temp_path("pychron-outage-")),
+        clock_(clock_options()),
+        still_(std::in_place, clock_) {
     fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
     fs::remove_all(dir_ / "data");
     systems::ExtractionLine::Options options;
@@ -173,6 +176,12 @@ class World {
         });
     });
     EXPECT_TRUE(session_->start(queue_));
+    // Time has stood still since the clock was made: the queue begins at the
+    // same instant of the line's life whatever this thread's setup cost in
+    // real time, so the simulated line is in the same state when it does
+    // (with time running, the gas the line gathered before the queue began,
+    // and so a peak center's tries, followed the machine's load).
+    still_.reset();
     const auto result = session_->wait();
     crew.join();
     std::lock_guard lock(mutex_);
@@ -216,6 +225,7 @@ class World {
 
   fs::path dir_;
   VirtualClock clock_;
+  std::optional<Clock::Hold> still_;  // until the queue is started
   std::unique_ptr<systems::ExtractionLine> line_;
   std::unique_ptr<spectrometer::Spectrometer> spec_;
   std::unique_ptr<spectrometer::ScanService> scan_;
