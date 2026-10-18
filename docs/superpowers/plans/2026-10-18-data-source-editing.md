@@ -70,16 +70,16 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
 **Interfaces:**
 - Produces: answers `db_file` (path), `data_folder` (path). `database_url_for(answers, root, with_password)` for local returns `"sqlite:" + (file is absolute ? file : root / file).generic_string()` with `file = db_file` or `"data/pychron.db"` when absent. `site_install(plan, name).data` = `data_folder` or `"data"` when absent.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `tests/setup/test_install.cpp`, extend `TEST(Installer, DatabaseUrlsFromTheAnswers)`: answers without `db_file` → `"sqlite:" + (root / "data" / "pychron.db").generic_string()` (unchanged); `db_file = "lab/copy.db"` → `root / "lab/copy.db"`; `db_file` absolute `/shared/pychron.db` (built from a temp dir, so it is absolute on Windows too) → that path.
   - `tests/setup/test_profiles.cpp`, `TEST(Profiles, StoreCommonAsksForTheFileAndTheDataFolder)`: library's `store-common` has version 2; `db_file` type `Path`, default `"data/pychron.db"`, group `Data`, `when` `data_source == "local"`; `data_folder` type `Path`, default `"data"`, group `Data`, no `when`; prompts "Database file", "Data folder"; helps "Relative to the install folder, or a full path", "Where run records are kept".
   - Same file, `TEST(Profiles, ADataFolderAnswerIsTheSiteEntrysData)`: data-reduction plan with `data_folder = "/x/records-disk"` (temp absolute) → `site_install(...).data` is that string; without the answer → `"data"`.
-- [ ] **Step 2: Run, expect FAIL** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='Installer.DatabaseUrlsFromTheAnswers:Profiles.*'` after `cmake --build --preset dev --target pychron_setup_tests`.
-- [ ] **Step 3: Implement:** add the two `[[questions]]` after `db_password` in `profile.toml` (fields exactly as spec 3.2), `version = 2`; `database_url_for` and `site_install` as in Interfaces.
-- [ ] **Step 4: Run** the whole `pychron_setup_tests` binary (every profile still renders with defaults, `DataReductionLocalAndServer` and `HasADatabaseOnThisComputerByDefault` unchanged). Expect PASS. A test that pinned `store-common` at version 1 is edited to 2, nothing else.
-- [ ] **Step 5: Run** the wizard UI test, since the Data page is generated from the profile: `cmake --build --preset dev-ui --target pychron_ui_test_setup_wizard` then `build/dev-ui/tests/ui/pychron_ui_test_setup_wizard`. Expect PASS (fix any count of Data-page fields the test pins, and only that).
-- [ ] **Step 6: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 7: Commit** `feat(setup): an install can name its database file and its data folder`
+- [x] **Step 2: Run, expect FAIL** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='Installer.DatabaseUrlsFromTheAnswers:Profiles.*'` after `cmake --build --preset dev --target pychron_setup_tests`.
+- [x] **Step 3: Implement:** add the two `[[questions]]` after `db_password` in `profile.toml` (fields exactly as spec 3.2), `version = 2`; `database_url_for` and `site_install` as in Interfaces.
+- [x] **Step 4: Run** the whole `pychron_setup_tests` binary (every profile still renders with defaults, `DataReductionLocalAndServer` and `HasADatabaseOnThisComputerByDefault` unchanged). Expect PASS. A test that pinned `store-common` at version 1 is edited to 2, nothing else.
+- [x] **Step 5: Run** the wizard UI test, since the Data page is generated from the profile: `cmake --build --preset dev-ui --target pychron_ui_test_setup_wizard` then `build/dev-ui/tests/ui/pychron_ui_test_setup_wizard`. Expect PASS (fix any count of Data-page fields the test pins, and only that).
+- [x] **Step 6: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 7: Commit** `feat(setup): an install can name its database file and its data folder`
 
 ### Task 3: Data source model: current source, URL, plan
 

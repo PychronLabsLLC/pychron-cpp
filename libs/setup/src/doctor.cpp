@@ -245,11 +245,12 @@ SiteInstall site_install(const InstallPlan& plan, const std::string& name) {
   s.name = name;
   s.profile = plan.profile.top.name;
   s.root = plan.root;
-  s.data = "data";
   auto text = [&](const char* id) {
     auto it = plan.answers.find(id);
     return it == plan.answers.end() ? std::string{} : to_text(it->second);
   };
+  s.data = text("data_folder");
+  if (s.data.empty()) s.data = "data";
   // Every install has a database: the catalog (samples, packages) and, for
   // data reduction, the analyses.
   s.database = database_url_for(plan.answers, plan.root, false);

@@ -99,7 +99,11 @@ std::string database_url_for(const Answers& answers, const fs::path& root, bool 
     auto it = answers.find(id);
     return it == answers.end() ? std::string{} : to_text(it->second);
   };
-  if (text("data_source") != "server") return "sqlite:" + (root / "data" / "pychron.db").generic_string();
+  if (text("data_source") != "server") {
+    std::string given = text("db_file");
+    const fs::path file = given.empty() ? fs::path("data/pychron.db") : fs::path(std::move(given));
+    return "sqlite:" + (file.is_absolute() ? file : root / file).generic_string();
+  }
   std::string user = percent_encode(text("db_user"));
   if (const std::string pw = text("db_password"); with_password && !pw.empty()) user += ":" + percent_encode(pw);
   return "postgresql://" + user + "@" + text("db_host") + ":" + text("db_port") + "/" + text("db_name");

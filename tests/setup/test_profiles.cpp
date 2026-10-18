@@ -620,6 +620,54 @@ TEST(Profiles, DataReductionLocalAndServer) {
   fs::remove_all(server);
 }
 
+TEST(Profiles, StoreCommonAsksForTheFileAndTheDataFolder) {
+  const auto lib = library();
+  const Profile* store = lib.find("store-common");
+  ASSERT_NE(store, nullptr);
+  EXPECT_EQ(store->version, 2);
+  auto question = [&](const std::string& id) -> const Question* {
+    const auto it = std::ranges::find(store->questions, id, &Question::id);
+    return it == store->questions.end() ? nullptr : &*it;
+  };
+  const Question* file = question("db_file");
+  ASSERT_NE(file, nullptr);
+  EXPECT_EQ(file->type, QuestionType::Path);
+  ASSERT_TRUE(file->default_value.has_value());
+  EXPECT_EQ(*file->default_value, Value{std::string("data/pychron.db")});
+  EXPECT_EQ(file->group, "Data");
+  EXPECT_EQ(file->when, "data_source == \"local\"");
+  EXPECT_EQ(file->prompt, "Database file");
+  EXPECT_EQ(file->help, "Relative to the install folder, or a full path");
+
+  const Question* folder = question("data_folder");
+  ASSERT_NE(folder, nullptr);
+  EXPECT_EQ(folder->type, QuestionType::Path);
+  ASSERT_TRUE(folder->default_value.has_value());
+  EXPECT_EQ(*folder->default_value, Value{std::string("data")});
+  EXPECT_EQ(folder->group, "Data");
+  EXPECT_TRUE(folder->when.empty());
+  EXPECT_EQ(folder->prompt, "Data folder");
+  EXPECT_EQ(folder->help, "Where run records are kept");
+}
+
+TEST(Profiles, ADataFolderAnswerIsTheSiteEntrysData) {
+  const auto lib = library();
+  auto resolved = lib.resolve("data-reduction");
+  ASSERT_TRUE(resolved) << resolved.error().what;
+  const fs::path root = scratch("dr-data-folder");
+  const std::string records = (fs::temp_directory_path() / "x" / "records-disk").generic_string();
+  const Answers builtins{{"install_name", Value{std::string("dr")}}, {"root", Value{root.generic_string()}}};
+
+  auto answers = complete_answers(*resolved, {{"data_folder", Value{records}}}, builtins);
+  ASSERT_TRUE(answers) << answers.error().what;
+  auto plan = plan_install(lib, *resolved, *answers, root);
+  ASSERT_TRUE(plan) << plan.error().what;
+  EXPECT_EQ(site_install(*plan, "dr").data, records);
+
+  plan->answers.erase("data_folder");
+  EXPECT_EQ(site_install(*plan, "dr").data, "data");
+}
+
 TEST(Profiles, InstrumentPagesAreSimulationConnectionThenDetectors) {
   const auto r = find_resources();
   auto lib = ProfileLibrary::load(r.profiles, r.examples);

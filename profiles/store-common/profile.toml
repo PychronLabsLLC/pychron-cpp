@@ -2,7 +2,7 @@ name = "store-common"
 title = "Database"
 kind = "fragment"
 summary = "Where the install's database is: a file on this computer, or the lab's PostgreSQL server"
-version = 1
+version = 2
 
 [[questions]]
 id = "data_source"
@@ -53,6 +53,23 @@ type = "secret"
 group = "Data"
 when = "data_source == \"server\""
 help = "Kept in .pychron/credentials.toml in this folder (owner-readable), never in the site config."
+
+[[questions]]
+id = "db_file"
+prompt = "Database file"
+type = "path"
+default = "data/pychron.db"
+group = "Data"
+when = "data_source == \"local\""
+help = "Relative to the install folder, or a full path"
+
+[[questions]]
+id = "data_folder"
+prompt = "Data folder"
+type = "path"
+default = "data"
+group = "Data"
+help = "Where run records are kept"
 
 [[files]]
 template = "credentials.toml"
