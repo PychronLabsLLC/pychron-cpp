@@ -294,47 +294,15 @@ Result<InstallReport> apply_install(const InstallPlan& plan) {
     }
   }
 
-  toml::table record;
-  toml::table install;
-  install.insert("profile", plan.profile.top.name);
-  toml::table versions;
-  for (const auto& [name, v] : plan.profile.versions) versions.insert(name, v);
-  install.insert("versions", std::move(versions));
-  record.insert("install", std::move(install));
-  toml::table answers;
+  InstallRecord record{plan.profile.top.name, {}, {}, std::move(hashes)};
+  record.versions.insert(plan.profile.versions.begin(), plan.profile.versions.end());
   for (const auto& [id, v] : plan.answers) {
     // Only answers to questions: built-ins and [values] come from the profile again.
     const bool question = std::any_of(plan.profile.questions.begin(), plan.profile.questions.end(),
                                       [&](const Question& q) { return q.id == id; });
-    if (!question || is_secret_question(plan.profile, id)) continue;
-    std::visit(
-        [&](const auto& x) {
-          using T = std::decay_t<decltype(x)>;
-          if constexpr (std::is_same_v<T, std::vector<std::string>>) {
-            toml::array a;
-            for (const auto& s : x) a.push_back(s);
-            answers.insert(id, std::move(a));
-          } else if constexpr (std::is_same_v<T, std::vector<Row>>) {
-            toml::array a;
-            for (const auto& r : x) {
-              toml::table row;
-              for (const auto& [k, val] : r) row.insert(k, val);
-              a.push_back(std::move(row));
-            }
-            answers.insert(id, std::move(a));
-          } else {
-            answers.insert(id, x);
-          }
-        },
-        v);
+    if (question && !is_secret_question(plan.profile, id)) record.answers.emplace(id, v);
   }
-  record.insert("answers", std::move(answers));
-  toml::table files;
-  for (const auto& [path, hash] : hashes) files.insert(path, hash);
-  record.insert("files", std::move(files));
-  std::ostringstream out;
-  out << "# Written by pychron setup. Do not edit: reconfigure and doctor read it.\n" << record << "\n";
-  if (auto w = write_file(record_path(plan.root), out.str(), false); !w) return fail(std::move(w).error());
+  if (auto w = write_install_record(plan.root, record); !w) return fail(std::move(w).error());
   return report;
 }
 
@@ -359,6 +327,46 @@ Result<InstallRecord> read_install_record(const fs::path& root) {
     for (const auto& [k, h] : *f) r.files[std::string(k.str())] = h.value_or(std::string{});
   if (r.profile.empty()) return fail(ErrorKind::Config, record_path(root).string() + ": no [install] profile");
   return r;
+}
+
+Result<void> write_install_record(const fs::path& root, const InstallRecord& record) {
+  toml::table install;
+  install.insert("profile", record.profile);
+  toml::table versions;
+  for (const auto& [name, v] : record.versions) versions.insert(name, v);
+  install.insert("versions", std::move(versions));
+  toml::table answers;
+  for (const auto& [id, v] : record.answers) {
+    std::visit(
+        [&](const auto& x) {
+          using T = std::decay_t<decltype(x)>;
+          if constexpr (std::is_same_v<T, std::vector<std::string>>) {
+            toml::array a;
+            for (const auto& s : x) a.push_back(s);
+            answers.insert(id, std::move(a));
+          } else if constexpr (std::is_same_v<T, std::vector<Row>>) {
+            toml::array a;
+            for (const auto& r : x) {
+              toml::table row;
+              for (const auto& [k, val] : r) row.insert(k, val);
+              a.push_back(std::move(row));
+            }
+            answers.insert(id, std::move(a));
+          } else {
+            answers.insert(id, x);
+          }
+        },
+        v);
+  }
+  toml::table files;
+  for (const auto& [path, hash] : record.files) files.insert(path, hash);
+  toml::table out_table;
+  out_table.insert("install", std::move(install));
+  out_table.insert("answers", std::move(answers));
+  out_table.insert("files", std::move(files));
+  std::ostringstream out;
+  out << "# Written by pychron setup. Do not edit: reconfigure and doctor read it.\n" << out_table << "\n";
+  return write_file(record_path(root), out.str(), false);
 }
 
 }  // namespace pychron::setup

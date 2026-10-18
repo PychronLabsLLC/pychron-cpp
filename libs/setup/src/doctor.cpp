@@ -265,19 +265,26 @@ SiteInstall site_install(const InstallPlan& plan, const std::string& name) {
   return s;
 }
 
+Result<std::optional<std::string>> read_kept_password(const fs::path& root) {
+  const fs::path creds = root / ".pychron" / "credentials.toml";
+  std::error_code ec;
+  if (!fs::exists(creds, ec)) return std::optional<std::string>{};
+  auto parsed = toml::parse(read_file(creds), creds.string());
+  if (!parsed) return fail(ErrorKind::Config, creds.string() + ": " + std::string(parsed.error().description()));
+  if (auto password = parsed.table()["database"]["password"].value<std::string>()) return password;
+  return std::optional<std::string>{};
+}
+
 Result<std::string> database_url(const SiteInstall& install) {
   const std::string& url = install.database;
   if (!url.starts_with("postgresql://")) return url;
-  const fs::path creds = install.root / ".pychron" / "credentials.toml";
-  std::error_code ec;
-  if (!fs::exists(creds, ec)) return url;  // a server that needs no password
-  auto parsed = toml::parse(read_file(creds), creds.string());
-  if (!parsed) return fail(ErrorKind::Config, creds.string() + ": " + std::string(parsed.error().description()));
-  const auto password = parsed.table()["database"]["password"].value_or(std::string{});
-  if (password.empty()) return url;
+  auto kept = read_kept_password(install.root);
+  if (!kept) return fail(std::move(kept).error());
+  // No file, no key or an empty one: a server that needs no password.
+  if (!*kept || (*kept)->empty()) return url;
   const auto at = url.find('@');
   if (at == std::string::npos) return fail(ErrorKind::Config, "database URL has no user: " + url);
-  return url.substr(0, at) + ":" + percent_encode(password) + url.substr(at);
+  return url.substr(0, at) + ":" + percent_encode(**kept) + url.substr(at);
 }
 
 }  // namespace pychron::setup

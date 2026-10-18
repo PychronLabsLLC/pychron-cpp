@@ -49,15 +49,15 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
   - `Result<std::optional<std::string>> read_kept_password(const std::filesystem::path& root);` (doctor.hpp): `[database] password` of `<root>/.pychron/credentials.toml`; `nullopt` when the file or key is missing; `Config` when the file does not parse.
   - `apply_install` and `database_url(const SiteInstall&)` call these.
 
-- [ ] **Step 1: Write the failing tests** in `tests/setup/test_install.cpp`:
+- [x] **Step 1: Write the failing tests** in `tests/setup/test_install.cpp`:
   - `TEST_F(Fixture, AnInstallRecordWrittenAgainReadsBackTheSame)`: install a profile, `read_install_record`, change one answer, `write_install_record`, read again: `profile`, `versions`, `files` equal, the changed answer is the new value, every other answer equal.
   - `TEST(Installer, TheKeptPasswordIsReadFromTheCredentialsFile)`: temp root without `.pychron` → `nullopt`; with `[database]\npassword = "p@ss:w/rd"` → `"p@ss:w/rd"`; with `[database` (bad TOML) → error kind `Config`.
-- [ ] **Step 2: Run, expect compile failure** (`write_install_record`, `read_kept_password` undeclared):
+- [x] **Step 2: Run, expect compile failure** (`write_install_record`, `read_kept_password` undeclared):
   `cmake --build --preset dev --target pychron_setup_tests`
-- [ ] **Step 3: Implement** both functions, move `apply_install`'s record serialization into `write_install_record`, and make `database_url` use `read_kept_password`.
-- [ ] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='Fixture.*:Installer.*:Site.*'`; expect PASS, existing cases included.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 6: Commit** `refactor(setup): the install record writer and the kept password are shared`
+- [x] **Step 3: Implement** both functions, move `apply_install`'s record serialization into `write_install_record`, and make `database_url` use `read_kept_password`.
+- [x] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='Fixture.*:Installer.*:Site.*'`; expect PASS, existing cases included.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 6: Commit** `refactor(setup): the install record writer and the kept password are shared`
 
 ### Task 2: `store-common` asks for the database file and the data folder
 

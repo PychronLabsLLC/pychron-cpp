@@ -4,7 +4,9 @@
 // OK, WARN or FAIL with a hint saying what to do. Runs the same loaders the
 // apps run, so "doctor passes" means the apps will start.
 
+#include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,5 +41,9 @@ SiteInstall site_install(const InstallPlan& plan, const std::string& name);
 // The install's database URL with its password (from
 // <root>/.pychron/credentials.toml) for a server, as the store opens it.
 Result<std::string> database_url(const SiteInstall& install);
+
+// `[database] password` of <root>/.pychron/credentials.toml; nullopt when the
+// file or the key is missing, Config when the file does not parse.
+Result<std::optional<std::string>> read_kept_password(const std::filesystem::path& root);
 
 }  // namespace pychron::setup

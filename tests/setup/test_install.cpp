@@ -118,6 +118,30 @@ TEST_F(Fixture, InstallsOnceThenFindsEverythingInPlace) {
   for (const auto& f : again->files) EXPECT_EQ(f.action, PlannedFile::Action::Same) << f.to;
 }
 
+TEST_F(Fixture, AnInstallRecordWrittenAgainReadsBackTheSame) {
+  auto p = plan({});
+  ASSERT_TRUE(p) << p.error().what;
+  ASSERT_TRUE(apply_install(*p));
+  const fs::path lab = root.dir / "lab";
+  auto before = read_install_record(lab);
+  ASSERT_TRUE(before) << before.error().what;
+  InstallRecord changed = *before;
+  changed.answers["host"] = Value{std::string("10.0.0.9")};
+  ASSERT_TRUE(write_install_record(lab, changed));
+  auto after = read_install_record(lab);
+  ASSERT_TRUE(after) << after.error().what;
+  EXPECT_EQ(after->profile, before->profile);
+  EXPECT_EQ(after->versions, before->versions);
+  EXPECT_EQ(after->files, before->files);
+  EXPECT_EQ(to_text(after->answers.at("host")), "10.0.0.9");
+  ASSERT_EQ(after->answers.size(), before->answers.size());
+  for (const auto& [id, v] : before->answers) {
+    if (id == "host") continue;
+    ASSERT_TRUE(after->answers.count(id)) << id;
+    EXPECT_EQ(after->answers.at(id), v) << id;
+  }
+}
+
 TEST_F(Fixture, AnInstallNeverOverwritesAndAReconfigureOnlyRewritesUntouchedFiles) {
   ASSERT_TRUE(apply_install(*plan({})));
   root.write("lab/shared.txt", "edited by the lab\n");
@@ -256,6 +280,29 @@ TEST(Installer, DatabaseUrlsFromTheAnswers) {
   EXPECT_EQ(database_url_for(server, "/x", true), "postgresql://ar%20user:p%40ss%3A%2F@db.lab.edu:5433/pychron");
   server["db_password"] = Value{std::string{}};
   EXPECT_EQ(database_url_for(server, "/x", true), "postgresql://ar%20user@db.lab.edu:5433/pychron");
+}
+
+TEST(Installer, TheKeptPasswordIsReadFromTheCredentialsFile) {
+  Tmp tmp;
+  auto none = read_kept_password(tmp.dir);
+  ASSERT_TRUE(none) << none.error().what;
+  EXPECT_FALSE(none->has_value());
+
+  tmp.write(".pychron/credentials.toml", "[database]\nuser = \"ar\"\n");
+  auto no_key = read_kept_password(tmp.dir);
+  ASSERT_TRUE(no_key) << no_key.error().what;
+  EXPECT_FALSE(no_key->has_value());
+
+  tmp.write(".pychron/credentials.toml", "[database]\npassword = \"p@ss:w/rd\"\n");
+  auto kept = read_kept_password(tmp.dir);
+  ASSERT_TRUE(kept) << kept.error().what;
+  ASSERT_TRUE(kept->has_value());
+  EXPECT_EQ(**kept, "p@ss:w/rd");
+
+  tmp.write(".pychron/credentials.toml", "[database");
+  auto bad = read_kept_password(tmp.dir);
+  ASSERT_FALSE(bad);
+  EXPECT_EQ(bad.error().kind, ErrorKind::Config);
 }
 
 TEST(Installer, RegisteringAnInstallMakesTheFirstOneTheDefault) {

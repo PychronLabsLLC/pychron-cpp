@@ -75,6 +75,9 @@ struct InstallRecord {
 std::filesystem::path record_path(const std::filesystem::path& root);
 // NotConnected-free: Io when the record is missing, Config when it is malformed.
 Result<InstallRecord> read_install_record(const std::filesystem::path& root);
+// Writes `record` to record_path(root) (not secret), as apply_install does:
+// answers are written as given, so the caller leaves secrets out.
+Result<void> write_install_record(const std::filesystem::path& root, const InstallRecord& record);
 
 std::string sha256_hex(std::string_view bytes);
 
