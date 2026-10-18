@@ -10,6 +10,7 @@
 // Errors are ErrorKind::Config; `what` lists every problem found, one per line,
 // each prefixed "<source>: <path>: ".
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,16 +39,34 @@ class ISpectrometerCatalog {
   // when the detector is unknown or has none. Labels the inactive entry the v1
   // desugar adds for a protected detector a hop does not collect.
   virtual std::optional<std::string> isotope_of(std::string_view detector) const = 0;
+  // Mass of a collect label (isotope, molecule, pseudo-isotope such as PHHCl
+  // or Ar40++) from the spectrometer's molecular weights; nullopt: none.
+  virtual std::optional<double> mass_of(std::string_view label) const = 0;
+  // The detector's deflection can be set (spectrometer.toml `deflection.control`).
+  virtual bool supports_deflection(std::string_view detector) const = 0;
+  // A named optics preset the driver applies (none before the optics phase).
+  virtual bool has_optics(std::string_view name) const = 0;
+  // A named field table loaded with the spectrometer.
+  virtual bool has_table(std::string_view name) const = 0;
+  // The magnet can be set by a raw DAC value (`at = { dac }`), and the
+  // source's HV can position a beam (`at = { hv, detector }`).
+  virtual bool positions_by_dac() const = 0;
+  virtual bool positions_by_hv() const = 0;
   virtual std::optional<ParamValue> resolve_alias(std::string_view /*key*/) const { return std::nullopt; }
 };
 
 // '@x.y' resolves, in order: to plan key x.y (self reference, e.g.
 // "@equilibration.time_s"), then the extraction line, then the spectrometer.
-// A null spectrometer skips detector-name checks. conditionals.include entries
-// are references to conditional sets and are kept verbatim.
+// A null spectrometer skips every check that needs the spectrometer
+// (detector names, label masses, deflection, optics, tables, positioning).
+// conditionals.include entries are references to conditional sets and are
+// kept verbatim.
 struct PlanResolvers {
   const IAliasResolver* extraction_line = nullptr;
   const ISpectrometerCatalog* spectrometer = nullptr;
+  // Whether a run of this analysis type has an extraction (a
+  // during_extraction segment needs one). Null: every type has one.
+  std::function<bool(std::string_view analysis_type)> has_extraction = nullptr;
 };
 
 struct PlanTemplate {

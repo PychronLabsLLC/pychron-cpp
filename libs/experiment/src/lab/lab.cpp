@@ -116,7 +116,9 @@ Lab load_lab(const LabPaths& paths) {
       if (schema != nullptr && schema->extraction_device) lab.extract_devices.push_back(name);
     }
   }
-  if (lab.spectrometer) lab.catalog = std::make_unique<measurement::SpectrometerCatalog>(lab.spectrometer->config);
+  if (lab.spectrometer)
+    lab.catalog = std::make_unique<measurement::SpectrometerCatalog>(
+        lab.spectrometer->config, lab.spectrometer->weights, measurement::table_names(*lab.spectrometer));
   lab.plans = std::make_unique<plan::PlanLibrary>(plan::PlanResolvers{lab.aliases.get(), lab.catalog.get()});
   if (fs::is_directory(dir / "plans", ec)) {
     std::vector<fs::path> files;

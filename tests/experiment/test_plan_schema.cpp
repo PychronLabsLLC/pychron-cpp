@@ -55,11 +55,23 @@ class FakeSpectrometer : public ISpectrometerCatalog {
     if (detector == "CDD") return "Ar36";
     return std::nullopt;
   }
+  std::optional<double> mass_of(std::string_view label) const override {
+    static const std::map<std::string, double, std::less<>> masses{
+        {"Ar36", 35.968}, {"Ar37", 36.967}, {"Ar38", 37.963}, {"Ar39", 38.964}, {"Ar40", 39.962}, {"Ar41", 40.965}};
+    if (const auto it = masses.find(label); it != masses.end()) return it->second;
+    return std::nullopt;
+  }
+  bool supports_deflection(std::string_view detector) const override { return detector == "CDD"; }
+  bool has_optics(std::string_view /*name*/) const override { return false; }
+  bool has_table(std::string_view name) const override { return name == "argon"; }
+  bool positions_by_dac() const override { return true; }
+  bool positions_by_hv() const override { return false; }
 };
 
 const FakeExtractionLine kLine;
 const FakeSpectrometer kSpec;
-const PlanResolvers kResolvers{&kLine, &kSpec};
+// An air analysis has no extraction here (v2_during_extraction_no_extraction.toml).
+const PlanResolvers kResolvers{&kLine, &kSpec, [](std::string_view type) { return type != "air"; }};
 
 PlanTemplate fixture_template(const std::string& name) {
   auto t = parse_plan_template(read_file(kFixtures / "valid" / name), name);

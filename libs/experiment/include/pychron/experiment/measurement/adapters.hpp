@@ -7,7 +7,7 @@
 //   ExtractionLineValves    systems::ExtractionLine    -> IValvePort
 //   ScriptMeasurementHook   scripting::IScriptHost     -> IMeasurementHook
 //   SystemConfigAliases     extraction_line.toml [aliases] -> plan::IAliasResolver
-//   SpectrometerCatalog     spectrometer.toml detectors    -> plan::ISpectrometerCatalog
+//   SpectrometerCatalog     spectrometer.toml, weights, tables -> plan::ISpectrometerCatalog
 //   InstrumentMetrics       spectrometer + line + devices  -> MetricContext for conditionals
 //   SpectrometerPeakCenter  jobs::run_peak_center          -> IPeakCenterPort
 
@@ -15,7 +15,9 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <set>
 #include <string_view>
+#include <vector>
 
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/experiment/conditionals/evaluator.hpp"
@@ -27,6 +29,7 @@
 #include "pychron/systems/jobs/job_runner.hpp"
 #include "pychron/systems/jobs/peak_center.hpp"
 #include "pychron/systems/spectrometer/config.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
 
 namespace pychron::experiment::measurement {
@@ -88,15 +91,35 @@ class SystemConfigAliases final : public plan::IAliasResolver {
   std::map<std::string, ParamValue, std::less<>> aliases_;
 };
 
+// What a plan is checked against: the detectors of spectrometer.toml (with
+// their isotope and whether their deflection can be set), the molecular
+// weights, the names of the field tables loaded with the spectrometer and
+// how the magnet and source can position. No optics presets yet: no driver
+// applies one (plan v2, phase 8).
 class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
  public:
-  explicit SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config);
+  SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config,
+                      spectrometer::cfg::MolecularWeights weights, std::vector<std::string> table_names);
   bool has_detector(std::string_view name) const override;
   std::optional<std::string> isotope_of(std::string_view detector) const override;
+  std::optional<double> mass_of(std::string_view label) const override;
+  bool supports_deflection(std::string_view detector) const override;
+  bool has_optics(std::string_view name) const override;
+  bool has_table(std::string_view name) const override;
+  bool positions_by_dac() const override;
+  bool positions_by_hv() const override;
 
  private:
   std::map<std::string, std::string, std::less<>> detectors_;  // name -> configured isotope
+  std::set<std::string, std::less<>> deflectable_;
+  spectrometer::cfg::MolecularWeights weights_;  // label -> mass (amu)
+  std::set<std::string, std::less<>> tables_;
+  bool by_dac_ = false;
+  bool by_hv_ = false;
 };
+
+// The names of the field tables `data` loaded (its `tables`), for a catalog.
+std::vector<std::string> table_names(const spectrometer::cfg::SpectrometerData& data);
 
 // The peak-center job for the MeasurementEngine. The request's config name
 // selects one of `configs` ("default" falls back to the built-in defaults);

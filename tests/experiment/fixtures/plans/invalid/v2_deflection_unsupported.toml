@@ -1,0 +1,12 @@
+# expect: detector 'L2' has no deflection control
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar37", detector = "L2", deflection = 50 } ]
+counts = 10

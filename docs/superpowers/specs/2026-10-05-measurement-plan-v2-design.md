@@ -177,6 +177,14 @@ In `spectrometer.toml`, not in plans:
   `at.mass`;
 - `at` resolves; `optics` and `table` names exist, a `table` written by a
   `peak_center` step is defined before any position that uses it;
+- `at` default checked only when plan names `[detectors] reference`; none
+  named: spectrometer's reference positions it, not checked at load. Entry
+  on a mode of reference (`H2(CDD)` for `H2`) counts as reference
+  (decided 2026-10-18, Task 3);
+- v1 file: only label masses of its signal hops and peak center isotope
+  checked; inactive entry desugar adds for a protected detector with no
+  configured isotope is not, so v1 file valid today stays valid (decided
+  2026-10-18, Task 3);
 - `deflection` only on detectors whose driver supports it; `optics` only on
   instrument families that declare presets;
 - a `during_extraction` segment only in plans whose analysis types have an

@@ -1,0 +1,12 @@
+# expect: label 'Foo99' has no mass
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1", Foo99 = "AX" }
+counts = 10

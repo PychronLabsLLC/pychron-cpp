@@ -17,16 +17,22 @@
 
 #include "pychron/experiment/plan/plan.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
 
 namespace plan = pychron::experiment::plan;
 
 namespace {
 
-// Detectors of an ARGUS VI; CDD and H2 have a configured isotope.
+// Detectors of an ARGUS VI (CDD and H2 have a configured isotope), and those
+// the other worked plans name: Helix CDD modes, Noblesse ICs, SFT Faraday and
+// SEM. Masses of the noble gases plus the lab entries the worked plans use;
+// deflection on CDD and every CDD mode; two optics presets (worked plan 7.5).
 class Catalog final : public plan::ISpectrometerCatalog {
  public:
   bool has_detector(std::string_view name) const override {
-    static const std::set<std::string, std::less<>> dets{"H2", "H1", "AX", "L1", "L2", "CDD"};
+    static const std::set<std::string, std::less<>> dets{
+        "H2",      "H1",      "AX",      "L1",      "L2", "CDD", "H2(CDD)", "H1(CDD)", "AX(CDD)", "L1(CDD)",
+        "L2(CDD)", "F0",      "IC0",     "IC1",     "IC2", "Faraday", "SEM"};
     return dets.contains(name);
   }
   std::optional<std::string> isotope_of(std::string_view detector) const override {
@@ -34,6 +40,22 @@ class Catalog final : public plan::ISpectrometerCatalog {
     if (const auto it = isotopes.find(detector); it != isotopes.end()) return it->second;
     return std::nullopt;
   }
+  std::optional<double> mass_of(std::string_view label) const override {
+    static const std::map<std::string, double, std::less<>> lab{
+        {"Ar36H", 36.975}, {"Ar37H", 37.975}, {"Ar38H", 38.971}, {"Ar39H", 39.972}, {"Ar40H", 40.970},
+        {"HCl", 35.977},   {"PHHCl", 36.46},  {"CO2", 43.990}};
+    if (const auto it = lab.find(label); it != lab.end()) return it->second;
+    const auto& weights = pychron::spectrometer::cfg::default_molecular_weights();
+    if (const auto it = weights.find(label); it != weights.end()) return it->second;
+    return std::nullopt;
+  }
+  bool supports_deflection(std::string_view detector) const override {
+    return detector == "CDD" || detector.ends_with("(CDD)");
+  }
+  bool has_optics(std::string_view name) const override { return name == "ar_config_a" || name == "ar_config_b"; }
+  bool has_table(std::string_view name) const override { return name == "argon"; }
+  bool positions_by_dac() const override { return true; }
+  bool positions_by_hv() const override { return true; }
 };
 
 const Catalog kCatalog;
@@ -468,8 +490,7 @@ class Line final : public plan::IAliasResolver {
 };
 
 const Line kLine;
-// No spectrometer until the v2 validation (plan Task 3) checks detectors and masses.
-const plan::PlanResolvers kWorkedResolvers{&kLine, nullptr};
+const plan::PlanResolvers kWorkedResolvers{&kLine, &kCatalog};
 
 plan::MeasurementPlan load_worked(const std::string& name) {
   const auto text = read_text(kPlanFixtures / "valid" / name);
@@ -1022,4 +1043,237 @@ counts = 1
   EXPECT_EQ(f.signal.at("Ar36"), pychron::reduction::FitKind::Average);
   EXPECT_EQ(f.signal.at("default"), pychron::reduction::FitKind::Linear);
   EXPECT_EQ(r->fits.error, pychron::reduction::ErrorType::Sem);  // the plan's own stays
+}
+
+// ---- v2 rules (spec 3.7) beyond the invalid fixtures --------------------------------
+
+namespace {
+
+// The catalog of the worked plans, but its magnet takes no raw DAC value and
+// its source no HV position.
+class NoRawPositioning final : public plan::ISpectrometerCatalog {
+ public:
+  bool has_detector(std::string_view name) const override { return kCatalog.has_detector(name); }
+  std::optional<std::string> isotope_of(std::string_view detector) const override {
+    return kCatalog.isotope_of(detector);
+  }
+  std::optional<double> mass_of(std::string_view label) const override { return kCatalog.mass_of(label); }
+  bool supports_deflection(std::string_view detector) const override {
+    return kCatalog.supports_deflection(detector);
+  }
+  bool has_optics(std::string_view name) const override { return kCatalog.has_optics(name); }
+  bool has_table(std::string_view name) const override { return kCatalog.has_table(name); }
+  bool positions_by_dac() const override { return false; }
+  bool positions_by_hv() const override { return false; }
+};
+
+}  // namespace
+
+TEST(PlanV2Rules, ALabelPositionedByMassNeedsNoMass) {
+  const auto p = resolve(R"(
+[[segment]]
+[[segment.positions]]
+collect = { mass35 = "CDD" }
+at = { mass = 35.0, detector = "CDD" }
+counts = 8
+)");
+  ASSERT_EQ(segments_of(p).size(), 1u);
+}
+
+TEST(PlanV2Rules, TheReferenceInOneOfItsModesNeedsNoAt) {
+  const auto p = resolve(R"toml(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40H = "H2(CDD)" }
+counts = 5
+)toml",
+                         &kCatalog, "[detectors]\nreference = \"H2\"\n");
+  ASSERT_EQ(segments_of(p).size(), 1u);
+}
+
+TEST(PlanV2Rules, AtNamesWhatItNeeds) {
+  const auto what = problems(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { label = "Foo99", detector = "XX" }
+counts = 5
+)");
+  EXPECT_NE(what.find("segment[0].positions[0].at.detector: unknown detector 'XX'"), std::string::npos) << what;
+  EXPECT_NE(what.find("segment[0].positions[0].at.label: label 'Foo99' has no mass"), std::string::npos) << what;
+}
+
+TEST(PlanV2Rules, RawPositioningNeedsTheSpectrometerToTakeIt) {
+  const NoRawPositioning catalog;
+  const std::string text = std::string(kHeader) + std::string(kReferenceH1) + R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { dac = 5.2 }
+counts = 5
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { hv = 4500, detector = "H1" }
+counts = 5
+)";
+  auto r = plan::resolve_plan(text, plan::PlanResolvers{nullptr, &catalog}, "v2");
+  ASSERT_FALSE(r.has_value());
+  EXPECT_NE(r.error().what.find("positions[0].at.dac: the spectrometer cannot position by DAC"), std::string::npos)
+      << r.error().what;
+  EXPECT_NE(r.error().what.find("positions[1].at.hv: the spectrometer cannot position by HV"), std::string::npos)
+      << r.error().what;
+  EXPECT_TRUE(plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2").has_value());
+}
+
+TEST(PlanV2Rules, UnknownDetectorsInSegmentsAndSteps) {
+  const auto what = problems(R"(
+[[segment]]
+kind = "set"
+when = "before_inlet"
+set = { deflection = { XX = 10, L2 = 5 }, gain = { YY = 1.0 } }
+[[segment]]
+kind = "peak_center"
+when = "before_inlet"
+peak_center = { label = "Ar40", detectors = ["H1", "ZZ"] }
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "QQ" }
+counts = 5
+)");
+  EXPECT_NE(what.find("segment[0].set.deflection.XX: unknown detector 'XX'"), std::string::npos) << what;
+  EXPECT_NE(what.find("segment[0].set.deflection.L2: detector 'L2' has no deflection control"), std::string::npos)
+      << what;
+  EXPECT_NE(what.find("segment[0].set.gain.YY: unknown detector 'YY'"), std::string::npos) << what;
+  EXPECT_NE(what.find("segment[1].peak_center.detectors[1]: unknown detector 'ZZ'"), std::string::npos) << what;
+  EXPECT_NE(what.find("unknown detector 'QQ'"), std::string::npos) << what;
+}
+
+TEST(PlanV2Rules, ATableWrittenInAnEarlierGasMayBeUsed) {
+  const auto p = resolve(R"(
+[[gas]]
+name = "A"
+[[gas.segment]]
+kind = "peak_center"
+when = "after_run"
+peak_center = { label = "Ar40", detectors = ["H1", "AX"], write_table = "ic_run" }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+[[gas]]
+name = "B"
+[[gas.segment]]
+table = "ic_run"
+[[gas.segment.positions]]
+collect = { Ar39 = "H1" }
+counts = 5
+)");
+  EXPECT_EQ(p.gases.size(), 2u);
+}
+
+TEST(PlanV2Rules, ASpectrometerTableNeedsNoStep) {
+  const auto p = resolve(R"(
+[[segment]]
+table = "argon"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+)");
+  ASSERT_EQ(segments_of(p).size(), 1u);
+}
+
+TEST(PlanV2Rules, WithoutASpectrometerOnlyThePlanItselfIsChecked) {
+  const auto p = resolve(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Foo99 = "XX", Ar40 = "H1" }
+optics = "nope"
+table = "nope"
+counts = 5
+)",
+                         nullptr);
+  ASSERT_EQ(segments_of(p).size(), 1u);
+  // A table written after its use is wrong whatever the spectrometer holds.
+  const std::string text = std::string(kHeader) + std::string(kReferenceH1) + R"(
+[[segment]]
+table = "ic_run"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+[[segment]]
+kind = "peak_center"
+when = "after_run"
+peak_center = { label = "Ar40", write_table = "ic_run" }
+)";
+  auto r = plan::resolve_plan(text, plan::PlanResolvers{}, "v2");
+  ASSERT_FALSE(r.has_value());
+  EXPECT_NE(r.error().what.find("segment[0].table: table 'ic_run' is used before it is written"), std::string::npos)
+      << r.error().what;
+}
+
+TEST(PlanV2Rules, DuringExtractionWithoutAnAnswerAllowsEveryType) {
+  const std::string text = R"(
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["air"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "baseline"
+when = "during_extraction"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+)";
+  EXPECT_TRUE(plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2").has_value());
+  const plan::PlanResolvers air_extracts_nothing{nullptr, &kCatalog,
+                                                 [](std::string_view type) { return type != "air"; }};
+  auto r = plan::resolve_plan(text, air_extracts_nothing, "v2");
+  ASSERT_FALSE(r.has_value());
+  EXPECT_NE(r.error().what.find("segment[0].when: during_extraction needs an analysis type with an extraction; "
+                                "'air' has none"),
+            std::string::npos)
+      << r.error().what;
+}
+
+TEST(PlanV2Rules, AV1LabelWithoutMassIsNamedByItsHop) {
+  const auto what = problems(R"(
+[main]
+[[main.hops]]
+positions = { Ar40 = "H1", Foo99 = "AX" }
+counts = 5
+)");
+  EXPECT_NE(what.find("main.hops[0].positions.Foo99: label 'Foo99' has no mass"), std::string::npos) << what;
+}
+
+TEST(PlanV2Rules, AV1ProtectedDetectorWithNoIsotopeStaysValid) {
+  // The desugar labels L2's inactive entry "L2", which has no mass: a v1 file
+  // valid before plan v2 stays valid.
+  const auto p = resolve(R"(
+[main]
+[[main.hops]]
+positions = { Ar40 = "H1" }
+protect = ["L2"]
+counts = 5
+)");
+  ASSERT_EQ(segments_of(p).size(), 1u);
+}
+
+TEST(PlanV2Rules, ExcludeLeavesEveryCollect) {
+  const auto p = resolve(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar36 = "CDD" }
+counts = 5
+)",
+                         &kCatalog, "[detectors]\nreference = \"H1\"\nexclude = [\"CDD\"]\n");
+  const auto segs = segments_of(p);
+  ASSERT_EQ(segs.size(), 1u);
+  ASSERT_EQ(segs[0].positions[0].collect.size(), 1u);
+  EXPECT_EQ(segs[0].positions[0].collect[0].detector, "H1");
 }

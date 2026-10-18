@@ -1,0 +1,13 @@
+# expect: unknown table 'nope'
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+table = "nope"
+counts = 10

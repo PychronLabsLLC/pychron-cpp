@@ -1,0 +1,18 @@
+# expect: no signal or sniff segment during_extraction
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+when = "during_extraction"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10

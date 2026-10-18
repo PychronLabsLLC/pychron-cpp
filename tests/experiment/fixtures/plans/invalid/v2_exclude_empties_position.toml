@@ -1,0 +1,17 @@
+# expect: position has no detector left after exclude
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+exclude = ["CDD"]
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+[[segment.positions]]
+collect = { Ar36 = "CDD" }
+at = { label = "Ar36", detector = "CDD" }
+counts = 10

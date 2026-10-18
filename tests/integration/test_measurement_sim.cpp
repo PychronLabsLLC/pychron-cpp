@@ -146,7 +146,7 @@ class MeasurementSim : public pychron::testing::VirtualTimeTest {
     // Spectrometer on one BeamModel whose peaks follow the config's table.
     auto data = spectrometer::cfg::load_spectrometer(kDir / "spectrometer.sim-integrated.toml");
     ASSERT_TRUE(data) << data.error().what;
-    catalog_ = std::make_unique<SpectrometerCatalog>(data->config);
+    catalog_ = std::make_unique<SpectrometerCatalog>(data->config, data->weights, table_names(*data));
     auto table = spectrometer::to_field_table(data->tables.at(data->config.magnet.field_table));
     sim::BeamSettings settings;
     settings.nominal_hv = *data->config.source.nominal_hv;

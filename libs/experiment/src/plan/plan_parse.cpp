@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <initializer_list>
 #include <map>
 #include <set>
 #include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "pychron/experiment/conditionals/conditional.hpp"
@@ -829,6 +833,259 @@ void check_detectors(const MeasurementPlan& plan, const ISpectrometerCatalog& sp
   }
 }
 
+// ---- v2 rules (spec 3.7) -------------------------------------------------------
+
+// `[detectors] exclude` on a plan of segments: the excluded detectors leave
+// every collect. A position that collected something and now collects
+// nothing is an error, as a v1 hop with every detector excluded is.
+void apply_exclude(MeasurementPlan& plan, Problems& p) {
+  const auto& ex = plan.detectors.exclude;
+  if (ex.empty()) return;
+  const auto excluded = [&](const CollectEntry& e) { return std::find(ex.begin(), ex.end(), e.detector) != ex.end(); };
+  for (std::size_t g = 0; g < plan.gases.size(); ++g) {
+    auto& gas = plan.gases[g];
+    for (std::size_t s = 0; s < gas.segments.size(); ++s) {
+      auto& positions = gas.segments[s].positions;
+      for (std::size_t j = 0; j < positions.size(); ++j) {
+        auto& collect = positions[j].collect;
+        const bool had_active = std::any_of(collect.begin(), collect.end(), [](const auto& e) { return e.active; });
+        std::erase_if(collect, excluded);
+        const bool active = std::any_of(collect.begin(), collect.end(), [](const auto& e) { return e.active; });
+        if (had_active && !active) {
+          const auto seg = gas.implicit ? join("segment", s) : join(join(join("gas", g), "segment"), s);
+          p.add(join(join(seg, "positions"), j), "position has no detector left after exclude");
+        }
+      }
+    }
+  }
+}
+
+// The order segments run in: gases in file order; in a gas, by `when`, then
+// file order (spec 5.1).
+std::vector<std::pair<std::size_t, std::size_t>> run_order(const MeasurementPlan& plan) {
+  std::vector<std::pair<std::size_t, std::size_t>> out;
+  for (std::size_t g = 0; g < plan.gases.size(); ++g) {
+    const auto& segs = plan.gases[g].segments;
+    std::vector<std::size_t> idx(segs.size());
+    for (std::size_t s = 0; s < idx.size(); ++s) idx[s] = s;
+    std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) {
+      return static_cast<int>(segs[a].when) < static_cast<int>(segs[b].when);
+    });
+    for (const auto s : idx) out.emplace_back(g, s);
+  }
+  return out;
+}
+
+// Every rule of spec 3.7 a plan's gases must keep, checked after the v1
+// desugar so a v1 file goes through the same rules. A v1 file's own reader
+// already holds it to the reference, exclude and detector-name rules, and the
+// desugar copies its labels into baseline, sniff and whiff segments and its
+// peak center into up to two steps: for it only the label masses of its
+// signal hops and its peak center are checked here, under the v1 paths.
+class V2Rules {
+ public:
+  V2Rules(const MeasurementPlan& plan, const PlanResolvers& r, bool from_v1, Problems& p)
+      : plan_(plan), cat_(r.spectrometer), has_extraction_(r.has_extraction), from_v1_(from_v1), p_(p) {}
+
+  void run() {
+    if (from_v1_) return v1_masses();
+    for (std::size_t g = 0; g < plan_.gases.size(); ++g) {
+      const auto& gas = plan_.gases[g];
+      for (std::size_t s = 0; s < gas.segments.size(); ++s) segment(g, s);
+      time_zero(g);
+    }
+    tables();
+    during_extraction();
+  }
+
+ private:
+  std::string seg_path(std::size_t g, std::size_t s) const {
+    if (plan_.gases[g].implicit) return join("segment", s);
+    return join(join(join("gas", g), "segment"), s);
+  }
+
+  bool known(const std::string& det, const std::string& where) {
+    if (cat_ == nullptr || det.empty() || cat_->has_detector(det)) return true;
+    p_.add(where, "unknown detector '" + det + "'");
+    return false;
+  }
+
+  void mass(const std::string& label, const std::string& where) {
+    if (cat_ != nullptr && !label.empty() && !cat_->mass_of(label))
+      p_.add(where, "label '" + label + "' has no mass");
+  }
+
+  void deflection(const std::string& det, const std::string& where) {
+    if (cat_ != nullptr && cat_->has_detector(det) && !cat_->supports_deflection(det))
+      p_.add(where, "detector '" + det + "' has no deflection control");
+  }
+
+  // The reference detector is in `collect` itself or as one of its modes
+  // ("H2(CDD)" is collector H2 in CDD mode, spec 3.6).
+  bool collects_reference(const Position& pos) const {
+    const auto& ref = plan_.detectors.reference;
+    return std::any_of(pos.collect.begin(), pos.collect.end(), [&](const CollectEntry& e) {
+      return e.detector == ref || (e.detector.starts_with(ref) && e.detector.size() > ref.size() &&
+                                   e.detector[ref.size()] == '(');
+    });
+  }
+
+  void segment(std::size_t g, std::size_t s) {
+    const auto& seg = plan_.gases[g].segments[s];
+    const auto path = seg_path(g, s);
+    for (std::size_t j = 0; j < seg.positions.size(); ++j) position(seg.positions[j], join(join(path, "positions"), j));
+    if (seg.peak_center) {
+      const auto at = join(path, "peak_center");
+      mass(seg.peak_center->label, join(at, "label"));
+      for (std::size_t i = 0; i < seg.peak_center->detectors.size(); ++i)
+        known(seg.peak_center->detectors[i], join(join(at, "detectors"), i));
+      for (std::size_t i = 0; i < seg.peak_center->extra_detectors.size(); ++i)
+        known(seg.peak_center->extra_detectors[i], join(join(at, "extra_detectors"), i));
+    }
+    if (seg.set) {
+      const auto at = join(path, "set");
+      for (const auto& kv : seg.set->deflection) {
+        const auto where = join(join(at, "deflection"), kv.first);
+        if (known(kv.first, where)) deflection(kv.first, where);
+      }
+      for (const auto& kv : seg.set->gain) known(kv.first, join(join(at, "gain"), kv.first));
+    }
+    if (seg.park) {
+      const auto at = join(path, "park");
+      known(seg.park->detector, join(at, "detector"));
+      mass(seg.park->label, join(at, "label"));
+    }
+  }
+
+  void position(const Position& pos, const std::string& path) {
+    std::set<std::string> seen;
+    const bool at_mass = pos.at && std::holds_alternative<AtMass>(*pos.at);
+    for (std::size_t k = 0; k < pos.collect.size(); ++k) {
+      const auto& e = pos.collect[k];
+      const auto where = join(join(path, "collect"), k);
+      if (!e.detector.empty() && !seen.insert(e.detector).second)
+        p_.add(join(path, "collect"), "detector '" + e.detector + "' appears twice in position");
+      if (e.label.empty()) p_.add(where, "collect entry needs a label");
+      else if (!at_mass) mass(e.label, where);
+      if (known(e.detector, where) && e.deflection) deflection(e.detector, join(where, "deflection"));
+    }
+    if (!pos.optics.empty() && cat_ != nullptr && !cat_->has_optics(pos.optics))
+      p_.add(join(path, "optics"), "unknown optics '" + pos.optics + "'");
+    at(pos, path);
+  }
+
+  void at(const Position& pos, const std::string& path) {
+    const auto where = join(path, "at");
+    if (!pos.at) {
+      const auto& ref = plan_.detectors.reference;
+      // With no reference in the plan, the spectrometer's positions it.
+      if (!ref.empty() && !collects_reference(pos))
+        p_.add(path, "reference detector '" + ref + "' not in collect: needs 'at'");
+      return;
+    }
+    std::visit(
+        [&](const auto& a) {
+          using T = std::decay_t<decltype(a)>;
+          if constexpr (std::is_same_v<T, AtLabel>) {
+            known(a.detector, join(where, "detector"));
+            mass(a.label, join(where, "label"));
+          } else if constexpr (std::is_same_v<T, AtMass>) {
+            known(a.detector, join(where, "detector"));
+          } else if constexpr (std::is_same_v<T, AtDac>) {
+            if (cat_ != nullptr && !cat_->positions_by_dac())
+              p_.add(join(where, "dac"), "the spectrometer cannot position by DAC");
+          } else {
+            known(a.detector, join(where, "detector"));
+            if (cat_ != nullptr && !cat_->positions_by_hv())
+              p_.add(join(where, "hv"), "the spectrometer cannot position by HV");
+          }
+        },
+        *pos.at);
+  }
+
+  // At most one time zero in a gas (its own, or one collection segment's),
+  // and a segment's only on the gas's first after_inlet signal segment. A
+  // time_zero step may come anywhere.
+  void time_zero(std::size_t g) {
+    const auto& gas = plan_.gases[g];
+    const auto first = std::find_if(gas.segments.begin(), gas.segments.end(), [](const Segment& s) {
+      return s.kind == SegmentKind::Signal && s.when == When::AfterInlet;
+    });
+    int count = gas.time_zero ? 1 : 0;
+    for (std::size_t s = 0; s < gas.segments.size(); ++s) {
+      const auto& seg = gas.segments[s];
+      if (is_step(seg.kind) || !seg.time_zero) continue;
+      ++count;
+      if (first == gas.segments.end() || &seg != &*first)
+        p_.add(join(seg_path(g, s), "time_zero"), "time_zero belongs on the first after_inlet signal segment");
+    }
+    if (count > 1) {
+      const auto where = gas.implicit ? std::string() : join(join("gas", g), "time_zero");
+      p_.add(where, gas.implicit ? "time_zero set twice in gas" : "time_zero set twice in gas '" + gas.name + "'");
+    }
+  }
+
+  // A table is the spectrometer's, or written by a peak_center step that runs
+  // before the position that uses it.
+  void tables() {
+    std::set<std::string> later;
+    for (const auto& gas : plan_.gases)
+      for (const auto& seg : gas.segments)
+        if (seg.peak_center && !seg.peak_center->write_table.empty()) later.insert(seg.peak_center->write_table);
+    std::set<std::string> written;
+    const auto use = [&](const std::string& name, const std::string& where) {
+      if (name.empty() || written.contains(name)) return;
+      if (cat_ != nullptr && cat_->has_table(name)) return;
+      if (later.contains(name)) p_.add(where, "table '" + name + "' is used before it is written");
+      else if (cat_ != nullptr) p_.add(where, "unknown table '" + name + "'");
+    };
+    for (const auto& [g, s] : run_order(plan_)) {
+      const auto& seg = plan_.gases[g].segments[s];
+      const auto path = seg_path(g, s);
+      use(seg.table, join(path, "table"));
+      for (std::size_t j = 0; j < seg.positions.size(); ++j)
+        use(seg.positions[j].table, join(join(join(path, "positions"), j), "table"));
+      if (seg.peak_center && !seg.peak_center->write_table.empty()) written.insert(seg.peak_center->write_table);
+    }
+  }
+
+  // No leak watch while heating (owner, 2026-10-15), and an analysis type
+  // without an extraction has no time for such a segment.
+  void during_extraction() {
+    bool reported_types = false;
+    for (std::size_t g = 0; g < plan_.gases.size(); ++g) {
+      const auto& segs = plan_.gases[g].segments;
+      for (std::size_t s = 0; s < segs.size(); ++s) {
+        if (segs[s].when != When::DuringExtraction) continue;
+        const auto where = join(seg_path(g, s), "when");
+        if (segs[s].kind == SegmentKind::Signal || segs[s].kind == SegmentKind::Sniff)
+          p_.add(where, "no signal or sniff segment during_extraction");
+        if (reported_types || !has_extraction_) continue;
+        for (const auto& type : plan_.info.analysis_types) {
+          if (has_extraction_(type)) continue;
+          p_.add(where, "during_extraction needs an analysis type with an extraction; '" + type + "' has none");
+          reported_types = true;
+        }
+      }
+    }
+  }
+
+  void v1_masses() {
+    for (std::size_t h = 0; h < plan_.main.hops.size(); ++h) {
+      const auto& hop = plan_.main.hops[h];
+      if (hop.baseline && hop.mass) continue;
+      for (const auto& kv : hop.positions) mass(kv.first, join(join(join("main.hops", h), "positions"), kv.first));
+    }
+    if (plan_.peak_center.before || plan_.peak_center.after) mass(plan_.peak_center.isotope, "peak_center.isotope");
+  }
+
+  const MeasurementPlan& plan_;
+  const ISpectrometerCatalog* cat_;
+  std::function<bool(std::string_view)> has_extraction_;
+  bool from_v1_;
+  Problems& p_;
+};
+
 }  // namespace
 
 Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const PlanResolvers& resolvers,
@@ -867,7 +1124,9 @@ Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const Plan
     if (auto gases = detail::desugar_v1(plan, resolvers.spectrometer)) plan.gases = std::move(*gases);
     else p.add("", gases.error().what);
   }
+  if (v2) apply_exclude(plan, p);
   if (resolvers.spectrometer) check_detectors(plan, *resolvers.spectrometer, p);
+  V2Rules(plan, resolvers, /*from_v1=*/!v2, p).run();
 
   if (p.any()) return p.error();
   return plan;

@@ -1,0 +1,16 @@
+# expect: time_zero set twice in gas
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[gas]]
+name = "Ar"
+time_zero = "on_inlet_close"
+[[gas.segment]]
+kind = "signal"
+time_zero = "on_first_count"
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10

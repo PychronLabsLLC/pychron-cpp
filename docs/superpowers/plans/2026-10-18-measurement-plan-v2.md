@@ -176,7 +176,7 @@ Done notes: fixture 7.1 leaves out its `[baseline.modifier.CDD]` table until Tas
   - `virtual bool positions_by_dac() const = 0; virtual bool positions_by_hv() const = 0;`
 - `PlanResolvers` gains `std::function<bool(std::string_view analysis_type)> has_extraction;` (null: every type has one; the factory's analysis-type table answers in `Run`/`check_queue`).
 
-- [ ] **Step 1: Write one invalid fixture per rule**, each starting `# expect: <text>`:
+- [x] **Step 1: Write one invalid fixture per rule**, each starting `# expect: <text>`:
   - `v2_detector_twice.toml` — `# expect: detector 'H1' appears twice in position`
   - `v2_inactive_without_label.toml` — `{ detector = "CDD", active = false, protect = true }` — `# expect: collect entry needs a label`
   - `v2_label_without_mass.toml` — label `Foo99` — `# expect: label 'Foo99' has no mass`
@@ -192,10 +192,12 @@ Done notes: fixture 7.1 leaves out its `[baseline.modifier.CDD]` table until Tas
   - `v2_gas_and_segment.toml` — `# expect: [[gas]] and top-level [[segment]] cannot both appear`
   - `v2_exclude_empties_position.toml` — `# expect: position has no detector left after exclude`
   - `v2_time_zero_not_first_signal.toml` — `time_zero` on the second `after_inlet` signal segment — `# expect: time_zero belongs on the first after_inlet signal segment`
-- [ ] **Step 2: Run** `--gtest_filter='PlanSchema.EveryInvalidFixtureFailsWithItsRule'` → FAIL on each new file.
-- [ ] **Step 3: Implement** the rules in `plan_parse.cpp` (`check_v2(const MeasurementPlan&, const PlanResolvers&, Problems&)`, run on `plan.gases`, so v1 files go through the same rules after desugar), the catalog calls in `SpectrometerCatalog` (it now also holds `MolecularWeights` and table names: constructor `SpectrometerCatalog(const cfg::SpectrometerConfig&, const MolecularWeights&, std::vector<std::string> table_names)`), and update its two construction sites (grep `SpectrometerCatalog(`).
-- [ ] **Step 4: Run** the invalid-fixture test, `PlanV2Parse.*`, `PlanSchema.*` and `pychron_integration_tests --gtest_filter='MeasurementSim.ShippedConfigsResolveTheExamplePlan'` → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): validate v2 plans against the spectrometer`.
+- [x] **Step 2: Run** `--gtest_filter='PlanSchema.EveryInvalidFixtureFailsWithItsRule'` → FAIL on each new file.
+- [x] **Step 3: Implement** the rules in `plan_parse.cpp` (`check_v2(const MeasurementPlan&, const PlanResolvers&, Problems&)`, run on `plan.gases`, so v1 files go through the same rules after desugar), the catalog calls in `SpectrometerCatalog` (it now also holds `MolecularWeights` and table names: constructor `SpectrometerCatalog(const cfg::SpectrometerConfig&, const MolecularWeights&, std::vector<std::string> table_names)`), and update its two construction sites (grep `SpectrometerCatalog(`).
+- [x] **Step 4: Run** the invalid-fixture test, `PlanV2Parse.*`, `PlanSchema.*` and `pychron_integration_tests --gtest_filter='MeasurementSim.ShippedConfigsResolveTheExamplePlan'` → PASS.
+- [x] **Step 5: Commit** `feat(experiment): validate v2 plans against the spectrometer`.
+
+Done notes: `SpectrometerCatalog` takes `spectrometer::cfg::MolecularWeights` (the label -> mass map `SpectrometerData::weights` holds, defaults merged with the lab's file), not the `spectrometer::MolecularWeights` class; `measurement::table_names(const SpectrometerData&)` gives its table names, at both construction sites. `positions_by_dac` is true when the magnet has a positioner whose native axis is `dac`, `positions_by_hv` when a source driver is configured; `has_optics` is false. Rules settled here (spec §3.7 updated): the `at` default is checked only when the plan names `[detectors] reference` (with none, the spectrometer's reference positions it, which Task 6's `position_target` answers), and an entry on one of the reference's modes (`H2(CDD)` for `H2`, worked plan 7.4) counts as the reference. A v1 file is held to the label-mass rule only, on its signal hops (`main.hops[i].positions.<label>`) and its peak center isotope: its reader already holds it to the reference, exclude and detector rules, and the inactive entry the desugar adds for a protected detector with no configured isotope is labelled with the detector's name, which has no mass, so checking it would refuse a v1 file valid today (`PlanV2Rules.AV1ProtectedDetectorWithNoIsotopeStaysValid`). The time-zero rules report both "set twice" and "belongs on the first after_inlet signal segment" when both hold. Without a catalog only the plan-internal rules run (a table used before the step that writes it is still refused). `PlanResolvers::has_extraction` is read by the rule but nobody sets it yet: no analysis-type table says which types extract; Task 20, which runs `during_extraction`, sets it where `Run` and `check_queue` resolve plans; a plan with no `analysis_types` names no type to ask about, so there the run's own type is the one to check. Worked plans now resolve against the test catalog (`kWorkedResolvers`), and `PlanV2Rules.*` covers what the fixtures do not.
 
 ### Task 4: Resolved-plan goldens and the v1 = v2 equivalence
 

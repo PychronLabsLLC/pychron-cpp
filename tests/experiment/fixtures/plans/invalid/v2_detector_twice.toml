@@ -1,0 +1,12 @@
+# expect: detector 'H1' appears twice in position
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar39", detector = "H1", active = false, protect = true } ]
+counts = 10

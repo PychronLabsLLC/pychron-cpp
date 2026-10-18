@@ -1,6 +1,7 @@
 #include "pychron/experiment/measurement/adapters.hpp"
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -67,8 +68,19 @@ std::optional<ParamValue> SystemConfigAliases::resolve_alias(std::string_view ke
   return it->second;
 }
 
-SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config) {
-  for (const auto& d : config.detectors) detectors_.emplace(d.name, d.isotope);
+SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config,
+                                         spectrometer::cfg::MolecularWeights weights,
+                                         std::vector<std::string> table_names)
+    : weights_(std::move(weights)),
+      tables_(std::make_move_iterator(table_names.begin()), std::make_move_iterator(table_names.end())),
+      // A raw value goes to the positioner only when its native axis is a DAC;
+      // an HV position needs a source to set it on.
+      by_dac_(!config.magnet.positioner.empty() && config.magnet.native_axis == spectrometer::cfg::Axis::Dac),
+      by_hv_(!config.source.driver.empty()) {
+  for (const auto& d : config.detectors) {
+    detectors_.emplace(d.name, d.isotope);
+    if (d.deflection && d.deflection->control) deflectable_.insert(d.name);
+  }
 }
 
 bool SpectrometerCatalog::has_detector(std::string_view name) const { return detectors_.contains(name); }
@@ -77,6 +89,31 @@ std::optional<std::string> SpectrometerCatalog::isotope_of(std::string_view dete
   const auto it = detectors_.find(detector);
   if (it == detectors_.end() || it->second.empty()) return std::nullopt;
   return it->second;
+}
+
+std::optional<double> SpectrometerCatalog::mass_of(std::string_view label) const {
+  const auto it = weights_.find(label);
+  if (it == weights_.end()) return std::nullopt;
+  return it->second;
+}
+
+bool SpectrometerCatalog::supports_deflection(std::string_view detector) const {
+  return deflectable_.contains(detector);
+}
+
+bool SpectrometerCatalog::has_optics(std::string_view /*name*/) const { return false; }
+
+bool SpectrometerCatalog::has_table(std::string_view name) const { return tables_.contains(name); }
+
+bool SpectrometerCatalog::positions_by_dac() const { return by_dac_; }
+
+bool SpectrometerCatalog::positions_by_hv() const { return by_hv_; }
+
+std::vector<std::string> table_names(const spectrometer::cfg::SpectrometerData& data) {
+  std::vector<std::string> out;
+  out.reserve(data.tables.size());
+  for (const auto& kv : data.tables) out.push_back(kv.first);
+  return out;
 }
 
 Result<jobs::PeakCenterConfig> SpectrometerPeakCenter::config_for(const PeakCenterRequest& request) const {

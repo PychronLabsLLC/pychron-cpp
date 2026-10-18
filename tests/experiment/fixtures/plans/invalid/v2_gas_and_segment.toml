@@ -1,0 +1,19 @@
+# expect: [[gas]] and top-level [[segment]] cannot both appear
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[gas]]
+name = "Ar"
+[[gas.segment]]
+kind = "signal"
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10

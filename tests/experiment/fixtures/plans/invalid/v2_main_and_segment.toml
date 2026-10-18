@@ -1,0 +1,17 @@
+# expect: [main] and [[segment]] cannot both appear
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[main]
+cycles = 1
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10

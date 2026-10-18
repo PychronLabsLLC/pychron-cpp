@@ -1,0 +1,17 @@
+# expect: table 'ic_run' is used before it is written
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+table = "ic_run"
+counts = 10
+[[segment]]
+kind = "peak_center"
+when = "after_run"
+peak_center = { label = "Ar40", detectors = ["H1", "AX"], write_table = "ic_run" }

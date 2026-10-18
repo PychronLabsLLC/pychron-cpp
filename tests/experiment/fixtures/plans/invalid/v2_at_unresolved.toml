@@ -1,0 +1,15 @@
+# expect: needs 'at'
+[plan]
+name = "t"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+[detectors]
+reference = "H1"
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+[[segment.positions]]
+collect = { Ar39 = "AX", Ar36 = "CDD" }
+counts = 10
