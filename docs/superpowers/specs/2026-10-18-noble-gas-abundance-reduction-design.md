@@ -1,7 +1,7 @@
 # Noble-gas abundance reduction: He, Ne, Ar, Kr, Xe below any age
 
 Date: 2026-10-18
-Status: Draft, not agreed. Nothing built.
+Status: Agreed 2026-10-18 (owner settled Q1-Q6, recorded in §17). Nothing built.
 Owner: Jake Ross
 Depends on: `2026-10-05-measurement-plan-v2-design.md` §3.6 (`[interferences]`,
 mass table), §6.1 (`label@detector` keys, record v3), §6.2 and §11.7 (what
@@ -57,7 +57,8 @@ unchanged; it also gets everything here as a gas.
    Arrhenius fit; output reusable by MDD. §10.
 8. Generic isochron input: any two ratio quantities to York. §11.
 9. Fix `reduced.cpp:107`. §3.3.
-10. Store placement without a migration. §12.
+10. Store placement: reference documents without a migration, one
+    migration for the `corrections` revision kind. §12.
 
 ### 2.2 Non-goals
 
@@ -101,7 +102,7 @@ mass); normalising }`. Normalising isotope per gas, lab-configurable
 | Kr | Kr84 | Kr86/Kr84 |
 | Xe | Xe130 | Xe136/Xe130 |
 
-Open question Q3 (Xe 130 or 132, Kr 84).
+Per-lab config, these defaults (owner, 2026-10-18, Q3).
 
 ### 3.2 Per-label stages
 
@@ -159,8 +160,8 @@ Reference document `noble/reference_ratios/<name>` (§12), default name
 | Gas | Ratio | Value **[literature]** | Source |
 |---|---|---|---|
 | He | He3/He4 | 1.384e-6 ± 0.006e-6 (Ra) | Clarke et al. 1976; Mamyrin et al. 1970 give 1.399e-6 |
-| Ne | Ne20/Ne22 | 9.80 ± 0.08 | Eberhardt et al. 1965, Bottomley et al. 1984; Honda et al. 2015: 9.777 ± 0.004 |
-| Ne | Ne21/Ne22 | 0.0290 ± 0.0003 | Eberhardt et al. 1965; Honda et al. 2015: 0.02905 ± 0.00003 |
+| Ne | Ne20/Ne22 | 9.777 ± 0.004 | Honda et al. 2015 (owner, Q1); Eberhardt et al. 1965, Bottomley et al. 1984: 9.80 ± 0.08 |
+| Ne | Ne21/Ne22 | 0.02905 ± 0.00003 | Honda et al. 2015 (owner, Q1); Eberhardt et al. 1965: 0.0290 ± 0.0003 |
 | Ar | Ar40/Ar36 | 298.56 ± 0.31 | Lee et al. 2006 (ArAr `Default` preset); Nier 1950: 295.5 ± 0.5 (`Legacy`) |
 | Ar | Ar38/Ar36 | 0.1885 ± 0.0003 | Lee et al. 2006; Nier 1950: 0.1876 (= 295.5 / 1575) |
 | Kr | Kr78/Kr84 | 0.006087 | Basford et al. 1973 (normalised 84Kr = 1) |
@@ -177,8 +178,10 @@ Reference document `noble/reference_ratios/<name>` (§12), default name
 | Xe | Xe134/Xe130 | 2.563 | Basford et al. 1973 |
 | Xe | Xe136/Xe130 | 2.176 | Basford et al. 1973 |
 
-Kr and Xe errors not listed: table ships them as 0 until the owner fills
-them (Q1). A ratio to another normalising isotope is derived at load:
+Shipped default (owner, Q1): Ne from Honda et al. 2015; Ra from Clarke et
+al. 1976; Kr and Xe from Basford et al. 1973, still to be verified against
+the paper, errors shipped as 0 until read from it. A lab's own table
+replaces any row. A ratio to another normalising isotope is derived at load:
 `(A/N') = (A/N) / (N'/N)`, error propagated with the two variables. ArAr
 constants `atm4036`, `atm4038` stay where they are (D1): this table is not
 their source; a test asserts the `air` document's Ar rows equal the
@@ -189,8 +192,8 @@ Document shape (JSON in `ref_document.content_json`):
 ```json
 {"schema": 1, "name": "air",
  "gases": {"Ne": {"normalising": "Ne22",
-                  "ratios": {"Ne20/Ne22": {"v": 9.80, "e": 0.08, "source": "Eberhardt 1965"},
-                             "Ne21/Ne22": {"v": 0.0290, "e": 0.0003, "source": "Eberhardt 1965"}}}}}
+                  "ratios": {"Ne20/Ne22": {"v": 9.777, "e": 0.004, "source": "Honda 2015"},
+                             "Ne21/Ne22": {"v": 0.02905, "e": 0.00003, "source": "Honda 2015"}}}}}
 ```
 
 Masses: `default_molecular_weights()` (AME2020), overridable by the lab's
@@ -229,7 +232,8 @@ N13 exponential:  D_i = (m_i / m_N)^β
 
 A ratio `s_i / s_N` is then `R_t`. Which law: `spectrometer.toml`
 `[discrimination] law = "exponential"`, per gas override
-`[discrimination.gases.Ne] law = "linear"`; default `exponential` (Q2).
+`[discrimination.gases.Ne] law = "linear"`; default `exponential` (owner,
+Q2).
 Where the law is a per-run property it is snapshotted with the
 spectrometer settings (`spectrometer_snapshot.settings`), so reduction reads
 the law the run was taken under, not today's config.
@@ -258,7 +262,13 @@ per isotope is written as that isotope's detector IC factor
 default `apply = "per_isotope"` writes one discrimination row for the gas
 (§12) and leaves detector IC factors alone. The two are not combined for one
 gas in one analysis: `per_detector` rows and a `disc:<gas>` row for the same
-gas is a validation error of the fit set.
+gas is a validation error of the fit set, and a reduction that finds both
+stored uses neither and reports `DiscriminationConflict`.
+
+Ar (owner, Q6): a `disc:Ar` row, when present, feeds `D_i` of the five Ar
+`IsotopeSignal`s given to `reduce()` (E3), so the ArAr age sees law-based
+discrimination through the slot it already has; with no row, `D_i = 1` and
+IC factors alone carry it, as today. Never both: the rule above.
 
 ### 4.4 Diagnostics
 
@@ -621,8 +631,8 @@ boundary the piecewise `g` is continuous to ~1e-3 (F and K's
 approximations), not exact; documented, not patched. `a_i ≤ 0` or a
 non-finite `a_i`: the step is excluded from the sums with a diagnostic and
 `F` is computed over the rest. `σ_T = 0` gives `sx = 0`; `york_fit` refuses a
-zero sigma, so the fit then uses `sx = 1e-12` with the choice recorded (Q5
-asks whether OLS with `fits.hpp` is wanted instead).
+zero sigma, so the fit then uses `sx = 1e-12` with the choice recorded in
+the result (`token_sx = true`) (owner, Q5).
 
 Output `KineticsSeries { geometry; steps: {T_k, t_s, a, F, g, lnDa2 (UFloat), included}; arrhenius: optional<YorkFit>;
 ea_kj_mol, ln_d0_a2 (UFloat) }`. MDD consumes `steps` and nothing else;
@@ -651,13 +661,14 @@ applies unchanged.
 
 ## 12. Store
 
-Rules: `libs/persistence/AGENTS.md`. No migration in this spec
-**[decision]**; the alternatives it rejects are named.
+Rules: `libs/persistence/AGENTS.md`. One migration in this spec, for the
+`corrections` revision kind (owner, Q4); reference documents need none.
+Alternatives rejected are named.
 
 | What | Where | Why there |
 |---|---|---|
 | Reference-ratio table, endmembers, pipette, spike | `ref_object` type `document`, keys `noble/reference_ratios/<name>`, `noble/endmembers/<name>`, `noble/pipette/<ms>/<name>`, `noble/spike/<ms>/<name>`; payload `ref_document.content_json`; `mass_spectrometer_uuid` set for pipette and spike (indexed, migration 0005) | Same kind of thing as `molecular_weights.json`, which already lives there. Revisioned, pinned by `refpins`, in every `derived_value` fingerprint through "resolved reference revisions". Rejected: new `ref_type` values (CHECK list change = migration, `revision`/`ref_object` rebuild on SQLite). Promote to typed `ref_type`s only in the one migration that also brings A1 `arar_constants`, if ever. |
-| Per-analysis discrimination, interference ratios, sensitivity, pipette shot, spike shot | `icfactors` revision, `icfactor_value` rows with pseudo-detector keys: `disc:<gas>` (`discrimination = 1`, `value/error` = `v` of the pair, `reference_detector` = pair as `"Ne20/Ne22"`, `standard_ratio` = table ratio, `reference_data` = `{"law", "factor": {v, e}, "table": {"name", "revision"}, "masses": "ame2020"}`, `references` = the fit's references); `if:<target>:<num>/<den>` (ratio with `reference_data = {"parent", "ratio_from"}`, references); `sens:<gas>` (`value/error` mol per unit, `extra = {"units", "pipette": {"name", "revision"}}`, references); `pipette:<gas>` (`value` = shot `k`, `extra = {"name"}`); `spike:<isotope>` (`value/error` = spike moles, `extra = {"name", "revision", "shot"}`). `IcFactorRow` already has every field. | These are corrections applied at reduction, fitted from references, reviewed, manually overridable: what `icfactors` is. `discrimination` flag exists for this and is unused. Old builds: `StoreSource::load` matches rows to isotopes by detector; a row no isotope's detector matches is ignored (to be verified by a test that loads such an analysis with the current loader before any row is written: `tests/processing/test_store_source.cpp`). Rejected: a new revision kind `corrections` (CHECK on `revision.kind` = migration and a `revision` table rebuild on SQLite, 312 thousand rows in one lab's store). Changeset message `<ICFactor> disc:Ne(average), if:Ne20:Ar40++/Ar40(average)`. |
+| Per-analysis discrimination, interference ratios, sensitivity, pipette shot, spike shot | New revision kind `corrections` (subject analysis, one head per analysis, not a collection kind: no root revision at ingest), payload table `correction_value` keyed `(revision_uuid, key)`, §12.1; keys `disc:<gas>` (`value/error` = `v` of the pair, `reference_data` = `{"pair": "Ne20/Ne22", "law", "factor": {v, e}, "standard_ratio", "table": {"name", "revision"}, "masses": "ame2020"}`); `if:<target>:<num>/<den>` (ratio, `reference_data = {"parent", "ratio_from"}`); `sens:<gas>` (`value/error`, `units` `mol/fA` or `mol/cps`, `reference_data = {"pipette": {"name", "revision"}}`); `pipette:<gas>` (`value` = shot `k`, `extra = {"name"}`); `spike:<isotope>` (`value/error` = spike moles, `units = "mol"`, `extra = {"name", "revision", "shot"}`). Fitted rows carry their references in `correction_reference`. | Corrections applied at reduction, fitted from references, reviewed, manually overridable: the shape of `blanks` and `icfactors`, under a key of their own so a detector IC factor and a gas discrimination never share a table. Rejected: pseudo-detector rows in `icfactor_value` (no migration, but `icfactors` would then mean two things and old builds would silently drop rows they do not understand). Changeset message `<CORRECTIONS> disc:Ne(average), if:Ne20:Ar40++/Ar40(average)`. |
 | Monitor labels' intercepts, `Ar40++`, `HD` | `intercept_value` as any label (free text `isotope`) | Already so. |
 | `[interferences]`, discrimination law | `spectrometer_snapshot.settings` JSON (record v3 spectrometer snapshot) | Reduction reads what the run had. Already JSON, no change. |
 | Shot counter | `analysis_meta` (`pipette`, `shot`) via the record | Free-form; no change. |
@@ -674,8 +685,69 @@ Queries: documents by key prefix `noble/` are read once per reduction run
 and shared across analyses (AGENTS "read once and shared"), never per
 analysis; the `UNIQUE (ref_type, key)` index serves `ref_type = 'document'
 AND key = ?`. Pipette and spike by `mass_spectrometer_uuid` use
-`ref_object_mass_spectrometer_ix`. No new per-analysis statement: the
-`icfactors` head is already loaded.
+`ref_object_mass_spectrometer_ix`. One new per-analysis read: the
+`corrections` head and its `correction_value` rows, loaded with the other
+heads (same statements as `blanks`: a head row, a payload query by
+`revision_uuid`, references by `(revision_uuid, key)`), and only for
+analyses that have the head (most Ar-only stores: none).
+
+### 12.1 Migration `0007_corrections.sql` **[decision]**
+
+Source `libs/persistence/migrations/pg/0007_corrections.sql`, SQLite file
+regenerated by `tools/ddl_sqlite.py`; added to
+`SchemaTest.MigrateIsIdempotentAndRecordsChecksums`; commit carries a
+`BREAKING CHANGE:` footer saying to run `elctl db migrate --db <url>`.
+
+```sql
+-- revision.kind gains 'corrections'; the CHECK is replaced
+-- (PostgreSQL: DROP CONSTRAINT / ADD CONSTRAINT; SQLite: table rebuild as
+-- 0006 did for principal_investigator, with deferred foreign keys).
+CREATE TABLE correction_value (
+  revision_uuid uuid NOT NULL REFERENCES revision,
+  key text NOT NULL,                       -- disc:Ne, if:Ne20:Ar40++/Ar40, sens:He, pipette:He, spike:He3
+  gas text,                                -- He, Ne, Ar, Kr, Xe
+  value double precision,
+  error double precision,
+  units text,                              -- mol/fA, mol/cps, mol, '' for ratios and factors
+  fit text,
+  error_type text,
+  reviewed boolean NOT NULL DEFAULT false,
+  use_manual_value boolean NOT NULL DEFAULT false,
+  manual_value double precision,
+  use_manual_error boolean NOT NULL DEFAULT false,
+  manual_error double precision,
+  reference_data jsonb,
+  extra jsonb,
+  PRIMARY KEY (revision_uuid, key)
+);
+CREATE TABLE correction_reference (
+  revision_uuid uuid NOT NULL,
+  key text NOT NULL,
+  ordinal integer NOT NULL,
+  ref_analysis_uuid uuid REFERENCES analysis,
+  record_id text,
+  exclude boolean NOT NULL DEFAULT false,
+  PRIMARY KEY (revision_uuid, key, ordinal),
+  FOREIGN KEY (revision_uuid, key) REFERENCES correction_value
+);
+-- append-only triggers as the other *_value tables
+```
+
+Additive except for the CHECK: a migrated store opens in the build before
+this one only if that build ignores a head whose kind it cannot parse;
+`StoreSource::load` and `parse_kind` are checked for that before the
+migration lands, and a test in `tests/persistence/test_schema.cpp` opens a
+store holding a `corrections` revision with a loader that does not know the
+kind and loads the analysis's other kinds. The SQLite `revision` rebuild
+(312 thousand rows in the lab store of AGENTS "Sizes") is timed on a copy
+of a lab store before release and the time recorded in the commit message.
+No new index: both tables are read by primary key.
+
+C++: `Kind::Corrections` (`"corrections"`), `CorrectionRow { key, gas,
+value, error, units, fit, error_type, reviewed, manual, reference_data_json,
+extra_json, references }`, `Corrections = std::vector<CorrectionRow>` in
+`RevisionPayload`; `payload_kind_matches` extended; `libs/dvc` import
+produces none (legacy has nothing to map).
 
 ## 13. Data model and API
 
@@ -742,7 +814,10 @@ when configured, diagnostics) and `std::map<std::string, UFloat> monitor_ratios`
 resolved documents (`ReferenceTable`, endmembers, pipettes, spikes) read
 once per run by the source. `Quantity::eval` covers §9. `reference_fit.hpp`
 gains the three targets (§4.3, §5.3, §6.2) with schemas, rows and
-`save_reference_fits` writing the pseudo-detector rows (§12).
+`save_reference_fits` writing `corrections` revisions (§12); `IsotopeData`
+gains `discrimination` and `interference` (`Value`) resolved from those rows
+by the source, and `Analysis` a `std::vector<CorrectionData> corrections`
+for the rows that are not per isotope (`sens:`, `pipette:`, `spike:`).
 
 Live path: nothing. `compute_arar` unchanged (parity test 8.2 stays).
 
@@ -782,9 +857,11 @@ vectors. Instead:
 - `reduced.cpp` fix: tag test §3.3; a He-Ne-Ar multi-gas fixture record
   (v2 §7.6 plan run in the simulator once that plan lands; until then a
   hand-written `Analysis`) reduces to three `GasResult`s.
-- Store: loader test for pseudo-detector rows (§12) on SQLite and, with
-  `PYCHRON_TEST_PG_URL`, PostgreSQL; `derived_value` fingerprint changes
-  when a noble document revision changes.
+- Store: migration 0007 idempotent and checksummed; `corrections` round
+  trip (write, head, CAS, rollback) on SQLite and, with
+  `PYCHRON_TEST_PG_URL`, PostgreSQL; unknown-kind tolerance test (§12.1);
+  `derived_value` fingerprint changes when a noble document revision or
+  the `corrections` head changes.
 - Reference fit targets: one test per target with three references and one
   unknown, each fit kind, as the blank fit tests.
 
@@ -794,35 +871,30 @@ Each item a plan task group; test first; the spec changes with the code.
 
 1. `make_signal(label)`, tags fix, `Stage::MonitorCorrected`, `IsotopeSignal::interference`, N3-N4 parity guard.
 2. `Gas`, labels, normalising config, `GasResult` with plain ratios (no discrimination yet); `Quantity` ratios of any gas; `available_quantities`.
-3. Reference-ratio document (load, renormalise, `air` default shipped under `configs/examples`), laws N5-N13, `Discrimination` fit target, `disc:<gas>` rows, `delta`, `rra`, `excess`, `disc_misfit`.
-4. `[interferences]` config, snapshot into the record, N14, `Interferences` fit target, `if:` rows; `Ar40++`, `CO2++` added to the example mass table.
-5. Pipette and spike documents, shot counter in the extraction host and record, `Sensitivity` fit target, `sens:` rows, N15-N22, amount stages.
-6. Isotope dilution N23, `spike_blank` handling, `moles_id`.
-7. Endmember document, N24-N27, `component`, `fraction`.
-8. Kinetics N30-N34, `kinetics.*` names.
-9. `ratio_isochron` unit (values only; scene in the figure spec).
-10. `elctl export` concentration columns (after `libs/processing/AGENTS.md` report rules).
+3. Migration 0007, `Kind::Corrections`, `CorrectionRow` payload, store round trip, unknown-kind tolerance test, loader into `IsotopeData` and `Analysis::corrections` (§12.1). One migration for everything below; nothing after this item adds a column.
+4. Reference-ratio document (load, renormalise, `air` default shipped under `configs/examples`), laws N5-N13, `Discrimination` fit target, `disc:<gas>` rows, Ar `D_i` from `disc:Ar` (§4.3), `delta`, `rra`, `excess`, `disc_misfit`.
+5. `[interferences]` config, snapshot into the record, N14, `Interferences` fit target, `if:` rows; `Ar40++`, `CO2++` added to the example mass table.
+6. Pipette and spike documents, shot counter in the extraction host and record, `Sensitivity` fit target, `sens:` rows, N15-N22, amount stages.
+7. Isotope dilution N23, `spike_blank` handling, `moles_id`.
+8. Endmember document, N24-N27, `component`, `fraction`.
+9. Kinetics N30-N34, `kinetics.*` names.
+10. `ratio_isochron` unit (values only; scene in the figure spec).
+11. `elctl export` concentration columns (after `libs/processing/AGENTS.md` report rules).
+
+## 17. Decisions (owner, 2026-10-18)
+
+Owner's answers to the draft's six questions, folded into the sections
+named:
+
+| # | Decision | Where |
+|---|---|---|
+| Q1 | Shipped `air` Ne ratios from Honda et al. 2015 (9.777, 0.02905); Ra and Kr/Xe as proposed, still to verify | §4.1 |
+| Q2 | `exponential` default law, settable per gas | §4.2 |
+| Q3 | Normalising isotope per-lab config, defaults Kr84, Xe130 | §3.1 |
+| Q4 | New `corrections` revision kind, one migration; not pseudo-detector rows in `icfactors` | §12, §12.1, §16 item 3 |
+| Q5 | Arrhenius with zero temperature error: York with token `sx`, recorded | §10 |
+| Q6 | Ar adopts a `disc:Ar` row through `D_i` when present; never both | §4.3 |
 
 ## Open questions
 
-Only what the owner decides; everything else above is decided or verifiable.
-
-- **Q1** Reference-ratio values and errors to ship as `air`: Eberhardt 1965
-  (9.80, 0.0290) or Honda 2015 (9.777, 0.02905) for Ne; Clarke 1976 or
-  Mamyrin 1970 for Ra; Basford 1973 for Kr and Xe with which errors. Which
-  labs want which (the table is per lab, the shipped default is one
-  choice).
-- **Q2** Default discrimination law (`exponential` proposed), and whether a
-  lab may set it per gas (proposed yes) or only per spectrometer.
-- **Q3** Kr and Xe normalising isotope: per-lab config (proposed:
-  `[reduction.gases.Xe] normalising`), defaults Kr84 and Xe130; or fixed
-  Xe132 as some labs report.
-- **Q4** Pseudo-detector rows in `icfactors` (§12, no migration) versus a
-  new `corrections` revision kind (one migration, `revision` rebuild on
-  SQLite). Proposed: rows now; promote only alongside A1.
-- **Q5** Arrhenius fit when temperature error is 0: York with a token
-  `sx` (proposed) or plain OLS through `fits.hpp`.
-- **Q6** Should Ar's `ic_corrected` adopt a `disc:Ar` row when present
-  (then the ArAr age sees law-based discrimination through `D_i`), or must
-  Ar discrimination stay IC-factor-only (legacy)? Proposed: adopt when
-  present, never both.
+None.
