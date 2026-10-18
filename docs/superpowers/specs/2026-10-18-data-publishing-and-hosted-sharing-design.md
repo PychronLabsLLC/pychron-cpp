@@ -1,7 +1,8 @@
 # Data publishing and hosted sharing: design
 
 Date: 2026-10-18
-Status: Proposed (owner decisions in section 14 pending)
+Status: Proposed (owner decisions of 2026-10-18 folded in: sections 6.3,
+7, 9.4, 9.7, 9.8, 10.1, 10.2)
 Deciders: Jake Ross
 Depends on: `2026-10-01-dvc-schema-design.md` (store, revisions, outbox D3,
 change feed D6, offline export D7), `2026-10-03-legacy-ingestion-design.md`,
@@ -73,7 +74,9 @@ a frozen read of either store.
 
 - R1 Nothing is public by default. A fresh store, a fresh release, a fresh
   tenant: nothing visible outside the lab until a release is `published` with
-  `visibility = 'public'` and nothing in it is under embargo.
+  `visibility = 'public'` and nothing in it is under embargo. Confirmed by
+  the owner 2026-10-18: not even a released sample's metadata (name,
+  location, material) is listed in the index before that.
 - R2 A release is immutable once `published`: its pins, members and
   manifest never change. A change is a new release that names the old one.
 - R3 A release pins revisions, not values: every value in the directory is a
@@ -154,6 +157,9 @@ CREATE INDEX external_id_entity_ix ON external_id (entity_type, entity_uuid);
   only. No constraint ties the two columns; the rule is in the access layer
   (an embargo is live when `lifted_utc IS NULL AND (until_utc IS NULL OR
   until_utc > now)`).
+- No cap on an embargo in the software: the lab decides its length
+  (owner's decision). The Publish page shows the end date and warns only
+  when none is set (indefinite).
 - Embargo on a `project` covers its samples and their analyses; on a `sample`
   its analyses; on an `analysis` that row. `is_embargoed(analysis, at)` is
   one query over the three scopes, written as `UNION`, never `OR` across
@@ -604,7 +610,9 @@ in `apps/pychron-ui/src/publish_page.*` over a `PublishBridge` calling
   Set public.
 - New release dialog: selection from the Data browser's current filter or
   selection (same path as **Export**), tags, title, authors (table with
-  ORCID), licence (combo of SPDX ids, default per section 14), description,
+  ORCID), licence (combo of SPDX ids; preselected `CC-BY-4.0`, one constant
+  `kDefaultLicence` in `libs/publish/release.hpp`; owner undecided and may
+  change it before the page ships), description,
   embargo date, supersedes. Shows member count and count under embargo
   before OK.
 - Build: directory chooser; options with-viewer, with-figures, private;
@@ -635,9 +643,10 @@ Scope, all of it:
 
 1. Header: title, authors, licence, DOI (link), version chain
    (supersedes), download buttons (each Parquet, Schaen CSV, manifest).
-2. Map: MapLibre GL with a public raster basemap (OpenStreetMap tiles or
-   none when offline), one point per sample from `samples.parquet`, click
-   opens the sample.
+2. Map: MapLibre GL with OpenStreetMap raster tiles (owner's decision;
+   attribution shown as the OSMF tile usage policy requires, a `User-Agent`
+   naming the viewer, no bulk prefetch; none when offline), one point per
+   sample from `samples.parquet`, click opens the sample.
 3. Sample list: name, material, project, n, ages summary; filter box over
    name, project, material; sort.
 4. Sample page: metadata, IGSN link, ages (interpreted ages table), analysis
@@ -830,9 +839,11 @@ pygeoapi has no access control
 the reverse proxy (Caddy) in front of every tenant process enforces it;
 pygeoapi listens on localhost only.
 
-- URL shape: `https://<region>.pychron.cloud/<lab>/` -> tenant's pygeoapi;
-  `https://<region>.pychron.cloud/index/` -> the cross-lab index (9.6);
-  `https://releases.pychron.cloud/<lab>/<name>-v<n>/` -> static release
+- URL shape (domain `pychronlabs.com`, owner's decision; releases on a
+  separate host from the API):
+  `https://<region>.api.pychronlabs.com/<lab>/` -> tenant's pygeoapi;
+  `https://<region>.api.pychronlabs.com/index/` -> the cross-lab index (9.6);
+  `https://releases.pychronlabs.com/<lab>/<name>-v<n>/` -> static release
   directories (object storage behind the same proxy, immutable cache
   headers, CORS `GET`, `HEAD`, range).
 - Private by default: a tenant's collections and its releases need
@@ -868,7 +879,7 @@ then stops after the PUT step (`--static-only`).
 
 ### 9.6 Cross-lab Records index
 
-`https://<region>.pychron.cloud/index/`: one pygeoapi, collection
+`https://<region>.api.pychronlabs.com/index/`: one pygeoapi, collection
 `records`, over a database `pychron_index` fed by `pychron-cloud index`
 (hourly): `INSERT ... ON CONFLICT` of every tenant's `pub.record` rows whose
 release is `public`, with `lab` and `region` columns added; never a private
@@ -880,12 +891,21 @@ index, three copies.
 
 ### 9.7 Region choice
 
-Tenant chooses region at creation: `us`, `eu`, `au` to start (where the
-labs are). Database, backups, private releases and the tenant's pygeoapi
+Tenant chooses region at creation: `us`, `eu`, `au` (confirmed by the
+owner; where the labs are). Database, backups, private releases and the tenant's pygeoapi
 stay in that region. Public releases are copied to every region's
 `releases` bucket (preservation and locality). The index is global (9.6).
 A tenant moves region by backup and restore; `store_id` unchanged, releases
 re-copied; tokens reissued.
+
+### 9.8 Decided later: pricing
+
+Pricing tiers of the hosted tier (storage, private readers, regions,
+preservation copies, DOI minting, what a free tier holds) are the owner's
+commercial decision, not yet made. Nothing in this design depends on them:
+every limit is a per-tenant setting in `pychron-cloud` (quota bytes,
+reader token count, regions allowed), read at provisioning, absent in the
+store and in `libs/publish`. Phases 1 to 5 proceed without them.
 
 ## 10. Registrations
 
@@ -902,7 +922,7 @@ re-copied; tokens reissued.
   `types.resourceTypeGeneral`. Metadata Schema 4.6 (2024-12-05;
   [versions](https://schema.datacite.org/versions.html)); the JSON
   attributes follow it.
-- Payload from the release: `prefix` (owner's or lab's, section 14),
+- Payload from the release: `prefix` (owner's or lab's, below),
   `url` = the release's landing page (`.../<lab>/<name>-v<n>/viewer/` or
   the lab's own URL), `creators` from `authors` (name, `nameIdentifiers`
   ORCID, `affiliation`), `titles`, `publisher`, `publicationYear`,
@@ -924,11 +944,18 @@ re-copied; tokens reissued.
   the state update. `external_id` row per request; `in_doubt` when no
   answer (never re-sent blindly; `GET /dois/<doi>` settles it). Secrets via
   `ISecretStore`, never a file or a log (EarthBank rules apply verbatim).
-- Registrar runs from the hosted tier by default (owner's DataCite
-  repository account, in `pychron-cloud`, on `publish upload --public`
-  when the release asks for a DOI) and from `elctl` for a lab with its own
-  account. Same payload code (`libs/publish/registrar.hpp`); the cloud
-  side calls `elctl publish doi` in a container with the tenant's store.
+- Two routes, both offered (owner's decision): the owner's prefix under
+  pychronlabs' DataCite membership, run from the hosted tier (owner's
+  repository account in `pychron-cloud`, on `publish upload --public` when
+  the release asks for a DOI); or the lab's own institutional repository
+  account and prefix, run from `elctl publish doi` with the lab's
+  credentials in its `ISecretStore`. `publisher` follows the prefix used:
+  the owner's route sets `publisher = "Pychron Labs"` with the lab named
+  in `contributors` (`HostingInstitution`), the lab's route sets its
+  institution. The tenant's profile names its route (`doi_route =
+  owner|lab`); a lab without a tenant has only the lab route. Same payload
+  code (`libs/publish/registrar.hpp`); the cloud side calls `elctl publish
+  doi` in a container with the tenant's store.
 
 ### 10.2 IGSN per sample (SESAR)
 
@@ -961,9 +988,12 @@ re-copied; tokens reissued.
   `in_doubt` row, and SESAR's `getSampleProfile`-style lookup by name and
   user code settles it before anything is re-sent. One request per sample,
   never retried in a client.
-- Account: the lab's SESAR account, or the owner's on the lab's behalf
-  (section 14). From the hosted tier the same `elctl publish igsn` runs in
-  the tenant's container.
+- Account: each lab its own SESAR account and user code (owner's decision);
+  its IGSNs carry its user code. The lab requests web-service access from
+  SESAR itself; JWT credentials live in the lab's `ISecretStore` (or the
+  tenant's secret store for runs from the hosted tier, where the same
+  `elctl publish igsn` runs in the tenant's container). The owner mints no
+  IGSN on a lab's behalf.
 - `sample.igsn` already feeds `SampleInfo::igsn`, the Schaen irradiation
   table, EarthBank's `Samples.igsn` and now `records/*.json`
   `externalIds`, `samples.parquet` and the DOI's `relatedIdentifiers`.
@@ -1045,28 +1075,4 @@ anywhere; nothing below it is needed for that.
 
 ## 14. Open questions
 
-For the owner; nothing here is technical.
-
-1. **Licence default.** Which SPDX licence does the New release dialog
-   preselect: `CC-BY-4.0`, `CC0-1.0`, or none (lab must choose)?
-2. **DataCite membership route.** Owner joins DataCite as a member (or via
-   a consortium) and mints under one prefix for every lab, or each lab
-   brings its institution's repository account and prefix, or both are
-   offered? Decides who is `publisher` and whose name is on the DOI.
-3. **SESAR account.** Owner registers IGSNs under one SESAR account and
-   user code for all labs, or each lab uses its own (its user code then
-   prefixes its IGSNs)? SESAR's web-service access request form is per
-   account.
-4. **Pricing tiers** for the hosted tier (storage, private readers, regions,
-   preservation copies, DOI minting) and what the free tier holds.
-5. **Domain names** (`pychron.cloud` is a placeholder) and whether releases
-   live on a separate host from the API.
-6. **Regions to open first** (`us`, `eu`, `au` assumed).
-7. **Embargo maximum.** Should the software cap an embargo (say 24 months
-   from first analysis) or leave it to the lab?
-8. **Public by default for the index entry of a *released* sample's
-   metadata only** (name, location, material, no values), as a discovery
-   aid while values stay private? This spec says no: nothing public until
-   `visibility = public`. Confirm.
-9. **Viewer basemap**: OpenStreetMap tiles (free, attribution, rate
-   limits) or a paid tile key held by the owner for hosted releases.
+None.
