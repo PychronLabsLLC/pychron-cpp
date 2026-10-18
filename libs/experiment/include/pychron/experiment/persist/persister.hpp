@@ -244,8 +244,13 @@ struct Allocation {
 // in this session takes the persister's next_aliquot(). A run with no step
 // leaves what is remembered alone. Steps are kept as given.
 //
-// What is remembered lives as long as the allocator: a queue resumed in a
-// new session gives its remaining steps a fresh aliquot.
+// What is remembered lives as long as the allocator. The first time a step
+// after A comes for an identifier nothing is remembered for, the persister's
+// last_run() stands in for that memory: when the identifier's last saved run
+// has a step before this one, its aliquot is taken and remembered, so a
+// heating resumed after a restart, in another queue or on another day keeps
+// its aliquot. It is asked at most once per identifier; an error from it
+// fails the allocation.
 class AliquotAllocator {
  public:
   explicit AliquotAllocator(IAnalysisPersister& persister) : persister_(persister) {}
@@ -257,8 +262,9 @@ class AliquotAllocator {
     int step = -1;  // step_index of the last step given
   };
   IAnalysisPersister& persister_;
-  std::mutex mutex_;                     // guards last_ only, never held across the persister
+  std::mutex mutex_;                     // guards last_ and asked_, never held across the persister
   std::map<std::string, Heating> last_;  // identifier -> its last stepped allocation
+  std::set<std::string> asked_;          // identifiers last_run() was asked about
 };
 
 }  // namespace pychron::experiment::persist

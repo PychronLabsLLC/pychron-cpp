@@ -374,11 +374,24 @@ Result<Allocation> AliquotAllocator::allocate(const RunIdentity& id) {
     remember(*id.aliquot);
     return Allocation{*id.aliquot, id.step};
   }
+  bool ask = false;
   if (step > 0) {
     const std::lock_guard lock(mutex_);
-    if (auto it = last_.find(id.identifier); it != last_.end() && step > it->second.step) {
+    const auto it = last_.find(id.identifier);
+    if (it != last_.end() && step > it->second.step) {
       it->second.step = step;
       return Allocation{it->second.aliquot, id.step};
+    }
+    ask = it == last_.end() && asked_.insert(id.identifier).second;
+  }
+  if (ask) {
+    // Nothing remembered for this identifier: the persister's last saved run
+    // stands in for that memory (a heating resumed after a restart).
+    auto saved = persister_.last_run(id.identifier);
+    if (!saved) return fail(saved.error());
+    if (const auto& last = *saved; last && 0 <= last->step && last->step < step) {
+      remember(last->aliquot);
+      return Allocation{last->aliquot, id.step};
     }
   }
   // Runs of one identifier start one after another, so nothing can come

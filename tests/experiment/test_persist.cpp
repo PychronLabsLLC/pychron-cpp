@@ -360,6 +360,98 @@ TEST_F(PersistTest, AliquotAllocatorKeepsTheStepsOfAHeatingTogether) {
   }
 }
 
+// A persister whose last saved run of every identifier is `last` (3B unless
+// a test changes it); `down` makes last_run fail. Next free aliquot 4.
+class SavedRunPersister final : public IAnalysisPersister {
+ public:
+  Result<int> next_aliquot(const std::string&) override { return next++; }
+  Result<std::optional<LastRun>> last_run(const std::string&) override {
+    ++asked;
+    if (down) return fail(ErrorKind::Io, "database down");
+    return last;
+  }
+  Result<void> begin_run(const RunIdentity&, const QueueSpec&) override { return {}; }
+  Result<void> save_extraction(const record::AnalysisRecord&) override { return {}; }
+  Result<void> save_analysis(const record::AnalysisRecord&) override { return {}; }
+  Result<void> save_artifact(const std::string&, const std::string&, const std::vector<std::uint8_t>&) override {
+    return {};
+  }
+  Result<void> flush() override { return {}; }
+  Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
+  std::optional<LastRun> last = LastRun{3, 1};
+  bool down = false;
+  int asked = 0;
+  int next = 4;
+};
+
+// Each row a fresh allocator over a persister whose last saved run is 3B.
+TEST_F(PersistTest, AliquotAllocatorJoinsTheLastSavedHeating) {
+  struct Row {
+    std::string step;
+    int expected;
+  };
+  for (const Row& r : std::vector<Row>{{"C", 3}, {"D", 3}, {"B", 4}, {"A", 4}, {"", 4}}) {
+    SavedRunPersister db;
+    AliquotAllocator alloc(db);
+    auto a = alloc.allocate(RunIdentity{"12345", std::nullopt, r.step});
+    ASSERT_TRUE(a) << r.step;
+    EXPECT_EQ(a->aliquot, r.expected) << "step '" << r.step << "'";
+  }
+}
+
+TEST_F(PersistTest, AliquotAllocatorDoesNotJoinWhenTheNewestAliquotHasNoStep) {
+  SavedRunPersister db;
+  db.last = LastRun{3, -1};
+  AliquotAllocator alloc(db);
+  EXPECT_EQ(alloc.allocate(RunIdentity{"12345", std::nullopt, "B"})->aliquot, 4);
+}
+
+TEST_F(PersistTest, AliquotAllocatorWithNothingSavedTakesTheNextAliquot) {
+  SavedRunPersister db;
+  db.last.reset();
+  AliquotAllocator alloc(db);
+  EXPECT_EQ(alloc.allocate(RunIdentity{"12345", std::nullopt, "C"})->aliquot, 4);
+}
+
+TEST_F(PersistTest, AliquotAllocatorFailsWhenLastRunFails) {
+  SavedRunPersister db;
+  db.down = true;
+  AliquotAllocator alloc(db);
+  auto a = alloc.allocate(RunIdentity{"12345", std::nullopt, "C"});
+  ASSERT_FALSE(a);
+  EXPECT_EQ(a.error().what, "database down");
+  EXPECT_EQ(db.next, 4);  // no aliquot was issued
+}
+
+TEST_F(PersistTest, AliquotAllocatorAsksOncePerIdentifierAndNeverForAOrNoStep) {
+  SavedRunPersister db;
+  AliquotAllocator alloc(db);
+  ASSERT_TRUE(alloc.allocate(RunIdentity{"12345", std::nullopt, "A"}));  // 4A: not asked
+  ASSERT_TRUE(alloc.allocate(RunIdentity{"12345", std::nullopt, ""}));   // not asked
+  EXPECT_EQ(db.asked, 0);
+  SavedRunPersister db2;
+  AliquotAllocator alloc2(db2);
+  EXPECT_EQ(alloc2.allocate(RunIdentity{"12345", std::nullopt, "C"})->aliquot, 3);
+  EXPECT_EQ(alloc2.allocate(RunIdentity{"12345", std::nullopt, "D"})->aliquot, 3);  // memory answers
+  EXPECT_EQ(alloc2.allocate(RunIdentity{"12345", std::nullopt, "B"})->aliquot, 4);  // not after D: T090
+  EXPECT_EQ(alloc2.allocate(RunIdentity{"12345", std::nullopt, "C"})->aliquot, 4);
+  EXPECT_EQ(db2.asked, 1);
+}
+
+TEST_F(PersistTest, AnAllocatorOverTheSameFilesContinuesAHeatingAfterARestart) {
+  FilePersister files(dir_ / "records");
+  {
+    AliquotAllocator before(files);
+    ASSERT_EQ(before.allocate(RunIdentity{"12345", std::nullopt, "A"})->aliquot, 1);
+  }
+  touch("12345-1A.json");  // what the first session saved
+  FilePersister restarted(dir_ / "records");
+  AliquotAllocator after(restarted);
+  EXPECT_EQ(after.allocate(RunIdentity{"12345", std::nullopt, "B"})->aliquot, 1);
+  EXPECT_EQ(after.allocate(RunIdentity{"12345", std::nullopt, "C"})->aliquot, 1);
+  EXPECT_EQ(after.allocate(RunIdentity{"12345", std::nullopt, "A"})->aliquot, 2);
+}
+
 // ---- SpoolFlusher (executor hardening spec 4.8) ----------------------------------
 
 using namespace std::chrono_literals;

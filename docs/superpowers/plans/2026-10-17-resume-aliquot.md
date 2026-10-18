@@ -141,7 +141,7 @@ git commit -m "feat(experiment): a persister says an identifier's last saved run
 - Consumes: `IAnalysisPersister::last_run`, `LastRun` (Task 1).
 - Produces: no new names; `allocate`'s behaviour per spec 4.
 
-- [ ] **Step 1: Write the failing tests** in `test_persist.cpp`. A fake `SavedRunPersister : IAnalysisPersister` with `std::optional<LastRun> last` (default `LastRun{3, 1}`), `bool down = false` (then `last_run` returns `fail(ErrorKind::Io, "database down")`), `int asked = 0` (counts `last_run` calls), `next_aliquot` returning `next++` from `int next = 4`; the rest succeed as in `FlakyPersister`.
+- [x] **Step 1: Write the failing tests** in `test_persist.cpp`. A fake `SavedRunPersister : IAnalysisPersister` with `std::optional<LastRun> last` (default `LastRun{3, 1}`), `bool down = false` (then `last_run` returns `fail(ErrorKind::Io, "database down")`), `int asked = 0` (counts `last_run` calls), `next_aliquot` returning `next++` from `int next = 4`; the rest succeed as in `FlakyPersister`.
 
 ```cpp
 // Each row a fresh allocator over a persister whose last saved run is 3B.
@@ -207,28 +207,28 @@ TEST_F(PersistTest, AnAllocatorOverTheSameFilesContinuesAHeatingAfterARestart) {
 
 The existing `AliquotAllocatorKeepsTheStepsOfAHeatingTogether` stays as it is and must still pass (T090's rule unchanged: its `FilePersister` has no files, so `last_run` answers none).
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev --target pychron_experiment_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='PersistTest.*Allocator*'`
 Expected: `AliquotAllocatorJoinsTheLastSavedHeating` row C gives 4, not 3; `...FailsWhenLastRunFails` gets a value; `...AfterARestart` B gives 2.
 
-- [ ] **Step 3: Implement `AliquotAllocator::allocate`**
+- [x] **Step 3: Implement `AliquotAllocator::allocate`**
 
 After the in-session lookup (unchanged), when `step > 0`, no entry in `last_` for the identifier and the identifier not in `asked_`: insert it into `asked_` (under `mutex_`), release the lock, call `persister_.last_run(id.identifier)`. Error: `return fail(err)`. A value with `0 <= last->step && last->step < step`: `remember(last->aliquot)` and return `Allocation{last->aliquot, id.step}`. Otherwise fall through to `next_aliquot()` as now. Fixed aliquots, step A and no step never reach the call. Rewrite the class comment's last paragraph: what is remembered lives as long as the allocator; the first time a step after A comes for an identifier nothing is remembered for, the persister's `last_run` stands in for that memory, so a heating resumed after a restart, in another queue or on another day keeps its aliquot; an error from it fails the allocation.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='PersistTest.*'`
 Expected: all PASS.
 
-- [ ] **Step 5: Update the user doc** `docs/user/04-experiments.md:136`: replace "a queue resumed after the program was restarted gives its remaining steps a new aliquot, so fix the aliquot of a step heat you may have to resume" with: a step heat resumed after a restart, or continued in a later queue, joins the aliquot of the identifier's last saved run when its step comes after that run's step (B, C ... after a saved A); otherwise the run takes the next free aliquot.
+- [x] **Step 5: Update the user doc** `docs/user/04-experiments.md:136`: replace "a queue resumed after the program was restarted gives its remaining steps a new aliquot, so fix the aliquot of a step heat you may have to resume" with: a step heat resumed after a restart, or continued in a later queue, joins the aliquot of the identifier's last saved run when its step comes after that run's step (B, C ... after a saved A); otherwise the run takes the next free aliquot.
 
-- [ ] **Step 6: Checks**
+- [x] **Step 6: Checks**
 
 Run: `python3 tools/quality_check.py && python3 tools/compiler_sweep.py --changed && ctest --preset dev-quick -R 'Persist|Executor|LabSession'`
 Expected: exit 0; all selected tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add libs/experiment/include/pychron/experiment/persist/persister.hpp libs/experiment/src/persist/persister.cpp tests/experiment/test_persist.cpp docs/user/04-experiments.md
