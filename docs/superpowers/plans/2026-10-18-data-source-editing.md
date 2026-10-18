@@ -95,6 +95,8 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
   - `std::string describe(const DataSource& source, const std::filesystem::path& root);` two lines, `database <url>` and `data folder <path as given> (<resolved>)`, used by both apps' before → after.
   - `DataSourceChange::notes` text pinned here: records note `"records in <old>/records are not moved; <new> starts without them"`; no record `"no install record in <root>/.pychron: a later elctl init --reconfigure would not know the new data source"`; unchanged `"nothing to change"` (and `install` equal to the input).
 
+Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) is `TEST(DataSource, ...)` or, when it needs the shared temp root and site, `TEST_F(DataSourceFixture, ...)`: the filter `DataSource*.*` and Task 11's `DataSource*.AReconfigureKeepsTheNewSource` match exactly those two suites.
+
 - [ ] **Step 1: Write the failing tests** in `tests/setup/test_data_source.cpp` (temp root and site per test, `PYCHRON_SITE_CONFIG` not needed: paths passed in):
   - `CurrentSourceComesFromTheRecord`: record answers `data_source=server, db_host=h, db_port=5433, db_name=n, db_user=u, data_folder=runs`, site entry saying local → `ServerDatabase{"h",5433,"n","u",nullopt}`, `data == "runs"`.
   - `CurrentSourceFallsBackToTheSiteEntry`: no record, site `database = "sqlite:<root>/x.db"`, `data = "d"` → `LocalDatabase{<root>/x.db}`, `data == "d"`; site `postgresql://u@h:5432/n` → server fields parsed.
@@ -156,14 +158,24 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
   // Spec 3.3. `create`: a missing local file is made (folder too) and migrated;
   // false (Test connection): said as "will be made", nothing made. Lines said on
   // success; Config error with the reason on refusal.
-  Result<std::vector<std::string>> check_data_source(const DataSourceChange& change, const DataSource& to,
-                                                     const DataSourceOpeners& openers, bool create);
-  // After apply: instrument install with <root>/seed.toml seeded (ensure-only);
-  // what was done or why skipped, never an error.
+  struct DataSourceCheck {
+    std::vector<std::string> said;
+    bool made_file = false;   // a missing local file was made and migrated (create = true)
+    bool opened = false;      // the database (made, existing or server) opened
+  };
+  Result<DataSourceCheck> check_data_source(const DataSourceChange& change, const DataSource& to,
+                                            const DataSourceOpeners& openers, bool create);
+  // After apply (spec 3.3): seeded (ensure-only, <root>/seed.toml) only when the
+  // install is an instrument one AND `to` is either a local file that this change
+  // made (missing before check_data_source with create = true) or a server that
+  // opened. An existing local file is never seeded: an existing store is not
+  // touched. Lines say what was done or why skipped, never an error.
+  // `check`: what check_data_source returned; a default one (`--no-check`, or
+  // "Save without checking") opened nothing, so nothing is seeded and that is said.
   std::vector<std::string> seed_data_source(const DataSourceChange& change, const DataSource& to,
-                                            const DataSourceOpeners& openers);
+                                            const DataSourceOpeners& openers, const DataSourceCheck& check);
   ```
-- Pinned text: no opener → `"skip  check: built without the DVC store"`; existing local file of size 0 → refusal `"<file> is empty: not a pychron store"`; existing local file whose open fails with kind `Config` → refusal `"<url>: <first line of error>; run `elctl db migrate --db <url>` first"`; server failure → `"<url without password>: <first line>"` plus doctor's hint `"check the server, the user and the password"`; data folder not writable → `"data folder <path> is not writable"`; seed skipped → `"seed skipped: <first line>"`.
+- Pinned text: no opener → `"skip  check: built without the DVC store"`; existing local file of size 0 → refusal `"<file> is empty: not a pychron store"`; existing local file whose open fails with kind `Config` → refusal `"<url>: <first line of error>; run `elctl db migrate --db <url>` first"`; server failure → `"<url without password>: <first line>"` plus doctor's hint `"check the server, the user and the password"`; data folder not writable → `"data folder <path> is not writable"`; missing data folder with `create = false` → said `"data folder <path> will be made"`; existing local file, nothing seeded → `"seed skipped: <file> existed; an existing store is not seeded"`; seed skipped → `"seed skipped: <first line>"`.
 
 - [ ] **Step 1: Write the failing tests** with a fake opener recording `(url, migrate)` calls:
   - `ANewLocalFileIsMadeAndMigrated`: missing `sub/new.db`, `create = true` → opener called once with `migrate = true`, folder `sub` exists; `create = false` → opener not called, said contains `"will be made"`.
@@ -171,10 +183,13 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
   - `AnEmptyFileIsNotAStore`: zero-byte file → refusal `"is empty: not a pychron store"`, opener not called.
   - `AServerIsOpenedWithThePasswordGivenOrKept`: password given → opener url contains it; `nullopt` with kept `k` → contains `k`; opener failure → refusal text without the password; `migrate == false` always.
   - `WithoutAnOpenerTheDatabaseIsNotChecked`: said contains `"skip  check: built without the DVC store"`.
-  - `TheDataFolderIsMadeOrRefused`: missing folder made; folder without write permission (POSIX only, `GTEST_SKIP` on Windows, as other permission tests) → refusal.
-  - `AnInstrumentInstallIsSeeded`: kind `instrument`, `seed.toml` present → seeder called with `<root>/seed.toml`; seeder error → said `"seed skipped: ..."`; data-reduction install → seeder not called.
+  - `TheDataFolderIsMadeOrRefused`: missing folder, `create = true` → made; missing folder, `create = false` → not made, said contains `"will be made"`; folder without write permission (POSIX only, `GTEST_SKIP` on Windows, as other permission tests) → refusal with either `create`.
+  - `ATestConnectionWritesNothing`: missing data folder and missing local file, then existing writable folder and existing non-empty file; `check_data_source(..., create = false)` each time: hash of every file and directory under the temp dir (names included, so a made folder or a left probe file shows) equal before and after.
+  - `AnInstrumentInstallIsSeeded`: kind `instrument`, `seed.toml` present, check `{.said = {}, .made_file = true, .opened = true}` → seeder called with `<root>/seed.toml`; server `to` with check `{.said = {}, .made_file = false, .opened = true}` → seeder called; server with a default check (`--no-check`) → seeder not called, said `"seed skipped: ..."`; seeder error → said `"seed skipped: ..."`; data-reduction install → seeder not called.
+  - (Every `DataSourceCheck` literal names all three fields: clang 18's `-Wmissing-field-initializers`.)
+  - `AnExistingLocalFileIsNotSeeded`: instrument install, `seed.toml` present, `to` an existing local file, check `{.said = {}, .made_file = false, .opened = true}` → seeder not called, said contains `"an existing store is not seeded"`.
 - [ ] **Step 2: Run, expect FAIL** after building `pychron_setup_tests`.
-- [ ] **Step 3: Implement.** Writability: create the folder (`create_directories`), then make and remove a probe file, as doctor's `check_writable`; reuse it if it can be made non-static without widening the public API.
+- [ ] **Step 3: Implement.** Data folder with `create = true`: create it (`create_directories`), then make and remove a probe file, as doctor's `check_writable` (reuse it if it can be made non-static without widening the public API). With `create = false` nothing is written: a missing folder is said as "will be made" and its nearest existing parent is not probed; an existing folder is probed for writability without writing (`access(W_OK)` on POSIX, `fs::status` permissions on Windows), never with a probe file. The caller passes `check_data_source`'s `DataSourceCheck` to `seed_data_source`.
 - [ ] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*'`; expect PASS.
 - [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
 - [ ] **Step 6: Commit** `feat(setup): a data source is checked before it is written and seeded after`
@@ -193,7 +208,7 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
 - [ ] **Step 1: Write the failing tests** (`ElctlSetupTest`, installs made with `elctl init` as the file's other tests):
   - `DataSourceShowsTheDatabaseAndTheDataFolder`: exit 0, output has `database sqlite:` and `data folder data`.
   - `SetLocalMakesAndMigratesTheFileAndSeedsAnInstrument` (store builds only, `#ifdef PYCHRON_ELCTL_HAS_STORE`): `data-source set --local new.db --yes` → exit 0; `<root>/new.db` exists and `db status --db sqlite:<root>/new.db` exits 0; site entry database is that URL; seed line printed.
-  - `SetLocalRefusesAnOutdatedFile` (store): a SQLite file created with an older schema (open with migrations up to an earlier version via the store fixture's helper, or a file whose `schema_version` is behind) → exit 1, output has `elctl db migrate --db`, site unchanged.
+  - `SetLocalRefusesAnOutdatedFile` (store): the outdated file is built as `ElctlExpStoreTest.ASchemaThatIsBehindSaysWhatToRun` (`test_exp_commands.cpp` line 883) builds one: `pychron::persistence::open_store(StoreConfig{"sqlite:" + file, true})` makes a current store at `<tmp>/old.db`, then a raw `QSqlDatabase` (`QSQLITE`, own connection name, removed after) runs `DELETE FROM schema_version WHERE version = (SELECT max(version) FROM schema_version)`. Put that in a helper `make_store_one_migration_behind(path)` in the test file, under `#ifdef PYCHRON_ELCTL_HAS_STORE`. Assert first that `open_store(StoreConfig{url, false})` fails on it (so the test fails for the right reason), then `data-source set --local <tmp>/old.db --yes` → exit 1, output has `elctl db migrate --db`, site bytes unchanged, and `open_store(..., false)` still fails (not migrated).
   - `SetDataAloneKeepsTheDatabase`: `set --data runs --yes` → database URL unchanged, `data = "runs"`, `<root>/runs` exists.
   - `SetToTheCurrentSourceWritesNothing`: `set --local --yes` on a default install → exit 0, `nothing to change`, site bytes unchanged.
   - `SetAsksBeforeWriting`: input `n\n` → exit 1, site unchanged.
