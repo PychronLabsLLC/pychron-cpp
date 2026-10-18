@@ -202,6 +202,22 @@ std::string redact(std::string text, const std::optional<std::string>& secret) {
   return text;
 }
 
+// The password a server URL is given: the one in `to`, or else the kept one
+// (none when nothing is kept or it does not read).
+std::optional<std::string> used_password(const ServerDatabase& server, const fs::path& root) {
+  if (server.password) return server.password;
+  auto kept = read_kept_password(root);
+  if (!kept) return std::nullopt;
+  return *kept;
+}
+
+// `text` with the password a URL carried put out of sight, as given and as
+// it stands in the URL (percent-encoded).
+std::string redact_password(std::string text, const std::optional<std::string>& password) {
+  if (!password) return text;
+  return redact(redact(std::move(text), password), percent_encode(*password));
+}
+
 // Whether `dir`, which exists, can be written to, found without writing.
 bool writable_without_writing(const fs::path& dir) {
 #ifdef _WIN32
@@ -287,12 +303,8 @@ Result<void> check_server(const ServerDatabase& server, const DataSource& to, co
   auto opened = openers.open_database(*url, false);
   if (!opened) {
     // The password may be the kept one: whichever was used is kept out of sight.
-    std::optional<std::string> password = server.password;
-    if (!password) {
-      auto kept = read_kept_password(root);
-      if (kept) password = *kept;
-    }
-    return fail(ErrorKind::Config, shown + ": " + redact(first_line(opened.error().what), password) +
+    return fail(ErrorKind::Config, shown + ": " +
+                                       redact_password(first_line(opened.error().what), used_password(server, root)) +
                                        "; check the server, the user and the password");
   }
   check.opened = true;
@@ -447,7 +459,12 @@ std::vector<std::string> seed_data_source(const DataSourceChange& change, const 
   if (!url) return {"seed skipped: " + first_line(url.error().what)};
   // Only a file this change made is migrated; a server never is from here.
   auto done = openers.seed_database(*url, seed, local != nullptr);
-  if (!done) return {"seed skipped: " + first_line(done.error().what)};
+  if (!done) {
+    // The URL carried the password, and a driver's message may quote it.
+    std::optional<std::string> password;
+    if (const auto* server = std::get_if<ServerDatabase>(&to.database)) password = used_password(*server, install.root);
+    return {"seed skipped: " + redact_password(first_line(done.error().what), password)};
+  }
   return {"database " + database_url(to, install.root) + ": " + *done};
 }
 

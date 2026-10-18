@@ -809,6 +809,28 @@ TEST_F(DataSourceCheckTest, AnInstrumentInstallIsSeeded) {
   }
 }
 
+TEST_F(DataSourceCheckTest, ASeedErrorDoesNotShowThePassword) {
+  write_text(root / "seed.toml", "# seed\n");
+  const DataSourceCheck opened{.said = {}, .made_file = false, .opened = true};
+  {
+    const DataSource given = server_source(std::string("given-pw"));
+    FakeOpeners fake;
+    fake.seed_reply = fail(ErrorKind::Io, "cannot seed postgresql://ana:given-pw@db.lab:5432/pychron\ndetail");
+    const auto said = seed_data_source(change_for(given, "instrument"), given, fake.openers(), opened);
+    ASSERT_EQ(fake.seeded.size(), 1U);
+    EXPECT_TRUE(any_contains(said, "seed skipped: cannot seed postgresql://ana:"));
+    EXPECT_FALSE(any_contains(said, "given-pw"));
+  }
+  write_text(root / ".pychron" / "credentials.toml", "[database]\npassword = \"kept-pw\"\n");
+  const DataSource kept = server_source(std::nullopt);
+  FakeOpeners fake;
+  fake.seed_reply = fail(ErrorKind::Io, "cannot seed with ana:kept-pw");
+  const auto said = seed_data_source(change_for(kept, "instrument"), kept, fake.openers(), opened);
+  ASSERT_EQ(fake.seeded.size(), 1U);
+  EXPECT_TRUE(any_contains(said, "seed skipped: cannot seed with ana:"));
+  EXPECT_FALSE(any_contains(said, "kept-pw"));
+}
+
 TEST_F(DataSourceCheckTest, AnExistingLocalFileIsNotSeeded) {
   write_text(root / "seed.toml", "# seed\n");
   write_text(root / "old.db", "store");
