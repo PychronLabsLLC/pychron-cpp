@@ -1,0 +1,39 @@
+# Worked plan §7.7 of docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md,
+# verbatim below the [plan] and [equilibration] tables (taken from multicollect.toml).
+
+[plan]
+name = "v2_77_helix_xenon"
+instrument_family = "thermo_helix_mc_plus"
+analysis_types = ["unknown"]
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+close_inlet = true
+
+[[segment]]
+kind = "signal"
+cycles = 12
+integration_s = 4
+[[segment.positions]]
+collect = { Xe136 = "H2", Xe134 = "H1", Xe132 = "AX", Xe131 = "L1", Xe130 = "L2" }
+counts = 5
+settle_s = 8
+[[segment.positions]]
+collect = { Xe132 = "H2", Xe131 = "H1", Xe130 = "AX", Xe129 = "L1", Xe128 = "L2" }
+counts = 5
+settle_s = 8
+[[segment.positions]]
+collect = { Xe129 = "H1", Xe128 = "AX", Xe126 = "L1", Xe124 = "L2" }
+counts = 8
+settle_s = 8
+
+[[segment]]
+kind = "baseline"
+when = "before_inlet"
+[[segment.positions]]
+collect = { Xe136 = "H2", Xe134 = "H1", Xe132 = "AX", Xe131 = "L1", Xe130 = "L2" }
+at = { mass = 133.5, detector = "AX" }
+counts = 30

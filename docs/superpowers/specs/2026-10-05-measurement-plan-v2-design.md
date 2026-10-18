@@ -85,7 +85,7 @@ plan
 
 | Key | Meaning |
 |---|---|
-| `collect` | List of `{ label, detector, active = true, deflection, protect }`, or the shorthand map `{ Ar40 = "H1", Ar36 = "CDD" }`. `active = false` keeps the cup in the configuration (deflected or protected) without collecting. A detector appears at most once per position. A label may appear on several detectors across positions, and in the list form on several detectors in one position. |
+| `collect` | List of `{ label, detector, active = true, deflection, protect }`, or the shorthand map `{ Ar40 = "H1", Ar36 = "CDD" }`. Shorthand read in key order (toml++ iterates a table sorted), not order written; list form keeps order written. `active = false` keeps the cup in the configuration (deflected or protected) without collecting. A detector appears at most once per position. A label may appear on several detectors across positions, and in the list form on several detectors in one position. |
 | `label` | An isotope (`Ar40`), a molecule or interference (`CO2`, `HCl`, `Ar40H`, `Ar40++`), a pseudo-isotope from the spectrometer's mass table (`PHHCl`), or an entry positioned by `at.mass` (`mass35`). |
 | `at` | Positioning target, independent of `collect`: `{ label, detector }`, `{ mass, detector }`, `{ dac }` or `{ hv, detector }`. Default: the reference detector's label in `collect`; if the reference detector is not in `collect`, `at` is required (the v1 `position` rule). |
 | `kind` | `signal` (default) or `baseline`. A baseline position inside a signal segment is the legacy `bs:` hop. |
@@ -129,14 +129,22 @@ Steps carry one table named after the kind:
 the source below ionisation during inlet and switch on at time zero, Thermo
 EST **[literature]**), `time_zero`, `fits` defaults, and `[[gas.segment]]`.
 Gases run in file order. A plan without `[[gas]]` has one implicit gas built
-from the top-level `[equilibration]`, `[fits]` and segments. A detector's
+from the top-level `[equilibration]`, `[fits]` and segments. Equilibration
+values (`inlet`, `outlet`, `time_s`, `inlet_delay_s`, `close_inlet`) a gas
+does not give are top-level `[equilibration]`'s; gas `fits` overrides plan's
+`[fits]` key by key, none: plan's; `[main]` and `[[gas]]` may not both
+appear (decided 2026-10-18, Task 2). A detector's
 deflection, integration and optics are snapshotted per gas, and per position
 where a position overrides them.
 
 ### 3.5 Baseline table
 
 `[baseline] before / after / counts / mass / detector / settle_s /
-integration_s` stay as sugar (§4.1). New:
+integration_s` stay as sugar (§4.1). Sugar for `[main]` only: in a plan of
+`[[segment]]` or `[[gas]]`, `[baseline] before`/`after`, `[peak_center]
+before`/`after`, `[sniff] enabled` and `[whiff] enabled` refused (`only with
+[main]; in a plan of segments write a <kind> segment`); segment written out,
+so its place among others is the file's (decided 2026-10-18, Task 2). New:
 
 ```toml
 [baseline.modifier.CDD]

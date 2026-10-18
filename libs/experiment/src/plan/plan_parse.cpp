@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <map>
 #include <set>
+#include <string>
+#include <vector>
 
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
@@ -188,6 +191,31 @@ class Section {
   Problems& p_;
 };
 
+// Each table of the array of tables at `key`, as a Section at `key[i]`.
+// Returns the number of tables read; a missing key reads none.
+template <class F>
+std::size_t for_each_table(const Section& s, std::string_view key, F&& f) {
+  const auto* n = s.node(key);
+  if (!n) return 0;
+  const auto* arr = n->as_array();
+  if (!arr) {
+    s.problems().add(s.at(key), "expected an array of tables");
+    return 0;
+  }
+  std::size_t read = 0;
+  for (std::size_t i = 0; i < arr->size(); ++i) {
+    const auto where = join(s.at(key), i);
+    const auto* t = arr->get(i)->as_table();
+    if (!t) {
+      s.problems().add(where, "expected a table");
+      continue;
+    }
+    f(Section(t, where, s.problems()), i);
+    ++read;
+  }
+  return read;
+}
+
 void read_info(const Section& s, PlanInfo& out) {
   s.keys({"name", "instrument_family", "description", "analysis_types"});
   s.get("name", out.name);
@@ -252,13 +280,17 @@ void read_baseline(const Section& s, Baseline& out) {
   s.above("integration_s", out.integration_s, 0);
 }
 
-void read_time_zero(const Section& s, TimeZero& out) {
+// `time_zero` of a v1 [main] or a v2 collection segment or gas, or (`step`)
+// of a v2 `time_zero` step, where "now" replaces the two inlet-relative strings.
+void read_time_zero(const Section& s, TimeZero& out, bool step = false) {
   const auto* n = s.node("time_zero");
   if (!n) return;
-  const std::string expected = "expected 'on_inlet_close', 'on_first_count' or { offset_s = N }";
+  const std::string expected =
+      step ? "expected 'now' or { offset_s = N }" : "expected 'on_inlet_close', 'on_first_count' or { offset_s = N }";
   if (auto str = n->value_exact<std::string>()) {
-    if (*str == "on_inlet_close") out.kind = TimeZeroKind::OnInletClose;
-    else if (*str == "on_first_count") out.kind = TimeZeroKind::OnFirstCount;
+    if (step && *str == "now") out.kind = TimeZeroKind::Now;
+    else if (!step && *str == "on_inlet_close") out.kind = TimeZeroKind::OnInletClose;
+    else if (!step && *str == "on_first_count") out.kind = TimeZeroKind::OnFirstCount;
     else s.problems().add(s.at("time_zero"), expected);
   } else if (n->is_table()) {
     Section tz(n->as_table(), s.at("time_zero"), s.problems());
@@ -391,28 +423,36 @@ void read_fits(const Section& s, Fits& out) {
   o.above("std_devs", out.outliers.std_devs, 0);
 }
 
-void read_conditionals(const Section& s, PlanConditionals& out) {
-  s.keys({"include", "truncations"});
-  s.get("include", out.include);
-  const auto* n = s.node("truncations");
-  if (!n) return;
-  const auto* arr = n->as_array();
-  if (!arr) return s.problems().add(s.at("truncations"), "expected an array of tables");
-  for (std::size_t i = 0; i < arr->size(); ++i) {
-    const auto where = join(s.at("truncations"), i);
-    const auto* t = arr->get(i)->as_table();
-    if (!t) {
-      s.problems().add(where, "expected a table");
-      continue;
-    }
-    Section ts(t, where, s.problems());
+void read_truncations(const Section& s, std::vector<Truncation>& out) {
+  for_each_table(s, "truncations", [&](const Section& ts, std::size_t) {
     ts.keys({"check", "start"});
-    auto& tr = out.truncations.emplace_back();
+    auto& tr = out.emplace_back();
     ts.get("check", tr.check);
     ts.get("start", tr.start);
     if (tr.check.empty()) s.problems().add(ts.at("check"), "required");
     ts.at_least("start", tr.start, 0);
-  }
+  });
+}
+
+void read_conditionals(const Section& s, PlanConditionals& out) {
+  s.keys({"include", "truncations"});
+  s.get("include", out.include);
+  read_truncations(s, out.truncations);
+}
+
+void read_checks(const Section& s, std::vector<WhiffCheck>& out) {
+  for_each_table(s, "checks", [&](const Section& cs, std::size_t) {
+    cs.keys({"check", "action"});
+    auto& c = out.emplace_back();
+    cs.get("check", c.check);
+    cs.get("action", c.action);
+    if (c.check.empty()) {
+      s.problems().add(cs.at("check"), "required");
+    } else if (auto e = parse_expression(c.check); !e) {
+      s.problems().add(cs.at("check"), e.error().what);
+    }
+    if (!parse_whiff_action(c.action)) s.problems().add(cs.at("action"), "expected run_remainder, pump or abort");
+  });
 }
 
 void read_whiff(const Section& s, Whiff& out) {
@@ -421,33 +461,354 @@ void read_whiff(const Section& s, Whiff& out) {
   s.get("counts", out.counts);
   s.get("integration_s", out.integration_s);
   s.above("integration_s", out.integration_s, 0);
-  if (const auto* n = s.node("checks")) {
-    const auto* arr = n->as_array();
-    if (!arr) return s.problems().add(s.at("checks"), "expected an array of tables");
-    for (std::size_t i = 0; i < arr->size(); ++i) {
-      const auto where = join(s.at("checks"), i);
-      const auto* t = arr->get(i)->as_table();
-      if (!t) {
-        s.problems().add(where, "expected a table");
-        continue;
-      }
-      Section cs(t, where, s.problems());
-      cs.keys({"check", "action"});
-      auto& c = out.checks.emplace_back();
-      cs.get("check", c.check);
-      cs.get("action", c.action);
-      if (c.check.empty()) {
-        s.problems().add(cs.at("check"), "required");
-      } else if (auto e = parse_expression(c.check); !e) {
-        s.problems().add(cs.at("check"), e.error().what);
-      }
-      if (!parse_whiff_action(c.action)) s.problems().add(cs.at("action"), "expected run_remainder, pump or abort");
-    }
-  }
+  read_checks(s, out.checks);
+  if (s.has("checks") && !s.node("checks")->is_array()) return;
   if (out.enabled) {
     if (out.counts < 1) s.problems().add(s.at("counts"), "an enabled whiff needs counts >= 1");
     if (out.checks.empty()) s.problems().add(s.at("checks"), "an enabled whiff needs at least one check");
   }
+}
+
+// ---- v2: gases, segments, positions (v2 spec 3.2-3.4) ------------------------------
+
+// `key` = { name = number, ... } (a step's deflection, gain or source table).
+void read_number_map(const Section& s, std::string_view key, std::map<std::string, double>& out) {
+  const auto m = s.sub(key);
+  if (!m.table()) return;
+  for (const auto& [k, v] : *m.table()) {
+    const std::string name(k.str());
+    double value = 0;
+    m.get(name, value);
+    if (v.is_number()) out[name] = value;
+  }
+}
+
+// `collect`: the list form [{ label, detector, active, deflection, protect }, ...]
+// or the shorthand map { label = "detector", ... }. The map is read in the
+// order toml++ iterates a table, which is key order, not the order written.
+void read_collect(const Section& s, std::vector<CollectEntry>& out) {
+  const auto* n = s.node("collect");
+  if (!n) return s.problems().add(s.at("collect"), "required");
+  if (const auto* map = n->as_table()) {
+    const Section m(map, s.at("collect"), s.problems());
+    for (const auto& [k, v] : *map) {
+      CollectEntry e;
+      e.label = std::string(k.str());
+      m.get(e.label, e.detector);
+      if (!v.is_string()) continue;
+      if (e.detector.empty()) m.problems().add(m.at(e.label), "required");
+      out.push_back(std::move(e));
+    }
+  } else if (n->is_array()) {
+    for_each_table(s, "collect", [&](const Section& es, std::size_t) {
+      es.keys({"label", "detector", "active", "deflection", "protect"});
+      CollectEntry e;
+      es.get("label", e.label);
+      es.get("detector", e.detector);
+      es.get("active", e.active);
+      es.get("deflection", e.deflection);
+      es.get("protect", e.protect);
+      if (e.detector.empty()) s.problems().add(es.at("detector"), "required");
+      out.push_back(std::move(e));
+    });
+  } else {
+    return s.problems().add(s.at("collect"), "expected { label = \"detector\" } or an array of tables");
+  }
+  if (out.empty()) s.problems().add(s.at("collect"), "at least one entry required");
+}
+
+// `at`: exactly one of label, mass, dac or hv; a detector with all but dac.
+void read_at(const Section& s, std::optional<At>& out) {
+  if (!s.has("at")) return;
+  const auto a = s.sub("at");
+  if (!a.table()) return;
+  a.keys({"label", "mass", "dac", "hv", "detector"});
+  const int forms = static_cast<int>(a.has("label")) + static_cast<int>(a.has("mass")) +
+                    static_cast<int>(a.has("dac")) + static_cast<int>(a.has("hv"));
+  if (forms != 1) return a.problems().add(a.path(), "expected exactly one of 'label', 'mass', 'dac' or 'hv'");
+  std::string detector;
+  a.get("detector", detector);
+  if (a.has("dac")) {
+    if (a.has("detector")) a.problems().add(a.at("detector"), "not allowed with 'dac'");
+    AtDac d;
+    a.get("dac", d.dac);
+    out = d;
+    return;
+  }
+  if (detector.empty()) a.problems().add(a.at("detector"), "required");
+  if (a.has("label")) {
+    AtLabel l;
+    a.get("label", l.label);
+    l.detector = detector;
+    out = l;
+  } else if (a.has("mass")) {
+    AtMass m;
+    a.get("mass", m.mass);
+    a.above("mass", m.mass, 0);
+    m.detector = detector;
+    out = m;
+  } else {
+    AtHv h;
+    a.get("hv", h.hv);
+    h.detector = detector;
+    out = h;
+  }
+}
+
+void read_position(const Section& s, Position& out) {
+  s.keys({"collect", "at", "kind", "counts", "settle_s", "integration_s", "optics", "table"});
+  read_collect(s, out.collect);
+  read_at(s, out.at);
+  std::string kind;
+  s.get("kind", kind);
+  if (kind == "baseline") out.kind = PositionKind::Baseline;
+  else if (!kind.empty() && kind != "signal") s.problems().add(s.at("kind"), "expected 'signal' or 'baseline'");
+  s.get("counts", out.counts);
+  s.get("settle_s", out.settle_s);
+  s.get("integration_s", out.integration_s);
+  s.get("optics", out.optics);
+  s.get("table", out.table);
+  s.at_least("counts", out.counts, 1);
+  s.at_least("settle_s", out.settle_s, 0);
+  if (out.integration_s) s.above("integration_s", *out.integration_s, 0);
+}
+
+std::optional<reduction::ErrorType> read_error_type(const Section& s) {
+  std::string err;
+  s.get("error", err);
+  if (err == "sem") return reduction::ErrorType::Sem;
+  if (err == "sd") return reduction::ErrorType::Sd;
+  if (!err.empty()) s.problems().add(s.at("error"), "expected 'sem' or 'sd'");
+  return std::nullopt;
+}
+
+// A segment's `fits`: { "<label@detector>" | "<label>" | "default" = { fit, error, outliers } }.
+void read_fit_overrides(const Section& s, FitOverrides& out) {
+  const auto f = s.sub("fits");
+  if (!f.table()) return;
+  for (const auto& [k, v] : *f.table()) {
+    const std::string key(k.str());
+    const auto o = f.sub(key);
+    if (!o.table()) continue;
+    o.keys({"fit", "error", "outliers"});
+    FitOverride fo;
+    std::string fit;
+    o.get("fit", fit);
+    if (auto kind = reduction::parse_fit_kind(fit)) fo.fit = *kind;
+    else if (!fit.empty()) o.problems().add(o.at("fit"), "unknown fit '" + fit + "'");
+    fo.error = read_error_type(o);
+    if (o.has("outliers")) {
+      const auto ol = o.sub("outliers");
+      ol.keys({"enabled", "iterations", "std_devs"});
+      auto& spec = fo.outliers.emplace();
+      ol.get("enabled", spec.enabled);
+      ol.get("iterations", spec.iterations);
+      ol.get("std_devs", spec.std_devs);
+      ol.at_least("iterations", spec.iterations, 0);
+      ol.above("std_devs", spec.std_devs, 0);
+    }
+    out[key] = fo;
+  }
+}
+
+void read_peak_center_step(const Section& s, const DetectorsSpec& dets, PeakCenterStep& out) {
+  s.keys({"label", "detector", "detectors", "extra_detectors", "config", "write_table", "min_signal"});
+  s.get("label", out.label);
+  const bool one = s.has("detector");
+  const bool several = s.has("detectors");
+  if (one && several) s.problems().add(s.path(), "'detector' and 'detectors' cannot both appear");
+  if (one) {
+    std::string det;
+    s.get("detector", det);
+    out.detectors = {det};
+  }
+  s.get("detectors", out.detectors);
+  if (!one && !several && !dets.reference.empty()) out.detectors = {dets.reference};  // as v1
+  s.get("extra_detectors", out.extra_detectors);
+  s.get("config", out.config);
+  s.get("write_table", out.write_table);
+  s.get("min_signal", out.min_signal);
+  s.at_least("min_signal", out.min_signal, 0);
+  if (out.label.empty()) s.problems().add(s.at("label"), "required");
+}
+
+void read_set_step(const Section& s, SetStep& out) {
+  s.keys({"deflection", "gain", "hv", "cdd_voltage", "source", "integration_s"});
+  read_number_map(s, "deflection", out.deflection);
+  read_number_map(s, "gain", out.gain);
+  read_number_map(s, "source", out.source);
+  s.get("hv", out.hv);
+  s.get("cdd_voltage", out.cdd_voltage);
+  s.get("integration_s", out.integration_s);
+  if (out.integration_s) s.above("integration_s", *out.integration_s, 0);
+}
+
+void read_park_step(const Section& s, ParkStep& out) {
+  s.keys({"mass", "label", "detector"});
+  if (s.has("mass") == s.has("label")) s.problems().add(s.path(), "expected exactly one of 'mass' or 'label'");
+  s.get("label", out.label);
+  s.get("mass", out.mass);
+  if (out.mass) s.above("mass", *out.mass, 0);
+  s.get("detector", out.detector);
+  if (out.detector.empty()) s.problems().add(s.at("detector"), "required");
+}
+
+// A segment of a collection kind reads positions, cycles and the rest; a
+// step reads the one table named after its kind.
+void read_segment(const Section& s, const DetectorsSpec& dets, Segment& out) {
+  s.keys({"kind", "when", "cycles", "integration_s", "time_zero", "table", "positions", "fits", "conditionals",
+          "checks", "peak_center", "set", "blank_beam", "park", "delay"});
+  auto& p = s.problems();
+  if (s.has("kind")) {
+    std::string kind;
+    s.get("kind", kind);
+    if (auto k = parse_segment_kind(kind)) out.kind = *k;
+    else
+      p.add(s.at("kind"),
+            "expected signal, baseline, sniff, whiff, peak_center, set, blank_beam, park, delay or time_zero");
+  }
+  if (s.has("when")) {
+    std::string when;
+    s.get("when", when);
+    if (auto w = parse_when(when)) out.when = *w;
+    else
+      p.add(s.at("when"),
+            "expected during_extraction, before_inlet, during_equilibration, after_inlet, after_main or after_run");
+  }
+  const bool step = is_step(out.kind);
+  const std::string kind_name(to_string(out.kind));
+
+  if (step) {
+    for (const std::string_view key : {"positions", "cycles", "integration_s", "table", "fits", "conditionals",
+                                       "checks"})
+      if (s.has(key)) p.add(s.at(key), "not allowed on a " + kind_name + " step");
+  } else {
+    s.get("cycles", out.cycles);
+    s.get("integration_s", out.integration_s);
+    s.get("table", out.table);
+    s.at_least("cycles", out.cycles, 1);
+    s.above("integration_s", out.integration_s, 0);
+    const auto read = for_each_table(
+        s, "positions", [&](const Section& ps, std::size_t) { read_position(ps, out.positions.emplace_back()); });
+    if (read == 0 && (!s.has("positions") || s.node("positions")->is_array()))
+      p.add(s.at("positions"), "at least one position required");
+    read_fit_overrides(s, out.fits);
+    if (s.has("conditionals")) {
+      const auto c = s.sub("conditionals");
+      c.keys({"truncations"});
+      read_truncations(c, out.truncations);
+    }
+    if (s.has("checks") && out.kind != SegmentKind::Whiff) p.add(s.at("checks"), "only allowed on whiff segments");
+    else read_checks(s, out.checks);
+  }
+
+  // Each step table belongs to the step of its name, and that step needs it.
+  const auto step_table = [&](std::string_view key, SegmentKind kind) {
+    if (s.has(key) && out.kind != kind) {
+      p.add(s.at(key), "only allowed on a " + std::string(key) + " step");
+      return false;
+    }
+    if (!s.has(key) && out.kind == kind) p.add(s.at(key), "required");
+    return s.has(key);
+  };
+  if (step_table("peak_center", SegmentKind::PeakCenter))
+    if (const auto t = s.sub("peak_center"); t.table()) read_peak_center_step(t, dets, out.peak_center.emplace());
+  if (step_table("set", SegmentKind::Set))
+    if (const auto t = s.sub("set"); t.table()) read_set_step(t, out.set.emplace());
+  if (step_table("blank_beam", SegmentKind::BlankBeam)) {
+    bool on = false;
+    s.get("blank_beam", on);
+    out.blank_beam = on;
+  }
+  if (step_table("park", SegmentKind::Park))
+    if (const auto t = s.sub("park"); t.table()) read_park_step(t, out.park.emplace());
+  if (step_table("delay", SegmentKind::Delay)) {
+    if (const auto t = s.sub("delay"); t.table()) {
+      t.keys({"seconds"});
+      if (!t.has("seconds")) p.add(t.at("seconds"), "required");
+      auto& seconds = out.delay_s.emplace();
+      t.get("seconds", seconds);
+      t.at_least("seconds", seconds, 0);
+    }
+  }
+  // `time_zero` is the table of a time_zero step and also a key of a
+  // collection segment (an inlet-relative time zero).
+  if (out.kind == SegmentKind::TimeZero) {
+    if (!s.has("time_zero")) p.add(s.at("time_zero"), "required");
+    else read_time_zero(s, out.time_zero.emplace(), /*step=*/true);
+  } else if (s.has("time_zero")) {
+    if (step) p.add(s.at("time_zero"), "only allowed on a collection segment or a time_zero step");
+    else read_time_zero(s, out.time_zero.emplace());
+  }
+}
+
+void read_segments(const Section& s, std::string_view key, const DetectorsSpec& dets, std::vector<Segment>& out) {
+  for_each_table(s, key, [&](const Section& ss, std::size_t) { read_segment(ss, dets, out.emplace_back()); });
+}
+
+// A [[gas]]. Equilibration values it does not give are the top-level
+// [equilibration] table's; its `fits` overrides the plan's [fits] key by key.
+void read_gas(const Section& s, const MeasurementPlan& plan, Gas& out) {
+  s.keys({"name", "inlet", "outlet", "equilibration", "source_dark_phase", "time_zero", "fits", "segment"});
+  s.get("name", out.name);
+  if (out.name.empty()) s.problems().add(s.at("name"), "required");
+  out.equilibration = plan.equilibration;
+  s.get("inlet", out.equilibration.inlet);
+  s.get("outlet", out.equilibration.outlet);
+  if (s.has("equilibration")) {
+    const auto e = s.sub("equilibration");
+    e.keys({"time_s", "inlet_delay_s", "close_inlet"});
+    e.get("time_s", out.equilibration.time_s);
+    e.get("inlet_delay_s", out.equilibration.inlet_delay_s);
+    e.get("close_inlet", out.equilibration.close_inlet);
+    e.at_least("time_s", out.equilibration.time_s, 0);
+    e.at_least("inlet_delay_s", out.equilibration.inlet_delay_s, 0);
+  }
+  s.get("source_dark_phase", out.source_dark_phase);
+  if (s.has("time_zero")) read_time_zero(s, out.time_zero.emplace());
+  out.fits = plan.fits;
+  if (s.has("fits")) read_fits(s.sub("fits"), *out.fits);
+  read_segments(s, "segment", plan.detectors, out.segments);
+  if (out.segments.empty() && (!s.has("segment") || s.node("segment")->is_array()))
+    s.problems().add(s.at("segment"), "at least one segment required");
+}
+
+// v2 form: [[gas]], or top-level [[segment]] as one implicit gas. The v1 block
+// tables that add segments are sugar for [main] only: in a plan of segments
+// that segment is written out, so its place among the others is the file's.
+void read_v2(const Section& top, MeasurementPlan& plan) {
+  auto& p = top.problems();
+  if (top.has("main") && top.has("segment")) p.add("", "[main] and [[segment]] cannot both appear");
+  if (top.has("main") && top.has("gas")) p.add("", "[main] and [[gas]] cannot both appear");
+  if (top.has("gas") && top.has("segment")) p.add("", "[[gas]] and top-level [[segment]] cannot both appear");
+  const auto sugar = [&](bool on, std::string_view path, std::string_view kind) {
+    if (on) p.add(path, "only with [main]; in a plan of segments write a " + std::string(kind) + " segment");
+  };
+  sugar(plan.sniff.enabled, "sniff.enabled", "sniff");
+  sugar(plan.whiff.enabled, "whiff.enabled", "whiff");
+  sugar(plan.peak_center.before, "peak_center.before", "peak_center");
+  sugar(plan.peak_center.after, "peak_center.after", "peak_center");
+  sugar(plan.baseline.before, "baseline.before", "baseline");
+  sugar(plan.baseline.after, "baseline.after", "baseline");
+
+  if (top.has("gas")) {
+    std::set<std::string> names;
+    for_each_table(top, "gas", [&](const Section& gs, std::size_t) {
+      auto& gas = plan.gases.emplace_back();
+      read_gas(gs, plan, gas);
+      if (!gas.name.empty() && !names.insert(gas.name).second)
+        p.add(gs.at("name"), "gas '" + gas.name + "' named twice");
+    });
+    if (plan.gases.empty() && top.node("gas")->is_array()) p.add("gas", "at least one gas required");
+    return;
+  }
+  Gas gas;
+  gas.implicit = true;
+  gas.equilibration = plan.equilibration;
+  gas.fits = plan.fits;
+  read_segments(top, "segment", plan.detectors, gas.segments);
+  if (gas.segments.empty() && top.node("segment")->is_array()) p.add("segment", "at least one segment required");
+  plan.gases.push_back(std::move(gas));
 }
 
 void check_detectors(const MeasurementPlan& plan, const ISpectrometerCatalog& spec, Problems& p) {
@@ -485,7 +846,8 @@ Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const Plan
 
   const Section top(&root, "", p);
   top.keys({"plan", "hook", "detectors", "equilibration", "sniff", "peak_center", "baseline", "main", "fits",
-            "conditionals", "whiff", "parameters"});
+            "conditionals", "whiff", "parameters", "segment", "gas"});
+  const bool v2 = top.has("segment") || top.has("gas");
   MeasurementPlan plan;
   read_info(top.sub("plan"), plan.info);
   top.get("hook", plan.hook);
@@ -494,13 +856,14 @@ Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const Plan
   read_sniff(top.sub("sniff"), plan.sniff);
   read_peak_center(top.sub("peak_center"), plan.peak_center);
   read_baseline(top.sub("baseline"), plan.baseline);
-  read_main(top.sub("main"), plan.detectors, plan.main);
+  if (!v2 || top.has("main")) read_main(top.sub("main"), plan.detectors, plan.main);
   read_fits(top.sub("fits"), plan.fits);
   read_conditionals(top.sub("conditionals"), plan.conditionals);
   read_whiff(top.sub("whiff"), plan.whiff);
   plan.expose = detail::read_expose(root, p);
+  if (v2) read_v2(top, plan);
   // v1 -> v2 (spec 4.1) once the v1 sections read cleanly, before the rules.
-  if (!p.any()) {
+  if (!v2 && !p.any()) {
     if (auto gases = detail::desugar_v1(plan, resolvers.spectrometer)) plan.gases = std::move(*gases);
     else p.add("", gases.error().what);
   }

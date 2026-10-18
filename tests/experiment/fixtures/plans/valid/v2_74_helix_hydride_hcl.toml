@@ -1,0 +1,44 @@
+# Worked plan §7.4 of docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md,
+# verbatim below the [plan] and [equilibration] tables (taken from multicollect.toml).
+
+[plan]
+name = "v2_74_helix_hydride_hcl"
+instrument_family = "thermo_helix"
+analysis_types = ["unknown"]
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+close_inlet = true
+
+[detectors]
+reference = "H2"
+
+[[segment]]
+kind = "signal"
+cycles = 10
+[[segment.positions]]
+collect = { Ar40 = "H2" }
+counts = 10
+settle_s = 3
+[[segment.positions]]
+collect = [
+  { label = "Ar40", detector = "H2(CDD)", active = false, protect = true, deflection = 3250 },
+  { label = "Ar39", detector = "H1(CDD)", deflection = 200 },
+  { label = "Ar38", detector = "AX(CDD)" },
+  { label = "Ar37", detector = "L1(CDD)", deflection = 600 },
+  { label = "Ar36", detector = "L2(CDD)" } ]
+at = { label = "Ar38", detector = "AX(CDD)" }
+counts = 10
+settle_s = 3
+[[segment.positions]]
+collect = { Ar40H = "H2(CDD)", Ar39H = "H1(CDD)", Ar38H = "AX(CDD)", Ar37H = "L1(CDD)", Ar36H = "L2(CDD)" }
+counts = 5
+settle_s = 3
+[[segment.positions]]
+collect = { HCl = "L2(CDD)" }
+at = { label = "PHHCl", detector = "L2(CDD)" }
+counts = 5
+settle_s = 3

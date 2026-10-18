@@ -146,17 +146,20 @@ Inputs the spec implies but no worked plan exercises, most likely first. Each ha
 - Consumes: Task 1 types.
 - Produces: `resolve_plan` accepts top-level `[[segment]]` (with `[[segment.positions]]`) and `[[gas]]` (with `[[gas.segment]]`, `[[gas.segment.positions]]`); allowed top-level keys add `segment`, `gas`. `collect` accepts the list form and the shorthand map (map order = TOML key order as toml++ iterates; documented as such). `at` accepts exactly one of the four forms.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `PlanV2Parse.EveryWorkedPlanResolves`: loop over the seven `v2_7*.toml`, `load_plan` with the test catalog (Task 3 extends it; until then `kResolvers` with no spectrometer) → `ok()`.
   - `PlanV2Parse.CollectShorthandEqualsListForm`: same position written both ways → equal `Position`.
   - `PlanV2Parse.AtForms`: `{label,detector}`, `{mass,detector}`, `{dac}`, `{hv,detector}` → the matching `At` alternative with values.
   - `PlanV2Parse.StepTables`: one segment of each step kind from §3.3 → each table's fields; `peak_center.detectors=["H1","AX","L2"]`, `write_table="ic_run"`; `set.deflection.CDD==2000`; `delay.seconds` → `delay_s`; `time_zero="now"` → `TimeZeroKind::Now`.
   - `PlanV2Parse.GasesInFileOrder`: worked plan 7.6 → `gases` names `He, Ne, Ar`, `implicit==false`, He `time_zero` OnInletClose, Ne `equilibration.time_s==30`.
   - `PlanV2Parse.UnknownKeysAtEveryLevel`: unknown key in `[[gas]]`, `[[segment]]`, `[[segment.positions]]`, a `collect` entry, `at`, each step table → error containing `unknown key '<k>'` and its path (`segment[0].positions[1]`).
-- [ ] **Step 2: Run** `--gtest_filter='PlanV2Parse.*'` → FAIL.
-- [ ] **Step 3: Implement** the readers in `plan_parse.cpp` with the existing `Section::keys` and `Problems` (paths `segment[i]`, `gas[g].segment[i].positions[j].collect[k]`).
-- [ ] **Step 4: Run** → PASS; plus `PlanSchema.*` → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): parse v2 segments, positions and gases`.
+- [x] **Step 2: Run** `--gtest_filter='PlanV2Parse.*'` → FAIL.
+- [x] **Step 3: Implement** the readers in `plan_parse.cpp` with the existing `Section::keys` and `Problems` (paths `segment[i]`, `gas[g].segment[i].positions[j].collect[k]`).
+- [x] **Step 4: Run** → PASS; plus `PlanSchema.*` → PASS.
+- [x] **Step 5: Commit** `feat(experiment): parse v2 segments, positions and gases`.
+
+Done notes: fixture 7.1 leaves out its `[baseline.modifier.CDD]` table until Task 21 reads it (Task 21 puts it back). Also built here, since the parse needs them to be unambiguous: the two conflict errors Task 3's fixtures `v2_main_and_segment.toml` and `v2_gas_and_segment.toml` expect (same messages) and `[main] and [[gas]] cannot both appear`, the refusal of v1 block sugar in a plan of segments (spec §3.5), and shape errors (`at` forms, step table on its own kind only, collection keys refused on a step, `gas '<n>' named twice`; a gas's `fits` overrides the plan's key by key and a gas without one carries the plan's), tested by `PlanV2Parse.ShapeErrors`. v2 detectors are not checked against the catalog yet (Task 3), and `[detectors] exclude` is not yet applied to v2 positions (Task 3, `v2_exclude_empties_position.toml`).
+
 
 ### Task 3: Validation additions (§3.7) and the catalog
 
@@ -521,7 +524,7 @@ Adds a thread: run under `-DPYCHRON_SANITIZE=thread` before it lands.
 
 **Interfaces:**
 - Produces: `struct BaselineModifier { std::string variable, model, error; };` `MeasurementPlan` gains `std::map<std::string, BaselineModifier> baseline_modifiers;` (`[baseline.modifier.<detector>]`; `baseline` table allowed keys add `modifier`). `model` is a CSV path relative to the plan library or an expression in `x`; `variable` an expression over this run's intercepts (the conditionals expression parser, intercept names only). Applied in `fit_results`: `Results::baseline_modifiers[det]` with the evaluated variable, the model's value and error; the detector's baseline value is not changed in the record (applied at reduction, §3.5). `to_ingest` writes `baseline_modifiers_json` and the detector's `modifier_value`/`modifier_error`.
-- [ ] **Step 1: Write failing tests:** `PlanV2Parse.BaselineModifier` (worked plan 7.1 table read); invalid fixture `v2_modifier_unknown_detector.toml` (`# expect: unknown detector`); `FitResults.BaselineModifierEvaluated` (model expression `0.01*x`, variable `Ar40+Ar39` → value); `RecordIngest.BaselineModifiersHaveAProducer` (row in the field table of that test file).
+- [ ] **Step 1: Write failing tests:** `PlanV2Parse.BaselineModifier` (worked plan 7.1 table read: put the worked plan's `[baseline.modifier.CDD]` back into `v2_71_argus_syn_baseline.toml`, left out by Task 2); invalid fixture `v2_modifier_unknown_detector.toml` (`# expect: unknown detector`); `FitResults.BaselineModifierEvaluated` (model expression `0.01*x`, variable `Ar40+Ar39` → value); `RecordIngest.BaselineModifiersHaveAProducer` (row in the field table of that test file).
 - [ ] **Step 2: Run** → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `pychron_experiment_tests`, `pychron_experiment_store_tests` → PASS.
