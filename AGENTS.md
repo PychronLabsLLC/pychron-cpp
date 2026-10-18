@@ -33,13 +33,13 @@ Day to day:
 - Branch landed: remove its worktree (`git worktree remove <path>`), then the
   branch. Each worktree holds its own build tree, 2 to 16 GB (October 2026:
   33 landed worktrees, 181 GB). Never one this session did not make.
-  Exception (owner, 2026-10-13): the nightly run names its worktrees
+  Exception: the nightly run names its worktrees
   `.claude/worktrees/nightly-<topic>` and never lands them itself, so a
   later nightly run removes one, and its branch, when every commit of the
   branch is on `origin/develop` and the worktree has no uncommitted change;
   never with `--force` or `-D`. A nightly run deletes the build tree of its
   worktree whose row is closed or whose plan is done; one whose row goes on
-  keeps it for the next night (developer, 2026-10-15).
+  keeps it for the next night.
 - Never skip or disable failing test; find root cause.
 - Never push to `main`. Do not open a pull request into `main` or merge one
   unless asked to release.
@@ -70,7 +70,7 @@ Anything larger than small fix starts from written spec, not code:
    `None.`. Settle what code, old implementation and this file settle; list
    only rest. Spec that lists questions is agreed with developer before
    anything else is written. Spec whose section says `None.` needs no
-   agreement: plan follows (developer, 2026-10-15).
+   agreement: plan follows.
 2. Plan: `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`. Spec cut into tasks
    small enough to test and commit one at a time, each naming its files and
    tests. Same `## Open questions` rule: none listed, build starts without
@@ -194,7 +194,8 @@ Inner loop (keep waits short):
 - `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
-  appear in its public headers or in any other `libs/` library.
+  appear in its public headers or in any other `libs/` library but
+  `libs/earthbank_qt`, HTTPS adapter of `libs/earthbank`.
 - Cache of ages (`derived_value`; spec
   `docs/superpowers/specs/2026-10-09-age-cache-filter-design.md`): browser's
   Age column and age filter read it, nothing calculates with it. Three rules:
@@ -410,7 +411,7 @@ Tests (`tests/support/virtual_time.hpp`, namespace `pychron::testing`):
   in it (start looking there: a raw wait, a plain mutex, a bare join). With
   no timed waiter (everybody waiting untimed, say for a notify that never
   comes) there is no such report, only the abort.
-- `ManualClock` remains for single-threaded unit tests that step time by
+- `ManualClock` is for single-threaded unit tests that step time by
   hand. Nothing advances it for a waiting thread: `advance()` wakes no
   untimed waiter, and a thread waiting on one that nobody advances waits for
   good.

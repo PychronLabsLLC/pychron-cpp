@@ -27,9 +27,9 @@ REPORT_SCHEMA: dict[str, Any] = {
 }
 
 CONVENTIONS = """\
-Repository conventions (non-negotiable):
+Repository conventions:
 - C++20, CMake >= 3.25, dependencies via vcpkg.json manifest. Presets live in CMakePresets.json.
-- libs/* must not depend on Qt. Dependency direction is strictly core <- transport <- codecs <- devices <- systems <- apps.
+- libs/* must not depend on Qt, except privately in libs/persistence (never in its public headers) and in libs/earthbank_qt. Dependency direction is strictly core <- transport <- codecs <- devices <- systems <- apps.
 - No exceptions across library boundaries: return Result<T> (std::expected<T, Error>).
 - Drivers hold no locks for bus sequencing: wrap any multi-exchange protocol step in transact(transport_, [&] { ... }) (see Transport::transaction).
 - Every new behavior gets a GoogleTest test under tests/<lib>/. Tests must not need hardware or network.
@@ -86,7 +86,7 @@ The full spec is at `{spec_path}` if you need surrounding context, but the secti
 {sections}
 
 ## {CONVENTIONS}
-Start by reading the existing tree (CMakeLists.txt, libs/, tests/) so you extend rather than duplicate. Then implement the unit.
+Extend what the existing tree (CMakeLists.txt, libs/, tests/) already has rather than duplicating it.
 """
 
 
