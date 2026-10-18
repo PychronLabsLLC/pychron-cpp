@@ -2,7 +2,9 @@
 
 Status: agreed 2026-10-15 (owner answered section 7). Written by unattended
 run for T091 on 2026-10-13. Builds on T090 (`f56e037f`, on `develop`).
-Nothing built.
+Built 2026-10-17 on `feat/exp-t091` (plan
+`docs/superpowers/plans/2026-10-17-resume-aliquot.md`); sections 3, 4, 6
+say what code settled.
 
 ## 1. Problem
 
@@ -39,6 +41,7 @@ Chosen: B (owner, 2026-10-15).
 struct LastRun {
   int aliquot = 0;
   int step = -1;  // step_index of its step; -1: no step
+  bool operator==(const LastRun&) const = default;
 };
 
 class IAnalysisPersister {
@@ -55,15 +58,36 @@ class IAnalysisPersister {
 - Default returns none: test fakes and `NoDatabasePersister`
   (`apps/pychron-ui/src/no_database_persister.cpp`) unchanged and keep
   T090's in-session behaviour.
-- `FilePersister::last_run`: same scan as `highest_on_disk`, also reading
-  the step letters after the aliquot digits (`step_index`); highest
-  aliquot, then highest step in it.
+- `FilePersister::last_run`: scans `<root>/<identifier>/` like
+  `highest_on_disk`, also reading step letters after aliquot digits
+  (`step_index`); highest aliquot, then highest step in it. Parser
+  `parse_run_name` (`persister.cpp`): name is `<identifier>-<digits><letters>.`
+  and ends `.json`; no digits, letters not followed by `.`, aliquot past
+  `int`, or `step_index` < 0: not a run, skipped. So
+  `12345-3B.extraction.json` (run started, analysis never saved) counts as
+  3B: its number is spent, as `highest_on_disk` already counts it.
+  `highest_on_disk` left as is (its numbering must not change). Identifier
+  `safe_name` refuses: `ErrorKind::Config`, as `next_aliquot`. Missing
+  directory: none, not error. Directory that cannot be listed: `Io` error.
+  Takes no `mutex_`, touches no `issued_`.
 - `StorePersister::last_run`: `store_.last_analysis(identifier)` mapped
   (`increment` → `step`), then records waiting in the spool
   (`persist::Spool`, as `next_aliquot` already reads them at
   `store_persister.cpp:49`–`70`) taken into account by the same order. A
   store that cannot be reached: the cached last answer when there is one
   (as `next_aliquot` does with `read_`), else the error.
+  - `read_` now `std::map<std::string, persist::LastRun>` (aliquot 0: store
+    had none), shared by `next_aliquot` (reads `.aliquot`) and `last_run`:
+    either one's store read fills cache for the other. `next_aliquot`'s
+    answers unchanged.
+  - Spool that cannot be listed: its error. Spooled record that cannot be
+    read: skipped (can never be sent, so no saved run). Spool read outside
+    `mutex_`.
+  - Answer `nullopt` when resulting aliquot is 0. Touches no `issued_`.
+- `Acquisition` proxy (`Marshalled`, `store_persister.cpp`) forwards
+  `last_run` to its worker thread through `impl_.call`, beside
+  `next_aliquot`. Without it UI and `elctl --db` would get default none
+  silently and fix would do nothing there.
 
 ## 4. Allocator rule
 
@@ -81,6 +105,11 @@ class IAnalysisPersister {
 
 - Step A or no step: never asks `last_run` (always a new aliquot), as now.
 - Asked once per identifier per session: after it, memory answers.
+  Identifier marked asked (`asked_`, under `mutex_`) before call; lock
+  released across call (`mutex_` never held across persister).
+- `last_run` failed: mark taken back before error returned, so retried
+  allocation asks again instead of falling to `next_aliquot()` (rule 3).
+  Failed allocation issues no aliquot.
 - Holds after a restart, in another queue, and on another day: a heating
   whose B, C ... come in a later queue joins the aliquot whose last saved
   step is before them. Same rule as within a session (T090): a step after
@@ -101,16 +130,26 @@ class IAnalysisPersister {
 
 - `tests/experiment/test_persist.cpp`: `FilePersister::last_run` on
   `12345-3A.json`, `12345-3B.json`, `12345-2.json` → {3, B}; no files → none;
-  a name with no step → step -1.
+  a name with no step → step -1; `.extraction.json` counted; identifier not
+  plain name refused; `last_run` moves no `next_aliquot`; default of
+  interface is none.
 - Allocator table, each row a fresh allocator over a persister whose last
   run is {3, B}: C → 3; B → next free (B is not after B); A → next free;
-  no step → next free. A failing `last_run` fails the allocation.
+  no step → next free. Newest aliquot with no step ({3, -1}): B → next free.
+  A failing `last_run` fails the allocation and issues nothing; retry after
+  it asks again and joins. Asked once per identifier, never for A or no
+  step. Fresh allocator over same files after restart continues heating.
 - `tests/experiment` store adapter (`pychron_experiment_store_tests`):
   `StorePersister::last_run` from the store, and from a record waiting in
-  the spool; SQLite and PostgreSQL (`engines()`).
+  the spool; cached answer with store unreadable, error with nothing
+  cached; issues nothing; store and files answer same for same runs;
+  `AcquisitionTest.ForwardsLastRun` (proxy). SQLite and PostgreSQL
+  (`engines()`).
 - Executor: queue of A, B, C, run stops after A; a new `Executor` and
   allocator over the same persister resumes at B: B and C get A's aliquot.
 - `elctl` `--resume` test of the same shape (`apps/elctl/tests/test_exp_commands.cpp`).
+- User doc `docs/user/04-experiments.md` (`aliquot`, `step` row) says a
+  resumed or later-queue step heat joins the last saved run's aliquot.
 
 ## 7. Owner, 2026-10-15
 

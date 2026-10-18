@@ -383,11 +383,11 @@ git commit -m "test(experiment): a step heat resumed by the executor and by elct
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-13-resume-aliquot-design.md` (status line: built, with the branch; any departure made in Tasks 1 to 4 written into sections 3 to 6)
 
-- [ ] **Step 1:** Update the spec's status line; check sections 3 to 6 against the code (`read_` change, `Marshalled` forwarding, `.extraction.json` counted) and write in what the code settled that the spec did not say. Compressed, as `AGENTS.md` says for specs.
-- [ ] **Step 2:** Run `cmake --build --preset dev` (timeout 3600000 ms). Expected: builds.
-- [ ] **Step 3:** Run `ctest --preset dev` (timeout 3600000 ms). Expected: 100% pass.
-- [ ] **Step 4:** Run `python3 tools/compiler_sweep.py` (whole tree) and `python3 tools/quality_check.py`. Expected: exit 0, no warnings.
-- [ ] **Step 5: Commit**
+- [x] **Step 1:** Update the spec's status line; check sections 3 to 6 against the code (`read_` change, `Marshalled` forwarding, `.extraction.json` counted) and write in what the code settled that the spec did not say. Compressed, as `AGENTS.md` says for specs.
+- [x] **Step 2:** Run `cmake --build --preset dev` (timeout 3600000 ms). Expected: builds.
+- [x] **Step 3:** Run `ctest --preset dev` (timeout 3600000 ms). Expected: 100% pass.
+- [x] **Step 4:** Run `python3 tools/compiler_sweep.py` (whole tree) and `python3 tools/quality_check.py`. Expected: exit 0, no warnings.
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-10-13-resume-aliquot-design.md
