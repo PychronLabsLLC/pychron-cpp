@@ -423,6 +423,20 @@ TEST_F(PersistTest, AliquotAllocatorFailsWhenLastRunFails) {
   EXPECT_EQ(db.next, 4);  // no aliquot was issued
 }
 
+// A failed last_run is not an answer: the retry asks again and joins 3B.
+TEST_F(PersistTest, AliquotAllocatorAsksAgainAfterLastRunFailed) {
+  SavedRunPersister db;
+  db.down = true;
+  AliquotAllocator alloc(db);
+  ASSERT_FALSE(alloc.allocate(RunIdentity{"12345", std::nullopt, "C"}));
+  db.down = false;
+  auto a = alloc.allocate(RunIdentity{"12345", std::nullopt, "C"});
+  ASSERT_TRUE(a);
+  EXPECT_EQ(a->aliquot, 3);
+  EXPECT_EQ(db.asked, 2);
+  EXPECT_EQ(db.next, 4);  // no aliquot was issued
+}
+
 TEST_F(PersistTest, AliquotAllocatorAsksOncePerIdentifierAndNeverForAOrNoStep) {
   SavedRunPersister db;
   AliquotAllocator alloc(db);

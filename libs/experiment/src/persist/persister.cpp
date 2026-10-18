@@ -388,7 +388,12 @@ Result<Allocation> AliquotAllocator::allocate(const RunIdentity& id) {
     // Nothing remembered for this identifier: the persister's last saved run
     // stands in for that memory (a heating resumed after a restart).
     auto saved = persister_.last_run(id.identifier);
-    if (!saved) return fail(saved.error());
+    if (!saved) {
+      // Not asked after all: a retry asks again rather than take a new aliquot.
+      const std::lock_guard lock(mutex_);
+      asked_.erase(id.identifier);
+      return fail(saved.error());
+    }
     if (const auto& last = *saved; last && 0 <= last->step && last->step < step) {
       remember(last->aliquot);
       return Allocation{last->aliquot, id.step};
