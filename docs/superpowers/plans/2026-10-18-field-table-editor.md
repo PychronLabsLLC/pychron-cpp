@@ -193,7 +193,7 @@
   ```
   Order inside `replace_table`, all under `mutex_`: hold check (`code = "table_held"`, what `"table is held by <holder>"`), axis vs `native_axis()` (`"table_axis"`), `check_field_table(table, config_, weights_, name)` errors (`"table_invalid"`, what = one `to_string` line per error), store current ≠ `base_version` when `base_version` non-empty (`"table_conflict"`, what names the current version), `FieldTableStore::save`, swap `tables_[name]` when loaded, publish `FieldTableChanged`. `restore_table_version`: hold check, `store.load(version)` (parse failure → `"table_invalid"`), diagnostics errors → `"table_invalid"`, `store.restore`, reload `tables_[name]` when loaded, publish.
 
-- [ ] **Step 1: Write failing tests** `SpectrometerTables.*`:
+- [x] **Step 1: Write failing tests** `SpectrometerTables.*`:
   - `ReplaceWritesVersionAndSwapsInMemory` (`field_table()` equals the new table, `table_version` equals result).
   - `ReplaceRefusesConflict` (save once through store directly, then replace with the old base → `code == "table_conflict"`; empty base succeeds).
   - `ReplaceRefusesAxisMismatch`, `ReplaceRefusesDiagnosticError` (duplicate isotope); each: store current and `field_table()` unchanged.
@@ -201,10 +201,10 @@
   - `SaveTableNotRefusedUnderHold`, `UpdateTableNotRefusedUnderHold`.
   - `RestoreReloadsInMemory`; `RestoreRefusesVersionWithDiagnosticError` and `RestoreRefusesUnparseableVersion` (write the bad file by hand; `current` file bytes unchanged).
   - `BothPublishFieldTableChanged`.
-- [ ] **Step 2: Run** filter `SpectrometerTables.*`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** filter. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(spectrometer): replace and restore field table versions in core`.
+- [x] **Step 2: Run** filter `SpectrometerTables.*`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** filter. Expected: PASS.
+- [x] **Step 5: Commit** `feat(spectrometer): replace and restore field table versions in core`.
 
 ### Task 7: Peak center saves its update (D2); jobs hold the table
 

@@ -25,6 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -235,6 +236,22 @@ class Spectrometer {
   Result<std::string> table_version(const std::string& name) const;
   const std::filesystem::path& data_root() const noexcept { return options_.data_root; }
 
+  // The editor's Save (field table editor spec, section 5): writes `table` as
+  // a new version of `name`, makes it current, swaps it in when `name` is
+  // loaded, and publishes FieldTableChanged. Refused, with nothing written,
+  // in this order: a TableHold is out (code "table_held"); the table's axis
+  // is not the positioner's ("table_axis"); check_field_table reports an
+  // error ("table_invalid", one line per error); the store's current version
+  // is not `base_version` ("table_conflict"; an empty `base_version` skips
+  // this check). Config error without a data_root. Returns the new version.
+  Result<std::string> replace_table(const std::string& name, FieldTable table, std::string_view base_version,
+                                    std::chrono::system_clock::time_point when);
+  // Make Current: points `name`'s current at an existing `version`, reloads
+  // it when `name` is loaded, and publishes FieldTableChanged. Refused while
+  // a TableHold is out ("table_held"), and when the version does not parse or
+  // check_field_table reports an error ("table_invalid").
+  Result<void> restore_table_version(const std::string& name, const std::string& version);
+
   // RAII: while any is out, the table may not be replaced or restored to
   // another version (a queue or a peak center is using it). Move-only; a
   // default-constructed or moved-from hold holds nothing. Must not outlive
@@ -329,6 +346,8 @@ class Spectrometer {
   Result<std::vector<ChannelId>> plan_protection(double from, double to, ProtectPolicy policy, bool& blank);
   void restore_table(const std::string& name);
   void release_hold(std::uint64_t id);
+  // Error "table_held" naming the first holder, or nothing.
+  Result<void> refuse_if_held() const;
 
   cfg::SpectrometerConfig config_;
   MolecularWeights weights_;

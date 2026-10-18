@@ -4,9 +4,11 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <utility>
 #include <vector>
 
+#include "pychron/systems/spectrometer/field_table_check.hpp"
 #include "pychron/systems/spectrometer/field_table_store.hpp"
 
 namespace pychron::spectrometer {
@@ -566,6 +568,96 @@ Result<std::string> Spectrometer::save_table(std::chrono::system_clock::time_poi
 Result<std::string> Spectrometer::table_version(const std::string& name) const {
   if (options_.data_root.empty()) return config_error("table_version needs a data directory");
   return FieldTableStore(options_.data_root / "tables", name).current_version();
+}
+
+namespace {
+
+Unexpected<Error> coded(std::string code, std::string what) {
+  Error e{ErrorKind::Config, std::move(what), kDevice};
+  e.code = std::move(code);
+  return fail(std::move(e));
+}
+
+// "table_invalid" listing every error of `diagnostics`, or nothing.
+Result<void> refuse_if_invalid(const TableDiagnostics& diagnostics) {
+  if (!has_error(diagnostics)) return {};
+  std::string what;
+  for (const auto& d : diagnostics) {
+    if (d.severity != TableSeverity::Error) continue;
+    if (!what.empty()) what += '\n';
+    what += to_string(d);
+  }
+  return coded("table_invalid", std::move(what));
+}
+
+}  // namespace
+
+Result<void> Spectrometer::refuse_if_held() const {
+  if (auto holder = table_held()) return coded("table_held", "table is held by " + *holder);
+  return {};
+}
+
+Result<std::string> Spectrometer::replace_table(const std::string& name, FieldTable table,
+                                                std::string_view base_version,
+                                                std::chrono::system_clock::time_point when) {
+  FieldTableChanged event;
+  {
+    // mutex_ first, then holds_mutex_ (inside refuse_if_held): a move in
+    // progress holds mutex_, so it sees the old table or the new, never half.
+    std::scoped_lock lock(mutex_);
+    if (auto held = refuse_if_held(); !held) return fail(held.error());
+    if (table.axis() != to_table_axis(axis_)) {
+      return coded("table_axis", "table '" + name + "' is in " + std::string(to_string(table.axis())) +
+                                     " units, positioner is " + std::string(to_string(axis_)));
+    }
+    if (auto valid = refuse_if_invalid(check_field_table(table, config_, weights_, name)); !valid) {
+      return fail(valid.error());
+    }
+    if (options_.data_root.empty()) return config_error("replace_table needs a data directory");
+    FieldTableStore store(options_.data_root / "tables", name);
+    if (!base_version.empty()) {
+      auto current = store.current_version();
+      const std::string now = current ? *current : std::string("none");
+      if (now != base_version) {
+        return coded("table_conflict", "table '" + name + "' changed since version " + std::string(base_version) +
+                                           " (now " + now + ")");
+      }
+    }
+    auto saved = store.save(table, when);
+    if (!saved) return saved;
+    if (auto it = tables_.find(name); it != tables_.end()) it->second = std::move(table);
+    event = FieldTableChanged{name, *saved};
+  }
+  // Outside mutex_, as save_table.
+  context_.bus.publish(event);
+  return event.version;
+}
+
+Result<void> Spectrometer::restore_table_version(const std::string& name, const std::string& version) {
+  FieldTableChanged event;
+  {
+    std::scoped_lock lock(mutex_);
+    if (auto held = refuse_if_held(); !held) return fail(held.error());
+    if (options_.data_root.empty()) return config_error("restore_table_version needs a data directory");
+    FieldTableStore store(options_.data_root / "tables", name);
+    auto loaded = store.load(version);
+    if (!loaded) {
+      // A file that is there but does not parse is an invalid table; a bad
+      // version name or a missing version keeps the store's error.
+      std::error_code ec;
+      const bool exists = !version.empty() && std::filesystem::exists(store.directory() / (version + ".toml"), ec);
+      if (!exists) return fail(loaded.error());
+      return coded("table_invalid", loaded.error().what);
+    }
+    if (auto valid = refuse_if_invalid(check_field_table(*loaded, config_, weights_, name)); !valid) {
+      return fail(valid.error());
+    }
+    if (auto restored = store.restore(version); !restored) return restored;
+    if (auto it = tables_.find(name); it != tables_.end()) it->second = std::move(*loaded);
+    event = FieldTableChanged{name, version};
+  }
+  context_.bus.publish(event);
+  return {};
 }
 
 Spectrometer::TableHold Spectrometer::hold_table(std::string holder) {
