@@ -5,18 +5,25 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <cmath>
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/devices/link.hpp"
 #include "pychron/experiment/measurement/results.hpp"
+#include "pychron/experiment/plan/plan_loader.hpp"
 
 using namespace pychron;
 using namespace pychron::experiment;
@@ -187,18 +194,153 @@ class FakeHook final : public IMeasurementHook {
   std::map<std::string, std::function<Result<void>(scripting::IMeasurementApi&)>> actions;
 };
 
-plan::Hop hop(std::map<std::string, std::string> positions, int counts, double settle = 2) {
-  plan::Hop h;
+// A plan as the engine tests write it: the v1 tables, rendered to TOML and
+// resolved by the plan loader, so the engine runs the segments a v1 file
+// desugars to (measurement plan v2 spec, 4.1).
+struct TestHopPosition {
+  std::string isotope, detector;
+};
+
+struct TestHop {
+  std::map<std::string, std::string> positions;
+  int counts = 0;
+  double settle_s = 0;
+  std::vector<std::string> protect;
+  bool baseline = false;
+  std::optional<double> mass;
+  std::optional<TestHopPosition> position;
+};
+
+struct TestSniff {
+  bool enabled = false;
+  int counts = 0;
+  double integration_s = 1;
+};
+
+struct TestPeakCenter {
+  bool before = false, after = false;
+  std::string detector, isotope, config = "default";
+  double min_signal = 0;
+};
+
+struct TestBaseline {
+  bool before = false, after = false;
+  int counts = 0;
+  std::optional<double> mass;
+  std::string detector;
+  double settle_s = 0;
+  double integration_s = 1;
+};
+
+struct TestMain {
+  int cycles = 1;
+  double integration_s = 1;
+  plan::TimeZero time_zero;
+  std::vector<TestHop> hops;
+};
+
+struct TestWhiff {
+  bool enabled = false;
+  int counts = 0;
+  double integration_s = 1;
+  std::vector<plan::WhiffCheck> checks;
+};
+
+std::string num(double v) {
+  std::array<char, 32> buf{};
+  std::snprintf(buf.data(), buf.size(), "%.17g", v);
+  return buf.data();
+}
+
+std::string quoted(const std::string& s) { return "\"" + s + "\""; }
+
+// NOLINTNEXTLINE(modernize-use-string-view): concatenated with "+" into TOML text, which a string_view does not take
+std::string boolean(bool b) { return b ? "true" : "false"; }
+
+std::string string_array(const std::vector<std::string>& v) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < v.size(); ++i) out += (i == 0 ? "" : ", ") + quoted(v[i]);
+  return out + "]";
+}
+
+// The plan through the loader, which fails the test when it does not resolve.
+plan::MeasurementPlan plan_from(std::string_view toml) {
+  auto r = plan::resolve_plan(toml, plan::PlanResolvers{}, "test");
+  EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().what) << "\n" << toml;
+  return r.value_or(plan::MeasurementPlan{});
+}
+
+struct V1Plan {
+  plan::DetectorsSpec detectors;
+  plan::Equilibration equilibration;
+  TestSniff sniff;
+  TestPeakCenter peak_center;
+  TestBaseline baseline;
+  TestMain main;
+  TestWhiff whiff;
+  std::optional<std::string> hook;
+
+  std::string toml() const {
+    std::string t;
+    if (hook) t += "hook = " + quoted(*hook) + "\n";
+    t += "[plan]\nname = \"mc\"\ninstrument_family = \"fake\"\n";
+    t += "[detectors]\nreference = " + quoted(detectors.reference) + "\nexclude = " + string_array(detectors.exclude) + "\n";
+    const auto& eq = equilibration;
+    t += "[equilibration]\ninlet = " + quoted(eq.inlet) + "\noutlet = " + quoted(eq.outlet) + "\ntime_s = " + num(eq.time_s) +
+         "\ninlet_delay_s = " + num(eq.inlet_delay_s) + "\nclose_inlet = " + boolean(eq.close_inlet) + "\n";
+    t += "[sniff]\nenabled = " + boolean(sniff.enabled) + "\ncounts = " + std::to_string(sniff.counts) +
+         "\nintegration_s = " + num(sniff.integration_s) + "\n";
+    const auto& pc = peak_center;
+    t += "[peak_center]\nbefore = " + boolean(pc.before) + "\nafter = " + boolean(pc.after) + "\ndetector = " +
+         quoted(pc.detector) + "\nisotope = " + quoted(pc.isotope) + "\nconfig = " + quoted(pc.config) +
+         "\nmin_signal = " + num(pc.min_signal) + "\n";
+    const auto& b = baseline;
+    t += "[baseline]\nbefore = " + boolean(b.before) + "\nafter = " + boolean(b.after) + "\ncounts = " +
+         std::to_string(b.counts) + "\ndetector = " + quoted(b.detector) + "\nsettle_s = " + num(b.settle_s) +
+         "\nintegration_s = " + num(b.integration_s) + "\n";
+    if (b.mass) t += "mass = " + num(*b.mass) + "\n";
+    t += "[main]\ncycles = " + std::to_string(main.cycles) + "\nintegration_s = " + num(main.integration_s) + "\n";
+    switch (main.time_zero.kind) {
+      case plan::TimeZeroKind::OnInletClose: t += "time_zero = \"on_inlet_close\"\n"; break;
+      case plan::TimeZeroKind::OnFirstCount: t += "time_zero = \"on_first_count\"\n"; break;
+      default: t += "time_zero = { offset_s = " + num(main.time_zero.offset_s) + " }\n"; break;
+    }
+    for (const auto& h : main.hops) {
+      t += "[[main.hops]]\npositions = {";
+      bool first = true;
+      for (const auto& [iso, det] : h.positions) {
+        t += std::string(first ? " " : ", ") + iso + " = " + quoted(det);
+        first = false;
+      }
+      t += " }\ncounts = " + std::to_string(h.counts) + "\nsettle_s = " + num(h.settle_s) + "\nprotect = " +
+           string_array(h.protect) + "\nbaseline = " + boolean(h.baseline) + "\n";
+      if (h.mass) t += "mass = " + num(*h.mass) + "\n";
+      if (h.position) {
+        t += "position = { detector = " + quoted(h.position->detector);
+        if (!h.position->isotope.empty()) t += ", isotope = " + quoted(h.position->isotope);
+        t += " }\n";
+      }
+    }
+    t += "[whiff]\nenabled = " + boolean(whiff.enabled) + "\ncounts = " + std::to_string(whiff.counts) +
+         "\nintegration_s = " + num(whiff.integration_s) + "\n";
+    for (const auto& c : whiff.checks)
+      t += "[[whiff.checks]]\ncheck = " + quoted(c.check) + "\naction = " + quoted(c.action) + "\n";
+    return t;
+  }
+
+  plan::MeasurementPlan plan() const { return plan_from(toml()); }
+};
+
+TestHop hop(std::map<std::string, std::string> positions, int counts, double settle = 2) {
+  TestHop h;
   h.positions = std::move(positions);
   h.counts = counts;
   h.settle_s = settle;
   return h;
 }
 
-plan::MeasurementPlan multicollect(int counts = 10, int cycles = 1) {
-  plan::MeasurementPlan p;
-  p.info.name = "mc";
-  p.info.instrument_family = "fake";
+V1Plan multicollect(int counts = 10, int cycles = 1) {
+  V1Plan p;
   p.detectors.reference = "H1";
   p.equilibration = {"B", "C", 10, 2, true};
   p.sniff = {true, 10, 1};
@@ -224,6 +366,10 @@ MeasurementInputs inputs(plan::MeasurementPlan p, ConditionalSet conditionals = 
   return in;
 }
 
+MeasurementInputs inputs(const V1Plan& p, ConditionalSet conditionals = {}) {
+  return inputs(p.plan(), std::move(conditionals));
+}
+
 Conditional conditional(ConditionalKind kind, std::string name, std::string check, int start = 0,
                         ActionSpec action = {}) {
   Conditional c;
@@ -243,6 +389,10 @@ Conditional conditional(ConditionalKind kind, std::string name, std::string chec
 class EngineTest : public ::testing::Test {
  protected:
   EngineTest() { valves_.t0 = t0_; }
+
+  MeasurementResult run(const V1Plan& p, ConditionalSet conditionals = {}, EngineOptions options = {}) {
+    return run(p.plan(), std::move(conditionals), std::move(options));
+  }
 
   MeasurementResult run(plan::MeasurementPlan p, ConditionalSet conditionals = {}, EngineOptions options = {}) {
     MeasurementInputs in = inputs(std::move(p), std::move(conditionals));
@@ -395,11 +545,11 @@ TEST_F(EngineTest, PeakHopOrderingProtectionAndBaselineHops) {
   auto h0 = hop({{"Ar40", "H1"}, {"Ar36", "CDD"}}, 3);
   h0.protect = {"CDD"};
   auto h1 = hop({{"Ar39", "CDD"}}, 2);
-  h1.position = plan::HopPosition{"Ar39", "CDD"};
+  h1.position = TestHopPosition{"Ar39", "CDD"};
   auto h2 = hop({{"Ar36", "CDD"}}, 1);
   h2.baseline = true;
   h2.mass = 34.2;
-  h2.position = plan::HopPosition{"", "CDD"};
+  h2.position = TestHopPosition{"", "CDD"};
   p.main.hops = {h0, h1, h2};
   auto r = run(p);
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
@@ -795,6 +945,7 @@ TEST_F(EngineTest, APeakCenterBeforeIsNotHeldToTheMinimumSignal) {
 TEST_F(EngineTest, ValidateNamesMissingServices) {
   auto p = multicollect();
   p.peak_center.after = true;
+  p.peak_center.isotope = "Ar40";
   p.hook = "h.py";
   EngineContext ctx{spec_, clock_};
   MeasurementEngine e(ctx, inputs(p));
@@ -845,7 +996,7 @@ TEST_F(EngineTest, HookErrorFailsTheMeasurement) {
 }
 
 TEST_F(EngineTest, PlanTruncationsBecomeAConditionalLevel) {
-  auto p = multicollect();
+  plan::MeasurementPlan p;
   p.conditionals.truncations = {{"Ar40 > 8e5", 20}};
   auto set = plan_conditionals(p);
   ASSERT_TRUE(set);
@@ -863,7 +1014,7 @@ TEST_F(EngineTest, ResultsFitInterceptsAndBaselines) {
   p.baseline.after = true;
   auto r = run(p);
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed);
-  auto fits = fit_results(r.data, p.fits);
+  auto fits = fit_results(r.data, p.plan().fits);
   EXPECT_TRUE(fits.errors.empty());
   // v = a (1 + 0.01 t) with t absolute clock seconds: the intercept at time
   // zero is a (1 + 0.01 t_zero).
@@ -1199,4 +1350,126 @@ TEST_F(MeasurementGaps, AStartLostTwiceLeavesTheAcquisitionStopped) {
   ASSERT_NE(second, spec_.log.end());
   ASSERT_NE(second + 1, spec_.log.end());
   EXPECT_EQ(*(second + 1), "stop");  // it may have started: stopped, to be sure
+}
+
+// ---- the engine runs segments (measurement plan v2, Task 6) -------------------
+
+namespace {
+
+// The extraction-line aliases the plan fixtures name.
+class FixtureLine final : public plan::IAliasResolver {
+ public:
+  std::optional<ParamValue> resolve_alias(std::string_view key) const override {
+    if (key == "valves.inlet") return std::string("B");
+    if (key == "valves.outlet") return std::string("C");
+    if (key == "extraction.eqtime") return std::int64_t{20};
+    return std::nullopt;
+  }
+};
+
+plan::MeasurementPlan load_fixture_plan(const std::string& name) {
+  std::ifstream in(std::filesystem::path(PYCHRON_PLAN_FIXTURES_DIR) / "valid" / name);
+  std::stringstream text;
+  text << in.rdbuf();
+  auto t = plan::parse_plan_template(text.str(), name);
+  EXPECT_TRUE(t.has_value()) << (t ? "" : t.error().what);
+  if (!t) return {};
+  const FixtureLine line;
+  auto loaded = plan::load_plan(*t, {}, plan::PlanResolvers{&line, nullptr});
+  EXPECT_TRUE(loaded.has_value()) << (loaded ? "" : loaded.error().what);
+  return loaded ? loaded->plan : plan::MeasurementPlan{};
+}
+
+}  // namespace
+
+class EngineV2 : public EngineTest {
+ protected:
+  struct Run {
+    MeasurementResult result;
+    TimePoint end{};
+  };
+
+  Run run_fixture(const std::string& name) {
+    clock_.set(t0_);
+    spec_.log.clear();
+    valves_.log.clear();
+    valves_.state.clear();
+    peak_.requests.clear();
+    hook_.entries.clear();
+    Run out;
+    out.result = run(load_fixture_plan(name));
+    out.end = clock_.now();
+    return out;
+  }
+
+  // The same plan written as v1 tables and as v2 segments runs the same.
+  void expect_same_run(const std::string& v1, const std::string& v2) {
+    const auto a = run_fixture(v1);
+    const auto b = run_fixture(v2);
+    ASSERT_EQ(a.result.outcome, MeasurementOutcome::Completed) << (a.result.error ? a.result.error->what : "");
+    ASSERT_EQ(b.result.outcome, MeasurementOutcome::Completed) << (b.result.error ? b.result.error->what : "");
+    EXPECT_FALSE(a.result.trace.empty());
+    EXPECT_EQ(a.result.trace, b.result.trace);
+    EXPECT_EQ(a.result.blocks, b.result.blocks);
+    EXPECT_EQ(a.end, b.end);
+    ASSERT_EQ(a.result.data.series.size(), b.result.data.series.size());
+    for (const auto& [key, s] : a.result.data.series) {
+      ASSERT_TRUE(b.result.data.series.contains(key)) << to_string(key);
+      EXPECT_EQ(s.t, b.result.data.series.at(key).t) << to_string(key);
+      EXPECT_EQ(s.v, b.result.data.series.at(key).v) << to_string(key);
+    }
+    EXPECT_EQ(a.result.data.counts, b.result.data.counts);
+  }
+};
+
+TEST_F(EngineV2, V1AndV2SpellingTraceEqual) {
+  expect_same_run("multicollect.toml", "v2_spelling_of_multicollect.toml");
+}
+
+TEST_F(EngineV2, V1AndV2SpellingTraceEqualForPeakHops) {
+  expect_same_run("peak_hop_cdd.toml", "v2_spelling_of_peak_hop_cdd.toml");
+}
+
+// The trace says what was done, in order, and when.
+TEST_F(EngineV2, TheTraceRecordsMovesSettlesProtectionAndCollections) {
+  auto p = multicollect(3);
+  p.sniff.enabled = false;
+  p.main.hops.front().protect = {"CDD"};
+  const auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  std::vector<std::string> what;
+  what.reserve(r.trace.size());
+  for (const auto& e : r.trace) what.push_back(e.what + " " + e.detail);
+  EXPECT_EQ(what, (std::vector<std::string>{"protect CDD on", "move Ar40@H1", "settle 2", "protect CDD off",
+                                            "collect 3"}));
+  ASSERT_EQ(r.trace.size(), 5u);
+  EXPECT_EQ(r.trace[1].segment, 0);  // the main segment, positioned before equilibration
+  EXPECT_EQ(r.trace[1].position, 0);
+  EXPECT_DOUBLE_EQ(r.trace[1].t, 0);
+  EXPECT_DOUBLE_EQ(r.trace[4].t, 14);  // after the 2 s settle and the 12 s equilibration
+}
+
+// A whiff reads where the first position put the magnet: no move of its own.
+TEST_F(EngineV2, AWhiffReadsWhereTheMagnetIs) {
+  auto p = multicollect(3);
+  p.main.hops.front().position = TestHopPosition{"Ar39", "AX"};
+  p.whiff = {true, 2, 1, {{"Ar40.cur > 1e9", "abort"}}};
+  const auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(std::count_if(spec_.log.begin(), spec_.log.end(), [](const std::string& l) { return l.starts_with("position"); }),
+            1);
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Whiff}), 2);
+}
+
+// An excluded cup the hop protects is still protected during the move.
+TEST_F(EngineV2, AnExcludedCupTheHopProtectsIsStillProtected) {
+  auto p = multicollect(3);
+  p.sniff.enabled = false;
+  p.detectors.exclude = {"CDD"};
+  p.main.hops.front().protect = {"CDD"};
+  const auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_NE(std::find(spec_.log.begin(), spec_.log.end(), "protect CDD"), spec_.log.end());
+  EXPECT_TRUE(spec_.protected_.empty());
+  EXPECT_FALSE(r.data.series.contains({"Ar36", "CDD", SeriesKind::Signal}));
 }

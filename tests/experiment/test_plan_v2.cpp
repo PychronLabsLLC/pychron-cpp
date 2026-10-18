@@ -366,8 +366,7 @@ counts = 10
   ASSERT_EQ(whiff.positions.size(), 1u);
   EXPECT_EQ(whiff.positions[0].collect, first);
   EXPECT_EQ(whiff.positions[0].counts, 4);
-  EXPECT_EQ(whiff.checks, p.whiff.checks);
-  ASSERT_EQ(whiff.checks.size(), 1u);
+  EXPECT_EQ(whiff.checks, (std::vector<plan::WhiffCheck>{{"Ar40 > 100", "pump"}}));
 
   // The whiff runs before the signal segment.
   EXPECT_EQ(segs[2].kind, plan::SegmentKind::Signal);
@@ -441,11 +440,15 @@ exclude = ["CDD"]
       EXPECT_FALSE(pos.collect.empty());
       for (const auto& e : pos.collect) {
         ++entries;
-        EXPECT_NE(e.detector, "CDD") << plan::to_string(s.kind);
+        if (e.detector != "CDD") continue;
+        // Not collected anywhere; the hops that protect it still protect it.
+        EXPECT_EQ(s.kind, plan::SegmentKind::Signal);
+        EXPECT_FALSE(e.active);
+        EXPECT_TRUE(e.protect);
       }
     }
   }
-  EXPECT_EQ(entries, 6u);  // H1 in each of the five segments, once more in the second hop
+  EXPECT_EQ(entries, 8u);  // H1 in each of the five segments, once more in the second hop; CDD in both hops
 }
 
 TEST(PlanDesugar, NamesRoundTrip) {
@@ -1287,6 +1290,26 @@ counts = 5
   EXPECT_EQ(segs[0].positions[0].collect[0].detector, "H1");
 }
 
+// A cup the plan excludes is not collected, but one a position protects stays
+// protected during the move (as a v1 hop's `protect` of it did).
+TEST(PlanV2Rules, ExcludeKeepsAProtectedCupProtected) {
+  const auto p = resolve(R"(
+[[segment]]
+[[segment.positions]]
+collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar36", detector = "CDD", protect = true } ]
+counts = 5
+)",
+                         &kCatalog, "[detectors]\nreference = \"H1\"\nexclude = [\"CDD\"]\n");
+  const auto segs = segments_of(p);
+  ASSERT_EQ(segs.size(), 1u);
+  const auto& collect = segs[0].positions[0].collect;
+  ASSERT_EQ(collect.size(), 2u);
+  EXPECT_TRUE(collect[0].active);
+  EXPECT_EQ(collect[1].detector, "CDD");
+  EXPECT_FALSE(collect[1].active);
+  EXPECT_TRUE(collect[1].protect);
+}
+
 // ---- resolved-plan goldens and the v1 = v2 equivalence (Task 4) -------------------
 
 namespace {
@@ -1481,6 +1504,86 @@ counts = 1
 name = "b"
 [[gas.segment]]
 [[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment[0].positions: sniff segment with several positions", R"(
+[[segment]]
+kind = "sniff"
+when = "during_equilibration"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment.positions]]
+collect = { Ar39 = "H1" }
+counts = 1
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment[0].cycles: whiff segment with cycles", R"(
+[[segment]]
+kind = "whiff"
+cycles = 2
+checks = [ { check = "Ar40 > 1", action = "pump" } ]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment[1]: a second sniff segment", R"(
+[[segment]]
+kind = "sniff"
+when = "during_equilibration"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+kind = "sniff"
+when = "during_equilibration"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment[1]: whiff after the signal segment", R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+kind = "whiff"
+checks = [ { check = "Ar40 > 1", action = "pump" } ]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment: no after_inlet signal segment", R"(
+[[segment]]
+kind = "baseline"
+when = "before_inlet"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 1
+)"},
+      {"segment[0].positions[0].at: at on a sniff segment", R"(
+[[segment]]
+kind = "sniff"
+when = "during_equilibration"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 1
+[[segment]]
+[[segment.positions]]
 collect = { Ar40 = "H1" }
 counts = 1
 )"},

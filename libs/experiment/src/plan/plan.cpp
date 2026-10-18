@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <utility>
 
 namespace pychron::experiment::plan {
@@ -69,33 +70,34 @@ bool is_step(SegmentKind k) {
   return false;
 }
 
-std::optional<HopTarget> hop_target(const MeasurementPlan& plan, const Hop& hop) {
-  if (hop.position) {
-    HopTarget t{hop.position->isotope, std::nullopt, hop.position->detector};
-    if (hop.baseline && hop.mass) t = {"", hop.mass, hop.position->detector};
-    return t;
-  }
+std::optional<At> position_target(const MeasurementPlan& plan, const Position& position) {
+  if (position.at) return position.at;
   const auto& ref = plan.detectors.reference;
-  for (const auto& [iso, det] : hop.positions) {
-    if (det != ref) continue;
-    if (hop.baseline && hop.mass) return HopTarget{"", hop.mass, det};
-    return HopTarget{iso, std::nullopt, det};
-  }
+  if (ref.empty()) return std::nullopt;
+  const auto& c = position.collect;
+  if (const auto it = std::find_if(c.begin(), c.end(), [&](const CollectEntry& e) { return e.detector == ref; });
+      it != c.end())
+    return AtLabel{it->label, it->detector};
+  // A mode of the reference: collector H2 in CDD mode is "H2(CDD)" (spec 3.6).
+  const auto mode = [&](const CollectEntry& e) {
+    return e.detector.size() > ref.size() && e.detector.starts_with(ref) && e.detector[ref.size()] == '(';
+  };
+  if (const auto it = std::find_if(c.begin(), c.end(), mode); it != c.end()) return AtLabel{it->label, it->detector};
   return std::nullopt;
 }
 
-std::optional<HopTarget> baseline_target(const MeasurementPlan& plan) {
-  if (!plan.baseline.mass) return std::nullopt;
-  const auto& det = plan.baseline.detector.empty() ? plan.detectors.reference : plan.baseline.detector;
-  return HopTarget{"", plan.baseline.mass, det};
+std::vector<CollectEntry> collecting(const Position& position) {
+  std::vector<CollectEntry> out;
+  std::copy_if(position.collect.begin(), position.collect.end(), std::back_inserter(out),
+               [](const CollectEntry& e) { return e.active; });
+  return out;
 }
 
-std::vector<ActiveDetector> active_detectors(const MeasurementPlan& plan, const Hop& hop) {
-  std::vector<ActiveDetector> out;
-  const auto& ex = plan.detectors.exclude;
-  for (const auto& [iso, det] : hop.positions)
-    if (std::find(ex.begin(), ex.end(), det) == ex.end()) out.push_back({iso, det});
-  return out;
+const Segment* main_segment(const Gas& gas) {
+  const auto it = std::find_if(gas.segments.begin(), gas.segments.end(), [](const Segment& s) {
+    return s.kind == SegmentKind::Signal && s.when == When::AfterInlet;
+  });
+  return it == gas.segments.end() ? nullptr : &*it;
 }
 
 namespace {

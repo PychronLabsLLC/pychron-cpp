@@ -314,12 +314,16 @@ LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
       out.extra.push_back({Severity::Error, row, "measurement", loaded.error().what});
       continue;
     }
-    const auto& pc = loaded->plan.peak_center;
-    if ((pc.before || pc.after) && pc.config != "default" && !lab.peak_centers.contains(pc.config)) {
-      if (reported.insert("peak_center:" + pc.config).second) {
-        out.extra.push_back({Severity::Error, row, "peak_center",
-                             "plan " + r.measurement.plan + " uses peak center config '" + pc.config +
-                                 "', which is not in " + (lab.paths.dir / "peak_center.toml").string()});
+    for (const auto& gas : loaded->plan.gases) {
+      for (const auto& seg : gas.segments) {
+        if (!seg.peak_center) continue;
+        const auto& config = seg.peak_center->config;
+        if (config == "default" || lab.peak_centers.contains(config)) continue;
+        if (reported.insert("peak_center:" + config).second) {
+          out.extra.push_back({Severity::Error, row, "peak_center",
+                               "plan " + r.measurement.plan + " uses peak center config '" + config +
+                                   "', which is not in " + (lab.paths.dir / "peak_center.toml").string()});
+        }
       }
     }
     auto set = lab.conditionals->for_run(queue, r, loaded->plan);

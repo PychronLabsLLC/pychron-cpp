@@ -210,14 +210,14 @@ existing fixture and template parses and the engine has one input form:
 | v1 | v2 |
 |---|---|
 | `[main]` + `[[main.hops]]` | one `signal` segment, `when = "after_inlet"`, `cycles`, `integration_s`, `time_zero`; each hop a position (`positions` map becomes `collect`; `protect` becomes `protect = true` on those entries, adding `active = false` entries for protected detectors not in the map; `baseline = true, mass` becomes `kind = "baseline", at = { mass, detector }`) |
-| `[baseline] before` | a `baseline` segment at `before_inlet`, one position collecting every detector that appears in any signal position, `at = { mass, detector }` |
+| `[baseline] before` | a `baseline` segment at `before_inlet`, one position collecting every detector that appears in any signal position, `at = { mass, detector }`. No `mass`: no `at`, §3.2 default positions it (v1 engine collected where magnet was; decided 2026-10-18, Task 6) |
 | `[baseline] after` | the same at `after_main` |
 | `[peak_center] before / after` | `peak_center` steps at `before_inlet` / `after_run` |
 | `[peak_center] min_signal` | `min_signal` of the `after_run` step: step skipped when mean of last 10 signal readings of its isotope on its detector is below it; a step with no such readings (`before_inlet`) runs |
 | `[sniff]` | a `sniff` segment at `during_equilibration` on the first signal position's detectors |
-| `[whiff]` | a `whiff` segment at `after_inlet`, before the signal segment |
+| `[whiff]` | a `whiff` segment at `after_inlet`, before the signal segment. Sniff and whiff read where magnet is: no move, no settle; `at` on them refused until phases land (Task 6) |
 | `[fits] signal.Ar40` | `Ar40` applies to every detector of Ar40; `[fits] baseline.H1` applies to every baseline series on H1 |
-| `[detectors] exclude` | removed from every `collect`; a position left empty is an error |
+| `[detectors] exclude` | removed from every `collect`; entry that protects its detector stays as `active = false, protect = true`, so cup stays protected during move, as v1 `protect` did (decided 2026-10-18, Task 6); a position left with nothing to collect is an error |
 | `parameters.expose` paths | `main.hops[i].counts` keeps working through a path alias table; new plans use `segment[i].positions[j].counts` |
 
 Property test: a v1 plan and its hand-written v2 equivalent produce the same

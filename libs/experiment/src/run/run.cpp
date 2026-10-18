@@ -374,7 +374,11 @@ SafeStateResult Run::make_safe() {
       step("close inlet " + p.equilibration.inlet, [&] { return s_.valves->close(p.equilibration.inlet); });
     if (s_.spectrometer != nullptr) {
       std::set<std::string> protected_detectors;
-      for (const auto& hop : p.main.hops) protected_detectors.insert(hop.protect.begin(), hop.protect.end());
+      for (const auto& gas : p.gases)
+        for (const auto& seg : gas.segments)
+          for (const auto& pos : seg.positions)
+            for (const auto& e : pos.collect)
+              if (e.protect) protected_detectors.insert(e.detector);
       for (const auto& d : protected_detectors)
         step("unprotect " + d, [&] { return s_.spectrometer->protect(d, false); });
     }
@@ -590,7 +594,9 @@ Result<void> Run::save(const std::optional<Error>& failure) {
     spec.field_table_version = info.field_table;
     spec.integration_time = info.integration_s;
   }
-  if (spec.integration_time <= 0) spec.integration_time = plan_->plan.main.integration_s;
+  if (spec.integration_time <= 0 && !plan_->plan.gases.empty()) {
+    if (const auto* main = plan::main_segment(plan_->plan.gases.front())) spec.integration_time = main->integration_s;
+  }
   b.set_spectrometer(spec);
 
   const auto& meas = result_.measurement;

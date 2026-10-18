@@ -23,6 +23,14 @@ namespace {
 
 using detail::join;
 using detail::Problems;
+using detail::V1Baseline;
+using detail::V1Hop;
+using detail::V1HopPosition;
+using detail::V1Main;
+using detail::V1PeakCenter;
+using detail::V1Sniff;
+using detail::V1Tables;
+using detail::V1Whiff;
 
 // ---- '@' alias resolution -------------------------------------------------------
 
@@ -248,7 +256,7 @@ void read_equilibration(const Section& s, Equilibration& out) {
   s.at_least("inlet_delay_s", out.inlet_delay_s, 0);
 }
 
-void read_sniff(const Section& s, Sniff& out) {
+void read_sniff(const Section& s, V1Sniff& out) {
   s.keys({"enabled", "counts", "integration_s"});
   s.get("enabled", out.enabled);
   s.get("counts", out.counts);
@@ -257,7 +265,7 @@ void read_sniff(const Section& s, Sniff& out) {
   s.above("integration_s", out.integration_s, 0);
 }
 
-void read_peak_center(const Section& s, PeakCenter& out) {
+void read_peak_center(const Section& s, V1PeakCenter& out) {
   s.keys({"before", "after", "detector", "isotope", "config", "min_signal"});
   s.get("before", out.before);
   s.get("after", out.after);
@@ -270,7 +278,7 @@ void read_peak_center(const Section& s, PeakCenter& out) {
     s.problems().add(s.at("isotope"), "required when before or after");
 }
 
-void read_baseline(const Section& s, Baseline& out) {
+void read_baseline(const Section& s, V1Baseline& out) {
   s.keys({"before", "after", "counts", "mass", "detector", "settle_s", "integration_s"});
   s.get("before", out.before);
   s.get("after", out.after);
@@ -309,7 +317,7 @@ void read_time_zero(const Section& s, TimeZero& out, bool step = false) {
   }
 }
 
-void read_hop(const Section& s, const DetectorsSpec& dets, Hop& hop) {
+void read_hop(const Section& s, const DetectorsSpec& dets, V1Hop& hop) {
   s.keys({"positions", "counts", "settle_s", "protect", "baseline", "mass", "position"});
   auto& p = s.problems();
   const auto pos = s.sub("positions");
@@ -344,7 +352,7 @@ void read_hop(const Section& s, const DetectorsSpec& dets, Hop& hop) {
   if (s.has("position")) {
     const auto ps = s.sub("position");
     ps.keys({"isotope", "detector"});
-    HopPosition hp;
+    V1HopPosition hp;
     ps.get("isotope", hp.isotope);
     ps.get("detector", hp.detector);
     if (hp.detector.empty()) p.add(ps.at("detector"), "required");
@@ -367,7 +375,7 @@ void read_hop(const Section& s, const DetectorsSpec& dets, Hop& hop) {
   }
 }
 
-void read_main(const Section& s, const DetectorsSpec& dets, MainSpec& out) {
+void read_main(const Section& s, const DetectorsSpec& dets, V1Main& out) {
   s.keys({"cycles", "integration_s", "time_zero", "hops"});
   s.get("cycles", out.cycles);
   s.get("integration_s", out.integration_s);
@@ -460,7 +468,7 @@ void read_checks(const Section& s, std::vector<WhiffCheck>& out) {
   });
 }
 
-void read_whiff(const Section& s, Whiff& out) {
+void read_whiff(const Section& s, V1Whiff& out) {
   s.keys({"enabled", "counts", "integration_s", "checks"});
   s.get("enabled", out.enabled);
   s.get("counts", out.counts);
@@ -781,7 +789,7 @@ void read_gas(const Section& s, const MeasurementPlan& plan, Gas& out) {
 // v2 form: [[gas]], or top-level [[segment]] as one implicit gas. The v1 block
 // tables that add segments are sugar for [main] only: in a plan of segments
 // that segment is written out, so its place among the others is the file's.
-void read_v2(const Section& top, MeasurementPlan& plan) {
+void read_v2(const Section& top, const V1Tables& v1, MeasurementPlan& plan) {
   auto& p = top.problems();
   if (top.has("main") && top.has("segment")) p.add("", "[main] and [[segment]] cannot both appear");
   if (top.has("main") && top.has("gas")) p.add("", "[main] and [[gas]] cannot both appear");
@@ -789,12 +797,12 @@ void read_v2(const Section& top, MeasurementPlan& plan) {
   const auto sugar = [&](bool on, std::string_view path, std::string_view kind) {
     if (on) p.add(path, "only with [main]; in a plan of segments write a " + std::string(kind) + " segment");
   };
-  sugar(plan.sniff.enabled, "sniff.enabled", "sniff");
-  sugar(plan.whiff.enabled, "whiff.enabled", "whiff");
-  sugar(plan.peak_center.before, "peak_center.before", "peak_center");
-  sugar(plan.peak_center.after, "peak_center.after", "peak_center");
-  sugar(plan.baseline.before, "baseline.before", "baseline");
-  sugar(plan.baseline.after, "baseline.after", "baseline");
+  sugar(v1.sniff.enabled, "sniff.enabled", "sniff");
+  sugar(v1.whiff.enabled, "whiff.enabled", "whiff");
+  sugar(v1.peak_center.before, "peak_center.before", "peak_center");
+  sugar(v1.peak_center.after, "peak_center.after", "peak_center");
+  sugar(v1.baseline.before, "baseline.before", "baseline");
+  sugar(v1.baseline.after, "baseline.after", "baseline");
 
   if (top.has("gas")) {
     std::set<std::string> names;
@@ -816,17 +824,17 @@ void read_v2(const Section& top, MeasurementPlan& plan) {
   plan.gases.push_back(std::move(gas));
 }
 
-void check_detectors(const MeasurementPlan& plan, const ISpectrometerCatalog& spec, Problems& p) {
+void check_detectors(const MeasurementPlan& plan, const V1Tables& v1, const ISpectrometerCatalog& spec, Problems& p) {
   const auto check = [&](const std::string& det, const std::string& where) {
     if (!det.empty() && !spec.has_detector(det)) p.add(where, "unknown detector '" + det + "'");
   };
   check(plan.detectors.reference, "detectors.reference");
   for (std::size_t i = 0; i < plan.detectors.exclude.size(); ++i)
     check(plan.detectors.exclude[i], join("detectors.exclude", i));
-  check(plan.peak_center.detector, "peak_center.detector");
-  check(plan.baseline.detector, "baseline.detector");
-  for (std::size_t h = 0; h < plan.main.hops.size(); ++h) {
-    const auto& hop = plan.main.hops[h];
+  check(v1.peak_center.detector, "peak_center.detector");
+  check(v1.baseline.detector, "baseline.detector");
+  for (std::size_t h = 0; h < v1.main.hops.size(); ++h) {
+    const auto& hop = v1.main.hops[h];
     const auto where = join("main.hops", h);
     for (const auto& [iso, det] : hop.positions) check(det, join(join(where, "positions"), iso));
     for (std::size_t i = 0; i < hop.protect.size(); ++i) check(hop.protect[i], join(join(where, "protect"), i));
@@ -837,8 +845,10 @@ void check_detectors(const MeasurementPlan& plan, const ISpectrometerCatalog& sp
 // ---- v2 rules (spec 3.7) -------------------------------------------------------
 
 // `[detectors] exclude` on a plan of segments: the excluded detectors leave
-// every collect. A position that collected something and now collects
-// nothing is an error, as a v1 hop with every detector excluded is.
+// every collect, except that an entry that protects its detector stays, not
+// collected (active = false), so the cup is still protected during the move.
+// A position that collected something and now collects nothing is an error,
+// as a v1 hop with every detector excluded is.
 void apply_exclude(MeasurementPlan& plan, Problems& p) {
   const auto& ex = plan.detectors.exclude;
   if (ex.empty()) return;
@@ -850,7 +860,9 @@ void apply_exclude(MeasurementPlan& plan, Problems& p) {
       for (std::size_t j = 0; j < positions.size(); ++j) {
         auto& collect = positions[j].collect;
         const bool had_active = std::any_of(collect.begin(), collect.end(), [](const auto& e) { return e.active; });
-        std::erase_if(collect, excluded);
+        for (auto& e : collect)
+          if (e.protect && excluded(e)) e.active = false;
+        std::erase_if(collect, [&](const CollectEntry& e) { return !e.protect && excluded(e); });
         const bool active = std::any_of(collect.begin(), collect.end(), [](const auto& e) { return e.active; });
         if (had_active && !active) {
           const auto seg = gas.implicit ? join("segment", s) : join(join(join("gas", g), "segment"), s);
@@ -885,11 +897,12 @@ std::vector<std::pair<std::size_t, std::size_t>> run_order(const MeasurementPlan
 // signal hops and its peak center are checked here, under the v1 paths.
 class V2Rules {
  public:
-  V2Rules(const MeasurementPlan& plan, const PlanResolvers& r, bool from_v1, Problems& p)
-      : plan_(plan), cat_(r.spectrometer), has_extraction_(r.has_extraction), from_v1_(from_v1), p_(p) {}
+  // `v1`: the plan's v1 tables when it is a v1 file, else null.
+  V2Rules(const MeasurementPlan& plan, const PlanResolvers& r, const V1Tables* v1, Problems& p)
+      : plan_(plan), cat_(r.spectrometer), has_extraction_(r.has_extraction), v1_(v1), p_(p) {}
 
   void run() {
-    if (from_v1_) return v1_masses();
+    if (v1_ != nullptr) return v1_masses();
     for (std::size_t g = 0; g < plan_.gases.size(); ++g) {
       const auto& gas = plan_.gases[g];
       for (std::size_t s = 0; s < gas.segments.size(); ++s) segment(g, s);
@@ -1072,18 +1085,19 @@ class V2Rules {
   }
 
   void v1_masses() {
-    for (std::size_t h = 0; h < plan_.main.hops.size(); ++h) {
-      const auto& hop = plan_.main.hops[h];
+    for (std::size_t h = 0; h < v1_->main.hops.size(); ++h) {
+      const auto& hop = v1_->main.hops[h];
       if (hop.baseline && hop.mass) continue;
       for (const auto& kv : hop.positions) mass(kv.first, join(join(join("main.hops", h), "positions"), kv.first));
     }
-    if (plan_.peak_center.before || plan_.peak_center.after) mass(plan_.peak_center.isotope, "peak_center.isotope");
+    const auto& pc = v1_->peak_center;
+    if (pc.before || pc.after) mass(pc.isotope, "peak_center.isotope");
   }
 
   const MeasurementPlan& plan_;
   const ISpectrometerCatalog* cat_;
   std::function<bool(std::string_view)> has_extraction_;
-  bool from_v1_;
+  const V1Tables* v1_;
   Problems& p_;
 };
 
@@ -1144,6 +1158,14 @@ void unbuilt_segment(const Segment& s, const std::string& at, std::vector<std::s
       break;
     default: break;
   }
+  // The engine takes one sniff or whiff reading block, at one place.
+  if (s.kind == SegmentKind::Sniff || s.kind == SegmentKind::Whiff) {
+    const std::string kind(to_string(s.kind));
+    if (s.positions.size() > 1) add(join(at, "positions"), kind + " segment with several positions");
+    for (std::size_t j = 0; j < s.positions.size(); ++j)
+      if (s.positions[j].at) add(join(join(join(at, "positions"), j), "at"), "at on a " + kind + " segment");
+    if (s.cycles != 1) add(join(at, "cycles"), kind + " segment with cycles");
+  }
   if (!v1_placement(s))
     add(join(at, "when"), "when = '" + std::string(to_string(s.when)) + "' for a " + std::string(to_string(s.kind)) +
                               " segment");
@@ -1164,8 +1186,25 @@ std::vector<std::string> unbuilt_features(const MeasurementPlan& plan) {
     const std::string at = gas.implicit ? std::string() : join("gas", g);
     if (g == 1) out.push_back(at + ": more than one gas");
     if (gas.source_dark_phase) out.push_back(join(at, "source_dark_phase") + ": source_dark_phase");
-    for (std::size_t i = 0; i < gas.segments.size(); ++i)
-      unbuilt_segment(gas.segments[i], at.empty() ? join("segment", i) : join(join(at, "segment"), i), out);
+    const auto seg_at = [&](std::size_t i) { return at.empty() ? join("segment", i) : join(join(at, "segment"), i); };
+    for (std::size_t i = 0; i < gas.segments.size(); ++i) unbuilt_segment(gas.segments[i], seg_at(i), out);
+    // What the engine runs of a gas until its phases are built (spec 5.1):
+    // one sniff, one whiff ahead of main, and a main segment to run.
+    const auto* main = main_segment(gas);
+    bool sniff = false, whiff = false;
+    for (std::size_t i = 0; i < gas.segments.size(); ++i) {
+      const auto& seg = gas.segments[i];
+      if (seg.kind == SegmentKind::Sniff) {
+        if (sniff) out.push_back(seg_at(i) + ": a second sniff segment");
+        sniff = true;
+      } else if (seg.kind == SegmentKind::Whiff) {
+        if (whiff) out.push_back(seg_at(i) + ": a second whiff segment");
+        if (main != nullptr && &seg > main) out.push_back(seg_at(i) + ": whiff after the signal segment");
+        whiff = true;
+      }
+    }
+    if (main == nullptr) out.push_back((at.empty() ? std::string("segment") : join(at, "segment")) +
+                                       ": no after_inlet signal segment");
   }
   return out;
 }
@@ -1192,23 +1231,24 @@ Result<MeasurementPlan> resolve_plan_ungated(std::string_view effective_toml, co
   top.get("hook", plan.hook);
   read_detectors(top.sub("detectors"), plan.detectors);
   read_equilibration(top.sub("equilibration"), plan.equilibration);
-  read_sniff(top.sub("sniff"), plan.sniff);
-  read_peak_center(top.sub("peak_center"), plan.peak_center);
-  read_baseline(top.sub("baseline"), plan.baseline);
-  if (!v2 || top.has("main")) read_main(top.sub("main"), plan.detectors, plan.main);
+  V1Tables v1;
+  read_sniff(top.sub("sniff"), v1.sniff);
+  read_peak_center(top.sub("peak_center"), v1.peak_center);
+  read_baseline(top.sub("baseline"), v1.baseline);
+  if (!v2 || top.has("main")) read_main(top.sub("main"), plan.detectors, v1.main);
   read_fits(top.sub("fits"), plan.fits);
   read_conditionals(top.sub("conditionals"), plan.conditionals);
-  read_whiff(top.sub("whiff"), plan.whiff);
+  read_whiff(top.sub("whiff"), v1.whiff);
   plan.expose = detail::read_expose(root, p);
-  if (v2) read_v2(top, plan);
+  if (v2) read_v2(top, v1, plan);
   // v1 -> v2 (spec 4.1) once the v1 sections read cleanly, before the rules.
   if (!v2 && !p.any()) {
-    if (auto gases = detail::desugar_v1(plan, resolvers.spectrometer)) plan.gases = std::move(*gases);
+    if (auto gases = detail::desugar_v1(plan, v1, resolvers.spectrometer)) plan.gases = std::move(*gases);
     else p.add("", gases.error().what);
   }
   if (v2) apply_exclude(plan, p);
-  if (resolvers.spectrometer) check_detectors(plan, *resolvers.spectrometer, p);
-  V2Rules(plan, resolvers, /*from_v1=*/!v2, p).run();
+  if (resolvers.spectrometer) check_detectors(plan, v1, *resolvers.spectrometer, p);
+  V2Rules(plan, resolvers, v2 ? nullptr : &v1, p).run();
 
   if (p.any()) return p.error();
   return plan;

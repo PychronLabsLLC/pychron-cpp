@@ -300,8 +300,8 @@ TEST_F(ExperimentMetricsTest, AClockThatGoesBackwardsCountsNoTime) {
 }
 
 TEST_F(ExperimentMetricsTest, MeasurementBlocks) {
-  bus.publish(measurement::BlockFinished{"r1", measurement::Block::Main, true});
-  bus.publish(measurement::BlockFinished{"r1", measurement::Block::BaselineAfter, false});
+  bus.publish(measurement::BlockFinished{"r1", measurement::Block::Main, true, "", -1});
+  bus.publish(measurement::BlockFinished{"r1", measurement::Block::BaselineAfter, false, "", -1});
   const std::string t = text();
   EXPECT_DOUBLE_EQ(value(t, "pychron_measurement_blocks_total{block=\"main\",ok=\"true\"}"), 1.0);
   EXPECT_DOUBLE_EQ(value(t, "pychron_measurement_blocks_total{block=\"baseline_after\",ok=\"false\"}"), 1.0);
@@ -360,7 +360,7 @@ TEST_F(ExperimentMetricsTest, RunIdsAndIdentifiersAreNeverRendered) {
   bus.publish(lab::QueueStarted{2, 0});
   bus.publish(executor::RunStarted{0, "run-77777-09B", "77777-09B", at(0)});
   walk_to_measuring("run-77777-09B", 0);
-  bus.publish(measurement::BlockFinished{"run-77777-09B", measurement::Block::Main, true});
+  bus.publish(measurement::BlockFinished{"run-77777-09B", measurement::Block::Main, true, "", -1});
   bus.publish(executor::ExecutorWaiting{"minimum pump time", {}, at(0), "run-77777-09B"});
   state("run-77777-09B", RunState::Measuring, RunState::Failed, 50);
   finished(RunState::Failed, false, false, "77777-09B");

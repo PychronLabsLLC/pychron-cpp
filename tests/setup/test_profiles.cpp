@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <toml++/toml.hpp>
@@ -297,23 +298,28 @@ TEST_P(InstrumentProfile, EveryInstalledPlanPutsItsIsotopesOnItsDetectors) {
     auto loaded = experiment::plan::load_plan(*tmpl, {}, resolvers);
     ASSERT_TRUE(loaded) << label << ": " << loaded.error().what;
     const auto& plan = loaded->plan;
-    ASSERT_FALSE(plan.main.hops.empty()) << label;
+    ASSERT_FALSE(plan.gases.empty()) << label;
+    const auto* main = experiment::plan::main_segment(plan.gases.front());
+    ASSERT_TRUE(main) << label;
+    ASSERT_FALSE(main->positions.empty()) << label;
     int h = 0;
     std::size_t compared = 0;
-    for (const auto& hop : plan.main.hops) {
+    for (const auto& hop : main->positions) {
       const std::string where = label + " hop " + std::to_string(h++);
-      const auto target = experiment::plan::hop_target(plan, hop);
+      const auto at_target = experiment::plan::position_target(plan, hop);
+      ASSERT_TRUE(at_target) << where;
+      const auto* target = std::get_if<experiment::plan::AtLabel>(&*at_target);
       ASSERT_TRUE(target) << where;
-      ASSERT_FALSE(target->isotope.empty()) << where;
-      auto reference = table->value_for(isotope_mass(target->isotope), target->detector);
+      ASSERT_FALSE(target->label.empty()) << where;
+      auto reference = table->value_for(isotope_mass(target->label), target->detector);
       ASSERT_TRUE(reference) << where << ": " << reference.error().what;
-      for (const auto& active : experiment::plan::active_detectors(plan, hop)) {
-        auto at = table->value_for(isotope_mass(active.isotope), active.detector);
+      for (const auto& active : experiment::plan::collecting(hop)) {
+        auto at = table->value_for(isotope_mass(active.label), active.detector);
         ASSERT_TRUE(at) << where << ": " << at.error().what;
         ++compared;
         EXPECT_NEAR(*at, *reference, tolerance)
-            << where << ": " << active.isotope << " on " << active.detector << " is at " << *at << ", but "
-            << target->isotope << " on " << target->detector << ", where the magnet is, is at " << *reference;
+            << where << ": " << active.label << " on " << active.detector << " is at " << *at << ", but "
+            << target->label << " on " << target->detector << ", where the magnet is, is at " << *reference;
       }
     }
     // A plan that is only one detector per hop (detector_ic) has nothing to compare; the others do.
@@ -400,6 +406,22 @@ INSTANTIATE_TEST_SUITE_P(Shipped, InstrumentProfile,
 
 using Positions = std::map<std::string, std::string>;
 
+// The peak center step a plan runs after the run (v1 [peak_center] after); nullptr: none.
+const experiment::plan::PeakCenterStep* after_run_peak_center(const experiment::plan::MeasurementPlan& plan) {
+  for (const auto& gas : plan.gases)
+    for (const auto& seg : gas.segments)
+      if (seg.peak_center && seg.when == experiment::plan::When::AfterRun) return &*seg.peak_center;
+  return nullptr;
+}
+
+// The kind of time zero of a plan's main segment (v1 [main] time_zero).
+std::optional<experiment::plan::TimeZeroKind> main_time_zero(const experiment::plan::MeasurementPlan& plan) {
+  if (plan.gases.empty()) return std::nullopt;
+  const auto* main = experiment::plan::main_segment(plan.gases.front());
+  if (main == nullptr || !main->time_zero) return std::nullopt;
+  return main->time_zero->kind;
+}
+
 // The hops of an installed plan, as the lab resolves it against the
 // installed line and spectrometer.
 std::vector<Positions> installed_hops(const fs::path& root, const SiteInstall& site, const std::string& plan) {
@@ -408,8 +430,14 @@ std::vector<Positions> installed_hops(const fs::path& root, const SiteInstall& s
   auto loaded = lab.plans->load(plan, {});
   EXPECT_TRUE(loaded) << root << ": " << (loaded ? "" : loaded.error().what);
   std::vector<Positions> out;
-  if (loaded)
-    for (const auto& hop : loaded->plan.main.hops) out.push_back(hop.positions);
+  if (!loaded || loaded->plan.gases.empty()) return out;
+  if (const auto* main = experiment::plan::main_segment(loaded->plan.gases.front())) {
+    for (const auto& pos : main->positions) {
+      Positions hop;
+      for (const auto& e : experiment::plan::collecting(pos)) hop[e.label] = e.detector;
+      out.push_back(std::move(hop));
+    }
+  }
   return out;
 }
 
@@ -465,11 +493,13 @@ TEST(Profiles, EveryShippedPlanHasAPeakCenterMinimumSignalAndShowsIt) {
 
     auto as_shipped = lab.plans->load(name, {});
     ASSERT_TRUE(as_shipped) << name << ": " << as_shipped.error().what;
-    EXPECT_TRUE(as_shipped->plan.peak_center.after) << name;
-    EXPECT_DOUBLE_EQ(as_shipped->plan.peak_center.min_signal, 3.0) << name;
+    const auto* after = after_run_peak_center(as_shipped->plan);
+    ASSERT_TRUE(after) << name;
+    EXPECT_DOUBLE_EQ(after->min_signal, 3.0) << name;
     auto changed = lab.plans->load(name, {{"peak_center.min_signal", 12.5}});
     ASSERT_TRUE(changed) << name << ": " << changed.error().what;
-    EXPECT_DOUBLE_EQ(changed->plan.peak_center.min_signal, 12.5) << name;
+    ASSERT_TRUE(after_run_peak_center(changed->plan)) << name;
+    EXPECT_DOUBLE_EQ(after_run_peak_center(changed->plan)->min_signal, 12.5) << name;
     EXPECT_FALSE(lab.plans->load(name, {{"peak_center.min_signal", -1.0}})) << name;
   }
   fs::remove_all(root);
@@ -494,10 +524,10 @@ TEST(Profiles, EveryShippedPlanShowsItsTimeZero) {
 
     auto as_shipped = lab.plans->load(name, {});
     ASSERT_TRUE(as_shipped) << name << ": " << as_shipped.error().what;
-    EXPECT_EQ(as_shipped->plan.main.time_zero.kind, plan::TimeZeroKind::OnInletClose) << name;
+    EXPECT_EQ(main_time_zero(as_shipped->plan), plan::TimeZeroKind::OnInletClose) << name;
     auto changed = lab.plans->load(name, {{"main.time_zero", std::string("on_first_count")}});
     ASSERT_TRUE(changed) << name << ": " << changed.error().what;
-    EXPECT_EQ(changed->plan.main.time_zero.kind, plan::TimeZeroKind::OnFirstCount) << name;
+    EXPECT_EQ(main_time_zero(changed->plan), plan::TimeZeroKind::OnFirstCount) << name;
     EXPECT_FALSE(lab.plans->load(name, {{"main.time_zero", std::string("soon")}})) << name;
   }
   fs::remove_all(root);

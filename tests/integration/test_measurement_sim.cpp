@@ -202,7 +202,12 @@ TEST_F(MeasurementSim, ShippedConfigsResolveTheExamplePlan) {
   EXPECT_EQ(loaded->plan.equilibration.inlet, "B");
   EXPECT_EQ(loaded->plan.equilibration.outlet, "C");
   EXPECT_DOUBLE_EQ(loaded->plan.equilibration.time_s, 20);
-  EXPECT_EQ(loaded->plan.sniff.counts, 20);
+  ASSERT_EQ(loaded->plan.gases.size(), 1u);
+  const auto& segs = loaded->plan.gases.front().segments;
+  const auto sniff = std::find_if(segs.begin(), segs.end(),
+                                  [](const plan::Segment& s) { return s.kind == plan::SegmentKind::Sniff; });
+  ASSERT_NE(sniff, segs.end());
+  EXPECT_EQ(sniff->positions.at(0).counts, 20);
 
   // A detector the spectrometer does not have is caught by the catalog.
   auto text = read_file(kPlans / "multicollect.toml");

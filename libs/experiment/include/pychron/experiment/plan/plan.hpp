@@ -1,9 +1,10 @@
 #pragma once
 
 // MeasurementPlan (spec 4.1): declarative measurement, data not code.
-// v1: a measurement is `main.cycles` repetitions of an ordered hop list;
-// multicollect is the degenerate case of one hop and one cycle.
-// v2 (measurement plan v2 spec): gases of segments of positions; see `Gas`.
+// A plan is gases of segments of positions (measurement plan v2 spec); see
+// `Gas`. A v1 file ([main] with its hops, [baseline], [peak_center], [sniff],
+// [whiff]) is rewritten into that form by the loader: multicollect is the
+// degenerate case of one position and one cycle.
 
 #include <cstddef>
 #include <map>
@@ -39,54 +40,9 @@ struct Equilibration {
   friend bool operator==(const Equilibration&, const Equilibration&) = default;
 };
 
-struct Sniff {
-  bool enabled = false;
-  int counts = 0;
-  double integration_s = 1;
-  friend bool operator==(const Sniff&, const Sniff&) = default;
-};
-
+// A peak center step with a `min_signal` compares the mean of this many of
+// the last signal readings of its label on its detector.
 inline constexpr std::size_t kPeakCenterSignalReadings = 10;
-
-struct PeakCenter {
-  bool before = false, after = false;
-  std::string detector;  // empty = detectors.reference
-  std::string isotope;
-  std::string config = "default";
-  // A peak center after the run is skipped when the mean of the last
-  // kPeakCenterSignalReadings readings of `isotope` on `detector` in the main
-  // block is below this (detector units). 0: no minimum.
-  double min_signal = 0;
-  friend bool operator==(const PeakCenter&, const PeakCenter&) = default;
-};
-
-struct Baseline {
-  bool before = false, after = false;
-  int counts = 0;
-  std::optional<double> mass;
-  std::string detector;  // empty = detectors.reference
-  double settle_s = 0;
-  double integration_s = 1;
-  friend bool operator==(const Baseline&, const Baseline&) = default;
-};
-
-// Explicit magnet position for a hop whose isotopes do not include the reference detector.
-struct HopPosition {
-  std::string isotope;  // may be empty for a baseline hop at `mass`
-  std::string detector;
-  friend bool operator==(const HopPosition&, const HopPosition&) = default;
-};
-
-struct Hop {
-  std::map<std::string, std::string> positions;  // isotope -> detector
-  int counts = 0;
-  double settle_s = 0;
-  std::vector<std::string> protect;
-  bool baseline = false;          // series kind `baseline`
-  std::optional<double> mass;     // baseline hops only: position at this mass
-  std::optional<HopPosition> position;
-  friend bool operator==(const Hop&, const Hop&) = default;
-};
 
 // Now: a `time_zero` step only (v2 spec 3.3), time zero is the moment the step runs.
 enum class TimeZeroKind { OnInletClose, OnFirstCount, Offset, Now };
@@ -95,14 +51,6 @@ struct TimeZero {
   TimeZeroKind kind = TimeZeroKind::OnInletClose;
   double offset_s = 0;  // Offset only
   friend bool operator==(const TimeZero&, const TimeZero&) = default;
-};
-
-struct MainSpec {
-  int cycles = 1;
-  double integration_s = 1;
-  TimeZero time_zero;
-  std::vector<Hop> hops;
-  friend bool operator==(const MainSpec&, const MainSpec&) = default;
 };
 
 struct Fits {
@@ -130,22 +78,14 @@ struct PlanConditionals {
   friend bool operator==(const PlanConditionals&, const PlanConditionals&) = default;
 };
 
-// Whiff (conditionals spec L26): after the inlet opens, `counts` readings on
-// the first hop's detectors, then the first matching check decides:
+// Whiff (conditionals spec L26): after the inlet opens, a whiff segment's
+// readings on its position's detectors, then the first matching check decides:
 // run_remainder (continue), pump (close the inlet, pump the gas away, end the
 // measurement) or abort. No match = run_remainder.
 struct WhiffCheck {
   std::string check;
   std::string action;  // run_remainder | pump | abort
   friend bool operator==(const WhiffCheck&, const WhiffCheck&) = default;
-};
-
-struct Whiff {
-  bool enabled = false;
-  int counts = 0;
-  double integration_s = 1;
-  std::vector<WhiffCheck> checks;
-  friend bool operator==(const Whiff&, const Whiff&) = default;
 };
 
 struct ExposeEntry {
@@ -298,23 +238,19 @@ struct MeasurementPlan {
   PlanInfo info;
   DetectorsSpec detectors;
   Equilibration equilibration;
-  Sniff sniff;
-  PeakCenter peak_center;
-  Baseline baseline;
-  MainSpec main;
   Fits fits;
   PlanConditionals conditionals;
-  Whiff whiff;
   std::vector<ExposeEntry> expose;
   std::optional<std::string> hook;  // "scripts/measurement_hooks/<name>.py"
-  // v2 form, always filled after resolve. For a v1 file: one implicit gas
-  // desugared from the v1 sections above, which stay filled until the engine
-  // reads segments.
+  // Always filled after resolve; a v1 file is one implicit gas desugared from
+  // its [main], [baseline], [peak_center], [sniff] and [whiff] tables.
   std::vector<Gas> gases;
   friend bool operator==(const MeasurementPlan&, const MeasurementPlan&) = default;
 };
 
-// Where the magnet puts which mass for a hop: an isotope (or explicit mass) on a detector.
+// Where the magnet puts which mass: a label (or an explicit mass) on a
+// detector. The spectrometer port's positioning target until the port takes
+// `At` itself.
 struct HopTarget {
   std::string isotope;
   std::optional<double> mass;
@@ -322,22 +258,18 @@ struct HopTarget {
   friend bool operator==(const HopTarget&, const HopTarget&) = default;
 };
 
-// The reference-detector / explicit-position rule. nullopt when the hop has
-// neither (a validation error in a loaded plan).
-std::optional<HopTarget> hop_target(const MeasurementPlan& plan, const Hop& hop);
+// Where a position puts the magnet (spec 3.2): its `at`, else the label of
+// its entry on the plan's reference detector (or on one of that detector's
+// modes, "H2(CDD)" for "H2"). nullopt when the plan names no reference and
+// the position no `at`: the position is collected wherever the magnet is.
+std::optional<At> position_target(const MeasurementPlan& plan, const Position& position);
 
-// Target of the before/after baseline block: baseline.mass on baseline.detector
-// (or the reference). nullopt without a mass: the baseline is taken where the
-// magnet already is.
-std::optional<HopTarget> baseline_target(const MeasurementPlan& plan);
+// The entries a position collects: its active ones, in file order.
+std::vector<CollectEntry> collecting(const Position& position);
 
-struct ActiveDetector {
-  std::string isotope, detector;
-  friend bool operator==(const ActiveDetector&, const ActiveDetector&) = default;
-};
-
-// Detectors collecting during the hop: positions minus detectors.exclude, isotope order.
-std::vector<ActiveDetector> active_detectors(const MeasurementPlan& plan, const Hop& hop);
+// The gas's first after_inlet signal segment (v1's [main]); nullptr when it
+// has none.
+const Segment* main_segment(const Gas& gas);
 
 // Fit for an isotope (signal) or detector (baseline), falling back to "default".
 reduction::FitSpec signal_fit(const Fits& fits, const std::string& isotope);

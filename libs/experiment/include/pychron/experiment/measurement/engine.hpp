@@ -3,35 +3,45 @@
 // MeasurementEngine (experiment spec 4.2): executes a resolved
 // MeasurementPlan over spectrometer primitives and extraction-line valves.
 //
-// Fixed block sequence; a disabled block is skipped:
+// The engine runs the plan's first gas (measurement plan v2 spec, 5.1; later
+// gases and every `when` come with the phases). Its segments run by `when`,
+// in file order within one `when`, in the v1 block order:
 //
-//   peak_center.before -> baseline.before -> position first hop
-//   -> equilibrate || sniff -> time zero -> main (cycles x hops)
-//   -> baseline.after -> peak_center.after
+//   before_inlet (peak_center steps, baseline segments)
+//   -> position the main segment's first position
+//   -> equilibrate || sniff segment (whiff segments once the inlet opens)
+//   -> time zero -> main (the first after_inlet signal segment, cycles x
+//   positions) -> the other after_inlet signal segments -> after_main
+//   -> after_run
 //
-// One HopRunner executes every collection: protect the hop's `protect` set ->
-// position (skipped, with its settle, when the magnet is already there) ->
-// settle -> unprotect -> collect `counts` readings on the hop's detectors.
-// main runs it `cycles` times over the hop list; sniff and the before/after
-// baselines are single-hop runs of the same runner. There is no separate
-// multicollect path: one hop x N cycles collects exactly what one hop with
-// N x counts does.
+// Each segment or step is published as a block: a plan desugared from v1
+// publishes exactly the v1 sequence (peak_center.before, baseline.before,
+// position, equilibrate, main, baseline.after, peak_center.after); any other
+// segment publishes Segment and any other step Step.
+//
+// One position executor (run_position) runs every collection: protect the
+// entries that carry `protect` -> position (skipped, with its settle, when
+// the magnet is already there) -> settle -> unprotect -> collect `counts`
+// readings on the active entries. A segment runs it `cycles` times over its
+// positions. There is no separate multicollect path: one position x N cycles
+// collects exactly what one position with N x counts does. What the engine
+// did is in MeasurementResult::trace.
 //
 // Equilibration (single-threaded, so sniff readings and valve timing never
 // race): close the outlet, wait inlet_delay_s, open the inlet, wait time_s,
-// close the inlet (if close_inlet). Sniff readings on the first hop's
-// detectors are taken while the waits run, so valve transitions happen at
+// close the inlet (if close_inlet). The sniff segment's readings are taken
+// while the waits run, so valve transitions happen at
 // reading granularity. Closing the inlet publishes OverlapReady and calls
 // on_inlet_closed (the run layer starts post-equilibration there). An
 // equilibration conditional tripping during sniff closes the inlet early.
 //
-// Time zero: on_inlet_close (inlet close, or end of time_s when close_inlet
-// is false), on_first_count (first main reading), offset_s (inlet open +
-// offset_s).
+// Time zero (the main segment's, else the gas's): on_inlet_close (inlet
+// close, or end of time_s when close_inlet is false), on_first_count (first
+// main reading), offset_s (inlet open + offset_s).
 //
-// Conditionals (conditionals spec section 6.1) are evaluated after every main
-// signal reading in pychron's order (modification, truncation, action,
-// termination, cancelation) with the main-wide reading count, and
+// Conditionals (conditionals spec section 6.1) are evaluated after every
+// signal reading of a signal segment in pychron's order (modification, truncation, action,
+// termination, cancelation) with the measurement-wide signal reading count, and
 // equilibration conditionals after every sniff reading; the first trip ends
 // the reading's evaluation. What a trip does:
 //   truncation     truncate main with the conditional's abbreviated_count_ratio
@@ -44,12 +54,12 @@
 //
 // Truncate (truncate(), a truncation trip, or a truncate action) ends the
 // current collection at the next reading. Truncating main skips its remaining
-// hops and cycles, and later collections scale their counts by the ratio in
+// positions and cycles, and later collections scale their counts by the ratio in
 // effect (the conditional's abbreviated_count_ratio; a user truncate 1.0;
 // quick 0.25), rounded up, at least 1.
 //
-// Whiff (plan [whiff]): once the inlet opens, `counts` readings of kind whiff
-// on the first hop's detectors (sniff starts after them), then the first
+// Whiff (a whiff segment, v1 [whiff]): once the inlet opens, its position's
+// readings of kind whiff (sniff starts after them), then the first
 // matching check decides: run_remainder continues; pump closes the inlet,
 // opens the outlet and ends the measurement (Terminated); abort ends it
 // (Aborted). The hook's on_whiff_result receives the result.
@@ -59,6 +69,7 @@
 // engine opened is closed.
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
@@ -66,6 +77,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -81,7 +93,21 @@
 
 namespace pychron::experiment::measurement {
 
-enum class Block { PeakCenterBefore, BaselineBefore, PositionFirstHop, Equilibrate, Main, BaselineAfter, PeakCenterAfter };
+// The v1 blocks, then Segment and Step for any other segment or step, and
+// the staged-release blocks of a gas (Prepare, PumpOut; not run yet).
+enum class Block {
+  PeakCenterBefore,
+  BaselineBefore,
+  PositionFirstHop,
+  Equilibrate,
+  Main,
+  BaselineAfter,
+  PeakCenterAfter,
+  Segment,
+  Step,
+  Prepare,
+  PumpOut,
+};
 
 std::string_view to_string(Block block) noexcept;
 
@@ -98,14 +124,20 @@ std::string_view to_string(MeasurementOutcome outcome) noexcept;
 
 // ---- events (SignalBus) ----------------------------------------------------
 
+// `gas`: the gas's name (empty for a plan without [[gas]]); `segment`: the
+// segment's index within the gas, -1 for Equilibrate and PositionFirstHop.
 struct BlockStarted {
   std::string run_id;
   Block block = Block::Main;
+  std::string gas;
+  int segment = -1;
 };
 struct BlockFinished {
   std::string run_id;
   Block block = Block::Main;
   bool ok = true;
+  std::string gas;
+  int segment = -1;
 };
 // The readings stopped (spec 4.4). Seconds since the measurement started:
 // from the last reading before the silence to the first after it, or, when
@@ -138,6 +170,22 @@ struct ConditionalTripped {
 };
 
 // ---- inputs and result -----------------------------------------------------
+
+// One thing the engine did to the spectrometer, in order. `what`: move,
+// settle, table, optics, deflect, protect, integration, collect, step,
+// prepare, pump_out. `detail`: its target or value ("Ar40@H1", "mass
+// 34.2@H1", "3", "CDD on", "peak_center Ar40@H1"). `t`: seconds since the
+// measurement started. `segment`, `position`: indices within the gas, -1
+// when the entry belongs to none.
+struct TraceEntry {
+  std::string gas;
+  int segment = -1;
+  int position = -1;
+  std::string what;
+  std::string detail;
+  double t = 0;
+  friend bool operator==(const TraceEntry&, const TraceEntry&) = default;
+};
 
 // Everything the engine touches. Only `spectrometer` is required; `valves` is
 // required when the plan names an inlet or outlet, `peak_center` when it
@@ -206,6 +254,7 @@ struct MeasurementResult {
   std::vector<Block> blocks;              // blocks that ran, in order
   std::vector<MeasurementGap> gaps;       // silences in the readings, in order
   bool truncated_by_link = false;         // main ended by a silence that did not end (Truncated)
+  std::vector<TraceEntry> trace;          // what the engine did, in order
 };
 
 // The plan's own [conditionals].truncations as a ConditionalSet level (names
@@ -239,18 +288,30 @@ class MeasurementEngine {
   // Block steps. A non-ok result is a Failed measurement; a Stop is read from
   // stop_ after each step.
   Result<void> run_blocks();
-  Result<void> peak_center(Block block);
-  Result<void> baseline(Block block);
+  // A segment of the running gas: a step, or `cycles` x its positions.
+  Result<void> run_segment(std::size_t segment);
+  Result<void> run_step(std::size_t segment);
+  Result<void> peak_center(const plan::PeakCenterStep& step);
   Result<void> equilibrate();
-  Result<void> whiff();
-  Result<void> main();
+  Result<void> whiff(std::size_t segment);
   Result<void> call_hook(std::string_view entry, const scripting::ValueMap& args = {});
 
-  Result<void> move_to(const std::optional<plan::HopTarget>& target, double settle_s,
-                       const std::vector<std::string>& protect);
+  // The position executor: every collection of a segment goes through it.
+  Result<collect::CollectStatus> run_position(const plan::Gas& gas, std::size_t segment, std::size_t position,
+                                              const plan::Position& pos, int counts);
+  // Puts the magnet at `target` (nothing when nullopt or already there):
+  // protect, move, settle, unprotect.
+  Result<void> position_magnet(const std::optional<plan::At>& target, double settle_s,
+                               const std::vector<std::string>& protect, int segment, int position);
   Result<collect::CollectStatus> collect(Block block, collect::CollectionSpec spec, double integration_s,
                                          collect::ReadingHook hook);
   bool main_reading(int count, double t);
+  // The block a segment of the running gas publishes (v1 names where they apply).
+  Block block_of(std::size_t segment) const;
+  // The label its collections are counted under: "main", "baseline.after", "segment[2]".
+  std::string collection_label(std::size_t segment, Block block) const;
+  void trace(int segment, int position, std::string what, std::string detail);
+  const plan::Equilibration& equilibration() const;
 
   // A silence in the readings (spec 4.4).
   enum class GapEnd { Resumed, Cap, NotResumed };
@@ -277,7 +338,6 @@ class MeasurementEngine {
   bool stopping() const;
   void publish_log(LogLevel level, std::string message);
   int scaled(int counts) const;
-  std::vector<collect::Channel> baseline_channels() const;
   void rebuild_conditionals();
   void cleanup(bool abnormal);
 
@@ -289,7 +349,11 @@ class MeasurementEngine {
   scripting::CancelToken* token_ = nullptr;
   std::unique_ptr<ConditionalEngine> conditionals_;
   MeasurementResult result_;
-  std::optional<plan::HopTarget> position_;  // where the magnet is, when known
+  const plan::Gas* gas_ = nullptr;           // the gas being run
+  std::size_t main_ = 0;                     // its main segment
+  plan::TimeZero time_zero_;                 // the main segment's, else the gas's
+  Block block_ = Block::Main;                // the block running
+  std::optional<plan::At> position_;         // where the magnet is, when known
   std::set<std::string> protected_;
   std::vector<collect::Channel> last_channels_;
   bool acquiring_ = false;

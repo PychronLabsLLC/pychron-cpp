@@ -101,7 +101,8 @@ const char* bool_name(bool b) { return b ? "true" : "false"; }
 constexpr measurement::Block kBlocks_[] = {
     measurement::Block::PeakCenterBefore, measurement::Block::BaselineBefore, measurement::Block::PositionFirstHop,
     measurement::Block::Equilibrate,      measurement::Block::Main,           measurement::Block::BaselineAfter,
-    measurement::Block::PeakCenterAfter};
+    measurement::Block::PeakCenterAfter,  measurement::Block::Segment,        measurement::Block::Step,
+    measurement::Block::Prepare,          measurement::Block::PumpOut};
 constexpr ConditionalKind kKinds[] = {
     ConditionalKind::Truncation,   ConditionalKind::Termination,   ConditionalKind::Cancelation, ConditionalKind::Action,
     ConditionalKind::Modification, ConditionalKind::Equilibration, ConditionalKind::PreRun,      ConditionalKind::PostRun};

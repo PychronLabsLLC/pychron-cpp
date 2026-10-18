@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstdio>
 #include <numeric>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "pychron/core/events.hpp"
 #include "pychron/devices/link.hpp"
@@ -21,18 +23,54 @@ pychron::Duration seconds_to(double s) {
   return std::chrono::duration_cast<pychron::Duration>(std::chrono::duration<double>(std::max(s, 0.0)));
 }
 
-std::vector<collect::Channel> channels_of(const plan::MeasurementPlan& plan, const plan::Hop& hop) {
-  std::vector<collect::Channel> out;
-  for (const auto& a : plan::active_detectors(plan, hop)) out.push_back({a.isotope, a.detector});
-  return out;
-}
-
 // A number as a person writes it: 500, 0.05, 1.2e-05.
 std::string plain(double v) {
   std::array<char, 32> buf{};
   std::snprintf(buf.data(), buf.size(), "%g", v);
   return buf.data();
 }
+
+// What a position's active entries collect, under their labels.
+std::vector<collect::Channel> channels_of(const plan::Position& pos) {
+  std::vector<collect::Channel> out;
+  for (const auto& e : plan::collecting(pos)) out.push_back({e.label, e.detector});
+  return out;
+}
+
+// A baseline segment collects per detector, with no label, each detector once.
+std::vector<collect::Channel> baseline_channels(const plan::Position& pos) {
+  std::vector<collect::Channel> out;
+  for (const auto& e : plan::collecting(pos)) {
+    const auto same = [&](const collect::Channel& c) { return c.detector == e.detector; };
+    if (std::none_of(out.begin(), out.end(), same)) out.push_back({"", e.detector});
+  }
+  return out;
+}
+
+// "Ar40@H1", "mass 34.2@H1", "dac 1.234", "hv 4500@H1".
+std::string describe(const plan::At& at) {
+  return std::visit(
+      [](const auto& a) -> std::string {
+        using T = std::decay_t<decltype(a)>;
+        if constexpr (std::is_same_v<T, plan::AtLabel>) return a.label + "@" + a.detector;
+        else if constexpr (std::is_same_v<T, plan::AtMass>) return "mass " + plain(a.mass) + "@" + a.detector;
+        else if constexpr (std::is_same_v<T, plan::AtDac>) return "dac " + plain(a.dac);
+        else return "hv " + plain(a.hv) + "@" + a.detector;
+      },
+      at);
+}
+
+// The spectrometer port positions by label or mass on a detector.
+Result<plan::HopTarget> to_port_target(const plan::At& at) {
+  if (const auto* l = std::get_if<plan::AtLabel>(&at)) return plan::HopTarget{l->label, std::nullopt, l->detector};
+  if (const auto* m = std::get_if<plan::AtMass>(&at)) return plan::HopTarget{"", m->mass, m->detector};
+  return fail(ErrorKind::Config, "positioning at " + describe(at) + " is not run by this build yet");
+}
+
+bool is_sniff(const plan::Segment& s) {
+  return s.kind == plan::SegmentKind::Sniff && s.when == plan::When::DuringEquilibration;
+}
+bool is_whiff(const plan::Segment& s) { return s.kind == plan::SegmentKind::Whiff && s.when == plan::When::AfterInlet; }
 
 }  // namespace
 
@@ -45,6 +83,10 @@ std::string_view to_string(Block block) noexcept {
     case Block::Main: return "main";
     case Block::BaselineAfter: return "baseline.after";
     case Block::PeakCenterAfter: return "peak_center.after";
+    case Block::Segment: return "segment";
+    case Block::Step: return "step";
+    case Block::Prepare: return "prepare";
+    case Block::PumpOut: return "pump_out";
   }
   return "main";
 }
@@ -70,14 +112,15 @@ class MeasurementEngine::Api final : public scripting::IMeasurementApi {
   explicit Api(MeasurementEngine& e) : e_(e) {}
 
   Result<void> position(std::string_view isotope, std::string_view detector) override {
-    return e_.move_to(plan::HopTarget{std::string(isotope), std::nullopt, std::string(detector)}, 0, {});
+    return e_.position_magnet(plan::AtLabel{std::string(isotope), std::string(detector)}, 0, {}, -1, -1);
   }
 
   Result<void> acquire(int counts, double integration_time_s) override {
     if (e_.collecting_) return fail(ErrorKind::Config, "acquire() is not allowed inside a collection");
     if (counts <= 0 || integration_time_s <= 0) return fail(ErrorKind::Config, "acquire() needs counts > 0 and integration > 0");
-    auto channels = e_.last_channels_.empty() ? channels_of(e_.in_.plan, e_.in_.plan.main.hops.front())
-                                              : e_.last_channels_;
+    auto channels = e_.last_channels_;
+    if (channels.empty() && e_.gas_ != nullptr)
+      channels = channels_of(e_.gas_->segments[e_.main_].positions.front());
     auto r = e_.collect(Block::Main, {collect::SeriesKind::Signal, counts, std::move(channels), "hook"},
                         integration_time_s, {});
     if (!r) return fail(r.error());
@@ -142,15 +185,29 @@ MeasurementEngine::~MeasurementEngine() = default;
 Result<void> MeasurementEngine::validate() const {
   const auto& p = in_.plan;
   std::vector<std::string> problems;
-  if (p.main.hops.empty()) problems.emplace_back("plan has no hops");
-  for (std::size_t i = 0; i < p.main.hops.size(); ++i) {
-    if (!plan::hop_target(p, p.main.hops[i]))
-      problems.push_back("main.hops[" + std::to_string(i) + "]: no magnet position (reference detector not in hop)");
+  const plan::Gas* gas = p.gases.empty() ? nullptr : &p.gases.front();
+  const plan::Segment* main = gas != nullptr ? plan::main_segment(*gas) : nullptr;
+  if (gas == nullptr) problems.emplace_back("plan has no gas");
+  else if (main == nullptr) problems.emplace_back("plan has no after_inlet signal segment");
+  else if (main->positions.empty()) problems.emplace_back("plan has no hops");
+  if (gas != nullptr) {
+    for (std::size_t s = 0; s < gas->segments.size(); ++s) {
+      const auto& seg = gas->segments[s];
+      if (seg.kind != plan::SegmentKind::Signal || p.detectors.reference.empty()) continue;
+      for (std::size_t j = 0; j < seg.positions.size(); ++j) {
+        if (!plan::position_target(p, seg.positions[j]))
+          problems.push_back("segment[" + std::to_string(s) + "].positions[" + std::to_string(j) +
+                             "]: no magnet position (reference detector not in position)");
+      }
+    }
+    const auto& eq = gas->equilibration;
+    if ((!eq.inlet.empty() || !eq.outlet.empty()) && ctx_.valves == nullptr)
+      problems.emplace_back("plan equilibrates through valves but no valve service is configured");
+    const bool centers = std::any_of(gas->segments.begin(), gas->segments.end(),
+                                     [](const plan::Segment& seg) { return seg.kind == plan::SegmentKind::PeakCenter; });
+    if (centers && ctx_.peak_center == nullptr)
+      problems.emplace_back("plan enables peak centering but no peak-center service is configured");
   }
-  if ((!p.equilibration.inlet.empty() || !p.equilibration.outlet.empty()) && ctx_.valves == nullptr)
-    problems.emplace_back("plan equilibrates through valves but no valve service is configured");
-  if ((p.peak_center.before || p.peak_center.after) && ctx_.peak_center == nullptr)
-    problems.emplace_back("plan enables peak centering but no peak-center service is configured");
   if (p.hook && ctx_.hook == nullptr) problems.push_back("plan names hook '" + *p.hook + "' but no hook runner is configured");
   if (problems.empty()) return {};
   std::string what;
@@ -165,6 +222,10 @@ void MeasurementEngine::rebuild_conditionals() {
 MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   token_ = &token;
   result_ = MeasurementResult{};
+  gas_ = nullptr;
+  main_ = 0;
+  time_zero_ = {};
+  block_ = Block::Main;
   position_.reset();
   protected_.clear();
   last_channels_.clear();
@@ -214,71 +275,154 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   return std::move(result_);
 }
 
+Block MeasurementEngine::block_of(std::size_t segment) const {
+  using plan::SegmentKind;
+  using plan::When;
+  if (segment == main_) return Block::Main;
+  const auto& segs = gas_->segments;
+  const auto& seg = segs[segment];
+  // The first segment of a v1 kind and placement takes the v1 block's name.
+  const auto first_of = [&](SegmentKind kind, When when) {
+    if (seg.kind != kind || seg.when != when) return false;
+    const auto it = std::find_if(segs.begin(), segs.end(),
+                                 [&](const plan::Segment& s) { return s.kind == kind && s.when == when; });
+    return it - segs.begin() == static_cast<std::ptrdiff_t>(segment);
+  };
+  if (first_of(SegmentKind::PeakCenter, When::BeforeInlet)) return Block::PeakCenterBefore;
+  if (first_of(SegmentKind::PeakCenter, When::AfterRun)) return Block::PeakCenterAfter;
+  if (first_of(SegmentKind::Baseline, When::BeforeInlet)) return Block::BaselineBefore;
+  if (first_of(SegmentKind::Baseline, When::AfterMain)) return Block::BaselineAfter;
+  return plan::is_step(seg.kind) ? Block::Step : Block::Segment;
+}
+
+std::string MeasurementEngine::collection_label(std::size_t segment, Block block) const {
+  switch (block) {
+    case Block::Main:
+    case Block::BaselineBefore:
+    case Block::BaselineAfter: return std::string(to_string(block));
+    default: break;
+  }
+  const auto& seg = gas_->segments[segment];
+  if (seg.kind == plan::SegmentKind::Sniff) return "sniff";
+  if (seg.kind == plan::SegmentKind::Whiff) return "whiff";
+  const std::string at = "segment[" + std::to_string(segment) + "]";
+  return gas_->name.empty() ? at : gas_->name + "." + at;
+}
+
+void MeasurementEngine::trace(int segment, int position, std::string what, std::string detail) {
+  result_.trace.push_back(TraceEntry{gas_ != nullptr ? gas_->name : std::string(), segment, position, std::move(what),
+                                     std::move(detail), collector_.seconds(ctx_.clock.now())});
+}
+
+const plan::Equilibration& MeasurementEngine::equilibration() const {
+  return gas_ != nullptr ? gas_->equilibration : in_.plan.equilibration;
+}
+
 Result<void> MeasurementEngine::run_blocks() {
-  const auto& p = in_.plan;
-  auto step = [&](Block b, auto&& fn) -> Result<void> {
+  // One gas for now (Phase 5 of the v2 plan runs every gas and every `when`).
+  gas_ = &in_.plan.gases.front();
+  const auto& segs = gas_->segments;
+  main_ = static_cast<std::size_t>(plan::main_segment(*gas_) - segs.data());
+  const auto& main = segs[main_];
+  time_zero_ = main.time_zero ? *main.time_zero : gas_->time_zero.value_or(plan::TimeZero{});
+
+  auto step = [&](Block b, int segment, auto&& fn) -> Result<void> {
     if (stopping()) return {};
+    block_ = b;
     if (options_.on_block_started) options_.on_block_started(b);
-    if (ctx_.bus != nullptr) ctx_.bus->publish(BlockStarted{in_.run_id, b});
+    if (ctx_.bus != nullptr) ctx_.bus->publish(BlockStarted{in_.run_id, b, gas_->name, segment});
     result_.blocks.push_back(b);
     Result<void> r = fn();
-    if (ctx_.bus != nullptr) ctx_.bus->publish(BlockFinished{in_.run_id, b, r.has_value()});
+    if (ctx_.bus != nullptr) ctx_.bus->publish(BlockFinished{in_.run_id, b, r.has_value(), gas_->name, segment});
     return r;
   };
+  auto run_when = [&](plan::When when) -> Result<void> {
+    for (std::size_t s = 0; s < segs.size(); ++s) {
+      if (segs[s].when != when) continue;
+      if (auto r = step(block_of(s), static_cast<int>(s), [&] { return run_segment(s); }); !r) return r;
+    }
+    return {};
+  };
 
-  if (p.peak_center.before) {
-    if (auto r = step(Block::PeakCenterBefore, [&] { return peak_center(Block::PeakCenterBefore); }); !r) return r;
-  }
-  if (p.baseline.before) {
-    if (auto r = step(Block::BaselineBefore, [&] { return baseline(Block::BaselineBefore); }); !r) return r;
-  }
-  if (auto r = step(Block::PositionFirstHop, [&] {
-        const auto& hop = p.main.hops.front();
-        return move_to(plan::hop_target(p, hop), hop.settle_s, hop.protect);
-      });
-      !r)
-    return r;
-  if (auto r = step(Block::Equilibrate, [&] { return equilibrate(); }); !r) return r;
+  if (auto r = run_when(plan::When::BeforeInlet); !r) return r;
+  const auto position_first = [&] {
+    const auto& first = main.positions.front();
+    std::vector<std::string> protect;
+    for (const auto& e : first.collect)
+      if (e.protect) protect.push_back(e.detector);
+    return position_magnet(plan::position_target(in_.plan, first), first.settle_s, protect, static_cast<int>(main_),
+                           0);
+  };
+  if (auto r = step(Block::PositionFirstHop, -1, position_first); !r) return r;
+  if (auto r = step(Block::Equilibrate, -1, [&] { return equilibrate(); }); !r) return r;
   if (!stopping()) {
     if (auto r = call_hook("before_main"); !r) return r;
   }
-  if (auto r = step(Block::Main, [&] {
-        if (auto m = main(); !m) return m;
-        return check_main_counts();
-      });
-      !r)
-    return r;
+  const auto run_main = [&] {
+    if (auto m = run_segment(main_); !m) return m;
+    return check_main_counts();
+  };
+  if (auto r = step(Block::Main, static_cast<int>(main_), run_main); !r) return r;
+  // The other after_inlet signal segments, in file order after main.
+  for (std::size_t s = main_ + 1; s < segs.size(); ++s) {
+    if (segs[s].kind != plan::SegmentKind::Signal || segs[s].when != plan::When::AfterInlet) continue;
+    if (auto r = step(block_of(s), static_cast<int>(s), [&] { return run_segment(s); }); !r) return r;
+  }
   if (!stopping()) {
     if (auto r = call_hook("after_main"); !r) return r;
   }
-  if (p.baseline.after) {
-    if (auto r = step(Block::BaselineAfter, [&] { return baseline(Block::BaselineAfter); }); !r) return r;
-  }
-  if (p.peak_center.after) {
-    if (auto r = step(Block::PeakCenterAfter, [&] { return peak_center(Block::PeakCenterAfter); }); !r) return r;
+  if (auto r = run_when(plan::When::AfterMain); !r) return r;
+  return run_when(plan::When::AfterRun);
+}
+
+Result<void> MeasurementEngine::run_segment(std::size_t segment) {
+  const auto& seg = gas_->segments[segment];
+  if (plan::is_step(seg.kind)) return run_step(segment);
+  const bool is_main = segment == main_;
+  for (int cycle = 0; cycle < seg.cycles; ++cycle) {
+    for (std::size_t j = 0; j < seg.positions.size(); ++j) {
+      if (stopping()) return {};
+      const auto& pos = seg.positions[j];
+      // Main collects as planned; what runs after it scales by a truncation.
+      const int counts = is_main ? pos.counts : scaled(pos.counts);
+      auto r = run_position(*gas_, segment, j, pos, counts);
+      if (!r) return fail(r.error());
+      if (is_main && (*r == collect::CollectStatus::Truncated || main_cut_)) return {};
+    }
   }
   return {};
 }
 
-Result<void> MeasurementEngine::peak_center(Block block) {
+Result<void> MeasurementEngine::run_step(std::size_t segment) {
+  const auto& seg = gas_->segments[segment];
+  if (seg.kind == plan::SegmentKind::PeakCenter && seg.peak_center) {
+    const auto& pc = *seg.peak_center;
+    const auto& det = pc.detectors.empty() ? in_.plan.detectors.reference : pc.detectors.front();
+    trace(static_cast<int>(segment), -1, "step", "peak_center " + pc.label + "@" + det);
+    return peak_center(pc);
+  }
+  return fail(ErrorKind::Config, std::string(plan::to_string(seg.kind)) + " step: not run by this build yet");
+}
+
+Result<void> MeasurementEngine::peak_center(const plan::PeakCenterStep& step) {
   const auto& p = in_.plan;
-  PeakCenterRequest req{p.peak_center.isotope,
-                        p.peak_center.detector.empty() ? p.detectors.reference : p.peak_center.detector,
-                        p.peak_center.config};
+  PeakCenterRequest req{step.label, step.detectors.empty() ? p.detectors.reference : step.detectors.front(),
+                        step.config};
+  const Block block = block_;
   // A small peak (after a blank) still fits, and its centre would go into the
-  // field table. Only readings of the main block say how much signal there
-  // is: with none (before the gas is in) the block runs.
-  if (p.peak_center.min_signal > 0) {
+  // field table. Only signal readings say how much signal there is: with
+  // none (before the gas is in) the step runs.
+  if (step.min_signal > 0) {
     const auto series = collector_.series({req.isotope, req.detector, collect::SeriesKind::Signal});
     if (series && !series->v.empty()) {
       const auto n = std::min(series->v.size(), plan::kPeakCenterSignalReadings);
       const double mean = std::accumulate(series->v.end() - static_cast<std::ptrdiff_t>(n), series->v.end(), 0.0) /
                           static_cast<double>(n);
-      if (mean < p.peak_center.min_signal) {
+      if (mean < step.min_signal) {
         PeakCenterReport skipped;
         skipped.request = std::move(req);
         skipped.skipped = true;
-        skipped.message = "signal " + plain(mean) + " below min_signal " + plain(p.peak_center.min_signal);
+        skipped.message = "signal " + plain(mean) + " below min_signal " + plain(step.min_signal);
         skipped.finished = ctx_.clock.now();
         publish_log(LogLevel::Info, std::string(to_string(block)) + " skipped: " + skipped.message);
         result_.peak_centers.push_back(std::move(skipped));
@@ -299,31 +443,13 @@ Result<void> MeasurementEngine::peak_center(Block block) {
   return {};
 }
 
-std::vector<collect::Channel> MeasurementEngine::baseline_channels() const {
-  std::vector<collect::Channel> out;
-  for (const auto& hop : in_.plan.main.hops) {
-    for (const auto& a : plan::active_detectors(in_.plan, hop)) {
-      auto same = [&](const collect::Channel& c) { return c.detector == a.detector; };
-      if (std::none_of(out.begin(), out.end(), same)) out.push_back({"", a.detector});
-    }
-  }
-  return out;
-}
-
-Result<void> MeasurementEngine::baseline(Block block) {
-  const auto& b = in_.plan.baseline;
-  if (auto r = move_to(plan::baseline_target(in_.plan), b.settle_s, {}); !r) return r;
-  const int counts = block == Block::BaselineAfter ? scaled(b.counts) : b.counts;
-  auto r = collect(block, {collect::SeriesKind::Baseline, counts, baseline_channels(), std::string(to_string(block))},
-                   b.integration_s, {});
-  if (!r) return fail(r.error());
-  return {};
-}
-
 Result<void> MeasurementEngine::equilibrate() {
-  const auto& p = in_.plan;
-  const auto& eq = p.equilibration;
+  const auto& segs = gas_->segments;
+  const auto& eq = gas_->equilibration;
   const auto now_s = [&] { return collector_.seconds(ctx_.clock.now()); };
+  const auto sniff_at = std::find_if(segs.begin(), segs.end(), is_sniff);
+  const plan::Segment* sniff = sniff_at == segs.end() ? nullptr : &*sniff_at;
+  const auto whiff_at = std::find_if(segs.begin(), segs.end(), is_whiff);
 
   if (!eq.outlet.empty()) {
     if (auto r = ctx_.valves->close(eq.outlet); !r) return r;
@@ -331,7 +457,8 @@ Result<void> MeasurementEngine::equilibrate() {
 
   bool sniffing = false;
   int sniffed = 0;
-  const auto sniff_integration = seconds_to(p.sniff.integration_s);
+  const int sniff_counts = sniff != nullptr ? sniff->positions.front().counts : 0;
+  const auto sniff_integration = seconds_to(sniff != nullptr ? sniff->integration_s : 1);
   const auto timeout = std::chrono::duration_cast<pychron::Duration>(sniff_integration * options_.timeout_factor) +
                        options_.timeout_slack;
   auto stop_sniff = [&] {
@@ -343,8 +470,8 @@ Result<void> MeasurementEngine::equilibrate() {
     acquiring_ = false;
   };
   auto start_sniff = [&]() -> Result<void> {
-    if (!p.sniff.enabled || p.sniff.counts <= 0) return {};
-    auto channels = channels_of(p, p.main.hops.front());
+    if (sniff == nullptr || sniff_counts <= 0) return {};
+    auto channels = channels_of(sniff->positions.front());
     last_channels_ = channels;
     if (auto r = start_acquisition(sniff_integration); !r) {
       if (!is_transient(r.error().kind)) return r;
@@ -353,14 +480,15 @@ Result<void> MeasurementEngine::equilibrate() {
     }
     acquiring_ = true;
     last_reading_ = ctx_.clock.now();
-    collector_.begin({collect::SeriesKind::Sniff, p.sniff.counts, std::move(channels), "sniff"},
+    trace(static_cast<int>(sniff_at - segs.begin()), 0, "collect", std::to_string(sniff_counts));
+    collector_.begin({collect::SeriesKind::Sniff, sniff_counts, std::move(channels), "sniff"},
                      [this](int, double) { return sniff_reading(); });
     collecting_ = true;
     sniffing = true;
     return {};
   };
   // With a whiff, sniffing starts once the whiff has decided.
-  if (!p.whiff.enabled) {
+  if (whiff_at == segs.end()) {
     if (auto r = start_sniff(); !r) return r;
   }
 
@@ -379,9 +507,9 @@ Result<void> MeasurementEngine::equilibrate() {
       }
       collector_.set_inlet_open(now);
       close_at = now + eq.time_s;
-      if (p.main.time_zero.kind == plan::TimeZeroKind::Offset) collector_.set_time_zero(now + p.main.time_zero.offset_s);
-      if (p.whiff.enabled) {
-        if (auto r = whiff(); !r) {
+      if (time_zero_.kind == plan::TimeZeroKind::Offset) collector_.set_time_zero(now + time_zero_.offset_s);
+      if (whiff_at != segs.end()) {
+        if (auto r = whiff(static_cast<std::size_t>(whiff_at - segs.begin())); !r) {
           out = r;
           break;
         }
@@ -403,7 +531,7 @@ Result<void> MeasurementEngine::equilibrate() {
         if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
         if (options_.on_inlet_closed) options_.on_inlet_closed();
       }
-      if (p.main.time_zero.kind == plan::TimeZeroKind::OnInletClose) collector_.set_time_zero(now);
+      if (time_zero_.kind == plan::TimeZeroKind::OnInletClose) collector_.set_time_zero(now);
       break;
     }
     if (sniffing) {
@@ -434,7 +562,7 @@ Result<void> MeasurementEngine::equilibrate() {
       last_reading_ = ctx_.clock.now();
       const auto status = collector_.add(*reading);
       ++sniffed;
-      if (ctx_.bus != nullptr) ctx_.bus->publish(CountsProgress{in_.run_id, Block::Equilibrate, sniffed, p.sniff.counts});
+      if (ctx_.bus != nullptr) ctx_.bus->publish(CountsProgress{in_.run_id, Block::Equilibrate, sniffed, sniff_counts});
       if (status != collect::CollectStatus::Running) stop_sniff();
     } else if (!wait((close_at ? *close_at : open_at) - now)) {
       break;
@@ -445,18 +573,18 @@ Result<void> MeasurementEngine::equilibrate() {
   return out;
 }
 
-Result<void> MeasurementEngine::whiff() {
-  const auto& p = in_.plan;
+Result<void> MeasurementEngine::whiff(std::size_t segment) {
+  const auto& seg = gas_->segments[segment];
+  const auto& pos = seg.positions.front();
   Whiff w;
-  w.sniff = p.whiff.counts;
-  for (const auto& c : p.whiff.checks) {
+  w.sniff = pos.counts;
+  for (const auto& c : seg.checks) {
     auto expr = parse_expression(c.check);
     auto action = parse_whiff_action(c.action);
     if (!expr || !action) return fail(ErrorKind::Config, "whiff check '" + c.check + "' is invalid");
     w.checks.push_back({c.check, std::shared_ptr<const Expr>(std::move(*expr)), *action});
   }
-  auto r = collect(Block::Equilibrate, {collect::SeriesKind::Whiff, p.whiff.counts, channels_of(p, p.main.hops.front()), "whiff"},
-                   p.whiff.integration_s, {});
+  auto r = run_position(*gas_, segment, 0, pos, pos.counts);
   if (!r) return fail(r.error());
   if (stopping()) return {};
   const auto action = evaluate_whiff(w, collector_.metrics(), in_.variables).value_or(WhiffCheck::Action::RunRemainder);
@@ -466,7 +594,7 @@ Result<void> MeasurementEngine::whiff() {
   switch (action) {
     case WhiffCheck::Action::RunRemainder: break;
     case WhiffCheck::Action::Pump: {
-      const auto& eq = p.equilibration;
+      const auto& eq = gas_->equilibration;
       if (auto c = close_inlet(); !c) return c;
       if (!eq.outlet.empty()) {
         if (auto o = ctx_.valves->open(eq.outlet); !o) return o;
@@ -479,27 +607,6 @@ Result<void> MeasurementEngine::whiff() {
   return {};
 }
 
-Result<void> MeasurementEngine::main() {
-  const auto& p = in_.plan;
-  for (int cycle = 0; cycle < p.main.cycles; ++cycle) {
-    for (const auto& hop : p.main.hops) {
-      if (stopping()) return {};
-      if (auto r = move_to(plan::hop_target(p, hop), hop.settle_s, hop.protect); !r) return r;
-      auto channels = channels_of(p, hop);
-      last_channels_ = channels;
-      collect::ReadingHook hook;
-      if (!hop.baseline) hook = [this](int count, double t) { return main_reading(count, t); };
-      auto r = collect(Block::Main,
-                       {hop.baseline ? collect::SeriesKind::Baseline : collect::SeriesKind::Signal, hop.counts,
-                        std::move(channels), "main"},
-                       p.main.integration_s, std::move(hook));
-      if (!r) return fail(r.error());
-      if (*r == collect::CollectStatus::Truncated || main_cut_) return {};
-    }
-  }
-  return {};
-}
-
 Result<void> MeasurementEngine::call_hook(std::string_view entry, const scripting::ValueMap& args) {
   if (!in_.plan.hook || ctx_.hook == nullptr) return {};
   Api api(*this);
@@ -508,24 +615,67 @@ Result<void> MeasurementEngine::call_hook(std::string_view entry, const scriptin
   return r;
 }
 
-Result<void> MeasurementEngine::move_to(const std::optional<plan::HopTarget>& target, double settle_s,
-                                        const std::vector<std::string>& protect) {
+Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& gas, std::size_t segment,
+                                                               std::size_t position, const plan::Position& pos,
+                                                               int counts) {
+  const auto& seg = gas.segments[segment];
+  const int si = static_cast<int>(segment);
+  const int pi = static_cast<int>(position);
+  // A sniff or whiff reads where the magnet is (as the plan's duration counts it).
+  if (seg.kind != plan::SegmentKind::Sniff && seg.kind != plan::SegmentKind::Whiff) {
+    std::vector<std::string> protect;
+    for (const auto& e : pos.collect)
+      if (e.protect) protect.push_back(e.detector);
+    if (auto r = position_magnet(plan::position_target(in_.plan, pos), pos.settle_s, protect, si, pi); !r)
+      return fail(r.error());
+  }
+
+  auto kind = collect::SeriesKind::Signal;
+  switch (seg.kind) {
+    case plan::SegmentKind::Baseline: kind = collect::SeriesKind::Baseline; break;
+    case plan::SegmentKind::Sniff: kind = collect::SeriesKind::Sniff; break;
+    case plan::SegmentKind::Whiff: kind = collect::SeriesKind::Whiff; break;
+    default:
+      if (pos.kind == plan::PositionKind::Baseline) kind = collect::SeriesKind::Baseline;
+      break;
+  }
+  auto channels = seg.kind == plan::SegmentKind::Baseline ? baseline_channels(pos) : channels_of(pos);
+  collect::ReadingHook hook;
+  if (seg.kind == plan::SegmentKind::Signal) {
+    last_channels_ = channels;
+    if (kind == collect::SeriesKind::Signal) hook = [this](int count, double t) { return main_reading(count, t); };
+  }
+  if (counts > 0) trace(si, pi, "collect", std::to_string(counts));
+  return collect(block_, {kind, counts, std::move(channels), collection_label(segment, block_)},
+                 pos.integration_s.value_or(seg.integration_s), std::move(hook));
+}
+
+Result<void> MeasurementEngine::position_magnet(const std::optional<plan::At>& target, double settle_s,
+                                                const std::vector<std::string>& protect, int segment, int position) {
   if (!target) return {};  // collect wherever the magnet is
   if (position_ && *position_ == *target) return {};
+  auto port_target = to_port_target(*target);
+  if (!port_target) return fail(port_target.error());
   for (const auto& d : protect) {
     if (auto r = ctx_.spectrometer.protect(d, true); !r) return r;
     protected_.insert(d);
+    trace(segment, position, "protect", d + " on");
   }
-  Result<void> r = ctx_.spectrometer.position(*target);
+  Result<void> r = ctx_.spectrometer.position(*port_target);
+  trace(segment, position, "move", describe(*target));
   if (r) {
     position_ = *target;
+    trace(segment, position, "settle", plain(settle_s));
     wait(settle_s);
   } else {
     position_.reset();
   }
   for (const auto& d : protect) {
     auto u = critical("unprotect " + d, [&] { return ctx_.spectrometer.protect(d, false); });
-    if (u) protected_.erase(d);
+    if (u) {
+      protected_.erase(d);
+      trace(segment, position, "protect", d + " off");
+    }
     if (!u && r) r = u;
   }
   return r;
@@ -719,7 +869,7 @@ Result<void> MeasurementEngine::critical(const std::string& what, const std::fun
 }
 
 Result<void> MeasurementEngine::close_inlet() {
-  const auto& inlet = in_.plan.equilibration.inlet;
+  const auto& inlet = equilibration().inlet;
   if (inlet.empty()) return {};
   if (auto r = critical("close inlet " + inlet, [&] { return ctx_.valves->close(inlet); }); !r) return r;
   inlet_open_ = false;
@@ -728,10 +878,11 @@ Result<void> MeasurementEngine::close_inlet() {
 
 Result<void> MeasurementEngine::check_main_counts() {
   if ((!main_gap_ && !main_cut_) || stopping()) return {};  // a stop is its own outcome
+  const auto& main = gas_->segments[main_];
   int planned = 0;
-  for (const auto& hop : in_.plan.main.hops)
-    if (!hop.baseline) planned += scaled(hop.counts);  // after a truncation, what it left
-  planned *= in_.plan.main.cycles;
+  for (const auto& pos : main.positions)
+    if (pos.kind == plan::PositionKind::Signal) planned += scaled(pos.counts);  // after a truncation, what it left
+  planned *= main.cycles;
   std::size_t fit_minimum = 0;
   for (const auto& [key, kind] : in_.plan.fits.signal) {
     reduction::FitSpec f;
@@ -755,7 +906,7 @@ Result<void> MeasurementEngine::check_main_counts() {
 
 bool MeasurementEngine::main_reading(int /*count*/, double t) {
   ++main_count_;
-  if (in_.plan.main.time_zero.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero())
+  if (time_zero_.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero())
     collector_.set_time_zero(t);
   if (auto trip = conditionals_->evaluate(kMeasurementOrder, collector_.metrics(), in_.variables, main_count_, t)) {
     collector_.add_trips({*trip});
@@ -863,10 +1014,11 @@ void MeasurementEngine::cleanup(bool abnormal) {
     }
   }
   if (abnormal && inlet_open_ && ctx_.valves != nullptr) {
-    if (auto r = ctx_.valves->close(in_.plan.equilibration.inlet); r) {
+    const auto& inlet = equilibration().inlet;
+    if (auto r = ctx_.valves->close(inlet); r) {
       inlet_open_ = false;
     } else {
-      publish_log(LogLevel::Error, "could not close inlet " + in_.plan.equilibration.inlet + ": " + r.error().what);
+      publish_log(LogLevel::Error, "could not close inlet " + inlet + ": " + r.error().what);
     }
   }
 }

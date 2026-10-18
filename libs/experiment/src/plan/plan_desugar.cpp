@@ -24,13 +24,14 @@ bool contains(const std::vector<std::string>& v, const std::string& s) {
 
 class Desugar {
  public:
-  Desugar(const MeasurementPlan& v1, const ISpectrometerCatalog* catalog) : v1_(v1), catalog_(catalog) {}
+  Desugar(const MeasurementPlan& plan, const V1Tables& v1, const ISpectrometerCatalog* catalog)
+      : plan_(plan), v1_(v1), catalog_(catalog) {}
 
   Result<std::vector<Gas>> run() {
     Gas gas;
     gas.implicit = true;
-    gas.equilibration = v1_.equilibration;
-    gas.fits = v1_.fits;
+    gas.equilibration = plan_.equilibration;
+    gas.fits = plan_.fits;
 
     if (v1_.main.hops.empty()) return fail(ErrorKind::Config, "main.hops: at least one hop required");
     std::vector<Position> hops;
@@ -72,7 +73,7 @@ class Desugar {
   }
 
  private:
-  bool excluded(const std::string& detector) const { return contains(v1_.detectors.exclude, detector); }
+  bool excluded(const std::string& detector) const { return contains(plan_.detectors.exclude, detector); }
 
   // The label a protected detector that this hop does not collect is given:
   // what another hop collects on it, else its configured isotope, else (no
@@ -86,21 +87,25 @@ class Desugar {
     return detector;
   }
 
-  Position position_of(const Hop& hop) const {
+  Position position_of(const V1Hop& hop) const {
     Position pos;
     pos.kind = hop.baseline ? PositionKind::Baseline : PositionKind::Signal;
     pos.counts = hop.counts;
     pos.settle_s = hop.settle_s;
     for (const auto& [label, det] : hop.positions) {
-      if (excluded(det)) continue;
       CollectEntry e;
       e.label = label;
       e.detector = det;
       e.protect = contains(hop.protect, det);
+      // An excluded detector is not collected; if the hop protects it, it
+      // stays protected during the move, as the v1 engine did.
+      if (excluded(det)) {
+        if (!e.protect) continue;
+        e.active = false;
+      }
       pos.collect.push_back(std::move(e));
     }
     for (const auto& det : hop.protect) {
-      if (excluded(det)) continue;
       const bool listed = std::any_of(hop.positions.begin(), hop.positions.end(),
                                       [&](const auto& kv) { return kv.second == det; });
       const bool added = std::any_of(pos.collect.begin(), pos.collect.end(),
@@ -119,7 +124,14 @@ class Desugar {
       if (hop.baseline && hop.mass) pos.at = AtMass{*hop.mass, hop.position->detector};
       else pos.at = AtLabel{hop.position->isotope, hop.position->detector};
     } else if (hop.baseline && hop.mass) {
-      pos.at = AtMass{*hop.mass, v1_.detectors.reference};
+      pos.at = AtMass{*hop.mass, plan_.detectors.reference};
+    } else if (excluded(plan_.detectors.reference)) {
+      // The v1 engine positioned on the reference even when it was excluded
+      // from collection; with its entry gone, that target is written out.
+      const auto& ref = plan_.detectors.reference;
+      const auto it = std::find_if(hop.positions.begin(), hop.positions.end(),
+                                   [&](const auto& kv) { return kv.second == ref; });
+      if (it != hop.positions.end()) pos.at = AtLabel{it->first, ref};
     }
     return pos;
   }
@@ -169,7 +181,7 @@ class Desugar {
         if (!seen) pos.collect.push_back(CollectEntry{e.label, e.detector, true, std::nullopt, false});
       }
     }
-    if (b.mass) pos.at = AtMass{*b.mass, b.detector.empty() ? v1_.detectors.reference : b.detector};
+    if (b.mass) pos.at = AtMass{*b.mass, b.detector.empty() ? plan_.detectors.reference : b.detector};
     Segment s;
     s.kind = SegmentKind::Baseline;
     s.when = when;
@@ -182,7 +194,7 @@ class Desugar {
     const auto& pc = v1_.peak_center;
     PeakCenterStep step;
     step.label = pc.isotope;
-    const auto& det = pc.detector.empty() ? v1_.detectors.reference : pc.detector;
+    const auto& det = pc.detector.empty() ? plan_.detectors.reference : pc.detector;
     if (!det.empty()) step.detectors.push_back(det);
     step.config = pc.config;
     step.min_signal = min_signal;
@@ -193,14 +205,16 @@ class Desugar {
     return s;
   }
 
-  const MeasurementPlan& v1_;
+  const MeasurementPlan& plan_;
+  const V1Tables& v1_;
   const ISpectrometerCatalog* catalog_;
 };
 
 }  // namespace
 
-Result<std::vector<Gas>> desugar_v1(const MeasurementPlan& v1, const ISpectrometerCatalog* catalog) {
-  return Desugar(v1, catalog).run();
+Result<std::vector<Gas>> desugar_v1(const MeasurementPlan& plan, const V1Tables& v1,
+                                    const ISpectrometerCatalog* catalog) {
+  return Desugar(plan, v1, catalog).run();
 }
 
 }  // namespace pychron::experiment::plan::detail

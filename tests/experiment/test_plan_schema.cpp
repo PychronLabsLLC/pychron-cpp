@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #include "pychron/experiment/plan/duration.hpp"
@@ -112,6 +113,38 @@ MeasurementPlan minimal(int cycles, int counts) {
   return p.value_or(MeasurementPlan{});
 }
 
+
+// The first segment of `kind` at `when` in the plan's first gas; nullptr when none.
+const Segment* segment_of(const MeasurementPlan& p, SegmentKind kind, When when) {
+  if (p.gases.empty()) return nullptr;
+  const auto& segs = p.gases.front().segments;
+  const auto it =
+      std::find_if(segs.begin(), segs.end(), [&](const Segment& s) { return s.kind == kind && s.when == when; });
+  return it == segs.end() ? nullptr : &*it;
+}
+
+// The plan's main segment (v1 [main]); an empty one when it has none.
+const Segment& main_of(const MeasurementPlan& p) {
+  static const Segment none;
+  const auto* m = p.gases.empty() ? nullptr : main_segment(p.gases.front());
+  return m != nullptr ? *m : none;
+}
+
+// The detector a position collects `label` on; empty when it does not.
+std::string detector_of(const plan::Position& pos, std::string_view label) {
+  for (const auto& e : pos.collect)
+    if (e.label == label) return e.detector;
+  return {};
+}
+
+// The detectors a position protects, in collect order.
+std::vector<std::string> protected_of(const plan::Position& pos) {
+  std::vector<std::string> out;
+  for (const auto& e : pos.collect)
+    if (e.protect) out.push_back(e.detector);
+  return out;
+}
+
 }  // namespace
 
 // ---- valid templates --------------------------------------------------------
@@ -126,19 +159,25 @@ TEST(PlanSchema, MulticollectResolvesAliasesAndSections) {
   EXPECT_EQ(p.equilibration.outlet, "V13");
   EXPECT_DOUBLE_EQ(p.equilibration.time_s, 20);  // "@extraction.eqtime"
   EXPECT_DOUBLE_EQ(p.equilibration.inlet_delay_s, 3);
-  EXPECT_TRUE(p.sniff.enabled);
-  EXPECT_EQ(p.sniff.counts, 20);  // "@equilibration.time_s" -> "@extraction.eqtime"
-  EXPECT_TRUE(p.peak_center.after);
-  EXPECT_EQ(p.peak_center.isotope, "Ar40");
-  EXPECT_EQ(p.baseline.counts, 120);
-  ASSERT_TRUE(p.baseline.mass);
-  EXPECT_DOUBLE_EQ(*p.baseline.mass, 34.2);
-  EXPECT_EQ(p.main.cycles, 1);
-  EXPECT_EQ(p.main.time_zero.kind, TimeZeroKind::OnInletClose);
-  ASSERT_EQ(p.main.hops.size(), 1u);
-  EXPECT_EQ(p.main.hops[0].positions.size(), 5u);
-  EXPECT_EQ(p.main.hops[0].positions.at("Ar36"), "CDD");
-  EXPECT_EQ(p.main.hops[0].counts, 400);
+  const auto* sniff = segment_of(p, SegmentKind::Sniff, When::DuringEquilibration);
+  ASSERT_TRUE(sniff);
+  EXPECT_EQ(sniff->positions.at(0).counts, 20);  // "@equilibration.time_s" -> "@extraction.eqtime"
+  const auto* center = segment_of(p, SegmentKind::PeakCenter, When::AfterRun);
+  ASSERT_TRUE(center && center->peak_center);
+  EXPECT_EQ(center->peak_center->label, "Ar40");
+  const auto* baseline = segment_of(p, SegmentKind::Baseline, When::AfterMain);
+  ASSERT_TRUE(baseline);
+  EXPECT_EQ(baseline->positions.at(0).counts, 120);
+  ASSERT_TRUE(baseline->positions.at(0).at);
+  EXPECT_DOUBLE_EQ(std::get<AtMass>(*baseline->positions.at(0).at).mass, 34.2);
+  const auto& main = main_of(p);
+  EXPECT_EQ(main.cycles, 1);
+  ASSERT_TRUE(main.time_zero);
+  EXPECT_EQ(main.time_zero->kind, TimeZeroKind::OnInletClose);
+  ASSERT_EQ(main.positions.size(), 1u);
+  EXPECT_EQ(main.positions[0].collect.size(), 5u);
+  EXPECT_EQ(detector_of(main.positions[0], "Ar36"), "CDD");
+  EXPECT_EQ(main.positions[0].counts, 400);
   EXPECT_EQ(p.fits.signal.at("Ar40"), reduction::FitKind::Parabolic);
   EXPECT_EQ(signal_fit(p.fits, "Ar39").kind, reduction::FitKind::Linear);
   EXPECT_EQ(signal_fit(p.fits, "Ar40").kind, reduction::FitKind::Parabolic);
@@ -148,7 +187,7 @@ TEST(PlanSchema, MulticollectResolvesAliasesAndSections) {
   EXPECT_EQ(p.conditionals.include[0], "@conditionals.default_unknown");  // kept verbatim
   ASSERT_EQ(p.conditionals.truncations.size(), 1u);
   EXPECT_EQ(p.conditionals.truncations[0].start, 20);
-  EXPECT_FALSE(p.whiff.enabled);
+  EXPECT_FALSE(segment_of(p, SegmentKind::Whiff, When::AfterInlet));
   ASSERT_TRUE(p.hook);
   EXPECT_EQ(*p.hook, "scripts/measurement_hooks/whiff.py");
   ASSERT_EQ(p.expose.size(), 9u);
@@ -158,26 +197,30 @@ TEST(PlanSchema, MulticollectResolvesAliasesAndSections) {
 
 TEST(PlanSchema, PeakHopTargetsFollowReferenceOrExplicitPosition) {
   const auto p = load_fixture("peak_hop_cdd.toml");
-  EXPECT_EQ(p.main.cycles, 20);
-  EXPECT_EQ(p.main.time_zero.kind, TimeZeroKind::Offset);
-  EXPECT_DOUBLE_EQ(p.main.time_zero.offset_s, 5);
-  ASSERT_EQ(p.main.hops.size(), 3u);
-  EXPECT_EQ(hop_target(p, p.main.hops[0]), (HopTarget{"Ar40", std::nullopt, "H1"}));
-  EXPECT_EQ(hop_target(p, p.main.hops[1]), (HopTarget{"Ar39", std::nullopt, "CDD"}));
-  EXPECT_EQ(hop_target(p, p.main.hops[2]), (HopTarget{"", 34.2, "CDD"}));
-  EXPECT_TRUE(p.main.hops[2].baseline);
-  EXPECT_EQ(p.main.hops[0].protect, std::vector<std::string>{"CDD"});
-  EXPECT_EQ(baseline_target(p), (HopTarget{"", 34.2, "H1"}));
+  const auto& main = main_of(p);
+  EXPECT_EQ(main.cycles, 20);
+  ASSERT_TRUE(main.time_zero);
+  EXPECT_EQ(main.time_zero->kind, TimeZeroKind::Offset);
+  EXPECT_DOUBLE_EQ(main.time_zero->offset_s, 5);
+  ASSERT_EQ(main.positions.size(), 3u);
+  EXPECT_EQ(position_target(p, main.positions[0]), (At{AtLabel{"Ar40", "H1"}}));
+  EXPECT_EQ(position_target(p, main.positions[1]), (At{AtLabel{"Ar39", "CDD"}}));
+  EXPECT_EQ(position_target(p, main.positions[2]), (At{AtMass{34.2, "CDD"}}));
+  EXPECT_EQ(main.positions[2].kind, PositionKind::Baseline);
+  EXPECT_EQ(protected_of(main.positions[0]), std::vector<std::string>{"CDD"});
+  const auto* baseline = segment_of(p, SegmentKind::Baseline, When::AfterMain);
+  ASSERT_TRUE(baseline);
+  EXPECT_EQ(position_target(p, baseline->positions.at(0)), (At{AtMass{34.2, "H1"}}));
 }
 
 TEST(PlanSchema, ExcludedDetectorsDropOutOfEveryHop) {
   const auto p = load_fixture("multicollect.toml", {{"detectors.exclude", std::string("CDD, L2")}});
   EXPECT_EQ(p.detectors.exclude, (std::vector<std::string>{"CDD", "L2"}));
-  const auto act = active_detectors(p, p.main.hops[0]);
+  const auto act = collecting(main_of(p).positions.at(0));
   ASSERT_EQ(act.size(), 3u);
-  EXPECT_EQ(act[0], (ActiveDetector{"Ar38", "L1"}));
-  EXPECT_EQ(act[1], (ActiveDetector{"Ar39", "AX"}));
-  EXPECT_EQ(act[2], (ActiveDetector{"Ar40", "H1"}));
+  EXPECT_EQ(act[0], (CollectEntry{"Ar38", "L1", true, std::nullopt, false}));
+  EXPECT_EQ(act[1], (CollectEntry{"Ar39", "AX", true, std::nullopt, false}));
+  EXPECT_EQ(act[2], (CollectEntry{"Ar40", "H1", true, std::nullopt, false}));
 }
 
 TEST(PlanSchema, NullSpectrometerSkipsDetectorChecks) {
@@ -238,11 +281,15 @@ TEST(PlanSchema, PeakCenterMinimumSignal) {
   const std::string text = std::string(head).replace(head.find("COUNTS"), 6, "5");
   auto none = resolve_plan(text + "[peak_center]\nafter = true\nisotope = \"Ar40\"\n", kResolvers);
   ASSERT_TRUE(none.has_value()) << none.error().what;
-  EXPECT_DOUBLE_EQ(none->peak_center.min_signal, 0);  // no minimum: every peak center runs
+  const auto* step = segment_of(*none, SegmentKind::PeakCenter, When::AfterRun);
+  ASSERT_TRUE(step && step->peak_center);
+  EXPECT_DOUBLE_EQ(step->peak_center->min_signal, 0);  // no minimum: every peak center runs
 
   auto set = resolve_plan(text + "[peak_center]\nafter = true\nisotope = \"Ar40\"\nmin_signal = 0.05\n", kResolvers);
   ASSERT_TRUE(set.has_value()) << set.error().what;
-  EXPECT_DOUBLE_EQ(set->peak_center.min_signal, 0.05);
+  step = segment_of(*set, SegmentKind::PeakCenter, When::AfterRun);
+  ASSERT_TRUE(step && step->peak_center);
+  EXPECT_DOUBLE_EQ(step->peak_center->min_signal, 0.05);
 
   auto negative = resolve_plan(text + "[peak_center]\nafter = true\nisotope = \"Ar40\"\nmin_signal = -1\n", kResolvers,
                                "neg.toml");
@@ -255,7 +302,7 @@ TEST(PlanSchema, PeakCenterMinimumSignal) {
 
 TEST(PlanOverrides, ExposedIndexedPathIsSettable) {
   const auto p = load_fixture("multicollect.toml", {{"main.hops[0].counts", std::int64_t{200}}});
-  EXPECT_EQ(p.main.hops[0].counts, 200);
+  EXPECT_EQ(main_of(p).positions.at(0).counts, 200);
 }
 
 TEST(PlanOverrides, NonExposedPathRejectedUnlessAdvanced) {
@@ -267,7 +314,7 @@ TEST(PlanOverrides, NonExposedPathRejectedUnlessAdvanced) {
 
   auto adv = load_plan(t, ov, kResolvers, LoadOptions{.advanced = true});
   ASSERT_TRUE(adv) << adv.error().what;
-  EXPECT_DOUBLE_EQ(adv->plan.main.hops[0].settle_s, 5.0);
+  EXPECT_DOUBLE_EQ(main_of(adv->plan).positions.at(0).settle_s, 5.0);
 }
 
 TEST(PlanOverrides, MissingPathRejectedEvenWhenAdvanced) {
@@ -297,8 +344,8 @@ TEST(PlanOverrides, TypeMustMatchTemplate) {
   // An int sets a float; an integral double sets an int.
   const auto p = load_fixture("multicollect.toml",
                               {{"main.integration_s", std::int64_t{2}}, {"main.cycles", 3.0}});
-  EXPECT_DOUBLE_EQ(p.main.integration_s, 2.0);
-  EXPECT_EQ(p.main.cycles, 3);
+  EXPECT_DOUBLE_EQ(main_of(p).integration_s, 2.0);
+  EXPECT_EQ(main_of(p).cycles, 3);
 }
 
 TEST(PlanOverrides, ChildOfExposedTableMaySetOrAddKey) {
@@ -322,7 +369,9 @@ TEST(PlanOverrides, ScalarMayReplaceAlias) {
   auto r = load_plan(t, {{"equilibration.time_s", std::int64_t{30}}}, kResolvers, LoadOptions{.advanced = true});
   ASSERT_TRUE(r) << r.error().what;
   EXPECT_DOUBLE_EQ(r->plan.equilibration.time_s, 30);
-  EXPECT_EQ(r->plan.sniff.counts, 30);  // self reference follows the override
+  const auto* sniff = segment_of(r->plan, SegmentKind::Sniff, When::DuringEquilibration);
+  ASSERT_TRUE(sniff);
+  EXPECT_EQ(sniff->positions.at(0).counts, 30);  // self reference follows the override
 }
 
 TEST(PlanOverrides, IndexedExposeOnArrayValue) {
@@ -330,9 +379,10 @@ TEST(PlanOverrides, IndexedExposeOnArrayValue) {
   auto r = load_plan(t, {{"main.hops[0].protect", std::string("CDD,L2")}, {"main.hops[1].counts", std::int64_t{25}}},
                      kResolvers);
   ASSERT_TRUE(r) << r.error().what;
-  EXPECT_EQ(r->plan.main.hops[0].protect, (std::vector<std::string>{"CDD", "L2"}));
-  EXPECT_EQ(r->plan.main.hops[1].counts, 25);
-  EXPECT_EQ(r->plan.main.hops[2].counts, 10);
+  const auto& main = main_of(r->plan);
+  EXPECT_EQ(protected_of(main.positions.at(0)), (std::vector<std::string>{"CDD", "L2"}));
+  EXPECT_EQ(main.positions.at(1).counts, 25);
+  EXPECT_EQ(main.positions.at(2).counts, 10);
 }
 
 // ---- effective-plan rendering ------------------------------------------------
@@ -348,8 +398,10 @@ TEST(PlanRender, EffectivePlanCarriesOverridesAndRoundTrips) {
   auto again = resolve_plan(loaded->effective_toml, kResolvers);
   ASSERT_TRUE(again) << again.error().what;
   EXPECT_EQ(*again, loaded->plan);
-  EXPECT_EQ(again->main.hops[0].counts, 250);
-  EXPECT_EQ(again->baseline.counts, 60);
+  EXPECT_EQ(main_of(*again).positions.at(0).counts, 250);
+  const auto* baseline = segment_of(*again, SegmentKind::Baseline, When::AfterMain);
+  ASSERT_TRUE(baseline);
+  EXPECT_EQ(baseline->positions.at(0).counts, 60);
 
   // Deterministic: same inputs, same text; rendering the effective plan with
   // no overrides reproduces it.
@@ -369,9 +421,10 @@ TEST(PlanRender, NoOverridesStillRendersTemplate) {
   ASSERT_TRUE(text);
   auto p = resolve_plan(*text, kResolvers);
   ASSERT_TRUE(p) << p.error().what;
-  EXPECT_EQ(p->main.hops.size(), 3u);
-  ASSERT_TRUE(p->baseline.mass);
-  EXPECT_EQ(*p->baseline.mass, 34.2);  // floats render at full precision
+  EXPECT_EQ(main_of(*p).positions.size(), 3u);
+  const auto* baseline = segment_of(*p, SegmentKind::Baseline, When::AfterMain);
+  ASSERT_TRUE(baseline && baseline->positions.at(0).at);
+  EXPECT_EQ(std::get<AtMass>(*baseline->positions.at(0).at).mass, 34.2);  // floats render at full precision
 }
 
 // ---- duration ------------------------------------------------------------------
@@ -624,10 +677,11 @@ settle_s = 4
 
 TEST(PlanSchema, WhiffBlock) {
   const auto p = load_fixture("peak_hop_cdd.toml");
-  EXPECT_TRUE(p.whiff.enabled);
-  EXPECT_EQ(p.whiff.counts, 4);
-  EXPECT_DOUBLE_EQ(p.whiff.integration_s, 0.5);
-  ASSERT_EQ(p.whiff.checks.size(), 2u);
-  EXPECT_EQ(p.whiff.checks[0], (WhiffCheck{"Ar40.cur > 5e6", "abort"}));
-  EXPECT_EQ(p.whiff.checks[1].action, "pump");
+  const auto* whiff = segment_of(p, SegmentKind::Whiff, When::AfterInlet);
+  ASSERT_TRUE(whiff);
+  EXPECT_EQ(whiff->positions.at(0).counts, 4);
+  EXPECT_DOUBLE_EQ(whiff->integration_s, 0.5);
+  ASSERT_EQ(whiff->checks.size(), 2u);
+  EXPECT_EQ(whiff->checks[0], (WhiffCheck{"Ar40.cur > 5e6", "abort"}));
+  EXPECT_EQ(whiff->checks[1].action, "pump");
 }
