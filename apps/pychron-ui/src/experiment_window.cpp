@@ -23,8 +23,11 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollBar>
+#include <QSplitter>
 #include <QTableView>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "pychron/experiment/model/queue_file.hpp"
@@ -74,7 +77,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
       simulation_(simulation),
       settings_(settings ? std::move(settings) : std::make_unique<QSettings>()),
       model_(bridge.lab().ids, [&bridge](const experiment::QueueSpec& q) { return bridge.check(q); }),
-      table_(new QTableView),
+      queue_table_(new QTableView),
       diagnostics_(new QLabel),
       pane_(new ExecutorPane(bridge)),
       evolutions_(make_evolutions(bridge.lab())),
@@ -83,16 +86,69 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   setObjectName(QStringLiteral("ExperimentWindow"));
   resize(1300, 850);
 
-  table_->setModel(&model_);
-  table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-  table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-  table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed |
-                          QAbstractItemView::AnyKeyPressed);
-  table_->verticalHeader()->hide();
-  table_->horizontalHeader()->setStretchLastSection(true);
-  table_->setColumnWidth(QueueTableModel::Row, 40);
-  table_->setColumnWidth(QueueTableModel::Status, 110);
-  table_->setContextMenuPolicy(Qt::ActionsContextMenu);
+  queue_table_->setObjectName(QStringLiteral("queue_table"));
+  queue_table_->setModel(&queue_proxy_);
+  queue_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  queue_table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  queue_table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed |
+                                QAbstractItemView::AnyKeyPressed);
+  queue_table_->verticalHeader()->hide();
+  queue_table_->horizontalHeader()->setStretchLastSection(true);
+  queue_table_->setContextMenuPolicy(Qt::ActionsContextMenu);
+
+  // The executed runs: read-only, the Queue table's column widths.
+  executed_table_ = new QTableView;
+  executed_table_->setObjectName(QStringLiteral("executed_table"));
+  executed_table_->setModel(&executed_proxy_);
+  executed_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  executed_table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  executed_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  executed_table_->verticalHeader()->hide();
+  executed_table_->horizontalHeader()->setStretchLastSection(true);
+  connect(queue_table_->horizontalHeader(), &QHeaderView::sectionResized, executed_table_,
+          [this](int section, int, int size) { executed_table_->horizontalHeader()->resizeSection(section, size); });
+  queue_table_->setColumnWidth(QueueTableModel::Row, 40);
+  queue_table_->setColumnWidth(QueueTableModel::Status, 110);
+  for (int c = 0; c < model_.columnCount(); ++c) executed_table_->setColumnWidth(c, queue_table_->columnWidth(c));
+  // It follows its newest row while its scroll bar is at the end.
+  connect(executed_table_->verticalScrollBar(), &QScrollBar::valueChanged, this,
+          [this](int value) { executed_follow_ = value >= executed_table_->verticalScrollBar()->maximum(); });
+
+  executed_fold_ = new QToolButton;
+  executed_fold_->setObjectName(QStringLiteral("executed_fold"));
+  executed_fold_->setAutoRaise(true);
+  connect(executed_fold_, &QToolButton::clicked, this, [this] { set_executed_collapsed(!executed_collapsed_); });
+  executed_count_ = new QLabel;
+  executed_count_->setObjectName(QStringLiteral("executed_count"));
+  executed_header_ = new QWidget;
+  auto* executed_header_row = new QHBoxLayout(executed_header_);
+  executed_header_row->setContentsMargins(6, 2, 6, 2);
+  executed_header_row->addWidget(executed_fold_);
+  executed_header_row->addWidget(executed_count_);
+  executed_header_row->addStretch(1);
+  executed_section_ = new QWidget;
+  executed_section_->setObjectName(QStringLiteral("executed_section"));
+  auto* executed_column = new QVBoxLayout(executed_section_);
+  executed_column->setContentsMargins(0, 0, 0, 0);
+  executed_column->setSpacing(0);
+  executed_column->addWidget(executed_header_);
+  executed_column->addWidget(executed_table_, 1);
+
+  tables_splitter_ = new QSplitter(Qt::Vertical);
+  tables_splitter_->setObjectName(QStringLiteral("tables_splitter"));
+  tables_splitter_->setChildrenCollapsible(false);
+  tables_splitter_->addWidget(executed_section_);
+  tables_splitter_->addWidget(queue_table_);
+  tables_splitter_->setStretchFactor(0, 1);
+  tables_splitter_->setStretchFactor(1, 2);
+  // The fold first: a collapsed section has only its header's minimum
+  // height, and the sizes restored must not be held to the table's.
+  executed_collapsed_ = settings_->value(QStringLiteral("experiment_window/executed_collapsed"), false).toBool();
+  set_executed_collapsed(executed_collapsed_);
+  const QString split_key = QStringLiteral("experiment_window/tables_splitter");
+  if (settings_->contains(split_key)) tables_splitter_->restoreState(settings_->value(split_key).toByteArray());
+  connect(tables_splitter_, &QSplitter::splitterMoved, this,
+          [this, split_key] { settings_->setValue(split_key, tables_splitter_->saveState()); });
   diagnostics_->setObjectName(QStringLiteral("QueueDiagnostics"));
   style::make_banner(diagnostics_);
   diagnostics_->setWordWrap(true);
@@ -114,7 +170,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   header->addWidget(edit_conditionals);
   header->addStretch(1);
   column->addLayout(header);
-  column->addWidget(table_, 1);
+  column->addWidget(tables_splitter_, 1);
   connect(queue_conditionals_, &QComboBox::activated, this, [this](int i) {
     if (!model_.set_queue_conditionals(queue_conditionals_->itemData(i).toString().toStdString()))
       sync_queue_conditionals();  // refused: show what the queue has
@@ -163,11 +219,14 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   connect(&model_, &QueueTableModel::edited, this, [this] { set_modified(true); });
   connect(&model_, &QueueTableModel::validated, this, [this] { update_state(); });
   connect(pane_, &ExecutorPane::startRequested, this, [this] { start(); });
-  connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, measurement_,
+  connect(&model_, &QueueTableModel::executedChanged, this, [this] { on_executed_changed(); });
+  connect(queue_table_->selectionModel(), &QItemSelectionModel::selectionChanged, measurement_,
           [this] { measurement_->refresh(); });
   connect(factory_, &RunFactoryPanel::inserted, this, [this](const std::vector<std::size_t>& rows) {
     select_rows(rows);
-    if (!rows.empty()) table_->scrollTo(model_.index(static_cast<int>(rows.back()), 0));
+    if (rows.empty()) return;
+    const QModelIndex at = queue_proxy_.mapFromSource(model_.index(static_cast<int>(rows.back()), 0));
+    if (at.isValid()) queue_table_->scrollTo(at);
   });
 
   connect(&bridge_, &ExperimentBridge::runStarted, this, [this](const exec::RunStarted& e) {
@@ -205,7 +264,7 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
   layouts_->restore_last();
 
   update_title();
-  update_state();
+  on_executed_changed();  // ends with update_state()
 }
 
 // The panels and the toolbar as installed. Run again by Reset Layout, so it
@@ -350,7 +409,7 @@ void ExperimentWindow::build_actions() {
   const Menu rows = Menu::Rows;
   auto add_row_action = [&](const QString& name, const QKeySequence& key, std::function<void()> f) {
     QAction* a = add(rows, name, std::move(f), key);
-    table_->addAction(a);
+    queue_table_->addAction(a);
     row_actions_.push_back(a);
   };
   add_row_action(tr("Move Up"), key(Shortcut::MoveRowsUp), [this] {
@@ -392,18 +451,25 @@ void ExperimentWindow::build_actions() {
   menus.contribute(this, run, {notify}, MenuHub::Scope::Window);
 }
 
+// Source rows of the Queue table's selection: the rows row actions act on.
 std::vector<std::size_t> ExperimentWindow::selected_rows() const {
-  if (table_->selectionModel() == nullptr) return {};  // panels ask while the window is still being built
+  if (queue_table_->selectionModel() == nullptr) return {};  // panels ask while the window is still being built
   std::set<std::size_t> rows;
-  for (const auto& i : table_->selectionModel()->selectedIndexes()) rows.insert(static_cast<std::size_t>(i.row()));
+  for (const auto& i : queue_table_->selectionModel()->selectedIndexes()) {
+    const QModelIndex source = queue_proxy_.mapToSource(i);
+    if (source.isValid()) rows.insert(static_cast<std::size_t>(source.row()));
+  }
   return {rows.begin(), rows.end()};
 }
 
+// Selects source rows in the Queue table; one not in it (executed) is left out.
 void ExperimentWindow::select_rows(const std::vector<std::size_t>& rows) {
-  auto* sel = table_->selectionModel();
+  auto* sel = queue_table_->selectionModel();
   sel->clearSelection();
-  for (auto r : rows)
-    sel->select(model_.index(static_cast<int>(r), 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+  for (auto r : rows) {
+    const QModelIndex at = queue_proxy_.mapFromSource(model_.index(static_cast<int>(r), 0));
+    if (at.isValid()) sel->select(at, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+  }
 }
 
 void ExperimentWindow::select_row(int row) { select_rows({static_cast<std::size_t>(row)}); }
@@ -668,14 +734,15 @@ void ExperimentWindow::save_as_dialog() {
 
 void ExperimentWindow::start() {
   if (bridge_.running()) return;
-  const auto rows = selected_rows();
-  const std::size_t from = rows.empty() ? 0 : rows.front();
+  // The first row of the Queue table (queue-tables design 3): the executed
+  // rows keep their statuses.
+  const std::size_t from = model_.executed_rows();
   auto r = bridge_.start(model_.queue(), from);
   if (!r) {
     pane_->show_error(QString::fromStdString(r.error().what));
     return;
   }
-  model_.clear_status();
+  model_.clear_status(from);
   // Rows after those the executor has reached stay editable; each change
   // goes to the running executor first.
   model_.set_live(from, [this](std::uint64_t base, const experiment::QueueSpec& q) { return bridge_.edit(base, q); });
@@ -711,6 +778,25 @@ void ExperimentWindow::update_state() {
   sync_queue_conditionals();
 }
 
+void ExperimentWindow::set_executed_collapsed(bool collapsed) {
+  const bool changed = collapsed != executed_collapsed_;
+  executed_collapsed_ = collapsed;
+  executed_table_->setVisible(!collapsed);
+  executed_fold_->setArrowType(collapsed ? Qt::RightArrow : Qt::DownArrow);
+  executed_fold_->setToolTip(collapsed ? tr("Show the executed runs") : tr("Hide the executed runs"));
+  // Collapsed, the splitter gives the section no more than its header.
+  executed_section_->setMaximumHeight(collapsed ? executed_header_->sizeHint().height() : QWIDGETSIZE_MAX);
+  if (changed) settings_->setValue(QStringLiteral("experiment_window/executed_collapsed"), collapsed);
+}
+
+void ExperimentWindow::on_executed_changed() {
+  const auto rows = model_.executed_rows();
+  executed_count_->setText(tr("Executed (%1)").arg(static_cast<qulonglong>(rows)));
+  executed_section_->setVisible(rows > 0);
+  if (executed_follow_) executed_table_->scrollToBottom();
+  update_state();
+}
+
 void ExperimentWindow::closeEvent(QCloseEvent* event) {
   if (!resolve_unsaved() || (script_editor_ != nullptr && script_editor_->isVisible() && !script_editor_->close()) ||
       (conditionals_editor_ != nullptr && conditionals_editor_->isVisible() && !conditionals_editor_->close())) {
@@ -719,6 +805,7 @@ void ExperimentWindow::closeEvent(QCloseEvent* event) {
   }
   if (bridge_.running() && ask_stop_()) bridge_.stop();
   layouts_->save_last();
+  settings_->setValue(QStringLiteral("experiment_window/tables_splitter"), tables_splitter_->saveState());
   QMainWindow::closeEvent(event);
 }
 

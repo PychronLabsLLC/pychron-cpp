@@ -21,7 +21,11 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QTabBar>
+#include <QLabel>
+#include <QSortFilterProxyModel>
+#include <QSplitter>
 #include <QTableView>
+#include <QToolButton>
 #include <QTemporaryDir>
 #include <QDockWidget>
 #include <QToolBar>
@@ -501,6 +505,10 @@ class TestExperimentWindow : public QObject {
     QVERIFY(!pane->start_enabled());
     QVERIFY(!window.load_queue(queue_file(sim, "other.toml"), &error));
     QCOMPARE(error, QStringLiteral("a queue is running"));
+    // A run moves to Executed when it starts (queue-tables design 2).
+    QTRY_VERIFY(window.model().status(0).has_value());
+    QTRY_VERIFY(window.executed_table()->model()->rowCount() >= 1);
+    QVERIFY(window.executed_section()->isVisible());
 
     QTRY_VERIFY_WITH_TIMEOUT(!pane->running(), 60000);
     for (int row = 0; row < 3; ++row) QCOMPARE(window.model().status(row), std::optional<RunState>(RunState::Success));
@@ -589,7 +597,11 @@ class TestExperimentWindow : public QObject {
     QVERIFY(waits >= 2);  // the delays before the runs
     // Every row was executed: nothing is left to start (queue-tables design 2).
     QCOMPARE(window.model().executed_rows(), 3u);
+    QCOMPARE(window.executed_table()->model()->rowCount(), 3);
+    QCOMPARE(window.queue_table()->model()->rowCount(), 0);
     QVERIFY(!pane->start_enabled());
+    QVERIFY(window.model().reset_executed());
+    QVERIFY(pane->start_enabled());
     // A second queue in the same window starts with no peak center kept.
     emit bridge.queueStarted(pychron::experiment::lab::QueueStarted{3, 0});
     QCOMPARE(evo->peak_center_view()->kept(), 0);
@@ -814,7 +826,7 @@ class TestExperimentWindow : public QObject {
     QVERIFY2(*run2_start < *run1_end, qPrintable(QStringLiteral("%1 %2").arg(*run2_start).arg(*run1_end)));
   }
 
-  void cancelAsksFirstAndStartsFromTheSelectedRow() {
+  void cancelAsksFirstAndStartsAtTheFirstNotExecutedRow() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());
     ExperimentWindow window(bridge, false, settings());
@@ -827,9 +839,8 @@ class TestExperimentWindow : public QObject {
       return answer;
     });
     window.select_row(1);
-    window.start();
-    QTRY_VERIFY_WITH_TIMEOUT(window.model().status(1).has_value(), 30000);
-    QVERIFY(!window.model().status(0).has_value());
+    window.start();  // the selection is not read: the first row not executed
+    QTRY_VERIFY_WITH_TIMEOUT(window.model().status(0).has_value(), 30000);
 
     window.executor()->request_cancel();  // declined
     window.executor()->request_abort();   // declined
@@ -843,8 +854,114 @@ class TestExperimentWindow : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 30000);
     QVERIFY(contains(window.executor()->events(), QStringLiteral("cancel requested")));
     QVERIFY(contains(window.executor()->events(), QStringLiteral("queue cancelled")));
-    QCOMPARE(window.model().status(1), std::optional<RunState>(RunState::Cancelled));
-    QVERIFY(!window.model().status(2).has_value());
+    QCOMPARE(window.model().status(0), std::optional<RunState>(RunState::Cancelled));
+    QVERIFY(!window.model().status(1).has_value());
+  }
+
+  // ---- the Executed and Queue tables (queue-tables design 3) -------------------
+
+  void theExecutedSectionShowsOnlyWithExecutedRows() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QVERIFY(!window.executed_section()->isVisible());
+    QVERIFY(window.model().resume_from(1, {}));
+    QVERIFY(window.executed_section()->isVisible());
+    auto* count = window.findChild<QLabel*>(QStringLiteral("executed_count"));
+    QVERIFY(count != nullptr);
+    QCOMPARE(count->text(), QStringLiteral("Executed (1)"));
+    QCOMPARE(window.executed_table()->model()->rowCount(), 1);
+    QCOMPARE(window.queue_table()->model()->rowCount(), 2);
+    QVERIFY(window.model().reset_executed());
+    QVERIFY(!window.executed_section()->isVisible());
+  }
+
+  void theTablesKeepTheirFoldAndSplitAcrossAReopen() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("s.ini"));
+    QByteArray split;
+    {
+      ExperimentWindow window(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+      QVERIFY(window.load_queue(queue_file(sim)));
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      QVERIFY(window.model().resume_from(1, {}));
+      QVERIFY(!window.executed_collapsed());
+      window.set_executed_collapsed(true);
+      QVERIFY(window.executed_collapsed());
+      QVERIFY(!window.executed_table()->isVisible());  // the header only
+      auto* fold = window.findChild<QToolButton*>(QStringLiteral("executed_fold"));
+      QVERIFY(fold != nullptr && fold->isVisible());
+      window.tables_splitter()->setSizes({100, 400});
+      split = window.tables_splitter()->saveState();
+      QVERIFY(window.close());
+    }
+    ExperimentWindow again(bridge, true, std::make_unique<QSettings>(file, QSettings::IniFormat));
+    QVERIFY(again.executed_collapsed());
+    QCOMPARE(again.tables_splitter()->saveState(), split);
+  }
+
+  void bothTablesShareTheirColumnWidths() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    window.queue_table()->setColumnWidth(QueueTableModel::Comment, 222);
+    QCOMPARE(window.executed_table()->columnWidth(QueueTableModel::Comment), 222);
+    QCOMPARE(window.executed_table()->columnWidth(QueueTableModel::Row), window.queue_table()->columnWidth(QueueTableModel::Row));
+  }
+
+  void rowActionsUseTheQueueSelection() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.model().resume_from(1, {}));
+    const auto executed = window.model().queue().runs[0];
+    const auto third = window.model().queue().runs[2];
+    auto* queue = window.queue_table();
+    auto* proxy = qobject_cast<QSortFilterProxyModel*>(queue->model());
+    QVERIFY(proxy != nullptr);
+    QCOMPARE(proxy->mapToSource(proxy->index(0, 0)).row(), 1);
+    window.select_row(0);  // executed: not in the Queue view
+    QVERIFY(queue->selectionModel()->selectedRows().isEmpty());
+    window.select_row(1);
+    QCOMPARE(queue->selectionModel()->selectedRows().size(), 1);
+    QAction* remove = nullptr;
+    for (QAction* a : queue->actions())
+      if (a->text() == QStringLiteral("Delete")) remove = a;
+    QVERIFY(remove != nullptr);
+    // The window's actions are enabled while it is the active window (MenuHub).
+    window.show();
+    window.activateWindow();
+    if (!QTest::qWaitForWindowActive(&window)) QSKIP("this platform does not activate windows");
+    QVERIFY(remove->isEnabled());
+    remove->trigger();
+    QCOMPARE(window.model().rowCount(), 2);
+    QVERIFY(window.model().queue().runs[0] == executed);
+    QVERIFY(window.model().queue().runs[1] == third);
+  }
+
+  void startBeginsAtTheFirstNotExecutedRow() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.model().resume_from(1, {}));
+    window.select_row(2);
+    window.start();
+    QVERIFY(bridge.running());
+    QTRY_VERIFY_WITH_TIMEOUT(window.model().status(1).has_value(), 30000);
+    QVERIFY(!window.model().status(0).has_value());  // the resume gave it none
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QCOMPARE(window.model().status(1), std::optional<RunState>(RunState::Success));
+    QCOMPARE(window.model().status(2), std::optional<RunState>(RunState::Success));
+    QCOMPARE(window.model().executed_rows(), 3u);
   }
 
   void aQueueWithErrorsCannotStart() {
@@ -1159,8 +1276,8 @@ class TestExperimentWindow : public QObject {
     run.conditionals = {{"default_unknown", "truncate"}, {"gone", "action"}};
     QVERIFY(window.model().replace_run(0, run));
     window.select_row(0);
-    window.table()->selectionModel()->select(window.model().index(1, 0),
-                                             QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    window.queue_table()->selectionModel()->select(window.queue_table()->model()->index(1, 0),
+                                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
     answer = std::nullopt;  // cancelled
     QVERIFY(!window.edit_selected_conditionals());
     QCOMPARE(asked, 1);
@@ -1229,7 +1346,7 @@ class TestExperimentWindow : public QObject {
     QVERIFY(window.load_queue(queue_file(sim)));
     using States = QList<Qt::CheckState>;
     QVERIFY(window.model().set_conditionals({0}, {"default_unknown"}));
-    window.table()->selectAll();
+    window.queue_table()->selectAll();
     int edits = 0;
     connect(&window.model(), &QueueTableModel::edited, this, [&] { ++edits; });
     // Rows end up with different lists (row 0 keeps its own file too): still one edit.
@@ -1243,7 +1360,7 @@ class TestExperimentWindow : public QObject {
 
     // The queue changes while the dialog is up (the executor inserts or removes runs):
     // the answer was about other rows, so nothing is applied.
-    window.table()->selectAll();
+    window.queue_table()->selectAll();
     window.set_pick_conditionals([&](const QStringList&, const States& states) {
       [&] { QVERIFY(window.model().remove({0, 1})); }();
       return std::optional<States>(States(states.size(), Qt::Unchecked));

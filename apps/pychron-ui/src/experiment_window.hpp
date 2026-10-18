@@ -1,7 +1,8 @@
 #pragma once
 
-// ExperimentWindow (experiment-window design 5.5): the queue table in the
-// center, the run factory and the selected run's measurement on the left
+// ExperimentWindow (experiment-window design 5.5): the queue's two tables in
+// the center (queue-tables design 3: Executed above, the runs not yet executed
+// in Queue below, one model split at its executed boundary), the run factory and the selected run's measurement on the left
 // (tabbed), the executor pane docked below and the evolutions on the right.
 //
 // The queue is edited in place and saved to its TOML file; every edit is
@@ -39,6 +40,7 @@
 #include "experiment_bridge.hpp"
 #include "pychron/core/clock.hpp"
 #include "queue_table_model.hpp"
+#include "queue_views.hpp"
 #include "measurement_panel.hpp"
 #include "run_factory_panel.hpp"
 #include "script_editor_window.hpp"
@@ -47,8 +49,11 @@ class QAction;
 class QComboBox;
 class QDockWidget;
 class QLabel;
+class QSplitter;
 class QTableView;
 class QToolBar;
+class QToolButton;
+class QWidget;
 
 namespace pychron::processing {
 class PresetStore;
@@ -73,7 +78,17 @@ class ExperimentWindow : public QMainWindow {
   QueueTableModel& model() noexcept { return model_; }
   // Where the panels are: the factory layout, the last one, the named ones.
   DockLayouts* dock_layouts() const noexcept { return layouts_; }
-  QTableView* table() const noexcept { return table_; }
+  // The runs not executed yet: edited here, and what row actions act on.
+  QTableView* queue_table() const noexcept { return queue_table_; }
+  // The runs executed (read-only), above the Queue table.
+  QTableView* executed_table() const noexcept { return executed_table_; }
+  // Its header row (fold button, "Executed (N)") and executed_table(); hidden
+  // while nothing is executed.
+  QWidget* executed_section() const noexcept { return executed_section_; }
+  QSplitter* tables_splitter() const noexcept { return tables_splitter_; }
+  // Collapsed, the Executed section shows its header only. Kept in QSettings.
+  bool executed_collapsed() const noexcept { return executed_collapsed_; }
+  void set_executed_collapsed(bool collapsed);
   ExecutorPane* executor() const noexcept { return pane_; }
   EvolutionsView* evolutions() const noexcept { return evolutions_; }
   RunFactoryPanel* factory() const noexcept { return factory_; }
@@ -125,8 +140,11 @@ class ExperimentWindow : public QMainWindow {
   bool modified() const noexcept { return modified_; }
   QString queue_diagnostics_text() const;
 
-  // Starts at the selected row (row 0 without a selection).
+  // Starts at the first row not executed (model().executed_rows()); the
+  // selection is not read.
   void start();
+  // Selects source row `row` in the Queue table, if it is there (an executed
+  // row is not).
   void select_row(int row);
 
   // Dialog hooks; defaults are message boxes. Tests replace them.
@@ -152,6 +170,9 @@ class ExperimentWindow : public QMainWindow {
   void run_due();
   void update_title();
   void update_state();
+  // The Executed section follows the boundary: its count, whether it shows,
+  // and its newest row unless the operator scrolled up.
+  void on_executed_changed();
   void save_as_dialog();
   void sync_queue_conditionals();  // the combo follows the queue and the lab's files
   std::optional<QList<Qt::CheckState>> pick_conditionals_dialog(const QStringList& names,
@@ -175,7 +196,17 @@ class ExperimentWindow : public QMainWindow {
   QTimer later_clock_;  // looks at the session's clock while something waits in later_
   QToolBar* toolbar_ = nullptr;
   QueueTableModel model_;
-  QTableView* table_;
+  QueueProxy queue_proxy_{model_};
+  ExecutedProxy executed_proxy_{model_};
+  QTableView* queue_table_;
+  QTableView* executed_table_ = nullptr;
+  QWidget* executed_section_ = nullptr;
+  QWidget* executed_header_ = nullptr;
+  QToolButton* executed_fold_ = nullptr;
+  QLabel* executed_count_ = nullptr;
+  QSplitter* tables_splitter_ = nullptr;
+  bool executed_collapsed_ = false;
+  bool executed_follow_ = true;  // the Executed table's scroll bar was at its end
   QLabel* diagnostics_;
   ExecutorPane* pane_;
   EvolutionsView* evolutions_;

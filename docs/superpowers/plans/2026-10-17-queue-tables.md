@@ -325,7 +325,7 @@ Each is written back into the spec by the task that makes it, so the two never d
   `Executed (%1)`. Splitter state saved with `saveState()` on `splitterMoved` and on close under
   `experiment_window/tables_splitter`; fold state under `experiment_window/executed_collapsed` when changed.
 
-- [ ] **Step 1: Write the failing tests, and move the existing ones to the Queue view**
+- [x] **Step 1: Write the failing tests, and move the existing ones to the Queue view**
 
   - `runsTheExampleQueue`: after `request_start()`, `QTRY_VERIFY(window.model().status(0).has_value())` then
     `QTRY_VERIFY(window.executed_table()->model()->rowCount() >= 1)` and `executed_section()->isVisible()`; at the
@@ -349,12 +349,12 @@ Each is written back into the spec by the task that makes it, so the two never d
   - `editsTheQueueWhileItRuns`, `rowsOpenTheirScriptsInTheEditor`: unchanged unless they fail; any use of the old
     table goes through `queue_table()`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   `cmake --build --preset dev-ui --target pychron_ui_test_experiment_window` fails (`queue_table`,
   `executed_table` undeclared).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
   Central widget: diagnostics, conditionals header, then a vertical `QSplitter`: the executed section
   (header row, `executed_table_`) above `queue_table_` (today's table, edit triggers, context menu, row actions
@@ -368,11 +368,11 @@ Each is written back into the spec by the task that makes it, so the two never d
   `start()`: `from = model_.executed_rows()`; `model_.clear_status(from)`; rest unchanged. Write decision 9 into
   spec section 3.
 
-- [ ] **Step 4: Run the window's tests**
+- [x] **Step 4: Run the window's tests**
 
   `build/dev-ui/tests/ui/pychron_ui_test_experiment_window` passes, every case.
 
-- [ ] **Step 5: Checks and commit**
+- [x] **Step 5: Checks and commit**
 
   `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
   `git commit -m "feat(ui): the experiment window shows executed runs apart from the queue"`

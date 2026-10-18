@@ -109,7 +109,19 @@ Window (`experiment_window.cpp:60`–`128`):
 - Run factory (`run_factory_panel.cpp:453`) inserts after the Queue view's
   selection; with none, appends (unchanged: `insert_position` clamps).
 - `select_rows` and `scrollTo` after an insert or move map source rows to
-  the Queue view.
+  the Queue view; a source row not in it (executed) skipped.
+- Names (plan decision 9): `ExperimentWindow::table()` becomes
+  `queue_table()`; added `executed_table()`, `executed_section()` (header
+  row and Executed table), `tables_splitter()`, `executed_collapsed()`,
+  `set_executed_collapsed(bool)`. Fold button `QToolButton` named
+  `executed_fold`, count `QLabel` named `executed_count`, text
+  `Executed (%1)`. Splitter state (`saveState()`) written on
+  `splitterMoved` and on close; fold state written when changed. Fold
+  state applied before splitter state restored: a collapsed section's
+  minimum is its header's, and restored sizes are not held to the table's.
+  Test `cancelAsksFirstAndStartsFromTheSelectedRow` renamed
+  `cancelAsksFirstAndStartsAtTheFirstNotExecutedRow` (start half changes
+  meaning, 7).
 
 ## 4. Menu actions (Experiment > Queue)
 
