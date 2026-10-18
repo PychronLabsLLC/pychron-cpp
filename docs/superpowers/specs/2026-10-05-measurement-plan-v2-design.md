@@ -177,6 +177,11 @@ In `spectrometer.toml`, not in plans:
 - `time_zero` at most once per gas unless as a step;
 - `[main]` and `[[segment]]` may not both appear at top level; `[[gas]]` and
   top-level segments may not both appear;
+- no two gases collect same `label@detector` with same `kind`: store keeps
+  one series of a kind per isotope per detector, so such a run would measure
+  and then not save (against 11.6). Refused at load: `gas '<a>' and gas
+  '<b>' both collect <kind> <label>@<detector>: the store keeps one`. Other
+  kind, or same label on other detector, allowed;
 - unknown keys at any level remain errors.
 
 ## 4. Desugaring and compatibility
