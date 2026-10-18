@@ -13,6 +13,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
+#include <QFileInfo>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -219,6 +220,9 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
   };
 
+  ask_resume_ = [this](const ResumeOffer& offer) { return ask_resume_dialog(offer); };
+  inform_ = [this](const QString& text) { QMessageBox::information(this, tr("Queue"), text); };
+
   build_actions();
 
   connect(&model_, &QueueTableModel::edited, this, [this] { set_modified(true); });
@@ -410,17 +414,23 @@ void ExperimentWindow::build_actions() {
   // The executed runs (queue-tables design 4); each says why it refuses.
   add(file, tr("Reset"), [this] {
     QString e;
-    if (!reset_executed(&e)) inform_refusal(tr("Reset"), e);
+    if (!reset_executed(&e)) inform_refusal(e);
   });
   add(file, tr("Clear Executed..."), [this] {
     QString e;
-    if (!clear_executed(&e)) inform_refusal(tr("Clear Executed"), e);
+    if (!clear_executed(&e)) inform_refusal(e);
   });
   auto repeat_last_run = [this] {
     QString e;
-    if (!repeat_last(&e)) inform_refusal(tr("Repeat Last Run"), e);
+    if (!repeat_last(&e)) inform_refusal(e);
   };
   add(file, tr("Repeat Last Run"), repeat_last_run);
+  // Resume after a crash or a Stop (5): says why when there is nothing.
+  resume_ = add(file, tr("Resume..."), [this] {
+    QString e;
+    if (offer_resume(&e)) return;
+    inform_(e == tr("a queue is running") ? tr("A queue is running.") : tr("Nothing to resume."));
+  });
   bar->addAction(open_);
   bar->addAction(save_);
   bar->addAction(revalidate_);
@@ -566,13 +576,51 @@ bool ExperimentWindow::repeat_last(QString* error) {
   return true;
 }
 
-void ExperimentWindow::inform_refusal(const QString& title, const QString& error) {
+void ExperimentWindow::inform_refusal(const QString& error) {
   if (error == tr("cancelled")) return;
   QString text = error;
   if (error == tr("a queue is running")) text = tr("A queue is running.");
   else if (error == tr("no run has been executed")) text = tr("No run has been executed.");
   else if (!text.isEmpty()) text = text.at(0).toUpper() + text.mid(1) + QLatin1Char('.');
-  QMessageBox::information(this, title, text);
+  inform_(text);
+}
+
+bool ExperimentWindow::offer_resume(QString* error) {
+  if (bridge_.running() || model_.live()) {
+    if (error != nullptr) *error = tr("a queue is running");
+    return false;
+  }
+  // The window that just stopped keeps its executed rows; Start goes on from
+  // them (design 5: not offered right after a Stop).
+  if (model_.executed_rows() > 0) return false;
+  const std::filesystem::path file = bridge_.session().data() / "executor_state.json";
+  auto state = experiment::executor::Executor::read_state(file);
+  if (!state) return false;  // no file, or one that does not read: nothing to offer
+  const QDateTime written = QFileInfo(QString::fromStdString(file.string())).lastModified();
+  const auto offer = resume_offer(*state, model_.queue(), written);
+  if (!offer) return false;
+  if (!ask_resume_(*offer) || !offer->resumable()) return false;
+  // The question ran an event loop: a queue may have started under it.
+  if (bridge_.running() || model_.live()) {
+    if (error != nullptr) *error = tr("a queue is running");
+    return false;
+  }
+  if (!model_.resume_from(offer->next_row, offer->statuses)) return false;
+  start();
+  return true;
+}
+
+bool ExperimentWindow::ask_resume_dialog(const ResumeOffer& offer) {
+  QMessageBox box(QMessageBox::Question, tr("Resume Queue"), offer.question, QMessageBox::NoButton, this);
+  QString detail = offer.how;
+  if (!offer.resumable()) detail += QLatin1Char('\n') + offer.mismatch;
+  box.setInformativeText(detail);
+  QPushButton* resume = box.addButton(tr("Resume"), QMessageBox::AcceptRole);
+  QPushButton* not_now = box.addButton(tr("Not now"), QMessageBox::RejectRole);
+  resume->setEnabled(offer.resumable());
+  box.setDefaultButton(offer.resumable() ? resume : not_now);
+  box.exec();
+  return box.clickedButton() == resume;
 }
 
 ScriptEditorWindow* ExperimentWindow::open_script_editor() {
@@ -825,8 +873,11 @@ void ExperimentWindow::open_dialog() {
   const QString file = QFileDialog::getOpenFileName(this, tr("Open queue"), last, tr("Experiment queues (*.toml)"));
   if (file.isEmpty()) return;
   QString error;
-  if (!load_queue(file.toStdString(), &error) && error != tr("cancelled"))
-    QMessageBox::warning(this, tr("Open"), error);
+  if (!load_queue(file.toStdString(), &error)) {
+    if (error != tr("cancelled")) QMessageBox::warning(this, tr("Open"), error);
+    return;
+  }
+  offer_resume();
 }
 
 void ExperimentWindow::save_as_dialog() {

@@ -41,6 +41,7 @@
 #include "pychron/core/clock.hpp"
 #include "queue_table_model.hpp"
 #include "queue_views.hpp"
+#include "resume_offer.hpp"
 #include "measurement_panel.hpp"
 #include "run_factory_panel.hpp"
 #include "script_editor_window.hpp"
@@ -164,6 +165,22 @@ class ExperimentWindow : public QMainWindow {
   // default: a message box.
   void set_ask_clear_executed(std::function<bool(int runs)> ask) { ask_clear_executed_ = std::move(ask); }
 
+  // Resume after a crash or a Stop (queue-tables design 5): reads the
+  // session's <data>/executor_state.json and, when resume_offer() makes an
+  // offer, asks; on yes (and resumable) the executed boundary and the earlier
+  // statuses come from the file and the queue starts. False while running,
+  // with "a queue is running", before any file is read. False with `error`
+  // left empty when nothing is offered: the window just stopped
+  // (executed_rows() > 0), no file, a file that does not read, no offer.
+  bool offer_resume(QString* error = nullptr);
+  // The question; default: a dialog, Resume / Not now (Resume disabled when
+  // the offer is not resumable).
+  void set_ask_resume(std::function<bool(const ResumeOffer&)> ask) { ask_resume_ = std::move(ask); }
+  // How a Queue menu action shows its refusal; default: a message box.
+  void set_inform(std::function<void(const QString&)> inform) { inform_ = std::move(inform); }
+  // Queue > Resume...
+  QAction* resume_action() const noexcept { return resume_; }
+
   // Dialog hooks; defaults are message boxes. Tests replace them.
   void set_confirm(ExecutorPane::Confirm confirm);
   void set_ask_unsaved(std::function<Unsaved()> ask) { ask_unsaved_ = std::move(ask); }
@@ -179,8 +196,9 @@ class ExperimentWindow : public QMainWindow {
   std::vector<std::size_t> selected_executed_rows() const;
   // Opens `row`'s script of `kind` in the script editor; false without one.
   bool open_row_script(std::size_t row, scripting::ScriptKind kind);
-  // A Queue menu action's refusal, in a message box; "cancelled" says nothing.
-  void inform_refusal(const QString& title, const QString& error);
+  // A Queue menu action's refusal, through inform_; "cancelled" says nothing.
+  void inform_refusal(const QString& error);
+  bool ask_resume_dialog(const ResumeOffer& offer);
   void select_rows(const std::vector<std::size_t>& rows);
   bool resolve_unsaved();
   void set_modified(bool modified);
@@ -244,11 +262,14 @@ class ExperimentWindow : public QMainWindow {
   std::function<Unsaved()> ask_unsaved_;
   std::function<bool()> ask_stop_;
   std::function<bool(int)> ask_clear_executed_;
+  std::function<bool(const ResumeOffer&)> ask_resume_;
+  std::function<void(const QString&)> inform_;
 
   QAction* open_ = nullptr;
   QAction* save_ = nullptr;
   QAction* save_as_ = nullptr;
   QAction* revalidate_ = nullptr;
+  QAction* resume_ = nullptr;
   std::vector<QAction*> row_actions_;
 };
 

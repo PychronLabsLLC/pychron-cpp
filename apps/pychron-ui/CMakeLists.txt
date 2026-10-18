@@ -33,6 +33,7 @@ add_library(pychron_ui_lib STATIC
   src/experiment_bridge.cpp
   src/queue_table_model.cpp
   src/queue_views.cpp
+  src/resume_offer.cpp
   src/executor_pane.cpp
   src/timeline.cpp
   src/evolutions_view.cpp
@@ -117,6 +118,7 @@ add_library(pychron_ui_lib STATIC
   src/experiment_bridge.hpp
   src/queue_table_model.hpp
   src/queue_views.hpp
+  src/resume_offer.hpp
   src/executor_pane.hpp
   src/timeline.hpp
   src/evolutions_view.hpp

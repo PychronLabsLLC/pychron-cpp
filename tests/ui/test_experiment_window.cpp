@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -166,6 +167,23 @@ class TestExperimentWindow : public QObject {
       for (int i = 0; i < bar->count(); ++i)
         if (bar->tabText(i) == title) return bar->tabText(bar->currentIndex());
     return {};
+  }
+  // The executor's state file as a crash or a Stop left it, in the session's data dir.
+  static fs::path write_state(const pychron::ui::test::SimLab& sim, const std::string& text) {
+    const fs::path p = sim.dir / "data" / "executor_state.json";
+    fs::create_directories(p.parent_path());
+    std::ofstream(p) << text;
+    return p;
+  }
+  // A state file for the example queue: stopped at `next_row`, row 0 finished `row0_state`
+  // under `row0_identifier` (the queue's own when empty).
+  static fs::path write_example_state(const pychron::ui::test::SimLab& sim, std::size_t next_row,
+                                      std::string row0_identifier = {}, const std::string& state = "running") {
+    const auto q = sim.queue();
+    if (row0_identifier.empty()) row0_identifier = q.runs[0].id.identifier;
+    return write_state(sim, R"({"queue": ")" + q.name + R"(", "state": ")" + state + R"(", "next_row": )" +
+                                std::to_string(next_row) + R"(, "runs": [{"row": 0, "identifier": ")" +
+                                row0_identifier + R"(", "run_id": "r1", "state": "success"}]})");
   }
   static bool contains(const QStringList& lines, const QString& text) {
     for (const auto& l : lines)
@@ -1126,6 +1144,158 @@ class TestExperimentWindow : public QObject {
     repeat->trigger();
     QCOMPARE(window.model().rowCount(), 4);
     QCOMPARE(window.model().queue().runs[2].id.identifier, window.model().queue().runs[1].id.identifier);
+  }
+
+  // ---- resume after a crash or a Stop (queue-tables design 5) ----------------
+
+  void resumeStartsAtTheFilesNextRowWithEarlierStatuses() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    write_example_state(sim, 1);
+    int asked = 0;
+    window.set_ask_resume([&](const pychron::ui::ResumeOffer& offer) {
+      ++asked;
+      return offer.resumable();
+    });
+    QString error;
+    QVERIFY2(window.offer_resume(&error), qPrintable(error));
+    QCOMPARE(asked, 1);
+    auto& model = window.model();
+    QCOMPARE(model.status(0), std::optional<RunState>(RunState::Success));
+    QVERIFY(model.executed_rows() >= 1);
+    QVERIFY(bridge.running());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QCOMPARE(model.status(0), std::optional<RunState>(RunState::Success));
+    QCOMPARE(model.status(1), std::optional<RunState>(RunState::Success));
+    QCOMPARE(model.status(2), std::optional<RunState>(RunState::Success));
+  }
+
+  void notNowChangesNothing() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    write_example_state(sim, 1);
+    int asked = 0;
+    window.set_ask_resume([&](const pychron::ui::ResumeOffer&) {
+      ++asked;
+      return false;
+    });
+    QString error;
+    QVERIFY(!window.offer_resume(&error));
+    QVERIFY(error.isEmpty());
+    QCOMPARE(asked, 1);
+    QCOMPARE(window.model().executed_rows(), std::size_t{0});
+    QVERIFY(!window.model().status(0).has_value());
+    QVERIFY(!bridge.running());
+  }
+
+  void noOfferWithoutAGoodFile() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    int asked = 0;
+    window.set_ask_resume([&](const pychron::ui::ResumeOffer&) {
+      ++asked;
+      return true;
+    });
+    const fs::path file = sim.dir / "data" / "executor_state.json";
+    fs::remove(file);
+    QVERIFY(!window.offer_resume());  // no file
+    write_state(sim, "not json");
+    QVERIFY(!window.offer_resume());
+    write_state(sim, R"({"queue": ")" + sim.queue().name + R"("})");  // no next_row
+    QVERIFY(!window.offer_resume());
+    write_example_state(sim, 3);  // the row count: a queue shortened since, or one that ended
+    QVERIFY(!window.offer_resume());
+    QCOMPARE(asked, 0);
+    QCOMPARE(window.model().executed_rows(), std::size_t{0});
+    QVERIFY(!bridge.running());
+  }
+
+  void noOfferInTheWindowThatJustStopped() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    const fs::path queue = queue_file(sim);
+    QVERIFY(window.load_queue(queue));
+    int asked = 0;
+    window.set_ask_resume([&](const pychron::ui::ResumeOffer&) {
+      ++asked;
+      return false;
+    });
+    window.start();
+    QVERIFY(bridge.running());
+    QTRY_VERIFY_WITH_TIMEOUT(window.model().status(0).has_value(), 30000);
+    bridge.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QVERIFY(window.model().executed_rows() > 0);
+    QVERIFY(window.model().executed_rows() < 3);
+    QVERIFY(!window.offer_resume());
+    QCOMPARE(asked, 0);
+
+    // Opened again, the same queue is offered from where it stopped.
+    QVERIFY(window.load_queue(queue));
+    QVERIFY(!window.offer_resume());
+    QCOMPARE(asked, 1);
+  }
+
+  void anOfferWithAnotherIdentifierCannotResume() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    write_example_state(sim, 1, "zzz");
+    bool resumable = true;
+    window.set_ask_resume([&](const pychron::ui::ResumeOffer& offer) {
+      resumable = offer.resumable();
+      return true;
+    });
+    QVERIFY(!window.offer_resume());
+    QVERIFY(!resumable);
+    QVERIFY(!bridge.running());
+    QCOMPARE(window.model().executed_rows(), std::size_t{0});
+  }
+
+  void resumeIsRefusedWhileRunningAndSaysSo() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    const fs::path file = write_example_state(sim, 1);
+    int asked = 0;
+    window.set_ask_resume([&](const pychron::ui::ResumeOffer&) {
+      ++asked;
+      return false;
+    });
+    QStringList told;
+    window.set_inform([&](const QString& text) { told.append(text); });
+    QVERIFY(window.resume_action() != nullptr);
+    // The window's actions are enabled while it is the active window (MenuHub).
+    window.show();
+    window.activateWindow();
+    if (!QTest::qWaitForWindowActive(&window)) QSKIP("this platform does not activate windows");
+    QVERIFY(window.resume_action()->isEnabled());
+
+    window.start();
+    QVERIFY(bridge.running());
+    QString error;
+    QVERIFY(!window.offer_resume(&error));
+    QCOMPARE(error, QStringLiteral("a queue is running"));
+    window.resume_action()->trigger();
+    QCOMPARE(told, QStringList{QStringLiteral("A queue is running.")});
+    QCOMPARE(asked, 0);
+
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QVERIFY(window.reset_executed());
+    fs::remove(file);
+    told.clear();
+    window.resume_action()->trigger();
+    QCOMPARE(told, QStringList{QStringLiteral("Nothing to resume.")});
+    QCOMPARE(asked, 0);
   }
 
   void aQueueWithErrorsCannotStart() {

@@ -484,7 +484,7 @@ Each is written back into the spec by the task that makes it, so the two never d
   (Global Constraints: a refusal while running says so). This task also moves Task 5's three menu actions
   onto the `inform` hook (their text unchanged).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   `test_resume_offer.cpp` (pure function, a 3-row `QueueSpec` named `q` built in the test, identifiers
   `a b c`):
@@ -517,24 +517,24 @@ Each is written back into the spec by the task that makes it, so the two never d
     hook count 0. After the queue ends and `reset_executed()`, with no state file left to offer from (file
     removed): `resume_action()->trigger()` → inform got `Nothing to resume.`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   `cmake --build --preset dev-ui --target pychron_ui_test_resume_offer pychron_ui_test_experiment_window` fails to
   compile.
 
-- [ ] **Step 3: Implement as the Interfaces block says**
+- [x] **Step 3: Implement as the Interfaces block says**
 
   `offer_resume()` checks `bridge_.running()` first and sets `*error = "a queue is running"` before reading
   any file. It does nothing when the hook says yes to an offer that is not resumable. `open_dialog()` calls
   it after a successful `load_queue`; `MainWindow::ensure_experiment_window` after its `--queue` load succeeds.
   Write decisions 1–4 and 10 into spec section 5.
 
-- [ ] **Step 4: Run both binaries**
+- [x] **Step 4: Run both binaries**
 
   `build/dev-ui/tests/ui/pychron_ui_test_resume_offer` and `build/dev-ui/tests/ui/pychron_ui_test_experiment_window`
   pass; `build/dev-ui/tests/ui/pychron_ui_test_menu_hub` still passes (new Queue menu actions).
 
-- [ ] **Step 5: Checks and commit**
+- [x] **Step 5: Checks and commit**
 
   `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
   `git commit -m "feat(ui): the experiment window offers to resume a queue that stopped"`

@@ -1067,7 +1067,10 @@ class TestMenuHub : public QObject {
     // Window is the hub's own and always there.
     QCOMPARE(shown(window), (QStringList{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("Window")}));
     // Save and Save As are File's, and say what they act on here.
-    QCOMPARE(texts(menu_of(window, Menu::Queue)), QStringList{QStringLiteral("&Revalidate")});
+    // The executed runs' actions (queue-tables design 4, 5) follow Revalidate.
+    QCOMPARE(texts(menu_of(window, Menu::Queue)),
+             (QStringList{QStringLiteral("&Revalidate"), QStringLiteral("Reset"), QStringLiteral("Clear Executed..."),
+                          QStringLiteral("Repeat Last Run"), QStringLiteral("Resume...")}));
     if (activate(window)) {
       QCOMPARE(MenuHub::instance().file_action(FileRole::Save)->text(), QStringLiteral("&Save Queue"));
       QCOMPARE(MenuHub::instance().file_action(FileRole::SaveAs)->text(), QStringLiteral("Save Queue &As…"));

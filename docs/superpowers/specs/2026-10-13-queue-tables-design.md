@@ -204,6 +204,36 @@ here the newest.
   the row's identifier now and in the file; when they differ, Resume is
   disabled with that reason. No path or hash of runs compared (owner,
   2026-10-15).
+- Identifier check (plan decision 1): `runs[]` lists only runs that
+  started, so no identifier for row `next_row` itself. Each `runs[]`
+  entry's `identifier` compared with open queue's at entry's `row`; row past
+  queue's end counts as mismatch. First mismatch disables Resume, line
+  `Row %1 is %2 now; the file has %3.` (1-based row). Empty `runs[]`:
+  nothing to compare, resumable.
+- Row numbers in dialog (decision 2) are `#` column's (1-based): "stopped at
+  row N" shows `next_row + 1`. Time of file: `QFileInfo::lastModified()`,
+  `yyyy-MM-dd HH:mm`.
+- Where offered (decision 3): `load_queue()` does not offer (tests and
+  programs call it). Public `ExperimentWindow::offer_resume(QString*)` does;
+  called by `open_dialog()` after successful load, by
+  `MainWindow::ensure_experiment_window` after `--queue` load succeeds, and
+  by Queue > `Resume...`. While running it refuses before reading any file,
+  error `a queue is running`, menu text `A queue is running.`. It offers
+  nothing (false, error empty) when `executed_rows() > 0` (the window that
+  just stopped), with no file, a file that does not read, or no offer; menu
+  then says `Nothing to resume.`.
+- Statuses from file (decision 4): row listed twice in `runs[]` (held run's
+  failed attempt, then the run): last entry wins. State string
+  `run::run_state_from` does not know leaves row without status.
+- Pure part: `resume_offer(file, queue, written)` (`resume_offer.hpp`) →
+  `std::optional<ResumeOffer>` {`next_row`, `question`, `how`, `mismatch`,
+  `statuses`, `resumable()`}. Hooks: `set_ask_resume` (default dialog,
+  Resume / Not now, `how` beneath question, `mismatch` shown and Resume
+  disabled when not resumable), `set_inform` (how a Queue menu action shows
+  its refusal; Reset, Clear Executed..., Repeat Last Run use it too).
+- Resume starts queue at once (decision 10, "then Start as usual"): window
+  calls `start()` after `resume_from`. Yes to an offer that is not
+  resumable does nothing.
 
 ## 6. Rules
 

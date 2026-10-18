@@ -407,6 +407,8 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
       QString error;
       if (!experiment_window_->load_queue(*experiment_queue_, &error)) {
         log_->append_line(QStringLiteral("ERROR [ui] queue not opened: ") + error);
+      } else {
+        experiment_window_->offer_resume();
       }
     }
   }
