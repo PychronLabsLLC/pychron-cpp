@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
+#include <string_view>
+#include <tuple>
 #include <fstream>
 #include <sstream>
 
@@ -47,6 +50,36 @@ Result<std::string> read_text(const fs::path& path) {
   return ss.str();
 }
 
+// The run a record file name stands for: `<prefix><aliquot><step>.` and
+// ending in `.json`, where `prefix` is `<identifier>-`, the aliquot is digits
+// and the step letters (none: step -1). Anything else is not a run.
+std::optional<LastRun> parse_run_name(std::string_view name, std::string_view prefix) {
+  if (!name.starts_with(prefix) || !name.ends_with(".json")) return std::nullopt;
+  const std::string_view rest = name.substr(prefix.size());
+  const auto digits_end = std::ranges::find_if_not(rest, [](char c) {
+    return std::isdigit(static_cast<unsigned char>(c)) != 0;
+  });
+  const auto n_digits = static_cast<std::size_t>(digits_end - rest.begin());
+  if (n_digits == 0) return std::nullopt;
+  LastRun run;
+  for (const char c : rest.substr(0, n_digits)) {
+    const int digit = c - '0';
+    if (run.aliquot > (std::numeric_limits<int>::max() - digit) / 10) return std::nullopt;
+    run.aliquot = run.aliquot * 10 + digit;
+  }
+  const std::string_view after = rest.substr(n_digits);
+  const auto letters_end = std::ranges::find_if_not(after, [](char c) {
+    return std::isalpha(static_cast<unsigned char>(c)) != 0;
+  });
+  const auto n_letters = static_cast<std::size_t>(letters_end - after.begin());
+  if (n_letters == after.size() || after[n_letters] != '.') return std::nullopt;
+  if (n_letters > 0) {
+    run.step = step_index(after.substr(0, n_letters));
+    if (run.step < 0) return std::nullopt;
+  }
+  return run;
+}
+
 std::string run_name(const record::Identity& id) {
   return id.identifier + "-" + std::to_string(id.aliquot) + id.step;
 }
@@ -84,6 +117,22 @@ Result<int> FilePersister::next_aliquot(const std::string& identifier) {
   int& issued = issued_[identifier];
   issued = std::max(issued, highest_on_disk(identifier)) + 1;
   return issued;
+}
+
+Result<std::optional<LastRun>> FilePersister::last_run(const std::string& identifier) {
+  if (!safe_name(identifier)) return fail(ErrorKind::Config, "identifier '" + identifier + "' is not a plain name");
+  std::error_code ec;
+  const fs::path dir = root_ / identifier;
+  if (!fs::is_directory(dir, ec)) return std::optional<LastRun>{};
+  const std::string prefix = identifier + "-";
+  std::optional<LastRun> best;
+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const auto run = parse_run_name(it->path().filename().string(), prefix);
+    if (!run) continue;
+    if (!best || std::tie(run->aliquot, run->step) > std::tie(best->aliquot, best->step)) best = run;
+  }
+  if (ec) return io("cannot list " + dir.string() + ": " + ec.message());
+  return best;
 }
 
 Result<void> FilePersister::begin_run(const RunIdentity& id, const QueueSpec&) {

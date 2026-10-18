@@ -59,7 +59,7 @@
   ```
 - Consumes: `step_index(std::string_view)` from `pychron/experiment/factory/increments.hpp` ("A" → 0, "" → -1).
 
-- [ ] **Step 1: Write the failing tests** in `tests/experiment/test_persist.cpp`, using `PersistTest::dir_`. A helper writes an empty file `<dir_>/records/12345/<name>`.
+- [x] **Step 1: Write the failing tests** in `tests/experiment/test_persist.cpp`, using `PersistTest::dir_`. A helper writes an empty file `<dir_>/records/12345/<name>`.
 
 ```cpp
 TEST_F(PersistTest, FilePersisterLastRunIsTheHighestAliquotThenItsHighestStep) {
@@ -101,26 +101,26 @@ TEST_F(PersistTest, FilePersisterLastRunIssuesNothing) {
 
 Also, in the existing `FlakyPersister` (`test_persist.cpp:40`), nothing changes: a test `DefaultLastRunIsNone` asserts `FlakyPersister{}.last_run("12345")` is a value holding `nullopt` (the default stays).
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev --target pychron_experiment_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='PersistTest.*LastRun*'`
 Expected: does not compile (`last_run`, `LastRun` not declared).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `persister.cpp`'s anonymous namespace, `std::optional<LastRun> parse_run_name(std::string_view name, std::string_view prefix)`: name must start with `<identifier>-` and end with `.json`; digits after the prefix are the aliquot (none: not a run); letters after them are the step, which must be followed by `.` (else not a run); no letters: step -1; `step_index` of the letters. `highest_on_disk` is left as it is (its digit scan counts names this parser refuses; its numbering must not change). `FilePersister::last_run` refuses a name `safe_name` refuses (`ErrorKind::Config`, as `next_aliquot`), walks `<root>/<identifier>/`, keeps the maximum by `(aliquot, step)`; a missing directory is `nullopt`, not an error. It does not take `mutex_` and does not touch `issued_`.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='PersistTest.*'`
 Expected: all PASS (the existing `FilePersisterWritesRecordsAndCountsAliquots` too).
 
-- [ ] **Step 5: Checks**
+- [x] **Step 5: Checks**
 
 Run: `python3 tools/quality_check.py && python3 tools/compiler_sweep.py --changed`
 Expected: exit 0 from both.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add libs/experiment/include/pychron/experiment/persist/persister.hpp libs/experiment/src/persist/persister.cpp tests/experiment/test_persist.cpp

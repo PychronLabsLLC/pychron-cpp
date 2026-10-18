@@ -37,6 +37,13 @@
 
 namespace pychron::experiment::persist {
 
+// An identifier's last run as a persister knows it.
+struct LastRun {
+  int aliquot = 0;
+  int step = -1;  // step_index of its step; -1: no step
+  bool operator==(const LastRun&) const = default;
+};
+
 class IAnalysisPersister {
  public:
   virtual ~IAnalysisPersister() = default;
@@ -52,6 +59,13 @@ class IAnalysisPersister {
   // when nothing would. Asked of the queue as it will run (rows_from): a
   // skipped row is not checked as a run.
   virtual Result<std::vector<std::string>> check_queue(const QueueSpec& queue) = 0;
+  // The identifier's run with the highest aliquot, and within it the highest
+  // step, among runs saved or waiting to be sent. nullopt: none, or this
+  // persister cannot say (the default).
+  virtual Result<std::optional<LastRun>> last_run(const std::string& identifier) {
+    (void)identifier;
+    return std::optional<LastRun>{};
+  }
 };
 
 // `queue` as a start at `from_row` will run it, for check_queue: the rows
@@ -77,6 +91,9 @@ class FilePersister final : public IAnalysisPersister {
                              const std::vector<std::uint8_t>& bytes) override;
   Result<void> flush() override { return {}; }
   Result<std::vector<std::string>> check_queue(const QueueSpec&) override { return std::vector<std::string>{}; }
+  // From the names under <root>/<identifier>/ (analysis and extraction
+  // files). Reads the disk only: hands out no aliquot.
+  Result<std::optional<LastRun>> last_run(const std::string& identifier) override;
 
   std::filesystem::path analysis_path(const record::AnalysisRecord& record) const;
 

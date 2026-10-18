@@ -66,6 +66,12 @@ class PersistTest : public ::testing::Test {
     std::error_code ec;
     fs::remove_all(dir_, ec);
   }
+  // An empty file <dir_>/records/12345/<name>.
+  void touch(const std::string& name) const {
+    const fs::path dir = dir_ / "records" / "12345";
+    fs::create_directories(dir);
+    std::ofstream(dir / name).flush();
+  }
   fs::path dir_;
 };
 
@@ -93,6 +99,72 @@ TEST_F(PersistTest, FilePersisterWritesRecordsAndCountsAliquots) {
   ASSERT_TRUE(fresh.save_artifact("u1", "snap.png", {1, 2, 3}));
   EXPECT_EQ(fs::file_size(dir_ / "records" / "artifacts" / "u1" / "snap.png"), 3u);
   EXPECT_FALSE(fresh.save_artifact("u1", "../x", {}));
+}
+
+TEST_F(PersistTest, FilePersisterLastRunIsTheHighestAliquotThenItsHighestStep) {
+  touch("12345-3A.json");
+  touch("12345-3B.json");
+  touch("12345-2.json");
+  {
+    const fs::path other = dir_ / "records" / "99999";  // another identifier
+    fs::create_directories(other);
+    std::ofstream(other / "99999-7C.json").flush();
+  }
+  FilePersister files(dir_ / "records");
+  auto last = files.last_run("12345");
+  ASSERT_TRUE(last) << last.error().what;
+  ASSERT_TRUE(last->has_value());
+  EXPECT_EQ(**last, (LastRun{3, 1}));
+}
+
+TEST_F(PersistTest, FilePersisterLastRunIsNoneWithoutFiles) {
+  FilePersister files(dir_ / "records");
+  auto last = files.last_run("12345");
+  ASSERT_TRUE(last) << last.error().what;
+  EXPECT_FALSE(last->has_value());
+}
+
+TEST_F(PersistTest, FilePersisterLastRunOfANameWithNoStepHasStepMinusOne) {
+  touch("12345-2B.json");
+  touch("12345-3.json");
+  FilePersister files(dir_ / "records");
+  EXPECT_EQ(files.last_run("12345").value(), (LastRun{3, -1}));
+}
+
+TEST_F(PersistTest, FilePersisterLastRunCountsAnExtractionFile) {
+  touch("12345-3A.json");
+  touch("12345-3B.extraction.json");
+  FilePersister files(dir_ / "records");
+  EXPECT_EQ(files.last_run("12345").value(), (LastRun{3, 1}));
+}
+
+TEST_F(PersistTest, FilePersisterLastRunIgnoresNamesThatAreNotRuns) {
+  touch("12345-3A.json");
+  touch("12345-9.txt");
+  touch("12345-.json");
+  touch("12345-8B_x.json");
+  touch("12345-7A.json.tmp");
+  FilePersister files(dir_ / "records");
+  EXPECT_EQ(files.last_run("12345").value(), (LastRun{3, 0}));
+}
+
+TEST_F(PersistTest, FilePersisterLastRunRefusesAnIdentifierThatIsNotAPlainName) {
+  FilePersister files(dir_ / "records");
+  EXPECT_FALSE(files.last_run("../x"));
+}
+
+TEST_F(PersistTest, FilePersisterLastRunIssuesNothing) {
+  touch("12345-3B.json");
+  FilePersister files(dir_ / "records");
+  (void)files.last_run("12345");
+  EXPECT_EQ(files.next_aliquot("12345").value(), 4);
+}
+
+TEST_F(PersistTest, DefaultLastRunIsNone) {
+  FlakyPersister flaky;
+  auto last = flaky.last_run("12345");
+  ASSERT_TRUE(last) << last.error().what;
+  EXPECT_FALSE(last->has_value());
 }
 
 TEST_F(PersistTest, FilePersisterChecksNothing) {
