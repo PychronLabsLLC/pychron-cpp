@@ -415,7 +415,7 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
   real-time poll inside a `Detached`, so that the operator is heard whatever
   simulated time is doing. The other `elctl` commands (`scan`, the laser
   commands) run on a `SteadyClock` only;
-- the UI: its timers (among them canvas's 3 s rest on a gauge chip before
+- the UI: its timers (among them canvas's 700 ms rest on a gauge chip before
   its popup chart, `CanvasView::kGaugeRestMs`, the one operator feels; history
   charts' 250 ms redraw throttle), the bridges' worker threads and their polls
   and settles (`laser_bridge.cpp`), the plots' autoscale. Not what it shows

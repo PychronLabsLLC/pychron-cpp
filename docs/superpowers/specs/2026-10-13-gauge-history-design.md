@@ -69,7 +69,7 @@ with a range the operator chooses).
 
 ### 4.2 Hover popup
 
-- Pointer rests on a gauge chip for 3 s (not moved off it): a frameless
+- Pointer rests on a gauge chip for 700 ms (not moved off it): a frameless
   popup beside the chip, about 320 x 180 px: gauge name, latest reading, a
   small chart of the last 10 minutes. Updates while shown. Goes when the
   pointer leaves the chip, on a button press anywhere, on a scroll of the
@@ -77,7 +77,7 @@ with a range the operator chooses).
 - Fewer than 2 points in the last 10 minutes: popup says "no readings yet"
   (or "no readings in the last 10 minutes"), no empty chart.
 - Decoration gauge (not configured): no popup.
-- The 3 s is real time (a wait on the operator's hand): a `QTimer`. Added
+- The 700 ms is real time (a wait on the operator's hand): a `QTimer`. Added
   to the virtual clock spec's list of what stays on real time (its 4.5).
 - Popup takes no focus and no clicks meant for the canvas: a `Qt::ToolTip`
   window transparent to the mouse, not `Qt::Popup` (which takes the click

@@ -941,6 +941,14 @@ class TestCanvasView : public QObject {
     QCOMPARE(clicked.count(), 0);
   }
 
+  void theRestDelayIsATooltipsNotSeconds() {
+    // The popup opens about when a tooltip would: 3 s felt like nothing came.
+    QCOMPARE(CanvasView::kGaugeRestMs, 700);
+    QCOMPARE(view_->gauge_rest_ms(), CanvasView::kGaugeRestMs);
+    view_->set_gauge_rest_ms(-5);
+    QCOMPARE(view_->gauge_rest_ms(), 0);
+  }
+
   void restingOnAGaugeSaysSoAfterTheDelay() {
     view_->set_gauge_rest_ms(0);
     view_->show();

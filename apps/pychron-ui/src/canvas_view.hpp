@@ -30,12 +30,15 @@ class CanvasView : public QGraphicsView {
   Q_OBJECT
 
  public:
-  // How long the pointer stays on a gauge before gauge_rested.
-  static constexpr int kGaugeRestMs = 3000;
+  // How long the pointer stays on a gauge before gauge_rested: Qt's own
+  // tooltip wake-up delay (QStyle::SH_ToolTip_WakeUpDelay), long enough that
+  // a pointer passing over a chip opens nothing.
+  static constexpr int kGaugeRestMs = 700;
 
   explicit CanvasView(CoreBridge& bridge, QWidget* parent = nullptr);
 
   void set_gauge_rest_ms(int ms);  // tests: 0
+  [[nodiscard]] int gauge_rest_ms() const noexcept { return gauge_rest_timer_.interval(); }
 
   ValveItem* valve(const std::string& name) const;
   StageItem* stage(const std::string& name) const;  // stages and pipettes

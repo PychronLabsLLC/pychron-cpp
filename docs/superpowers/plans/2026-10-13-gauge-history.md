@@ -157,7 +157,7 @@ class HistoryChart : public QWidget {
   void gauge_rested(const QString& name, const QRect& global_chip);  // the pointer stayed on it for the delay
   void gauge_left();                                                 // it moved off, the view scrolled, or a button went down
  public:
-  static constexpr int kGaugeRestMs = 3000;
+  static constexpr int kGaugeRestMs = 3000;  // 700 since T094 (spec 4.2)
   void set_gauge_rest_ms(int ms);   // tests: 0
 ```
 
