@@ -97,7 +97,7 @@ Refactor so later tasks can rewrite `install.toml` and read the stored password 
 
 Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) is `TEST(DataSource, ...)` or, when it needs the shared temp root and site, `TEST_F(DataSourceFixture, ...)`: the filter `DataSource*.*` and Task 11's `DataSource*.AReconfigureKeepsTheNewSource` match exactly those two suites.
 
-- [ ] **Step 1: Write the failing tests** in `tests/setup/test_data_source.cpp` (temp root and site per test, `PYCHRON_SITE_CONFIG` not needed: paths passed in):
+- [x] **Step 1: Write the failing tests** in `tests/setup/test_data_source.cpp` (temp root and site per test, `PYCHRON_SITE_CONFIG` not needed: paths passed in):
   - `CurrentSourceComesFromTheRecord`: record answers `data_source=server, db_host=h, db_port=5433, db_name=n, db_user=u, data_folder=runs`, site entry saying local → `ServerDatabase{"h",5433,"n","u",nullopt}`, `data == "runs"`.
   - `CurrentSourceFallsBackToTheSiteEntry`: no record, site `database = "sqlite:<root>/x.db"`, `data = "d"` → `LocalDatabase{<root>/x.db}`, `data == "d"`; site `postgresql://u@h:5432/n` → server fields parsed.
   - `AVersionOneRecordIsTheDefaultFileAndFolder`: record with `data_source=local`, no `db_file`, `data_folder` → `LocalDatabase{"data/pychron.db"}`, `"data"`.
@@ -107,11 +107,11 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
   - `AnInstallWithoutARecordIsToldSo`: notes contain the no-record note, no error.
   - `APlanToTheCurrentSourceChangesNothing`: `to == current_data_source(install)` → notes `{"nothing to change"}`.
   - `PathsOutsideTheRootAndWithSpacesAreKeptAsGiven`: data `"<tmp>/shared disk/runs"` and file `"my data/p.db"` → `install.data` exactly that string, URL `sqlite:<root>/my data/p.db`.
-- [ ] **Step 2: Run, expect compile failure** (header missing): `cmake --build --preset dev --target pychron_setup_tests`.
-- [ ] **Step 3: Implement** in `data_source.cpp`. Postgres URL parse for the site fallback: `postgresql://user[:pw]@host:port/db`, password part ignored. A file "names an existing directory" when `fs::is_directory(install.path(file))`.
-- [ ] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*'`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 6: Commit** `feat(setup): a data source change is planned and refused before anything is written`
+- [x] **Step 2: Run, expect compile failure** (header missing): `cmake --build --preset dev --target pychron_setup_tests`.
+- [x] **Step 3: Implement** in `data_source.cpp`. Postgres URL parse for the site fallback: `postgresql://user[:pw]@host:port/db`, password part ignored. A file "names an existing directory" when `fs::is_directory(install.path(file))`.
+- [x] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*'`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 6: Commit** `feat(setup): a data source change is planned and refused before anything is written`
 
 ### Task 4: Apply a data source change
 
