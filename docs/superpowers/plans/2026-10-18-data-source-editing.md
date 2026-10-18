@@ -203,9 +203,9 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
 
 **Interfaces:**
 - Consumes: Tasks 3-5; `resolve_install`, `yes(...)` (setup.cpp line 39, exposed in `setup.hpp`), `open_store(url, migrate)`, `seed_database(url, seed, migrate, false)` (`entry.hpp`), `report_doctor`'s database check (expose `report_doctor` in `setup.hpp`).
-- Produces: `int data_source_command(const std::vector<std::string>& args, std::optional<std::string> install, Io io);`. Show prints `database <url>`, `data folder <data>`, `password kept` / `no password kept` (server only). `set` prints `describe` before → after, notes, `Write them? [Y/n]` unless `--yes`, then check lines, `written`, then `seed_data_source` lines and doctor's output.
+- Produces: `int data_source_command(const std::vector<std::string>& args, const std::optional<std::string>& install, Io io);`. Show prints `database <url>`, `data folder <data>`, `password kept` / `no password kept` (server only). `set` prints `describe` before → after, notes, `Write them? [Y/n]` unless `--yes`, then check lines, `written`, then `seed_data_source` lines and doctor's output.
 
-- [ ] **Step 1: Write the failing tests** (`ElctlSetupTest`, installs made with `elctl init` as the file's other tests):
+- [x] **Step 1: Write the failing tests** (`ElctlSetupTest`, installs made with `elctl init` as the file's other tests):
   - `DataSourceShowsTheDatabaseAndTheDataFolder`: exit 0, output has `database sqlite:` and `data folder data`.
   - `SetLocalMakesAndMigratesTheFileAndSeedsAnInstrument` (store builds only, `#ifdef PYCHRON_ELCTL_HAS_STORE`): `data-source set --local new.db --yes` → exit 0; `<root>/new.db` exists and `db status --db sqlite:<root>/new.db` exits 0; site entry database is that URL; seed line printed.
   - `SetLocalRefusesAnOutdatedFile` (store): the outdated file is built as `ElctlExpStoreTest.ASchemaThatIsBehindSaysWhatToRun` (`test_exp_commands.cpp` line 883) builds one: `pychron::persistence::open_store(StoreConfig{"sqlite:" + file, true})` makes a current store at `<tmp>/old.db`, then a raw `QSqlDatabase` (`QSQLITE`, own connection name, removed after) runs `DELETE FROM schema_version WHERE version = (SELECT max(version) FROM schema_version)`. Put that in a helper `make_store_one_migration_behind(path)` in the test file, under `#ifdef PYCHRON_ELCTL_HAS_STORE`. Assert first that `open_store(StoreConfig{url, false})` fails on it (so the test fails for the right reason), then `data-source set --local <tmp>/old.db --yes` → exit 1, output has `elctl db migrate --db`, site bytes unchanged, and `open_store(..., false)` still fails (not migrated).
@@ -214,11 +214,11 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
   - `SetAsksBeforeWriting`: input `n\n` → exit 1, site unchanged.
   - `SetUsageMistakes`: `--local` with `--server`, unknown flag, nothing to set → exit 2.
   - Without the store (`#ifndef`): `set --local new.db --yes` prints `skip  check: built without the DVC store`.
-- [ ] **Step 2: Run, expect FAIL** `cmake --build --preset dev --target pychron_elctl_tests && build/dev/apps/elctl/tests/pychron_elctl_tests --gtest_filter='ElctlSetupTest.*DataSource*:ElctlSetupTest.Set*'` (path of the binary as `apps/elctl/tests/CMakeLists.txt` puts it).
-- [ ] **Step 3: Implement** the command; openers: `open_database = open_store`, `seed_database = [](url, seed, migrate){ return seed_database(url, seed, migrate, false); }`.
-- [ ] **Step 4: Run** the filter above, then all of `ElctlSetupTest.*`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 6: Commit** `feat(elctl): data-source shows and sets an install's database file and data folder`
+- [x] **Step 2: Run, expect FAIL** `cmake --build --preset dev --target pychron_elctl_tests && build/dev/apps/elctl/tests/pychron_elctl_tests --gtest_filter='ElctlSetupTest.*DataSource*:ElctlSetupTest.Set*'` (path of the binary as `apps/elctl/tests/CMakeLists.txt` puts it).
+- [x] **Step 3: Implement** the command (`--server` parsed only so `--local --server` is a usage error; alone it says "not supported yet" until Task 7); openers: `open_database = open_store`, `seed_database = [](url, seed, migrate){ return seed_database(url, seed, migrate, false); }`.
+- [x] **Step 4: Run** the filter above, then all of `ElctlSetupTest.*`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 6: Commit** `feat(elctl): data-source shows and sets an install's database file and data folder`
 
 ### Task 7: `elctl data-source set --server`, password, `--no-check`; `db --install`
 

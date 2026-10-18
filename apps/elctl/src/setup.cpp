@@ -36,13 +36,6 @@ Resources resources(const std::optional<fs::path>& profiles) {
   return r;
 }
 
-bool yes(std::istream& in, std::ostream& out, const std::string& question) {
-  out << question << " [Y/n] " << std::flush;
-  std::string line;
-  if (!std::getline(in, line)) return false;
-  return line.empty() || line == "y" || line == "Y" || line == "yes";
-}
-
 std::string shown(const Question& q, const Value& v) {
   if (q.type == QuestionType::Secret) return "****";
   if (const auto* rows = std::get_if<std::vector<Row>>(&v)) {
@@ -126,16 +119,6 @@ void print_plan(const InstallPlan& plan, Io io) {
   }
 }
 
-#ifdef PYCHRON_ELCTL_HAS_STORE
-Result<std::string> open_store(const std::string& url, bool migrate) {
-  auto store = persistence::open_store(persistence::StoreConfig{url, migrate});
-  if (!store) return fail(std::move(store).error());
-  auto status = (*store)->schema_status();
-  if (!status) return fail(std::move(status).error());
-  return "schema " + (status->empty() ? std::string("empty") : "version " + std::to_string(status->back().version));
-}
-#endif
-
 // An instrument install's database is made (a local one) and given what
 // <root>/seed.toml names: the references project, its samples and special
 // identifiers, the reactors. The instrument measures without any of it, so
@@ -169,6 +152,25 @@ void seed_instrument_database(const SiteInstall& entry, Io io) {
 #endif
 }
 
+}  // namespace
+
+bool yes(std::istream& in, std::ostream& out, const std::string& question) {
+  out << question << " [Y/n] " << std::flush;
+  std::string line;
+  if (!std::getline(in, line)) return false;
+  return line.empty() || line == "y" || line == "Y" || line == "yes";
+}
+
+#ifdef PYCHRON_ELCTL_HAS_STORE
+Result<std::string> open_store(const std::string& url, bool migrate) {
+  auto store = persistence::open_store(persistence::StoreConfig{url, migrate});
+  if (!store) return fail(std::move(store).error());
+  auto status = (*store)->schema_status();
+  if (!status) return fail(std::move(status).error());
+  return "schema " + (status->empty() ? std::string("empty") : "version " + std::to_string(status->back().version));
+}
+#endif
+
 int report_doctor(const SiteInstall& install, const ProfileLibrary* library, bool strict, bool probe, Io io) {
   DoctorOptions options;
   options.library = library;
@@ -185,8 +187,6 @@ int report_doctor(const SiteInstall& install, const ProfileLibrary* library, boo
   if (any_fail(checks) || (strict && any_warn(checks))) return kFailed;
   return kOk;
 }
-
-}  // namespace
 
 Result<SiteInstall> resolve_install(const std::optional<std::string>& name) {
   const auto path = default_site_path();

@@ -21,6 +21,7 @@
 #include "earthbank.hpp"
 #include "entry.hpp"
 #include "exp.hpp"
+#include "data_source.hpp"
 #include "db.hpp"
 #include "export.hpp"
 #include "flux.hpp"
@@ -88,6 +89,10 @@ constexpr const char* kUsageText =
     "  init --reconfigure [--set id=value]... [--yes]\n"
     "                              re-render an install with new answers; edited files are kept\n"
     "  doctor [--strict] [--probe] check an install (the default, or --install NAME)\n"
+    "  data-source                 the install's database and data folder\n"
+    "  data-source set [--local [FILE]] [--data DIR] [--yes]\n"
+    "                              point the install at another database file or data folder;\n"
+    "                              checks it first, moves nothing\n"
     "  import-line <folder> [--out DIR] [--force]\n"
     "                              convert a legacy Pychron setupfiles extraction line and canvas\n"
     "  --install NAME              before a command: use that install's files (see doctor)\n"
@@ -772,6 +777,7 @@ int run(const std::vector<std::string>& args, Io io) {
     return init_command(init_args, io);
   }
   if (command == "doctor") return doctor_command(rest, globals.install, io);
+  if (command == "data-source") return data_source_command(rest, globals.install, io);
   if (command == "import-line") return import_line_command(rest, io);
   // --install NAME (or, with no -c, the default install): its files are the defaults.
   if (globals.install || !globals.config_given) {

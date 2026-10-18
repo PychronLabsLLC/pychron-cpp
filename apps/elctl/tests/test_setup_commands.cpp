@@ -3,10 +3,19 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include "elctl_fixture.hpp"
 #include "pychron/setup/site.hpp"
+
+#ifdef PYCHRON_ELCTL_HAS_STORE
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QString>
+
+#include "pychron/persistence/store.hpp"
+#endif
 
 namespace elctl::testing {
 namespace {
@@ -278,6 +287,122 @@ TEST_F(ElctlSetupTest, InitConvertsALegacyLineAndSaysWhatWasNotCarriedOver) {
                "line_source=legacy", "--set", "legacy_folder=" + path("empty").string()});
   EXPECT_EQ(o.code, 1);
   EXPECT_FALSE(fs::exists(path("no-legacy")));
+}
+
+// elctl data-source (data source editing spec, 3.4).
+
+std::string bytes_of(const fs::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+TEST_F(ElctlSetupTest, DataSourceShowsTheDatabaseAndTheDataFolder) {
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr").string(), "--yes"}).code, 0);
+  auto o = run_raw({"data-source"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "database sqlite:")) << o.out;
+  EXPECT_TRUE(contains(o.out, "data folder data")) << o.out;
+  EXPECT_FALSE(contains(o.out, "password")) << "a local database has no password: " << o.out;
+}
+
+#ifdef PYCHRON_ELCTL_HAS_STORE
+// A store one migration behind this build, as ASchemaThatIsBehindSaysWhatToRun
+// (test_exp_commands.cpp) makes one.
+void make_store_one_migration_behind(const fs::path& file) {
+  {
+    auto store = pychron::persistence::open_store(pychron::persistence::StoreConfig{"sqlite:" + file.generic_string(), true});
+    ASSERT_TRUE(store);
+  }
+  {
+    QSqlDatabase d = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("data-source-test"));
+    d.setDatabaseName(QString::fromStdString(file.string()));
+    ASSERT_TRUE(d.open());
+    QSqlQuery q(d);
+    ASSERT_TRUE(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version = (SELECT max(version) FROM schema_version)")));
+    d.close();
+  }
+  QSqlDatabase::removeDatabase(QStringLiteral("data-source-test"));
+}
+
+TEST_F(ElctlSetupTest, SetLocalMakesAndMigratesTheFileAndSeedsAnInstrument) {
+  const auto root = path("argus-switch");
+  ASSERT_EQ(run_raw({"init", "argus", "--root", root.string(), "--name", "lab", "--yes"}).code, 0);
+  auto o = run_raw({"data-source", "set", "--local", "new.db", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(fs::exists(root / "new.db"));
+  const std::string url = "sqlite:" + (root / "new.db").generic_string();
+  EXPECT_EQ(run_raw({"db", "status", "--db", url}).code, 0);
+  EXPECT_EQ(site().find("lab")->database, url);
+  EXPECT_TRUE(contains(o.out, "written")) << o.out;
+  EXPECT_TRUE(contains(o.out, "seeded ")) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out << o.err;
+}
+
+TEST_F(ElctlSetupTest, SetLocalRefusesAnOutdatedFile) {
+  const auto root = path("dr-outdated");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  const auto old = path("old.db");
+  make_store_one_migration_behind(old);
+  const std::string url = "sqlite:" + old.generic_string();
+  ASSERT_FALSE(pychron::persistence::open_store(pychron::persistence::StoreConfig{url, false}))
+      << "the file is meant to be behind";
+  const std::string before = bytes_of(path("site.toml"));
+
+  auto o = run_raw({"data-source", "set", "--local", old.string(), "--yes"});
+  EXPECT_EQ(o.code, 1) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "elctl db migrate --db")) << o.err;
+  EXPECT_EQ(bytes_of(path("site.toml")), before);
+  EXPECT_FALSE(pychron::persistence::open_store(pychron::persistence::StoreConfig{url, false}))
+      << "an existing file is never migrated from here";
+}
+#else
+TEST_F(ElctlSetupTest, WithoutTheStoreTheDataSourceIsNotChecked) {
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr").string(), "--yes"}).code, 0);
+  auto o = run_raw({"data-source", "set", "--local", "new.db", "--yes"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "skip  check: built without the DVC store")) << o.out;
+}
+#endif
+
+TEST_F(ElctlSetupTest, SetDataAloneKeepsTheDatabase) {
+  const auto root = path("dr-data");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  const std::string database = site().find("data-reduction")->database;
+  auto o = run_raw({"data-source", "set", "--data", "runs", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  const auto config = site();
+  EXPECT_EQ(config.find("data-reduction")->database, database);
+  EXPECT_EQ(config.find("data-reduction")->data, "runs");
+  EXPECT_TRUE(fs::is_directory(root / "runs"));
+}
+
+TEST_F(ElctlSetupTest, SetToTheCurrentSourceWritesNothing) {
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr-same").string(), "--yes"}).code, 0);
+  const std::string before = bytes_of(path("site.toml"));
+  auto o = run_raw({"data-source", "set", "--local", "--yes"});
+  EXPECT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "nothing to change")) << o.out;
+  EXPECT_EQ(bytes_of(path("site.toml")), before);
+}
+
+TEST_F(ElctlSetupTest, SetAsksBeforeWriting) {
+  const auto root = path("dr-ask");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  const std::string before = bytes_of(path("site.toml"));
+  auto o = run_raw({"data-source", "set", "--data", "runs"}, "n\n");
+  EXPECT_EQ(o.code, 1) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "Write them? [Y/n]")) << o.out;
+  EXPECT_EQ(bytes_of(path("site.toml")), before);
+  EXPECT_FALSE(fs::exists(root / "runs"));
+}
+
+TEST_F(ElctlSetupTest, SetUsageMistakes) {
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr-usage").string(), "--yes"}).code, 0);
+  EXPECT_EQ(run_raw({"data-source", "set", "--local", "--server", "h/db", "--yes"}).code, 2);
+  EXPECT_EQ(run_raw({"data-source", "set", "--frobnicate", "--yes"}).code, 2);
+  EXPECT_EQ(run_raw({"data-source", "set", "--yes"}).code, 2);
+  EXPECT_EQ(run_raw({"data-source", "set", "--data"}).code, 2);
+  EXPECT_EQ(run_raw({"data-source", "show-me"}).code, 2);
 }
 
 }  // namespace
