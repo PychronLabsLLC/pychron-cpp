@@ -234,6 +234,8 @@ Read `libs/experiment/AGENTS.md` first.
 - Consumes: `Spectrometer::hold_table`, `table_held` (Task 5).
 - Produces: `Executor::execute` takes `hold_table("queue")` for its whole body when `context.spectrometer` is set; released before `execute` returns.
 
+Spec §8 places this test under `tests/experiment`; `tests/experiment` executor tests run without a real `Spectrometer`, while `LabSessionTest` assembles one, so the test lives in `tests/integration`. Edit spec §8's sentence to say so in this task.
+
 - [ ] **Step 1: Write failing test** `LabSessionTest.TheQueueHoldsTheFieldTableWhileItRuns`: subscribe `executor::RunStarted`, record the spectrometer's `table_held()` in the handler; after `QueueEnded`, assert every recorded value `== "queue"` and `table_held()` is nullopt.
 - [ ] **Step 2: Run** `cmake --build --preset dev --target pychron_integration_tests && build/dev/tests/integration/pychron_integration_tests --gtest_filter='LabSessionTest.*'`. Expected: new test FAILS.
 - [ ] **Step 3: Implement.**
@@ -388,7 +390,7 @@ Read `libs/experiment/AGENTS.md` first.
     void changeEvent(QEvent*) override;  // ActivationChange: reread version list
   };
   ```
-  Behaviour per spec §3, §3.1–3.4: left lists (names with `(active)` / `(HV)`, versions with points and detectors counts, current marked); right panel (default fit combo, one override combo per detector with "default", axis label, diagnostics list clicking selects the cell); in-memory-differs banner when `bridge->table_copy(name) != store.load()`; `fieldTableChanged` on the open table reloads when unmodified, else shows banner `"table changed since you opened it (now <v>)"` and keeps edits; Save disabled with reason while `bridge->table_held()` (text `"table is held by <holder>"`) or diagnostics have an error (first error's text); first save over a version whose text ≠ `to_toml(parse(text))` asks `"comments in <v> are not kept"` once per version; a version that does not parse is shown read-only with its parse error; save/restore failures from the bridge go to `show_error`. Poll `table_held()` on a 500 ms `QTimer` for enable state (UI convenience only; core refuses anyway).
+  Behaviour per spec §3, §3.1–3.4: left lists (names with `(active)` / `(HV)`, versions with points and detectors counts, current marked); right panel (default fit combo, one override combo per detector with "default", axis label, diagnostics list clicking selects the cell); in-memory-differs banner when `bridge->table_copy(name) != store.load()`; `fieldTableChanged` on the open table reloads when unmodified, else shows banner `"table changed since you opened it (now <v>)"` and keeps edits; Save disabled with reason while `bridge->table_held()` (text `"table is held by <holder>"`) or diagnostics have an error (first error's text); first save over a version whose text ≠ `to_toml(parse(text))` asks `"comments in <v> are not kept"` once per version; a version that does not parse is shown read-only with its parse error; save/restore failures from the bridge go to `show_error`. Undo and Redo actions from `model()->undo_stack()->createUndoAction/createRedoAction` with `QKeySequence::Undo` / `QKeySequence::Redo` (Ctrl+Z / Ctrl+Shift+Z). Make Current applies Save's conflict rule: before restoring, it rereads the store's current version; when that differs from the current version the window last listed, it refuses with `show_error("table changed since you opened it (now <v>)")` and rereads the list. Poll `table_held()` on a 500 ms `QTimer` for enable state (UI convenience only; core refuses anyway).
 
 - [ ] **Step 1: Write failing tests** (temp copy of `profiles/qtegra` data root, `SimSpectrometer` from the fixture):
   - `opensTheActiveTableAtItsCurrentVersion`
@@ -398,7 +400,8 @@ Read `libs/experiment/AGENTS.md` first.
   - `conflictReloadDiscardsEdits`, `conflictSaveAnywayWrites`, `conflictCancelKeepsEdits` (another version saved through `FieldTableStore` between open and save; chooser injected)
   - `unsavedPromptOnSwitchingVersionAndOnClose` (Cancel keeps window and edits; Discard switches)
   - `saveAndMakeCurrentDisabledWhileHeld` (`spec->hold_table("queue")`; reasons name "queue"; enabled again after release and `check_now()`)
-  - `makeCurrentDisabledOnVersionWithError` (hand-written bad version), `makeCurrentConfirmsAndMovesPointer`
+  - `makeCurrentDisabledOnVersionWithError` (hand-written bad version), `makeCurrentConfirmsAndMovesPointer`, `makeCurrentRefusedWhenCurrentMovedMeanwhile` (version saved through `FieldTableStore` after the list was read; `current` unchanged by the refused call)
+  - `undoAndRedoShortcutsEditTheGrid` (Ctrl+Z through `QTest::keyClick` restores the cell; Ctrl+Shift+Z reapplies it)
   - `aTableChangedWhileEditingShowsTheBannerAndKeepsEdits`
   - `commentsLostIsAskedOnce`
   - `unparseableVersionIsReadOnly`
