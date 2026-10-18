@@ -4,6 +4,8 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <utility>
+#include <vector>
 
 #include "pychron/systems/spectrometer/field_table_store.hpp"
 
@@ -546,10 +548,62 @@ Result<void> Spectrometer::update_table(const DetectorId& det, const std::string
 }
 
 Result<std::string> Spectrometer::save_table(std::chrono::system_clock::time_point when) {
-  std::scoped_lock lock(mutex_);
-  if (options_.data_root.empty()) return config_error("save_table needs a data directory");
-  FieldTableStore store(options_.data_root / "tables", active_table_);
-  return store.save(table_locked(), when);
+  FieldTableChanged event;
+  {
+    std::scoped_lock lock(mutex_);
+    if (options_.data_root.empty()) return config_error("save_table needs a data directory");
+    FieldTableStore store(options_.data_root / "tables", active_table_);
+    auto saved = store.save(table_locked(), when);
+    if (!saved) return saved;
+    event = FieldTableChanged{active_table_, *saved};
+  }
+  // Outside mutex_: a handler may read the table back without waiting behind
+  // a move another thread starts meanwhile.
+  context_.bus.publish(event);
+  return event.version;
+}
+
+Result<std::string> Spectrometer::table_version(const std::string& name) const {
+  if (options_.data_root.empty()) return config_error("table_version needs a data directory");
+  return FieldTableStore(options_.data_root / "tables", name).current_version();
+}
+
+Spectrometer::TableHold Spectrometer::hold_table(std::string holder) {
+  std::scoped_lock lock(holds_mutex_);
+  const std::uint64_t id = next_hold_id_++;
+  holds_.emplace_back(id, std::move(holder));
+  return TableHold(this, id);
+}
+
+std::optional<std::string> Spectrometer::table_held() const {
+  std::scoped_lock lock(holds_mutex_);
+  if (holds_.empty()) return std::nullopt;
+  return holds_.front().second;
+}
+
+void Spectrometer::release_hold(std::uint64_t id) {
+  std::scoped_lock lock(holds_mutex_);
+  std::erase_if(holds_, [id](const auto& h) { return h.first == id; });
+}
+
+Spectrometer::TableHold::TableHold(TableHold&& other) noexcept
+    : owner_(std::exchange(other.owner_, nullptr)), id_(std::exchange(other.id_, 0)) {}
+
+Spectrometer::TableHold& Spectrometer::TableHold::operator=(TableHold&& other) noexcept {
+  if (this != &other) {
+    release();
+    owner_ = std::exchange(other.owner_, nullptr);
+    id_ = std::exchange(other.id_, 0);
+  }
+  return *this;
+}
+
+Spectrometer::TableHold::~TableHold() { release(); }
+
+void Spectrometer::TableHold::release() {
+  if (owner_ != nullptr) owner_->release_hold(id_);
+  owner_ = nullptr;
+  id_ = 0;
 }
 
 Result<Spectrometer::TableScope> Spectrometer::with_table(const std::string& name) {

@@ -262,7 +262,11 @@ process next loads the table".
   failure or any `check_field_table` error (error lists them); then
   `FieldTableStore::restore`, then reload `tables_[name]` if loaded.
 - `Spectrometer::hold_table(std::string holder) -> TableHold`: RAII, move-only;
-  count of holds plus holder names under `mutex_`; `table_held() ->
+  holds (id, holder name), in order taken, under own plain `std::mutex
+  holds_mutex_`, not `mutex_`: few fields, never held across clock time, so
+  `table_held()` from UI thread never waits behind settling move;
+  `replace_table` and `restore_table_version` take `mutex_`, then
+  `holds_mutex_`, never other order; `table_held() ->
   std::optional<std::string>` (first holder) for UI enable state. Taken by
   `Executor` for whole queue run (`libs/experiment` already links
   `pychron::systems`) and by peak center and sweep jobs for their run. Hold

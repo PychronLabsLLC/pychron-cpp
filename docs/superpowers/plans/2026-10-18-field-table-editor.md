@@ -171,11 +171,11 @@
   Holds are kept as `std::vector<std::pair<std::uint64_t, std::string>>` under a plain `std::mutex holds_mutex_` (a few fields, never held across clock time), not `mutex_`, so `table_held()` from the UI thread never waits behind a settling move. `replace_table` reads them while holding `mutex_` and then `holds_mutex_`. This departs from spec §5 ("under `mutex_`"): edit that sentence of the spec in this task.
 - `save_table(when)` publishes `FieldTableChanged{active_table(), version}` after a successful save.
 
-- [ ] **Step 1: Write failing tests** `SpectrometerTables.*`: `HoldIsCountedAndNamed` (two holds "queue", "peak_center" → `table_held() == "queue"`; release first → `"peak_center"`; release both → nullopt); `MovedHoldReleasesOnce`; `TableVersionReadsStoreCurrent`; `TableVersionWithoutDataRootIsConfigError`; `SaveTablePublishesFieldTableChanged` (subscribe on the fake's bus, check name and version equal the returned version).
-- [ ] **Step 2: Run** `build/dev/tests/systems/pychron_systems_tests --gtest_filter='SpectrometerTables.*'`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement** the members.
-- [ ] **Step 4: Run** filter, then `--gtest_filter='Spectrometer*'`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(spectrometer): table holds and change event`.
+- [x] **Step 1: Write failing tests** `SpectrometerTables.*`: `HoldIsCountedAndNamed` (two holds "queue", "peak_center" → `table_held() == "queue"`; release first → `"peak_center"`; release both → nullopt); `MovedHoldReleasesOnce`; `TableVersionReadsStoreCurrent`; `TableVersionWithoutDataRootIsConfigError`; `SaveTablePublishesFieldTableChanged` (subscribe on the fake's bus, check name and version equal the returned version).
+- [x] **Step 2: Run** `build/dev/tests/systems/pychron_systems_tests --gtest_filter='SpectrometerTables.*'`. Expected: FAIL to compile.
+- [x] **Step 3: Implement** the members.
+- [x] **Step 4: Run** filter, then `--gtest_filter='Spectrometer*'`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(spectrometer): table holds and change event`.
 
 ### Task 6: `replace_table` and `restore_table_version`
 

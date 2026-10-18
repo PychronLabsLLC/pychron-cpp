@@ -97,6 +97,13 @@ struct MagnetMoved {
   TimePoint ts{};
 };
 
+// A field table got a new current version in the store (save_table, and the
+// editor's replace and restore). `version` is the store's bare version.
+struct FieldTableChanged {
+  std::string name;
+  std::string version;
+};
+
 // ---- snapshot -------------------------------------------------------------
 
 struct SpectrometerState {
@@ -220,8 +227,37 @@ class Spectrometer {
   FieldTable field_table() const;  // copy of the active table
   Result<void> update_table(const DetectorId& det, const std::string& isotope, double table_value,
                             std::optional<bool> propagate = std::nullopt);
-  // Saves the active table as a new version under <data_root>/tables.
+  // Saves the active table as a new version under <data_root>/tables and
+  // publishes FieldTableChanged. Not refused while a TableHold is out.
   Result<std::string> save_table(std::chrono::system_clock::time_point when);
+  // The store's current version of table `name`; Config error without a
+  // data_root.
+  Result<std::string> table_version(const std::string& name) const;
+  const std::filesystem::path& data_root() const noexcept { return options_.data_root; }
+
+  // RAII: while any is out, the table may not be replaced or restored to
+  // another version (a queue or a peak center is using it). Move-only; a
+  // default-constructed or moved-from hold holds nothing. Must not outlive
+  // the Spectrometer that gave it.
+  class TableHold {
+   public:
+    TableHold() = default;
+    TableHold(TableHold&& other) noexcept;
+    TableHold& operator=(TableHold&& other) noexcept;
+    TableHold(const TableHold&) = delete;
+    TableHold& operator=(const TableHold&) = delete;
+    ~TableHold();
+    void release();
+
+   private:
+    friend class Spectrometer;
+    TableHold(Spectrometer* owner, std::uint64_t id) : owner_(owner), id_(id) {}
+    Spectrometer* owner_ = nullptr;
+    std::uint64_t id_ = 0;
+  };
+  [[nodiscard]] TableHold hold_table(std::string holder);
+  // The first holder still out, for the UI's enable state.
+  std::optional<std::string> table_held() const;
 
   // Waits `d` on the context clock (simulated time under a ManualClock), or
   // through SpectrometerOptions::sleep when injected. Jobs settle with it.
@@ -292,6 +328,7 @@ class Spectrometer {
   // caller must then not move, since the path cannot be judged.
   Result<std::vector<ChannelId>> plan_protection(double from, double to, ProtectPolicy policy, bool& blank);
   void restore_table(const std::string& name);
+  void release_hold(std::uint64_t id);
 
   cfg::SpectrometerConfig config_;
   MolecularWeights weights_;
@@ -308,6 +345,14 @@ class Spectrometer {
   std::optional<DetectorSet> detectors_;
   std::map<DetectorId, ChannelId> local_channel_;  // detector -> driver-local channel
   std::optional<std::pair<double, TimePoint>> hv_cache_;
+
+  // Table holds, in the order taken. A plain mutex: it guards these fields
+  // only and is never held across clock time, so table_held() from the UI
+  // thread does not wait behind a settling move. Taken after mutex_ when both
+  // are needed, never before.
+  mutable std::mutex holds_mutex_;
+  std::vector<std::pair<std::uint64_t, std::string>> holds_;
+  std::uint64_t next_hold_id_ = 1;
 
   std::vector<std::unique_ptr<IIntensityAcquirer>> adapters_;  // "driver:channel" views
   std::unique_ptr<AcquisitionEngine> engine_;
