@@ -184,7 +184,10 @@ Diagnostics function lives in `libs/systems` (pure, testable), not UI:
   current), Cancel.
 - Save refused while executor runs a queue or a scan (peak center, sweep) is
   running on this spectrometer: Save disabled, tooltip gives reason. Table
-  must not change between hops of one run.
+  must not change between hops of one run. UI state is convenience only:
+  refusal itself is in core (`replace_table` returns error while a
+  `TableHold` is out, §5), so a race between enable check and Save, or a
+  caller other than this window, still refused. Error shown in dialog.
 - Saved TOML is canonical `to_toml`: comments of hand-written version lost.
   First save over version whose file text ≠ `to_toml(parse(text))` asks once
   ("comments in <v> are not kept"). Old version file untouched (immutable).
@@ -202,8 +205,10 @@ Diagnostics function lives in `libs/systems` (pure, testable), not UI:
   and row; failed when detectors differed).
 - Make Current: `FieldTableStore::restore(version)` through
   `Spectrometer::restore_table_version(name, version)` (§5). Same refusals as
-  Save (running queue or scan, conflict). Confirm dialog naming old and new
-  version.
+  Save (running queue or scan, conflict). Also refused when chosen version
+  has a §3.2 error (diagnostics run against current config; version that does
+  not parse counts as error): Make Current disabled, tooltip lists first
+  error; core refuses too (§5). Confirm dialog naming old and new version.
 - Revert: drop edits, reload open version.
 - No delete of versions (immutable history; a lab prunes by hand).
 
@@ -232,7 +237,8 @@ elctl spec table check [<name>]                # §3.2 diagnostics; exit 1 on er
 ```
 
 `set` and `import` write new version (same diagnostics; errors refuse with
-exit 1). Run against data root of config, no device opened, through
+exit 1). `restore` runs §3.2 diagnostics on target version first (unparseable
+= error); any error refuses with exit 1, pointer unchanged, errors printed. Run against data root of config, no device opened, through
 `FieldTableStore` only. No cross-process lock exists between `elctl` and a
 running `pychron-ui` (none found in `apps/elctl` or `libs/experiment`), and
 none is added: a running process keeps the table it loaded until it reloads
@@ -245,13 +251,24 @@ process next loads the table".
 
 - `Spectrometer::replace_table(const std::string& name, FieldTable table,
   std::string_view base_version, WallTime when) -> Result<std::string>`:
-  under `mutex_`: check axis = positioner axis; check store current =
-  `base_version` unless `base_version` empty (Save Anyway passes empty);
-  `FieldTableStore::save`; then swap `tables_[name]` if loaded. Returns new
-  version. Move in progress holds `mutex_`, so move sees old or new table,
-  never half.
+  under `mutex_`: refuse while any `TableHold` out (error "table is held by
+  <holder>"); check axis = positioner axis; check `check_field_table` has no
+  error; check store current = `base_version` unless `base_version` empty
+  (Save Anyway passes empty); `FieldTableStore::save`; then swap
+  `tables_[name]` if loaded. Returns new version. Move in progress holds
+  `mutex_`, so move sees old or new table, never half.
 - `Spectrometer::restore_table_version(name, version) -> Result<void>`:
+  under `mutex_`: same hold refusal; load version from store, refuse on parse
+  failure or any `check_field_table` error (error lists them); then
   `FieldTableStore::restore`, then reload `tables_[name]` if loaded.
+- `Spectrometer::hold_table(std::string holder) -> TableHold`: RAII, move-only;
+  count of holds plus holder names under `mutex_`; `table_held() ->
+  std::optional<std::string>` (first holder) for UI enable state. Taken by
+  `Executor` for whole queue run (`libs/experiment` already links
+  `pychron::systems`) and by peak center and sweep jobs for their run. Hold
+  blocks only `replace_table` and `restore_table_version`; `update_table` and
+  `save_table` (peak center's D2 path) do not check it, so peak center inside
+  a held queue still updates and saves.
 - `Spectrometer::table_version(name) -> Result<std::string>`: store current.
 - Event `FieldTableChanged{name, version}` on `SignalBus` after either, and
   after peak center save (D2). `SpectrometerBridge` relays it, re-reads its
@@ -282,8 +299,10 @@ process next loads the table".
 - Magnet never positioned from table that failed §3.2 errors: Save,
   `set`, `import` refuse; `restore` of version with errors refused too.
 - In a running process, table changes only between moves (`mutex_`), and
-  editor never changes it while queue or scan runs. Peak center's own D2
-  save is exempt: it runs as part of the queue, between runs, as today.
+  editor never changes it while queue or scan runs: enforced in core by
+  `TableHold` refusal in `replace_table` and `restore_table_version`, not by
+  UI. Peak center's own D2 save is exempt: it runs as part of the queue,
+  between runs, as today.
   `elctl` writes only files; it never changes a running process's table.
 - Time stamps from `Clock::wall_now()`, never `system_clock::now()`.
 - UI talks to core only through `SpectrometerBridge` / `CoreBridge`; save
@@ -295,19 +314,28 @@ process next loads the table".
 
 - `tests/systems` (or where `FieldTableStore` tests are): D1 round-trip
   (save → `resolve_current_table` finds it; shipped-style pointer → `load()`
-  works); `replace_table` conflict, axis refusal, in-memory swap;
-  `restore_table_version` reload; `check_field_table` each error and
+  works); `replace_table` conflict, axis refusal, diagnostics-error refusal,
+  in-memory swap; `restore_table_version` reload; `replace_table` and
+  `restore_table_version` each refused while a `TableHold` out (store
+  current and in-memory table unchanged), accepted after hold released;
+  `save_table` not refused under hold; `restore_table_version` refused for
+  version with §3.2 error and for unparseable version, pointer unchanged;
+  executor holds table for queue run (`tests/experiment`: `table_held()`
+  set during run, clear after); `check_field_table` each error and
   warning; `diff_field_tables` by isotope with added/removed rows.
 - Peak center: with `update_table`, new version exists after job, stamped
   from `VirtualClock`; save failure (read-only dir) leaves job success with
   warning.
 - `read_mftable_csv`: legacy first-line fit name form.
 - `elctl`: each `spec table` subcommand on temp data root; `set` / `import`
-  refused on diagnostics error, exit 1.
+  refused on diagnostics error, exit 1; `restore` to version with
+  diagnostics error refused, exit 1, `current` file unchanged.
 - `tests/ui`: editor opens shipped qtegra table, edit cell, Save → new
   version current and `SpectrometerBridge` sees it; duplicate isotope
   disables Save; conflict dialog path via injected chooser (as
-  `ConditionalsEditorWindow::set_pick_file`); unsaved prompt.
+  `ConditionalsEditorWindow::set_pick_file`); unsaved prompt; Save and Make
+  Current disabled while `table_held()`; Make Current disabled on version
+  with §3.2 error.
 
 ## 9. Out of scope
 
