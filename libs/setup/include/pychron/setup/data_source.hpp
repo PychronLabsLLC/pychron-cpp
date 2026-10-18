@@ -10,6 +10,7 @@
 // then applied.
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <variant>
@@ -87,5 +88,46 @@ Result<DataSourceChange> plan_data_source(const SiteInstall& install, const Data
 // refuses the change with nothing written.
 Result<void> apply_data_source(const DataSourceChange& change, const DataSource& to,
                                const std::filesystem::path& site_path);
+
+// What a change opens the store with, injected by an app built with the store
+// (as `DoctorOptions::open_database`): libs/setup does not link it.
+struct DataSourceOpeners {
+  // Opens url (with password); migrate: made and migrated. Result describes it
+  // ("schema version 12"). Empty: database not checked (built without the store).
+  std::function<Result<std::string>(const std::string& url, bool migrate)> open_database;
+  // As SetupWizard::SeedDatabase. Empty: not seeded.
+  std::function<Result<std::string>(const std::string& url, const std::filesystem::path& seed_file, bool migrate)>
+      seed_database;
+};
+
+// What check_data_source found. A default one (nothing opened) stands for a
+// change written without checking (`--no-check`, "Save without checking").
+struct DataSourceCheck {
+  std::vector<std::string> said;  // lines said on success
+  bool made_file = false;         // a missing local file was made and migrated (create = true)
+  bool opened = false;            // the database (made, existing or server) opened
+};
+
+// Checks before a change is written (spec 3.3). Data folder: with `create`
+// made when missing, then probed with a file made and removed; refused when
+// not writable. Database: a missing local file is made (folder too) and
+// migrated with `create`; an existing one is opened with migrate = false
+// (an empty file, or one whose open fails, is refused); a server is opened
+// with migrate = false and the password given or kept. `create` false (Test
+// connection) writes nothing: a missing folder or file is said as "will be
+// made". Refused with ErrorKind::Config, reason in plain words, never the
+// password.
+Result<DataSourceCheck> check_data_source(const DataSourceChange& change, const DataSource& to,
+                                          const DataSourceOpeners& openers, bool create);
+
+// After apply (spec 3.3): seeded (ensure-only, <root>/seed.toml) only when the
+// install is an instrument one AND `to` is either a local file that this change
+// made (missing before check_data_source with create = true) or a server that
+// opened. An existing local file is never seeded: an existing store is not
+// touched. Lines say what was done or why skipped, never an error.
+// `check`: what check_data_source returned; a default one (`--no-check`, or
+// "Save without checking") opened nothing, so nothing is seeded and that is said.
+std::vector<std::string> seed_data_source(const DataSourceChange& change, const DataSource& to,
+                                          const DataSourceOpeners& openers, const DataSourceCheck& check);
 
 }  // namespace pychron::setup

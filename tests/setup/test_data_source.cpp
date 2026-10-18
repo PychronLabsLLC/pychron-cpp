@@ -9,7 +9,14 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "pychron/setup/data_source.hpp"
 #include "pychron/setup/doctor.hpp"
@@ -530,4 +537,287 @@ TEST_F(DataSourceApply, WithoutARecordOnlyTheSiteAndCredentialsAreWritten) {
   EXPECT_FALSE(fs::exists(record_path(root)));
   EXPECT_TRUE(fs::exists(creds));
   EXPECT_EQ(site_entry().database, "postgresql://u@h:5432/n");
+}
+
+// --- Checks before writing (spec 3.3), and the seed after ---
+
+namespace {
+
+// Openers that record what they were asked and answer as told.
+struct FakeOpeners {
+  std::vector<std::pair<std::string, bool>> opened;  // (url, migrate)
+  struct Seeded {
+    std::string url;
+    fs::path seed_file;
+    bool migrate = false;
+  };
+  std::vector<Seeded> seeded;
+  Result<std::string> open_reply = std::string("schema version 12");
+  Result<std::string> seed_reply = std::string("seeded 3 samples");
+
+  DataSourceOpeners openers() {
+    DataSourceOpeners o;
+    o.open_database = [this](const std::string& url, bool migrate) {
+      opened.emplace_back(url, migrate);
+      return open_reply;
+    };
+    o.seed_database = [this](const std::string& url, const fs::path& seed_file, bool migrate) {
+      seeded.push_back({url, seed_file, migrate});
+      return seed_reply;
+    };
+    return o;
+  }
+};
+
+bool any_contains(const std::vector<std::string>& lines, const std::string& part) {
+  return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(part) != std::string::npos; });
+}
+
+DataSource local_source(const fs::path& file, std::string data = "data") {
+  DataSource s;
+  s.database = LocalDatabase{file};
+  s.data = std::move(data);
+  return s;
+}
+
+DataSource server_source(std::optional<std::string> password) {
+  DataSource s;
+  s.database = ServerDatabase{"db.lab", 5432, "pychron", "ana", std::move(password)};
+  return s;
+}
+
+struct DataSourceCheckTest : DataSourceFixture {
+  [[nodiscard]] DataSourceChange change_for(const DataSource& to, const std::string& kind = "data_reduction") const {
+    SiteInstall s = install();
+    s.kind = kind;
+    s.database = database_url(to, root);
+    s.data = to.data;
+    return DataSourceChange{s, {}};
+  }
+};
+
+}  // namespace
+
+TEST_F(DataSourceCheckTest, ANewLocalFileIsMadeAndMigrated) {
+  const DataSource to = local_source("sub/new.db");
+  {
+    FakeOpeners fake;
+    auto checked = check_data_source(change_for(to), to, fake.openers(), false);
+    ASSERT_TRUE(checked) << checked.error().what;
+    EXPECT_TRUE(fake.opened.empty());
+    EXPECT_TRUE(any_contains(checked->said, "will be made"));
+    EXPECT_FALSE(checked->made_file);
+    EXPECT_FALSE(checked->opened);
+    EXPECT_FALSE(fs::exists(root / "sub"));
+  }
+  FakeOpeners fake;
+  auto checked = check_data_source(change_for(to), to, fake.openers(), true);
+  ASSERT_TRUE(checked) << checked.error().what;
+  ASSERT_EQ(fake.opened.size(), 1U);
+  EXPECT_EQ(fake.opened[0].first, "sqlite:" + (root / "sub" / "new.db").generic_string());
+  EXPECT_TRUE(fake.opened[0].second);
+  EXPECT_TRUE(fs::is_directory(root / "sub"));
+  EXPECT_TRUE(checked->made_file);
+  EXPECT_TRUE(checked->opened);
+}
+
+TEST_F(DataSourceCheckTest, AnExistingLocalFileIsNeverMigrated) {
+  write_text(root / "old.db", "not empty");
+  const DataSource to = local_source("old.db");
+  const std::string url = "sqlite:" + (root / "old.db").generic_string();
+  for (const bool create : {true, false}) {
+    FakeOpeners fake;
+    fake.open_reply = fail(ErrorKind::Config, "schema version 9 is behind 12\nmore");
+    auto checked = check_data_source(change_for(to), to, fake.openers(), create);
+    ASSERT_FALSE(checked);
+    EXPECT_EQ(checked.error().kind, ErrorKind::Config);
+    std::string expected = url;
+    expected += ": schema version 9 is behind 12; run `elctl db migrate --db ";
+    expected += url;
+    expected += "` first";
+    EXPECT_EQ(checked.error().what, expected);
+    EXPECT_NE(checked.error().what.find("elctl db migrate --db sqlite:"), std::string::npos);
+    ASSERT_EQ(fake.opened.size(), 1U);
+    EXPECT_FALSE(fake.opened[0].second);
+  }
+  FakeOpeners fake;
+  auto checked = check_data_source(change_for(to), to, fake.openers(), true);
+  ASSERT_TRUE(checked) << checked.error().what;
+  EXPECT_FALSE(checked->made_file);
+  EXPECT_TRUE(checked->opened);
+  ASSERT_EQ(fake.opened.size(), 1U);
+  EXPECT_FALSE(fake.opened[0].second);
+}
+
+TEST_F(DataSourceCheckTest, AnEmptyFileIsNotAStore) {
+  write_text(root / "empty.db", "");
+  const DataSource to = local_source("empty.db");
+  FakeOpeners fake;
+  auto checked = check_data_source(change_for(to), to, fake.openers(), true);
+  ASSERT_FALSE(checked);
+  EXPECT_EQ(checked.error().kind, ErrorKind::Config);
+  EXPECT_EQ(checked.error().what, (root / "empty.db").generic_string() + " is empty: not a pychron store");
+  EXPECT_TRUE(fake.opened.empty());
+}
+
+TEST_F(DataSourceCheckTest, AServerIsOpenedWithThePasswordGivenOrKept) {
+  {
+    const DataSource to = server_source(std::string("given"));
+    FakeOpeners fake;
+    auto checked = check_data_source(change_for(to), to, fake.openers(), true);
+    ASSERT_TRUE(checked) << checked.error().what;
+    ASSERT_EQ(fake.opened.size(), 1U);
+    EXPECT_NE(fake.opened[0].first.find("given"), std::string::npos);
+    EXPECT_FALSE(fake.opened[0].second);
+    EXPECT_TRUE(checked->opened);
+    EXPECT_FALSE(checked->made_file);
+    EXPECT_FALSE(any_contains(checked->said, "given"));
+  }
+  write_text(root / ".pychron" / "credentials.toml", "[database]\npassword = \"kept-pw\"\n");
+  const DataSource kept = server_source(std::nullopt);
+  {
+    FakeOpeners fake;
+    auto checked = check_data_source(change_for(kept), kept, fake.openers(), false);
+    ASSERT_TRUE(checked) << checked.error().what;
+    ASSERT_EQ(fake.opened.size(), 1U);
+    EXPECT_EQ(fake.opened[0].first, "postgresql://ana:kept-pw@db.lab:5432/pychron");
+    EXPECT_FALSE(fake.opened[0].second);
+  }
+  FakeOpeners fake;
+  fake.open_reply = fail(ErrorKind::Io, "could not connect with ana:kept-pw\nsecond line");
+  auto checked = check_data_source(change_for(kept), kept, fake.openers(), true);
+  ASSERT_FALSE(checked);
+  EXPECT_EQ(checked.error().kind, ErrorKind::Config);
+  EXPECT_EQ(checked.error().what.find("kept-pw"), std::string::npos);
+  EXPECT_NE(checked.error().what.find("postgresql://ana@db.lab:5432/pychron: could not connect"), std::string::npos);
+  EXPECT_NE(checked.error().what.find("check the server, the user and the password"), std::string::npos);
+  EXPECT_EQ(checked.error().what.find("second line"), std::string::npos);
+  ASSERT_EQ(fake.opened.size(), 1U);
+  EXPECT_FALSE(fake.opened[0].second);
+}
+
+TEST_F(DataSourceCheckTest, WithoutAnOpenerTheDatabaseIsNotChecked) {
+  const DataSource to = local_source("new.db");
+  auto checked = check_data_source(change_for(to), to, DataSourceOpeners{}, true);
+  ASSERT_TRUE(checked) << checked.error().what;
+  EXPECT_TRUE(contains(checked->said, "skip  check: built without the DVC store"));
+  EXPECT_FALSE(checked->opened);
+  EXPECT_FALSE(checked->made_file);
+  EXPECT_FALSE(fs::exists(root / "new.db"));
+}
+
+TEST_F(DataSourceCheckTest, TheDataFolderIsMadeOrRefused) {
+  const DataSource to = local_source("x.db", "runs/new");
+  {
+    FakeOpeners fake;
+    auto checked = check_data_source(change_for(to), to, fake.openers(), false);
+    ASSERT_TRUE(checked) << checked.error().what;
+    EXPECT_FALSE(fs::exists(root / "runs"));
+    EXPECT_TRUE(contains(checked->said, "data folder " + (root / "runs" / "new").generic_string() + " will be made"));
+  }
+  {
+    FakeOpeners fake;
+    auto checked = check_data_source(change_for(to), to, fake.openers(), true);
+    ASSERT_TRUE(checked) << checked.error().what;
+    EXPECT_TRUE(fs::is_directory(root / "runs" / "new"));
+    EXPECT_TRUE(fs::is_empty(root / "runs" / "new"));  // the probe is gone
+  }
+#ifdef _WIN32
+  GTEST_SKIP() << "POSIX permissions";
+#else
+  if (::geteuid() == 0) GTEST_SKIP() << "root ignores directory permissions";
+  const fs::path locked = root / "locked";
+  fs::create_directories(locked);
+  fs::permissions(locked, fs::perms::owner_read | fs::perms::owner_exec);
+  const DataSource to_locked = local_source("x.db", "locked");
+  for (const bool create : {true, false}) {
+    FakeOpeners fake;
+    auto checked = check_data_source(change_for(to_locked), to_locked, fake.openers(), create);
+    EXPECT_FALSE(checked);
+    if (!checked) {
+      EXPECT_EQ(checked.error().what, "data folder " + locked.generic_string() + " is not writable");
+    }
+    EXPECT_TRUE(fake.opened.empty());
+  }
+  fs::permissions(locked, fs::perms::owner_all);
+#endif
+}
+
+TEST_F(DataSourceCheckTest, ATestConnectionWritesNothing) {
+  const DataSource missing = local_source("sub/new.db", "runs/new");
+  {
+    FakeOpeners fake;
+    const auto before = hash_tree(dir);
+    auto checked = check_data_source(change_for(missing), missing, fake.openers(), false);
+    ASSERT_TRUE(checked) << checked.error().what;
+    EXPECT_EQ(hash_tree(dir), before);
+  }
+  fs::create_directories(root / "runs");
+  write_text(root / "old.db", "store");
+  const DataSource existing = local_source("old.db", "runs");
+  FakeOpeners fake;
+  const auto before = hash_tree(dir);
+  auto checked = check_data_source(change_for(existing), existing, fake.openers(), false);
+  ASSERT_TRUE(checked) << checked.error().what;
+  EXPECT_EQ(hash_tree(dir), before);
+  ASSERT_EQ(fake.opened.size(), 1U);
+  EXPECT_FALSE(fake.opened[0].second);
+}
+
+TEST_F(DataSourceCheckTest, AnInstrumentInstallIsSeeded) {
+  write_text(root / "seed.toml", "# seed\n");
+  const DataSource local = local_source("new.db");
+  {
+    FakeOpeners fake;
+    const auto said = seed_data_source(change_for(local, "instrument"), local, fake.openers(),
+                                       DataSourceCheck{.said = {}, .made_file = true, .opened = true});
+    ASSERT_EQ(fake.seeded.size(), 1U);
+    EXPECT_EQ(fake.seeded[0].seed_file, root / "seed.toml");
+    EXPECT_EQ(fake.seeded[0].url, "sqlite:" + (root / "new.db").generic_string());
+    EXPECT_TRUE(any_contains(said, "seeded 3 samples"));
+  }
+  const DataSource server = server_source(std::string("pw"));
+  {
+    FakeOpeners fake;
+    const auto said = seed_data_source(change_for(server, "instrument"), server, fake.openers(),
+                                       DataSourceCheck{.said = {}, .made_file = false, .opened = true});
+    ASSERT_EQ(fake.seeded.size(), 1U);
+    EXPECT_EQ(fake.seeded[0].url, "postgresql://ana:pw@db.lab:5432/pychron");
+    EXPECT_FALSE(fake.seeded[0].migrate);
+    EXPECT_FALSE(any_contains(said, "pw@"));
+  }
+  {
+    FakeOpeners fake;  // --no-check: nothing opened
+    const auto said = seed_data_source(change_for(server, "instrument"), server, fake.openers(),
+                                       DataSourceCheck{.said = {}, .made_file = false, .opened = false});
+    EXPECT_TRUE(fake.seeded.empty());
+    EXPECT_TRUE(any_contains(said, "seed skipped: "));
+  }
+  {
+    FakeOpeners fake;
+    fake.seed_reply = fail(ErrorKind::Io, "seed failed\ndetail");
+    const auto said = seed_data_source(change_for(server, "instrument"), server, fake.openers(),
+                                       DataSourceCheck{.said = {}, .made_file = false, .opened = true});
+    EXPECT_EQ(fake.seeded.size(), 1U);
+    EXPECT_TRUE(contains(said, "seed skipped: seed failed"));
+  }
+  {
+    FakeOpeners fake;
+    const auto said = seed_data_source(change_for(local, "data_reduction"), local, fake.openers(),
+                                       DataSourceCheck{.said = {}, .made_file = true, .opened = true});
+    EXPECT_TRUE(fake.seeded.empty());
+  }
+}
+
+TEST_F(DataSourceCheckTest, AnExistingLocalFileIsNotSeeded) {
+  write_text(root / "seed.toml", "# seed\n");
+  write_text(root / "old.db", "store");
+  const DataSource to = local_source("old.db");
+  FakeOpeners fake;
+  const auto said = seed_data_source(change_for(to, "instrument"), to, fake.openers(),
+                                     DataSourceCheck{.said = {}, .made_file = false, .opened = true});
+  EXPECT_TRUE(fake.seeded.empty());
+  EXPECT_TRUE(contains(said, "seed skipped: " + (root / "old.db").generic_string() +
+                                 " existed; an existing store is not seeded"));
+  EXPECT_TRUE(any_contains(said, "an existing store is not seeded"));
 }

@@ -177,7 +177,7 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
   ```
 - Pinned text: no opener → `"skip  check: built without the DVC store"`; existing local file of size 0 → refusal `"<file> is empty: not a pychron store"`; existing local file whose open fails with kind `Config` → refusal `"<url>: <first line of error>; run `elctl db migrate --db <url>` first"`; server failure → `"<url without password>: <first line>"` plus doctor's hint `"check the server, the user and the password"`; data folder not writable → `"data folder <path> is not writable"`; missing data folder with `create = false` → said `"data folder <path> will be made"`; existing local file, nothing seeded → `"seed skipped: <file> existed; an existing store is not seeded"`; seed skipped → `"seed skipped: <first line>"`.
 
-- [ ] **Step 1: Write the failing tests** with a fake opener recording `(url, migrate)` calls:
+- [x] **Step 1: Write the failing tests** with a fake opener recording `(url, migrate)` calls:
   - `ANewLocalFileIsMadeAndMigrated`: missing `sub/new.db`, `create = true` → opener called once with `migrate = true`, folder `sub` exists; `create = false` → opener not called, said contains `"will be made"`.
   - `AnExistingLocalFileIsNeverMigrated`: existing non-empty file; opener returns `Config` error → refusal with `elctl db migrate --db sqlite:`; opener called with `migrate = false` only.
   - `AnEmptyFileIsNotAStore`: zero-byte file → refusal `"is empty: not a pychron store"`, opener not called.
@@ -188,11 +188,11 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
   - `AnInstrumentInstallIsSeeded`: kind `instrument`, `seed.toml` present, check `{.said = {}, .made_file = true, .opened = true}` → seeder called with `<root>/seed.toml`; server `to` with check `{.said = {}, .made_file = false, .opened = true}` → seeder called; server with a default check (`--no-check`) → seeder not called, said `"seed skipped: ..."`; seeder error → said `"seed skipped: ..."`; data-reduction install → seeder not called.
   - (Every `DataSourceCheck` literal names all three fields: clang 18's `-Wmissing-field-initializers`.)
   - `AnExistingLocalFileIsNotSeeded`: instrument install, `seed.toml` present, `to` an existing local file, check `{.said = {}, .made_file = false, .opened = true}` → seeder not called, said contains `"an existing store is not seeded"`.
-- [ ] **Step 2: Run, expect FAIL** after building `pychron_setup_tests`.
-- [ ] **Step 3: Implement.** Data folder with `create = true`: create it (`create_directories`), then make and remove a probe file, as doctor's `check_writable` (reuse it if it can be made non-static without widening the public API). With `create = false` nothing is written: a missing folder is said as "will be made" and its nearest existing parent is not probed; an existing folder is probed for writability without writing (`access(W_OK)` on POSIX, `fs::status` permissions on Windows), never with a probe file. The caller passes `check_data_source`'s `DataSourceCheck` to `seed_data_source`.
-- [ ] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*'`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 6: Commit** `feat(setup): a data source is checked before it is written and seeded after`
+- [x] **Step 2: Run, expect FAIL** after building `pychron_setup_tests`. (Not seen failing on its own: the implementation went in before the first build.)
+- [x] **Step 3: Implement.** Data folder with `create = true`: create it (`create_directories`), then make and remove a probe file, as doctor's `check_writable` (reuse it if it can be made non-static without widening the public API). With `create = false` nothing is written: a missing folder is said as "will be made" and its nearest existing parent is not probed; an existing folder is probed for writability without writing (`access(W_OK)` on POSIX, `fs::status` permissions on Windows), never with a probe file. The caller passes `check_data_source`'s `DataSourceCheck` to `seed_data_source`.
+- [x] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*'`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 6: Commit** `feat(setup): a data source is checked before it is written and seeded after`
 
 ### Task 6: `elctl data-source` show and `set --local` / `--data`
 

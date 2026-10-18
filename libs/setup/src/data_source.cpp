@@ -2,6 +2,7 @@
 
 #include <charconv>
 #include <cstdint>
+#include <fstream>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -12,6 +13,10 @@
 #include "pychron/setup/template.hpp"
 
 #include "file_io.hpp"
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -186,6 +191,115 @@ void set_answers(Answers& answers, const DataSource& to) {
   answers["data_folder"] = Value{to.data};
 }
 
+std::string first_line(const std::string& text) { return text.substr(0, text.find('\n')); }
+
+// `text` with every occurrence of `secret` put out of sight: a driver's
+// message may quote the URL it was given.
+std::string redact(std::string text, const std::optional<std::string>& secret) {
+  if (!secret || secret->empty()) return text;
+  for (auto at = text.find(*secret); at != std::string::npos; at = text.find(*secret, at + 3))
+    text.replace(at, secret->size(), "***");
+  return text;
+}
+
+// Whether `dir`, which exists, can be written to, found without writing.
+bool writable_without_writing(const fs::path& dir) {
+#ifdef _WIN32
+  std::error_code ec;
+  const auto status = fs::status(dir, ec);
+  return !ec && (status.permissions() & fs::perms::owner_write) != fs::perms::none;
+#else
+  return ::access(dir.c_str(), W_OK) == 0;
+#endif
+}
+
+// Whether a file can be made in `dir` (as doctor's check_writable): one is
+// made and removed.
+bool writable_by_probe(const fs::path& dir) {
+  const fs::path probe = dir / ".pychron-data-source-probe";
+  {
+    std::ofstream f(probe, std::ios::binary);
+    f << "x";
+    if (!f) return false;
+  }
+  std::error_code ec;
+  fs::remove(probe, ec);
+  return true;
+}
+
+// The data folder: made with `create`, then probed; without it nothing is
+// written and a missing folder is said as what will happen.
+Result<void> check_data_folder(const fs::path& folder, bool create, std::vector<std::string>& said) {
+  const std::string name = folder.generic_string();
+  auto refused = [&] { return fail(ErrorKind::Config, "data folder " + name + " is not writable"); };
+  std::error_code ec;
+  if (!fs::exists(folder, ec)) {
+    if (!create) {
+      said.push_back("data folder " + name + " will be made");
+      return {};
+    }
+    fs::create_directories(folder, ec);
+    if (ec) return refused();
+  }
+  if (!fs::is_directory(folder, ec)) return refused();
+  if (create ? !writable_by_probe(folder) : !writable_without_writing(folder)) return refused();
+  said.push_back("data folder " + name);
+  return {};
+}
+
+Result<void> check_local(const fs::path& file, const std::string& url, const DataSourceOpeners& openers, bool create,
+                         DataSourceCheck& check) {
+  std::error_code ec;
+  if (fs::exists(file, ec)) {
+    if (fs::file_size(file, ec) == 0 && !ec)
+      return fail(ErrorKind::Config, file.generic_string() + " is empty: not a pychron store");
+    // Never migrated from here: the file may be a copy an older build reads.
+    auto opened = openers.open_database(url, false);
+    if (!opened) {
+      std::string why = url + ": " + first_line(opened.error().what);
+      if (opened.error().kind == ErrorKind::Config) why += "; run `elctl db migrate --db " + url + "` first";
+      return fail(ErrorKind::Config, std::move(why));
+    }
+    check.opened = true;
+    check.said.push_back("database " + url + " (" + *opened + ")");
+    return {};
+  }
+  if (!create) {
+    check.said.push_back("database " + file.generic_string() + " will be made");
+    return {};
+  }
+  // SQLite makes the file, not the folder it is in.
+  fs::create_directories(file.parent_path(), ec);
+  if (ec) return fail(ErrorKind::Config, "cannot make " + file.parent_path().generic_string() + ": " + ec.message());
+  auto opened = openers.open_database(url, true);
+  if (!opened) return fail(ErrorKind::Config, url + ": " + first_line(opened.error().what));
+  check.made_file = true;
+  check.opened = true;
+  check.said.push_back("database " + url + " made (" + *opened + ")");
+  return {};
+}
+
+Result<void> check_server(const ServerDatabase& server, const DataSource& to, const fs::path& root,
+                          const DataSourceOpeners& openers, DataSourceCheck& check) {
+  const std::string shown = database_url(to, root);
+  auto url = database_url_with_password(to, root);
+  if (!url) return fail(ErrorKind::Config, shown + ": " + first_line(url.error().what));
+  auto opened = openers.open_database(*url, false);
+  if (!opened) {
+    // The password may be the kept one: whichever was used is kept out of sight.
+    std::optional<std::string> password = server.password;
+    if (!password) {
+      auto kept = read_kept_password(root);
+      if (kept) password = *kept;
+    }
+    return fail(ErrorKind::Config, shown + ": " + redact(first_line(opened.error().what), password) +
+                                       "; check the server, the user and the password");
+  }
+  check.opened = true;
+  check.said.push_back("database " + shown + " (" + *opened + ")");
+  return {};
+}
+
 }  // namespace
 
 Result<DataSource> current_data_source(const SiteInstall& install) {
@@ -293,6 +407,48 @@ Result<void> apply_data_source(const DataSourceChange& change, const DataSource&
   }
   site->upsert(std::move(entry));
   return save_site(*site, site_path);
+}
+
+Result<DataSourceCheck> check_data_source(const DataSourceChange& change, const DataSource& to,
+                                          const DataSourceOpeners& openers, bool create) {
+  const fs::path& root = change.install.root;
+  DataSourceCheck check;
+  if (auto folder = check_data_folder(resolve(fs::path(to.data), root), create, check.said); !folder)
+    return fail(std::move(folder).error());
+  if (!openers.open_database) {
+    check.said.emplace_back("skip  check: built without the DVC store");
+    return check;
+  }
+  if (const auto* local = std::get_if<LocalDatabase>(&to.database)) {
+    if (auto done = check_local(resolve(local->file, root), database_url(to, root), openers, create, check); !done)
+      return fail(std::move(done).error());
+    return check;
+  }
+  if (auto done = check_server(std::get<ServerDatabase>(to.database), to, root, openers, check); !done)
+    return fail(std::move(done).error());
+  return check;
+}
+
+std::vector<std::string> seed_data_source(const DataSourceChange& change, const DataSource& to,
+                                          const DataSourceOpeners& openers, const DataSourceCheck& check) {
+  const SiteInstall& install = change.install;
+  if (install.kind != "instrument") return {};
+  // An install from before there was a seed file has none: nothing is said.
+  const fs::path seed = install.root / "seed.toml";
+  std::error_code ec;
+  if (!fs::exists(seed, ec)) return {};
+  if (!openers.seed_database) return {"skip  seed: built without the DVC store"};
+  if (!check.opened) return {"seed skipped: the database was not checked; doctor says the rest"};
+  const auto* local = std::get_if<LocalDatabase>(&to.database);
+  if (local != nullptr && !check.made_file)
+    return {"seed skipped: " + resolve(local->file, install.root).generic_string() +
+            " existed; an existing store is not seeded"};
+  auto url = database_url_with_password(to, install.root);
+  if (!url) return {"seed skipped: " + first_line(url.error().what)};
+  // Only a file this change made is migrated; a server never is from here.
+  auto done = openers.seed_database(*url, seed, local != nullptr);
+  if (!done) return {"seed skipped: " + first_line(done.error().what)};
+  return {"database " + database_url(to, install.root) + ": " + *done};
 }
 
 }  // namespace pychron::setup
