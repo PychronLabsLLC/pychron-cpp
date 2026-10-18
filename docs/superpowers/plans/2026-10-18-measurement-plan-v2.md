@@ -123,7 +123,7 @@ Inputs the spec implies but no worked plan exercises, most likely first. Each ha
   - `struct Gas { std::string name; Equilibration equilibration; bool source_dark_phase = false; std::optional<TimeZero> time_zero; std::optional<Fits> fits; std::vector<Segment> segments; bool implicit = false; };`
   - `MeasurementPlan` gains `std::vector<Gas> gases;` (always filled after resolve; v1 fields stay filled for v1 files until Task 6 removes them).
 
-- [ ] **Step 1: Write failing desugar tests**, one per §4.1 row, each resolving inline v1 TOML with `resolve_plan` and asserting on `plan.gases`:
+- [x] **Step 1: Write failing desugar tests**, one per §4.1 row, each resolving inline v1 TOML with `resolve_plan` and asserting on `plan.gases`:
   - `PlanDesugar.MainBecomesOneSignalSegment`: `[main] cycles=3, integration_s=2` with two hops → `gases.size()==1`, `gases[0].implicit`, one segment `kind==Signal`, `when==AfterInlet`, `cycles==3`, `integration_s==2`, two positions, `positions[0].collect` equals the hop's `positions` map as entries in map order.
   - `PlanDesugar.ProtectBecomesEntriesAndInactiveEntries`: hop `positions={Ar40="H1"}`, `protect=["H1","CDD"]` → entry H1 `protect==true, active==true`; added entry `{label=<see rule>, detector="CDD", active=false, protect=true}`. Label rule for the added entry (§3.7 requires one that resolves to a mass): the label the plan collects on that detector in another hop; else the detector's configured `isotope` (Task 1 adds `virtual std::optional<std::string> isotope_of(std::string_view detector) const = 0;` to `ISpectrometerCatalog`, answered from `DetectorConfig::isotope`); else, with no catalog, the detector name (the mass check needs a catalog and is skipped without one). Assert the first case here and the second with the test catalog.
   - `PlanDesugar.BaselineHopBecomesBaselinePosition`: `baseline=true, mass=34.2` on reference H1 → `kind==PositionKind::Baseline`, `at==AtMass{34.2,"H1"}`.
@@ -131,10 +131,10 @@ Inputs the spec implies but no worked plan exercises, most likely first. Each ha
   - `PlanDesugar.PeakCenterBecomesSteps`: `[peak_center] before=true, after=true, isotope="Ar40", min_signal=5` → `PeakCenter` step at `BeforeInlet` (`min_signal==0`) and at `AfterRun` (`min_signal==5`).
   - `PlanDesugar.SniffAndWhiffBecomeSegments`: `[sniff]` → `Sniff` at `DuringEquilibration` on first signal position's detectors; `[whiff]` → `Whiff` at `AfterInlet` placed before the signal segment, `checks` copied.
   - `PlanDesugar.ExcludeRemovesFromEveryCollect`: `[detectors] exclude=["CDD"]` → no entry with detector CDD anywhere.
-- [ ] **Step 2: Run, verify they fail** — `cmake --build --preset dev --target pychron_experiment_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='PlanDesugar.*'` → compile errors on `gases`.
-- [ ] **Step 3: Add the types to `plan.hpp`** (each with defaulted `operator==`) **and `Result<std::vector<Gas>> desugar_v1(const MeasurementPlan& v1, const ISpectrometerCatalog* catalog)` in `plan_desugar.cpp`** (internal header `src/plan/plan_desugar.hpp`), called from `resolve_plan` after the v1 typed parse and before the rules.
-- [ ] **Step 4: Run** the filter above and the whole binary's `PlanSchema.*:PlanOverrides.*:PlanDuration.*:PlanLibrary.*:PlanParameters.*` → all pass (v1 behaviour untouched).
-- [ ] **Step 5: Commit** `feat(experiment): v2 plan types and the v1 desugar`.
+- [x] **Step 2: Run, verify they fail** — `cmake --build --preset dev --target pychron_experiment_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='PlanDesugar.*'` → compile errors on `gases`.
+- [x] **Step 3: Add the types to `plan.hpp`** (each with defaulted `operator==`) **and `Result<std::vector<Gas>> desugar_v1(const MeasurementPlan& v1, const ISpectrometerCatalog* catalog)` in `plan_desugar.cpp`** (internal header `src/plan/plan_desugar.hpp`), called from `resolve_plan` after the v1 typed parse and before the rules.
+- [x] **Step 4: Run** the filter above and the whole binary's `PlanSchema.*:PlanOverrides.*:PlanDuration.*:PlanLibrary.*:PlanParameters.*` → all pass (v1 behaviour untouched).
+- [x] **Step 5: Commit** `feat(experiment): v2 plan types and the v1 desugar`.
 
 ### Task 2: Native v2 parse
 

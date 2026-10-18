@@ -7,6 +7,7 @@
 
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
+#include "plan_desugar.hpp"
 #include "plan_toml.hpp"
 
 namespace pychron::experiment::plan {
@@ -498,6 +499,11 @@ Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const Plan
   read_conditionals(top.sub("conditionals"), plan.conditionals);
   read_whiff(top.sub("whiff"), plan.whiff);
   plan.expose = detail::read_expose(root, p);
+  // v1 -> v2 (spec 4.1) once the v1 sections read cleanly, before the rules.
+  if (!p.any()) {
+    if (auto gases = detail::desugar_v1(plan, resolvers.spectrometer)) plan.gases = std::move(*gases);
+    else p.add("", gases.error().what);
+  }
   if (resolvers.spectrometer) check_detectors(plan, *resolvers.spectrometer, p);
 
   if (p.any()) return p.error();

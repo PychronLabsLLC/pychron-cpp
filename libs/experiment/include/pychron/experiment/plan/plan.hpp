@@ -1,13 +1,16 @@
 #pragma once
 
 // MeasurementPlan (spec 4.1): declarative measurement, data not code.
-// A measurement is `main.cycles` repetitions of an ordered hop list;
+// v1: a measurement is `main.cycles` repetitions of an ordered hop list;
 // multicollect is the degenerate case of one hop and one cycle.
+// v2 (measurement plan v2 spec): gases of segments of positions; see `Gas`.
 
 #include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "pychron/reduction/fits.hpp"
@@ -85,7 +88,8 @@ struct Hop {
   friend bool operator==(const Hop&, const Hop&) = default;
 };
 
-enum class TimeZeroKind { OnInletClose, OnFirstCount, Offset };
+// Now: a `time_zero` step only (v2 spec 3.3), time zero is the moment the step runs.
+enum class TimeZeroKind { OnInletClose, OnFirstCount, Offset, Now };
 
 struct TimeZero {
   TimeZeroKind kind = TimeZeroKind::OnInletClose;
@@ -150,6 +154,146 @@ struct ExposeEntry {
   friend bool operator==(const ExposeEntry&, const ExposeEntry&) = default;
 };
 
+// ---- v2 (measurement plan v2 spec, sections 3 and 4.1) ---------------------------
+//
+// A plan is gases of segments of positions. A v1 file is rewritten into one
+// implicit gas by the parser (desugar, spec 4.1), so `MeasurementPlan::gases`
+// is always filled after resolve.
+
+// When a segment runs within the run (spec 3.3, 5.1). Same `when`: file order.
+enum class When { DuringExtraction, BeforeInlet, DuringEquilibration, AfterInlet, AfterMain, AfterRun };
+std::string_view to_string(When w);
+std::optional<When> parse_when(std::string_view s);
+
+// A collection (signal .. whiff) or a step (peak_center .. time_zero).
+enum class SegmentKind { Signal, Baseline, Sniff, Whiff, PeakCenter, Set, BlankBeam, Park, Delay, TimeZero };
+std::string_view to_string(SegmentKind k);
+std::optional<SegmentKind> parse_segment_kind(std::string_view s);
+// True for the kinds that carry a step table instead of positions.
+bool is_step(SegmentKind k);
+
+enum class PositionKind { Signal, Baseline };
+
+// One detector of a position (spec 3.2). `active = false` keeps the cup in the
+// configuration (deflected or protected) without collecting it.
+struct CollectEntry {
+  std::string label, detector;
+  bool active = true;
+  std::optional<double> deflection;
+  bool protect = false;
+  friend bool operator==(const CollectEntry&, const CollectEntry&) = default;
+};
+
+// Positioning target, independent of what a position collects.
+struct AtLabel {
+  std::string label, detector;
+  friend bool operator==(const AtLabel&, const AtLabel&) = default;
+};
+struct AtMass {
+  double mass = 0;
+  std::string detector;
+  friend bool operator==(const AtMass&, const AtMass&) = default;
+};
+struct AtDac {
+  double dac = 0;
+  friend bool operator==(const AtDac&, const AtDac&) = default;
+};
+struct AtHv {
+  double hv = 0;
+  std::string detector;
+  friend bool operator==(const AtHv&, const AtHv&) = default;
+};
+using At = std::variant<AtLabel, AtMass, AtDac, AtHv>;
+
+struct Position {
+  std::vector<CollectEntry> collect;
+  std::optional<At> at;  // nullopt: the reference detector's label in `collect`
+  PositionKind kind = PositionKind::Signal;
+  int counts = 0;
+  double settle_s = 0;
+  std::optional<double> integration_s;  // nullopt: the segment's
+  std::string optics, table;            // empty: none / the segment's table
+  friend bool operator==(const Position&, const Position&) = default;
+};
+
+// One fit override; unset members fall back to the gas's (or plan's) fits.
+struct FitOverride {
+  std::optional<reduction::FitKind> fit;
+  std::optional<reduction::ErrorType> error;
+  std::optional<reduction::OutlierSpec> outliers;
+  friend bool operator==(const FitOverride& a, const FitOverride& b) {
+    const auto same_outliers = [](const std::optional<reduction::OutlierSpec>& x,
+                                  const std::optional<reduction::OutlierSpec>& y) {
+      if (x.has_value() != y.has_value()) return false;
+      return !x || (x->enabled == y->enabled && x->iterations == y->iterations && x->std_devs == y->std_devs);
+    };
+    return a.fit == b.fit && a.error == b.error && same_outliers(a.outliers, b.outliers);
+  }
+};
+// Keyed `label@detector`, `label` (every detector of that label) or `default`.
+using FitOverrides = std::map<std::string, FitOverride>;
+
+// ---- step tables (spec 3.3) ----
+
+struct PeakCenterStep {
+  std::string label;
+  std::vector<std::string> detectors;  // the job runs once per detector
+  std::vector<std::string> extra_detectors;
+  std::string config = "default";
+  std::string write_table;  // empty: no per-run field table
+  // Skipped when the mean of the last kPeakCenterSignalReadings signal
+  // readings of `label` on its detector is below this. 0: no minimum.
+  double min_signal = 0;
+  friend bool operator==(const PeakCenterStep&, const PeakCenterStep&) = default;
+};
+
+struct SetStep {
+  std::map<std::string, double> deflection, gain, source;
+  std::optional<double> hv, cdd_voltage, integration_s;
+  friend bool operator==(const SetStep&, const SetStep&) = default;
+};
+
+struct ParkStep {
+  std::string label;
+  std::optional<double> mass;
+  std::string detector;
+  friend bool operator==(const ParkStep&, const ParkStep&) = default;
+};
+
+// A segment: positions cycled `cycles` times, or one step. A `time_zero`
+// step uses `time_zero` with kind Now or Offset. `table` is the default
+// field table of its positions.
+struct Segment {
+  SegmentKind kind = SegmentKind::Signal;
+  When when = When::AfterInlet;
+  int cycles = 1;
+  double integration_s = 1;
+  std::optional<TimeZero> time_zero;
+  std::string table;
+  std::vector<Position> positions;
+  FitOverrides fits;
+  std::vector<Truncation> truncations;
+  std::vector<WhiffCheck> checks;  // whiff only
+  std::optional<PeakCenterStep> peak_center;
+  std::optional<SetStep> set;
+  std::optional<bool> blank_beam;
+  std::optional<ParkStep> park;
+  std::optional<double> delay_s;
+  friend bool operator==(const Segment&, const Segment&) = default;
+};
+
+// A gas (spec 3.4). `implicit`: built from a plan without `[[gas]]`.
+struct Gas {
+  std::string name;
+  Equilibration equilibration;
+  bool source_dark_phase = false;
+  std::optional<TimeZero> time_zero;
+  std::optional<Fits> fits;
+  std::vector<Segment> segments;
+  bool implicit = false;
+  friend bool operator==(const Gas&, const Gas&) = default;
+};
+
 struct MeasurementPlan {
   PlanInfo info;
   DetectorsSpec detectors;
@@ -163,6 +307,10 @@ struct MeasurementPlan {
   Whiff whiff;
   std::vector<ExposeEntry> expose;
   std::optional<std::string> hook;  // "scripts/measurement_hooks/<name>.py"
+  // v2 form, always filled after resolve. For a v1 file: one implicit gas
+  // desugared from the v1 sections above, which stay filled until the engine
+  // reads segments.
+  std::vector<Gas> gases;
   friend bool operator==(const MeasurementPlan&, const MeasurementPlan&) = default;
 };
 

@@ -51,6 +51,10 @@ class FakeSpectrometer : public ISpectrometerCatalog {
     static const std::set<std::string, std::less<>> dets{"H2", "H1", "AX", "L1", "L2", "CDD"};
     return dets.contains(name);
   }
+  std::optional<std::string> isotope_of(std::string_view detector) const override {
+    if (detector == "CDD") return "Ar36";
+    return std::nullopt;
+  }
 };
 
 const FakeExtractionLine kLine;

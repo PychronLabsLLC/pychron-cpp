@@ -14,7 +14,6 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include <set>
 #include <string>
 #include <string_view>
 
@@ -93,9 +92,10 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
  public:
   explicit SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config);
   bool has_detector(std::string_view name) const override;
+  std::optional<std::string> isotope_of(std::string_view detector) const override;
 
  private:
-  std::set<std::string, std::less<>> detectors_;
+  std::map<std::string, std::string, std::less<>> detectors_;  // name -> configured isotope
 };
 
 // The peak-center job for the MeasurementEngine. The request's config name

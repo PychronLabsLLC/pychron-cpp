@@ -34,6 +34,10 @@ class ISpectrometerCatalog {
  public:
   virtual ~ISpectrometerCatalog() = default;
   virtual bool has_detector(std::string_view name) const = 0;
+  // The detector's configured isotope (spectrometer.toml `isotope`), nullopt
+  // when the detector is unknown or has none. Labels the inactive entry the v1
+  // desugar adds for a protected detector a hop does not collect.
+  virtual std::optional<std::string> isotope_of(std::string_view detector) const = 0;
   virtual std::optional<ParamValue> resolve_alias(std::string_view /*key*/) const { return std::nullopt; }
 };
 

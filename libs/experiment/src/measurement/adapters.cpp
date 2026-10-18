@@ -68,10 +68,16 @@ std::optional<ParamValue> SystemConfigAliases::resolve_alias(std::string_view ke
 }
 
 SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config) {
-  for (const auto& d : config.detectors) detectors_.insert(d.name);
+  for (const auto& d : config.detectors) detectors_.emplace(d.name, d.isotope);
 }
 
 bool SpectrometerCatalog::has_detector(std::string_view name) const { return detectors_.contains(name); }
+
+std::optional<std::string> SpectrometerCatalog::isotope_of(std::string_view detector) const {
+  const auto it = detectors_.find(detector);
+  if (it == detectors_.end() || it->second.empty()) return std::nullopt;
+  return it->second;
+}
 
 Result<jobs::PeakCenterConfig> SpectrometerPeakCenter::config_for(const PeakCenterRequest& request) const {
   const std::string name = request.config.empty() ? "default" : request.config;
