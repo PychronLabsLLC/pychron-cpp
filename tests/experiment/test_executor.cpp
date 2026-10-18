@@ -584,6 +584,43 @@ TEST_F(ExecutorTest, ResumeStartsAfterTheLastStartedRun) {
   EXPECT_FALSE(Executor::resume_row(lab_.dir() / "nope.json"));
 }
 
+// A heating with no fixed aliquot resumed in a new session (a new allocator,
+// as after a restart) keeps the aliquot its first step was saved at.
+TEST_F(ExecutorTest, AResumedStepHeatKeepsItsAliquot) {
+  auto step = [](const std::string& s) {
+    RunSpec r = unknown_run("12345");
+    r.id.step = s;
+    return r;
+  };
+  const RunSpec a = step("A");
+  const RunSpec b = step("B");
+  const RunSpec c = step("C");
+  {
+    // The program stopped after A: a deterministic stand-in for a crash
+    // between runs.
+    Executor ex(context(), options());
+    auto first = queue({a});
+    const auto r = ex.execute(first);
+    ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  }
+  const auto from = Executor::resume_row(lab_.dir() / "executor_state.json");
+  ASSERT_TRUE(from) << from.error().what;
+  EXPECT_EQ(*from, 1u);
+
+  persist::AliquotAllocator fresh(lab_.files);
+  auto ctx = context();
+  ctx.services.aliquots = &fresh;
+  Executor again(std::move(ctx), options());
+  auto rest = queue({a, b, c});
+  const auto r = again.execute(rest, *from);
+  EXPECT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states(r), (std::vector<std::string>{"12345:success", "12345:success"}));
+  const auto records = lab_.dir() / "records" / "12345";
+  EXPECT_TRUE(std::filesystem::exists(records / "12345-1B.json"));
+  EXPECT_TRUE(std::filesystem::exists(records / "12345-1C.json"));
+  EXPECT_FALSE(std::filesystem::exists(records / "12345-2B.json"));
+}
+
 TEST_F(ExecutorTest, PauseAndScheduledStart) {
   RunSpec pause;
   pause.id.identifier = "pa";

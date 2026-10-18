@@ -153,6 +153,55 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   EXPECT_FALSE(contains(from.out, "run 0 ")) << from.out;
 }
 
+// A step heat stopped after its first step and resumed by a new process (a
+// new aliquot allocator) keeps the aliquot its first step was saved at.
+TEST_F(ElctlExpTest, AResumedStepHeatKeepsItsAliquot) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const auto write_queue = [this](const std::vector<std::string>& steps) {
+    std::ofstream out(dir_ / "lab" / "steps.toml");
+    out << R"([queue]
+name = "sim-example"
+mass_spectrometer = "sim"
+username = "example"
+
+[queue.delays]
+before_analyses = 5
+between_analyses = 10
+after_blank = 10
+)";
+    for (const auto& s : steps) {
+      out << R"(
+[[runs]]
+identifier = "66001"
+step = ")" << s << R"("
+extraction = { script = "sim_extract", value = 5, units = "w", duration = 10 }
+measurement = { plan = "sim_multicollect" }
+post_measurement = "sim_pump"
+sample = { sample = "FC-2", material = "sanidine", project = "examples" }
+)";
+    }
+  };
+  const auto data = (dir_ / "out").string();
+  const std::vector<std::string> args{"run",  lab("steps.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+                                      "--data", data,             "--sim-speed",    "max"};
+
+  write_queue({"A"});
+  auto first = exp(args, true);
+  ASSERT_EQ(first.code, 0) << first.out << first.err;
+
+  write_queue({"A", "B", "C"});
+  auto resume_args = args;
+  resume_args.emplace_back("--resume");
+  auto again = exp(resume_args, true);
+  ASSERT_EQ(again.code, 0) << again.out << again.err;
+  EXPECT_TRUE(contains(again.out, "2/2 run(s)")) << again.out;
+  const auto records = dir_ / "out" / "records" / "66001";
+  EXPECT_TRUE(fs::exists(records / "66001-1A.json"));
+  EXPECT_TRUE(fs::exists(records / "66001-1B.json"));
+  EXPECT_TRUE(fs::exists(records / "66001-1C.json"));
+  EXPECT_FALSE(fs::exists(records / "66001-2B.json"));
+}
+
 // The queue is some eight minutes of delays, extraction and counting; on the
 // virtual clock at unlimited speed nothing waits for real time. The bound is
 // for the whole command, interpreter start-up included, on a slow machine:

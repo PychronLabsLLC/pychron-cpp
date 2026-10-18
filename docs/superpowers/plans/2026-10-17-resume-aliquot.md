@@ -346,30 +346,30 @@ Tests only: Tasks 1 to 3 make them pass. Before Task 2 they would see B and C at
 **Interfaces:**
 - Consumes: `Executor::resume_row`, `ExecutorTest::context()` (sets `s.aliquots = &lab_.aliquots`, line 81), `lab_.files`; `elctl exp run ... --resume`, which starts at `next_row` of `<data>/executor_state.json`.
 
-- [ ] **Step 1: Write the executor test**
+- [x] **Step 1: Write the executor test**
 
 `ExecutorTest.AResumedStepHeatKeepsItsAliquot`: `RunSpec` `a`, `b`, `c` = `unknown_run("12345")` with `id.step` `"A"`, `"B"`, `"C"`. First session: `Executor ex(context(), options())` runs `queue({a})` to `Completed` (the program stopped after A; a deterministic stand-in for a crash between runs). Assert `Executor::resume_row(lab_.dir() / "executor_state.json")` is 1. Second session: `persist::AliquotAllocator fresh(lab_.files); auto ctx = context(); ctx.aliquots = &fresh;` a new `Executor`, `execute(queue({a, b, c}), 1)`. Assert: `Completed`, `states(r) == {"12345:success", "12345:success"}`; files `12345/12345-1B.json` and `12345/12345-1C.json` exist under `lab_.files`' root; `12345-2B.json` does not.
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `cmake --build --preset dev --target pychron_experiment_tests && build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='ExecutorTest.AResumedStepHeatKeepsItsAliquot'`
 Expected: PASS.
 
-- [ ] **Step 3: Write the `elctl` test**
+- [x] **Step 3: Write the `elctl` test**
 
 `ElctlExpTest.AResumedStepHeatKeepsItsAliquot` (skips without scripting, as its neighbours): write `<lab>/steps.toml` with the `[queue]` table of `configs/examples/experiment.toml` and one `[[runs]]` row of `66001`, `step = "A"`, the example's extraction, measurement and post-measurement. Run it (`exp({"run", lab("steps.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"), "--data", data, "--sim-speed", "max"}, true)`), code 0. Rewrite `steps.toml` with rows A, B, C; run again with `--resume` (a new process: a new allocator; `--resume` starts at `next_row` 1 of the first run's state file). Assert code 0, `"2/2 run(s)"` in the output, `records/66001/66001-1B.json` and `66001-1C.json` exist, `66001-2B.json` does not.
 
-- [ ] **Step 4: Run it**
+- [x] **Step 4: Run it**
 
 Run: `cmake --build --preset dev --target pychron_elctl_tests && build/dev/apps/elctl/tests/pychron_elctl_tests --gtest_filter='ElctlExpTest.AResumedStepHeatKeepsItsAliquot'`
 Expected: PASS.
 
-- [ ] **Step 5: Checks**
+- [x] **Step 5: Checks**
 
 Run: `python3 tools/quality_check.py && python3 tools/compiler_sweep.py --changed`
 Expected: exit 0 from both.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tests/experiment/test_executor.cpp apps/elctl/tests/test_exp_commands.cpp
