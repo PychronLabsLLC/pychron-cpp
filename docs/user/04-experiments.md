@@ -210,11 +210,11 @@ Open it from **View > Experiment** (Ctrl+Shift+E). Its menus are the submenus of
 
 | Area | What it is |
 |---|---|
-| Centre | The queue table, one row per run. Above it, the queue's conditionals file and an Edit button. |
+| Centre | Two tables, one row per run: **Executed** above, **Queue** below (see "Executed and Queue" below). Above them, the queue's conditionals file and an Edit button. |
 | Left (tabs) | **Run Factory** (section 5) and **Measurement** (the plan and parameters of the selected run). |
 | Bottom | **Executor**: the Start / Stop / Cancel / Abort / Truncate buttons, status, a timeline, a table of events (each with the time it happened, on the line's clock) and tripped conditionals. |
 | Right | **Evolutions**: the run being measured, one tab a kind (Signal, Baseline, Sniff). Each series of the tab has a panel of its own, stacked in the order the series began on one time axis, each scaled to its own readings, with its live fit and intercept; with many series the panels scroll. Signals and baselines are a panel an isotope on a detector (an isotope peak-hopped onto a second detector has two), sniffs a panel an isotope. Below, a table of the intercepts (isotope, detector, fit, intercept, error, percent error, points used). A last tab, **Peak center**, draws the run's peak center (below). The panels cannot be zoomed or saved yet. |
-| Right, behind Evolutions | **References**: the recent blanks and airs of this spectrometer as time series, redrawn after each saved run (section 3.4). Only when runs are saved to a database. |
+| Right, behind Evolutions | **References**: the recent blanks and airs of this spectrometer as time series, redrawn after each saved run (section 3.5). Only when runs are saved to a database. |
 
 **The Peak center tab.** When a run centres a peak (the plan's `peak_center`
 block, see "Peak centring" in [the spectrometer chapter](03-spectrometer.md)),
@@ -254,6 +254,20 @@ and **Window > Arrangements** bring them back, restore the installed layout
 and keep layouts under a name: see "Panels and arrangements" in
 [the extraction line chapter](02-extraction-line.md).
 
+**Executed and Queue.** The queue is one list of runs, shown in two tables.
+**Queue**, the lower one, holds the runs still to do: it is the one you edit,
+and the one Start begins at. **Executed**, above it, holds the runs the
+executor has reached, oldest first: a run moves there the moment it starts
+(and a skipped row the executor has passed moves too, greyed). Executed is
+read-only. Its header reads **Executed (N)**, N the number of runs in it;
+the arrow beside it folds the table to its header line and opens it again.
+The table is hidden while it is empty. It follows the newest run as runs
+arrive, unless you have scrolled up in it. Drag the bar between the two
+tables to share the room; the fold and the sizes are kept for the next
+time the window opens. Both tables have the same columns, and widening a
+column in Queue widens it in Executed. A run keeps its number (`#`) in both
+tables: runs never change place in the queue, only which table shows them.
+
 Rows that have a problem are colored, and hovering over them lists the
 problems. A row that is running or finished has a colored Status
 (success, failed, cancelled or aborted).
@@ -291,21 +305,72 @@ Conditionals...** lists the lab's conditionals files, with a tick for files
 all selected rows have, no tick for none, and a half tick where they differ
 (a half-ticked file is left as each row has it).
 
+These commands act on the rows selected in the **Queue** table only; a
+selection in Executed is not read. Executed has its own right-click menu:
+
+| Command | What it does |
+|---|---|
+| Repeat | Same as **Queue > Repeat Last Run** (section 3.4): copies the selected executed runs, or the last one when none is selected, to the front of Queue |
+| Open Extraction Script / Open Post-Measurement Script | opens the selected run's script in the script editor, to read (one row selected) |
+
 ### 3.3 Editing while the queue runs
 
-You may edit rows the executor has not reached yet. Rows that have started,
-a pause being waited, and a skipped row already passed are frozen: a change
-to them is refused ("rows the executor has reached cannot change"). A row
-whose delay is still counting down is not yet frozen; the executor re-reads
-it when the delay ends. The queue-level settings cannot be changed while
-running.
+You may edit rows the executor has not reached yet: the rows of the Queue
+table. A run moves to Executed when it starts; rows in Executed (runs that
+have started, a pause being waited, a skipped row already passed) cannot be
+changed, and a change that would reach them is refused ("rows the executor
+has reached cannot change"). A row whose delay is still counting down is
+still in Queue and not yet frozen; the executor re-reads it when the delay
+ends. The queue-level settings cannot be changed while running.
+
+When the queue ends, or is stopped, its executed runs stay in Executed and
+stay read-only. Rows in Queue can be edited again. To edit an executed run,
+or run it again, use **Queue > Reset** (section 3.4).
 
 The executor can also change the queue itself, when a conditional asks it to
 skip a run or add a blank (section 7.5). Those changes show in the table
 and in the Events list. If you and the executor change the queue at the same
 moment, one of the edits is refused rather than lost; make it again.
 
-### 3.4 References: recent blanks and airs
+### 3.4 Reset, Clear Executed, Repeat and Resume (Experiment > Queue)
+
+| Command | What it does | While a queue runs |
+|---|---|---|
+| **Reset** | Puts every run back in Queue and clears their statuses. The queue file is not changed (runs never moved in it). | refused |
+| **Clear Executed...** | Asks "Remove N executed runs from the queue?", then deletes the executed runs from the queue; the queue is marked as changed, to be saved. | refused |
+| **Repeat Last Run** | Copies the last executed run (or the runs selected in Executed), aliquot and step cleared, to the front of Queue, so it runs next. | allowed |
+| **Resume...** | Offers to resume a queue that stopped before its end (below). | refused |
+
+A command that cannot run says why in a message: "A queue is running.", or
+"No run has been executed." for Repeat Last Run with an empty Executed
+table, or "Nothing to resume." for Resume....
+
+**Resuming a queue.** While a queue runs, the executor keeps how far it has
+got in `executor_state.json` in the data directory. When you open a queue
+(**File > Open**, or `pychron-ui --queue <file>` at start-up), and when you
+choose **Queue > Resume...**, the window reads that file. If it is about the
+same queue (same name) and that queue stopped part way, it asks:
+
+> The queue *name* stopped at row N (*identifier*) at *date and time*.
+> Resume from row N?
+
+with a line beneath saying how it stopped: "It was stopped." after a Stop,
+Cancel or Abort, or "It did not finish (the program ended while it ran)."
+after a crash or a forced quit. **Resume** puts the rows before N in Executed,
+with the statuses they had, and starts the queue at row N. **Not now**
+changes nothing; Resume... stays in the menu for later. If the queue was
+changed since (a row inserted or removed before N), the window compares
+each executed row's identifier with the file's; on the first difference it
+says so ("Row 3 is 12345-02 now; the file has 12345-01.") and Resume cannot
+be pressed. A queue that ran to its end, or stopped before its first run,
+is not offered. Nor is it offered in the window that has just stopped the
+queue: there its executed runs are still in Executed, and Start goes on
+from the first row of Queue.
+
+Resuming does not yet give the remaining steps of a step heat the aliquot
+of its earlier steps when the run had none fixed; they are given a new one.
+
+### 3.5 References: recent blanks and airs
 
 The **References** panel shows how the instrument's references have been
 behaving while the queue runs: are the blanks falling, is the air steady. It
@@ -753,9 +818,13 @@ there; fix it in a text editor.
 ### 8.1 Start
 
 Check that the queue has no errors (the Start button stays disabled until it
-is runnable), optionally select the row to start from, and press **Start**
-(F5, or **Experiment > Executor > Start**). Start begins at the **selected row**, or row 0
-if none is selected. The window starts the queue on the instrument; to try
+is runnable) and press **Start** (F5, or **Experiment > Executor > Start**).
+Start begins at the **first row of the Queue table**, whatever row is
+selected: after a Stop, Start goes on from the run after the last one that
+started. Runs already in Executed are not run again; to run them again,
+choose **Experiment > Queue > Reset** and then Start. Once a queue has run
+to its end, Queue is empty and Start stays disabled until Reset (or until
+runs are added). The window starts the queue on the instrument; to try
 without hardware use a simulation (section 9).
 
 A queue will not start, and the Executor banner says why, when:

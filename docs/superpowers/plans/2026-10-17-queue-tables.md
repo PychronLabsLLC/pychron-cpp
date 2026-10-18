@@ -549,7 +549,7 @@ Each is written back into the spec by the task that makes it, so the two never d
 - Modify: `docs/superpowers/specs/2026-10-02-experiment-window-design.md` (5.2, 5.5: a pointer to
   `2026-10-13-queue-tables-design.md`)
 
-- [ ] **Step 1: Write the docs**
+- [x] **Step 1: Write the docs**
 
   Section 3: the centre is two tables, Executed (foldable, read-only, "Executed (N)") above Queue. 3.2: row
   operations act on Queue only; Executed's context menu (Repeat, Open script). 3.3: a run moves to Executed when it
@@ -557,12 +557,12 @@ Each is written back into the spec by the task that makes it, so the two never d
   Executed, Repeat Last Run, Resume... and the offer at Open and at start-up with `--queue`. 8.1: Start begins at the
   first row of Queue, not at the selected row; to run executed rows again, Reset then Start.
 
-- [ ] **Step 2: Whole-tree build and tests, once**
+- [x] **Step 2: Whole-tree build and tests, once**
 
   `cmake --build --preset dev-ui` and `ctest --preset dev-ui`: all pass. `python3 tools/compiler_sweep.py
   --build-dir build/dev-ui`: no warning. `python3 tools/quality_check.py`: exit 0.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   `git commit -m "docs(ui): the Executed and Queue tables, Reset, Repeat and resume"`
 

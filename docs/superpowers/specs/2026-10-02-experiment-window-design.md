@@ -263,6 +263,10 @@ beside the Evolutions dock).
   ignores the echo of its own accepted edit. The run factory inserts after
   the frontier even when an earlier row is selected; the measurement panel
   is read-only on frozen rows.
+- Executed boundary (`executed_rows()`, `executedChanged`, kept after
+  `end_live()`; Reset, Clear executed, Repeat, resume from
+  `executor_state.json`): see `2026-10-13-queue-tables-design.md`, which
+  supersedes this section where they differ.
 
 ### 5.3 `ExecutorPane`
 
@@ -275,7 +279,8 @@ A widget, docked at the bottom of the experiment window:
 - Wait line: `ExecutorWaiting` reason and its duration (simulated time
   makes a wall-clock countdown wrong), cleared when a run starts, its state
   changes or a block starts.
-- Buttons: Start (from the selected row, or row 0), Stop, Cancel, Abort,
+- Buttons: Start (from first row not executed, `executed_rows()`; was
+  selected row, see `2026-10-13-queue-tables-design.md` 3), Stop, Cancel, Abort,
   Truncate. Enabled by state: Start only when idle and the queue checks;
   the others only while running. Cancel and Abort ask first (default No);
   Stop and Truncate do not.
@@ -332,7 +337,10 @@ orders of magnitude).
 - Separate top-level `QMainWindow` titled "Experiment", plus
   " (Simulation)" when the session's line is simulated.
 - Center: the queue table (row selection, context menu with the row
-  operations), queue-level diagnostics in a strip above it.
+  operations), queue-level diagnostics in a strip above it. Now two views
+  over the one model, foldable Executed above Queue, in a splitter; Queue
+  menu adds Reset, Clear Executed..., Repeat Last Run, Resume...: see
+  `2026-10-13-queue-tables-design.md` 3 to 5.
 - Bottom dock "Executor" (`ExecutorPane`), right dock "Evolutions".
 - Menus: Queue (Open..., Save, Save As..., Revalidate), Rows (Move Up,
   Move Down, Duplicate, Delete, Toggle Skip, End After; also the table's
