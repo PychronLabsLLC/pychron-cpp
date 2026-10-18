@@ -149,6 +149,25 @@ the frontier is an ordinary live edit, refused like any other when stale.
 Legacy repeated `executed_runs[0]` (oldest, a defect: survey section 1);
 here the newest.
 
+- Repeat in model (plan decision 8): `repeat(rows)` returns inserted rows;
+  copies keep source order, inserted at
+  `insert_position(executed_rows())`. With no executed run refused, menu
+  text `No run has been executed.`: never a silent no-op, never a copy of a
+  Queue row (selection in Queue not read).
+- Window (`ExperimentWindow`): `reset_executed(QString*)`,
+  `clear_executed(QString*)`, `repeat_last(QString*)`; error texts
+  `a queue is running`, `no run has been executed`, `cancelled` (Clear
+  Executed's question answered no). Question hook
+  `set_ask_clear_executed(std::function<bool(int runs)>)`, default
+  `QMessageBox` question `Remove %1 executed runs from the queue?`. Queue
+  menu: `Reset`, `Clear Executed...`, `Repeat Last Run`; refusal shown in
+  `QMessageBox::information` (`A queue is running.`,
+  `No run has been executed.`); `cancelled` shows nothing.
+- Executed table's `ActionsContextMenu`: `Repeat` (as Repeat Last Run),
+  `Open Extraction Script`, `Open Post-Measurement Script` (selected
+  executed row's script in script editor, as `edit_row_script` for a Queue
+  row; nothing with other than one row selected).
+
 ## 5. Resume after a crash or a Stop
 
 - When the window has a queue and is not running (after Open, at start-up

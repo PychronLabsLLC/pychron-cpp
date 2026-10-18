@@ -214,6 +214,11 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
   };
 
+  ask_clear_executed_ = [this](int runs) {
+    return QMessageBox::question(this, tr("Clear Executed"), tr("Remove %1 executed runs from the queue?").arg(runs),
+                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+  };
+
   build_actions();
 
   connect(&model_, &QueueTableModel::edited, this, [this] { set_modified(true); });
@@ -402,6 +407,20 @@ void ExperimentWindow::build_actions() {
   });
   save_as_ = file_action(MenuHub::FileRole::SaveAs, tr("Save &As..."), [this] { save_as_dialog(); });
   revalidate_ = add(file, tr("&Revalidate"), [this] { model_.revalidate(); });
+  // The executed runs (queue-tables design 4); each says why it refuses.
+  add(file, tr("Reset"), [this] {
+    QString e;
+    if (!reset_executed(&e)) inform_refusal(tr("Reset"), e);
+  });
+  add(file, tr("Clear Executed..."), [this] {
+    QString e;
+    if (!clear_executed(&e)) inform_refusal(tr("Clear Executed"), e);
+  });
+  auto repeat_last_run = [this] {
+    QString e;
+    if (!repeat_last(&e)) inform_refusal(tr("Repeat Last Run"), e);
+  };
+  add(file, tr("Repeat Last Run"), repeat_last_run);
   bar->addAction(open_);
   bar->addAction(save_);
   bar->addAction(revalidate_);
@@ -433,6 +452,24 @@ void ExperimentWindow::build_actions() {
                  [this] { edit_row_script(scripting::ScriptKind::PostMeasurement); });
 
   add_row_action(tr("Set Conditionals..."), {}, [this] { edit_selected_conditionals(); });
+
+  // The Executed table's own menu: its rows are read-only, so only Repeat
+  // and the scripts to look at.
+  auto add_executed_action = [this](const QString& name, std::function<void()> f) {
+    auto* a = new QAction(name, this);
+    connect(a, &QAction::triggered, this, [f = std::move(f)] { f(); });
+    executed_table_->addAction(a);
+  };
+  executed_table_->setContextMenuPolicy(Qt::ActionsContextMenu);
+  add_executed_action(tr("Repeat"), repeat_last_run);
+  auto open_executed_script = [this](scripting::ScriptKind kind) {
+    const auto selected = selected_executed_rows();
+    if (selected.size() == 1) open_row_script(selected.front(), kind);
+  };
+  add_executed_action(tr("Open Extraction Script"),
+                      [open_executed_script] { open_executed_script(scripting::ScriptKind::Extraction); });
+  add_executed_action(tr("Open Post-Measurement Script"),
+                      [open_executed_script] { open_executed_script(scripting::ScriptKind::PostMeasurement); });
 
   add(Menu::Scripts, tr("Script &Editor..."), [this] { open_script_editor(); }, key(Shortcut::ScriptEditor));
   add(Menu::Scripts, tr("&Conditionals Editor..."), [this] { open_conditionals_editor(); });
@@ -473,6 +510,70 @@ void ExperimentWindow::select_rows(const std::vector<std::size_t>& rows) {
 }
 
 void ExperimentWindow::select_row(int row) { select_rows({static_cast<std::size_t>(row)}); }
+
+// Source rows of the Executed table's selection.
+std::vector<std::size_t> ExperimentWindow::selected_executed_rows() const {
+  std::set<std::size_t> rows;
+  for (const auto& i : executed_table_->selectionModel()->selectedIndexes()) {
+    const QModelIndex source = executed_proxy_.mapToSource(i);
+    if (source.isValid()) rows.insert(static_cast<std::size_t>(source.row()));
+  }
+  return {rows.begin(), rows.end()};
+}
+
+bool ExperimentWindow::reset_executed(QString* error) {
+  // The model refuses while live too: the queue may have ended without the
+  // window having heard yet.
+  if (bridge_.running() || model_.live() || !model_.reset_executed()) {
+    if (error != nullptr) *error = tr("a queue is running");
+    return false;
+  }
+  return true;
+}
+
+bool ExperimentWindow::clear_executed(QString* error) {
+  auto set_error = [&](const QString& e) {
+    if (error != nullptr) *error = e;
+    return false;
+  };
+  if (bridge_.running() || model_.live()) return set_error(tr("a queue is running"));
+  const std::size_t runs = model_.executed_rows();
+  if (runs == 0) return set_error(tr("no run has been executed"));
+  if (!ask_clear_executed_(static_cast<int>(runs))) return set_error(tr("cancelled"));
+  // The question ran an event loop: a queue may have started under it.
+  if (bridge_.running() || model_.live()) return set_error(tr("a queue is running"));
+  if (!model_.clear_executed()) return set_error(tr("the queue cannot change"));
+  return true;  // edited() marked the queue modified
+}
+
+bool ExperimentWindow::repeat_last(QString* error) {
+  auto set_error = [&](const QString& e) {
+    if (error != nullptr) *error = e;
+    return false;
+  };
+  const std::size_t executed = model_.executed_rows();
+  if (executed == 0) return set_error(tr("no run has been executed"));
+  auto rows = selected_executed_rows();
+  if (rows.empty()) rows.push_back(executed - 1);  // the newest
+  const auto inserted = model_.repeat(std::move(rows));
+  // Refused live: editRefused has shown the executor's reason in the pane.
+  if (!inserted) return set_error(tr("the runs could not be repeated"));
+  select_rows(*inserted);
+  if (!inserted->empty()) {
+    const QModelIndex at = queue_proxy_.mapFromSource(model_.index(static_cast<int>(inserted->front()), 0));
+    if (at.isValid()) queue_table_->scrollTo(at);
+  }
+  return true;
+}
+
+void ExperimentWindow::inform_refusal(const QString& title, const QString& error) {
+  if (error == tr("cancelled")) return;
+  QString text = error;
+  if (error == tr("a queue is running")) text = tr("A queue is running.");
+  else if (error == tr("no run has been executed")) text = tr("No run has been executed.");
+  else if (!text.isEmpty()) text = text.at(0).toUpper() + text.mid(1) + QLatin1Char('.');
+  QMessageBox::information(this, title, text);
+}
 
 ScriptEditorWindow* ExperimentWindow::open_script_editor() {
   if (script_editor_ == nullptr) {
@@ -621,8 +722,12 @@ std::optional<QList<Qt::CheckState>> ExperimentWindow::pick_conditionals_dialog(
 
 bool ExperimentWindow::edit_row_script(scripting::ScriptKind kind) {
   const auto rows = selected_rows();
-  if (rows.size() != 1 || rows.front() >= model_.queue().runs.size()) return false;
-  const auto& run = model_.queue().runs[rows.front()];
+  return rows.size() == 1 && open_row_script(rows.front(), kind);
+}
+
+bool ExperimentWindow::open_row_script(std::size_t row, scripting::ScriptKind kind) {
+  if (row >= model_.queue().runs.size()) return false;
+  const auto& run = model_.queue().runs[row];
   std::string name;
   if (kind == scripting::ScriptKind::Extraction) name = run.extraction.script;
   else if (kind == scripting::ScriptKind::PostMeasurement) name = run.post_measurement.value_or("");

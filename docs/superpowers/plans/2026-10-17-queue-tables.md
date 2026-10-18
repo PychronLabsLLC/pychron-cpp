@@ -403,7 +403,7 @@ Each is written back into the spec by the task that makes it, so the two never d
   (same as Repeat Last Run), `Open Extraction Script`, `Open Post-Measurement Script` (the selected executed row's
   script in the script editor, as `edit_row_script` does for a Queue row).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   - `resetAndClearExecutedAreRefusedWhileRunning`: start the example queue; while `bridge.running()`:
     `reset_executed(&e)` false with `e == "a queue is running"`, same for `clear_executed`, ask hook not called.
@@ -419,17 +419,17 @@ Each is written back into the spec by the task that makes it, so the two never d
   - `repeatWithNothingExecutedSaysSo` (Review Focus 5): `load_queue`, `repeat_last(&e)` false,
     `e == "no run has been executed"`, 3 rows.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   `cmake --build --preset dev-ui --target pychron_ui_test_experiment_window` fails (`repeat_last` undeclared).
 
-- [ ] **Step 3: Implement as the Interfaces block says; write decision 8 into spec section 4.3**
+- [x] **Step 3: Implement as the Interfaces block says; write decision 8 into spec section 4.3**
 
-- [ ] **Step 4: Run the window's tests**
+- [x] **Step 4: Run the window's tests**
 
   `build/dev-ui/tests/ui/pychron_ui_test_experiment_window` passes.
 
-- [ ] **Step 5: Checks and commit**
+- [x] **Step 5: Checks and commit**
 
   `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
   `git commit -m "feat(ui): reset, clear executed and repeat the last run from the Queue menu"`

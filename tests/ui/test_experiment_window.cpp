@@ -964,6 +964,170 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(window.model().executed_rows(), 3u);
   }
 
+  // ---- Queue > Reset, Clear Executed, Repeat Last Run (queue-tables design 4) ----
+
+  void resetAndClearExecutedAreRefusedWhileRunning() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    int asked = 0;
+    window.set_ask_clear_executed([&](int) {
+      ++asked;
+      return true;
+    });
+    window.start();
+    QVERIFY(bridge.running());
+    QString error;
+    QVERIFY(!window.reset_executed(&error));
+    QCOMPARE(error, QStringLiteral("a queue is running"));
+    error.clear();
+    QVERIFY(!window.clear_executed(&error));
+    QCOMPARE(error, QStringLiteral("a queue is running"));
+    QCOMPARE(asked, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QCOMPARE(window.model().rowCount(), 3);
+  }
+
+  void clearExecutedAsksRemovesAndMarksModified() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    const auto last = window.model().queue().runs[2];
+    QVERIFY(window.model().resume_from(2, {}));
+    int asked_for = -1;
+    bool answer = false;
+    window.set_ask_clear_executed([&](int runs) {
+      asked_for = runs;
+      return answer;
+    });
+    QString error;
+    QVERIFY(!window.clear_executed(&error));
+    QCOMPARE(error, QStringLiteral("cancelled"));
+    QCOMPARE(asked_for, 2);
+    QCOMPARE(window.model().rowCount(), 3);
+    QVERIFY(!window.modified());
+
+    answer = true;
+    asked_for = -1;
+    QVERIFY(window.clear_executed(&error));
+    QCOMPARE(asked_for, 2);
+    QCOMPARE(window.model().rowCount(), 1);
+    QVERIFY(window.model().queue().runs[0] == last);
+    QCOMPARE(window.model().executed_rows(), 0u);
+    QVERIFY(window.modified());
+
+    error.clear();
+    QVERIFY(!window.clear_executed(&error));  // nothing executed now
+    QCOMPARE(error, QStringLiteral("no run has been executed"));
+  }
+
+  void resetPutsTheRunsBackWithoutModifying() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.model().resume_from(2, {{0, RunState::Success}}));
+    QCOMPARE(window.queue_table()->model()->rowCount(), 1);
+    QVERIFY(window.reset_executed());
+    QCOMPARE(window.model().executed_rows(), 0u);
+    QVERIFY(!window.model().status(0).has_value());
+    QVERIFY(!window.modified());
+    QCOMPARE(window.queue_table()->model()->rowCount(), 3);
+  }
+
+  void repeatInsertsAtTheFrontOfTheQueue() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    auto& model = window.model();
+    const auto first = model.queue().runs[0].id;
+    const auto second = model.queue().runs[1].id;
+    auto identifier = [&](int row) {
+      return model.index(row, QueueTableModel::Identifier).data().toString();
+    };
+    QVERIFY(model.resume_from(2, {}));
+    const QString second_shown = identifier(1);
+
+    // Nothing selected in Executed: its last row.
+    QString error;
+    QVERIFY2(window.repeat_last(&error), qPrintable(error));
+    QCOMPARE(model.rowCount(), 4);
+    QCOMPARE(model.queue().runs[2].id.identifier, second.identifier);
+    QVERIFY(!model.queue().runs[2].id.aliquot.has_value());
+    auto* queue = window.queue_table()->model();
+    QCOMPARE(queue->index(0, QueueTableModel::Identifier).data().toString(), second_shown);
+    QVERIFY(window.modified());
+
+    // The rows selected in Executed.
+    auto* executed = window.executed_table();
+    executed->selectionModel()->select(executed->model()->index(0, 0),
+                                       QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QVERIFY2(window.repeat_last(&error), qPrintable(error));
+    QCOMPARE(model.rowCount(), 5);
+    QCOMPARE(model.queue().runs[2].id.identifier, first.identifier);
+    QCOMPARE(model.queue().runs[3].id.identifier, second.identifier);
+
+    // While running: an ordinary live edit at the front of the Queue table.
+    window.set_ask_unsaved([] { return ExperimentWindow::Unsaved::Discard; });
+    QVERIFY2(window.load_queue(queue_file(sim, "again.toml"), &error), qPrintable(error));
+    window.start();
+    QVERIFY(bridge.running());
+    QTRY_VERIFY_WITH_TIMEOUT(model.executed_rows() >= 1, 30000);
+    QVERIFY2(window.repeat_last(&error), qPrintable(error));
+    QCOMPARE(model.rowCount(), 4);
+    QTRY_VERIFY_WITH_TIMEOUT(!window.executor()->running(), 60000);
+    QVERIFY(contains(window.executor()->events(), QStringLiteral("queue completed")));
+  }
+
+  void repeatWithNothingExecutedSaysSo() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    window.select_row(1);  // a Queue row is never what is repeated
+    QString error;
+    QVERIFY(!window.repeat_last(&error));
+    QCOMPARE(error, QStringLiteral("no run has been executed"));
+    QCOMPARE(window.model().rowCount(), 3);
+    QVERIFY(!window.modified());
+  }
+
+  void theExecutedTablesMenuRepeatsAndOpensScripts() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(window.model().resume_from(2, {}));
+    auto* executed = window.executed_table();
+    QCOMPARE(executed->contextMenuPolicy(), Qt::ActionsContextMenu);
+    auto action = [&](const QString& text) -> QAction* {
+      for (QAction* a : executed->actions())
+        if (a->text() == text) return a;
+      return nullptr;
+    };
+    QAction* repeat = action(QStringLiteral("Repeat"));
+    QAction* extraction = action(QStringLiteral("Open Extraction Script"));
+    QAction* post = action(QStringLiteral("Open Post-Measurement Script"));
+    QVERIFY(repeat != nullptr && extraction != nullptr && post != nullptr);
+
+    executed->selectionModel()->select(executed->model()->index(1, 0),
+                                       QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    const bool has_script = !window.model().queue().runs[1].extraction.script.empty();
+    extraction->trigger();
+    QCOMPARE(window.script_editor() != nullptr, has_script);
+    if (has_script) {
+      QCOMPARE(window.script_editor()->current_name(), QStringLiteral("extraction/sim_extract"));
+      post->trigger();
+      QCOMPARE(window.script_editor()->current_name(), QStringLiteral("post_measurement/sim_pump"));
+    }
+    repeat->trigger();
+    QCOMPARE(window.model().rowCount(), 4);
+    QCOMPARE(window.model().queue().runs[2].id.identifier, window.model().queue().runs[1].id.identifier);
+  }
+
   void aQueueWithErrorsCannotStart() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

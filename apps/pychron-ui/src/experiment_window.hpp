@@ -147,6 +147,23 @@ class ExperimentWindow : public QMainWindow {
   // row is not).
   void select_row(int row);
 
+  // Queue > Reset (queue-tables design 4.1): every run back in the Queue
+  // table, the queue unchanged. False while running ("a queue is running").
+  bool reset_executed(QString* error = nullptr);
+  // Queue > Clear Executed... (4.2): asks first, then removes the executed
+  // runs from the queue. False while running ("a queue is running"), with
+  // none executed ("no run has been executed"), on no ("cancelled"), or when
+  // the queue cannot change.
+  bool clear_executed(QString* error = nullptr);
+  // Queue > Repeat Last Run (4.3): copies of the rows selected in the
+  // Executed table, else of its last row, at the front of the Queue table;
+  // allowed while running. False with none executed ("no run has been
+  // executed") or when the edit is refused.
+  bool repeat_last(QString* error = nullptr);
+  // The question Clear Executed asks, given how many runs it removes;
+  // default: a message box.
+  void set_ask_clear_executed(std::function<bool(int runs)> ask) { ask_clear_executed_ = std::move(ask); }
+
   // Dialog hooks; defaults are message boxes. Tests replace them.
   void set_confirm(ExecutorPane::Confirm confirm);
   void set_ask_unsaved(std::function<Unsaved()> ask) { ask_unsaved_ = std::move(ask); }
@@ -158,6 +175,12 @@ class ExperimentWindow : public QMainWindow {
  private:
   void build_actions();
   std::vector<std::size_t> selected_rows() const;
+  // Source rows of the Executed table's selection.
+  std::vector<std::size_t> selected_executed_rows() const;
+  // Opens `row`'s script of `kind` in the script editor; false without one.
+  bool open_row_script(std::size_t row, scripting::ScriptKind kind);
+  // A Queue menu action's refusal, in a message box; "cancelled" says nothing.
+  void inform_refusal(const QString& title, const QString& error);
   void select_rows(const std::vector<std::size_t>& rows);
   bool resolve_unsaved();
   void set_modified(bool modified);
@@ -220,6 +243,7 @@ class ExperimentWindow : public QMainWindow {
   bool modified_ = false;
   std::function<Unsaved()> ask_unsaved_;
   std::function<bool()> ask_stop_;
+  std::function<bool(int)> ask_clear_executed_;
 
   QAction* open_ = nullptr;
   QAction* save_ = nullptr;
