@@ -468,15 +468,20 @@ Each is written back into the spec by the task that makes it, so the two never d
 - Produces (class `ExperimentWindow`):
   ```cpp
   // Reads <session data>/executor_state.json; asks when resume_offer() gives one; on yes resume_from() and
-  // start(). False (nothing asked) while running, with executed_rows() > 0, or with no file, a file that does
-  // not read, or no offer.
-  bool offer_resume();
+  // start(). False (nothing asked) while running, with *error "a queue is running"; false with *error left
+  // empty with executed_rows() > 0, or with no file, a file that does not read, or no offer.
+  bool offer_resume(QString* error = nullptr);
   void set_ask_resume(std::function<bool(const ResumeOffer&)> ask);  // default: dialog, Resume / Not now
+  // How a Queue menu action shows its refusal; default QMessageBox::information(this, ...).
+  void set_inform(std::function<void(const QString&)> inform);
+  QAction* resume_action() const;  // Queue > Resume...
   ```
   State file path: `bridge_.session().data() / "executor_state.json"` (as `LabSession::resume_row`); time from
   `QFileInfo::lastModified()`. The default dialog shows `question`, `how` beneath it and, when not resumable,
-  `mismatch` with Resume disabled. Queue menu gains `Resume...` calling `offer_resume()`, and saying
-  `Nothing to resume.` when it returns false while not running.
+  `mismatch` with Resume disabled. Queue menu gains `Resume...` calling `offer_resume(&e)`; when it returns
+  false the menu informs `A queue is running.` if `e == "a queue is running"`, else `Nothing to resume.`
+  (Global Constraints: a refusal while running says so). This task also moves Task 5's three menu actions
+  onto the `inform` hook (their text unchanged).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -505,6 +510,11 @@ Each is written back into the spec by the task that makes it, so the two never d
     hook called once.
   - `anOfferWithAnotherIdentifierCannotResume`: row 0 `identifier "zzz"`; hook sees `!resumable()`, returns
     true; nothing starts (`!bridge.running()`, `executed_rows() == 0`).
+  - `resumeIsRefusedWhileRunningAndSaysSo`: a good state file (`next_row 1`), ask hook counting calls, inform
+    hook recording its text; start the example queue; while `bridge.running()`: `offer_resume(&e)` false with
+    `e == "a queue is running"`; `resume_action()->trigger()` → inform got exactly `A queue is running.`; ask
+    hook count 0. After the queue ends and `reset_executed()`, with no state file left to offer from (file
+    removed): `resume_action()->trigger()` → inform got `Nothing to resume.`.
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -513,7 +523,8 @@ Each is written back into the spec by the task that makes it, so the two never d
 
 - [ ] **Step 3: Implement as the Interfaces block says**
 
-  `offer_resume()` does nothing when the hook says yes to an offer that is not resumable. `open_dialog()` calls
+  `offer_resume()` checks `bridge_.running()` first and sets `*error = "a queue is running"` before reading
+  any file. It does nothing when the hook says yes to an offer that is not resumable. `open_dialog()` calls
   it after a successful `load_queue`; `MainWindow::ensure_experiment_window` after its `--queue` load succeeds.
   Write decisions 1–4 and 10 into spec section 5.
 
