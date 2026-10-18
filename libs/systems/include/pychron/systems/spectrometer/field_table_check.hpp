@@ -49,4 +49,49 @@ inline constexpr double kWeightTolerance = 0.01;  // amu
 // is not finite", "warning: H2: detector is not in config".
 std::string to_string(const TableDiagnostic& d);
 
+// Difference of two versions of a table (spec 3.4). Rows are matched by
+// isotope name, trimmed of surrounding blanks, never by row index; a name
+// that appears twice on one side is matched by its first row.
+struct CellDiff {
+  std::string isotope, detector;
+  std::optional<double> old_value, new_value;  // nullopt: no value on that side
+
+  friend bool operator==(const CellDiff&, const CellDiff&) = default;
+};
+
+struct MassDiff {
+  std::string isotope;
+  double old_mass = 0, new_mass = 0;
+
+  friend bool operator==(const MassDiff&, const MassDiff&) = default;
+};
+
+enum class RowChange { Added, Removed };
+
+struct RowDiff {
+  std::string isotope;
+  RowChange change = RowChange::Added;
+
+  friend bool operator==(const RowDiff&, const RowDiff&) = default;
+};
+
+struct TableDiff {
+  // "fit: quadratic -> linear", then one line per detector override that
+  // changed, by detector name: "fit H1: default -> cubic". An axis change,
+  // which the editor cannot make, is listed first as "axis: dac -> field".
+  std::vector<std::string> fit_changes;
+  std::vector<RowDiff> rows;  // added, in b's order, then removed, in a's
+  std::vector<MassDiff> masses;  // isotopes in both, in b's order
+  // Isotopes in both, in b's order; detectors of either side, by name;
+  // only cells that differ.
+  std::vector<CellDiff> cells;
+
+  [[nodiscard]] bool empty() const noexcept {
+    return fit_changes.empty() && rows.empty() && masses.empty() && cells.empty();
+  }
+};
+
+// `a` is the old version, `b` the new one. Pure.
+[[nodiscard]] TableDiff diff_field_tables(const FieldTable& a, const FieldTable& b);
+
 }  // namespace pychron::spectrometer

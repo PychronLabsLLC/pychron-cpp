@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -185,6 +186,94 @@ std::string to_string(const TableDiagnostic& d) {
   if (!d.detector.empty()) where += (where.empty() ? "" : "/") + d.detector;
   if (!where.empty()) out += where + ": ";
   return out + d.message;
+}
+
+namespace {
+
+// First row of each trimmed isotope name.
+std::map<std::string_view, const ControlPoint*, std::less<>> by_isotope(const FieldTable& t) {
+  std::map<std::string_view, const ControlPoint*, std::less<>> out;
+  for (const auto& p : t.points()) out.try_emplace(trimmed(p.isotope), &p);
+  return out;
+}
+
+// Exact comparison, except that two NaNs are the same value.
+bool same_value(double x, double y) noexcept { return x == y || (std::isnan(x) && std::isnan(y)); }
+
+std::string fit_text(const FieldTable& t, std::string_view det) {
+  const auto& o = t.fit_overrides();
+  const auto it = o.find(det);
+  return it == o.end() ? std::string("default") : std::string(to_string(it->second));
+}
+
+// "<label>: <before> -> <after>"
+std::string change(std::string_view label, std::string_view before, std::string_view after) {
+  std::string out(label);
+  out.append(": ").append(before).append(" -> ").append(after);
+  return out;
+}
+
+}  // namespace
+
+TableDiff diff_field_tables(const FieldTable& a, const FieldTable& b) {
+  TableDiff d;
+
+  if (a.axis() != b.axis()) {
+    d.fit_changes.push_back(change("axis", to_string(a.axis()), to_string(b.axis())));
+  }
+  if (a.default_fit() != b.default_fit()) {
+    d.fit_changes.push_back(change("fit", to_string(a.default_fit()), to_string(b.default_fit())));
+  }
+  std::set<std::string_view> override_dets;
+  for (const auto& [det, kind] : a.fit_overrides()) override_dets.insert(det);
+  for (const auto& [det, kind] : b.fit_overrides()) override_dets.insert(det);
+  for (const auto det : override_dets) {
+    const auto before = fit_text(a, det);
+    const auto after = fit_text(b, det);
+    if (before != after) d.fit_changes.push_back(change(std::string("fit ").append(det), before, after));
+  }
+
+  const auto old_rows = by_isotope(a);
+  const auto new_rows = by_isotope(b);
+
+  std::set<std::string_view> seen;
+  for (const auto& p : b.points()) {
+    const auto iso = trimmed(p.isotope);
+    if (!seen.insert(iso).second) continue;
+    if (!old_rows.contains(iso)) d.rows.push_back({std::string(iso), RowChange::Added});
+  }
+  seen.clear();
+  for (const auto& p : a.points()) {
+    const auto iso = trimmed(p.isotope);
+    if (!seen.insert(iso).second) continue;
+    if (!new_rows.contains(iso)) d.rows.push_back({std::string(iso), RowChange::Removed});
+  }
+
+  seen.clear();
+  for (const auto& p : b.points()) {
+    const auto iso = trimmed(p.isotope);
+    if (!seen.insert(iso).second) continue;
+    const auto it = old_rows.find(iso);
+    if (it == old_rows.end()) continue;
+    const ControlPoint& was = *it->second;
+    const ControlPoint& now = *new_rows.at(iso);
+    if (!same_value(was.mass, now.mass)) d.masses.push_back({std::string(iso), was.mass, now.mass});
+
+    std::set<std::string_view> dets;
+    for (const auto& [det, v] : was.values) dets.insert(det);
+    for (const auto& [det, v] : now.values) dets.insert(det);
+    for (const auto det : dets) {
+      const auto o = was.values.find(std::string(det));
+      const auto n = now.values.find(std::string(det));
+      std::optional<double> ov;
+      std::optional<double> nv;
+      if (o != was.values.end()) ov = o->second;
+      if (n != now.values.end()) nv = n->second;
+      if (ov && nv && same_value(*ov, *nv)) continue;
+      d.cells.push_back({std::string(iso), std::string(det), ov, nv});
+    }
+  }
+  return d;
 }
 
 }  // namespace pychron::spectrometer

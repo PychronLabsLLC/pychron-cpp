@@ -114,7 +114,7 @@
   enum class RowChange { Added, Removed };
   struct RowDiff { std::string isotope; RowChange change; };
   struct TableDiff {
-    std::vector<std::string> fit_changes;  // "fit: quadratic -> linear", "fit H1: default -> cubic"
+    std::vector<std::string> fit_changes;  // "fit: quadratic -> linear", "fit H1: default -> cubic"; "axis: dac -> field" first if axis differs
     std::vector<RowDiff> rows;             // by isotope name, b's order then a's
     std::vector<MassDiff> masses;
     std::vector<CellDiff> cells;           // isotopes in both, union of detectors, differing only
@@ -123,11 +123,11 @@
   TableDiff diff_field_tables(const FieldTable& a, const FieldTable& b);  // a = old, b = new
   ```
 
-- [ ] **Step 1: Write failing tests** `DiffFieldTables.*`: `IdenticalIsEmpty`; `MatchesByIsotopeNotRowIndex` (same rows reordered → empty); `AddedAndRemovedRows`; `ChangedValueHasOldNewAndDelta` (`new − old` checked by test); `ValueOnlyOnOneSideHasNullopt`; `DifferentDetectorSetsStillMatchRows` (legacy failure case); `FitAndOverrideChangesListed`; `MassChangeListed`.
-- [ ] **Step 2: Run** filter `DiffFieldTables.*`. Expected: FAIL.
-- [ ] **Step 3: Implement** `diff_field_tables`.
-- [ ] **Step 4: Run** filter. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(spectrometer): diff two field tables by isotope`.
+- [x] **Step 1: Write failing tests** `DiffFieldTables.*`: `IdenticalIsEmpty`; `MatchesByIsotopeNotRowIndex` (same rows reordered → empty); `AddedAndRemovedRows`; `ChangedValueHasOldNewAndDelta` (`new − old` checked by test); `ValueOnlyOnOneSideHasNullopt`; `DifferentDetectorSetsStillMatchRows` (legacy failure case); `FitAndOverrideChangesListed`; `MassChangeListed`; `AxisChangeListedFirst`.
+- [x] **Step 2: Run** filter `DiffFieldTables.*`. Expected: FAIL.
+- [x] **Step 3: Implement** `diff_field_tables`.
+- [x] **Step 4: Run** filter. Expected: PASS.
+- [x] **Step 5: Commit** `feat(spectrometer): diff two field tables by isotope`.
 
 ### Task 4: `read_mftable_csv` reads legacy first-line fit name
 

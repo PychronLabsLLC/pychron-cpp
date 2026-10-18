@@ -321,3 +321,145 @@ TEST(FieldTable, CheckFitMatchesValueFor) {
   t.set_fit("H1", ps::FitKind::Discrete);
   EXPECT_TRUE(t.check_fit("H1").has_value());
 }
+
+// ---- diff_field_tables ----
+
+namespace {
+
+const ps::CellDiff* cell(const ps::TableDiff& d, std::string_view iso, std::string_view det) {
+  const auto it = std::find_if(d.cells.begin(), d.cells.end(),
+                               [&](const ps::CellDiff& c) { return c.isotope == iso && c.detector == det; });
+  return it == d.cells.end() ? nullptr : &*it;
+}
+
+}  // namespace
+
+TEST(DiffFieldTables, IdenticalIsEmpty) {
+  const auto t = small_table();
+  const auto d = ps::diff_field_tables(t, t);
+  EXPECT_TRUE(d.empty());
+  EXPECT_TRUE(d.fit_changes.empty());
+  EXPECT_TRUE(d.rows.empty());
+  EXPECT_TRUE(d.masses.empty());
+  EXPECT_TRUE(d.cells.empty());
+}
+
+TEST(DiffFieldTables, MatchesByIsotopeNotRowIndex) {
+  const auto a = small_table();
+  auto b = small_table();
+  std::reverse(b.mutable_points().begin(), b.mutable_points().end());
+  EXPECT_TRUE(ps::diff_field_tables(a, b).empty());
+}
+
+TEST(DiffFieldTables, AddedAndRemovedRows) {
+  const auto a = small_table();
+  auto b = small_table();
+  auto& pts = b.mutable_points();
+  pts.erase(pts.begin());  // Ar36 removed
+  pts.push_back({"Ar39", 38.964, {{"H1", 4.0}}});
+  pts.push_back({"Ar37", 36.966, {{"H1", 3.9}}});
+  const auto d = ps::diff_field_tables(a, b);
+  ASSERT_EQ(d.rows.size(), 3U);
+  EXPECT_EQ(d.rows[0].isotope, "Ar39");
+  EXPECT_EQ(d.rows[0].change, ps::RowChange::Added);
+  EXPECT_EQ(d.rows[1].isotope, "Ar37");
+  EXPECT_EQ(d.rows[1].change, ps::RowChange::Added);
+  EXPECT_EQ(d.rows[2].isotope, "Ar36");
+  EXPECT_EQ(d.rows[2].change, ps::RowChange::Removed);
+  EXPECT_TRUE(d.cells.empty());  // added and removed rows have no cell diffs
+  EXPECT_TRUE(d.masses.empty());
+  EXPECT_FALSE(d.empty());
+}
+
+TEST(DiffFieldTables, ChangedValueHasOldNewAndDelta) {
+  const auto a = small_table();
+  auto b = small_table();
+  b.mutable_points()[2].values["H1"] += 0.025;
+  const auto d = ps::diff_field_tables(a, b);
+  ASSERT_EQ(d.cells.size(), 1U);
+  const auto& c = d.cells[0];
+  EXPECT_EQ(c.isotope, "Ar40");
+  EXPECT_EQ(c.detector, "H1");
+  ASSERT_TRUE(c.old_value.has_value());
+  ASSERT_TRUE(c.new_value.has_value());
+  EXPECT_DOUBLE_EQ(*c.old_value, curve(kAr40));
+  EXPECT_DOUBLE_EQ(*c.new_value, curve(kAr40) + 0.025);
+  EXPECT_NEAR(*c.new_value - *c.old_value, 0.025, 1e-12);
+  EXPECT_FALSE(d.empty());
+}
+
+TEST(DiffFieldTables, ValueOnlyOnOneSideHasNullopt) {
+  const auto a = small_table();
+  auto b = small_table();
+  b.mutable_points()[0].values.erase("AX");
+  b.mutable_points()[1].values["CDD"] = 7.5;
+  const auto d = ps::diff_field_tables(a, b);
+  ASSERT_EQ(d.cells.size(), 2U);
+  const auto* gone = cell(d, "Ar36", "AX");
+  ASSERT_NE(gone, nullptr);
+  EXPECT_TRUE(gone->old_value.has_value());
+  EXPECT_FALSE(gone->new_value.has_value());
+  const auto* added = cell(d, "Ar38", "CDD");
+  ASSERT_NE(added, nullptr);
+  EXPECT_FALSE(added->old_value.has_value());
+  ASSERT_TRUE(added->new_value.has_value());
+  EXPECT_DOUBLE_EQ(*added->new_value, 7.5);
+}
+
+// Legacy compare matched by header and row index, and failed when the two
+// versions had different detector columns.
+TEST(DiffFieldTables, DifferentDetectorSetsStillMatchRows) {
+  const auto a = small_table();
+  auto b = small_table();
+  for (auto& p : b.mutable_points()) {
+    p.values.erase("AX");
+    p.values["H2"] = p.values.at("H1") + 0.3;
+  }
+  const auto d = ps::diff_field_tables(a, b);
+  EXPECT_TRUE(d.rows.empty());
+  EXPECT_TRUE(d.masses.empty());
+  ASSERT_EQ(d.cells.size(), 6U);  // 3 isotopes x (AX removed, H2 added)
+  for (const auto* iso : {"Ar36", "Ar38", "Ar40"}) {
+    EXPECT_NE(cell(d, iso, "AX"), nullptr) << iso;
+    EXPECT_NE(cell(d, iso, "H2"), nullptr) << iso;
+    EXPECT_EQ(cell(d, iso, "H1"), nullptr) << iso;
+  }
+}
+
+TEST(DiffFieldTables, FitAndOverrideChangesListed) {
+  auto a = small_table();
+  a.set_fit("AX", ps::FitKind::Linear);
+  a.set_fit("H1", ps::FitKind::Cubic);
+  auto b = small_table(ps::FitKind::Linear);
+  b.set_fit("H1", ps::FitKind::Quadratic);
+  b.set_fit("CDD", ps::FitKind::Cubic);
+  const auto d = ps::diff_field_tables(a, b);
+  EXPECT_EQ(d.fit_changes, (std::vector<std::string>{
+                               "fit: quadratic -> linear",
+                               "fit AX: linear -> default",
+                               "fit CDD: default -> cubic",
+                               "fit H1: cubic -> quadratic",
+                           }));
+  EXPECT_TRUE(d.cells.empty());
+  EXPECT_FALSE(d.empty());
+}
+
+TEST(DiffFieldTables, MassChangeListed) {
+  const auto a = small_table();
+  auto b = small_table();
+  b.mutable_points()[1].mass = 37.9627;
+  const auto d = ps::diff_field_tables(a, b);
+  ASSERT_EQ(d.masses.size(), 1U);
+  EXPECT_EQ(d.masses[0].isotope, "Ar38");
+  EXPECT_DOUBLE_EQ(d.masses[0].old_mass, kAr38);
+  EXPECT_DOUBLE_EQ(d.masses[0].new_mass, 37.9627);
+  EXPECT_TRUE(d.cells.empty());
+  EXPECT_FALSE(d.empty());
+}
+
+TEST(DiffFieldTables, AxisChangeListedFirst) {
+  const auto a = small_table();
+  const ps::FieldTable b(ps::FitKind::Linear, ps::TableAxis::Field, a.points());
+  const auto d = ps::diff_field_tables(a, b);
+  EXPECT_EQ(d.fit_changes, (std::vector<std::string>{"axis: dac -> field", "fit: quadratic -> linear"}));
+}
