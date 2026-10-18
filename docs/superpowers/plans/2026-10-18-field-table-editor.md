@@ -139,12 +139,12 @@
 **Interfaces:**
 - Consumes/Produces: `read_mftable_csv(text, weights, axis)` unchanged signature. A first non-blank line holding one token (no comma) is the table default fit: `linear` → Linear, `parabolic` → Quadratic, `cubic` → Cubic, anything else → Discrete. Without it the default stays quadratic. The existing `#,<fit>,...` row keeps working.
 
-- [ ] **Step 1: Get the fixture.** Download melbourne `spectrometer/mftables/mftable.csv` with the Drive connector (`search_files` under the melbourne setupfiles folder from the drive-setupfiles survey memory, then `download_file_content`; never trust a search snippet for bytes). When the connector is not reachable, write the fixture by hand in the surveyed shape: line 1 `parabolic`, line 2 `iso,H2,H1,AX,L1,L2,CDD`, rows `Ar40`, `Ar39`, `Ar36` with values between 5.35 and 6.36, CRLF line endings; say in the commit body which was done. Add the data dir to the test target's compile definitions as `PYCHRON_SYSTEMS_TEST_DATA_DIR` if no such definition exists in `tests/systems/CMakeLists.txt`.
-- [ ] **Step 2: Write failing tests** `MftableCsv.*`: `FirstLineFitNameLinear|Parabolic|Cubic|OtherIsDiscrete` (inline strings); `ReadsTheMelbourneFileWithItsH2Column` (fixture: 3 points, detectors include `H2`, default fit Quadratic, Ar40 mass from `MolecularWeights::defaults()`); `HashFitRowStillRead` (existing form, kept passing).
-- [ ] **Step 3: Run** filter `MftableCsv.*`. Expected: new tests FAIL.
-- [ ] **Step 4: Implement** the first-line rule.
-- [ ] **Step 5: Run** filter. Expected: PASS.
-- [ ] **Step 6: Commit** `feat(spectrometer): read legacy mftable fit line`.
+- [x] **Step 1: Get the fixture.** Download melbourne `spectrometer/mftables/mftable.csv` with the Drive connector (`search_files` under the melbourne setupfiles folder from the drive-setupfiles survey memory, then `download_file_content`; never trust a search snippet for bytes). When the connector is not reachable, write the fixture by hand in the surveyed shape: line 1 `parabolic`, line 2 `iso,H2,H1,AX,L1,L2,CDD`, rows `Ar40`, `Ar39`, `Ar36` with values between 5.35 and 6.36, CRLF line endings; say in the commit body which was done. Add the data dir to the test target's compile definitions as `PYCHRON_SYSTEMS_TEST_DATA_DIR` if no such definition exists in `tests/systems/CMakeLists.txt`.
+- [x] **Step 2: Write failing tests** `MftableCsv.*`: `FirstLineFitNameLinear|Parabolic|Cubic|OtherIsDiscrete` (inline strings); `ReadsTheMelbourneFileWithItsH2Column` (fixture: 3 points, detectors include `H2`, default fit Quadratic, Ar40 mass from `MolecularWeights::defaults()`); `HashFitRowStillRead` (existing form, kept passing).
+- [x] **Step 3: Run** filter `MftableCsv.*`. Expected: new tests FAIL.
+- [x] **Step 4: Implement** the first-line rule.
+- [x] **Step 5: Run** filter. Expected: PASS.
+- [x] **Step 6: Commit** `feat(spectrometer): read legacy mftable fit line`.
 
 ### Task 5: `TableHold`, `table_version`, `FieldTableChanged`
 

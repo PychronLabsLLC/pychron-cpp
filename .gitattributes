@@ -7,3 +7,5 @@
 *.xlsx binary
 # Legacy fixtures are read byte for byte (hashes, git blob shas): never convert line endings.
 tests/dvc/fixtures/** -text
+# Legacy lab files kept with their CRLF line endings: the reader is tested against them.
+tests/systems/data/** -text

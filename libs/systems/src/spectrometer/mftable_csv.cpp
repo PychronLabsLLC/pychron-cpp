@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace pychron::spectrometer {
@@ -44,6 +45,15 @@ Unexpected<Error> bad(size_t line_no, const std::string& what) {
   return fail(ErrorKind::Config, "mftable.csv line " + std::to_string(line_no) + ": " + what);
 }
 
+// Legacy pychron writes the table's fit as a lone first line. Only its three
+// polynomial names are fits; anything else there means discrete.
+FitKind legacy_fit_name(const std::string& name) {
+  if (name == "linear") return FitKind::Linear;
+  if (name == "parabolic") return FitKind::Quadratic;
+  if (name == "cubic") return FitKind::Cubic;
+  return FitKind::Discrete;
+}
+
 }  // namespace
 
 Result<FieldTable> read_mftable_csv(std::string_view csv_text, const MolecularWeights& weights, TableAxis axis) {
@@ -52,6 +62,8 @@ Result<FieldTable> read_mftable_csv(std::string_view csv_text, const MolecularWe
   std::vector<std::optional<FitKind>> fits;
   std::vector<ControlPoint> points;
   std::set<std::string> seen;
+  FitKind default_fit = FitKind::Quadratic;
+  bool first_line = true;
 
   size_t line_no = 0;
   size_t pos = 0;
@@ -62,6 +74,11 @@ Result<FieldTable> read_mftable_csv(std::string_view csv_text, const MolecularWe
     ++line_no;
     if (trim(line).empty()) continue;
     auto cells = split_row(line);
+
+    if (std::exchange(first_line, false) && cells.size() == 1) {
+      default_fit = legacy_fit_name(cells[0]);
+      continue;
+    }
 
     if (header.empty()) {
       if (cells.size() < 2) return bad(line_no, "header needs an isotope column and at least one detector");
@@ -115,7 +132,7 @@ Result<FieldTable> read_mftable_csv(std::string_view csv_text, const MolecularWe
 
   if (header.empty()) return fail(ErrorKind::Config, "mftable.csv: empty file");
 
-  FieldTable table(FitKind::Quadratic, axis, std::move(points));
+  FieldTable table(default_fit, axis, std::move(points));
   for (size_t i = 0; i < header.size(); ++i) {
     if (!header[i].empty() && fits[i] && *fits[i] != table.default_fit()) table.set_fit(header[i], *fits[i]);
   }
