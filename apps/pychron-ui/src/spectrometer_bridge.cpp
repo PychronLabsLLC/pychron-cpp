@@ -8,11 +8,15 @@
 #include <QPointer>
 #include <QSemaphore>
 
+#include "pychron/systems/spectrometer/field_table_store.hpp"
+
 namespace pychron::ui {
 
 namespace {
 
 using spectrometer::DetectorState;
+using spectrometer::FieldTable;
+using spectrometer::FieldTableChanged;
 using spectrometer::IntensityReading;
 using spectrometer::MagnetMoved;
 using spectrometer::ScanStatus;
@@ -65,9 +69,11 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
   relay<MagnetMoved>(&SpectrometerBridge::on_magnet);
   relay<DetectorState>(&SpectrometerBridge::on_detector);
   relay<ScanStatus>(&SpectrometerBridge::on_scan);
+  relay<FieldTableChanged>(&SpectrometerBridge::on_table_changed);
 
   // Seeded after subscribing: anything published meanwhile is queued and
   // applied on top once the event loop runs.
+  active_table_ = spec_.active_table();
   table_ = spec_.field_table();
   for (const auto& d : spec_.config().detectors) {
     auto current = spec_.detector_state(d.name);
@@ -158,25 +164,32 @@ QString SpectrometerBridge::reference_detector() const { return QString::fromStd
 
 double SpectrometerBridge::default_integration_s() const { return spec_.config().system.integration_time_s; }
 
-template <class Command>
-void SpectrometerBridge::run(const char* what, Command command) {
-  const QString name = QString::fromLatin1(what);
+template <class Work, class Deliver>
+void SpectrometerBridge::post(Work work, Deliver deliver) {
   QPointer<SpectrometerBridge> self(this);
   QMetaObject::invokeMethod(
       worker_,
-      [self, name, command = std::move(command)] {
-        Result<void> result = command();
+      [self, work = std::move(work), deliver = std::move(deliver)]() mutable {
+        auto result = work();
         // `self` is only dereferenced on the main thread, inside the posted call.
         QMetaObject::invokeMethod(
             self.data(),
-            [self, name, result] {
+            [self, deliver = std::move(deliver), result = std::move(result)]() mutable {
               if (self) {
-                emit self->commandFinished(name, result);
+                deliver(*self, std::move(result));
               }
             },
             Qt::QueuedConnection);
       },
       Qt::QueuedConnection);
+}
+
+template <class Command>
+void SpectrometerBridge::run(const char* what, Command command) {
+  post([command = std::move(command)]() -> Result<void> { return command(); },
+       [name = QString::fromLatin1(what)](SpectrometerBridge& self, const Result<void>& result) {
+         emit self.commandFinished(name, result);
+       });
 }
 
 void SpectrometerBridge::start_scan(double integration_s) {
@@ -234,6 +247,43 @@ void SpectrometerBridge::drain() {
   done.acquire();
 }
 
+std::filesystem::path SpectrometerBridge::data_root() const { return spec_.data_root(); }
+
+const spectrometer::cfg::SpectrometerConfig& SpectrometerBridge::config() const { return spec_.config(); }
+
+const spectrometer::MolecularWeights& SpectrometerBridge::weights() const { return spec_.weights(); }
+
+QString SpectrometerBridge::active_table() const { return QString::fromStdString(active_table_); }
+
+std::optional<QString> SpectrometerBridge::table_held() const {
+  auto holder = spec_.table_held();
+  if (!holder) {
+    return std::nullopt;
+  }
+  return QString::fromStdString(*holder);
+}
+
+FieldTable SpectrometerBridge::table_copy(const QString& name) const {
+  return name.toStdString() == active_table_ ? table_ : FieldTable{};
+}
+
+void SpectrometerBridge::replace_table(const QString& name, FieldTable table, const QString& base_version) {
+  post(
+      [spec = &spec_, name = name.toStdString(), table = std::move(table),
+       base = base_version.toStdString()]() mutable {
+        return spec->replace_table(name, std::move(table), base, spec->clock().wall_now());
+      },
+      [name](SpectrometerBridge& self, const Result<std::string>& result) { emit self.tableSaved(name, result); });
+}
+
+void SpectrometerBridge::restore_table_version(const QString& name, const QString& version) {
+  post([spec = &spec_, name = name.toStdString(),
+        version = version.toStdString()] { return spec->restore_table_version(name, version); },
+       [name, version](SpectrometerBridge& self, const Result<void>& result) {
+         emit self.tableRestored(name, version, result);
+       });
+}
+
 void SpectrometerBridge::flush_readings() {
   std::vector<IntensityReading> batch;
   {
@@ -261,6 +311,35 @@ void SpectrometerBridge::on_magnet_read(double native, std::optional<double> mas
 void SpectrometerBridge::on_detector(const DetectorState& e) {
   state_.isotopes[e.detector] = e.isotope;
   emit detectorChanged(e);
+}
+
+// The copy is re-read on the executor: the core's table lock may be held
+// across a settling move, which the main thread must not wait for. Events
+// are re-read in the order they came, so the last one leaves the newest copy.
+// While a TableScope has another table active, the active table's version is
+// read from the store instead.
+void SpectrometerBridge::on_table_changed(const FieldTableChanged& e) {
+  if (e.name != active_table_) {
+    emit fieldTableChanged(QString::fromStdString(e.name), QString::fromStdString(e.version));
+    return;
+  }
+  post(
+      [spec = &spec_, e]() -> std::optional<FieldTable> {
+        if (spec->active_table() == e.name) {
+          return spec->field_table();
+        }
+        auto stored = spectrometer::FieldTableStore(spec->data_root() / "tables", e.name).load(e.version);
+        if (!stored) {
+          return std::nullopt;
+        }
+        return std::move(*stored);
+      },
+      [e](SpectrometerBridge& self, std::optional<FieldTable> table) {
+        if (table) {
+          self.table_ = std::move(*table);
+        }
+        emit self.fieldTableChanged(QString::fromStdString(e.name), QString::fromStdString(e.version));
+      });
 }
 
 // Statuses are published from several threads and can arrive out of order:

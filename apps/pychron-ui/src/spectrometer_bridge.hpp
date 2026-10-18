@@ -17,9 +17,17 @@
 // finishes the command in flight and drops queued ones, except that a stop
 // asked for after the last start always happens.
 //
+// Field tables: replace_table and restore_table_version run on the same
+// executor and report through tableSaved / tableRestored. FieldTableChanged
+// (from them, from a peak center's save, from anything else) is relayed; the
+// bridge re-reads its copy of the active table on the executor, since the
+// core's table lock can be held across a settling move, then emits
+// fieldTableChanged with the copy already current.
+//
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.
 
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
@@ -91,6 +99,27 @@ class SpectrometerBridge : public QObject {
   // Blocks until every queued command has finished.
   void drain();
 
+  // ---- field tables (field table editor spec, section 5) ----
+  // Immutable description; safe to read from the main thread at any time.
+  std::filesystem::path data_root() const;
+  const spectrometer::cfg::SpectrometerConfig& config() const;
+  const spectrometer::MolecularWeights& weights() const;
+  // The table that was active when the bridge was built (config's).
+  QString active_table() const;
+  // The first holder of a TableHold still out; a straight call, since holds
+  // have their own small lock in the core.
+  std::optional<QString> table_held() const;
+  // The bridge's copy of the active table, current as of the last
+  // fieldTableChanged; an empty table (no points) for any other name.
+  spectrometer::FieldTable table_copy(const QString& name) const;
+  // Non-blocking. Spectrometer::replace_table stamped from the
+  // spectrometer's wall clock, reported once through tableSaved; an empty
+  // `base_version` skips the conflict check.
+  void replace_table(const QString& name, spectrometer::FieldTable table, const QString& base_version);
+  // Non-blocking. Spectrometer::restore_table_version, reported once
+  // through tableRestored.
+  void restore_table_version(const QString& name, const QString& version);
+
  signals:
   void readings(const std::vector<pychron::spectrometer::IntensityReading>& batch);
   void magnetMoved(const pychron::spectrometer::MagnetMoved& event);
@@ -98,6 +127,11 @@ class SpectrometerBridge : public QObject {
   void detectorChanged(const pychron::spectrometer::DetectorState& event);
   void scanStatus(const pychron::spectrometer::ScanStatus& status);
   void commandFinished(const QString& what, const pychron::Result<void>& result);
+  // A table got a new current version; table_copy and isotopes_for already
+  // reflect it.
+  void fieldTableChanged(const QString& name, const QString& version);
+  void tableSaved(const QString& name, const pychron::Result<std::string>& result);  // the new version
+  void tableRestored(const QString& name, const QString& version, const pychron::Result<void>& result);
 
  private:
   struct Gate;
@@ -107,17 +141,23 @@ class SpectrometerBridge : public QObject {
   // Runs `command` on the executor and posts its Result back as `what`.
   template <class Command>
   void run(const char* what, Command command);
+  // Runs `work` on the executor; its result is handed to `deliver` on the
+  // main thread unless the bridge is gone by then.
+  template <class Work, class Deliver>
+  void post(Work work, Deliver deliver);
 
   void flush_readings();
   void on_magnet(const spectrometer::MagnetMoved& e);
   void on_magnet_read(double native, std::optional<double> mass);
   void on_detector(const spectrometer::DetectorState& e);
   void on_scan(const spectrometer::ScanStatus& e);
+  void on_table_changed(const spectrometer::FieldTableChanged& e);
 
   spectrometer::Spectrometer& spec_;
   spectrometer::ScanService& scan_;
   SignalBus& bus_;
-  spectrometer::FieldTable table_;  // active table at construction
+  std::string active_table_;        // active table at construction
+  spectrometer::FieldTable table_;  // copy of it, re-read on FieldTableChanged
   State state_;
   std::shared_ptr<Gate> gate_;
   std::vector<SignalBus::Subscription> subscriptions_;

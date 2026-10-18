@@ -7,11 +7,14 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <optional>
 #include <ranges>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "spectrometer_bridge.hpp"
@@ -33,6 +36,25 @@ struct Finished {
   QString what;
   Result<void> result;
 };
+
+struct Saved {
+  QString name;
+  Result<std::string> result;
+};
+
+struct Restored {
+  QString name;
+  QString version;
+  Result<void> result;
+};
+
+struct Changed {
+  QString name;
+  QString version;
+};
+
+// The version the example `argon` table ships as current.
+const QString kShippedArgon = QStringLiteral("2026-09-30T000000");
 
 }  // namespace
 
@@ -57,15 +79,22 @@ class TestSpectrometerBridge : public QObject {
     return nullptr;
   }
 
-  std::unique_ptr<ui::test::SimSpectrometer> sim_;
-  std::unique_ptr<SpectrometerBridge> bridge_;
-  std::vector<Finished> finished_;
-  std::vector<IntensityReading> readings_;
-  std::vector<std::size_t> batches_;
+  // Rebuilds the fixture on a copy of the example tables in a temporary
+  // directory, so that saves never write into the source tree.
+  void use_temporary_tables() {
+    bridge_.reset();
+    sim_.reset();
+    tables_dir_ = std::make_unique<QTemporaryDir>();
+    QVERIFY(tables_dir_->isValid());
+    const std::filesystem::path root = tables_dir_->path().toStdString();
+    std::filesystem::copy(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "tables", root / "tables",
+                          std::filesystem::copy_options::recursive);
+    sim_ = ui::test::make_sim_spectrometer([&root](spectrometer::cfg::SpectrometerData& data) { data.root = root; });
+    QVERIFY(sim_->spec->data_root() == root);
+    make_bridge();
+  }
 
- private slots:
-  void init() {
-    sim_ = ui::test::make_sim_spectrometer();
+  void make_bridge() {
     bridge_ = std::make_unique<SpectrometerBridge>(*sim_->spec, *sim_->scan, sim_->bus);
     connect(bridge_.get(), &SpectrometerBridge::commandFinished, this,
             [this](const QString& what, const Result<void>& r) { finished_.push_back({what, r}); });
@@ -73,14 +102,65 @@ class TestSpectrometerBridge : public QObject {
       batches_.push_back(batch.size());
       readings_.insert(readings_.end(), batch.begin(), batch.end());
     });
+    connect(bridge_.get(), &SpectrometerBridge::tableSaved, this,
+            [this](const QString& name, const Result<std::string>& r) { saved_.push_back({name, r}); });
+    connect(bridge_.get(), &SpectrometerBridge::tableRestored, this,
+            [this](const QString& name, const QString& version, const Result<void>& r) {
+              restored_.push_back({name, version, r});
+            });
+    connect(bridge_.get(), &SpectrometerBridge::fieldTableChanged, this, [this](const QString& name, const QString& v) {
+      // The copy is re-read before the signal.
+      changed_.push_back({name, v});
+      changed_had_copy_.push_back(bridge_->table_copy(name));
+    });
+  }
+
+  // The active table with an Ar38 row between Ar39 and Ar36, its values
+  // read off the table itself so the row keeps every check happy.
+  spectrometer::FieldTable with_ar38() const {
+    auto table = bridge_->table_copy(bridge_->active_table());
+    const double mass = *bridge_->mass_of("Ar38");
+    spectrometer::ControlPoint row{"Ar38", mass, {}};
+    for (const auto& d : bridge_->detectors()) {
+      auto value = table.value_for(mass, d.name);
+      if (value) {
+        row.values[d.name] = *value;
+      }
+    }
+    auto& points = table.mutable_points();  // heaviest first, as shipped
+    const auto at = std::ranges::find_if(points, [mass](const auto& p) { return p.mass < mass; });
+    points.insert(at, row);
+    return table;
+  }
+
+  std::unique_ptr<QTemporaryDir> tables_dir_;
+  std::unique_ptr<ui::test::SimSpectrometer> sim_;
+  std::unique_ptr<SpectrometerBridge> bridge_;
+  std::vector<Finished> finished_;
+  std::vector<IntensityReading> readings_;
+  std::vector<std::size_t> batches_;
+  std::vector<Saved> saved_;
+  std::vector<Restored> restored_;
+  std::vector<Changed> changed_;
+  std::vector<spectrometer::FieldTable> changed_had_copy_;
+
+ private slots:
+  void init() {
+    sim_ = ui::test::make_sim_spectrometer();
+    make_bridge();
   }
 
   void cleanup() {
     bridge_.reset();
     sim_.reset();
+    tables_dir_.reset();
     finished_.clear();
     readings_.clear();
     batches_.clear();
+    saved_.clear();
+    restored_.clear();
+    changed_.clear();
+    changed_had_copy_.clear();
   }
 
   void readingsArriveOnGuiThreadInOrder() {
@@ -307,6 +387,121 @@ class TestSpectrometerBridge : public QObject {
     QCOMPARE(detectors[1].color, QColor("#ff7f0e"));
     QCOMPARE(detectors[1].isotope, QStringLiteral("Ar40"));
     QCOMPARE(detectors[5].units, QStringLiteral("cps"));
+  }
+
+  void tableDescriptionComesFromTheCore() {
+    QCOMPARE(bridge_->active_table(), QStringLiteral("argon"));
+    QVERIFY(bridge_->data_root() == sim_->spec->data_root());
+    QCOMPARE(&bridge_->config(), &sim_->spec->config());
+    QCOMPARE(&bridge_->weights(), &sim_->spec->weights());
+    QVERIFY(bridge_->table_copy("argon") == sim_->spec->field_table());
+    QVERIFY(bridge_->table_copy("argon_hv").points().empty());  // not the active table
+    QVERIFY(!bridge_->table_held().has_value());
+    auto hold = sim_->spec->hold_table("queue");
+    QCOMPARE(bridge_->table_held(), std::optional<QString>(QStringLiteral("queue")));
+    hold.release();
+    QVERIFY(!bridge_->table_held().has_value());
+  }
+
+  void replaceTableEmitsSavedAndChanged() {
+    use_temporary_tables();
+    const auto table = with_ar38();
+    bridge_->replace_table("argon", table, kShippedArgon);
+    QTRY_COMPARE_WITH_TIMEOUT(saved_.size(), std::size_t{1}, kWaitMs);
+    QCOMPARE(saved_[0].name, QStringLiteral("argon"));
+    if (!saved_[0].result) {
+      QFAIL(saved_[0].result.error().what.c_str());
+    }
+    const std::string version = *saved_[0].result;
+    QCOMPARE(*sim_->spec->table_version("argon"), version);
+
+    QTRY_COMPARE_WITH_TIMEOUT(changed_.size(), std::size_t{1}, kWaitMs);
+    QCOMPARE(changed_[0].name, QStringLiteral("argon"));
+    QCOMPARE(changed_[0].version, QString::fromStdString(version));
+    QVERIFY(changed_had_copy_[0] == table);
+    QVERIFY(bridge_->isotopes_for("H1").contains("Ar38"));
+    QVERIFY(sim_->spec->field_table() == table);
+
+    // The same base again is now stale: the store moved on.
+    bridge_->replace_table("argon", table, kShippedArgon);
+    QTRY_COMPARE_WITH_TIMEOUT(saved_.size(), std::size_t{2}, kWaitMs);
+    QVERIFY(!saved_[1].result.has_value());
+    QCOMPARE(saved_[1].result.error().code, std::string("table_conflict"));
+  }
+
+  void isotopesFollowAPeakCenterStyleSave() {
+    use_temporary_tables();
+    bridge_->replace_table("argon", with_ar38(), QString());
+    QTRY_COMPARE_WITH_TIMEOUT(changed_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(bridge_->isotopes_for("AX").contains("Ar38"));
+    const auto before = bridge_->mass_on_reference_for("Ar38", "AX");
+    QVERIFY(before.has_value());
+
+    // What peak center does from the core side, on another thread than the
+    // bridge's: update one value, save.
+    const double old_value = bridge_->table_copy("argon").value_for(*bridge_->mass_of("Ar38"), "AX").value();
+    const double new_value = old_value + 0.01;
+    std::string version;
+    std::thread job([&] {
+      if (auto updated = sim_->spec->update_table("AX", "Ar38", new_value, false); !updated) return;
+      if (auto saved = sim_->spec->save_table(sim_->spec->clock().wall_now())) version = *saved;
+    });
+    job.join();
+    QVERIFY(!version.empty());
+    QTRY_COMPARE_WITH_TIMEOUT(changed_.size(), std::size_t{2}, kWaitMs);
+    QCOMPARE(changed_[1].version, QString::fromStdString(version));
+    const auto& copy = changed_had_copy_[1];
+    const auto row = std::ranges::find(copy.points(), std::string("Ar38"), &spectrometer::ControlPoint::isotope);
+    QVERIFY(row != copy.points().end());
+    QCOMPARE(row->values.at("AX"), new_value);
+    QVERIFY(bridge_->isotopes_for("AX").contains("Ar38"));
+    const auto after = bridge_->mass_on_reference_for("Ar38", "AX");
+    QVERIFY(after.has_value());
+    QVERIFY(std::abs(*after - *before) > 1e-6);  // the copy is the new table
+  }
+
+  void replaceRefusedWhileHeldReportsTheCode() {
+    use_temporary_tables();
+    const auto before = *sim_->spec->table_version("argon");
+    {
+      auto hold = sim_->spec->hold_table("queue");
+      bridge_->replace_table("argon", with_ar38(), kShippedArgon);
+      QTRY_COMPARE_WITH_TIMEOUT(saved_.size(), std::size_t{1}, kWaitMs);
+    }
+    QVERIFY(!saved_[0].result.has_value());
+    QCOMPARE(saved_[0].result.error().code, std::string("table_held"));
+    QCOMPARE(*sim_->spec->table_version("argon"), before);
+    QVERIFY(!bridge_->isotopes_for("H1").contains("Ar38"));
+    QCoreApplication::processEvents();
+    QVERIFY(changed_.empty());
+
+    // Held for a restore too.
+    {
+      auto hold = sim_->spec->hold_table("peak_center");
+      bridge_->restore_table_version("argon", kShippedArgon);
+      QTRY_COMPARE_WITH_TIMEOUT(restored_.size(), std::size_t{1}, kWaitMs);
+    }
+    QVERIFY(!restored_[0].result.has_value());
+    QCOMPARE(restored_[0].result.error().code, std::string("table_held"));
+  }
+
+  void restoreEmitsRestored() {
+    use_temporary_tables();
+    bridge_->replace_table("argon", with_ar38(), kShippedArgon);
+    QTRY_COMPARE_WITH_TIMEOUT(changed_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(bridge_->isotopes_for("H1").contains("Ar38"));
+
+    bridge_->restore_table_version("argon", kShippedArgon);
+    QTRY_COMPARE_WITH_TIMEOUT(restored_.size(), std::size_t{1}, kWaitMs);
+    QCOMPARE(restored_[0].name, QStringLiteral("argon"));
+    QCOMPARE(restored_[0].version, kShippedArgon);
+    QVERIFY(restored_[0].result.has_value());
+    QCOMPARE(*sim_->spec->table_version("argon"), kShippedArgon.toStdString());
+
+    QTRY_COMPARE_WITH_TIMEOUT(changed_.size(), std::size_t{2}, kWaitMs);
+    QCOMPARE(changed_[1].version, kShippedArgon);
+    QVERIFY(!bridge_->isotopes_for("H1").contains("Ar38"));
+    QVERIFY(changed_had_copy_[1] == sim_->spec->field_table());
   }
 
   void destroyWithCommandInFlightIsClean() {

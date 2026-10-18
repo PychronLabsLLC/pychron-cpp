@@ -294,7 +294,7 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
   const spectrometer::MolecularWeights& weights() const;
   QString active_table() const;
   std::optional<QString> table_held() const;            // straight call: holds use their own small mutex
-  spectrometer::FieldTable table_copy(const QString& name) const;  // in-memory copy if loaded, else empty
+  spectrometer::FieldTable table_copy(const QString& name) const;  // bridge's copy of the active table, else empty (no points)
   void replace_table(const QString& name, spectrometer::FieldTable table, const QString& base_version);
   void restore_table_version(const QString& name, const QString& version);
   signals:
@@ -302,13 +302,13 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
   void tableSaved(const QString& name, const pychron::Result<std::string>& result);
   void tableRestored(const QString& name, const QString& version, const pychron::Result<void>& result);
   ```
-  `replace_table` / `restore_table_version` run through the bridge's `run(...)` executor thread with `when` from the bridge's wall clock, result posted back. `FieldTableChanged` relayed with `relay<>`; on it the bridge re-reads its table copy (isotope lists, `mass_on_reference_for`) before emitting `fieldTableChanged`.
+  `replace_table` / `restore_table_version` run through the bridge's `run(...)` executor thread with `when` from the bridge's wall clock, result posted back. `FieldTableChanged` relayed with `relay<>`; on it the bridge re-reads its table copy (isotope lists, `mass_on_reference_for`) before emitting `fieldTableChanged`. The re-read runs on the executor thread (the core's table lock can be held across a settling move); while a `TableScope` has another table active it reads the event's version from the store. The bridge sees only the active table in memory, so `table_copy` of any other name is empty.
 
-- [ ] **Step 1: Write failing tests** (private slots): `replaceTableEmitsSavedAndChanged`, `isotopesFollowAPeakCenterStyleSave` (call `spec->update_table` + `save_table` from the core side, wait for `fieldTableChanged`, `isotopes_for` reflects the new row added through `replace_table`), `replaceRefusedWhileHeldReportsTheCode` (`result.error().code == "table_held"`), `restoreEmitsRestored`.
-- [ ] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_spectrometer_bridge && build/dev-ui/tests/ui/pychron_ui_test_spectrometer_bridge`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** same. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(ui): spectrometer bridge saves and restores field tables`.
+- [x] **Step 1: Write failing tests** (private slots): `replaceTableEmitsSavedAndChanged`, `isotopesFollowAPeakCenterStyleSave` (call `spec->update_table` + `save_table` from the core side, wait for `fieldTableChanged`, `isotopes_for` reflects the new row added through `replace_table`), `replaceRefusedWhileHeldReportsTheCode` (`result.error().code == "table_held"`), `restoreEmitsRestored`.
+- [x] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_spectrometer_bridge && build/dev-ui/tests/ui/pychron_ui_test_spectrometer_bridge`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** same. Expected: PASS.
+- [x] **Step 5: Commit** `feat(ui): spectrometer bridge saves and restores field tables`.
 
 ### Task 12: `FieldTableModel` (grid and undo)
 
@@ -390,7 +390,7 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
     void changeEvent(QEvent*) override;  // ActivationChange: reread version list
   };
   ```
-  Behaviour per spec §3, §3.1–3.4: left lists (names with `(active)` / `(HV)`, versions with points and detectors counts, current marked); right panel (default fit combo, one override combo per detector with "default", axis label, diagnostics list clicking selects the cell); in-memory-differs banner when `bridge->table_copy(name) != store.load()`; `fieldTableChanged` on the open table reloads when unmodified, else shows banner `"table changed since you opened it (now <v>)"` and keeps edits; Save disabled with reason while `bridge->table_held()` (text `"table is held by <holder>"`) or diagnostics have an error (first error's text); first save over a version whose text ≠ `to_toml(parse(text))` asks `"comments in <v> are not kept"` once per version; a version that does not parse is shown read-only with its parse error; save/restore failures from the bridge go to `show_error`. Undo and Redo actions from `model()->undo_stack()->createUndoAction/createRedoAction` with `QKeySequence::Undo` / `QKeySequence::Redo` (Ctrl+Z / Ctrl+Shift+Z). Make Current applies Save's conflict rule: before restoring, it rereads the store's current version; when that differs from the current version the window last listed, it refuses with `show_error("table changed since you opened it (now <v>)")` and rereads the list. Poll `table_held()` on a 500 ms `QTimer` for enable state (UI convenience only; core refuses anyway).
+  Behaviour per spec §3, §3.1–3.4: left lists (names with `(active)` / `(HV)`, versions with points and detectors counts, current marked); right panel (default fit combo, one override combo per detector with "default", axis label, diagnostics list clicking selects the cell); in-memory-differs banner when `bridge->table_copy(name)` has points and `!= store.load()` (empty for a table that is not the active one); `fieldTableChanged` on the open table reloads when unmodified, else shows banner `"table changed since you opened it (now <v>)"` and keeps edits; Save disabled with reason while `bridge->table_held()` (text `"table is held by <holder>"`) or diagnostics have an error (first error's text); first save over a version whose text ≠ `to_toml(parse(text))` asks `"comments in <v> are not kept"` once per version; a version that does not parse is shown read-only with its parse error; save/restore failures from the bridge go to `show_error`. Undo and Redo actions from `model()->undo_stack()->createUndoAction/createRedoAction` with `QKeySequence::Undo` / `QKeySequence::Redo` (Ctrl+Z / Ctrl+Shift+Z). Make Current applies Save's conflict rule: before restoring, it rereads the store's current version; when that differs from the current version the window last listed, it refuses with `show_error("table changed since you opened it (now <v>)")` and rereads the list. Poll `table_held()` on a 500 ms `QTimer` for enable state (UI convenience only; core refuses anyway).
 
 - [ ] **Step 1: Write failing tests** (temp copy of `profiles/qtegra` data root, `SimSpectrometer` from the fixture):
   - `opensTheActiveTableAtItsCurrentVersion`
