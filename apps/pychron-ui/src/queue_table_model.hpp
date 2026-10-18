@@ -24,6 +24,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <QAbstractTableModel>
@@ -125,6 +126,24 @@ class QueueTableModel : public QAbstractTableModel {
   std::size_t insert_position(std::size_t at) const noexcept {
     return std::max({at, frozen_rows(), executed_rows()});
   }
+  // All runs back in Queue: executed 0, statuses cleared; the queue itself
+  // unchanged, edited() not emitted. False while live.
+  bool reset_executed();
+  // Removes rows < executed_rows() as one reset edit (revalidated, edited()
+  // emitted), then executed 0 and statuses cleared. False while live, with
+  // nothing executed, or when the edit is refused (locked).
+  bool clear_executed();
+  // Copies of `rows` (each < executed_rows()), aliquot and step cleared, in
+  // queue order, inserted at insert_position(executed_rows()); live, an
+  // ordinary live edit. The inserted rows, or nullopt (empty, a row not
+  // executed, refused edit).
+  std::optional<std::vector<std::size_t>> repeat(std::vector<std::size_t> rows);
+  // After a crash or a Stop: executed = next_row, each (row, state) a
+  // finished status (rows at or past next_row are ignored), every other
+  // status cleared. False while live or when next_row > rowCount().
+  bool resume_from(std::size_t next_row,
+                   const std::vector<std::pair<std::size_t, experiment::run::RunState>>& statuses);
+
   // The executor changed the queue (a queue action, a post-run conditional,
   // or the echo of a live edit); adopted when newer than what the model has.
   // True when adopted.

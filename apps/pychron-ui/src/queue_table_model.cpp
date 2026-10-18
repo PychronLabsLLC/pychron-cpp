@@ -433,6 +433,75 @@ bool QueueTableModel::on_queue_edited(const experiment::executor::QueueEdited& e
   return true;
 }
 
+bool QueueTableModel::reset_executed() {
+  if (live()) return false;
+  status_.clear();
+  run_rows_.clear();
+  set_executed(0);
+  if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));  // editable, no status
+  return true;
+}
+
+bool QueueTableModel::clear_executed() {
+  if (live() || executed_ == 0) return false;
+  const std::size_t was = executed_;
+  std::vector<std::size_t> rows(std::min(was, queue_.size()));
+  for (std::size_t i = 0; i < rows.size(); ++i) rows[i] = i;
+  experiment::ExperimentQueue next = queue_;
+  if (!rows.empty() && !next.remove(rows)) return false;
+  // The one edit past the executed guard (plan decision 6): adopt sees no
+  // executed rows, so it keeps nothing back. The statuses go with the rows,
+  // before the reset shows the shifted ones.
+  executed_ = 0;
+  auto statuses = std::exchange(status_, {});
+  auto run_rows = std::exchange(run_rows_, {});
+  if (!adopt(std::move(next), true)) {
+    executed_ = was;
+    status_ = std::move(statuses);
+    run_rows_ = std::move(run_rows);
+    return false;
+  }
+  emit executedChanged(0);
+  return true;
+}
+
+std::optional<std::vector<std::size_t>> QueueTableModel::repeat(std::vector<std::size_t> rows) {
+  if (rows.empty()) return std::nullopt;
+  std::sort(rows.begin(), rows.end());
+  rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+  if (rows.back() >= std::min(executed_, queue_.size())) return std::nullopt;
+  std::vector<RunSpec> copies;
+  copies.reserve(rows.size());
+  for (const std::size_t row : rows) {
+    RunSpec r = queue_.runs()[row];
+    r.id.aliquot.reset();
+    r.id.step.clear();
+    copies.push_back(std::move(r));
+  }
+  const std::size_t at = insert_position(executed_);
+  if (!insert_runs(at, copies)) return std::nullopt;
+  std::vector<std::size_t> inserted(copies.size());
+  for (std::size_t i = 0; i < inserted.size(); ++i) inserted[i] = at + i;
+  return inserted;
+}
+
+bool QueueTableModel::resume_from(std::size_t next_row,
+                                  const std::vector<std::pair<std::size_t, RunState>>& statuses) {
+  if (live() || next_row > queue_.size()) return false;
+  status_.clear();
+  run_rows_.clear();
+  for (const auto& [row, state] : statuses) {
+    if (row >= next_row) continue;
+    RowStatus st;
+    st.state = state;
+    st.finished = true;
+    status_[static_cast<int>(row)] = std::move(st);
+  }
+  set_executed(next_row);
+  if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
+  return true;
+}
+
 void QueueTableModel::clear_status(std::size_t from) {
   const auto first = static_cast<int>(std::min(from, queue_.size()));
   std::erase_if(status_, [first](const auto& kv) { return kv.first >= first; });

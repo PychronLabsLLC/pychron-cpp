@@ -32,6 +32,7 @@ add_library(pychron_ui_lib STATIC
   src/spectrometer_window.cpp
   src/experiment_bridge.cpp
   src/queue_table_model.cpp
+  src/queue_views.cpp
   src/executor_pane.cpp
   src/timeline.cpp
   src/evolutions_view.cpp
@@ -115,6 +116,7 @@ add_library(pychron_ui_lib STATIC
   src/spectrometer_window.hpp
   src/experiment_bridge.hpp
   src/queue_table_model.hpp
+  src/queue_views.hpp
   src/executor_pane.hpp
   src/timeline.hpp
   src/evolutions_view.hpp

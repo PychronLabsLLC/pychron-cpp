@@ -250,7 +250,7 @@ Each is written back into the spec by the task that makes it, so the two never d
   // executedChanged to invalidateFilter(); no sorting (setDynamicSortFilter(false)).
   ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   In `test_queue_table_model.cpp`:
   - `resetExecutedPutsEveryRowBack`: refused while live; after `end_live()` with `executed_rows() == 2` and
@@ -277,23 +277,23 @@ Each is written back into the spec by the task that makes it, so the two never d
   - `aQueueEditKeepsBothViewsSplit` (Review Focus 1): live, `set_frozen(2)`, `on_queue_edited({queue, 9, 2})` →
     executed proxy 2 rows, queue proxy 1.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   `cmake --build --preset dev-ui --target pychron_ui_test_queue_table_model pychron_ui_test_queue_views` fails to
   compile.
 
-- [ ] **Step 3: Implement as the Interfaces block says**
+- [x] **Step 3: Implement as the Interfaces block says**
 
   `clear_executed()` sets the guard aside for its own edit (decision 6): it removes through `ExperimentQueue::remove`
   and `adopt(…, true)` with `executed_` already 0, restoring it if `adopt` refuses. `repeat()` goes through
   `insert_runs`, so a live repeat is an ordinary live edit.
 
-- [ ] **Step 4: Run both binaries**
+- [x] **Step 4: Run both binaries**
 
   `build/dev-ui/tests/ui/pychron_ui_test_queue_table_model` and `build/dev-ui/tests/ui/pychron_ui_test_queue_views`
   pass.
 
-- [ ] **Step 5: Checks and commit**
+- [x] **Step 5: Checks and commit**
 
   `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
   `git commit -m "feat(ui): executed and queue views over the one queue model"`
