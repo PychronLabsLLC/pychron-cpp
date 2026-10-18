@@ -621,6 +621,70 @@ TEST_F(ExecutorTest, AResumedStepHeatKeepsItsAliquot) {
   EXPECT_FALSE(std::filesystem::exists(records / "12345-2B.json"));
 }
 
+TEST_F(ExecutorTest, ReadStateGivesWhatWriteStateWrote) {
+  Executor ex(context(), options());
+  spec_.on_reading = [&](int n) {
+    if (n == 3) ex.abort();
+  };
+  auto q = queue({unknown_run("12345"), unknown_run("12346"), unknown_run("12347")});
+  auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Aborted);
+
+  const auto file = lab_.dir() / "executor_state.json";
+  auto s = Executor::read_state(file);
+  ASSERT_TRUE(s) << s.error().what;
+  EXPECT_EQ(s->queue, q.spec().name);
+  EXPECT_EQ(s->state, "finalizing");
+  auto row = Executor::resume_row(file);
+  ASSERT_TRUE(row) << row.error().what;
+  EXPECT_EQ(s->next_row, *row);
+  ASSERT_EQ(s->runs.size(), r.runs.size());
+  for (std::size_t i = 0; i < r.runs.size(); ++i) {
+    EXPECT_EQ(s->runs[i].row, r.runs[i].row) << i;
+    EXPECT_EQ(s->runs[i].identifier, r.runs[i].identifier) << i;
+    EXPECT_EQ(s->runs[i].run_id, r.runs[i].run_id) << i;
+    EXPECT_EQ(s->runs[i].state, run::to_string(r.runs[i].state)) << i;
+  }
+}
+
+namespace {
+
+std::filesystem::path write_text(const std::filesystem::path& p, const std::string& text) {
+  std::filesystem::create_directories(p.parent_path());
+  std::ofstream(p, std::ios::trunc) << text;
+  return p;
+}
+
+}  // namespace
+
+TEST_F(ExecutorTest, ReadStateOfAnOlderFileGivesItsNextRow) {
+  auto s = Executor::read_state(write_text(lab_.dir() / "old_state.json", R"({"next_row": 4})"));
+  ASSERT_TRUE(s) << s.error().what;
+  EXPECT_EQ(s->next_row, 4u);
+  EXPECT_EQ(s->queue, "");
+  EXPECT_EQ(s->state, "");
+  EXPECT_TRUE(s->runs.empty());
+}
+
+TEST_F(ExecutorTest, ReadStateRefusesWhatIsNotAStateFile) {
+  auto missing = Executor::read_state(lab_.dir() / "nope.json");
+  ASSERT_FALSE(missing);
+  EXPECT_EQ(missing.error().kind, ErrorKind::Io);
+
+  auto not_json = Executor::read_state(write_text(lab_.dir() / "a.json", "not json"));
+  ASSERT_FALSE(not_json);
+  EXPECT_EQ(not_json.error().kind, ErrorKind::Config);
+
+  auto no_row = Executor::read_state(write_text(lab_.dir() / "b.json", R"({"queue": "q"})"));
+  ASSERT_FALSE(no_row);
+  EXPECT_EQ(no_row.error().kind, ErrorKind::Config);
+  EXPECT_NE(no_row.error().what.find("no next_row"), std::string::npos) << no_row.error().what;
+
+  auto negative = Executor::read_state(write_text(lab_.dir() / "c.json", R"({"next_row": -1})"));
+  ASSERT_FALSE(negative);
+  EXPECT_EQ(negative.error().kind, ErrorKind::Config);
+}
+
 TEST_F(ExecutorTest, PauseAndScheduledStart) {
   RunSpec pause;
   pause.id.identifier = "pa";

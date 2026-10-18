@@ -43,6 +43,8 @@ enum class RunEvent {
 
 std::string_view to_string(RunState s) noexcept;
 std::string_view to_string(RunEvent e) noexcept;
+// The state whose to_string() is `text`; nullopt for any other text.
+std::optional<RunState> run_state_from(std::string_view text) noexcept;
 bool is_terminal(RunState s) noexcept;
 
 // The state `e` leads to from `from`; nullopt when illegal.

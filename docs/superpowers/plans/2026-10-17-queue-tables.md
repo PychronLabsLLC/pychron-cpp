@@ -13,7 +13,7 @@ the window turns what it reads into an offer (`resume_offer`, a pure function) a
 and the earlier statuses and starts.
 
 **Tech Stack:** C++20, Qt 6 Widgets (6.4 floor), Qt Test (`tests/ui`), GoogleTest (`tests/experiment`),
-nlohmann_json (already linked privately by `libs/experiment`).
+nlohmann_json (linked privately by `libs/experiment` from Task 1 on; before it only `experiment_store` linked it).
 
 **Spec:** `docs/superpowers/specs/2026-10-13-queue-tables-design.md` (survey and legacy analysis:
 `docs/superpowers/specs/2026-10-13-queue-tables-survey.md`).
@@ -93,6 +93,7 @@ Each is written back into the spec by the task that makes it, so the two never d
 **Files:**
 - Modify: `libs/experiment/include/pychron/experiment/executor/executor.hpp` (beside `resume_row`, line 241)
 - Modify: `libs/experiment/src/executor/executor.cpp` (`resume_row`, line 672: regex reader replaced)
+- Modify: `libs/experiment/CMakeLists.txt` (`nlohmann_json` linked `PRIVATE` to `pychron_experiment`)
 - Modify: `libs/experiment/include/pychron/experiment/run/state.hpp`, `libs/experiment/src/run/state.cpp`
 - Test: `tests/experiment/test_executor.cpp`, `tests/experiment/test_run.cpp`
 
@@ -116,7 +117,7 @@ Each is written back into the spec by the task that makes it, so the two never d
 - Produces (namespace `pychron::experiment::run`):
   `std::optional<RunState> run_state_from(std::string_view text) noexcept;` (inverse of `to_string(RunState)`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   In `test_executor.cpp`:
   - `ExecutorTest.ReadStateGivesWhatWriteStateWrote`: the abort scenario of the existing resume test (three
@@ -132,12 +133,12 @@ Each is written back into the spec by the task that makes it, so the two never d
   In `test_run.cpp`: `RunState.FromStringIsToStringsInverse`: for every `RunState` from `Pending` to `Aborted`,
   `run_state_from(to_string(s)) == s`; `run_state_from("nope")` is `std::nullopt`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   `cmake --build --preset dev --target pychron_experiment_tests` fails to compile (`read_state`, `run_state_from`
   undeclared).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
   `read_state`: read the file (Io error if it cannot be opened), `nlohmann::json::parse(text, nullptr, false)`;
   not an object or no unsigned integer `next_row` → Config error `<path>: no next_row`. `queue`, `state` read when
@@ -145,13 +146,13 @@ Each is written back into the spec by the task that makes it, so the two never d
   `read_state(state_file)` mapped to `next_row`; drop the `<regex>` include if nothing else uses it.
   `run_state_from`: loop over the enum comparing with `to_string`.
 
-- [ ] **Step 4: Run them to see them pass, and the existing readers**
+- [x] **Step 4: Run them to see them pass, and the existing readers**
 
   `build/dev/tests/experiment/pychron_experiment_tests --gtest_filter='ExecutorTest.*:ExecutorHolding_.*:RunState.*'`
   all pass (`TheStateFileCarriesTheHoldAndTheLastFailedRow` still reads `1` from both files). Then
   `elctl exp run --resume` is unchanged: `ctest --preset dev-quick -R elctl`.
 
-- [ ] **Step 5: Checks and commit**
+- [x] **Step 5: Checks and commit**
 
   `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed`.
   `git commit -m "feat(experiment): Executor::read_state reads the executor's state file as JSON"`

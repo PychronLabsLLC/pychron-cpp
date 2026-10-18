@@ -37,6 +37,14 @@ std::string_view to_string(RunEvent e) noexcept {
   return "?";
 }
 
+std::optional<RunState> run_state_from(std::string_view text) noexcept {
+  for (int i = static_cast<int>(RunState::Pending); i <= static_cast<int>(RunState::Aborted); ++i) {
+    const auto s = static_cast<RunState>(i);
+    if (to_string(s) == text) return s;
+  }
+  return std::nullopt;
+}
+
 bool is_terminal(RunState s) noexcept {
   return s == RunState::Success || s == RunState::Failed || s == RunState::Cancelled || s == RunState::Aborted;
 }

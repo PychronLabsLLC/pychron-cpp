@@ -170,6 +170,20 @@ struct QueueResult {
   std::string code;  // kUnsafe, or empty
 };
 
+// One run as the executor's state file records it.
+struct ExecutorStateRun {
+  std::size_t row = 0;
+  std::string identifier, run_id, state;  // state: run::to_string of the run's state
+};
+
+// The executor's state file (Executor::read_state).
+struct ExecutorStateFile {
+  std::string queue;  // "" when absent
+  std::string state;  // to_string(ExecutorState) as written; "" when absent
+  std::size_t next_row = 0;
+  std::vector<ExecutorStateRun> runs;
+};
+
 struct ExecutorContext {
   run::RunServices services;                         // copied into every run
   const MetricContext* pre_run_metrics = nullptr;    // instrument metrics for pre_run conditionals
@@ -237,7 +251,12 @@ class Executor {
   std::uint64_t queue_version() const;
   std::size_t frozen_rows() const;
 
-  // The row to resume from after a restart (one past the last started run).
+  // What write_state() wrote: Io error when the file cannot be read, Config
+  // error when it is not JSON or has no unsigned next_row. Other fields are
+  // read when present and of the right type (an older file has next_row only).
+  static Result<ExecutorStateFile> read_state(const std::filesystem::path& state_file);
+  // The row to resume from after a restart (one past the last started run):
+  // read_state(state_file)->next_row.
   static Result<std::size_t> resume_row(const std::filesystem::path& state_file);
 
  private:

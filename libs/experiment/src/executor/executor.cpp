@@ -4,10 +4,11 @@
 #include <chrono>
 #include <cstddef>
 #include <fstream>
-#include <regex>
 #include <sstream>
 #include <string_view>
 #include <system_error>
+
+#include <nlohmann/json.hpp>
 
 #include "pychron/core/events.hpp"
 #include "pychron/experiment/conditionals/metrics.hpp"
@@ -669,16 +670,41 @@ void Executor::write_state(const ExperimentQueue& queue, std::size_t next_row, c
   std::filesystem::rename(tmp, options_.state_file, ec);
 }
 
-Result<std::size_t> Executor::resume_row(const std::filesystem::path& state_file) {
+Result<ExecutorStateFile> Executor::read_state(const std::filesystem::path& state_file) {
   std::ifstream in(state_file);
   if (!in) return fail(ErrorKind::Io, "cannot read " + state_file.string());
   std::stringstream ss;
   ss << in.rdbuf();
-  const std::string text = ss.str();
-  std::smatch m;
-  if (!std::regex_search(text, m, std::regex(R"("next_row"\s*:\s*([0-9]+))")))
-    return fail(ErrorKind::Config, state_file.string() + ": no next_row");
-  return static_cast<std::size_t>(std::stoull(m[1].str()));
+  const auto j = nlohmann::json::parse(ss.str(), nullptr, false);
+  const auto row = j.is_object() ? j.find("next_row") : j.end();
+  if (row == j.end() || !row->is_number_unsigned()) return fail(ErrorKind::Config, state_file.string() + ": no next_row");
+
+  const auto text = [](const nlohmann::json& o, const char* key) {
+    const auto it = o.find(key);
+    return it != o.end() && it->is_string() ? it->get<std::string>() : std::string{};
+  };
+  ExecutorStateFile out;
+  out.next_row = row->get<std::size_t>();
+  out.queue = text(j, "queue");
+  out.state = text(j, "state");
+  if (const auto runs = j.find("runs"); runs != j.end() && runs->is_array()) {
+    for (const auto& r : *runs) {
+      if (!r.is_object()) continue;
+      ExecutorStateRun entry;
+      if (const auto n = r.find("row"); n != r.end() && n->is_number_unsigned()) entry.row = n->get<std::size_t>();
+      entry.identifier = text(r, "identifier");
+      entry.run_id = text(r, "run_id");
+      entry.state = text(r, "state");
+      out.runs.push_back(std::move(entry));
+    }
+  }
+  return out;
+}
+
+Result<std::size_t> Executor::resume_row(const std::filesystem::path& state_file) {
+  auto s = read_state(state_file);
+  if (!s) return fail(s.error());
+  return s->next_row;
 }
 
 void Executor::ended(QueueResult& out, bool read) {

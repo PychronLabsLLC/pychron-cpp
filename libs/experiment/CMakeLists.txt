@@ -18,6 +18,8 @@ target_include_directories(pychron_experiment PUBLIC
 
 target_compile_features(pychron_experiment PUBLIC cxx_std_20)
 target_link_libraries(pychron_experiment PUBLIC pychron::systems pychron::scripting pychron::reduction pychron::laser pychron::devices pychron::core)
+# nlohmann_json reads the executor's state file back (Executor::read_state).
+target_link_libraries(pychron_experiment PRIVATE nlohmann_json::nlohmann_json)
 
 if(TARGET pychron_metrics)
   target_link_libraries(pychron_experiment PUBLIC pychron::metrics)

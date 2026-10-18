@@ -48,6 +48,14 @@ TEST(RunStateMachine, LegalAndIllegalTransitions) {
   }
 }
 
+TEST(RunState, FromStringIsToStringsInverse) {
+  for (int i = static_cast<int>(RunState::Pending); i <= static_cast<int>(RunState::Aborted); ++i) {
+    const auto s = static_cast<RunState>(i);
+    EXPECT_EQ(run_state_from(to_string(s)), s) << to_string(s);
+  }
+  EXPECT_EQ(run_state_from("nope"), std::nullopt);
+}
+
 TEST(RunStateMachine, PublishesAndRejects) {
   ManualClock clock;
   SignalBus bus;
