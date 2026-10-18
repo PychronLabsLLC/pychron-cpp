@@ -70,9 +70,11 @@ bool is_step(SegmentKind k) {
   return false;
 }
 
-std::optional<At> position_target(const MeasurementPlan& plan, const Position& position) {
+std::optional<At> position_target(const MeasurementPlan& plan, const Position& position,
+                                  std::string_view spectrometer_reference) {
   if (position.at) return position.at;
-  const auto& ref = plan.detectors.reference;
+  const bool plan_names_one = !plan.detectors.reference.empty();
+  const std::string_view ref = plan_names_one ? std::string_view(plan.detectors.reference) : spectrometer_reference;
   if (ref.empty()) return std::nullopt;
   const auto& c = position.collect;
   if (const auto it = std::find_if(c.begin(), c.end(), [&](const CollectEntry& e) { return e.detector == ref; });
@@ -83,6 +85,15 @@ std::optional<At> position_target(const MeasurementPlan& plan, const Position& p
     return e.detector.size() > ref.size() && e.detector.starts_with(ref) && e.detector[ref.size()] == '(';
   };
   if (const auto it = std::find_if(c.begin(), c.end(), mode); it != c.end()) return AtLabel{it->label, it->detector};
+  // The plan names no reference and the spectrometer's is not collected
+  // here: the first active entry positions the magnet, as a legacy hop's
+  // first isotope:detector did. A plan that names a reference needs `at`
+  // instead (checked at load).
+  if (!plan_names_one) {
+    if (const auto it = std::find_if(c.begin(), c.end(), [](const CollectEntry& e) { return e.active; });
+        it != c.end())
+      return AtLabel{it->label, it->detector};
+  }
   return std::nullopt;
 }
 

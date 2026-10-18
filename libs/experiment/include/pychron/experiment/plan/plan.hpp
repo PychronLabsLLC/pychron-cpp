@@ -249,10 +249,15 @@ struct MeasurementPlan {
 };
 
 // Where a position puts the magnet (spec 3.2): its `at`, else the label of
-// its entry on the plan's reference detector (or on one of that detector's
-// modes, "H2(CDD)" for "H2"). nullopt when the plan names no reference and
-// the position no `at`: the position is collected wherever the magnet is.
-std::optional<At> position_target(const MeasurementPlan& plan, const Position& position);
+// its entry on the reference detector (or on one of that detector's modes,
+// "H2(CDD)" for "H2"). The reference is the plan's; when the plan names none,
+// `spectrometer_reference` (spectrometer.toml's reference_detector), and a
+// position that does not collect on it is positioned by its first active
+// entry. nullopt when no reference is known at all and the position has no
+// `at` (the position is collected wherever the magnet is), and when the
+// plan's own reference is not collected and `at` is missing.
+std::optional<At> position_target(const MeasurementPlan& plan, const Position& position,
+                                  std::string_view spectrometer_reference = {});
 
 // The entries a position collects: its active ones, in file order.
 std::vector<CollectEntry> collecting(const Position& position);

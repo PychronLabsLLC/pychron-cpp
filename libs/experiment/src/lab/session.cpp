@@ -73,7 +73,10 @@ struct LabSession::Services {
     s.valves = &valves;
     s.peak_center = peak_center ? &*peak_center : nullptr;
     s.instrument_metrics = &instrument;
-    if (lab.spectrometer) s.detector_timing = measurement::detector_timing(lab.spectrometer->config);
+    if (lab.spectrometer) {
+      s.detector_timing = measurement::detector_timing(lab.spectrometer->config);
+      s.reference_detector = lab.spectrometer->config.system.reference_detector;
+    }
     if (auto* spec = hw.spectrometer) {
       s.spectrometer_info = [spec] {
         const auto st = spec->snapshot();

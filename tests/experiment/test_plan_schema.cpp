@@ -213,6 +213,32 @@ TEST(PlanSchema, PeakHopTargetsFollowReferenceOrExplicitPosition) {
   EXPECT_EQ(position_target(p, baseline->positions.at(0)), (At{AtMass{34.2, "H1"}}));
 }
 
+// A plan that names no reference (worked plan 7.2) is positioned by the
+// spectrometer's: its entry when the position collects on it, else the
+// position's first active entry, as a legacy hop's first isotope:detector.
+TEST(PlanSchema, SpectrometerReferencePositionsAPlanThatNamesNone) {
+  MeasurementPlan p;
+  const auto entry = [](const char* label, const char* detector, bool active = true) {
+    return CollectEntry{label, detector, active, std::nullopt, false};
+  };
+  plan::Position both;
+  both.collect = {entry("Ar36", "CDD"), entry("Ar40", "H1")};
+  plan::Position cdd;
+  cdd.collect = {entry("Ar40", "H2(CDD)", false), entry("Ar39", "CDD")};
+  plan::Position on_mode;
+  on_mode.collect = {entry("Ar39", "CDD"), entry("Ar40", "H1(CDD)")};
+  EXPECT_FALSE(position_target(p, both));  // no reference known at all
+  EXPECT_EQ(position_target(p, both, "H1"), (At{AtLabel{"Ar40", "H1"}}));
+  EXPECT_EQ(position_target(p, cdd, "H1"), (At{AtLabel{"Ar39", "CDD"}}));  // the inactive entry is skipped
+  EXPECT_EQ(position_target(p, on_mode, "H1"), (At{AtLabel{"Ar40", "H1(CDD)"}}));
+
+  // The plan's own reference wins; one it does not collect needs `at`.
+  p.detectors.reference = "CDD";
+  EXPECT_EQ(position_target(p, both, "H1"), (At{AtLabel{"Ar36", "CDD"}}));
+  p.detectors.reference = "L2";
+  EXPECT_FALSE(position_target(p, both, "H1"));
+}
+
 TEST(PlanSchema, ExcludedDetectorsDropOutOfEveryHop) {
   const auto p = load_fixture("multicollect.toml", {{"detectors.exclude", std::string("CDD, L2")}});
   EXPECT_EQ(p.detectors.exclude, (std::vector<std::string>{"CDD", "L2"}));

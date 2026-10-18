@@ -1,0 +1,10 @@
+# Isotope / species -> mass (amu), extending the built-in noble-gas table with
+# the hydrides and the HCl monitor of worked plan 7.4. PHHCl is the
+# pseudo-isotope the magnet is put on to read HCl (spec 3.6).
+Ar36H = 36.975370
+Ar37H = 37.974601
+Ar38H = 38.970557
+Ar39H = 39.972138
+Ar40H = 40.970208
+HCl = 35.976678
+PHHCl = 36.46

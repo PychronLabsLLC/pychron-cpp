@@ -1,0 +1,108 @@
+# A simulated Helix MC for worked plan 7.4 of the measurement plan v2 spec
+# (docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md): Faraday
+# H2 and H1, and the CDD mode of each collector as its own logical detector
+# (spec 3.6). H2(CDD) shares collector H2 with H2, H1(CDD) shares H1 with H1;
+# AX, L1 and L2 are used in CDD mode only. Read by MeasurementSimHelix in
+# tests/integration/test_measurement_sim.cpp.
+
+[system]
+name = "sim-helix"
+reference_detector = "H2"
+integration_time_s = 1.0
+
+[transports.sim]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers.sim]
+kind = "sim_integrated"
+transport = "sim"
+roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
+channels = ["H2", "H1", "H2(CDD)", "H1(CDD)", "AX(CDD)", "L1(CDD)", "L2(CDD)"]
+move_time_ms = 200
+
+[magnet]
+positioner = "sim"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 500
+field_table = "helix"
+propagate = false
+corrections = { deflection = true, hv = true }
+protection = { detectors = ["H2(CDD)", "H1(CDD)", "AX(CDD)", "L1(CDD)", "L2(CDD)"], beam_blank_threshold = 0.5 }
+
+[source]
+driver = "sim"
+nominal_hv = 4500
+
+[acquisition]
+acquirers = ["sim"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[detector_control]
+driver = "sim"
+
+[[detectors]]
+name = "H2"
+kind = "faraday"
+channel = "sim:H2"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "H1"
+kind = "faraday"
+channel = "sim:H1"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "H2(CDD)"
+kind = "cdd"
+channel = "sim:H2(CDD)"
+units = "cps"
+collector = "H2"
+mode = "CDD"
+mode_switch_s = 2
+deflection = { control = true, correction = [0.0, 0.0010], sign = 1, max = 4000, per_volt = 0.0029 }
+protection = { threshold = 5e5, on_move = true }
+
+[[detectors]]
+name = "H1(CDD)"
+kind = "cdd"
+channel = "sim:H1(CDD)"
+units = "cps"
+collector = "H1"
+mode = "CDD"
+mode_switch_s = 2
+deflection = { control = true, correction = [0.0, 0.0010], sign = 1, max = 4000, per_volt = 0.0029 }
+protection = { threshold = 5e5, on_move = true }
+
+[[detectors]]
+name = "AX(CDD)"
+kind = "cdd"
+channel = "sim:AX(CDD)"
+units = "cps"
+collector = "AX"
+mode = "CDD"
+protection = { threshold = 5e5, on_move = true }
+
+[[detectors]]
+name = "L1(CDD)"
+kind = "cdd"
+channel = "sim:L1(CDD)"
+units = "cps"
+collector = "L1"
+mode = "CDD"
+deflection = { control = true, correction = [0.0, 0.0010], sign = -1, max = 4000, per_volt = 0.0029 }
+protection = { threshold = 5e5, on_move = true }
+
+[[detectors]]
+name = "L2(CDD)"
+kind = "cdd"
+channel = "sim:L2(CDD)"
+units = "cps"
+collector = "L2"
+mode = "CDD"
+protection = { threshold = 5e5, on_move = true }

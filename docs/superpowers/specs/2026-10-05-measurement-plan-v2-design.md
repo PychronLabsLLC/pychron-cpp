@@ -197,7 +197,12 @@ In `spectrometer.toml`, not in plans:
 - `at` default checked only when plan names `[detectors] reference`; none
   named: spectrometer's reference positions it, not checked at load. Entry
   on a mode of reference (`H2(CDD)` for `H2`) counts as reference
-  (decided 2026-10-18, Task 3);
+  (decided 2026-10-18, Task 3). None named, at run (decided 2026-10-18,
+  Task 10): position collecting on spectrometer's `reference_detector` (or
+  a mode of it) is positioned by that entry; other position by its first
+  active entry, as legacy hop's first `isotope:detector`
+  (`plan::position_target`, `EngineContext::reference`). Worked plan 7.2
+  runs so: position 2 is `Ar39@CDD`;
 - v1 file: only label masses of its signal hops and peak center isotope
   checked; inactive entry desugar adds for a protected detector with no
   configured isotope is not, so v1 file valid today stays valid (decided

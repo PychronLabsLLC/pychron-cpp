@@ -659,7 +659,7 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
 
 Result<void> MeasurementEngine::enter_position(const plan::Segment& seg, const plan::Position& pos, int segment,
                                                int position) {
-  const auto target = plan::position_target(in_.plan, pos);
+  const auto target = plan::position_target(in_.plan, pos, ctx_.reference);
   const std::string& table = pos.table.empty() ? seg.table : pos.table;
   std::map<std::string, double> wanted;
   for (const auto& e : pos.collect)

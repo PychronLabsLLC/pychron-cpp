@@ -86,6 +86,8 @@ struct RunServices {
   measurement::EngineOptions engine;  // sleep injection, timeouts
   // spectrometer.toml's per-detector settle timing (measurement::detector_timing).
   std::map<std::string, measurement::DetectorTiming> detector_timing;
+  // spectrometer.toml's reference_detector, for a plan that names no reference.
+  std::string reference_detector;
   // How long a step of the safe state keeps trying (executor.toml
   // [links] critical_window_s; the spec's 10 min by default).
   pychron::Duration critical_window = measurement::kCriticalWindow;

@@ -224,6 +224,9 @@ struct EngineContext {
   const MetricContext* metrics = nullptr;
   // By detector name; a detector not in it has no large-beam or mode timing.
   std::map<std::string, DetectorTiming> timing = {};
+  // spectrometer.toml's reference_detector: positions what the plan's own
+  // reference would when the plan names none (plan::position_target).
+  std::string reference = {};
 };
 
 struct EngineOptions {

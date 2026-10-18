@@ -1,0 +1,37 @@
+# DAC of each mass on each collector; a collector's CDD mode sits where its
+# Faraday does.
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831237
+H2 = 5.123
+H1 = 5.001
+"H2(CDD)" = 5.123
+"H1(CDD)" = 5.001
+"AX(CDD)" = 4.874
+"L1(CDD)" = 4.750
+"L2(CDD)" = 4.628
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+H2 = 4.995
+H1 = 4.874
+"H2(CDD)" = 4.995
+"H1(CDD)" = 4.874
+"AX(CDD)" = 4.750
+"L1(CDD)" = 4.628
+"L2(CDD)" = 4.505
+
+[[points]]
+isotope = "Ar36"
+mass = 35.967545105
+H2 = 4.622
+H1 = 4.505
+"H2(CDD)" = 4.622
+"H1(CDD)" = 4.505
+"AX(CDD)" = 4.383
+"L1(CDD)" = 4.264
+"L2(CDD)" = 4.146
