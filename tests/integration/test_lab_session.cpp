@@ -574,6 +574,30 @@ TEST_F(LabSessionTest, TheQueuesStartIsAnnouncedBeforeItsFirstRun) {
   EXPECT_EQ(order.size(), 1u + result->runs.size());
 }
 
+// A running queue holds the field table (field table editor spec, section 5):
+// the editor's Save and Make Current are refused while it runs, and free
+// again once the queue has ended.
+TEST_F(LabSessionTest, TheQueueHoldsTheFieldTableWhileItRuns) {
+  std::mutex m;
+  std::vector<std::optional<std::string>> held;
+  auto sub = line_->bus().subscribe<executor::RunStarted>([&](const executor::RunStarted&) {
+    const auto who = spec_->table_held();
+    std::lock_guard lock(m);
+    held.push_back(who);
+  });
+  ASSERT_FALSE(spec_->table_held().has_value());
+  ASSERT_TRUE(session_->start(queue_));
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  ASSERT_FALSE(ended().empty());
+
+  std::lock_guard lock(m);
+  ASSERT_FALSE(held.empty());
+  for (const auto& who : held) EXPECT_EQ(who, std::optional<std::string>("queue"));
+  EXPECT_FALSE(spec_->table_held().has_value());
+}
+
 // --- the metrics endpoint over a whole queue (observability design, 6) --------
 
 #ifdef PYCHRON_EXPERIMENT_HAS_METRICS

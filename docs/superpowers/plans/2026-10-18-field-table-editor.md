@@ -236,11 +236,11 @@ Read `libs/experiment/AGENTS.md` first.
 
 Spec §8 places this test under `tests/experiment`; `tests/experiment` executor tests run without a real `Spectrometer`, while `LabSessionTest` assembles one, so the test lives in `tests/integration`. Edit spec §8's sentence to say so in this task.
 
-- [ ] **Step 1: Write failing test** `LabSessionTest.TheQueueHoldsTheFieldTableWhileItRuns`: subscribe `executor::RunStarted`, record the spectrometer's `table_held()` in the handler; after `QueueEnded`, assert every recorded value `== "queue"` and `table_held()` is nullopt.
-- [ ] **Step 2: Run** `cmake --build --preset dev --target pychron_integration_tests && build/dev/tests/integration/pychron_integration_tests --gtest_filter='LabSessionTest.*'`. Expected: new test FAILS.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** same filter, then `pychron_experiment_tests --gtest_filter='Executor*'`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(experiment): a running queue holds the field table`.
+- [x] **Step 1: Write failing test** `LabSessionTest.TheQueueHoldsTheFieldTableWhileItRuns`: subscribe `executor::RunStarted`, record the spectrometer's `table_held()` in the handler; after `QueueEnded`, assert every recorded value `== "queue"` and `table_held()` is nullopt.
+- [x] **Step 2: Run** `cmake --build --preset dev --target pychron_integration_tests && build/dev/tests/integration/pychron_integration_tests --gtest_filter='LabSessionTest.*'`. Expected: new test FAILS.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** same filter, then `pychron_experiment_tests --gtest_filter='Executor*'`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(experiment): a running queue holds the field table`.
 
 ### Task 9: `elctl spec table` read commands
 

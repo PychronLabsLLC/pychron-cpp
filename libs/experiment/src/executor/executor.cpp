@@ -12,6 +12,7 @@
 
 #include "pychron/core/events.hpp"
 #include "pychron/experiment/conditionals/metrics.hpp"
+#include "pychron/systems/spectrometer/spectrometer.hpp"
 #include "pychron/transport/transport.hpp"
 
 namespace pychron::experiment::executor {
@@ -737,6 +738,10 @@ void Executor::ended(QueueResult& out, bool read) {
 
 QueueResult Executor::execute(ExperimentQueue& queue, std::size_t from_row) {
   Clock::Participant participant(clock_, "executor.run");
+  // The field table stays as it is while the queue runs (field table editor
+  // spec, section 5); released on every return.
+  const auto table_hold = ctx_.spectrometer != nullptr ? ctx_.spectrometer->hold_table("queue")
+                                                       : spectrometer::Spectrometer::TableHold{};
   QueueResult out;
   {
     // A stop, cancel or abort already asked for is left as it is: it was

@@ -324,8 +324,10 @@ process next loads the table".
   current and in-memory table unchanged), accepted after hold released;
   `save_table` not refused under hold; `restore_table_version` refused for
   version with §3.2 error and for unparseable version, pointer unchanged;
-  executor holds table for queue run (`tests/experiment`: `table_held()`
-  set during run, clear after); `check_field_table` each error and
+  executor holds table for queue run (`tests/integration`
+  `LabSessionTest`: executor tests under `tests/experiment` have no real
+  `Spectrometer`; `table_held()` `"queue"` at each `RunStarted`, clear
+  after); `check_field_table` each error and
   warning; `diff_field_tables` by isotope with added/removed rows.
 - Peak center: with `update_table`, new version exists after job, stamped
   from `VirtualClock`; save failure (read-only dir) leaves job success with

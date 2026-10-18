@@ -91,6 +91,7 @@ struct LabSession::Services {
     s.persister = given != nullptr ? given : &files;
     s.save = &save;
     ctx.flusher = &flusher;
+    ctx.spectrometer = hw.spectrometer;  // holds the field table while a queue runs
     ctx.pre_run_metrics = &instrument;
     ctx.checks = {&links_up, &spool_writable};
     ctx.links = [line = &hw.line, spec = hw.spectrometer](const RunSpec& run) {

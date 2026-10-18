@@ -63,6 +63,10 @@
 #include "pychron/experiment/run/run.hpp"
 #include "pychron/scripting/cancel_token.hpp"
 
+namespace pychron::spectrometer {
+class Spectrometer;
+}  // namespace pychron::spectrometer
+
 namespace pychron::experiment::executor {
 
 enum class ExecutorState { Idle, Preparing, Running, Holding, StoppingAtBoundary, Cancelling, Aborting, Finalizing };
@@ -207,6 +211,10 @@ struct ExecutorContext {
   // flush as a queue starts and after every run. None: the queue's start
   // re-sends what an earlier session left (services.save->recover()) inline.
   persist::SpoolFlusher* flusher = nullptr;
+  // Held for the whole of execute() (Spectrometer::hold_table("queue")), so
+  // the field table editor cannot replace or restore the table while a queue
+  // runs (field table editor spec, section 5). None: nothing is held.
+  spectrometer::Spectrometer* spectrometer = nullptr;
 };
 
 struct ExecutorOptions {
