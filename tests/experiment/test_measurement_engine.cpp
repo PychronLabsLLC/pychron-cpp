@@ -461,7 +461,9 @@ class EngineTest : public ::testing::Test {
   }
 
   EngineContext context() {
-    return EngineContext{spec_, clock_, &valves_, &peak_, &hook_, &bus_, nullptr};
+    EngineContext c{spec_, clock_, &valves_, &peak_, &hook_, &bus_, nullptr};
+    c.timing = timing_;
+    return c;
   }
 
   int count(const MeasurementResult& r, const SeriesKey& key) {
@@ -470,6 +472,7 @@ class EngineTest : public ::testing::Test {
   }
 
   TimePoint t0_ = TimePoint{} + 1000s;
+  std::map<std::string, DetectorTiming> timing_;  // EngineContext::timing
   ManualClock clock_{t0_};
   SignalBus bus_;
   FakeSpectrometer spec_{clock_};
@@ -1750,4 +1753,129 @@ settle_s = 1
                                       "table t1", "move Ar40@H1", "settle 1", "collect 1",  //
                                       "table t2", "move Ar40@H1", "settle 1", "collect 1"}));
   EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "table t2"), 2);
+}
+
+// Large-beam settle and logical detector modes (measurement plan v2 spec
+// 3.6 and 5.2): H2 has threshold 5 and settles 20 s after a large beam;
+// H2(CDD) is H2 in CDD mode, 2 s to switch.
+class LargeBeamSettle : public PositionExec {
+ protected:
+  LargeBeamSettle() {
+    spec_.detectors = {"H1", "H2", "H2(CDD)"};
+    // Ar40 on H2 reads about 110 (10 x the fake's growth), far over 5; at
+    // Ar39@H1, H2 sees Ar38 at about 0.11.
+    spec_.layout = {{"Ar40@H2", {{"H2", "Ar40"}}},
+                    {"Ar39@H1", {{"H1", "Ar39"}, {"H2", "Ar38"}}},
+                    {"Ar40@H2(CDD)", {{"H2(CDD)", "Ar40"}}}};
+    spec_.abundance = {{"Ar40", 10}, {"Ar39", 1}, {"Ar38", 0.01}};
+    timing_["H2"] = DetectorTiming{5.0, 20, "", 0};
+    timing_["H2(CDD)"] = DetectorTiming{std::nullopt, 0, "H2", 2};
+  }
+
+  static std::vector<std::string> settles(const MeasurementResult& r) {
+    std::vector<std::string> out;
+    for (const auto& e : r.trace)
+      if (e.what == "settle") out.push_back(std::to_string(e.segment) + ":" + std::to_string(e.position) + " " + e.detail);
+    return out;
+  }
+};
+
+TEST_F(LargeBeamSettle, WaitsTheConfiguredSettle) {
+  const auto r = run_toml(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H2" }
+at = { label = "Ar40", detector = "H2" }
+counts = 2
+settle_s = 1
+[[segment.positions]]
+collect = { Ar39 = "H1", Ar38 = "H2" }
+at = { label = "Ar39", detector = "H1" }
+counts = 2
+settle_s = 3
+)");
+  EXPECT_EQ(settles(r), (std::vector<std::string>{"0:0 1", "0:1 20"}));
+}
+
+// A detector without the large beam, or not in the next position, does not wait.
+TEST_F(LargeBeamSettle, OnlyADetectorThatSawALargeBeamWaits) {
+  spec_.abundance["Ar40"] = 0.01;  // about 0.11 on H2: under 5
+  const auto r = run_toml(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H2" }
+at = { label = "Ar40", detector = "H2" }
+counts = 2
+settle_s = 1
+[[segment.positions]]
+collect = { Ar39 = "H1", Ar38 = "H2" }
+at = { label = "Ar39", detector = "H1" }
+counts = 2
+settle_s = 3
+)");
+  EXPECT_EQ(settles(r), (std::vector<std::string>{"0:0 1", "0:1 3"}));
+}
+
+TEST_F(LargeBeamSettle, BaselineDoesNotClearIt) {
+  const auto r = run_toml(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H2" }
+at = { label = "Ar40", detector = "H2" }
+counts = 2
+settle_s = 1
+[[segment.positions]]
+kind = "baseline"
+collect = { Ar40 = "H2" }
+at = { mass = 34.2, detector = "H2" }
+counts = 2
+settle_s = 3
+[[segment.positions]]
+collect = { Ar39 = "H1", Ar38 = "H2" }
+at = { label = "Ar39", detector = "H1" }
+counts = 2
+settle_s = 3
+)");
+  EXPECT_EQ(settles(r), (std::vector<std::string>{"0:0 1", "0:1 20", "0:2 20"}));
+}
+
+// Review focus 4: the state is the measurement's, not the segment's.
+TEST_F(LargeBeamSettle, StateCarriesAcrossSegments) {
+  const auto r = run_toml(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H2" }
+at = { label = "Ar40", detector = "H2" }
+counts = 2
+settle_s = 1
+
+[[segment]]
+[[segment.positions]]
+collect = { Ar39 = "H1", Ar38 = "H2" }
+at = { label = "Ar39", detector = "H1" }
+counts = 2
+settle_s = 3
+)");
+  EXPECT_EQ(settles(r), (std::vector<std::string>{"0:0 1", "1:0 20"}));
+}
+
+TEST_F(LargeBeamSettle, ModeSwitchWaits) {
+  timing_["H2"].large_beam_threshold.reset();  // only the mode switch here
+  const auto r = run_toml(R"toml(
+[[segment]]
+cycles = 2
+[[segment.positions]]
+collect = { Ar40 = "H2" }
+at = { label = "Ar40", detector = "H2" }
+counts = 1
+settle_s = 1
+[[segment.positions]]
+collect = { Ar40 = "H2(CDD)" }
+at = { label = "Ar40", detector = "H2(CDD)" }
+counts = 1
+settle_s = 1
+)toml");
+  // The first position has no mode to switch from; every switch after it,
+  // into CDD and back, waits mode_switch_s.
+  EXPECT_EQ(settles(r), (std::vector<std::string>{"0:0 1", "0:1 2", "0:0 2", "0:1 2"}));
 }

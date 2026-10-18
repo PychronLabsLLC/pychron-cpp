@@ -322,16 +322,16 @@ Done notes: Step 2 was not observed failing: the tests were written in the same 
   - `struct DetectorTiming { std::optional<double> large_beam_threshold; double settle_after_large_beam_s = 0; std::string collector; double mode_switch_s = 0; };` in `engine.hpp`; `EngineContext` gains `std::map<std::string, DetectorTiming> timing;`; `std::map<std::string, DetectorTiming> detector_timing(const spectrometer::cfg::SpectrometerConfig&)` in `adapters.hpp`; `Run::measure` fills it.
   - Engine rule: settle = `max(settle_s, settle_after_large_beam_s of every detector in the new position whose last signal reading exceeded its large_beam_threshold, mode_switch_s when a collector changes mode)`. A baseline reading does not clear large-beam state (owner, 2026-10-15). State lives on the engine for the whole run, across segments and gases.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `SpectrometerConfig.LargeBeamAndModeKeys`: a config with `large_beam_threshold = 5.0`, `settle_after_large_beam_s = 20`, and `H2(CDD)` with `collector = "H2"`, `mode = "CDD"`, `mode_switch_s = 2` parses to those values; a negative `settle_after_large_beam_s` is a config error naming the detector.
   - `LargeBeamSettle.WaitsTheConfiguredSettle`: Ar40 on H2 reads 10 (threshold 5, settle 20); next position with `settle_s = 3` → trace `settle 20`.
   - `LargeBeamSettle.BaselineDoesNotClearIt`: signal saturates H2, then a baseline position on H2, then a signal position → both moves settle 20.
   - `LargeBeamSettle.StateCarriesAcrossSegments` (Review Focus 4): two signal segments, first saturates H2, second's first position `settle_s=3` → `settle 20`.
   - `LargeBeamSettle.ModeSwitchWaits`: position on `H2` then on `H2(CDD)` → settle `max(settle_s, 2)`.
-- [ ] **Step 2: Run** `pychron_systems_tests --gtest_filter='SpectrometerConfig.LargeBeamAndModeKeys'` and `pychron_experiment_tests --gtest_filter='LargeBeamSettle.*'` → FAIL.
-- [ ] **Step 3: Implement**; add the new keys, commented out with defaults, to the spectrometer example config under `configs/examples` that documents `[[detectors]]` (read `libs/setup/AGENTS.md` first).
-- [ ] **Step 4: Run** both → PASS; `ctest --preset dev-quick`.
-- [ ] **Step 5: Commit** `feat(systems): per-detector large-beam settle and logical detector modes`.
+- [x] **Step 2: Run** `pychron_systems_tests --gtest_filter='SpectrometerConfig.LargeBeamAndModeKeys'` and `pychron_experiment_tests --gtest_filter='LargeBeamSettle.*'` → FAIL.
+- [x] **Step 3: Implement**; add the new keys, commented out with defaults, to the spectrometer example config under `configs/examples` that documents `[[detectors]]` (read `libs/setup/AGENTS.md` first).
+- [x] **Step 4: Run** both → PASS; `ctest --preset dev-quick`.
+- [x] **Step 5: Commit** `feat(systems): per-detector large-beam settle and logical detector modes`.
 
 ### Task 10: Worked plans 7.2 and 7.4 through the simulator
 

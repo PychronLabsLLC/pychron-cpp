@@ -559,6 +559,7 @@ Result<void> MeasurementEngine::equilibrate() {
         reading = std::move(w->reading);
       }
       last_reading_ = ctx_.clock.now();
+      note_beams(collect::SeriesKind::Sniff, *reading);
       const auto status = collector_.add(*reading);
       ++sniffed;
       if (ctx_.bus != nullptr) ctx_.bus->publish(CountsProgress{in_.run_id, Block::Equilibrate, sniffed, sniff_counts});
@@ -667,7 +668,9 @@ Result<void> MeasurementEngine::enter_position(const plan::Segment& seg, const p
   for (const auto& [det, d] : deflected_) current[det] = d.wanted;
   const bool optics_same = pos.optics.empty() || pos.optics == optics_;
   const bool there = !target || (position_ && *position_ == *target);
-  if (there && optics_same && table == table_ && wanted == current && !settle_due_) return {};
+  const Settle settle = settle_for(pos);
+  note_modes(pos);
+  if (there && optics_same && table == table_ && wanted == current && !settle_due_ && !settle.mode_change) return {};
 
   // Another table or other optics put a label elsewhere: the move is made again.
   if (table != table_) {
@@ -724,8 +727,8 @@ Result<void> MeasurementEngine::enter_position(const plan::Segment& seg, const p
   }
   if (r) {
     settle_due_ = false;
-    trace(segment, position, "settle", plain(pos.settle_s));
-    wait(pos.settle_s);
+    trace(segment, position, "settle", plain(settle.s));
+    wait(settle.s);
   }
   for (const auto& d : protect) {
     auto u = critical("unprotect " + d, [&] { return ctx_.spectrometer.protect(d, false); });
@@ -736,6 +739,44 @@ Result<void> MeasurementEngine::enter_position(const plan::Segment& seg, const p
     if (!u && r) r = u;
   }
   return r;
+}
+
+MeasurementEngine::Settle MeasurementEngine::settle_for(const plan::Position& pos) const {
+  Settle out{pos.settle_s, false};
+  const auto timing = [&](const std::string& det) -> const DetectorTiming* {
+    const auto it = ctx_.timing.find(det);
+    return it == ctx_.timing.end() ? nullptr : &it->second;
+  };
+  for (const auto& e : pos.collect) {
+    const auto* t = timing(e.detector);
+    if (t != nullptr && large_beam_.contains(e.detector)) out.s = std::max(out.s, t->settle_after_large_beam_s);
+    const std::string& collector = t != nullptr && !t->collector.empty() ? t->collector : e.detector;
+    const auto mode = modes_.find(collector);
+    if (mode == modes_.end() || mode->second == e.detector) continue;
+    // Either mode's switch time: going into CDD and coming back out both wait.
+    out.mode_change = true;
+    const auto* before = timing(mode->second);
+    out.s = std::max({out.s, t != nullptr ? t->mode_switch_s : 0.0, before != nullptr ? before->mode_switch_s : 0.0});
+  }
+  return out;
+}
+
+void MeasurementEngine::note_modes(const plan::Position& pos) {
+  for (const auto& e : pos.collect) {
+    const auto it = ctx_.timing.find(e.detector);
+    const bool own = it == ctx_.timing.end() || it->second.collector.empty();
+    modes_[own ? e.detector : it->second.collector] = e.detector;
+  }
+}
+
+void MeasurementEngine::note_beams(collect::SeriesKind kind, const spectrometer::Reading& reading) {
+  if (kind == collect::SeriesKind::Baseline) return;  // owner, 2026-10-15: a baseline does not clear it
+  for (const auto& [det, value] : reading.values) {
+    const auto it = ctx_.timing.find(det);
+    if (it == ctx_.timing.end() || !it->second.large_beam_threshold || !value) continue;
+    if (value->mean > *it->second.large_beam_threshold) large_beam_.insert(det);
+    else large_beam_.erase(det);
+  }
 }
 
 Result<void> MeasurementEngine::restore_deflections(const plan::Position* keep, int segment, int position) {
@@ -808,6 +849,7 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
   // A collection's planned end: after a gap it ends then, not at its count,
   // so that its end and time zero do not move (spec 4.4).
   const TimePoint planned_end = ctx_.clock.now() + integration * spec.counts;
+  const auto kind = spec.kind;
   last_reading_ = ctx_.clock.now();
   collector_.begin(std::move(spec), std::move(hook));
   collecting_ = true;
@@ -847,6 +889,7 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
       had_gap = true;
     }
     last_reading_ = ctx_.clock.now();
+    note_beams(kind, *reading);
     status = collector_.add(*reading);
     if (ctx_.bus != nullptr)
       ctx_.bus->publish(CountsProgress{in_.run_id, block, collector_.count(), collector_.target()});

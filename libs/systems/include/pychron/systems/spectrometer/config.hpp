@@ -160,6 +160,18 @@ struct DetectorConfig : Located {
   std::optional<double> saturation;
   std::optional<double> dead_time_ns;
   std::optional<double> cdd_voltage;
+  // Measurement timing (measurement plan v2 spec, 3.6). A signal reading above
+  // `large_beam_threshold` makes the next move onto this detector settle at
+  // least `settle_after_large_beam_s`.
+  std::optional<double> large_beam_threshold;
+  double settle_after_large_beam_s = 0;
+  // Logical detector modes: two detectors naming one `collector` are one cup
+  // in two modes (`H2` and `H2(CDD)` with collector "H2"); empty means the
+  // detector is its own collector. Changing a collector's mode waits
+  // `mode_switch_s`.
+  std::string collector;
+  std::string mode;
+  double mode_switch_s = 0;
 };
 
 struct SpectrometerConfig {

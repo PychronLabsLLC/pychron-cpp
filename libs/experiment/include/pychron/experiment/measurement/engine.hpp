@@ -196,6 +196,20 @@ struct TraceEntry {
   friend bool operator==(const TraceEntry&, const TraceEntry&) = default;
 };
 
+// A detector's timing from spectrometer.toml (measurement plan v2 spec, 3.6;
+// detector_timing() in adapters.hpp). A position settles for the largest of
+// its own settle_s, the settle_after_large_beam_s of every detector it
+// collects (active or not) whose last reading of gas (signal, sniff, whiff;
+// a baseline reading leaves it as it was) exceeded large_beam_threshold, and,
+// when it puts a collector in another mode, the mode_switch_s of the two
+// modes. `collector` empty: the detector is its own collector.
+struct DetectorTiming {
+  std::optional<double> large_beam_threshold;
+  double settle_after_large_beam_s = 0;
+  std::string collector;
+  double mode_switch_s = 0;
+};
+
 // Everything the engine touches. Only `spectrometer` is required; `valves` is
 // required when the plan names an inlet or outlet, `peak_center` when it
 // enables a peak-center block, `hook` when it names a hook.
@@ -208,6 +222,8 @@ struct EngineContext {
   SignalBus* bus = nullptr;
   // Metrics the Collector cannot answer (gauges, devices, detector state).
   const MetricContext* metrics = nullptr;
+  // By detector name; a detector not in it has no large-beam or mode timing.
+  std::map<std::string, DetectorTiming> timing = {};
 };
 
 struct EngineOptions {
@@ -318,6 +334,17 @@ class MeasurementEngine {
   // Restores the deflections the engine changed, except those `keep` sets
   // (all of them when `keep` is null).
   Result<void> restore_deflections(const plan::Position* keep, int segment, int position);
+  // The settle a move onto `pos` needs (DetectorTiming), and whether it puts
+  // a collector in another mode.
+  struct Settle {
+    double s = 0;
+    bool mode_change = false;
+  };
+  Settle settle_for(const plan::Position& pos) const;
+  // Records which mode each collector of `pos` is in.
+  void note_modes(const plan::Position& pos);
+  // Large-beam state from one reading; a baseline reading changes nothing.
+  void note_beams(collect::SeriesKind kind, const spectrometer::Reading& reading);
   Result<collect::CollectStatus> collect(Block block, collect::CollectionSpec spec, double integration_s,
                                          collect::ReadingHook hook);
   bool main_reading(int count, double t);
@@ -377,6 +404,9 @@ class MeasurementEngine {
   };
   std::map<std::string, Deflected> deflected_;      // deflections the engine changed, by detector
   bool settle_due_ = false;                         // a restore moved a beam since the last settle
+  // For the whole measurement, across segments and gases (DetectorTiming).
+  std::set<std::string> large_beam_;                // detectors whose last gas reading was large
+  std::map<std::string, std::string> modes_;        // collector -> the detector (mode) last used on it
   std::optional<pychron::Duration> integration_;    // of the last acquisition started
   std::set<std::string> protected_;
   std::vector<collect::Channel> last_channels_;

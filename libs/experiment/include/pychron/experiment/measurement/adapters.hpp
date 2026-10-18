@@ -22,6 +22,7 @@
 
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/experiment/conditionals/evaluator.hpp"
+#include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/experiment/measurement/ports.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/scripting/script.hpp"
@@ -133,6 +134,9 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
   bool by_dac_ = false;
   bool by_hv_ = false;
 };
+
+// Each detector's large-beam and mode timing, for EngineContext::timing.
+std::map<std::string, DetectorTiming> detector_timing(const spectrometer::cfg::SpectrometerConfig& config);
 
 // The names of the field tables `data` loaded (its `tables`), for a catalog.
 std::vector<std::string> table_names(const spectrometer::cfg::SpectrometerData& data);

@@ -463,6 +463,7 @@ Result<void> Run::measure(RunControl& control) {
 
   measurement::EngineContext ctx{*s_.spectrometer,      *s_.clock, s_.valves, s_.peak_center, nullptr,
                                  s_.bus,                s_.instrument_metrics};
+  ctx.timing = s_.detector_timing;
   measurement::MeasurementInputs in;
   in.plan = plan_->plan;
   in.conditionals = conditionals_;

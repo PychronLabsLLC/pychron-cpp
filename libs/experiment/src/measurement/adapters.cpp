@@ -157,6 +157,13 @@ SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerCo
   }
 }
 
+std::map<std::string, DetectorTiming> detector_timing(const spectrometer::cfg::SpectrometerConfig& config) {
+  std::map<std::string, DetectorTiming> out;
+  for (const auto& d : config.detectors)
+    out.emplace(d.name, DetectorTiming{d.large_beam_threshold, d.settle_after_large_beam_s, d.collector, d.mode_switch_s});
+  return out;
+}
+
 bool SpectrometerCatalog::has_detector(std::string_view name) const { return detectors_.contains(name); }
 
 std::optional<std::string> SpectrometerCatalog::isotope_of(std::string_view detector) const {

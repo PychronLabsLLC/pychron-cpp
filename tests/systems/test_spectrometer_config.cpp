@@ -179,6 +179,40 @@ TEST(SpectrometerConfig, ParsesIntegratedSpecExample) {
   EXPECT_TRUE(cdd.active);
 }
 
+// Measurement plan v2 spec 3.6: large-beam settle per detector, and logical
+// detectors that are one collector in two modes.
+TEST(SpectrometerConfig, LargeBeamAndModeKeys) {
+  const std::string toml = with("saturation = 4.9e6", "saturation = 4.9e6\nlarge_beam_threshold = 5.0\nsettle_after_large_beam_s = 20") +
+                           "\n[[detectors]]\nname = \"H2(CDD)\"\nkind = \"cdd\"\nchannel = \"qtegra:CDD\"\n"
+                           "collector = \"H2\"\nmode = \"CDD\"\nmode_switch_s = 2\n";
+  auto r = parse(toml);
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& c = *r.config;
+  const auto* h1 = c.detector("H1");
+  ASSERT_NE(h1, nullptr);
+  EXPECT_EQ(h1->large_beam_threshold, 5.0);
+  EXPECT_DOUBLE_EQ(h1->settle_after_large_beam_s, 20);
+  EXPECT_TRUE(h1->collector.empty());
+  EXPECT_DOUBLE_EQ(h1->mode_switch_s, 0);
+  const auto* cdd = c.detector("CDD");
+  ASSERT_NE(cdd, nullptr);
+  EXPECT_FALSE(cdd->large_beam_threshold);
+  EXPECT_DOUBLE_EQ(cdd->settle_after_large_beam_s, 0);
+  const auto* h2 = c.detector("H2(CDD)");
+  ASSERT_NE(h2, nullptr);
+  EXPECT_EQ(h2->collector, "H2");
+  EXPECT_EQ(h2->mode, "CDD");
+  EXPECT_DOUBLE_EQ(h2->mode_switch_s, 2);
+
+  const auto bad = parse(with("saturation = 4.9e6", "saturation = 4.9e6\nsettle_after_large_beam_s = -1"));
+  EXPECT_FALSE(bad.ok());
+  EXPECT_TRUE(mentions(bad, "detectors[0].settle_after_large_beam_s", "detector 'H1'")) << dump(bad);
+  EXPECT_TRUE(mentions(parse(with("saturation = 4.9e6", "saturation = 4.9e6\nmode_switch_s = -2")),
+                       "detectors[0].mode_switch_s", "must be >= 0"));
+  EXPECT_TRUE(mentions(parse(with("saturation = 4.9e6", "saturation = 4.9e6\nlarge_beam_threshold = 0")),
+                       "detectors[0].large_beam_threshold", "must be > 0"));
+}
+
 TEST(SpectrometerConfig, DriverKeepsExtraKeysAsOptions) {
   auto r = parse(with(R"(channels = ["H1", "CDD"])", "channels = [\"H1\", \"CDD\"]\nsample_hz = 100"));
   ASSERT_TRUE(r.ok()) << dump(r);

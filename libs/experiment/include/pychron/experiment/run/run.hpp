@@ -84,6 +84,8 @@ struct RunServices {
   const MetricContext* instrument_metrics = nullptr;
   std::function<SpectrometerInfo()> spectrometer_info;
   measurement::EngineOptions engine;  // sleep injection, timeouts
+  // spectrometer.toml's per-detector settle timing (measurement::detector_timing).
+  std::map<std::string, measurement::DetectorTiming> detector_timing;
   // How long a step of the safe state keeps trying (executor.toml
   // [links] critical_window_s; the spec's 10 min by default).
   pychron::Duration critical_window = measurement::kCriticalWindow;

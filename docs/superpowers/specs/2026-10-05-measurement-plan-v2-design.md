@@ -162,6 +162,23 @@ In `spectrometer.toml`, not in plans:
 - logical detectors with `mode`, so `H2` and `H2(CDD)` are two detectors
   sharing one collector, with `mode_switch_s`;
 - per detector `large_beam_threshold` and `settle_after_large_beam_s`;
+
+  Decided 2026-10-18, Task 9: keys under `[[detectors]]`: `large_beam_threshold`
+  (> 0, unset: never), `settle_after_large_beam_s`, `collector` (empty: own
+  collector), `mode`, `mode_switch_s` (each >= 0; negative is config error
+  naming detector). Engine gets them as `EngineContext::timing`
+  (`detector_timing()`, `adapters.hpp`). State on engine for whole
+  measurement, across segments and gases:
+  - large beam: every non-baseline reading (signal, sniff, whiff) sets or
+    clears each detector's state against its threshold, all detectors of
+    the reading, collected or not; baseline reading leaves it;
+  - position settles `max(settle_s, settle_after_large_beam_s` of each of
+    its entries' detectors, `active = false` included, in large-beam state`)`;
+  - mode: engine remembers detector last used on each collector. Entry on
+    other detector of same collector is mode change: settle at least larger
+    `mode_switch_s` of the two, and settle taken even when move skipped.
+    First use of a collector in a measurement: mode unknown, no wait;
+  - hook's `position_magnet` (settle 0) untouched.
 - `[optics.<name>]` presets, opaque to the plan, applied by the driver;
 - a mass table with molecules, doubly charged species and pseudo-isotopes
   (`PHHCl = 36.46`, `Ar40++ = 19.98`, `CO2 = 43.99`);

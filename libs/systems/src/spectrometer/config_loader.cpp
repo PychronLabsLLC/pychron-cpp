@@ -328,7 +328,8 @@ class Builder {
 
   void parse_detector(const Obj& o, DetectorConfig& d) {
     r_.only(o, {"name", "kind", "channel", "units", "software_gain", "isotope", "color", "active", "deflection", "protection",
-                "saturation", "dead_time_ns", "cdd_voltage"});
+                "saturation", "dead_time_ns", "cdd_voltage", "large_beam_threshold", "settle_after_large_beam_s",
+                "collector", "mode", "mode_switch_s"});
     r_.str(o, "name", d.name, true);
     r_.choice(o, "kind", d.kind, choices(kDetectorKinds), true);
     if (r_.str(o, "channel", d.channel, true) && !d.channel.empty())
@@ -370,6 +371,15 @@ class Builder {
     if (r_.number(o, "dead_time_ns", d.dead_time_ns) && d.dead_time_ns)
       r_.require(*d.dead_time_ns >= 0.0, o, "dead_time_ns", "must be >= 0");
     r_.number(o, "cdd_voltage", d.cdd_voltage);
+    if (r_.number(o, "large_beam_threshold", d.large_beam_threshold) && d.large_beam_threshold)
+      r_.require(*d.large_beam_threshold > 0.0, o, "large_beam_threshold", "detector '" + d.name + "': must be > 0");
+    if (r_.number(o, "settle_after_large_beam_s", d.settle_after_large_beam_s, false))
+      r_.require(d.settle_after_large_beam_s >= 0.0, o, "settle_after_large_beam_s",
+                 "detector '" + d.name + "': must be >= 0");
+    r_.str(o, "collector", d.collector, false);
+    r_.str(o, "mode", d.mode, false);
+    if (r_.number(o, "mode_switch_s", d.mode_switch_s, false))
+      r_.require(d.mode_switch_s >= 0.0, o, "mode_switch_s", "detector '" + d.name + "': must be >= 0");
   }
 
   Reader r_;

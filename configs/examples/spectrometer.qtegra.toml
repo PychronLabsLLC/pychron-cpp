@@ -100,6 +100,19 @@ active = true
 deflection = { control = true, correction = [0.0, 0.0012], sign = 1, max = 800, per_volt = 0.0031 }
 protection = { threshold = 5e5, on_move = true }
 saturation = 4.9e6
+# Measurement timing (measurement plan v2 spec 3.6). A reading of gas above
+# large_beam_threshold (this detector's units) makes the next move onto this
+# detector settle at least settle_after_large_beam_s; a baseline reading
+# leaves that as it was. Unset threshold: never.
+# large_beam_threshold = 1e5
+# settle_after_large_beam_s = 0
+# Logical detectors: a cup that is Faraday or CDD by mode is two [[detectors]]
+# naming one collector, e.g. name = "H1(CDD)", collector = "H1", mode = "CDD".
+# A position that puts the collector in its other mode waits mode_switch_s
+# (the larger of the two modes'). Empty collector: the detector is its own.
+# collector = ""
+# mode = ""
+# mode_switch_s = 0
 
 [[detectors]]
 name = "AX"
