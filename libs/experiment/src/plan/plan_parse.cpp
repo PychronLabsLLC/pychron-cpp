@@ -15,6 +15,7 @@
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "plan_desugar.hpp"
+#include "plan_parse.hpp"
 #include "plan_toml.hpp"
 
 namespace pychron::experiment::plan {
@@ -1088,8 +1089,89 @@ class V2Rules {
 
 }  // namespace
 
-Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const PlanResolvers& resolvers,
-                                     std::string_view source) {
+namespace detail {
+
+namespace {
+
+// Where a v1 file puts each kind of segment (desugar, spec 4.1): the only
+// placements the engine runs until the phases are built.
+bool v1_placement(const Segment& s) {
+  switch (s.kind) {
+    case SegmentKind::Signal:
+    case SegmentKind::Whiff: return s.when == When::AfterInlet;
+    case SegmentKind::Baseline: return s.when == When::BeforeInlet || s.when == When::AfterMain;
+    case SegmentKind::Sniff: return s.when == When::DuringEquilibration;
+    case SegmentKind::PeakCenter: return s.when == When::BeforeInlet || s.when == When::AfterRun;
+    default: return true;  // the other steps are refused by kind
+  }
+}
+
+void unbuilt_position(const Position& pos, const std::string& at, std::vector<std::string>& out) {
+  const auto add = [&](const std::string& path, std::string_view feature) {
+    out.push_back(path + ": " + std::string(feature));
+  };
+  for (std::size_t k = 0; k < pos.collect.size(); ++k) {
+    const auto& e = pos.collect[k];
+    const auto where = join(join(at, "collect"), k);
+    if (e.deflection) add(where, "deflection");
+    if (!e.active && !e.protect) add(where, "active = false without protect");
+  }
+  if (pos.at) {
+    if (std::holds_alternative<AtDac>(*pos.at)) add(join(at, "at"), "at = { dac }");
+    if (std::holds_alternative<AtHv>(*pos.at)) add(join(at, "at"), "at = { hv }");
+  }
+  if (!pos.optics.empty()) add(at, "optics");
+  if (!pos.table.empty()) add(at, "table");
+  if (pos.integration_s) add(at, "integration_s");
+}
+
+void unbuilt_segment(const Segment& s, const std::string& at, std::vector<std::string>& out) {
+  const auto add = [&](const std::string& path, std::string_view feature) {
+    out.push_back(path + ": " + std::string(feature));
+  };
+  switch (s.kind) {
+    case SegmentKind::Set:
+    case SegmentKind::BlankBeam:
+    case SegmentKind::Park:
+    case SegmentKind::Delay:
+    case SegmentKind::TimeZero: add(at, std::string(to_string(s.kind)) + " step"); break;
+    case SegmentKind::PeakCenter:
+      if (s.peak_center) {
+        if (s.peak_center->detectors.size() > 1) add(join(at, "peak_center"), "peak_center with several detectors");
+        if (!s.peak_center->extra_detectors.empty()) add(join(at, "peak_center"), "extra_detectors");
+        if (!s.peak_center->write_table.empty()) add(join(at, "peak_center"), "write_table");
+      }
+      break;
+    default: break;
+  }
+  if (!v1_placement(s))
+    add(join(at, "when"), "when = '" + std::string(to_string(s.when)) + "' for a " + std::string(to_string(s.kind)) +
+                              " segment");
+  if (!s.table.empty()) add(at, "table");
+  if (!s.fits.empty()) add(join(at, "fits"), "segment fits");
+  if (!s.truncations.empty()) add(join(at, "conditionals"), "segment conditionals");
+  for (std::size_t j = 0; j < s.positions.size(); ++j)
+    unbuilt_position(s.positions[j], join(join(at, "positions"), j), out);
+}
+
+}  // namespace
+
+std::vector<std::string> unbuilt_features(const MeasurementPlan& plan) {
+  std::vector<std::string> out;
+  for (std::size_t g = 0; g < plan.gases.size(); ++g) {
+    const auto& gas = plan.gases[g];
+    // An implicit gas is the file's top-level segments (or its v1 tables).
+    const std::string at = gas.implicit ? std::string() : join("gas", g);
+    if (g == 1) out.push_back(at + ": more than one gas");
+    if (gas.source_dark_phase) out.push_back(join(at, "source_dark_phase") + ": source_dark_phase");
+    for (std::size_t i = 0; i < gas.segments.size(); ++i)
+      unbuilt_segment(gas.segments[i], at.empty() ? join("segment", i) : join(join(at, "segment"), i), out);
+  }
+  return out;
+}
+
+Result<MeasurementPlan> resolve_plan_ungated(std::string_view effective_toml, const PlanResolvers& resolvers,
+                                             std::string_view source) {
   auto parsed = toml::parse(effective_toml, source);
   if (!parsed) {
     const auto& e = parsed.error();
@@ -1130,6 +1212,21 @@ Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const Plan
 
   if (p.any()) return p.error();
   return plan;
+}
+
+}  // namespace detail
+
+// Until each phase of the v2 plan lands, a plan that uses what it builds is
+// refused here, so a plan that resolves always runs as written.
+Result<MeasurementPlan> resolve_plan(std::string_view effective_toml, const PlanResolvers& resolvers,
+                                     std::string_view source) {
+  auto plan = detail::resolve_plan_ungated(effective_toml, resolvers, source);
+  if (!plan) return plan;
+  const auto unbuilt = detail::unbuilt_features(*plan);
+  if (unbuilt.empty()) return plan;
+  Problems p(source);
+  for (const auto& feature : unbuilt) p.add("", feature + ": not run by this build yet");
+  return p.error();
 }
 
 }  // namespace pychron::experiment::plan

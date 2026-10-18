@@ -15,8 +15,9 @@ if(PYCHRON_EXPERIMENT_TESTS)
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
     PYCHRON_PLAN_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/plans")
-  # virtual_time.hpp
-  target_include_directories(pychron_experiment_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
+  # virtual_time.hpp; plan/plan_parse.hpp (the plan loader's ungated resolve)
+  target_include_directories(pychron_experiment_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support
+    ${PROJECT_SOURCE_DIR}/libs/experiment/src)
   if(TARGET pychron_metrics)
     # test_metrics_service.cpp scrapes over a socket (http_client.hpp)
     target_link_libraries(pychron_experiment_tests PRIVATE asio::asio)

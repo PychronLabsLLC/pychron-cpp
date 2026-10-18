@@ -21,6 +21,9 @@
 #include "pychron/experiment/plan/plan_json.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
+// Internal to the plan loader (the test target has libs/experiment/src on its
+// include path): the schema is tested without the unbuilt-feature gate.
+#include "plan/plan_parse.hpp"
 
 namespace plan = pychron::experiment::plan;
 
@@ -77,7 +80,7 @@ reference = "H1"
 plan::MeasurementPlan resolve(std::string_view body, const plan::ISpectrometerCatalog* catalog = &kCatalog,
                               std::string_view detectors = kReferenceH1) {
   const std::string text = std::string(kHeader) + std::string(detectors) + std::string(body);
-  auto r = plan::resolve_plan(text, plan::PlanResolvers{nullptr, catalog}, "desugar");
+  auto r = plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, catalog}, "desugar");
   EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().what);
   return r.value_or(plan::MeasurementPlan{});
 }
@@ -500,15 +503,18 @@ plan::MeasurementPlan load_worked(const std::string& name) {
   auto t = plan::parse_plan_template(text, name);
   EXPECT_TRUE(t.has_value()) << (t ? "" : t.error().what);
   if (!t) return {};
-  auto r = plan::load_plan(*t, {}, kWorkedResolvers);
+  const auto effective = plan::render_effective_plan(*t, {});
+  EXPECT_TRUE(effective.has_value()) << (effective ? "" : effective.error().what);
+  if (!effective) return {};
+  auto r = plan::detail::resolve_plan_ungated(*effective, kWorkedResolvers, name);
   EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().what);
-  return r ? r->plan : plan::MeasurementPlan{};
+  return r.value_or(plan::MeasurementPlan{});
 }
 
 // The error text of a plan that must not resolve (empty, with a failure, when it does).
 std::string problems(std::string_view body, std::string_view detectors = kReferenceH1) {
   const std::string text = std::string(kHeader) + std::string(detectors) + std::string(body);
-  auto r = plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2");
+  auto r = plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2");
   if (r) {
     ADD_FAILURE() << "plan resolved but should not:\n" << body;
     return {};
@@ -1036,7 +1042,7 @@ fits = { error = "sd", signal = { Ar36 = "average" } }
 collect = { Ar40 = "H1" }
 counts = 1
 )";
-  auto r = plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2");
+  auto r = plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2");
   ASSERT_TRUE(r.has_value()) << r.error().what;
   ASSERT_EQ(r->gases.size(), 1u);
   ASSERT_TRUE(r->gases[0].fits);
@@ -1119,13 +1125,13 @@ collect = { Ar40 = "H1" }
 at = { hv = 4500, detector = "H1" }
 counts = 5
 )";
-  auto r = plan::resolve_plan(text, plan::PlanResolvers{nullptr, &catalog}, "v2");
+  auto r = plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, &catalog}, "v2");
   ASSERT_FALSE(r.has_value());
   EXPECT_NE(r.error().what.find("positions[0].at.dac: the spectrometer cannot position by DAC"), std::string::npos)
       << r.error().what;
   EXPECT_NE(r.error().what.find("positions[1].at.hv: the spectrometer cannot position by HV"), std::string::npos)
       << r.error().what;
-  EXPECT_TRUE(plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2").has_value());
+  EXPECT_TRUE(plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2").has_value());
 }
 
 TEST(PlanV2Rules, UnknownDetectorsInSegmentsAndSteps) {
@@ -1208,7 +1214,7 @@ kind = "peak_center"
 when = "after_run"
 peak_center = { label = "Ar40", write_table = "ic_run" }
 )";
-  auto r = plan::resolve_plan(text, plan::PlanResolvers{}, "v2");
+  auto r = plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{}, "v2");
   ASSERT_FALSE(r.has_value());
   EXPECT_NE(r.error().what.find("segment[0].table: table 'ic_run' is used before it is written"), std::string::npos)
       << r.error().what;
@@ -1233,10 +1239,10 @@ counts = 5
 collect = { Ar40 = "H1" }
 counts = 5
 )";
-  EXPECT_TRUE(plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2").has_value());
+  EXPECT_TRUE(plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2").has_value());
   const plan::PlanResolvers air_extracts_nothing{nullptr, &kCatalog,
                                                  [](std::string_view type) { return type != "air"; }};
-  auto r = plan::resolve_plan(text, air_extracts_nothing, "v2");
+  auto r = plan::detail::resolve_plan_ungated(text, air_extracts_nothing, "v2");
   ASSERT_FALSE(r.has_value());
   EXPECT_NE(r.error().what.find("segment[0].when: during_extraction needs an analysis type with an extraction; "
                                 "'air' has none"),
@@ -1344,5 +1350,153 @@ TEST(PlanGoldens, V1EqualsItsV2Spelling) {
       b.gases = v2.gases;
       EXPECT_EQ(plan::to_json(a), plan::to_json(b));
     }
+  }
+}
+
+// ---- the unbuilt-feature gate (plan Task 5) ------------------------------------
+
+namespace {
+
+// The error of a gated resolve that must fail (empty, with a failure, when it does not).
+std::string gated_problems(std::string_view body, std::string_view detectors = kReferenceH1) {
+  const std::string text = std::string(kHeader) + std::string(detectors) + std::string(body);
+  auto r = plan::resolve_plan(text, plan::PlanResolvers{nullptr, &kCatalog}, "v2");
+  if (r) {
+    ADD_FAILURE() << "plan resolved but should not:\n" << body;
+    return {};
+  }
+  return r.error().what;
+}
+
+}  // namespace
+
+TEST(PlanV2Gate, UnbuiltFeatureIsRefusedWithItsPath) {
+  const std::string name = "v2_74_helix_hydride_hcl.toml";
+  auto t = plan::parse_plan_template(read_text(kPlanFixtures / "valid" / name), name);
+  ASSERT_TRUE(t.has_value()) << t.error().what;
+  auto r = plan::load_plan(*t, {}, kWorkedResolvers);
+  ASSERT_FALSE(r.has_value());
+  EXPECT_NE(r.error().what.find(name + ": segment[0].positions[1].collect[0]: deflection: not run by this build yet"),
+            std::string::npos)
+      << r.error().what;
+  EXPECT_EQ(r.error().kind, pychron::ErrorKind::Config);
+}
+
+// Worked plan 7.7 says only what a v1 file can (signal hops, a baseline
+// before the inlet); every other one needs something not run yet.
+TEST(PlanV2Gate, WorkedPlansNeedingUnbuiltFeatures) {
+  for (const auto& entry : fs::directory_iterator(kPlanFixtures / "valid")) {
+    const auto name = entry.path().filename().string();
+    if (entry.path().extension() != ".toml" || !name.starts_with("v2_7")) continue;
+    SCOPED_TRACE(name);
+    EXPECT_EQ(plan::detail::unbuilt_features(load_worked(name)).empty(), name == "v2_77_helix_xenon.toml");
+  }
+}
+
+// A v1 file, and a v2 file that says only what a v1 file can, never trips it.
+TEST(PlanV2Gate, AV1FileNeverTripsIt) {
+  std::size_t n = 0;
+  for (const auto& entry : fs::directory_iterator(kPlanFixtures / "valid")) {
+    const auto name = entry.path().filename().string();
+    if (entry.path().extension() != ".toml" || name.starts_with("v2_7")) continue;
+    ++n;
+    SCOPED_TRACE(name);
+    auto t = plan::parse_plan_template(read_text(entry.path()), name);
+    ASSERT_TRUE(t.has_value()) << t.error().what;
+    auto r = plan::load_plan(*t, {}, kWorkedResolvers);
+    EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().what);
+  }
+  EXPECT_GE(n, 4u);
+}
+
+TEST(PlanV2Gate, EachUnbuiltFeatureIsNamed) {
+  const std::map<std::string, std::string> cases{
+      {"segment[0].positions[0].at: at = { dac }", R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { dac = 5.1 }
+counts = 1
+)"},
+      {"segment[0].positions[0].collect[1]: active = false without protect", R"(
+[[segment]]
+[[segment.positions]]
+collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar36", detector = "CDD", active = false } ]
+counts = 1
+)"},
+      {"segment[0].positions[0]: integration_s", R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+integration_s = 2
+)"},
+      {"segment[1]: delay step", R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+kind = "delay"
+delay = { seconds = 5 }
+)"},
+      {"segment[1].when: when = 'during_extraction' for a baseline segment", R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+kind = "baseline"
+when = "during_extraction"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 1
+)"},
+      {"segment[0].fits: segment fits", R"(
+[[segment]]
+fits = { Ar40 = { fit = "parabolic" } }
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment[1].peak_center: peak_center with several detectors", R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+kind = "peak_center"
+when = "after_run"
+peak_center = { label = "Ar40", detectors = ["H1", "AX"] }
+)"},
+      {"gas[1]: more than one gas", R"(
+[[gas]]
+name = "a"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[gas]]
+name = "b"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"gas[0].source_dark_phase: source_dark_phase", R"(
+[[gas]]
+name = "a"
+source_dark_phase = true
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+  };
+  for (const auto& [expected, body] : cases) {
+    SCOPED_TRACE(expected);
+    EXPECT_NE(gated_problems(body).find("v2: " + expected + ": not run by this build yet"), std::string::npos)
+        << gated_problems(body);
   }
 }

@@ -15,6 +15,9 @@
 #include "pychron/experiment/plan/duration.hpp"
 #include "pychron/experiment/plan/plan_library.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
+// Internal to the plan loader (libs/experiment/src on the test target's
+// include path): worked v2 plans load past the unbuilt-feature gate.
+#include "plan/plan_parse.hpp"
 
 namespace fs = std::filesystem;
 using namespace pychron;
@@ -397,8 +400,8 @@ TEST(PlanDuration, IntegrationScalesCounts) {
 
 TEST(PlanDuration, FullSequence) {
   const auto p = load_fixture("multicollect.toml");
-  // eq 20 (sniff concurrent) + main 403 + baseline.after (moves: 15 + 120) + peak_center.after 30
-  EXPECT_DOUBLE_EQ(estimate_duration(p, DurationOptions{Duration(30)}).count(), 20 + 403 + 135 + 30);
+  // inlet delay 3 + eq 20 (sniff concurrent) + main 403 + baseline.after (moves: 15 + 120) + peak_center.after 30
+  EXPECT_DOUBLE_EQ(estimate_duration(p, DurationOptions{Duration(30)}).count(), 3 + 20 + 403 + 135 + 30);
 
   const auto h = load_fixture("peak_hop_cdd.toml");
   // eq 15 + main 780 + baseline.after at 34.2 on H1 (last hop was 34.2 on CDD: move) 10 + 30
@@ -413,10 +416,10 @@ TEST(PlanLibrary, ResolvesPlansForQueueValidation) {
   const IPlanResolver& r = lib;
   auto d = r.plan_duration("argus_multicollect", {}, false);
   ASSERT_TRUE(d);
-  EXPECT_DOUBLE_EQ(d->count(), 588);
+  EXPECT_DOUBLE_EQ(d->count(), 591);
   d = r.plan_duration("argus_multicollect", {{"main.hops[0].counts", std::int64_t{100}}}, false);
   ASSERT_TRUE(d);
-  EXPECT_DOUBLE_EQ(d->count(), 288);
+  EXPECT_DOUBLE_EQ(d->count(), 291);
   EXPECT_FALSE(r.plan_duration("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}, false));  // not exposed
   EXPECT_TRUE(r.plan_duration("argus_multicollect", {{"main.hops[0].settle_s", 1.0}}, true));    // advanced: any key
   EXPECT_FALSE(r.plan_duration("nope", {}, false));
@@ -531,14 +534,92 @@ TEST(PlanLibrary, LoadsFromSeveralThreadsAtOnce) {
 }
 
 TEST(PlanDuration, BaselineAtSamePositionSkipsSettle) {
-  auto p = minimal(1, 10);
-  p.baseline.after = true;
-  p.baseline.counts = 5;
-  p.baseline.settle_s = 7;
-  p.equilibration.time_s = 0;
-  // Baseline at the last hop's position (Ar40 on H1) -> no move, no settle.
-  p.baseline.mass.reset();
-  EXPECT_DOUBLE_EQ(estimate_duration(p).count(), 13 + 5);
+  std::string text = kMinimal;
+  text.replace(text.find("CYCLES"), 6, "1");
+  text.replace(text.find("COUNTS"), 6, "10");
+  // Baseline without a mass: at the last hop's position (Ar40 on H1) -> no move, no settle.
+  text += "[equilibration]\ntime_s = 0\n[baseline]\nafter = true\ncounts = 5\nsettle_s = 7\n";
+  const auto p = resolve_plan(text, kResolvers);
+  ASSERT_TRUE(p.has_value()) << p.error().what;
+  EXPECT_DOUBLE_EQ(estimate_duration(*p).count(), 13 + 5);
+}
+
+// The v1 estimates, computed from the desugared gases, and the same for each
+// v1 file's v2 spelling. Only change from the v1 estimate: the inlet delay
+// the engine always waits before opening the inlet is counted.
+TEST(PlanDuration, V1DurationsUnchanged) {
+  const DurationOptions pc{Duration(30)};
+  for (const std::string stem : {"multicollect", "peak_hop_cdd"}) {
+    SCOPED_TRACE(stem);
+    const auto v1 = load_fixture(stem + ".toml");
+    const auto v2 = load_fixture("v2_spelling_of_" + stem + ".toml");
+    EXPECT_DOUBLE_EQ(main_duration(v1).count(), main_duration(v2).count());
+    EXPECT_DOUBLE_EQ(estimate_duration(v1, pc).count(), estimate_duration(v2, pc).count());
+  }
+  EXPECT_DOUBLE_EQ(main_duration(load_fixture("multicollect.toml")).count(), 403);
+  EXPECT_DOUBLE_EQ(estimate_duration(load_fixture("multicollect.toml"), pc).count(), 591);
+  EXPECT_DOUBLE_EQ(main_duration(load_fixture("peak_hop_cdd.toml")).count(), 780);
+  // whiff (4 x 0.5 s) runs inside the 15 s equilibration
+  EXPECT_DOUBLE_EQ(estimate_duration(load_fixture("peak_hop_cdd.toml"), pc).count(), 15 + 780 + 40);
+  EXPECT_DOUBLE_EQ(main_duration(minimal(4, 100)).count(), main_duration(minimal(1, 400)).count());
+}
+
+TEST(PlanDuration, WorkedPlan72) {
+  const std::string name = "v2_72_argus_hop_fifth.toml";
+  auto t = parse_plan_template(read_file(kFixtures / "valid" / name), name);
+  ASSERT_TRUE(t.has_value()) << t.error().what;
+  auto text = render_effective_plan(*t, {});
+  ASSERT_TRUE(text.has_value()) << text.error().what;
+  // Deflection on CDD is not run yet: the schema's resolve, past the gate.
+  auto p = plan::detail::resolve_plan_ungated(*text, kResolvers, name);
+  ASSERT_TRUE(p.has_value()) << p.error().what;
+  // No reference detector: every position is its own place, so every one settles.
+  EXPECT_DOUBLE_EQ(main_duration(*p).count(), 20 * ((6 + 15) + (5 + 15) + (3 + 8)));
+  // + after_main baseline at 34.2 on H1 (a move) 20 + 120, + inlet delay 3 and equilibration 20
+  EXPECT_DOUBLE_EQ(estimate_duration(*p).count(), 1040 + 140 + 3 + 20);
+}
+
+// A multi-gas plan: each gas's equilibration, positions carried across gases,
+// steps by their own cost.
+TEST(PlanDuration, StepsAndGases) {
+  const auto p = plan::detail::resolve_plan_ungated(R"(
+[plan]
+name = "gases"
+instrument_family = "generic"
+[detectors]
+reference = "H1"
+[[gas]]
+name = "a"
+equilibration = { time_s = 10, inlet_delay_s = 1 }
+[[gas.segment]]
+kind = "peak_center"
+when = "before_inlet"
+peak_center = { label = "Ar40", detectors = ["H1", "AX"] }
+[[gas.segment]]
+cycles = 2
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+settle_s = 4
+[[gas.segment]]
+kind = "delay"
+when = "after_main"
+delay = { seconds = 7 }
+[[gas]]
+name = "b"
+equilibration = { time_s = 6 }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+settle_s = 4
+)",
+                                              kResolvers);
+  ASSERT_TRUE(p.has_value()) << p.error().what;
+  // main: gas a settles once then 2 x 5; gas b is at the same place: 3
+  EXPECT_DOUBLE_EQ(main_duration(*p).count(), 4 + 10 + 3);
+  // a: 2 peak centers x 30 + eq 11 + main 14 + delay 7; b: eq 6 + main 3
+  EXPECT_DOUBLE_EQ(estimate_duration(*p, DurationOptions{Duration(30)}).count(), 60 + 11 + 14 + 7 + 6 + 3);
 }
 
 TEST(PlanSchema, WhiffBlock) {
