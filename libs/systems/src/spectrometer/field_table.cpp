@@ -189,6 +189,10 @@ FitKind FieldTable::fit(std::string_view det) const {
 
 void FieldTable::set_fit(std::string det, FitKind kind) { fits_[std::move(det)] = kind; }
 
+void FieldTable::clear_fit(std::string_view det) {
+  if (auto it = fits_.find(det); it != fits_.end()) fits_.erase(it);
+}
+
 namespace {
 
 Result<std::vector<Sample>> samples_for(const std::vector<ControlPoint>& points, std::string_view det) {
@@ -223,6 +227,16 @@ Result<double> FieldTable::value_for(double mass, std::string_view det) const {
   auto p = fit_poly(*s, degree(kind), det);
   if (!p) return fail(p.error());
   return (*p)(mass);
+}
+
+Result<void> FieldTable::check_fit(std::string_view det) const {
+  auto s = samples_for(points_, det);
+  if (!s) return fail(s.error());
+  const FitKind kind = fit(det);
+  if (kind == FitKind::Discrete) return {};
+  auto p = fit_poly(*s, degree(kind), det);
+  if (!p) return fail(p.error());
+  return {};
 }
 
 Result<double> FieldTable::mass_for(double value, std::string_view det) const {

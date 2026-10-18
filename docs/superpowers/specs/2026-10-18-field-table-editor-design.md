@@ -170,7 +170,7 @@ Warnings:
 - isotope not in `MolecularWeights`, or mass differs from weight by > 0.01 amu.
 
 Diagnostics function lives in `libs/systems` (pure, testable), not UI:
-`check_field_table(const FieldTable&, const cfg::SpectrometerConfig&, const MolecularWeights&, std::string_view name) -> Diagnostics`.
+`check_field_table(const FieldTable&, const cfg::SpectrometerConfig&, const MolecularWeights&, std::string_view name) -> TableDiagnostics` (`field_table_check.hpp`; `has_error`, `first_error`, `to_string(TableDiagnostic)` → `"error: row 3/H1: <message>"`, row 1-based, location left out when none).
 
 ### 3.3 Save
 

@@ -86,19 +86,19 @@
   const TableDiagnostic* first_error(const TableDiagnostics& d) noexcept;
   TableDiagnostics check_field_table(const FieldTable& table, const cfg::SpectrometerConfig& config,
                                      const MolecularWeights& weights, std::string_view name);
-  std::string to_string(const TableDiagnostic& d);  // "error: Ar40/H1: ..." form
+  std::string to_string(const TableDiagnostic& d);  // "error: row 3/H1: ..." form (row 1-based)
   ```
   Spec §3.2's `-> Diagnostics` becomes `-> TableDiagnostics` (spec edited in this task).
 
-- [ ] **Step 1: Write failing tests** (`CheckFieldTable.*`), one per rule, on a small 3-point quadratic table built in the test with config detectors `H1, AX` active, `[magnet] field_table = "argon"`:
+- [x] **Step 1: Write failing tests** (`CheckFieldTable.*`), one per rule, on a small 3-point quadratic table built in the test with config detectors `H1, AX` active, `[magnet] field_table = "argon"`:
   - Errors: `EmptyIsotope`, `DuplicateIsotope`, `IsotopeNamesAreTrimmedBeforeTheDuplicateCheck` (`"Ar40"` and `"Ar40 "`), `MassNotFiniteOrNotPositive` (NaN, 0, −1), `ValueNotFinite` (inf), `FitFailsWithTooFewPoints` (cubic on 3 points; message equals `table.check_fit("H1").error().what`), `RepeatedMasses`, `ActiveDetectorWithNoValueWhenTableIsTheFieldTable`, same for `hv_table`, `ActiveDetectorMissingIsNotAnErrorForAnotherTableName`.
   - Warnings: `NonMonotonicFit` (quadratic with vertex inside range), `ResidualAboveOnePercentOfSpan` (linear fit through 3 non-collinear points, one off by 2 % of span; 0.5 % gives none), `DetectorNotInConfig`, `IsotopeNotInWeights`, `MassDiffersFromWeightBy0.01Amu` (0.011 warns, 0.009 does not).
   - `CleanTableHasNoDiagnostics`; `HasErrorAndFirstError`.
   - `FieldTable.ClearFitFallsBackToDefault`, `FieldTable.SetDefaultFit`.
-- [ ] **Step 2: Run** `build/dev/tests/systems/pychron_systems_tests --gtest_filter='CheckFieldTable.*:FieldTable.*'` after building the target. Expected: compile failure (header missing).
-- [ ] **Step 3: Implement** the three `FieldTable` members and `check_field_table`. Monotonic: sample `value_for` at 200 masses evenly over `[min mass, max mass]` of the detector's points, warn when the sign of successive differences changes. Residual: `|value − value_for(mass)| > 0.01 × (max value − min value)` for that detector. Skip fit-dependent warnings for a detector whose `check_fit` failed or whose fit is Discrete.
-- [ ] **Step 4: Run** same filter. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(spectrometer): field table diagnostics`.
+- [x] **Step 2: Run** `build/dev/tests/systems/pychron_systems_tests --gtest_filter='CheckFieldTable.*:FieldTable.*'` after building the target. Expected: compile failure (header missing).
+- [x] **Step 3: Implement** the three `FieldTable` members and `check_field_table`. Monotonic: sample `value_for` at 200 masses evenly over `[min mass, max mass]` of the detector's points, warn when the sign of successive differences changes. Residual: `|value − value_for(mass)| > 0.01 × (max value − min value)` for that detector. Skip fit-dependent warnings for a detector whose `check_fit` failed or whose fit is Discrete.
+- [x] **Step 4: Run** same filter. Expected: PASS.
+- [x] **Step 5: Commit** `feat(spectrometer): field table diagnostics`.
 
 ### Task 3: `diff_field_tables`
 

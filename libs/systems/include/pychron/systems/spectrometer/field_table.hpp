@@ -46,8 +46,12 @@ class FieldTable {
   FieldTable(FitKind fit, TableAxis axis, std::vector<ControlPoint> points);
 
   FitKind default_fit() const noexcept { return fit_; }
+  void set_default_fit(FitKind kind) noexcept { fit_ = kind; }
   TableAxis axis() const noexcept { return axis_; }
   const std::vector<ControlPoint>& points() const noexcept { return points_; }
+  // For the editor model. The caller keeps the invariants that
+  // check_field_table checks (field_table_check.hpp).
+  std::vector<ControlPoint>& mutable_points() noexcept { return points_; }
   // Detectors in first-appearance order across points.
   std::vector<std::string> detectors() const;
   bool has_detector(std::string_view det) const;
@@ -55,12 +59,18 @@ class FieldTable {
   // Per-detector fit; falls back to the table default.
   FitKind fit(std::string_view det) const;
   void set_fit(std::string det, FitKind kind);
+  // Drops `det`'s override; it then uses the table default.
+  void clear_fit(std::string_view det);
   const std::map<std::string, FitKind, std::less<>>& fit_overrides() const noexcept { return fits_; }
 
   // Native value that centers `mass` on `det`. Discrete: nearest control
   // point within kDiscreteTolerance, else Error{Config}. Never falls back to
   // any "current" position.
   Result<double> value_for(double mass, std::string_view det) const;
+
+  // Whether value_for can answer for `det`: same samples and fit, same error
+  // message. Discrete: ok when the detector has at least one point.
+  Result<void> check_fit(std::string_view det) const;
 
   // Bracketed numeric inverse of value_for over the detector's mass range.
   Result<double> mass_for(double value, std::string_view det) const;
