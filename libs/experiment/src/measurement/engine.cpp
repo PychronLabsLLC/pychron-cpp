@@ -220,6 +220,11 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   time_zero_ = {};
   block_ = Block::Main;
   position_.reset();
+  table_.clear();
+  optics_.clear();
+  deflected_.clear();
+  settle_due_ = false;
+  integration_.reset();
   protected_.clear();
   last_channels_.clear();
   inlet_open_ = false;
@@ -339,12 +344,7 @@ Result<void> MeasurementEngine::run_blocks() {
 
   if (auto r = run_when(plan::When::BeforeInlet); !r) return r;
   const auto position_first = [&] {
-    const auto& first = main.positions.front();
-    std::vector<std::string> protect;
-    for (const auto& e : first.collect)
-      if (e.protect) protect.push_back(e.detector);
-    return position_magnet(plan::position_target(in_.plan, first), first.settle_s, protect, static_cast<int>(main_),
-                           0);
+    return enter_position(main, main.positions.front(), static_cast<int>(main_), 0);
   };
   if (auto r = step(Block::PositionFirstHop, -1, position_first); !r) return r;
   if (auto r = step(Block::Equilibrate, -1, [&] { return equilibrate(); }); !r) return r;
@@ -372,18 +372,24 @@ Result<void> MeasurementEngine::run_segment(std::size_t segment) {
   const auto& seg = gas_->segments[segment];
   if (plan::is_step(seg.kind)) return run_step(segment);
   const bool is_main = segment == main_;
-  for (int cycle = 0; cycle < seg.cycles; ++cycle) {
-    for (std::size_t j = 0; j < seg.positions.size(); ++j) {
-      if (stopping()) return {};
-      const auto& pos = seg.positions[j];
-      // Main collects as planned; what runs after it scales by a truncation.
-      const int counts = is_main ? pos.counts : scaled(pos.counts);
-      auto r = run_position(*gas_, segment, j, pos, counts);
-      if (!r) return fail(r.error());
-      if (is_main && (*r == collect::CollectStatus::Truncated || main_cut_)) return {};
+  const auto run_cycles = [&]() -> Result<void> {
+    for (int cycle = 0; cycle < seg.cycles; ++cycle) {
+      for (std::size_t j = 0; j < seg.positions.size(); ++j) {
+        if (stopping()) return {};
+        const auto& pos = seg.positions[j];
+        // Main collects as planned; what runs after it scales by a truncation.
+        const int counts = is_main ? pos.counts : scaled(pos.counts);
+        auto r = run_position(*gas_, segment, j, pos, counts);
+        if (!r) return fail(r.error());
+        if (is_main && (*r == collect::CollectStatus::Truncated || main_cut_)) return {};
+      }
     }
-  }
-  return {};
+    return {};
+  };
+  Result<void> r = run_cycles();
+  if (!r) return r;  // cleanup restores what is left
+  // A deflection does not outlive its segment (legacy peak_hop_collector reset).
+  return restore_deflections(nullptr, static_cast<int>(segment), -1);
 }
 
 Result<void> MeasurementEngine::run_step(std::size_t segment) {
@@ -615,12 +621,9 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
   const int si = static_cast<int>(segment);
   const int pi = static_cast<int>(position);
   // A sniff or whiff reads where the magnet is (as the plan's duration counts it).
-  if (seg.kind != plan::SegmentKind::Sniff && seg.kind != plan::SegmentKind::Whiff) {
-    std::vector<std::string> protect;
-    for (const auto& e : pos.collect)
-      if (e.protect) protect.push_back(e.detector);
-    if (auto r = position_magnet(plan::position_target(in_.plan, pos), pos.settle_s, protect, si, pi); !r)
-      return fail(r.error());
+  const bool in_place = seg.kind == plan::SegmentKind::Sniff || seg.kind == plan::SegmentKind::Whiff;
+  if (!in_place) {
+    if (auto r = enter_position(seg, pos, si, pi); !r) return fail(r.error());
   }
 
   auto kind = collect::SeriesKind::Signal;
@@ -638,9 +641,123 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
     last_channels_ = channels;
     if (kind == collect::SeriesKind::Signal) hook = [this](int count, double t) { return main_reading(count, t); };
   }
-  if (counts > 0) trace(si, pi, "collect", std::to_string(counts));
-  return collect(block_, {kind, counts, std::move(channels), collection_label(segment, block_)},
-                 pos.integration_s.value_or(seg.integration_s), std::move(hook));
+  const double integration_s = pos.integration_s.value_or(seg.integration_s);
+  if (counts > 0) {
+    // Acquisition starts again for every collection; a new integration is traced.
+    if (integration_ && *integration_ != seconds_to(integration_s)) trace(si, pi, "integration", plain(integration_s));
+    trace(si, pi, "collect", std::to_string(counts));
+  }
+  auto status = collect(block_, {kind, counts, std::move(channels), collection_label(segment, block_)}, integration_s,
+                        std::move(hook));
+  if (!status || in_place) return status;
+  // What this position deflected and the next one (cyclically) does not set goes back.
+  const auto& next = seg.positions[(position + 1) % seg.positions.size()];
+  if (auto r = restore_deflections(&next, si, pi); !r) return fail(r.error());
+  return status;
+}
+
+Result<void> MeasurementEngine::enter_position(const plan::Segment& seg, const plan::Position& pos, int segment,
+                                               int position) {
+  const auto target = plan::position_target(in_.plan, pos);
+  const std::string& table = pos.table.empty() ? seg.table : pos.table;
+  std::map<std::string, double> wanted;
+  for (const auto& e : pos.collect)
+    if (e.deflection) wanted[e.detector] = *e.deflection;
+  std::map<std::string, double> current;
+  for (const auto& [det, d] : deflected_) current[det] = d.wanted;
+  const bool optics_same = pos.optics.empty() || pos.optics == optics_;
+  const bool there = !target || (position_ && *position_ == *target);
+  if (there && optics_same && table == table_ && wanted == current && !settle_due_) return {};
+
+  // Another table or other optics put a label elsewhere: the move is made again.
+  if (table != table_) {
+    position_.reset();
+    auto r = ctx_.spectrometer.with_table(table);
+    trace(segment, position, "table", table.empty() ? "(current)" : table);
+    if (!r) return r;
+    table_ = table;
+  }
+  if (!optics_same) {
+    position_.reset();
+    auto r = ctx_.spectrometer.apply_optics(pos.optics);
+    trace(segment, position, "optics", pos.optics);
+    if (!r) return r;
+    optics_ = pos.optics;
+  }
+
+  std::vector<std::string> protect;
+  for (const auto& e : pos.collect)
+    if (e.protect) protect.push_back(e.detector);
+  for (const auto& d : protect) {
+    if (auto r = ctx_.spectrometer.protect(d, true); !r) return r;
+    protected_.insert(d);
+    trace(segment, position, "protect", d + " on");
+  }
+  Result<void> r;
+  for (const auto& e : pos.collect) {
+    if (!e.deflection) continue;
+    const auto it = deflected_.find(e.detector);
+    if (it != deflected_.end() && it->second.wanted == *e.deflection) continue;
+    double original = 0;
+    if (it != deflected_.end()) {
+      original = it->second.original;
+    } else if (auto now = ctx_.spectrometer.deflection(e.detector)) {
+      original = *now;
+    } else {
+      r = fail(now.error());
+      break;
+    }
+    // Recorded before the call, so that a failed set is still restored.
+    deflected_[e.detector] = Deflected{*e.deflection, original};
+    auto set = ctx_.spectrometer.set_deflection(e.detector, *e.deflection);
+    if (!set) {
+      r = fail(set.error());
+      break;
+    }
+    trace(segment, position, "deflect", e.detector + "=" + plain(*set));
+  }
+  if (r && target && !(position_ && *position_ == *target)) {
+    r = ctx_.spectrometer.position(*target);
+    trace(segment, position, "move", describe(*target));
+    if (r) position_ = *target;
+    else position_.reset();
+  }
+  if (r) {
+    settle_due_ = false;
+    trace(segment, position, "settle", plain(pos.settle_s));
+    wait(pos.settle_s);
+  }
+  for (const auto& d : protect) {
+    auto u = critical("unprotect " + d, [&] { return ctx_.spectrometer.protect(d, false); });
+    if (u) {
+      protected_.erase(d);
+      trace(segment, position, "protect", d + " off");
+    }
+    if (!u && r) r = u;
+  }
+  return r;
+}
+
+Result<void> MeasurementEngine::restore_deflections(const plan::Position* keep, int segment, int position) {
+  Result<void> out;
+  for (auto it = deflected_.begin(); it != deflected_.end();) {
+    const auto& det = it->first;
+    const auto sets = [&](const plan::CollectEntry& e) { return e.detector == det && e.deflection; };
+    if (keep != nullptr && std::any_of(keep->collect.begin(), keep->collect.end(), sets)) {
+      ++it;
+      continue;
+    }
+    auto r = ctx_.spectrometer.set_deflection(det, it->second.original);
+    if (!r) {
+      if (out) out = fail(r.error());
+      ++it;
+      continue;
+    }
+    trace(segment, position, "deflect", det + "=" + plain(*r));
+    settle_due_ = true;  // the beam moved on that detector
+    it = deflected_.erase(it);
+  }
+  return out;
 }
 
 Result<void> MeasurementEngine::position_magnet(const std::optional<plan::At>& target, double settle_s,
@@ -845,6 +962,7 @@ Result<void> MeasurementEngine::start_acquisition(pychron::Duration integration)
     r = ctx_.spectrometer.start_acquisition(integration);
     if (!r) ctx_.spectrometer.stop_acquisition();  // it may have started after all
   }
+  if (r) integration_ = integration;
   return r;
 }
 
@@ -1004,6 +1122,8 @@ void MeasurementEngine::cleanup(bool abnormal) {
       publish_log(LogLevel::Error, "could not unprotect " + d + ": " + r.error().what);
     }
   }
+  if (auto r = restore_deflections(nullptr, -1, -1); !r)
+    publish_log(LogLevel::Error, "could not restore a deflection: " + r.error().what);
   if (abnormal && inlet_open_ && ctx_.valves != nullptr) {
     const auto& inlet = equilibration().inlet;
     if (auto r = ctx_.valves->close(inlet); r) {

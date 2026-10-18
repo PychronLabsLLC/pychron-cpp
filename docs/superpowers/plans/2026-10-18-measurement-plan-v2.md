@@ -297,16 +297,18 @@ Done notes: Step 2 was observed failing only as a build failure (the port had no
 - Consumes: Task 7 port calls, Task 6 `TraceEntry`.
 - Produces: per position, in this order: `with_table` (position `table`, else segment `table`, else ""), `apply_optics`, deflections and protect for entries carrying them (and `ProtectPolicy::Auto` for the move as today), `position(at)`, settle, restart acquisition when integration differs, collect `counts` on active entries, then restore each deflection this position changed whose detector the next position (cyclically, within the segment) does not set. Table, optics, move and settle are skipped when position target, optics, table and deflections equal the previous position's.
 
-- [ ] **Step 1: Write failing tests** (plans inline as TOML, `ManualClock`, assertions on `result.trace`):
+- [x] **Step 1: Write failing tests** (plans inline as TOML, `ManualClock`, assertions on `result.trace`):
   - `PositionExec.WorkedPlan72DeflectsCddOnlyAtTheFirstPosition`: trace for cycle 1 is `deflect CDD=110`, `move Ar40@H1`, `settle 6`, `collect 15`, `deflect CDD=<previous value>` (restore before position 2, which does not set CDD), `move Ar39@CDD`, `settle 5`, `collect 15`, `move mass 35.0@CDD`, `settle 3`, `collect 8`.
   - `PositionExec.InactiveEntryIsProtectedNotCollected`: worked plan 7.4 position 2 → `protect H2(CDD) on`, `deflect H2(CDD)=3250`; no series for `Ar40` on `H2(CDD)`.
   - `PositionExec.IntegrationChangeRestartsAcquisition`: worked plan 7.5 without optics → `integration 1` before position 1 and `integration 2` before position 2, every cycle.
   - `PositionExec.UnchangedPositionSkipsMoveAndSettle`: one position, 3 cycles → one `move`, one `settle` in the trace (keeps `EngineTest.OneHopTimesNCyclesEqualsOneHopWithNTimesCounts`).
   - `PositionExec.DacAndHvTargets`: `at={dac=1.234}` → fake journal `move_native 1.234`; `at={hv=4500, detector="H1"}` → `position_hv`.
-- [ ] **Step 2: Run** `--gtest_filter='PositionExec.*'` → FAIL.
-- [ ] **Step 3: Implement** in `run_position`; drop the corresponding gate entries.
-- [ ] **Step 4: Run** the binary → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): per-position deflection, protect, integration, table and positioning`.
+- [x] **Step 2: Run** `--gtest_filter='PositionExec.*'` → FAIL.
+- [x] **Step 3: Implement** in `run_position`; drop the corresponding gate entries.
+- [x] **Step 4: Run** the binary → PASS.
+- [x] **Step 5: Commit** `feat(experiment): per-position deflection, protect, integration, table and positioning`.
+
+Done notes: Step 2 was not observed failing: the tests were written in the same pass as `run_position`, and against the old gate the inline plans would not have resolved. Trace text is the engine's `describe`: `move mass 35@CDD`, not `35.0`. `PositionExec.WorkedPlan72...` names `[detectors] reference = "H1"` and gives position 2 an explicit `at`: worked plan 7.2 as written names no reference, and `position_target` gives positions 1 and 2 no target then (Task 10, which runs 7.2 through the simulator, has to settle what positions them: spec 3.2 says "the spectrometer's reference"). `IntegrationChangeRestartsAcquisition` expects no `integration` entry before the first collection (nothing to differ from), then one at every change. Decided here (spec 5.2 updated): every deflection still held is restored at the segment's end and on cleanup; a restore makes the next position settle; a new table or new optics forces the move; an empty `optics` leaves the preset in effect; protect stays around the move, as v1. Added beyond the task list: `PositionExec.TheTableIsSelectedPerPosition`. Gate: deflection, inactive entries, `at = { dac }` / `{ hv }`, position `integration_s`, position and segment `table` leave it, except on sniff and whiff segments (read in place, so none of these is applied there); `optics` stays until phase 8; `write_table` stays until Task 16, so a position table is one of the spectrometer's named tables. Worked plans 7.2 and 7.4 now pass the gate.
 
 ### Task 9: Large-beam settle and mode detectors in the spectrometer config
 

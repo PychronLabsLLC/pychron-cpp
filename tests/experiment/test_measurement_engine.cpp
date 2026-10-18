@@ -1532,3 +1532,222 @@ TEST_F(EngineV2, AnExcludedCupTheHopProtectsIsStillProtected) {
   EXPECT_TRUE(spec_.protected_.empty());
   EXPECT_FALSE(r.data.series.contains({"Ar36", "CDD", SeriesKind::Signal}));
 }
+
+// ---- position execution (measurement plan v2 spec 5.2, Task 8) ---------------
+
+namespace {
+
+constexpr std::string_view kPlanHeader = R"(
+[plan]
+name = "positions"
+instrument_family = "fake"
+)";
+
+std::vector<std::string> what_of(const std::vector<TraceEntry>& trace) {
+  std::vector<std::string> out;
+  out.reserve(trace.size());
+  for (const auto& e : trace) out.push_back(e.what + " " + e.detail);
+  return out;
+}
+
+// The entries of one segment's position, in order.
+std::vector<std::string> at_position(const std::vector<TraceEntry>& trace, int segment, int position) {
+  std::vector<TraceEntry> picked;
+  std::copy_if(trace.begin(), trace.end(), std::back_inserter(picked),
+               [&](const TraceEntry& e) { return e.segment == segment && e.position == position; });
+  return what_of(picked);
+}
+
+}  // namespace
+
+class PositionExec : public EngineV2 {
+ protected:
+  MeasurementResult run_toml(std::string_view body) {
+    const std::string toml = std::string(kPlanHeader) + std::string(body);
+    auto r = run(plan_from(toml));
+    EXPECT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+    return r;
+  }
+};
+
+// Worked plan 7.2 (with a reference named, so the first two positions have a
+// magnet target): CDD is deflected at the first position only, and put back
+// before the second, which does not set it.
+TEST_F(PositionExec, WorkedPlan72DeflectsCddOnlyAtTheFirstPosition) {
+  spec_.detectors = {"H1", "H2", "L1", "L2", "CDD"};
+  const auto r = run_toml(R"(
+[detectors]
+reference = "H1"
+
+[[segment]]
+kind = "signal"
+cycles = 20
+integration_s = 1
+[[segment.positions]]
+collect = [
+  { label = "Ar40", detector = "H1" }, { label = "Ar41", detector = "H2" },
+  { label = "Ar38", detector = "L1" }, { label = "Ar37", detector = "L2" },
+  { label = "Ar36", detector = "CDD", deflection = 110 } ]
+counts = 15
+settle_s = 6
+[[segment.positions]]
+collect = { Ar39 = "CDD" }
+at = { label = "Ar39", detector = "CDD" }
+counts = 15
+settle_s = 5
+[[segment.positions]]
+collect = { mass35 = "CDD" }
+at = { mass = 35.0, detector = "CDD" }
+counts = 8
+settle_s = 3
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar41 = "H2", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
+at = { mass = 34.2, detector = "H1" }
+counts = 120
+settle_s = 20
+)");
+  const auto what = what_of(r.trace);
+  ASSERT_GE(what.size(), 22u);
+  const std::vector<std::string> cycle1{"deflect CDD=110", "move Ar40@H1",      "settle 6", "collect 15",
+                                        "deflect CDD=0",   "move Ar39@CDD",     "settle 5", "collect 15",
+                                        "move mass 35@CDD", "settle 3",         "collect 8"};
+  EXPECT_EQ(std::vector<std::string>(what.begin(), what.begin() + 11), cycle1);
+  // Cycle 2 begins as cycle 1 did: CDD is deflected again before the move.
+  EXPECT_EQ(std::vector<std::string>(what.begin() + 11, what.begin() + 15),
+            (std::vector<std::string>{"deflect CDD=110", "move Ar40@H1", "settle 6", "collect 15"}));
+  EXPECT_EQ(std::count(what.begin(), what.end(), "deflect CDD=110"), 20);
+  EXPECT_EQ(std::count(what.begin(), what.end(), "deflect CDD=0"), 20);
+  // The baseline after main sees CDD as it was.
+  EXPECT_EQ(std::vector<std::string>(what.end() - 3, what.end()),
+            (std::vector<std::string>{"move mass 34.2@H1", "settle 20", "collect 120"}));
+  EXPECT_DOUBLE_EQ(spec_.deflections.at("CDD"), 0);
+  EXPECT_EQ(count(r, {"mass35", "CDD", SeriesKind::Signal}), 20 * 8);
+}
+
+// Worked plan 7.4, second position: the inactive H2(CDD) is protected for the
+// move and deflected, and nothing is collected on it.
+TEST_F(PositionExec, InactiveEntryIsProtectedNotCollected) {
+  spec_.detectors = {"H2", "H2(CDD)", "H1(CDD)", "AX(CDD)", "L1(CDD)", "L2(CDD)"};
+  const auto r = run_fixture("v2_74_helix_hydride_hcl.toml").result;
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  const auto pos2 = at_position(r.trace, 0, 1);
+  ASSERT_GE(pos2.size(), 11u);
+  EXPECT_EQ(std::vector<std::string>(pos2.begin(), pos2.begin() + 11),
+            (std::vector<std::string>{"protect H2(CDD) on", "deflect H2(CDD)=3250", "deflect H1(CDD)=200",
+                                      "deflect L1(CDD)=600", "move Ar38@AX(CDD)", "settle 3", "protect H2(CDD) off",
+                                      "collect 10", "deflect H1(CDD)=0", "deflect H2(CDD)=0",
+                                      "deflect L1(CDD)=0"}));
+  EXPECT_FALSE(r.data.series.contains({"Ar40", "H2(CDD)", SeriesKind::Signal}));
+  EXPECT_TRUE(r.data.series.contains({"Ar40", "H2", SeriesKind::Signal}));
+  EXPECT_TRUE(r.data.series.contains({"Ar39", "H1(CDD)", SeriesKind::Signal}));
+  EXPECT_TRUE(spec_.protected_.empty());
+}
+
+// Worked plan 7.5 without its optics: acquisition restarts with each
+// position's integration, and the trace says so where it changes.
+TEST_F(PositionExec, IntegrationChangeRestartsAcquisition) {
+  spec_.detectors = {"F0", "IC0", "IC1", "IC2"};
+  const auto r = run_toml(R"(
+[[segment]]
+kind = "signal"
+cycles = 15
+[[segment.positions]]
+collect = { Ar40 = "F0", Ar38 = "IC1", Ar36 = "IC2" }
+counts = 10
+settle_s = 5
+integration_s = 1
+[[segment.positions]]
+collect = { Ar39 = "IC0", Ar37 = "IC1" }
+counts = 10
+settle_s = 5
+integration_s = 2
+)");
+  std::vector<std::string> changes;
+  for (const auto& e : r.trace)
+    if (e.what == "integration") changes.push_back(std::to_string(e.position) + ":" + e.detail);
+  // The first collection has nothing to differ from; after it, every
+  // position changes the integration, every cycle.
+  std::vector<std::string> expected{"1:2"};
+  for (int cycle = 1; cycle < 15; ++cycle) {
+    expected.emplace_back("0:1");
+    expected.emplace_back("1:2");
+  }
+  EXPECT_EQ(changes, expected);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "start 2.000000"), 15);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "start 1.000000"), 15);
+  const auto& t = r.data.series.at({"Ar39", "IC0", SeriesKind::Signal}).t;
+  ASSERT_GE(t.size(), 2u);
+  EXPECT_DOUBLE_EQ(t[1] - t[0], 2);  // readings 2 s apart
+}
+
+// One position, three cycles: one move and one settle; its deflection is set
+// once and put back when the segment ends.
+TEST_F(PositionExec, UnchangedPositionSkipsMoveAndSettle) {
+  const auto r = run_toml(R"(
+[detectors]
+reference = "H1"
+[[segment]]
+cycles = 3
+[[segment.positions]]
+collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar36", detector = "CDD", deflection = 50 } ]
+counts = 4
+settle_s = 2
+)");
+  EXPECT_EQ(what_of(r.trace),
+            (std::vector<std::string>{"deflect CDD=50", "move Ar40@H1", "settle 2", "collect 4", "collect 4",
+                                      "collect 4", "deflect CDD=0"}));
+  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 12);
+}
+
+TEST_F(PositionExec, DacAndHvTargets) {
+  auto r = run_toml(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { dac = 1.234 }
+counts = 2
+)");
+  EXPECT_NE(std::find(spec_.log.begin(), spec_.log.end(), "move_native 1.234"), spec_.log.end());
+  EXPECT_EQ(what_of(r.trace).front(), "move dac 1.234");
+  spec_.log.clear();
+  r = run_toml(R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { hv = 4500, detector = "H1" }
+counts = 2
+)");
+  EXPECT_NE(std::find(spec_.log.begin(), spec_.log.end(), "position_hv 4500@H1"), spec_.log.end());
+  EXPECT_EQ(what_of(r.trace).front(), "move hv 4500@H1");
+}
+
+// A position's table, else its segment's, is selected before the move; going
+// to another table moves the magnet again.
+TEST_F(PositionExec, TheTableIsSelectedPerPosition) {
+  const auto r = run_toml(R"(
+[detectors]
+reference = "H1"
+[[segment]]
+cycles = 2
+table = "t1"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+settle_s = 1
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+table = "t2"
+counts = 1
+settle_s = 1
+)");
+  EXPECT_EQ(what_of(r.trace),
+            (std::vector<std::string>{"table t1", "move Ar40@H1", "settle 1", "collect 1",  //
+                                      "table t2", "move Ar40@H1", "settle 1", "collect 1",  //
+                                      "table t1", "move Ar40@H1", "settle 1", "collect 1",  //
+                                      "table t2", "move Ar40@H1", "settle 1", "collect 1"}));
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "table t2"), 2);
+}

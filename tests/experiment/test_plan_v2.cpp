@@ -1394,25 +1394,28 @@ std::string gated_problems(std::string_view body, std::string_view detectors = k
 }  // namespace
 
 TEST(PlanV2Gate, UnbuiltFeatureIsRefusedWithItsPath) {
-  const std::string name = "v2_74_helix_hydride_hcl.toml";
+  const std::string name = "v2_75_noblesse_optics.toml";
   auto t = plan::parse_plan_template(read_text(kPlanFixtures / "valid" / name), name);
   ASSERT_TRUE(t.has_value()) << t.error().what;
   auto r = plan::load_plan(*t, {}, kWorkedResolvers);
   ASSERT_FALSE(r.has_value());
-  EXPECT_NE(r.error().what.find(name + ": segment[0].positions[1].collect[0]: deflection: not run by this build yet"),
+  EXPECT_NE(r.error().what.find(name + ": segment[0].positions[1]: optics: not run by this build yet"),
             std::string::npos)
       << r.error().what;
   EXPECT_EQ(r.error().kind, pychron::ErrorKind::Config);
 }
 
-// Worked plan 7.7 says only what a v1 file can (signal hops, a baseline
-// before the inlet); every other one needs something not run yet.
+// Worked plans 7.2 and 7.4 (deflections, an inactive protected cup) and 7.7
+// (signal hops, a baseline before the inlet) run; every other one needs
+// something not run yet.
 TEST(PlanV2Gate, WorkedPlansNeedingUnbuiltFeatures) {
   for (const auto& entry : fs::directory_iterator(kPlanFixtures / "valid")) {
     const auto name = entry.path().filename().string();
     if (entry.path().extension() != ".toml" || !name.starts_with("v2_7")) continue;
     SCOPED_TRACE(name);
-    EXPECT_EQ(plan::detail::unbuilt_features(load_worked(name)).empty(), name == "v2_77_helix_xenon.toml");
+    const bool runs = name == "v2_72_argus_hop_fifth.toml" || name == "v2_74_helix_hydride_hcl.toml" ||
+                      name == "v2_77_helix_xenon.toml";
+    EXPECT_EQ(plan::detail::unbuilt_features(load_worked(name)).empty(), runs);
   }
 }
 
@@ -1434,25 +1437,50 @@ TEST(PlanV2Gate, AV1FileNeverTripsIt) {
 
 TEST(PlanV2Gate, EachUnbuiltFeatureIsNamed) {
   const std::map<std::string, std::string> cases{
-      {"segment[0].positions[0].at: at = { dac }", R"(
+      {"segment[0].positions[0]: optics", R"(
 [[segment]]
 [[segment.positions]]
 collect = { Ar40 = "H1" }
-at = { dac = 5.1 }
+optics = "ar_config_a"
 counts = 1
 )"},
-      {"segment[0].positions[0].collect[1]: active = false without protect", R"(
+      {"segment[0].positions[0].collect[1]: deflection", R"(
+[[segment]]
+kind = "whiff"
+checks = [ { check = "Ar40 > 1", action = "pump" } ]
+[[segment.positions]]
+collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar36", detector = "CDD", deflection = 5 } ]
+counts = 1
 [[segment]]
 [[segment.positions]]
-collect = [ { label = "Ar40", detector = "H1" }, { label = "Ar36", detector = "CDD", active = false } ]
+collect = { Ar40 = "H1" }
 counts = 1
 )"},
       {"segment[0].positions[0]: integration_s", R"(
 [[segment]]
+kind = "sniff"
+when = "during_equilibration"
 [[segment.positions]]
 collect = { Ar40 = "H1" }
 counts = 1
 integration_s = 2
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)"},
+      {"segment[0]: table", R"(
+[[segment]]
+kind = "sniff"
+when = "during_equilibration"
+table = "argon"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
 )"},
       {"segment[1]: delay step", R"(
 [[segment]]

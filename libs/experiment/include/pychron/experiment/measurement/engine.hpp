@@ -19,13 +19,22 @@
 // position, equilibrate, main, baseline.after, peak_center.after); any other
 // segment publishes Segment and any other step Step.
 //
-// One position executor (run_position) runs every collection: protect the
-// entries that carry `protect` -> position (skipped, with its settle, when
-// the magnet is already there) -> settle -> unprotect -> collect `counts`
-// readings on the active entries. A segment runs it `cycles` times over its
-// positions. There is no separate multicollect path: one position x N cycles
-// collects exactly what one position with N x counts does. What the engine
-// did is in MeasurementResult::trace.
+// One position executor (run_position) runs every collection (spec 5.2):
+// select the position's field table (its own, else its segment's, else the
+// configured current one) -> apply its optics -> protect the entries that
+// carry `protect` -> set the deflections entries carry -> position (label,
+// mass, DAC or HV) -> settle -> unprotect -> collect `counts` readings on the
+// active entries, restarting acquisition with the position's integration
+// (traced when it differs from the previous collection's) -> restore each
+// deflection this position changed that the next position of the segment
+// (cyclically) does not set. Table, optics, protect, move and settle are
+// skipped when target, optics, table and deflections are what the previous
+// position left; at a segment's end every deflection still changed is
+// restored. A sniff or whiff reads where the magnet is, with none of this. A
+// segment runs the executor `cycles` times over its positions. There is no
+// separate multicollect path: one position x N cycles collects exactly what
+// one position with N x counts does. What the engine did is in
+// MeasurementResult::trace.
 //
 // Equilibration (single-threaded, so sniff readings and valve timing never
 // race): close the outlet, wait inlet_delay_s, open the inlet, wait time_s,
@@ -65,8 +74,8 @@
 // (Aborted). The hook's on_whiff_result receives the result.
 //
 // Safety, on every exit including cancel, abort and failure: acquisition is
-// stopped, detectors the engine protected are unprotected, and an inlet the
-// engine opened is closed.
+// stopped, detectors the engine protected are unprotected, deflections it
+// changed are restored, and an inlet the engine opened is closed.
 
 #include <atomic>
 #include <cstddef>
@@ -299,10 +308,16 @@ class MeasurementEngine {
   // The position executor: every collection of a segment goes through it.
   Result<collect::CollectStatus> run_position(const plan::Gas& gas, std::size_t segment, std::size_t position,
                                               const plan::Position& pos, int counts);
+  // Everything run_position does before it collects: table, optics,
+  // protect, deflections, move, settle, unprotect (nothing when unchanged).
+  Result<void> enter_position(const plan::Segment& seg, const plan::Position& pos, int segment, int position);
   // Puts the magnet at `target` (nothing when nullopt or already there):
   // protect, move, settle, unprotect.
   Result<void> position_magnet(const std::optional<plan::At>& target, double settle_s,
                                const std::vector<std::string>& protect, int segment, int position);
+  // Restores the deflections the engine changed, except those `keep` sets
+  // (all of them when `keep` is null).
+  Result<void> restore_deflections(const plan::Position* keep, int segment, int position);
   Result<collect::CollectStatus> collect(Block block, collect::CollectionSpec spec, double integration_s,
                                          collect::ReadingHook hook);
   bool main_reading(int count, double t);
@@ -354,6 +369,15 @@ class MeasurementEngine {
   plan::TimeZero time_zero_;                 // the main segment's, else the gas's
   Block block_ = Block::Main;                // the block running
   std::optional<plan::At> position_;         // where the magnet is, when known
+  std::string table_;                        // field table selected ("" the configured one)
+  std::string optics_;                       // optics preset applied ("" none yet)
+  struct Deflected {
+    double wanted = 0;    // what the plan asked for
+    double original = 0;  // what the detector had before the engine changed it
+  };
+  std::map<std::string, Deflected> deflected_;      // deflections the engine changed, by detector
+  bool settle_due_ = false;                         // a restore moved a beam since the last settle
+  std::optional<pychron::Duration> integration_;    // of the last acquisition started
   std::set<std::string> protected_;
   std::vector<collect::Channel> last_channels_;
   bool acquiring_ = false;

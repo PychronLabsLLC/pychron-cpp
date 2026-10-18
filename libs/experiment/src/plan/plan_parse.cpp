@@ -1120,21 +1120,22 @@ bool v1_placement(const Segment& s) {
   }
 }
 
-void unbuilt_position(const Position& pos, const std::string& at, std::vector<std::string>& out) {
+// The position executor runs deflection, protect, inactive entries, every
+// `at` form, a position's integration and table (spec 5.2); optics wait for a
+// driver that applies them (phase 8). A sniff or whiff reads where the
+// magnet is, so its positions get none of the per-position settings yet.
+void unbuilt_position(const Position& pos, const std::string& at, bool in_place, std::vector<std::string>& out) {
   const auto add = [&](const std::string& path, std::string_view feature) {
     out.push_back(path + ": " + std::string(feature));
   };
+  if (!pos.optics.empty()) add(at, "optics");
+  if (!in_place) return;
   for (std::size_t k = 0; k < pos.collect.size(); ++k) {
     const auto& e = pos.collect[k];
     const auto where = join(join(at, "collect"), k);
     if (e.deflection) add(where, "deflection");
     if (!e.active && !e.protect) add(where, "active = false without protect");
   }
-  if (pos.at) {
-    if (std::holds_alternative<AtDac>(*pos.at)) add(join(at, "at"), "at = { dac }");
-    if (std::holds_alternative<AtHv>(*pos.at)) add(join(at, "at"), "at = { hv }");
-  }
-  if (!pos.optics.empty()) add(at, "optics");
   if (!pos.table.empty()) add(at, "table");
   if (pos.integration_s) add(at, "integration_s");
 }
@@ -1169,11 +1170,12 @@ void unbuilt_segment(const Segment& s, const std::string& at, std::vector<std::s
   if (!v1_placement(s))
     add(join(at, "when"), "when = '" + std::string(to_string(s.when)) + "' for a " + std::string(to_string(s.kind)) +
                               " segment");
-  if (!s.table.empty()) add(at, "table");
+  const bool in_place = s.kind == SegmentKind::Sniff || s.kind == SegmentKind::Whiff;
+  if (in_place && !s.table.empty()) add(at, "table");
   if (!s.fits.empty()) add(join(at, "fits"), "segment fits");
   if (!s.truncations.empty()) add(join(at, "conditionals"), "segment conditionals");
   for (std::size_t j = 0; j < s.positions.size(); ++j)
-    unbuilt_position(s.positions[j], join(join(at, "positions"), j), out);
+    unbuilt_position(s.positions[j], join(join(at, "positions"), j), in_place, out);
 }
 
 }  // namespace

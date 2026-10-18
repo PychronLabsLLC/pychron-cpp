@@ -272,6 +272,26 @@ position changed if the next position does not set them (legacy reset rule
 skipped when nothing changed, which preserves the v1 property that one
 position times N cycles equals one position with N times counts.
 
+Decided 2026-10-18, Task 8:
+- next position is cyclic within segment; at segment end every deflection
+  engine still holds is restored, so none outlives its segment (baseline
+  after main sees detector as configured). Cleanup restores too, on any exit;
+- deflection restored to value read (`deflection(det)`) before engine first
+  changed it; a restore counts as a change: next position settles even when
+  its move is skipped;
+- table: position's, else segment's, else `""` (configured current);
+  selected only when it differs from one in effect. New table or new optics
+  forces move again (same label sits at another DAC);
+- `optics` empty means none asked: preset in effect stays;
+- integration: acquisition is started for every collection anyway; trace
+  `integration` only where it differs from previous collection's (first
+  collection of measurement has nothing to differ from);
+- protect around move, as v1: unprotected after settle, before collect, also
+  for `active = false` entry;
+- sniff, whiff read in place: no per-position settings; their deflection,
+  table, `integration_s`, inactive entry stay refused by gate. `optics`
+  refused everywhere until phase 8.
+
 ### 5.3 Ports
 
 `measurement/ports.hpp` gains `apply_optics(name)`, `with_table(name)`,
