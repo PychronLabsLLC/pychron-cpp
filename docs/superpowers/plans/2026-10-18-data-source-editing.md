@@ -123,7 +123,7 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
 - Consumes: `write_install_record`, `read_install_record`, `sha256_hex`, `render` (template.hpp), `load_site`/`save_site`, Task 3's types.
 - Produces: `apply_data_source(change, to, site_path)` per spec 3.1. Credentials content is `render` of the constant `kCredentialsTemplate` in `data_source.cpp`, byte-equal to `profiles/store-common/credentials.toml`, with answer `db_password`; written by the owner-only path (extract `write_file` from `install.cpp` into an internal header `libs/setup/src/file_io.hpp` if needed, no public API). Record answers replaced: `data_source`, `db_host`, `db_port` (int64), `db_name`, `db_user`, `db_file`, `data_folder`; server keys erased for a local source, `db_file` erased for a server one.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `ApplyLocalToServerWritesTheThreeFiles`: site with this install, a second install `other`, `default = "other"`; apply server with password `"s3cret"`: credentials 0600 (skip the mode assert on Windows, as `SecretsAreOwnerOnlyAndNeverRecorded` does) reading back `"s3cret"`; record answers updated, `files[".pychron/credentials.toml"] == sha256_hex(file bytes)`; site entry `database == "postgresql://u@h:5432/n"`, `data` set; other fields of the entry, entry `other` and `default` equal to before; `"s3cret"` absent from `install.toml` and `site.toml` bytes.
   - `AKeptPasswordLeavesTheCredentialsFileAlone`: existing credentials file; apply server with `password = nullopt`: file bytes and mtime-independent hash unchanged, record `files` entry unchanged.
   - `ApplyKeepsAPasswordWithSpecialCharacters`: password `p@ss:w/"r\d`; `read_kept_password` returns it; `database_url_with_password` contains `p%40ss%3Aw%2F%22r%5Cd`.
@@ -132,11 +132,11 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
   - `AReconfigureAfterServerToLocalHasNoConflicts`: server install, apply local; reconfigure plan: no `Conflict`, `credentials.toml` still on disk.
   - `OnlyTheThreeFilesChange`: hash every file under root and the site dir before and after apply: only `.pychron/credentials.toml`, `.pychron/install.toml`, `site.toml` differ.
   - `WithoutARecordOnlyTheSiteAndCredentialsAreWritten`: no `install.toml` before, none after; site updated.
-- [ ] **Step 2: Run, expect FAIL** (`apply_data_source` undefined) after building `pychron_setup_tests`.
-- [ ] **Step 3: Implement** `apply_data_source` in the spec's order; it re-reads the record (missing record: step 2 skipped).
-- [ ] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*:Fixture.*'`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 6: Commit** `feat(setup): a data source change writes the credentials, the install record and the site entry`
+- [x] **Step 2: Run, expect FAIL** (`apply_data_source` undefined) after building `pychron_setup_tests`.
+- [x] **Step 3: Implement** `apply_data_source` in the spec's order; it re-reads the record (missing record: step 2 skipped).
+- [x] **Step 4: Run** `build/dev/tests/setup/pychron_setup_tests --gtest_filter='DataSource*.*:Fixture.*'`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 6: Commit** `feat(setup): a data source change writes the credentials, the install record and the site entry`
 
 ### Task 5: Checks before writing, and the seed after
 

@@ -71,4 +71,21 @@ struct DataSourceChange {
 // existing directory; an install whose root is not on disk. Writes nothing.
 Result<DataSourceChange> plan_data_source(const SiteInstall& install, const DataSource& to);
 
+// Writes a planned change, in this order, and nothing else:
+//  1. <root>/.pychron/credentials.toml, owner-only, as the store-common
+//     profile renders it: only for a server with a password given. A kept
+//     password (nullopt) and a local source leave the file alone.
+//  2. <root>/.pychron/install.toml, when the install has one: answers
+//     data_source, db_host, db_port, db_name, db_user, db_file and
+//     data_folder replaced (server keys erased for a local source, db_file
+//     for a server one), and the credentials file's sha256 when step 1 wrote
+//     it, so a later reconfigure sees it as its own. Never the password.
+//  3. The install's entry in the site file at `site_path`: database and data
+//     replaced, every other field and entry as it was (an entry not there is
+//     added).
+// The site file is read before anything is written: one that does not load
+// refuses the change with nothing written.
+Result<void> apply_data_source(const DataSourceChange& change, const DataSource& to,
+                               const std::filesystem::path& site_path);
+
 }  // namespace pychron::setup

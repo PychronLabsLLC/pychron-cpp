@@ -1,6 +1,7 @@
 #include "pychron/setup/data_source.hpp"
 
 #include <charconv>
+#include <cstdint>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -10,6 +11,8 @@
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/template.hpp"
 
+#include "file_io.hpp"
+
 namespace fs = std::filesystem;
 
 namespace pychron::setup {
@@ -17,6 +20,15 @@ namespace {
 
 constexpr std::string_view kSqlitePrefix = "sqlite:";
 constexpr std::string_view kPostgresPrefix = "postgresql://";
+
+// Byte-equal to profiles/store-common/credentials.toml (a test holds them
+// together): a change writes the file a reconfigure would render, so the
+// reconfigure finds it as its own.
+constexpr std::string_view kCredentialsTemplate =
+    "# This computer only (written by pychron setup, owner-readable).\n"
+    "[database]\n"
+    "password = {{ db_password | toml }}\n";
+constexpr std::string_view kCredentialsFile = ".pychron/credentials.toml";
 
 fs::path resolve(const fs::path& path, const fs::path& root) { return path.is_absolute() ? path : root / path; }
 
@@ -154,6 +166,26 @@ bool holds_records(const fs::path& data_folder) {
   return fs::directory_iterator(records, ec) != fs::directory_iterator();
 }
 
+// The answers of the install record `to` stands for: the server's keys or
+// the file, never both; the password is not an answer that is recorded.
+void set_answers(Answers& answers, const DataSource& to) {
+  if (const auto* local = std::get_if<LocalDatabase>(&to.database)) {
+    answers["data_source"] = Value{std::string("local")};
+    answers["db_file"] = Value{local->file.generic_string()};
+    for (const char* id : {"db_host", "db_port", "db_name", "db_user"}) answers.erase(id);
+  } else {
+    const auto& server = std::get<ServerDatabase>(to.database);
+    answers["data_source"] = Value{std::string("server")};
+    answers["db_host"] = Value{server.host};
+    answers["db_port"] = Value{std::int64_t{server.port}};
+    answers["db_name"] = Value{server.name};
+    answers["db_user"] = Value{server.user};
+    answers.erase("db_file");
+  }
+  answers.erase("db_password");
+  answers["data_folder"] = Value{to.data};
+}
+
 }  // namespace
 
 Result<DataSource> current_data_source(const SiteInstall& install) {
@@ -219,6 +251,48 @@ Result<DataSourceChange> plan_data_source(const SiteInstall& install, const Data
                            ": a later elctl init --reconfigure would not know the new data source");
   }
   return change;
+}
+
+Result<void> apply_data_source(const DataSourceChange& change, const DataSource& to, const fs::path& site_path) {
+  const fs::path& root = change.install.root;
+  // Read first: a site file or a record that does not load stops the change
+  // before anything is written.
+  auto site = load_site(site_path);
+  if (!site) return fail(std::move(site).error());
+  std::optional<InstallRecord> record;
+  std::error_code ec;
+  if (fs::exists(record_path(root), ec)) {
+    auto read = read_install_record(root);
+    if (!read) return fail(std::move(read).error());
+    record = std::move(*read);
+  }
+
+  // 1. The credentials: only a server given a password.
+  std::optional<std::string> credentials;
+  if (const auto* server = std::get_if<ServerDatabase>(&to.database); server != nullptr && server->password) {
+    auto rendered = render(kCredentialsTemplate, {{"db_password", Value{*server->password}}}, kCredentialsFile);
+    if (!rendered) return fail(std::move(rendered).error());
+    if (auto written = detail::write_file(root / kCredentialsFile, *rendered, true); !written)
+      return fail(std::move(written).error());
+    credentials = std::move(*rendered);
+  }
+
+  // 2. The install record, when there is one.
+  if (record) {
+    set_answers(record->answers, to);
+    if (credentials) record->files[std::string(kCredentialsFile)] = sha256_hex(*credentials);
+    if (auto written = write_install_record(root, *record); !written) return fail(std::move(written).error());
+  }
+
+  // 3. The site entry: database and data only.
+  SiteInstall entry = change.install;
+  if (const SiteInstall* found = site->find(change.install.name)) {
+    entry = *found;
+    entry.database = change.install.database;
+    entry.data = change.install.data;
+  }
+  site->upsert(std::move(entry));
+  return save_site(*site, site_path);
 }
 
 }  // namespace pychron::setup

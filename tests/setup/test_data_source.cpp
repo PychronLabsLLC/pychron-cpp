@@ -1,6 +1,7 @@
 // Changing an install's data source (data source editing spec, 3.1): the
 // current source read from the install record or the site entry, the URL it
-// stands for, and a planned change, refused before anything is written.
+// stands for, a planned change, refused before anything is written, and the
+// change applied: credentials, install record and site entry, nothing else.
 
 #include <gtest/gtest.h>
 
@@ -11,7 +12,10 @@
 #include <string>
 
 #include "pychron/setup/data_source.hpp"
+#include "pychron/setup/doctor.hpp"
 #include "pychron/setup/install.hpp"
+#include "pychron/setup/installer.hpp"
+#include "pychron/setup/profile.hpp"
 #include "pychron/setup/site.hpp"
 #include "pychron/setup/template.hpp"
 #include "temp_path.hpp"
@@ -275,4 +279,255 @@ TEST_F(DataSourceFixture, PathsOutsideTheRootAndWithSpacesAreKeptAsGiven) {
   ASSERT_TRUE(change) << change.error().what;
   EXPECT_EQ(change->install.data, shared);
   EXPECT_EQ(change->install.database, "sqlite:" + (root / "my data/p.db").generic_string());
+}
+
+namespace {
+
+const fs::path kProfiles(PYCHRON_PROFILES_DIR);
+const fs::path kExamples(PYCHRON_EXAMPLE_CONFIGS_DIR);
+
+ProfileLibrary library() {
+  auto lib = ProfileLibrary::load(kProfiles, kExamples);
+  EXPECT_TRUE(lib) << (lib ? "" : lib.error().what);
+  return std::move(*lib);
+}
+
+const ServerDatabase kServer{"h", 5432, "n", "u", std::nullopt};
+
+ServerDatabase server_with(std::optional<std::string> password) {
+  ServerDatabase s = kServer;
+  s.password = std::move(password);
+  return s;
+}
+
+// The fixture with the site file and real data-reduction installs.
+struct DataSourceApply : DataSourceFixture {
+  fs::path creds = root / ".pychron" / "credentials.toml";
+
+  // Installs the shipped data-reduction profile into `root` and records it
+  // in the site file as "lab".
+  SiteInstall install_profile(const Answers& given) {
+    const auto lib = library();
+    auto resolved = lib.resolve("data-reduction");
+    EXPECT_TRUE(resolved) << (resolved ? "" : resolved.error().what);
+    auto answers = complete_answers(*resolved, given, builtin_answers("lab", root));
+    EXPECT_TRUE(answers) << (answers ? "" : answers.error().what);
+    auto plan = plan_install(lib, *resolved, *answers, root);
+    EXPECT_TRUE(plan) << (plan ? "" : plan.error().what);
+    auto report = apply_install(*plan);
+    EXPECT_TRUE(report) << (report ? "" : report.error().what);
+    SiteInstall entry = site_install(*plan, "lab");
+    EXPECT_TRUE(register_install(entry, site_path));
+    return entry;
+  }
+
+  // What `elctl init --reconfigure` plans: the recorded answers, plus `extra`.
+  [[nodiscard]] InstallPlan reconfigure(const Answers& extra = {}) const {
+    const auto lib = library();
+    auto resolved = lib.resolve("data-reduction");
+    EXPECT_TRUE(resolved) << (resolved ? "" : resolved.error().what);
+    auto record = read_install_record(root);
+    EXPECT_TRUE(record) << (record ? "" : record.error().what);
+    Answers given = record->answers;
+    for (const auto& [id, v] : extra) given[id] = v;
+    const bool keep_secrets = keep_unanswered_secrets(*resolved, given);
+    auto answers = complete_answers(*resolved, given, builtin_answers("lab", root));
+    EXPECT_TRUE(answers) << (answers ? "" : answers.error().what);
+    auto plan = plan_install(lib, *resolved, *answers, root, {.reconfigure = true, .skip_secret_files = keep_secrets});
+    EXPECT_TRUE(plan) << (plan ? "" : plan.error().what);
+    return std::move(*plan);
+  }
+
+  // Plans and applies `to` for the install named "lab" in the site file.
+  void apply(const DataSource& to) const {
+    auto site = load_site(site_path);
+    ASSERT_TRUE(site) << site.error().what;
+    const SiteInstall* entry = site->find("lab");
+    ASSERT_NE(entry, nullptr);
+    auto change = plan_data_source(*entry, to);
+    ASSERT_TRUE(change) << change.error().what;
+    auto applied = apply_data_source(*change, to, site_path);
+    ASSERT_TRUE(applied) << applied.error().what;
+  }
+
+  [[nodiscard]] SiteInstall site_entry(const std::string& name = "lab") const {
+    auto site = load_site(site_path);
+    EXPECT_TRUE(site) << (site ? "" : site.error().what);
+    const SiteInstall* entry = site->find(name);
+    EXPECT_NE(entry, nullptr);
+    return entry ? *entry : SiteInstall{};
+  }
+
+  static void expect_no_conflict(const InstallPlan& plan) {
+    for (const auto& f : plan.files)
+      EXPECT_NE(f.action, PlannedFile::Action::Conflict) << f.to.generic_string();
+  }
+};
+
+bool same_entry(const SiteInstall& a, const SiteInstall& b) {
+  return a.name == b.name && a.kind == b.kind && a.profile == b.profile && a.root == b.root && a.line == b.line &&
+         a.canvas == b.canvas && a.spectrometer == b.spectrometer && a.data == b.data && a.database == b.database &&
+         a.simulation == b.simulation;
+}
+
+}  // namespace
+
+TEST_F(DataSourceApply, ApplyLocalToServerWritesTheThreeFiles) {
+  install_profile({});
+  SiteInstall other = install("sqlite:/elsewhere/other.db", "other-data");
+  other.name = "other";
+  other.root = dir / "other";
+  other.line = "x.toml";
+  ASSERT_TRUE(register_install(other, site_path));
+  {
+    auto site = load_site(site_path);
+    ASSERT_TRUE(site);
+    site->default_install = "other";
+    ASSERT_TRUE(save_site(*site, site_path));
+  }
+  const SiteInstall before = site_entry();
+
+  apply(DataSource{server_with("s3cret"), "runs"});
+
+  auto kept = read_kept_password(root);
+  ASSERT_TRUE(kept) << kept.error().what;
+  EXPECT_EQ(*kept, std::optional<std::string>("s3cret"));
+#ifndef _WIN32
+  EXPECT_EQ(fs::status(creds).permissions() & (fs::perms::group_all | fs::perms::others_all), fs::perms::none);
+#endif
+
+  auto record = read_install_record(root);
+  ASSERT_TRUE(record) << record.error().what;
+  EXPECT_EQ(record->answers.at("data_source"), Value{std::string("server")});
+  EXPECT_EQ(record->answers.at("db_host"), Value{std::string("h")});
+  EXPECT_EQ(record->answers.at("db_port"), Value{std::int64_t{5432}});
+  EXPECT_EQ(record->answers.at("db_name"), Value{std::string("n")});
+  EXPECT_EQ(record->answers.at("db_user"), Value{std::string("u")});
+  EXPECT_EQ(record->answers.at("data_folder"), Value{std::string("runs")});
+  EXPECT_FALSE(record->answers.contains("db_file"));
+  EXPECT_FALSE(record->answers.contains("db_password"));
+  EXPECT_EQ(record->files.at(".pychron/credentials.toml"), sha256_hex(read_text(creds)));
+
+  auto site = load_site(site_path);
+  ASSERT_TRUE(site) << site.error().what;
+  EXPECT_EQ(site->default_install, "other");
+  const SiteInstall* after = site->find("lab");
+  ASSERT_NE(after, nullptr);
+  EXPECT_EQ(after->database, "postgresql://u@h:5432/n");
+  EXPECT_EQ(after->data, "runs");
+  SiteInstall expected = before;
+  expected.database = after->database;
+  expected.data = after->data;
+  EXPECT_TRUE(same_entry(*after, expected));
+  const SiteInstall* other_after = site->find("other");
+  ASSERT_NE(other_after, nullptr);
+  EXPECT_TRUE(same_entry(*other_after, other));
+
+  EXPECT_EQ(read_text(record_path(root)).find("s3cret"), std::string::npos);
+  EXPECT_EQ(read_text(site_path).find("s3cret"), std::string::npos);
+}
+
+TEST_F(DataSourceApply, AKeptPasswordLeavesTheCredentialsFileAlone) {
+  install_profile({{"data_source", Value{std::string("server")}},
+                   {"db_host", Value{std::string("old")}},
+                   {"db_password", Value{std::string("kept")}}});
+  const std::string bytes = read_text(creds);
+  auto before = read_install_record(root);
+  ASSERT_TRUE(before) << before.error().what;
+
+  apply(DataSource{server_with(std::nullopt), "data"});
+
+  EXPECT_EQ(read_text(creds), bytes);
+  auto after = read_install_record(root);
+  ASSERT_TRUE(after) << after.error().what;
+  EXPECT_EQ(after->files.at(".pychron/credentials.toml"), before->files.at(".pychron/credentials.toml"));
+  EXPECT_EQ(after->answers.at("db_host"), Value{std::string("h")});
+}
+
+TEST_F(DataSourceApply, ApplyKeepsAPasswordWithSpecialCharacters) {
+  install_profile({});
+  const std::string password = R"(p@ss:w/"r\d)";
+  apply(DataSource{server_with(password), "data"});
+
+  auto kept = read_kept_password(root);
+  ASSERT_TRUE(kept) << kept.error().what;
+  EXPECT_EQ(*kept, std::optional<std::string>(password));
+  auto url = database_url_with_password(DataSource{server_with(std::nullopt), "data"}, root);
+  ASSERT_TRUE(url) << url.error().what;
+  EXPECT_NE(url->find("p%40ss%3Aw%2F%22r%5Cd"), std::string::npos) << *url;
+}
+
+TEST_F(DataSourceApply, TheCredentialsFileIsWhatTheProfileRenders) {
+  install_profile({});
+  apply(DataSource{server_with("x"), "data"});
+  auto rendered = render(read_text(kProfiles / "store-common" / "credentials.toml"),
+                         {{"db_password", Value{std::string("x")}}});
+  ASSERT_TRUE(rendered) << rendered.error().what;
+  EXPECT_EQ(read_text(creds), *rendered);
+}
+
+TEST_F(DataSourceApply, AReconfigureKeepsTheNewSource) {
+  install_profile({});
+  apply(DataSource{server_with("pw"), "runs"});
+  const SiteInstall applied = site_entry();
+
+  const InstallPlan kept = reconfigure();
+  EXPECT_EQ(site_install(kept, "lab").database, applied.database);
+  EXPECT_EQ(site_install(kept, "lab").data, applied.data);
+  expect_no_conflict(kept);
+
+  const InstallPlan again = reconfigure({{"db_password", Value{std::string("pw")}}});
+  EXPECT_EQ(site_install(again, "lab").database, applied.database);
+  EXPECT_EQ(site_install(again, "lab").data, applied.data);
+  expect_no_conflict(again);
+  const auto it = std::ranges::find(again.files, fs::path(".pychron/credentials.toml"), &PlannedFile::to);
+  ASSERT_NE(it, again.files.end());
+  EXPECT_TRUE(it->action == PlannedFile::Action::Update || it->action == PlannedFile::Action::Same)
+      << to_string(it->action);
+}
+
+TEST_F(DataSourceApply, AReconfigureAfterServerToLocalHasNoConflicts) {
+  install_profile({{"data_source", Value{std::string("server")}},
+                   {"db_host", Value{std::string("h")}},
+                   {"db_password", Value{std::string("pw")}}});
+  apply(DataSource{LocalDatabase{"copy.db"}, "data"});
+  EXPECT_EQ(site_entry().database, "sqlite:" + (root / "copy.db").generic_string());
+
+  const InstallPlan plan = reconfigure();
+  EXPECT_EQ(site_install(plan, "lab").database, site_entry().database);
+  expect_no_conflict(plan);
+  EXPECT_TRUE(fs::exists(creds));
+  auto record = read_install_record(root);
+  ASSERT_TRUE(record) << record.error().what;
+  EXPECT_EQ(record->answers.at("db_file"), Value{std::string("copy.db")});
+  for (const char* id : {"db_host", "db_port", "db_name", "db_user"}) EXPECT_FALSE(record->answers.contains(id)) << id;
+}
+
+TEST_F(DataSourceApply, OnlyTheThreeFilesChange) {
+  install_profile({});
+  const auto root_before = hash_tree(root);
+  const auto site_before = hash_tree(site_path.parent_path());
+
+  apply(DataSource{server_with("pw"), "runs"});
+
+  auto root_after = hash_tree(root);
+  auto site_after = hash_tree(site_path.parent_path());
+  std::vector<std::string> changed;
+  for (const auto& [name, hash] : root_after) {
+    const auto it = root_before.find(name);
+    if (it == root_before.end() || it->second != hash) changed.push_back(name);
+  }
+  for (const auto& [name, hash] : root_before)
+    if (!root_after.contains(name)) changed.push_back("removed " + name);
+  EXPECT_EQ(changed, (std::vector<std::string>{".pychron/credentials.toml", ".pychron/install.toml"}));
+  EXPECT_EQ(site_after.size(), site_before.size());
+  EXPECT_NE(site_after.at("site.toml"), site_before.at("site.toml"));
+}
+
+TEST_F(DataSourceApply, WithoutARecordOnlyTheSiteAndCredentialsAreWritten) {
+  ASSERT_TRUE(register_install(install(), site_path));
+  apply(DataSource{server_with("pw"), "data"});
+  EXPECT_FALSE(fs::exists(record_path(root)));
+  EXPECT_TRUE(fs::exists(creds));
+  EXPECT_EQ(site_entry().database, "postgresql://u@h:5432/n");
 }
