@@ -29,7 +29,35 @@ std::optional<int> parse_port(std::string_view text) {
   return port;
 }
 
-// postgresql://user[:password]@host:port/db; the password is not taken.
+int hex_value(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// Undoes percent_encode. A '%' not followed by two hex digits is kept as it is.
+std::string percent_decode(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '%' && i + 2 < text.size()) {
+      const int hi = hex_value(text[i + 1]);
+      const int lo = hex_value(text[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        out += static_cast<char>((hi << 4) | lo);
+        i += 2;
+        continue;
+      }
+    }
+    out += text[i];
+  }
+  return out;
+}
+
+// postgresql://user[:password]@host:port/db; the password is not taken. The
+// user is percent-decoded, as database_url_for encodes it; host and db name
+// are written unencoded there, so they are taken as they stand.
 Result<ServerDatabase> parse_server_url(const std::string& url) {
   auto bad = [&] { return fail(ErrorKind::Config, "database URL is not postgresql://user@host:port/db: " + url); };
   std::string_view rest = std::string_view(url).substr(kPostgresPrefix.size());
@@ -42,7 +70,7 @@ Result<ServerDatabase> parse_server_url(const std::string& url) {
   const std::string_view hostport = rest.substr(0, slash);
   ServerDatabase server;
   server.name = std::string(rest.substr(slash + 1));
-  server.user = std::string(userinfo.substr(0, userinfo.find(':')));
+  server.user = percent_decode(userinfo.substr(0, userinfo.find(':')));
   if (const auto colon = hostport.rfind(':'); colon != std::string_view::npos) {
     const auto port = parse_port(hostport.substr(colon + 1));
     if (!port) return bad();

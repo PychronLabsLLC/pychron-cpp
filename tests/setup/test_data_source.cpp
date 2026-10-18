@@ -129,6 +129,27 @@ TEST_F(DataSourceFixture, CurrentSourceFallsBackToTheSiteEntry) {
             (std::variant<LocalDatabase, ServerDatabase>{ServerDatabase{"h", 5432, "n", "u", std::nullopt}}));
 }
 
+TEST_F(DataSourceFixture, AnEncodedUserInTheSiteEntryIsDecoded) {
+  // The installer writes the user percent-encoded (me@lab as me%40lab).
+  const SiteInstall before = install("postgresql://me%40lab@h:5432/n", "runs");
+  auto current = current_data_source(before);
+  ASSERT_TRUE(current) << current.error().what;
+  EXPECT_EQ(current->database,
+            (std::variant<LocalDatabase, ServerDatabase>{ServerDatabase{"h", 5432, "n", "me@lab", std::nullopt}}));
+  EXPECT_EQ(database_url(*current, root), before.database);
+
+  // A plan to the source as it stands is no change.
+  auto change = plan_data_source(before, *current);
+  ASSERT_TRUE(change) << change.error().what;
+  EXPECT_EQ(change->notes, (std::vector<std::string>{"nothing to change"}));
+  EXPECT_EQ(change->install.database, before.database);
+
+  // A '%' with no two hex digits after it is kept.
+  auto odd = current_data_source(install("postgresql://a%zz%4@h:5432/n"));
+  ASSERT_TRUE(odd) << odd.error().what;
+  EXPECT_EQ(std::get<ServerDatabase>(odd->database).user, "a%zz%4");
+}
+
 TEST_F(DataSourceFixture, AVersionOneRecordIsTheDefaultFileAndFolder) {
   write_record({{"data_source", Value{std::string("local")}}});
   auto current = current_data_source(install());
