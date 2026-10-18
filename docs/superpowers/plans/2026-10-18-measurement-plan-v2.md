@@ -209,13 +209,13 @@ Done notes: `SpectrometerCatalog` takes `spectrometer::cfg::MolecularWeights` (t
 **Interfaces:**
 - Produces: `std::string to_json(const MeasurementPlan& plan);` — `nlohmann::json` with sorted keys, 2-space indent, trailing newline; serializes `info`, `detectors`, `gases` (every field, enums as their strings), `fits`, `conditionals`, `expose`, `hook`; not the v1 fields.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `PlanGoldens.EveryValidFixtureMatchesItsGolden`: for each `valid/*.toml`, `to_json(load(...).plan)` equals `resolved/<stem>.json` byte for byte; when env `PYCHRON_UPDATE_GOLDENS=1` the test writes the file instead and fails with "golden rewritten: review the diff".
   - `PlanGoldens.V1EqualsItsV2Spelling`: `multicollect.toml` and `v2_spelling_of_multicollect.toml` resolve to equal `gases` (and the same for `peak_hop_cdd`).
-- [ ] **Step 2: Run** `--gtest_filter='PlanGoldens.*'` → FAIL.
-- [ ] **Step 3: Implement `to_json`**, write the two v2 spellings by hand from the §4.1 table, generate goldens with `PYCHRON_UPDATE_GOLDENS=1`, and read each golden against its fixture before committing.
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `test(experiment): resolved-plan goldens for every plan fixture`.
+- [x] **Step 2: Run** `--gtest_filter='PlanGoldens.*'` → FAIL.
+- [x] **Step 3: Implement `to_json`**, write the two v2 spellings by hand from the §4.1 table, generate goldens with `PYCHRON_UPDATE_GOLDENS=1`, and read each golden against its fixture before committing.
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `test(experiment): resolved-plan goldens for every plan fixture`.
 
 ### Task 5: Duration over gases, and the unbuilt-feature gate
 

@@ -1,0 +1,338 @@
+{
+  "conditionals": {
+    "include": [
+      "@conditionals.default_unknown"
+    ],
+    "truncations": [
+      {
+        "check": "Ar40 > 8e5",
+        "start": 20
+      }
+    ]
+  },
+  "detectors": {
+    "exclude": [],
+    "reference": "H1"
+  },
+  "expose": [
+    {
+      "label": "Counts",
+      "path": "main.hops[0].counts"
+    },
+    {
+      "label": "main.integration_s",
+      "path": "main.integration_s"
+    },
+    {
+      "label": "main.cycles",
+      "path": "main.cycles"
+    },
+    {
+      "label": "baseline.counts",
+      "path": "baseline.counts"
+    },
+    {
+      "label": "baseline.settle_s",
+      "path": "baseline.settle_s"
+    },
+    {
+      "label": "peak_center.before",
+      "path": "peak_center.before"
+    },
+    {
+      "label": "peak_center.after",
+      "path": "peak_center.after"
+    },
+    {
+      "label": "detectors.exclude",
+      "path": "detectors.exclude"
+    },
+    {
+      "label": "fits.signal",
+      "path": "fits.signal"
+    }
+  ],
+  "fits": {
+    "baseline": {
+      "default": "average"
+    },
+    "error": "sem",
+    "outliers": {
+      "enabled": true,
+      "iterations": 1,
+      "std_devs": 2.0
+    },
+    "signal": {
+      "Ar40": "parabolic",
+      "default": "linear"
+    }
+  },
+  "gases": [
+    {
+      "equilibration": {
+        "close_inlet": true,
+        "inlet": "V12",
+        "inlet_delay_s": 3.0,
+        "outlet": "V13",
+        "time_s": 20.0
+      },
+      "fits": {
+        "baseline": {
+          "default": "average"
+        },
+        "error": "sem",
+        "outliers": {
+          "enabled": true,
+          "iterations": 1,
+          "std_devs": 2.0
+        },
+        "signal": {
+          "Ar40": "parabolic",
+          "default": "linear"
+        }
+      },
+      "implicit": true,
+      "name": "",
+      "segments": [
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "sniff",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "CDD",
+                  "label": "Ar36",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "L2",
+                  "label": "Ar37",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "L1",
+                  "label": "Ar38",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "AX",
+                  "label": "Ar39",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "H1",
+                  "label": "Ar40",
+                  "protect": false
+                }
+              ],
+              "counts": 20,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "during_equilibration"
+        },
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "signal",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "CDD",
+                  "label": "Ar36",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "L2",
+                  "label": "Ar37",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "L1",
+                  "label": "Ar38",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "AX",
+                  "label": "Ar39",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "H1",
+                  "label": "Ar40",
+                  "protect": false
+                }
+              ],
+              "counts": 400,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 3.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": {
+            "kind": "on_inlet_close",
+            "offset_s": 0.0
+          },
+          "truncations": [],
+          "when": "after_inlet"
+        },
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "baseline",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": {
+                "detector": "H1",
+                "mass": 34.2
+              },
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "CDD",
+                  "label": "Ar36",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "L2",
+                  "label": "Ar37",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "L1",
+                  "label": "Ar38",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "AX",
+                  "label": "Ar39",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "H1",
+                  "label": "Ar40",
+                  "protect": false
+                }
+              ],
+              "counts": 120,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 15.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_main"
+        },
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "peak_center",
+          "park": null,
+          "peak_center": {
+            "config": "default",
+            "detectors": [
+              "H1"
+            ],
+            "extra_detectors": [],
+            "label": "Ar40",
+            "min_signal": 0.0,
+            "write_table": ""
+          },
+          "positions": [],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_run"
+        }
+      ],
+      "source_dark_phase": false,
+      "time_zero": null
+    }
+  ],
+  "hook": "scripts/measurement_hooks/whiff.py",
+  "info": {
+    "analysis_types": [
+      "unknown",
+      "air",
+      "cocktail",
+      "blank_unknown"
+    ],
+    "description": "Standard 6-collector static measurement",
+    "instrument_family": "thermo_argus",
+    "name": "argus_multicollect"
+  }
+}

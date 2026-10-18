@@ -1,0 +1,65 @@
+# peak_hop_cdd.toml written out as v2 segments by hand from the v1 -> v2 table
+# (section 4.1 of docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md).
+# PlanGoldens.V1EqualsItsV2Spelling holds that both resolve to the same gases.
+#
+#   [whiff] enabled                  -> whiff segment at after_inlet, before the signal segment,
+#                                       on the first hop's collected detectors
+#   [main] + [[main.hops]]           -> one signal segment; protect = ["CDD"] -> protect = true on
+#                                       that entry; position = {...} -> at; baseline = true, mass
+#                                       -> kind = "baseline", at = { mass, detector }
+#   [baseline] after                 -> baseline segment at after_main, at the mass on the reference
+
+[plan]
+name = "argus_peak_hop_cdd_v2"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = 15
+
+[[segment]]
+kind = "whiff"
+when = "after_inlet"
+integration_s = 0.5
+checks = [{ check = "Ar40.cur > 5e6", action = "abort" }, { check = "Ar40.cur > 1e6", action = "pump" }]
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar36 = "CDD" }
+counts = 4
+
+[[segment]]
+kind = "signal"
+cycles = 20
+integration_s = 1
+time_zero = { offset_s = 5 }
+[[segment.positions]]
+collect = [{ label = "Ar36", detector = "CDD", protect = true }, { label = "Ar40", detector = "H1" }]
+counts = 10
+settle_s = 3
+[[segment.positions]]
+collect = { Ar39 = "CDD" }
+at = { label = "Ar39", detector = "CDD" }
+counts = 10
+settle_s = 3
+[[segment.positions]]
+collect = { Ar36 = "CDD" }
+kind = "baseline"
+at = { mass = 34.2, detector = "CDD" }
+counts = 10
+settle_s = 3
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+integration_s = 1
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar36 = "CDD" }
+at = { mass = 34.2, detector = "H1" }
+counts = 30
+settle_s = 10
+
+[parameters]
+expose = ["segment[1].cycles", "segment[1].positions[1].counts"]

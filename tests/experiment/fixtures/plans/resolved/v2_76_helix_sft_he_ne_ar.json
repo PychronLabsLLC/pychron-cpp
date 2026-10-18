@@ -1,0 +1,431 @@
+{
+  "conditionals": {
+    "include": [],
+    "truncations": []
+  },
+  "detectors": {
+    "exclude": [],
+    "reference": ""
+  },
+  "expose": [],
+  "fits": {
+    "baseline": {
+      "default": "average"
+    },
+    "error": "sem",
+    "outliers": {
+      "enabled": false,
+      "iterations": 1,
+      "std_devs": 2.0
+    },
+    "signal": {
+      "default": "linear"
+    }
+  },
+  "gases": [
+    {
+      "equilibration": {
+        "close_inlet": true,
+        "inlet": "V20",
+        "inlet_delay_s": 3.0,
+        "outlet": "V13",
+        "time_s": 20.0
+      },
+      "fits": {
+        "baseline": {
+          "default": "average"
+        },
+        "error": "sem",
+        "outliers": {
+          "enabled": false,
+          "iterations": 1,
+          "std_devs": 2.0
+        },
+        "signal": {
+          "default": "linear"
+        }
+      },
+      "implicit": false,
+      "name": "He",
+      "segments": [
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "signal",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "He3",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "Faraday",
+                  "label": "He4",
+                  "protect": false
+                }
+              ],
+              "counts": 200,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_inlet"
+        },
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "baseline",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": {
+                "detector": "SEM",
+                "mass": 3.5
+              },
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "He3",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "Faraday",
+                  "label": "He4",
+                  "protect": false
+                }
+              ],
+              "counts": 30,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_main"
+        }
+      ],
+      "source_dark_phase": false,
+      "time_zero": {
+        "kind": "on_inlet_close",
+        "offset_s": 0.0
+      }
+    },
+    {
+      "equilibration": {
+        "close_inlet": true,
+        "inlet": "V21",
+        "inlet_delay_s": 3.0,
+        "outlet": "V13",
+        "time_s": 30.0
+      },
+      "fits": {
+        "baseline": {
+          "default": "average"
+        },
+        "error": "sem",
+        "outliers": {
+          "enabled": false,
+          "iterations": 1,
+          "std_devs": 2.0
+        },
+        "signal": {
+          "default": "linear"
+        }
+      },
+      "implicit": false,
+      "name": "Ne",
+      "segments": [
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 10,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 2.0,
+          "kind": "signal",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ne20",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 4.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ne21",
+                  "protect": false
+                }
+              ],
+              "counts": 8,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 4.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ne22",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 4.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ar40",
+                  "protect": false
+                }
+              ],
+              "counts": 3,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 4.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "CO2",
+                  "protect": false
+                }
+              ],
+              "counts": 3,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 4.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_inlet"
+        }
+      ],
+      "source_dark_phase": false,
+      "time_zero": null
+    },
+    {
+      "equilibration": {
+        "close_inlet": true,
+        "inlet": "V22",
+        "inlet_delay_s": 3.0,
+        "outlet": "V13",
+        "time_s": 20.0
+      },
+      "fits": {
+        "baseline": {
+          "default": "average"
+        },
+        "error": "sem",
+        "outliers": {
+          "enabled": false,
+          "iterations": 1,
+          "std_devs": 2.0
+        },
+        "signal": {
+          "default": "linear"
+        }
+      },
+      "implicit": false,
+      "name": "Ar",
+      "segments": [
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 8,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "signal",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "Faraday",
+                  "label": "Ar40",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ar39",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ar38",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ar37",
+                  "protect": false
+                }
+              ],
+              "counts": 8,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ar36",
+                  "protect": false
+                }
+              ],
+              "counts": 8,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_inlet"
+        }
+      ],
+      "source_dark_phase": false,
+      "time_zero": null
+    }
+  ],
+  "hook": null,
+  "info": {
+    "analysis_types": [
+      "unknown"
+    ],
+    "description": "",
+    "instrument_family": "thermo_helix_sft",
+    "name": "v2_76_helix_sft_he_ne_ar"
+  }
+}

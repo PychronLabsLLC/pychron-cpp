@@ -1,0 +1,76 @@
+# multicollect.toml written out as v2 segments by hand from the v1 -> v2 table
+# (section 4.1 of docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md).
+# PlanGoldens.V1EqualsItsV2Spelling holds that both resolve to the same gases.
+#
+#   [sniff] enabled          -> sniff segment at during_equilibration, first hop's detectors
+#   [main] + [[main.hops]]   -> one signal segment at after_inlet
+#   [baseline] after         -> baseline segment at after_main, every signal detector, at the mass
+#   [peak_center] after      -> peak_center step at after_run
+
+hook = "scripts/measurement_hooks/whiff.py"
+
+[plan]
+name = "argus_multicollect_v2"
+instrument_family = "thermo_argus"
+description = "Standard 6-collector static measurement, v2 spelling"
+analysis_types = ["unknown", "air", "cocktail", "blank_unknown"]
+
+[detectors]
+reference = "H1"
+exclude = []
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+close_inlet = true
+
+[[segment]]
+kind = "sniff"
+when = "during_equilibration"
+integration_s = 1
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
+counts = "@equilibration.time_s"
+
+[[segment]]
+kind = "signal"
+when = "after_inlet"
+cycles = 1
+integration_s = 1
+time_zero = "on_inlet_close"
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
+counts = 400
+settle_s = 3
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+integration_s = 1
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX", Ar38 = "L1", Ar37 = "L2", Ar36 = "CDD" }
+at = { mass = 34.2, detector = "H1" }
+counts = 120
+settle_s = 15
+
+[[segment]]
+kind = "peak_center"
+when = "after_run"
+peak_center = { label = "Ar40", detector = "H1", config = "default" }
+
+[fits]
+signal = { default = "linear", Ar40 = "parabolic" }
+baseline = { default = "average" }
+error = "sem"
+outliers = { enabled = true, iterations = 1, std_devs = 2 }
+
+[conditionals]
+include = ["@conditionals.default_unknown"]
+truncations = [{ check = "Ar40 > 8e5", start = 20 }]
+
+[parameters]
+expose = [{ path = "segment[1].positions[0].counts", label = "Counts" }, "segment[1].integration_s",
+          "segment[1].cycles", "segment[2].positions[0].counts", "segment[2].positions[0].settle_s",
+          "detectors.exclude", "fits.signal"]

@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -16,6 +18,7 @@
 #include <vector>
 
 #include "pychron/experiment/plan/plan.hpp"
+#include "pychron/experiment/plan/plan_json.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 
@@ -1276,4 +1279,70 @@ counts = 5
   ASSERT_EQ(segs.size(), 1u);
   ASSERT_EQ(segs[0].positions[0].collect.size(), 1u);
   EXPECT_EQ(segs[0].positions[0].collect[0].detector, "H1");
+}
+
+// ---- resolved-plan goldens and the v1 = v2 equivalence (Task 4) -------------------
+
+namespace {
+
+// Every valid fixture, in name order (directory order is the platform's).
+std::vector<fs::path> valid_fixtures() {
+  std::vector<fs::path> out;
+  for (const auto& entry : fs::directory_iterator(kPlanFixtures / "valid"))
+    if (entry.path().extension() == ".toml") out.push_back(entry.path());
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+std::string read_bytes(const fs::path& p) {
+  std::ifstream in(p, std::ios::binary);
+  std::stringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
+
+bool update_goldens() {
+  const char* v = std::getenv("PYCHRON_UPDATE_GOLDENS");  // NOLINT(concurrency-mt-unsafe): read once, no setenv in this suite
+  return v != nullptr && std::string_view(v) == "1";
+}
+
+}  // namespace
+
+TEST(PlanGoldens, EveryValidFixtureMatchesItsGolden) {
+  const auto fixtures = valid_fixtures();
+  ASSERT_FALSE(fixtures.empty());
+  const bool update = update_goldens();
+  for (const auto& fixture : fixtures) {
+    const auto name = fixture.filename().string();
+    SCOPED_TRACE(name);
+    const auto json = plan::to_json(load_worked(name));
+    const auto golden = kPlanFixtures / "resolved" / (fixture.stem().string() + ".json");
+    if (update) {
+      fs::create_directories(golden.parent_path());
+      std::ofstream(golden, std::ios::binary) << json;
+      ADD_FAILURE() << "golden rewritten: review the diff (" << golden.filename().string() << ")";
+      continue;
+    }
+    ASSERT_TRUE(fs::exists(golden)) << "no golden " << golden.string()
+                                    << "; write it with PYCHRON_UPDATE_GOLDENS=1 and review it";
+    EXPECT_EQ(json, read_bytes(golden));
+  }
+}
+
+TEST(PlanGoldens, V1EqualsItsV2Spelling) {
+  for (const std::string stem : {"multicollect", "peak_hop_cdd"}) {
+    SCOPED_TRACE(stem);
+    const auto v1 = load_worked(stem + ".toml");
+    const auto v2 = load_worked("v2_spelling_of_" + stem + ".toml");
+    ASSERT_EQ(v1.gases.size(), 1u);
+    EXPECT_FALSE(v1.gases.front().segments.empty());
+    EXPECT_EQ(v1.gases, v2.gases);
+    // On a difference, the JSON of the two shows where.
+    if (v1.gases != v2.gases) {
+      plan::MeasurementPlan a, b;
+      a.gases = v1.gases;
+      b.gases = v2.gases;
+      EXPECT_EQ(plan::to_json(a), plan::to_json(b));
+    }
+  }
 }
