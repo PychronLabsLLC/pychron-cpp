@@ -216,11 +216,11 @@
 - Consumes: `Spectrometer::save_table`, `hold_table`, `table_held` (Task 5).
 - Produces: after `update_table` succeeds, `apply` calls `spec_.save_table(clock.wall_now())` (the spectrometer's context clock; expose `const Clock& Spectrometer::clock() const noexcept` if no accessor exists). Save failure: result stays ok, `notes` gets `"field table not saved: <what>"`, a warning is logged, in-memory table kept. `run_peak_center` takes `hold_table("peak_center")`, `Sweep::run` takes `hold_table("sweep")`, for their whole run.
 
-- [ ] **Step 1: Write failing tests**: `PeakCenterRun.UpdateTableWritesANewVersionStampedFromTheClock` (data root in a temp dir with the table saved once; after the job `table_version` differs and equals `format_version(clock.wall_now())` at the save, using the test's virtual or manual clock); `PeakCenterRun.SaveFailureLeavesSuccessWithANote` (make `tables/<name>` read-only with `fs::permissions`; restore permissions in TearDown; result ok, `notes` has one entry starting `"field table not saved"`, `field_table()` has the new value); `PeakCenterRun.HoldsTheTableWhileRunning` and `Sweep.HoldsTheTableWhileRunning` (record `table_held()` from the progress callback or a fake acquirer read: `"peak_center"` / `"sweep"`; nullopt after).
-- [ ] **Step 2: Run** `--gtest_filter='PeakCenterRun.*:Sweep*'`. Expected: new tests FAIL.
-- [ ] **Step 3: Implement.** Update `docs/user/03-spectrometer.md` near line 425 only if wording no longer matches (the sentence is now true; add that a save failure is shown as a note).
-- [ ] **Step 4: Run** same filter. Expected: PASS. Then `ctest --preset dev-quick` (peak center results reach `libs/experiment` and UI views).
-- [ ] **Step 5: Commit** `fix(spectrometer): peak center saves its field table update`.
+- [x] **Step 1: Write failing tests**: `PeakCenterRun.UpdateTableWritesANewVersionStampedFromTheClock` (data root in a temp dir with the table saved once; after the job `table_version` differs and equals `format_version(clock.wall_now())` at the save, using the test's virtual or manual clock); `PeakCenterRun.SaveFailureLeavesSuccessWithANote` (make `tables/<name>` a regular file, so no version can be written into it: a read-only directory is written into all the same on Windows and by root; result ok, `notes` has one entry starting `"field table not saved"`, `field_table()` has the new value); `PeakCenterRun.HoldsTheTableWhileRunning` and `Sweep.HoldsTheTableWhileRunning` (record `table_held()` from the progress callback or a fake acquirer read: `"peak_center"` / `"sweep"`; nullopt after).
+- [x] **Step 2: Run** `--gtest_filter='PeakCenterRun.*:Sweep*'`. Expected: new tests FAIL.
+- [x] **Step 3: Implement.** Update `docs/user/03-spectrometer.md` near line 425 only if wording no longer matches (the sentence is now true; add that a save failure is shown as a note).
+- [x] **Step 4: Run** same filter. Expected: PASS. Then `ctest --preset dev-quick` (peak center results reach `libs/experiment` and UI views).
+- [x] **Step 5: Commit** `fix(spectrometer): peak center saves its field table update`.
 
 ### Task 8: Executor holds the table for a queue run
 

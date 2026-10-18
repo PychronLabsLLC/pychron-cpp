@@ -156,8 +156,12 @@ class MeasurementSim : public pychron::testing::VirtualTimeTest {
     };
     beam_ = std::make_shared<sim::BeamModel>(clock_, settings);
     sim::BeamModelRegistry::global().set("default", beam_);
+    // Peak center saves its table update under the data root: a scratch
+    // directory, not the shipped examples.
+    spectrometer::SpectrometerAssembler::Options assembler;
+    assembler.spectrometer.data_root = data_root_;
     auto spec = spectrometer::SpectrometerAssembler::assemble(
-        std::move(*data), spectrometer::SpectrometerContext{clock_, scheduler_, bus_});
+        std::move(*data), spectrometer::SpectrometerContext{clock_, scheduler_, bus_}, std::move(assembler));
     ASSERT_TRUE(spec) << spec.error().what;
     spec_ = std::move(*spec);
     scheduler_.start();
@@ -168,10 +172,13 @@ class MeasurementSim : public pychron::testing::VirtualTimeTest {
     spec_.reset();
     line_.reset();
     sim::BeamModelRegistry::global().clear();
+    std::error_code ec;
+    std::filesystem::remove_all(data_root_, ec);
   }
 
   plan::PlanResolvers resolvers() const { return plan::PlanResolvers{aliases_.get(), catalog_.get()}; }
 
+  std::filesystem::path data_root_ = pychron::testing::unique_temp_path("measurement_sim_data_");
   VirtualClock clock_;  // before everything that is given a reference to it
   // Time moves only while the test waits in the clock (a measurement, a job).
   Clock::Participant test_{clock_, "test"};
@@ -682,8 +689,12 @@ class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
     };
     beam_ = std::make_shared<sim::BeamModel>(clock_, settings);
     sim::BeamModelRegistry::global().set("default", beam_);
+    // Peak center saves its table update under the data root: a scratch
+    // directory, not the shipped examples.
+    spectrometer::SpectrometerAssembler::Options assembler;
+    assembler.spectrometer.data_root = data_root_;
     auto spec = spectrometer::SpectrometerAssembler::assemble(
-        std::move(*data), spectrometer::SpectrometerContext{clock_, scheduler_, bus_});
+        std::move(*data), spectrometer::SpectrometerContext{clock_, scheduler_, bus_}, std::move(assembler));
     ASSERT_TRUE(spec) << spec.error().what;
     spec_ = std::move(*spec);
     scheduler_.start();
@@ -693,6 +704,8 @@ class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
     scheduler_.stop();
     spec_.reset();
     sim::BeamModelRegistry::global().clear();
+    std::error_code ec;
+    std::filesystem::remove_all(data_root_, ec);
   }
 
   std::vector<std::string> stalls() {
@@ -702,6 +715,7 @@ class SpectrometerPeakCenterVirtual : public pychron::testing::VirtualTimeTest {
 
   std::mutex mutex_;
   std::vector<std::string> stalls_;
+  std::filesystem::path data_root_ = pychron::testing::unique_temp_path("measurement_sim_data_");
   VirtualClock clock_{options(this)};  // before everything that is given a reference to it
   Clock::Participant test_{clock_, "test"};
   SignalBus bus_;

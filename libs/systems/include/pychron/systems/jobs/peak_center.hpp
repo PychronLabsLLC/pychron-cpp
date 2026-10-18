@@ -25,8 +25,12 @@
 //   4. success: dac_offset is added; a center further than
 //      peak_shift_threshold from the start is rejected; otherwise the center
 //      is uncorrected (deflection, HV) into a table value, written with
-//      Spectrometer::update_table (propagated to other detectors per config)
-//      and the magnet is positioned on the isotope through the new table.
+//      Spectrometer::update_table (propagated to other detectors per config),
+//      saved as a new version of the table (stamped from the spectrometer's
+//      clock; a failed save is a note and a warning, not a failure) and the
+//      magnet is positioned on the isotope through the new table.
+// The runner holds the field table (Spectrometer::hold_table) for its whole
+// run, so the editor cannot replace it underneath.
 // A failed centering is a result with ok = false, not an error: errors are
 // for hardware faults and cancellation. Every try's points are kept.
 
@@ -132,6 +136,9 @@ struct PeakCenterResult {
   std::optional<PeakShape> shape;      // reference detector
   std::vector<DetectorPeak> additional;
   std::vector<PeakCenterTry> tries;    // every try's sweep, kept on failure too
+  // What went wrong without failing the centering, e.g. "field table not
+  // saved: <why>" when the updated table could not be written to the store.
+  std::vector<std::string> notes;
 };
 
 // Published by run_peak_center when a bus is given (spec: PeakCenterDone).

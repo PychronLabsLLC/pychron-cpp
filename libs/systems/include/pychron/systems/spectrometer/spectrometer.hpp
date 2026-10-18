@@ -235,6 +235,9 @@ class Spectrometer {
   // data_root.
   Result<std::string> table_version(const std::string& name) const;
   const std::filesystem::path& data_root() const noexcept { return options_.data_root; }
+  // The context's clock and bus (jobs stamp saves and log through them).
+  const Clock& clock() const noexcept { return context_.clock; }
+  SignalBus& bus() const noexcept { return context_.bus; }
 
   // The editor's Save (field table editor spec, section 5): writes `table` as
   // a new version of `name`, makes it current, swaps it in when `name` is

@@ -8,13 +8,19 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <mutex>
+#include <optional>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include <toml++/toml.hpp>
 
 #include "jobs_fakes.hpp"
+#include "temp_path.hpp"
 #include "pychron/systems/jobs/job_runner.hpp"
 #include "pychron/systems/jobs/peak_center.hpp"
+#include "pychron/systems/spectrometer/field_table_store.hpp"
 
 using namespace pychron;
 using namespace pychron::jobs;
@@ -154,8 +160,14 @@ detector = "CDD"
 
 // The rig's H1 signal is a flat-topped peak at `true_center` (native units) on
 // whatever the magnet is set to; AX sees the same peak shifted by `ax_shift`.
+// The spectrometer's data root is a fresh directory per test.
 class PeakCenterRun : public ::testing::Test {
  protected:
+  void TearDown() override {
+    std::error_code ec;
+    std::filesystem::remove_all(root_, ec);
+  }
+
   void SetUp() override {
     ASSERT_TRUE(rig_.spec);
     auto initial = rig_.spec->native_for(*rig_.spec->mass_of(spectrometer::PositionTarget{
@@ -189,7 +201,8 @@ class PeakCenterRun : public ::testing::Test {
     return c;
   }
 
-  JobRig rig_;
+  std::filesystem::path root_ = pychron::testing::unique_temp_path("pychron_peak_center_");
+  JobRig rig_{root_};
   Progress progress_;
   CancelToken cancel_;
   double initial_ = 0, true_center_ = 0, ax_shift_ = 0.001, height_ = 1000;
@@ -452,3 +465,78 @@ TEST_F(PeakCenterRun, AnAdditionalDetectorWithoutAPeakDoesNotFailThePeakCenter) 
 }
 
 }  // namespace
+
+// D2 (field table editor spec, section 6): the peak center's table update is
+// saved as a new version, stamped from the spectrometer's clock.
+TEST_F(PeakCenterRun, UpdateTableWritesANewVersionStampedFromTheClock) {
+  const std::string name = rig_.spec->active_table();
+  auto first = rig_.spec->save_table(rig_.clock.wall_now());
+  ASSERT_TRUE(first) << first.error().what;
+  std::mutex m;
+  std::vector<std::string> saved_at;  // format_version of the clock at each save
+  auto sub = rig_.bus.subscribe<spectrometer::FieldTableChanged>([&](const spectrometer::FieldTableChanged&) {
+    std::lock_guard lock(m);
+    saved_at.push_back(spectrometer::format_version(rig_.clock.wall_now()));
+  });
+  auto r = run(config());
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_TRUE(r->ok) << r->message;
+  EXPECT_TRUE(r->table_updated);
+  EXPECT_TRUE(r->notes.empty());
+  auto current = rig_.spec->table_version(name);
+  ASSERT_TRUE(current) << current.error().what;
+  EXPECT_NE(*current, *first);
+  ASSERT_EQ(saved_at.size(), 1u);
+  EXPECT_EQ(*current, saved_at.front());
+  // The saved version is the updated table.
+  auto stored = spectrometer::FieldTableStore(root_ / "tables", name).load(*current);
+  ASSERT_TRUE(stored) << stored.error().what;
+  EXPECT_EQ(*stored, rig_.spec->field_table());
+}
+
+// A save that fails does not fail the peak center: the update stays in
+// memory and the result says it was not saved.
+TEST_F(PeakCenterRun, SaveFailureLeavesSuccessWithANote) {
+  // The table's store directory is a regular file: no version can be written
+  // into it (on every platform and for every user, unlike a read-only
+  // directory, which Windows and root write into all the same).
+  const std::string name = rig_.spec->active_table();
+  const auto store = root_ / "tables" / name;
+  std::filesystem::create_directories(store.parent_path());
+  std::ofstream(store) << "not a directory\n";
+  const auto before = rig_.spec->field_table();
+  auto r = run(config());
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_TRUE(r->ok) << r->message;
+  EXPECT_TRUE(r->table_updated);
+  ASSERT_EQ(r->notes.size(), 1u);
+  EXPECT_EQ(r->notes.front().rfind("field table not saved", 0), 0u) << r->notes.front();
+  EXPECT_NE(rig_.spec->field_table(), before);
+  auto again = rig_.spec->native_for(
+      *rig_.spec->mass_of(spectrometer::PositionTarget{spectrometer::Isotope{"Ar40"}, "H1"}), "H1");
+  ASSERT_TRUE(again);
+  EXPECT_NEAR(*again, *r->center, 1e-9);
+  EXPECT_TRUE(std::filesystem::is_regular_file(store));
+}
+
+// The table is held for the whole run (field table editor spec, section 5);
+// the sweep inside takes its own hold, behind this one.
+TEST_F(PeakCenterRun, HoldsTheTableWhileRunning) {
+  std::mutex m;
+  std::vector<std::optional<std::string>> seen;
+  auto signal = rig_.acquirer.signal;
+  rig_.acquirer.signal = [&, signal](const spectrometer::ChannelId& ch) {
+    {
+      std::lock_guard lock(m);
+      seen.push_back(rig_.spec->table_held());
+    }
+    return signal(ch);
+  };
+  EXPECT_EQ(rig_.spec->table_held(), std::nullopt);
+  auto r = run(config());
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_TRUE(r->ok) << r->message;
+  ASSERT_FALSE(seen.empty());
+  for (const auto& held : seen) EXPECT_EQ(held, std::optional<std::string>("peak_center"));
+  EXPECT_EQ(rig_.spec->table_held(), std::nullopt);
+}

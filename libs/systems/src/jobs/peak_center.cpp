@@ -8,6 +8,8 @@
 
 #include <toml++/toml.hpp>
 
+#include "pychron/core/logger.hpp"
+
 namespace pychron::jobs {
 
 namespace {
@@ -263,6 +265,7 @@ class Runner {
 
   Result<PeakCenterResult> run() {
     if (auto v = validate(cfg_); !v) return fail(v.error());
+    const auto hold = spec_.hold_table("peak_center");  // released when the run returns
     r_.config = cfg_;
     r_.isotope = cfg_.isotope;
     r_.detector = cfg_.detector.empty() ? spec_.reference_detector() : cfg_.detector;
@@ -438,6 +441,13 @@ class Runner {
     if (cfg_.update_table && !cfg_.isotope.empty()) {
       if (auto u = spec_.update_table(r_.detector, cfg_.isotope, *table_value, cfg_.propagate); !u) return u;
       r_.table_updated = true;
+      // D2 (field table editor spec, section 6): persist the update. A failed
+      // save keeps the in-memory table and the success.
+      if (auto saved = spec_.save_table(spec_.clock().wall_now()); !saved) {
+        const std::string note = "field table not saved: " + saved.error().what;
+        Logger("peak_center", spec_.clock(), &spec_.bus()).warn(note);
+        r_.notes.push_back(note);
+      }
       auto p = spec_.position(spectrometer::PositionTarget{spectrometer::Isotope{cfg_.isotope}, r_.detector});
       if (!p) return fail(p.error());
       return {};

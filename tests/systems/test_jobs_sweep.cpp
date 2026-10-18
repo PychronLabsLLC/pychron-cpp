@@ -3,6 +3,9 @@
 #include <chrono>
 #include <cmath>
 #include <future>
+#include <mutex>
+#include <optional>
+#include <string>
 
 #include "jobs_fakes.hpp"
 #include "pychron/systems/jobs/sweep.hpp"
@@ -367,4 +370,30 @@ TEST(Sweep, FailedMagnetStepWaitsTheConfiguredSettleBeforeCleanup) {
   EXPECT_EQ(r.clock.now() - start, 500ms);  // the facade's wait; the sweep's own settle never ran
   EXPECT_TRUE(r.sleeps.empty());
   EXPECT_TRUE(sweep.points().empty());
+}
+
+// A sweep holds the field table for its whole run (field table editor spec,
+// section 5): the editor's Save is refused while it measures.
+TEST(Sweep, HoldsTheTableWhileRunning) {
+  JobRig r;
+  ASSERT_TRUE(r.spec);
+  std::mutex seen_mutex;
+  std::vector<std::optional<std::string>> seen;
+  r.acquirer.signal = [&](const ChannelId&) {
+    std::lock_guard lock(seen_mutex);
+    seen.push_back(r.spec->table_held());
+    return 1.0;
+  };
+  SweepSpec s = magnet_sweep(4.0, 5.0, 0.5);
+  s.record = {"H1"};
+  Sweep sweep(Sweep::Options{r.sweep_sleep(), spectrometer::ProtectPolicy::Never});
+  Progress progress;
+  CancelToken cancel;
+  EXPECT_EQ(r.spec->table_held(), std::nullopt);
+  auto fut = std::async(std::launch::async, [&] { return sweep.run(*r.spec, s, progress, cancel); });
+  auto result = r.drive(fut);
+  ASSERT_TRUE(result.has_value()) << to_string(result.error());
+  ASSERT_FALSE(seen.empty());
+  for (const auto& held : seen) EXPECT_EQ(held, std::optional<std::string>("sweep"));
+  EXPECT_EQ(r.spec->table_held(), std::nullopt);
 }

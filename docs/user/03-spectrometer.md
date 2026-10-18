@@ -424,7 +424,11 @@ either, so each lab chooses its own.
 
 `update_table = true` writes a **new version** of the field table (a
 timestamped file under `tables/<name>/`, with a `current` pointer file naming
-the active one). Old versions are kept; nothing is overwritten.
+the active one). Old versions are kept; nothing is overwritten. If that file
+cannot be written (no data directory, a folder that is not writable), the
+peak center still succeeds and moves to the new value, but its result
+carries the note `field table not saved: <why>` and a warning is logged:
+the update then lasts only until pychron is restarted.
 
 ## The spectrometer config
 

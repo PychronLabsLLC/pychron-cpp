@@ -100,6 +100,7 @@ class IntegrationScope {
 Result<std::vector<SweepPoint>> Sweep::run(Spectrometer& spec, const SweepSpec& sweep, Progress& progress,
                                            CancelToken& cancel) {
   points_.clear();
+  const auto hold = spec.hold_table("sweep");  // the editor cannot replace the table mid-sweep
   auto positions = sweep_positions(sweep);
   if (!positions) return fail(positions.error());
 
