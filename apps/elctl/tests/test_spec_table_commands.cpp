@@ -1,10 +1,11 @@
-// elctl spec table: the read commands (list, show, versions, diff, check),
-// on a scratch copy of the example lab and its field tables.
+// elctl spec table: the read commands (list, show, versions, diff, check)
+// and the write commands (set, restore, import), on a scratch copy of the example lab and its field tables.
 
 #include <gtest/gtest.h>
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -100,6 +101,32 @@ class SpecTableCmd : public ElctlTest {
                    bool make_current) const {
     std::ofstream(table_dir(name) / (version + ".toml"), std::ios::binary) << text;
     if (make_current) std::ofstream(table_dir(name) / "current", std::ios::binary | std::ios::trunc) << version << ".toml\n";
+  }
+
+  std::string read_file(const fs::path& p) const {
+    std::ifstream in(p, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+  }
+  std::string current_of(const std::string& name) const { return read_file(table_dir(name) / "current"); }
+  std::size_t version_count(const std::string& name) const {
+    std::size_t n = 0;
+    for (const auto& e : fs::directory_iterator(table_dir(name)))
+      if (e.path().extension() == ".toml") ++n;
+    return n;
+  }
+  // Takes detector H2 out of the scratch spectrometer config, as at a lab
+  // whose mftable.csv still has a column the config no longer names.
+  void drop_h2_from_config() const {
+    const auto file = lab("spectrometer.qtegra.toml");
+    auto text = read_file(file);
+    const auto start = text.find("[[detectors]]\nname = \"H2\"");
+    ASSERT_NE(start, std::string::npos);
+    const auto next = text.find("[[detectors]]", start + 1);
+    ASSERT_NE(next, std::string::npos);
+    text.erase(start, next - start);
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << text;
   }
 };
 
@@ -210,12 +237,120 @@ TEST_F(SpecTableCmd, UnknownTableFails) {
   EXPECT_EQ(version.code, kFailed) << version.out << version.err;
 }
 
+TEST_F(SpecTableCmd, SetWritesANewVersionAndPropagates) {
+  const auto before = version_count("argon");
+  const auto o = table({"set", "argon", "H1", "Ar40", "5.011", "--propagate"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_EQ(version_count("argon"), before + 1);
+  EXPECT_NE(current_of("argon"), "2026-09-30T000000.toml\n");
+  // H1 moved by +0.010; with --propagate every other detector at Ar40 did too.
+  const auto shown = table({"show", "argon"});
+  ASSERT_EQ(shown.code, 0) << shown.err;
+  EXPECT_TRUE(contains(shown.out, "5.01100")) << shown.out;
+  EXPECT_TRUE(contains(shown.out, "5.13300")) << shown.out;  // H2 5.123 + 0.010
+
+  // Without it (the config default here) only H1 moves.
+  const auto lone = table({"set", "argon", "H1", "Ar40", "5.021"});
+  ASSERT_EQ(lone.code, 0) << lone.out << lone.err;
+  const auto again = table({"show", "argon"});
+  EXPECT_TRUE(contains(again.out, "5.02100")) << again.out;
+  EXPECT_TRUE(contains(again.out, "5.13300")) << again.out;
+}
+
+TEST_F(SpecTableCmd, SetRefusedOnDiagnosticErrorExitsOne) {
+  const auto before = version_count("argon");
+  const auto current = current_of("argon");
+  const auto o = table({"set", "argon", "H1", "Ar40", "nan"});
+  EXPECT_EQ(o.code, kFailed) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "error: row ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "is not finite")) << o.out;
+  EXPECT_FALSE(contains(o.out, "wrote ")) << o.out;
+  EXPECT_EQ(version_count("argon"), before);
+  EXPECT_EQ(current_of("argon"), current);
+
+  // Neither a detector nor an isotope the table lacks is written.
+  EXPECT_EQ(table({"set", "argon", "H9", "Ar40", "5.0"}).code, kFailed);
+  EXPECT_EQ(table({"set", "argon", "H1", "Kr84", "5.0"}).code, kFailed);
+  EXPECT_EQ(table({"set", "argon", "H1", "Ar40", "five"}).code, kUsage);
+  EXPECT_EQ(version_count("argon"), before);
+}
+
+TEST_F(SpecTableCmd, ImportTheMelbourneFixture) {
+  drop_h2_from_config();
+  const auto o = table({"import", "argon", std::string(PYCHRON_SYSTEMS_TEST_DATA_DIR) + "/mftable_melbourne.csv"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "warning: H2: ")) << o.out;
+  EXPECT_TRUE(contains(o.out, "wrote argon ")) << o.out;
+  const auto shown = table({"show", "argon"});
+  ASSERT_EQ(shown.code, 0) << shown.err;
+  EXPECT_TRUE(contains(shown.out, "6.24000")) << shown.out;  // H1 at Ar40
+  EXPECT_TRUE(contains(shown.out, "(axis dac)")) << shown.out;
+  EXPECT_TRUE(contains(shown.out, "fit: quadratic")) << shown.out;
+}
+
+TEST_F(SpecTableCmd, ImportRefusedOnError) {
+  const auto csv = dir_ / "dup.csv";
+  std::ofstream(csv, std::ios::binary) << "iso,H1,AX\nAr40,5.0,4.9\nAr40,4.8,4.7\n";
+  const auto before = version_count("argon");
+  const auto current = current_of("argon");
+  const auto o = table({"import", "argon", csv.string()});
+  EXPECT_EQ(o.code, kFailed) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "duplicate isotope Ar40")) << o.err;
+  EXPECT_FALSE(contains(o.out, "wrote ")) << o.out;
+  EXPECT_EQ(version_count("argon"), before);
+  EXPECT_EQ(current_of("argon"), current);
+
+  const auto missing = table({"import", "argon", (dir_ / "nope.csv").string()});
+  EXPECT_EQ(missing.code, kFailed) << missing.out << missing.err;
+}
+
+TEST_F(SpecTableCmd, RestoreMovesPointer) {
+  add_version("argon", "20261001T000000Z", kSecondArgon, true);
+  const auto o = table({"restore", "argon", "2026-09-30T000000"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(current_of("argon"), "2026-09-30T000000")) << current_of("argon");
+  EXPECT_EQ(version_count("argon"), 2U);
+
+  EXPECT_EQ(table({"restore", "argon", "19990101T000000Z"}).code, kFailed);
+}
+
+TEST_F(SpecTableCmd, RestoreToVersionWithErrorRefusedCurrentUnchanged) {
+  add_version("argon", "20261001T000000Z", kDuplicateArgon, false);
+  add_version("argon", "20261002T000000Z", "not = [toml", false);
+  const auto current = current_of("argon");
+  const auto o = table({"restore", "argon", "20261001T000000Z"});
+  EXPECT_EQ(o.code, kFailed) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "error: row 2: ")) << o.out;
+  EXPECT_EQ(current_of("argon"), current);
+
+  const auto broken = table({"restore", "argon", "20261002T000000Z"});
+  EXPECT_EQ(broken.code, kFailed) << broken.out << broken.err;
+  EXPECT_EQ(current_of("argon"), current);
+}
+
+TEST_F(SpecTableCmd, OutputSaysWhenItTakesEffect) {
+  const std::string effect = "; takes effect when a process next loads the table\n";
+  const auto set = table({"set", "argon", "H1", "Ar40", "5.011"});
+  ASSERT_EQ(set.code, 0) << set.out << set.err;
+  EXPECT_TRUE(contains(set.out, "wrote argon ")) << set.out;
+  EXPECT_TRUE(contains(set.out, effect)) << set.out;
+
+  const auto restore = table({"restore", "argon", "2026-09-30T000000"});
+  ASSERT_EQ(restore.code, 0) << restore.out << restore.err;
+  EXPECT_TRUE(contains(restore.out, "wrote argon 2026-09-30T000000" + effect)) << restore.out;
+}
+
 TEST_F(SpecTableCmd, BadArgumentsAreUsage) {
   EXPECT_EQ(table({}).code, kUsage);
   EXPECT_EQ(table({"frobnicate"}).code, kUsage);
   EXPECT_EQ(table({"versions"}).code, kUsage);
   EXPECT_EQ(table({"diff", "argon"}).code, kUsage);
   EXPECT_EQ(table({"show", "--version"}).code, kUsage);
+  EXPECT_EQ(table({"set", "argon", "H1", "Ar40"}).code, kUsage);
+  EXPECT_EQ(table({"set", "argon", "H1", "Ar40", "5.0", "--propagate", "--no-propagate"}).code, kUsage);
+  EXPECT_EQ(table({"show", "--propagate"}).code, kUsage);
+  EXPECT_EQ(table({"restore", "argon"}).code, kUsage);
+  EXPECT_EQ(table({"import", "argon"}).code, kUsage);
   // No spectrometer file given and no install: nothing to read.
   const auto none = run_raw({"-c", lab("extraction_line.toml").string(), "spec", "table", "list"});
   EXPECT_EQ(none.code, kUsage) << none.err;

@@ -4,7 +4,8 @@ add_executable(pychron_elctl_tests ${PYCHRON_ELCTL_TESTS})
 target_link_libraries(pychron_elctl_tests PRIVATE pychron_elctl_lib GTest::gtest_main)
 pychron_link_drivers(pychron_elctl_tests pychron_sim)
 target_compile_definitions(pychron_elctl_tests PRIVATE
-  PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples")
+  PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
+  PYCHRON_SYSTEMS_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/systems/data")
 # test_import_cmd.cpp builds legacy repositories with the helpers of
 # tests/dvc and looks behind the store through its white-box connection, as
 # the dvc tests do; without persistence it holds one test, of the stub.

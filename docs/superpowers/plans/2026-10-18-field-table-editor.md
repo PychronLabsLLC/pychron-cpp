@@ -273,11 +273,11 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
 - Consumes: Task 9; `FieldTable::update`, `read_mftable_csv`, `format_version`.
 - Produces: `table set <name> <det> <isotope> <value> [--propagate|--no-propagate]` (default config `[magnet] propagate`), `table restore <name> <version>`, `table import <name> <mftable.csv>`. `set` and `import` load current, apply, run `check_field_table`; any error → print each, exit 1, nothing written; else `FieldTableStore::save(table, pychron::SteadyClock{}.wall_now())`: elctl opens no device and runs no simulation here, so real wall time. Import keeps the current version's axis and uses config weights. `restore`: load target (parse failure = error), diagnostics; error → exit 1, `current` unchanged. Every write prints `wrote <name> <version>; takes effect when a process next loads the table`.
 
-- [ ] **Step 1: Write failing tests**: `SetWritesANewVersionAndPropagates`, `SetRefusedOnDiagnosticErrorExitsOne` (value `nan`: "value not finite" error, exit 1, versions unchanged), `ImportTheMelbourneFixture` (Task 4 fixture; H2 warning printed, exit 0, new version current), `ImportRefusedOnError` (CSV with duplicate isotope), `RestoreMovesPointer`, `RestoreToVersionWithErrorRefusedCurrentUnchanged` (compare `current` bytes), `OutputSaysWhenItTakesEffect`.
-- [ ] **Step 2: Run** filter `SpecTableCmd.*`. Expected: new tests FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** filter. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(elctl): spec table set, restore, import`.
+- [x] **Step 1: Write failing tests**: `SetWritesANewVersionAndPropagates`, `SetRefusedOnDiagnosticErrorExitsOne` (value `nan`: "value not finite" error, exit 1, versions unchanged), `ImportTheMelbourneFixture` (Task 4 fixture; H2 warning printed, exit 0, new version current), `ImportRefusedOnError` (CSV with duplicate isotope), `RestoreMovesPointer`, `RestoreToVersionWithErrorRefusedCurrentUnchanged` (compare `current` bytes), `OutputSaysWhenItTakesEffect`.
+- [x] **Step 2: Run** filter `SpecTableCmd.*`. Expected: new tests FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** filter. Expected: PASS.
+- [x] **Step 5: Commit** `feat(elctl): spec table set, restore, import`.
 
 ### Task 11: `SpectrometerBridge` table operations (D3)
 

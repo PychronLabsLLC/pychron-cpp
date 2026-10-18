@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -12,6 +13,7 @@
 #include <system_error>
 #include <utility>
 
+#include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/systems/spectrometer/config.hpp"
 #include "pychron/systems/spectrometer/config_loader.hpp"
@@ -19,6 +21,7 @@
 #include "pychron/systems/spectrometer/field_table.hpp"
 #include "pychron/systems/spectrometer/field_table_check.hpp"
 #include "pychron/systems/spectrometer/field_table_store.hpp"
+#include "pychron/systems/spectrometer/mftable_csv.hpp"
 #include "pychron/systems/spectrometer/molecular_weights.hpp"
 
 namespace elctl {
@@ -35,7 +38,13 @@ constexpr const char* kSpecUsage =
     "  show [<name>] [--version V]   a version as a grid; default the active table, current version\n"
     "  versions <name>               versions, newest first\n"
     "  diff <name> <v1> [<v2>]       what changed from v1 to v2 (default current), by isotope\n"
-    "  check [<name>]                diagnostics of the current version; exit 1 on an error\n";
+    "  check [<name>]                diagnostics of the current version; exit 1 on an error\n"
+    "  set <name> <det> <isotope> <value> [--propagate|--no-propagate]\n"
+    "                                a new version with one value changed; default [magnet] propagate\n"
+    "  restore <name> <version>      make an existing version current\n"
+    "  import <name> <mftable.csv>   a new version from pychron's mftable.csv, on the current axis\n"
+    "  set and import save nothing when the result has an error; restore refuses a version with one.\n"
+    "  A write takes effect when a process next loads the table.\n";
 
 std::string fixed5(double v) {
   std::array<char, 64> buf{};
@@ -50,6 +59,16 @@ std::string signed5(double v) {
 }
 
 std::string cell(const std::optional<double>& v) { return v ? fixed5(*v) : "-"; }
+
+// The whole of `text` as a double ("nan" and "inf" included: the checks
+// refuse them, with a message, rather than the parser).
+std::optional<double> parse_value(const std::string& text) {
+  if (text.empty()) return std::nullopt;
+  char* end = nullptr;
+  const double v = std::strtod(text.c_str(), &end);
+  if (end != text.c_str() + text.size()) return std::nullopt;
+  return v;
+}
 
 // What every subcommand reads: the spectrometer config and weights, and the
 // data root its tables live under.
@@ -215,9 +234,65 @@ class SpecTable {
     return spec::has_error(found) ? kFailed : kOk;
   }
 
+
+  int set(const std::string& name, const std::string& det, const std::string& isotope, double value,
+          std::optional<bool> propagate) {
+    auto store = open(name);
+    if (!store) return kFailed;
+    auto table = store->load();
+    if (!table) return failed(name + ": " + table.error().what);
+    if (auto r = table->update(det, isotope, value, propagate.value_or(d_.config.magnet.propagate)); !r)
+      return failed(name + ": " + r.error().what);
+    return save(*store, *table);
+  }
+
+  int import_csv(const std::string& name, const fs::path& csv) {
+    auto store = open(name);
+    if (!store) return kFailed;
+    auto current = store->load();
+    if (!current) return failed(name + ": " + current.error().what);
+    std::ifstream in(csv, std::ios::binary);
+    if (!in.is_open()) return failed("cannot read " + csv.string());
+    std::ostringstream text;
+    text << in.rdbuf();
+    auto table = spec::read_mftable_csv(text.str(), d_.weights, current->axis());
+    if (!table) return failed(csv.string() + ": " + table.error().what);
+    return save(*store, *table);
+  }
+
+  int restore(const std::string& name, const std::string& version) {
+    auto store = open(name);
+    if (!store) return kFailed;
+    auto table = store->load(version);
+    if (!table) return failed(name + " " + version + ": " + table.error().what);
+    if (!report(name, *table)) return failed(name + " " + version + " has an error; current not changed");
+    if (auto r = store->restore(version); !r) return failed(r.error().what);
+    return wrote(name, version);
+  }
+
   const std::string& active() const { return d_.config.magnet.field_table; }
 
  private:
+  // Prints every diagnostic of `table`; false when one is an error.
+  bool report(const std::string& name, const spec::FieldTable& table) {
+    const auto found = spec::check_field_table(table, d_.config, d_.weights, name);
+    for (const auto& diagnostic : found) io_.out << spec::to_string(diagnostic) << '\n';
+    return !spec::has_error(found);
+  }
+
+  // Checks, then saves a new current version stamped in real wall time:
+  // elctl opens no device and runs no simulation here.
+  int save(spec::FieldTableStore& store, const spec::FieldTable& table) {
+    if (!report(store.name(), table)) return failed(store.name() + ": the table has an error; nothing written");
+    auto version = store.save(table, pychron::SteadyClock{}.wall_now());
+    if (!version) return failed(version.error().what);
+    return wrote(store.name(), *version);
+  }
+
+  int wrote(const std::string& name, const std::string& version) {
+    io_.out << "wrote " << name << ' ' << version << "; takes effect when a process next loads the table\n";
+    return kOk;
+  }
   // The store of an existing table; says so and returns nullopt when there is none.
   std::optional<spec::FieldTableStore> open(const std::string& name) {
     std::error_code ec;
@@ -278,6 +353,7 @@ int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals
 
   fs::path file = globals.spectrometer;
   std::optional<std::string> version;
+  std::optional<bool> propagate;
   std::vector<std::string> pos;
   for (std::size_t i = 1; i < args.size(); ++i) {
     const auto& a = args[i];
@@ -285,6 +361,9 @@ int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals
       if (i + 1 >= args.size()) return usage(io, a + " needs a value");
       if (a == "--spectrometer") file = args[++i];
       else version = args[++i];
+    } else if (a == "--propagate" || a == "--no-propagate") {
+      if (propagate) return usage(io, "give one of --propagate and --no-propagate");
+      propagate = a == "--propagate";
     } else if (a.starts_with("--")) {
       return usage(io, "unknown option '" + a + "'");
     } else {
@@ -295,6 +374,7 @@ int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals
   const std::string sub = pos.front();
   pos.erase(pos.begin());
   if (version && sub != "show") return usage(io, "--version is for show");
+  if (propagate && sub != "set") return usage(io, "--propagate and --no-propagate are for set");
 
   const auto arity = [&](std::size_t lo, std::size_t hi) { return pos.size() >= lo && pos.size() <= hi; };
   if (sub == "list" && !arity(0, 0)) return usage(io, "table list takes no arguments");
@@ -302,8 +382,17 @@ int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals
   if (sub == "versions" && !arity(1, 1)) return usage(io, "table versions <name>");
   if (sub == "diff" && !arity(2, 3)) return usage(io, "table diff <name> <v1> [<v2>]");
   if (sub == "check" && !arity(0, 1)) return usage(io, "table check [<name>]");
-  if (sub != "list" && sub != "show" && sub != "versions" && sub != "diff" && sub != "check")
+  if (sub == "set" && !arity(4, 4)) return usage(io, "table set <name> <det> <isotope> <value> [--propagate|--no-propagate]");
+  if (sub == "restore" && !arity(2, 2)) return usage(io, "table restore <name> <version>");
+  if (sub == "import" && !arity(2, 2)) return usage(io, "table import <name> <mftable.csv>");
+  constexpr std::array kCommands{"list", "show", "versions", "diff", "check", "set", "restore", "import"};
+  if (std::find(kCommands.begin(), kCommands.end(), sub) == kCommands.end())
     return usage(io, "unknown table command '" + sub + "'");
+  std::optional<double> value;
+  if (sub == "set") {
+    value = parse_value(pos[3]);
+    if (!value) return usage(io, "table set: '" + pos[3] + "' is not a number");
+  }
 
   if (file.empty()) return usage(io, "no spectrometer: give --spectrometer <spectrometer.toml> or --install <name>");
   auto data = load_data(file);
@@ -315,6 +404,9 @@ int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals
   if (sub == "list") return t.list();
   if (sub == "show") return t.show(pos.empty() ? t.active() : pos[0], version);
   if (sub == "versions") return t.versions(pos[0]);
+  if (sub == "set") return t.set(pos[0], pos[1], pos[2], *value, propagate);
+  if (sub == "restore") return t.restore(pos[0], pos[1]);
+  if (sub == "import") return t.import_csv(pos[0], pos[1]);
   if (sub == "diff") return t.diff(pos[0], pos[1], pos.size() > 2 ? std::optional<std::string>(pos[2]) : std::nullopt);
   return t.check(pos.empty() ? t.active() : pos[0]);
 }
