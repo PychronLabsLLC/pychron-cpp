@@ -938,6 +938,59 @@ the queue at once, without holding. These times, and whether the queue
 goes on after a run failed for a link, are in `executor.toml`
 ([Configuration reference](07-configuration-reference.md)).
 
+**What a dropped link costs, by where the run is.** A link that comes back
+within 20 s (the call window; `call_window_s` of the transport, or of
+`executor.toml`) costs nothing: the command is sent again when it is safe to
+send twice (a read, a valve to open, a setpoint), and the run goes on. A
+command whose second arrival would do more (fire the laser, start an
+acquisition) is never sent twice: the program reads back what happened
+instead. When the link stays away longer:
+
+| Where the run is | What happens |
+|---|---|
+| Waiting to start, or Preparing | The run has not started and spends nothing. The queue holds, and starts that same run, with the same aliquot, once the links are back. |
+| Extracting | The extraction script stops with an error and the run fails. Its record is saved as `failed`, the line is put in its safe state, and the queue holds before the next row. |
+| Equilibrating, Measuring: the spectrometer goes silent | The measurement waits up to 2 minutes for the readings, then goes on, truncates or fails, as described under step 5 above. Nothing is done to the line while it waits. |
+| Measuring: a valve (closing the inlet, unprotecting a detector) | The command keeps trying for 10 minutes, with an alarm after 20 s; if it still fails, as for Extracting. |
+| PostMeasuring | As before: the failure is noted and the run still saves; then the safe state. |
+| Saving | Never waits: the record goes to the spool, and is sent on when the store is back (section 8.5). |
+
+**What you see while it holds.** The health bar shows a chip, "holding:
+<reason> · ends in H:MM:SS", counting down to the hold's limit; the
+Executor pane's events say `holding: <reason> (<links>) until <time>`, then
+`resumed`, and each gap in the readings and each reconnect. Two buttons in
+the Executor pane, also in **Experiment > Executor**, act only while the queue
+holds:
+
+| Button | Effect |
+|---|---|
+| **Resume** | Try now: the queue goes on as soon as the links answer, without waiting the 30 s settle. If a link is still down, the queue holds again, with the limit it had. |
+| **Skip Held Run** | Drop the row the queue holds for (it asks first) and hold, if needed, for the next one. Only for a row that has not started: a run past the start of its extraction is never run again. |
+
+This Resume acts on a queue that is running and holds. **Queue > Resume...**
+(section 3.4) is another command: it takes up a queue that stopped.
+
+`elctl exp run` prints the same lines (`holding: ...`, `resumed`,
+`gap in <block>: <n> s`, `reconnected <transport> after <n> s`); it has no
+Resume or Skip: stop it and start again with `--resume`.
+
+**A failed run is never run again.** Its row in the queue table says
+`failed (saved)` and a notification goes out. When it failed because a link
+dropped, the queue holds and then goes on to the next row (with
+`after_link_failure = "end"` in `executor.toml`, it ends instead); any other
+failure ends the queue, as before. The program never puts the run back in the
+queue, a reference run (blank, air) included: add a row yourself if you want
+one.
+
+**The lab's safe state.** `<lab>/scripts/safe_state.py` is optional. It runs
+after the built-in steps, with the line only (no spectrometer acquisition),
+each time a safe state is applied, and may be applied more than once for one
+failure: write it with absolute targets (close this valve, open that pump
+valve), never toggles, so that running it twice does no harm. When a step of
+the safe state, built-in or the script, cannot be done, the queue ends at once
+with the reason `unsafe`, a critical alarm, and an `unsafe` notification:
+someone must look at the line.
+
 ### 8.3 Stop, Cancel, Abort, Truncate
 
 The buttons in the Executor pane (also **Experiment > Executor**):
@@ -1105,16 +1158,23 @@ warning: 5 record(s) waiting in /home/lab/Pychron/argus/data/spool: <record id>:
 ```
 
 A pending run is safe on this computer but is not yet in the database, so the
-data window does not show it. Pending runs are sent again when the next queue
-starts, and a run is never stored twice. One the database refuses for good (its
-identifier was removed, say) stays in the spool and is tried at each queue
-start until the missing entry is added.
+data window does not show it. Pending runs are sent again when a queue
+starts, after every run, and every 5 minutes while any wait (the wait
+doubles, up to 30 minutes, while sending keeps failing); no run waits for
+this, and a run is never stored twice. One the database refuses for good (its
+identifier was removed, say) stays in the spool and is tried again in the
+same way until the missing entry is added. When the spool's disk has less
+than 500 MB free, or more than 200 records wait, the queue holds before its
+next run (section 8.2; `[spool]` in `executor.toml`).
 
 Only one program at a time should run queues into a database.
 
 The executor also keeps `<data>/executor_state.json` up to date. It records
 the next row to run, so a queue can be resumed after a crash (a run that has
-started counts as consumed and is never repeated):
+started counts as consumed and is not repeated by `--resume`; a run that
+failed for a link before its extraction began is given back its row). While the queue holds, the file also
+says why, since when and for which row (`holding`), and it names the last row
+that failed (`last_failed_row`):
 
 ```bash
 elctl -c extraction_line.toml exp run queues/experiment.toml --resume
@@ -1124,8 +1184,11 @@ elctl -c extraction_line.toml exp run queues/experiment.toml --resume
 
 ### 8.6 Notifications
 
-Pychron can send a message when a run fails (or its record cannot be saved)
-and when the queue ends: email, a Slack-style webhook, or a local program.
+Pychron can send a message when a run fails (or its record cannot be saved),
+when the queue holds and goes on again, when a failed run left the line
+unsafe, and when the queue ends: email, a Slack-style webhook, or a local
+program. A message that cannot be sent (the network is down) waits on disk
+and is sent when it can, for up to 24 hours.
 Set it up in `<lab>/notifications.toml`; see [notifications](../notifications.md).
 The Executor pane's **Notify** line lists the configured channels ("off" when
 there is no file), and sent messages and failures appear in the Events list.
@@ -1208,8 +1271,8 @@ before relying on them.
   is accepted, but the lookup is by file name only.
 * **Queue `extract_delay`** is stored and written back, but nothing in the
   executor reads it (section 2.2).
-* **Spool recovery** happens when the next queue starts; there is no separate
-  command to resend spooled records.
+* **Spool recovery** happens only while a queue runs (section 8.5); there is
+  no separate command to resend spooled records.
 * **Runs in a database on PostgreSQL.** Writing a queue's runs to an
   install's database (section 8.5) has been tested on SQLite only.
 * **Peak center and measurement plan details** are outside this chapter; see

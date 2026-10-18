@@ -4,7 +4,10 @@ Status: agreed 2026-10-13 (owner), as written. Section 9's two points
 settled from code 2026-10-13 (answers there; 4.4 and 4.5 changed to match).
 Tests that need sim serve's real sockets are deferred until it lands
 (section 6). Plan: `docs/superpowers/plans/2026-10-13-executor-hardening.md`.
-Nothing implemented.
+Implemented 2026-10-18 (plan Tasks 1 to 23; "As built" notes per section).
+Deferred: real-socket test killing sim serve's `WireServer` listener
+(section 6), written when `WireServer` lands; store-backed offline aliquot
+allocation (4.8, constraint only, in `libs/experiment/AGENTS.md`).
 
 Date: 2026-10-09. Builds on `2026-09-29-experiment-system-design.md`
 (sections 3.1 to 3.3, 8.4), `2026-10-06-virtual-clock-design.md`. Tested

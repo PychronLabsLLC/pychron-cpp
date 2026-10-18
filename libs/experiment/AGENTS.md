@@ -93,3 +93,38 @@ only this component's. Kept compressed, as that file is.
     error text of an `Acquisition` already has url and password taken out.
     The acquisition worker's `try` is the library's one catch (thread
     boundary).
+
+## Links that drop (executor, run, measurement)
+
+Spec: `docs/superpowers/specs/2026-10-09-executor-hardening-design.md`.
+
+- Point of no return: start of extraction script (`RunResult::past_no_return`,
+  set after resource wait). Before it nothing of sample spent: failure for
+  link leaves row unconsumed, run started again after hold with aliquot and
+  step it was given. After it: run never started again by executor, whatever
+  failed; failed run is saved (`save(error)` before `Fail`, record in spool
+  before `RunFinished`), flagged `failed`, never rerun or re-inserted,
+  reference run included. Aliquot of such run spent.
+- Safe state (`Run::make_safe`) idempotent by construction: every built-in
+  step sets absolute target (device ended and disabled, inlet closed,
+  detectors unprotected), lab's `safe_state.py` documented to do same. May
+  run twice for one failure; never add a toggle or relative step. Every step
+  attempted even when one before it failed; failed step ->
+  `unsafe_steps`, critical `Alarm`, queue ends `code = "unsafe"`, no hold.
+  Safe state never started by a measurement gap: only once run has ended.
+- Spectrometer link drop mid-measurement moves nothing on line (no valve, no
+  protect, no safe state): gap rule waits `max_gap`, then truncates or fails.
+- Every wait added to executor, run or measurement engine is a clock wait
+  (`clock.wait*`, cv notified with `clock.notify_all`), mutex held across one
+  a `ClockMutex` (root `AGENTS.md`, "Time"). Executor's hold waits on `cv_`
+  through clock; anything that ends a hold (`resume`, `skip`, stop family,
+  `TransportHealth`) notifies through clock. Only notifier's retry is on real
+  time (virtual clock spec 4.4).
+- Executor never ends queue for transient failure without holding first,
+  except `after_link_failure = "end"`. `continue_on_failure` concerns
+  definite failures only.
+- No run waits on network service: spool flush, notification outbox off
+  control path (see spool rule above, `docs/notifications.md`).
+- `Outage.*` (`tests/integration/test_outage.cpp`, not in `dev-quick`) holds
+  spec section 5 across whole queue: a change to executor, run or engine
+  timing runs it before landing.

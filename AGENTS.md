@@ -234,7 +234,7 @@ given it when it reads a file there; any other agent opens it itself).
 | `libs/processing`, `tests/processing`: publication report, flux fitting, `elctl export`, `elctl flux`, flux window | `libs/processing/AGENTS.md` |
 | `libs/entry`, `tests/entry`, an install's `seed.toml` | `libs/entry/AGENTS.md` |
 | `libs/earthbank`, `libs/earthbank_qt`, `tests/earthbank`, `elctl earthbank`, EarthBank page and Publish dialog | `libs/earthbank/AGENTS.md` |
-| `libs/experiment` record, store adapter, `tests/experiment`, how a run is saved | `libs/experiment/AGENTS.md` |
+| `libs/experiment` record, store adapter, `tests/experiment`, how a run is saved, executor hold, safe state, gap rule | `libs/experiment/AGENTS.md` |
 | `profiles/`, `configs/examples`, shipped plans, queue, field tables, `tests/setup`, `tests/integration/test_install_e2e.cpp` | `libs/setup/AGENTS.md` |
 | `libs/devices`, `tests/devices`, a driver's command or wire call | `libs/devices/AGENTS.md` (which command may be sent twice; a new command has a row in `test_repeat_tables.cpp`) |
 | `libs/sim`, `sim.toml`, simulator noise or gas | `libs/sim/AGENTS.md` |
