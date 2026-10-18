@@ -46,16 +46,16 @@
 **Interfaces:**
 - Produces: `FieldTableStore::current_version()` returns the bare version (no `.toml`) whichever form the file holds; `set_current` writes `"<version>.toml\n"`.
 
-- [ ] **Step 1: Write failing tests** in `FieldTableStoreTest`:
+- [x] **Step 1: Write failing tests** in `FieldTableStoreTest`:
   - `SavedPointerIsAFileNameResolveFinds`: `save(table, when)` → read `current` → equals `v + ".toml\n"`; `cfg::resolve_current_table(root, name)` succeeds and its path's stem `== v`.
   - `ReadsAShippedStylePointer`: write `2026-09-30T000000.toml` with a valid table and `current` = `"2026-09-30T000000.toml\n"`; `current_version() == "2026-09-30T000000"`; `load()` succeeds.
   - `ReadsABareStemPointer`: `current` = `"<v>\n"` → `current_version() == v`.
   - `ReadsAPointerWithTomlSuffixAndCrlf`: `current` = `"2026-09-30T000000.toml\r\n"` → `"2026-09-30T000000"`.
   - `PointerWithTwoSuffixesIsRejected`: `"x.toml.toml"` → error (only one suffix stripped, then `valid_version` refuses `.`).
-- [ ] **Step 2: Run** `cmake --build --preset dev --target pychron_systems_tests && build/dev/tests/systems/pychron_systems_tests --gtest_filter='FieldTableStoreTest.*'`. Expected: the new tests fail.
-- [ ] **Step 3: Implement**: `current_version` trims trailing whitespace (`\n \r \t`), strips one trailing `.toml`, then `valid_version`; `set_current` writes `version + ".toml\n"`.
-- [ ] **Step 4: Run** same command, plus `--gtest_filter='*DataDir*:*Spectrometer*'`. Expected: PASS.
-- [ ] **Step 5: Commit** `fix(spectrometer): one current pointer form for field tables`.
+- [x] **Step 2: Run** `cmake --build --preset dev --target pychron_systems_tests && build/dev/tests/systems/pychron_systems_tests --gtest_filter='FieldTableStoreTest.*'`. Expected: the new tests fail.
+- [x] **Step 3: Implement**: `current_version` trims trailing whitespace (`\n \r \t`), strips one trailing `.toml`, then `valid_version`; `set_current` writes `version + ".toml\n"`.
+- [x] **Step 4: Run** same command, plus `--gtest_filter='*DataDir*:*Spectrometer*'`. Expected: PASS.
+- [x] **Step 5: Commit** `fix(spectrometer): one current pointer form for field tables`.
 
 ### Task 2: `check_fit`, `clear_fit` and `check_field_table`
 

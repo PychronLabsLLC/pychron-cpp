@@ -13,7 +13,11 @@ namespace pychron::spectrometer {
 // Versioned persistence for one named table:
 //
 //   <tables_root>/<name>/<version>.toml   immutable snapshots
-//   <tables_root>/<name>/current          text file holding the active version
+//   <tables_root>/<name>/current          text file holding "<version>.toml",
+//                                         the active version's file name
+//
+// current_version() returns the bare version; it also reads a pointer that
+// holds the bare version, as older stores wrote it.
 //
 // Versions are UTC timestamps "YYYYMMDDTHHMMSSZ" (suffixed "-N" on
 // collision), so lexical order is chronological. Saving never overwrites an

@@ -1,10 +1,14 @@
 #include "pychron/systems/spectrometer/field_table_store.hpp"
 
+#include "pychron/systems/spectrometer/data_dir.hpp"
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <sstream>
+#include <string>
 
 namespace fs = std::filesystem;
 namespace ps = pychron::spectrometer;
@@ -32,6 +36,18 @@ class FieldTableStoreTest : public ::testing::Test {
 
   // 2026-09-30T12:00:00Z
   static ps::FieldTableStore::WallTime t0() { return ps::FieldTableStore::WallTime{} + 1790769600s; }
+
+  static std::string read_text(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+  }
+
+  static void write_text(const fs::path& p, const std::string& text) {
+    fs::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary | std::ios::trunc) << text;
+  }
 
   fs::path root_;
 };
@@ -121,4 +137,52 @@ TEST_F(FieldTableStoreTest, NamedTablesAreIndependent) {
   ASSERT_TRUE(ic.save(table(6.0), t0()).has_value());
   EXPECT_DOUBLE_EQ(argon.load()->points()[0].values.at("H1"), 5.0);
   EXPECT_DOUBLE_EQ(ic.load()->points()[0].values.at("H1"), 6.0);
+}
+
+// The store and the assembler (cfg::resolve_current_table) read one pointer
+// form: `current` holds the version's file name, "<version>.toml".
+TEST_F(FieldTableStoreTest, SavedPointerIsAFileNameResolveFinds) {
+  ps::FieldTableStore store(root_ / "tables", "argon");
+  auto v = store.save(table(5.0), t0());
+  ASSERT_TRUE(v.has_value()) << pychron::to_string(v.error());
+  EXPECT_EQ(read_text(root_ / "tables" / "argon" / "current"), *v + ".toml\n");
+  auto file = ps::cfg::resolve_current_table(root_, "argon");
+  ASSERT_TRUE(file.has_value()) << pychron::to_string(file.error());
+  EXPECT_EQ(file->stem().string(), *v);
+}
+
+TEST_F(FieldTableStoreTest, ReadsAShippedStylePointer) {
+  ps::FieldTableStore store(root_, "argon");
+  write_text(root_ / "argon" / "2026-09-30T000000.toml", ps::to_toml(table(5.0)));
+  write_text(root_ / "argon" / "current", "2026-09-30T000000.toml\n");
+  auto v = store.current_version();
+  ASSERT_TRUE(v.has_value()) << pychron::to_string(v.error());
+  EXPECT_EQ(*v, "2026-09-30T000000");
+  auto loaded = store.load();
+  ASSERT_TRUE(loaded.has_value()) << pychron::to_string(loaded.error());
+  EXPECT_EQ(*loaded, table(5.0));
+}
+
+TEST_F(FieldTableStoreTest, ReadsABareStemPointer) {
+  ps::FieldTableStore store(root_, "argon");
+  write_text(root_ / "argon" / "current", "20260930T120000Z\n");
+  auto v = store.current_version();
+  ASSERT_TRUE(v.has_value()) << pychron::to_string(v.error());
+  EXPECT_EQ(*v, "20260930T120000Z");
+}
+
+TEST_F(FieldTableStoreTest, ReadsAPointerWithTomlSuffixAndCrlf) {
+  ps::FieldTableStore store(root_, "argon");
+  write_text(root_ / "argon" / "current", "2026-09-30T000000.toml\r\n");
+  auto v = store.current_version();
+  ASSERT_TRUE(v.has_value()) << pychron::to_string(v.error());
+  EXPECT_EQ(*v, "2026-09-30T000000");
+}
+
+TEST_F(FieldTableStoreTest, PointerWithTwoSuffixesIsRejected) {
+  ps::FieldTableStore store(root_, "argon");
+  write_text(root_ / "argon" / "current", "x.toml.toml\n");
+  auto v = store.current_version();
+  ASSERT_FALSE(v.has_value());
+  EXPECT_EQ(v.error().kind, ErrorKind::Config);
 }
