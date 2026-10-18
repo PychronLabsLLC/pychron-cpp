@@ -26,6 +26,7 @@
 #include "export.hpp"
 #include "flux.hpp"
 #include "laser.hpp"
+#include "spec_table.hpp"
 #include "import.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
@@ -81,6 +82,8 @@ constexpr const char* kUsageText =
     "  laser look <device> [--tray <tray>]   what the camera's finder sees; moves nothing\n"
     "  laser patterns              the lab's laser patterns\n"
     "  laser pattern <device> <name> [--dry-run]   run a pattern (laser not fired), or print its points\n"
+    "  spec table list|show|versions|diff|check [--spectrometer <file>]\n"
+    "                              the spectrometer's field tables, read from their files; no device opened\n"
     "\n"
     "Setup (no line needed):\n"
     "  init --list                 the setup profiles (argus, helix, ngx, data-reduction)\n"
@@ -252,6 +255,7 @@ class Session {
       e.sim = g_.sim;
       return laser_command(args, e, io_);
     }
+    if (cmd == "spec") return spec_command(args, g_.exp, io_);
     if (cmd == "import") return import_command(args, io_);
     if (cmd == "entry") return entry_command(args, io_);
     if (cmd == "export") return export_command(args, io_);

@@ -251,17 +251,17 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
 
 **Interfaces:**
 - Consumes: `FieldTableStore`, `cfg::load_spectrometer`, `check_field_table`, `diff_field_tables`.
-- Produces: `int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);` in namespace `elctl`. Spectrometer file: `--spectrometer <file>` else `globals.spectrometer` (install's); data root = `load_spectrometer(file)->root`. Subcommands here: `table list`, `table show [<name>] [--version V]`, `table versions <name>`, `table diff <name> <v1> [<v2>]`, `table check [<name>]`. Exit: 0 ok, 1 (`kFailed`) on check error or command failure, usage code on bad args.
+- Produces: `int spec_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);` in namespace `elctl`. Spectrometer file: `--spectrometer <file>` else `globals.spectrometer` (install's); data root = directory of that file (as `load_spectrometer`), config read with `cfg::parse_config` only: `load_spectrometer` runs the assembler rules over the tables and fails on a broken one, which is what `check` has to report. Subcommands here: `table list`, `table show [<name>] [--version V]`, `table versions <name>`, `table diff <name> <v1> [<v2>]`, `table check [<name>]`. Exit: 0 ok, 1 (`kFailed`) on check error or command failure, usage code on bad args.
   - `list`: one line per directory under `<root>/tables` with a `current` file: `<name>  <current version>[  (active)][  (HV)]`.
   - `show`: header `Isotope Mass <detectors…>`, rows sorted by mass, values `%0.5f`, blank as `-`; then `fit:` and overrides.
   - `diff`: fit changes, `+ <iso>` / `- <iso>`, cells `<iso> <det> <old> -> <new> (Δ <d>)`.
   - `check`: one `to_string(TableDiagnostic)` per line; default name = config `[magnet] field_table`.
 
-- [ ] **Step 1: Write failing tests** `SpecTableCmd.*` on a copy of `PYCHRON_EXAMPLE_CONFIGS_DIR` (as `LaserCmd`): `ListMarksActiveAndHv`, `ShowDefaultsToActiveCurrent`, `ShowAVersion`, `VersionsNewestFirst`, `DiffByIsotope`, `CheckCleanTableExitsZero`, `CheckErrorExitsOne` (hand-written version with duplicate isotope, pointer moved to it), `UnknownTableFails`.
-- [ ] **Step 2: Run** `cmake --build --preset dev --target pychron_elctl_tests && build/dev/apps/elctl/tests/pychron_elctl_tests --gtest_filter='SpecTableCmd.*'` (binary path: the test target's output directory under `build/dev`; check once). Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** filter. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(elctl): spec table list, show, versions, diff, check`.
+- [x] **Step 1: Write failing tests** `SpecTableCmd.*` on a copy of `PYCHRON_EXAMPLE_CONFIGS_DIR` (as `LaserCmd`): `ListMarksActiveAndHv`, `ShowDefaultsToActiveCurrent`, `ShowAVersion`, `VersionsNewestFirst`, `DiffByIsotope`, `CheckCleanTableExitsZero`, `CheckErrorExitsOne` (hand-written version with duplicate isotope, pointer moved to it), `UnknownTableFails`.
+- [x] **Step 2: Run** `cmake --build --preset dev --target pychron_elctl_tests && build/dev/apps/elctl/tests/pychron_elctl_tests --gtest_filter='SpecTableCmd.*'` (binary path: the test target's output directory under `build/dev`; check once). Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** filter. Expected: PASS.
+- [x] **Step 5: Commit** `feat(elctl): spec table list, show, versions, diff, check`.
 
 ### Task 10: `elctl spec table` write commands
 
