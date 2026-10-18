@@ -780,6 +780,17 @@ Result<double> Spectrometer::set_deflection(const DetectorId& det, double value)
   return value;
 }
 
+Result<double> Spectrometer::read_deflection(const DetectorId& det) {
+  std::scoped_lock lock(mutex_);
+  auto ch = control_channel(det);
+  if (!ch) return fail(ch.error());
+  if (!detector_caps().has(DetectorCap::Deflection)) return fail(unsupported(DetectorCap::Deflection));
+  auto value = roles_.detector_control->read_deflection(*ch);
+  if (!value) return fail(value.error());
+  if (auto r = detectors_->record_deflection(det, *value); !r) return fail(r.error());
+  return *value;
+}
+
 Result<void> Spectrometer::set_gain(const DetectorId& det, double value) {
   std::scoped_lock lock(mutex_);
   auto ch = control_channel(det);
@@ -796,6 +807,12 @@ Result<void> Spectrometer::set_cdd_voltage(const DetectorId& det, double volts) 
   if (!detector_caps().has(DetectorCap::CddVoltage)) return fail(unsupported(DetectorCap::CddVoltage));
   if (auto r = roles_.detector_control->set_cdd_voltage(*ch, volts); !r) return r;
   return detectors_->record_cdd_voltage(det, volts);
+}
+
+Result<void> Spectrometer::blank_beam(bool on) {
+  std::scoped_lock lock(mutex_);
+  if (roles_.beam_blank == nullptr) return config_error("no beam blank bound");
+  return roles_.beam_blank->blank(on);
 }
 
 // ---- source -----------------------------------------------------------------

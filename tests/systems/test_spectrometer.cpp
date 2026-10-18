@@ -447,6 +447,32 @@ TEST(Spectrometer, DeflectionClampedToMax) {
   EXPECT_EQ(*r.spec->detector_state("H1")->deflection, 800.0);
 }
 
+TEST(Spectrometer, ReadDeflectionReadsTheControlAndRecordsIt) {
+  Rig r;
+  r.build();
+  r.control.deflection["H1"] = 42.0;  // set on the instrument, not through the facade
+  auto defl = r.spec->read_deflection("H1");
+  ASSERT_TRUE(defl.has_value()) << defl.error().what;
+  EXPECT_DOUBLE_EQ(*defl, 42.0);
+  EXPECT_EQ(*r.spec->detector_state("H1")->deflection, 42.0);
+
+  Rig no_caps;
+  no_caps.control.caps_ = DetectorCap::Protect;
+  no_caps.build();
+  auto unsupported = no_caps.spec->read_deflection("H1");
+  ASSERT_FALSE(unsupported.has_value());
+  EXPECT_EQ(unsupported.error().kind, ErrorKind::Config);
+}
+
+TEST(Spectrometer, BlankBeamGoesToTheBeamBlank) {
+  Rig r;
+  r.build();
+  ASSERT_TRUE(r.spec->blank_beam(true).has_value());
+  EXPECT_TRUE(r.blank.blanked);
+  ASSERT_TRUE(r.spec->blank_beam(false).has_value());
+  EXPECT_FALSE(r.blank.blanked);
+}
+
 TEST(Spectrometer, NoDetectorControlMeansUnsupported) {
   Rig r;
   auto made = r.make({}, false);

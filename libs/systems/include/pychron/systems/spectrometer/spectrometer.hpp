@@ -312,8 +312,14 @@ class Spectrometer {
   // clamped to the detector's `max`.
   Result<void> protect(const DetectorId& det, bool on);
   Result<double> set_deflection(const DetectorId& det, double value);  // returns the clamped value
+  // Reads the deflection back from the detector control and records it.
+  Result<double> read_deflection(const DetectorId& det);
   Result<void> set_gain(const DetectorId& det, double value);
   Result<void> set_cdd_voltage(const DetectorId& det, double volts);
+
+  // Blanks (or unblanks) the beam through the bound IBeamBlank; Config when
+  // none is bound. A move that blanks on its own unblanks when it ends.
+  Result<void> blank_beam(bool on);
 
   // ---- source ----
   Result<void> set_hv(double volts);

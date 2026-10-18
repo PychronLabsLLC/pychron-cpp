@@ -22,10 +22,36 @@ namespace pychron::experiment::measurement {
 class ISpectrometerPort {
  public:
   virtual ~ISpectrometerPort() = default;
-  // Puts target.isotope (or target.mass) on target.detector. No settle: the
-  // engine settles itself so the wait is cancellable.
-  virtual Result<void> position(const plan::HopTarget& target) = 0;
+  // Positions the beam: a label or a mass on a detector through the magnet,
+  // a raw native value (`AtDac`) through the magnet's move protocol, or an
+  // HV value on a detector (`AtHv`) through the source. No settle: the engine
+  // settles itself so the wait is cancellable.
+  virtual Result<void> position(const plan::At& target) = 0;
   virtual Result<void> protect(const std::string& detector, bool on) = 0;
+
+  // Per-position and step settings (plan v2, spec 5.2 and 5.3). Deflection
+  // answers the value actually set (clamped to the detector's limit);
+  // deflection(detector) answers the current one, so the engine can restore
+  // what a position changed.
+  virtual Result<double> set_deflection(const std::string& detector, double value) = 0;
+  virtual Result<double> deflection(const std::string& detector) = 0;
+  // Selects field table `name` until the next call; an empty name goes back
+  // to the spectrometer's configured current table.
+  virtual Result<void> with_table(const std::string& name) = 0;
+  virtual Result<void> set_gain(const std::string& detector, double gain) = 0;
+  virtual Result<void> set_hv(double volts) = 0;
+  // On every CDD the spectrometer has.
+  virtual Result<void> set_cdd_voltage(double volts) = 0;
+  // A source parameter by its registry name ("trap_current") or vendor name.
+  virtual Result<void> set_param(const std::string& name, double value) = 0;
+  virtual Result<void> blank_beam(bool on) = 0;
+  // Optics preset and source output: no driver applies them yet (plan v2,
+  // phase 8); the adapter answers a Config error.
+  virtual Result<void> apply_optics(const std::string& name) = 0;
+  virtual Result<void> set_source_output(bool on) = 0;
+
+  // Integration has no setter: it is an argument of start_acquisition, and a
+  // change of integration is the engine restarting acquisition.
   // Readings flow from start until stop; start discards anything queued.
   virtual Result<void> start_acquisition(pychron::Duration integration) = 0;
   // nullopt when nothing arrived within `timeout`.

@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <variant>
 #include <vector>
 
 #include "pychron/devices/extraction/interfaces.hpp"
@@ -55,12 +56,30 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   // on that clock.
   explicit FakeSpectrometer(const Clock& clock) : clock_(clock) {}
 
-  Result<void> position(const plan::HopTarget& target) override {
+  Result<void> position(const plan::At& target) override {
     std::lock_guard lock(mutex_);
     at_ = target;
     ++moves;
     return {};
   }
+  Result<double> set_deflection(const std::string& detector, double value) override {
+    std::lock_guard lock(mutex_);
+    deflections_[detector] = value;
+    return value;
+  }
+  Result<double> deflection(const std::string& detector) override {
+    std::lock_guard lock(mutex_);
+    const auto it = deflections_.find(detector);
+    return it == deflections_.end() ? 0.0 : it->second;
+  }
+  Result<void> with_table(const std::string&) override { return {}; }
+  Result<void> set_gain(const std::string&, double) override { return {}; }
+  Result<void> set_hv(double) override { return {}; }
+  Result<void> set_cdd_voltage(double) override { return {}; }
+  Result<void> set_param(const std::string&, double) override { return {}; }
+  Result<void> blank_beam(bool) override { return {}; }
+  Result<void> apply_optics(const std::string&) override { return {}; }
+  Result<void> set_source_output(bool) override { return {}; }
   Result<void> protect(const std::string& detector, bool on) override {
     if (journal != nullptr) journal->add((on ? "protect " : "unprotect ") + detector);
     return {};
@@ -85,7 +104,7 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
     r.ts = clock_.now();
     r.integration = integration_;
     const double t = secs(clock_.now() - TimePoint{});
-    const bool on_peak = at_ && !at_->mass;
+    const bool on_peak = at_ && std::holds_alternative<plan::AtLabel>(*at_);
     r.values["H1"] = spectrometer::Value{on_peak ? 1000 + t : 0.5, std::nullopt, std::nullopt, false};
     r.values["AX"] = spectrometer::Value{on_peak ? 100 + 0.1 * t : 0.5, std::nullopt, std::nullopt, false};
     if (on_reading) on_reading(n);
@@ -104,7 +123,8 @@ class FakeSpectrometer final : public measurement::ISpectrometerPort {
   const Clock& clock_;
   ManualClock* manual_ = nullptr;
   std::mutex mutex_;
-  std::optional<plan::HopTarget> at_;
+  std::optional<plan::At> at_;
+  std::map<std::string, double> deflections_;
   pychron::Duration integration_ = 1s;
 };
 

@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -752,6 +753,114 @@ TEST_F(SpectrometerPeakCenterVirtual, CompletesOnAVirtualClockWithoutAStall) {
   EXPECT_LT(std::chrono::steady_clock::now() - real_started, 5s);
   // Nothing kept time standing.
   EXPECT_TRUE(stalls().empty()) << stalls().front();
+}
+
+// The spectrometer port's per-position calls on the real facade and the
+// simulated drivers (plan v2, spec 5.3).
+class SpectrometerPortSim : public MeasurementSim {};
+
+TEST_F(SpectrometerPortSim, DacAndHvPositioning) {
+  SpectrometerPort port(*spec_);
+  ASSERT_TRUE(port.position(plan::AtDac{6.25}));
+  auto native = spec_->magnet_native();
+  ASSERT_TRUE(native) << native.error().what;
+  EXPECT_NEAR(*native, 6.25, 1e-9);
+
+  ASSERT_TRUE(port.position(plan::AtHv{4400, "H1"}));
+  clock_.sleep_for(5s);  // the simulated supply ramps
+  auto hv = spec_->read_hv();
+  ASSERT_TRUE(hv) << hv.error().what;
+  EXPECT_NEAR(*hv, 4400, 1e-6);
+
+  // A label goes through the field table: the magnet moves off the raw value.
+  ASSERT_TRUE(port.position(plan::AtLabel{"Ar40", "H1"}));
+  native = spec_->magnet_native();
+  ASSERT_TRUE(native);
+  EXPECT_GT(std::abs(*native - 6.25), 1e-3);
+}
+
+TEST_F(SpectrometerPortSim, DeflectionReachesTheBeam) {
+  SpectrometerPort port(*spec_);
+  ASSERT_TRUE(port.position(plan::AtLabel{"Ar36", "CDD"}));
+  auto before = port.deflection("CDD");
+  ASSERT_TRUE(before) << before.error().what;
+  auto center = beam_->peak_center("CDD", "Ar36");
+  ASSERT_TRUE(center) << center.error().what;
+  auto on_peak = beam_->intensity("CDD");
+  ASSERT_TRUE(on_peak) << on_peak.error().what;
+
+  auto set = port.set_deflection("CDD", 110);
+  ASSERT_TRUE(set) << set.error().what;
+  EXPECT_DOUBLE_EQ(*set, 110);
+  auto now = port.deflection("CDD");
+  ASSERT_TRUE(now);
+  EXPECT_DOUBLE_EQ(*now, 110);
+
+  // The peak moved away from the magnet, which did not move.
+  auto shifted = beam_->peak_center("CDD", "Ar36");
+  ASSERT_TRUE(shifted);
+  EXPECT_GT(std::abs(*shifted - *center), 0.05);
+  auto off_peak = beam_->intensity("CDD");
+  ASSERT_TRUE(off_peak);
+  EXPECT_LT(off_peak->value, 0.5 * on_peak->value) << "on peak " << on_peak->value;
+
+  // Restoring the deflection puts the peak back on the magnet.
+  ASSERT_TRUE(port.set_deflection("CDD", *before));
+  auto back = beam_->peak_center("CDD", "Ar36");
+  ASSERT_TRUE(back);
+  EXPECT_NEAR(*back, *center, 1e-9);
+}
+
+TEST_F(SpectrometerPortSim, SettingsReachTheFacade) {
+  SpectrometerPort port(*spec_);
+  ASSERT_TRUE(port.set_gain("H1", 1.02));
+  auto h1 = spec_->detector_state("H1");
+  ASSERT_TRUE(h1);
+  ASSERT_TRUE(h1->gain);
+  EXPECT_DOUBLE_EQ(*h1->gain, 1.02);
+
+  ASSERT_TRUE(port.set_cdd_voltage(1300));
+  auto cdd = spec_->detector_state("CDD");
+  ASSERT_TRUE(cdd);
+  ASSERT_TRUE(cdd->cdd_voltage);
+  EXPECT_DOUBLE_EQ(*cdd->cdd_voltage, 1300);
+
+  ASSERT_TRUE(port.set_param("trap_current", 150));
+  EXPECT_FALSE(port.set_param("no_such_parameter", 1));
+
+  ASSERT_TRUE(port.blank_beam(true));
+  EXPECT_TRUE(beam_->blanked());
+  ASSERT_TRUE(port.blank_beam(false));
+  EXPECT_FALSE(beam_->blanked());
+
+  // A table the spectrometer has is selected until the next call; an empty
+  // name goes back to the configured one.
+  const std::string configured = spec_->active_table();
+  ASSERT_TRUE(port.with_table("argon_hv"));
+  EXPECT_EQ(spec_->active_table(), "argon_hv");
+  ASSERT_TRUE(port.with_table(""));
+  EXPECT_EQ(spec_->active_table(), configured);
+  EXPECT_FALSE(port.with_table("no_such_table"));
+  EXPECT_EQ(spec_->active_table(), configured);
+
+  // No driver applies optics or switches the source output yet.
+  auto optics = port.apply_optics("zoom");
+  ASSERT_FALSE(optics);
+  EXPECT_EQ(optics.error().kind, ErrorKind::Config);
+  EXPECT_NE(optics.error().what.find("not supported by this spectrometer"), std::string::npos);
+  auto output = port.set_source_output(true);
+  ASSERT_FALSE(output);
+  EXPECT_EQ(output.error().kind, ErrorKind::Config);
+}
+
+TEST_F(SpectrometerPortSim, TheTableScopeEndsWithThePort) {
+  const std::string configured = spec_->active_table();
+  {
+    SpectrometerPort port(*spec_);
+    ASSERT_TRUE(port.with_table("argon_hv"));
+    EXPECT_EQ(spec_->active_table(), "argon_hv");
+  }
+  EXPECT_EQ(spec_->active_table(), configured);
 }
 
 }  // namespace

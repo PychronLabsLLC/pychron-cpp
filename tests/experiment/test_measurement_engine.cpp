@@ -18,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "pychron/experiment/measurement/engine.hpp"
@@ -42,10 +43,51 @@ class FakeSpectrometer final : public ISpectrometerPort {
  public:
   explicit FakeSpectrometer(ManualClock& clock) : clock_(clock) {}
 
-  Result<void> position(const plan::HopTarget& target) override {
-    log.push_back("position " + (target.mass ? std::to_string(*target.mass) : target.isotope) + "@" + target.detector);
+  Result<void> position(const plan::At& target) override {
+    log.push_back(describe(target));
     if (fail_position) return fail(ErrorKind::Io, "magnet fault");
     at_ = target;
+    return {};
+  }
+  Result<double> set_deflection(const std::string& det, double value) override {
+    log.push_back("deflect " + det + "=" + num(value));
+    deflections[det] = value;
+    return value;
+  }
+  Result<double> deflection(const std::string& det) override {
+    const auto it = deflections.find(det);
+    return it == deflections.end() ? 0.0 : it->second;
+  }
+  Result<void> with_table(const std::string& name) override {
+    log.push_back("table " + name);
+    return {};
+  }
+  Result<void> set_gain(const std::string& det, double gain) override {
+    log.push_back("gain " + det + "=" + num(gain));
+    return {};
+  }
+  Result<void> set_hv(double volts) override {
+    log.push_back("hv " + num(volts));
+    return {};
+  }
+  Result<void> set_cdd_voltage(double volts) override {
+    log.push_back("cdd_voltage " + num(volts));
+    return {};
+  }
+  Result<void> set_param(const std::string& name, double value) override {
+    log.push_back("param " + name + "=" + num(value));
+    return {};
+  }
+  Result<void> blank_beam(bool on) override {
+    log.push_back(std::string("blank ") + (on ? "on" : "off"));
+    return {};
+  }
+  Result<void> apply_optics(const std::string& name) override {
+    log.push_back("optics " + name);
+    return {};
+  }
+  Result<void> set_source_output(bool on) override {
+    log.push_back(std::string("source_output ") + (on ? "on" : "off"));
     return {};
   }
   Result<void> protect(const std::string& det, bool on) override {
@@ -92,9 +134,10 @@ class FakeSpectrometer final : public ISpectrometerPort {
     const double t = secs(clock_.now() - TimePoint{});
     for (const auto& det : detectors) {
       double v = 0.0;
-      if (at_ && !at_->mass) {
+      const auto* label = at_ ? std::get_if<plan::AtLabel>(&*at_) : nullptr;
+      if (label != nullptr) {
         // The isotope sitting on `det` given where the reference was put.
-        auto it = layout.find(at_->isotope + "@" + at_->detector);
+        auto it = layout.find(label->label + "@" + label->detector);
         if (it != layout.end()) {
           auto iso = it->second.find(det);
           if (iso != it->second.end()) v = abundance.at(iso->second) * (1 + 0.01 * t);
@@ -133,10 +176,26 @@ class FakeSpectrometer final : public ISpectrometerPort {
   bool acquiring = false;
   int readings = 0;
   std::set<std::string> protected_;
+  std::map<std::string, double> deflections;  // detector -> current deflection; absent: 0
 
  private:
+  static std::string num(double v) {
+    std::ostringstream out;
+    out << v;
+    return out.str();
+  }
+  // "position Ar40@H1", "position 35.000000@CDD", "move_native 1.234",
+  // "position_hv 4500@H1".
+  static std::string describe(const plan::At& at) {
+    if (const auto* l = std::get_if<plan::AtLabel>(&at)) return "position " + l->label + "@" + l->detector;
+    if (const auto* m = std::get_if<plan::AtMass>(&at)) return "position " + std::to_string(m->mass) + "@" + m->detector;
+    if (const auto* d = std::get_if<plan::AtDac>(&at)) return "move_native " + num(d->dac);
+    const auto& h = std::get<plan::AtHv>(at);
+    return "position_hv " + num(h.hv) + "@" + h.detector;
+  }
+
   ManualClock& clock_;
-  std::optional<plan::HopTarget> at_;
+  std::optional<plan::At> at_;
   pychron::Duration integration_ = 1s;
 };
 

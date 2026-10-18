@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <set>
 #include <string_view>
@@ -34,22 +35,37 @@
 
 namespace pychron::experiment::measurement {
 
-// position() targets an isotope (or a mass for baselines) on a detector with
-// no settle; acquisition runs the facade's AcquisitionEngine and reads its
-// IntensityStream. A running acquisition (a live readout) is restarted with
-// the collection's integration time.
+// position() puts a label or a mass on a detector (Spectrometer::position),
+// a raw value through the move protocol (move_native) or an HV value through
+// the source (position_hv), each with no settle; acquisition runs the
+// facade's AcquisitionEngine and reads its IntensityStream. A running
+// acquisition (a live readout) is restarted with the collection's
+// integration time. with_table() keeps the facade's TableScope until the
+// next with_table() or the port's end, which restores the table that was
+// current before. The spectrometer outlives the port.
 class SpectrometerPort final : public ISpectrometerPort {
  public:
   explicit SpectrometerPort(spectrometer::Spectrometer& spectrometer) : spec_(spectrometer) {}
 
-  Result<void> position(const plan::HopTarget& target) override;
+  Result<void> position(const plan::At& target) override;
   Result<void> protect(const std::string& detector, bool on) override;
+  Result<double> set_deflection(const std::string& detector, double value) override;
+  Result<double> deflection(const std::string& detector) override;
+  Result<void> with_table(const std::string& name) override;
+  Result<void> set_gain(const std::string& detector, double gain) override;
+  Result<void> set_hv(double volts) override;
+  Result<void> set_cdd_voltage(double volts) override;
+  Result<void> set_param(const std::string& name, double value) override;
+  Result<void> blank_beam(bool on) override;
+  Result<void> apply_optics(const std::string& name) override;
+  Result<void> set_source_output(bool on) override;
   Result<void> start_acquisition(pychron::Duration integration) override;
   Result<std::optional<spectrometer::Reading>> next_reading(pychron::Duration timeout) override;
   void stop_acquisition() override;
 
  private:
   spectrometer::Spectrometer& spec_;
+  std::optional<spectrometer::Spectrometer::TableScope> table_;  // declared after spec_: released first
 };
 
 // Valve actuation through the line, so interlocks and SwitchManager events apply.

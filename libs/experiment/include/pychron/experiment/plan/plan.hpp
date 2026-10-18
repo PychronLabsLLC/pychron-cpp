@@ -248,16 +248,6 @@ struct MeasurementPlan {
   friend bool operator==(const MeasurementPlan&, const MeasurementPlan&) = default;
 };
 
-// Where the magnet puts which mass: a label (or an explicit mass) on a
-// detector. The spectrometer port's positioning target until the port takes
-// `At` itself.
-struct HopTarget {
-  std::string isotope;
-  std::optional<double> mass;
-  std::string detector;
-  friend bool operator==(const HopTarget&, const HopTarget&) = default;
-};
-
 // Where a position puts the magnet (spec 3.2): its `at`, else the label of
 // its entry on the plan's reference detector (or on one of that detector's
 // modes, "H2(CDD)" for "H2"). nullopt when the plan names no reference and

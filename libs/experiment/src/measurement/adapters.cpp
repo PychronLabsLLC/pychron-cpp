@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <type_traits>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -10,22 +11,95 @@
 
 namespace pychron::experiment::measurement {
 
-Result<void> SpectrometerPort::position(const plan::HopTarget& target) {
-  spectrometer::PositionTarget t;
-  if (target.mass) {
-    t.target = spectrometer::Mass{*target.mass};
-  } else {
-    t.target = spectrometer::Isotope{target.isotope};
-  }
-  t.on = target.detector;
+namespace {
+
+spectrometer::PositionOptions no_settle() {
   spectrometer::PositionOptions options;
   options.settle = pychron::Duration::zero();
-  auto r = spec_.position(t, options);
-  if (!r) return fail(r.error());
-  return {};
+  return options;
+}
+
+}  // namespace
+
+Result<void> SpectrometerPort::position(const plan::At& target) {
+  return std::visit(
+      [&](const auto& at) -> Result<void> {
+        using T = std::decay_t<decltype(at)>;
+        if constexpr (std::is_same_v<T, plan::AtLabel>) {
+          auto r = spec_.position(spectrometer::PositionTarget{spectrometer::Isotope{at.label}, at.detector}, no_settle());
+          if (!r) return fail(r.error());
+        } else if constexpr (std::is_same_v<T, plan::AtMass>) {
+          auto r = spec_.position(spectrometer::PositionTarget{spectrometer::Mass{at.mass}, at.detector}, no_settle());
+          if (!r) return fail(r.error());
+        } else if constexpr (std::is_same_v<T, plan::AtDac>) {
+          auto r = spec_.move_native(at.dac, no_settle());
+          if (!r) return fail(r.error());
+        } else {
+          auto r = spec_.position_hv(spectrometer::PositionTarget{spectrometer::NativeUnits{at.hv}, at.detector},
+                                     no_settle());
+          if (!r) return fail(r.error());
+        }
+        return {};
+      },
+      target);
 }
 
 Result<void> SpectrometerPort::protect(const std::string& detector, bool on) { return spec_.protect(detector, on); }
+
+Result<double> SpectrometerPort::set_deflection(const std::string& detector, double value) {
+  return spec_.set_deflection(detector, value);
+}
+
+Result<double> SpectrometerPort::deflection(const std::string& detector) { return spec_.read_deflection(detector); }
+
+Result<void> SpectrometerPort::with_table(const std::string& name) {
+  table_.reset();  // back to the table that was current before the last call
+  if (name.empty()) return {};
+  auto scope = spec_.with_table(name);
+  if (!scope) return fail(scope.error());
+  table_.emplace(std::move(*scope));
+  return {};
+}
+
+Result<void> SpectrometerPort::set_gain(const std::string& detector, double gain) {
+  return spec_.set_gain(detector, gain);
+}
+
+Result<void> SpectrometerPort::set_hv(double volts) { return spec_.set_hv(volts); }
+
+Result<void> SpectrometerPort::set_cdd_voltage(double volts) {
+  bool any = false;
+  for (const auto& d : spec_.config().detectors) {
+    if (d.kind != spectrometer::cfg::DetectorKind::Cdd) continue;
+    any = true;
+    if (auto r = spec_.set_cdd_voltage(d.name, volts); !r) return r;
+  }
+  if (!any) return fail(ErrorKind::Config, "cdd_voltage: the spectrometer has no CDD");
+  return {};
+}
+
+Result<void> SpectrometerPort::set_param(const std::string& name, double value) {
+  auto id = spectrometer::parse_param_id(name);
+  if (!id) {
+    // Not a registry name: the source's own (vendor) name for one.
+    auto specs = spec_.source_params();
+    if (!specs) return fail(specs.error());
+    const auto* spec = spectrometer::find_vendor(*specs, name);
+    if (spec == nullptr) return fail(id.error());
+    id = spec->id;
+  }
+  return spec_.set_param(*id, value);
+}
+
+Result<void> SpectrometerPort::blank_beam(bool on) { return spec_.blank_beam(on); }
+
+Result<void> SpectrometerPort::apply_optics(const std::string& name) {
+  return fail(ErrorKind::Config, "optics '" + name + "': not supported by this spectrometer");
+}
+
+Result<void> SpectrometerPort::set_source_output(bool /*on*/) {
+  return fail(ErrorKind::Config, "source output: not supported by this spectrometer");
+}
 
 Result<void> SpectrometerPort::start_acquisition(pychron::Duration integration) {
   auto& engine = spec_.acquisition();

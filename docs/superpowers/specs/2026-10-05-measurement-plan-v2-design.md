@@ -278,9 +278,11 @@ position times N cycles equals one position with N times counts.
 `set_deflection(det, v)`, `set_integration(s)`, `move_native(dac)`,
 `position_hv(v, det)`, `blank_beam(bool)`, `set_source_output(bool)`,
 `set_gain`, `set_hv`, `set_param`, and `peak_center` with `write_table`.
-Every one maps to a call that already exists on the spectrometer facade
-except `apply_optics` and `set_source_output`, which the Qtegra and Noblesse
-drivers add. The simulator applies deflection and optics to the simulated
+Every one maps to a call on the spectrometer facade except `apply_optics`
+and `set_source_output`, which the Qtegra and Noblesse drivers add. Facade
+gained `blank_beam(bool)` and `read_deflection(det)` (current deflection, for
+the restore rule) for this. Integration stays an argument of starting
+acquisition: setting it is the engine restarting acquisition. The simulator applies deflection and optics to the simulated
 beams so tests can observe them; a driver without a capability reports it at
 plan load (`doctor` and `exp validate`), not at run time.
 

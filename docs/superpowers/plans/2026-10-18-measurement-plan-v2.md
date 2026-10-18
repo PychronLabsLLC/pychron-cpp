@@ -279,11 +279,13 @@ Done notes: Step 2 was not observed failing: the equivalence tests were written 
   - Integration stays an argument of `start_acquisition` (the facade has no setter): "set integration" in §5.2 is the engine restarting acquisition with the new integration.
 - `SpectrometerPort` maps each to the facade call named in "What the code says"; `with_table` keeps the returned `TableScope` alive until the next `with_table` call or the port's destruction.
 
-- [ ] **Step 1: Write failing tests:** `SpectrometerPortSim.DacAndHvPositioning` and `SpectrometerPortSim.DeflectionReachesTheBeam` in `test_measurement_sim.cpp` (real facade on the simulated drivers: `position(AtDac{x})` leaves `magnet_native()==x`; `set_deflection("CDD",110)` then `deflection("CDD")==110` and the simulated peak on CDD shifts, read through `BeamModel::intensity`).
-- [ ] **Step 2: Run** `pychron_integration_tests --gtest_filter='SpectrometerPortSim.*'` → FAIL.
-- [ ] **Step 3: Implement** the port calls, the adapter, the fake.
-- [ ] **Step 4: Run** → PASS; `pychron_experiment_tests` → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): spectrometer port calls for per-position settings`.
+- [x] **Step 1: Write failing tests:** `SpectrometerPortSim.DacAndHvPositioning` and `SpectrometerPortSim.DeflectionReachesTheBeam` in `test_measurement_sim.cpp` (real facade on the simulated drivers: `position(AtDac{x})` leaves `magnet_native()==x`; `set_deflection("CDD",110)` then `deflection("CDD")==110` and the simulated peak on CDD shifts, read through `BeamModel::intensity`).
+- [x] **Step 2: Run** `pychron_integration_tests --gtest_filter='SpectrometerPortSim.*'` → FAIL.
+- [x] **Step 3: Implement** the port calls, the adapter, the fake.
+- [x] **Step 4: Run** → PASS; `pychron_experiment_tests` → PASS.
+- [x] **Step 5: Commit** `feat(experiment): spectrometer port calls for per-position settings`.
+
+Done notes: Step 2 was observed failing only as a build failure (the port had none of the calls); the tests were then run green with the adapter. The facade lacked two calls the port needs, so `Spectrometer` gained `blank_beam(bool)` (through the bound `IBeamBlank`, Config when none) and `read_deflection(det)` (reads the detector control back and records it: `DetectorState::deflection` is empty until something sets it, so the port's `deflection()` could not answer from the state alone); both tested in `tests/systems/test_spectrometer.cpp`. `set_cdd_voltage(volts)` sets every detector of kind `cdd` (Config when there is none); `set_param(name)` takes a registry name (`trap_current`, `custom:<name>`) or the source's vendor name. `AtHv` is set as a native HV value on its detector (`position_hv` with `NativeUnits`), not through the HV table. `plan::HopTarget` is gone: the engine hands `At` to the port; the loader's gate still refuses `at = { dac }` and `at = { hv }` until Task 8. Tests: `SpectrometerPortSim.{DacAndHvPositioning,DeflectionReachesTheBeam,SettingsReachTheFacade,TheTableScopeEndsWithThePort}`; the engine fake journals `move_native <v>`, `position_hv <v>@<det>`, `deflect <det>=<v>`, `table`, `gain`, `hv`, `cdd_voltage`, `param`, `blank`, `optics`, `source_output`.
 
 ### Task 8: Position execution (§5.2)
 

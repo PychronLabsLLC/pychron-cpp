@@ -60,13 +60,6 @@ std::string describe(const plan::At& at) {
       at);
 }
 
-// The spectrometer port positions by label or mass on a detector.
-Result<plan::HopTarget> to_port_target(const plan::At& at) {
-  if (const auto* l = std::get_if<plan::AtLabel>(&at)) return plan::HopTarget{l->label, std::nullopt, l->detector};
-  if (const auto* m = std::get_if<plan::AtMass>(&at)) return plan::HopTarget{"", m->mass, m->detector};
-  return fail(ErrorKind::Config, "positioning at " + describe(at) + " is not run by this build yet");
-}
-
 bool is_sniff(const plan::Segment& s) {
   return s.kind == plan::SegmentKind::Sniff && s.when == plan::When::DuringEquilibration;
 }
@@ -654,14 +647,12 @@ Result<void> MeasurementEngine::position_magnet(const std::optional<plan::At>& t
                                                 const std::vector<std::string>& protect, int segment, int position) {
   if (!target) return {};  // collect wherever the magnet is
   if (position_ && *position_ == *target) return {};
-  auto port_target = to_port_target(*target);
-  if (!port_target) return fail(port_target.error());
   for (const auto& d : protect) {
     if (auto r = ctx_.spectrometer.protect(d, true); !r) return r;
     protected_.insert(d);
     trace(segment, position, "protect", d + " on");
   }
-  Result<void> r = ctx_.spectrometer.position(*port_target);
+  Result<void> r = ctx_.spectrometer.position(*target);
   trace(segment, position, "move", describe(*target));
   if (r) {
     position_ = *target;
