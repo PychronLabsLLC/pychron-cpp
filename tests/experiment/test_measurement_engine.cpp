@@ -31,11 +31,21 @@ using namespace pychron::experiment;
 using namespace pychron::experiment::measurement;
 using namespace std::chrono_literals;
 using collect::SeriesKey;
-using collect::SeriesKind;
+using collect::merged_series;
 
 namespace {
 
 double secs(pychron::Duration d) { return std::chrono::duration<double>(d).count(); }
+
+SeriesKey skey(std::string label, std::string detector, std::string_view kind, int segment = 0, int position = 0) {
+  SeriesKey k;
+  k.label = std::move(label);
+  k.detector = std::move(detector);
+  k.kind = std::string(kind);
+  k.segment = segment;
+  k.position = position;
+  return k;
+}
 
 // Intensity = abundance of the isotope on the detector at the magnet target,
 // growing linearly with time since t0: v = a * (1 + 0.01 t).
@@ -466,9 +476,11 @@ class EngineTest : public ::testing::Test {
     return c;
   }
 
-  int count(const MeasurementResult& r, const SeriesKey& key) {
-    auto it = r.data.series.find(key);
-    return it == r.data.series.end() ? 0 : static_cast<int>(it->second.v.size());
+  // Points of a label on a detector, wherever in the plan they were read.
+  static int count(const MeasurementResult& r, std::string_view label, std::string_view detector,
+                   std::string_view kind) {
+    const auto s = merged_series(r.data, label, detector, kind);
+    return s ? static_cast<int>(s->v.size()) : 0;
   }
 
   TimePoint t0_ = TimePoint{} + 1000s;
@@ -504,9 +516,9 @@ TEST_F(EngineTest, RunsTheBlockSequenceInOrder) {
   EXPECT_EQ(peak_.requests[0].isotope, "Ar40");
   EXPECT_EQ(r.peak_centers.size(), 2u);
   // Baselines collect per detector (no isotope) on every detector of the hops.
-  EXPECT_EQ(count(r, {"", "H1", SeriesKind::Baseline}), 10);
-  EXPECT_EQ(count(r, {"", "CDD", SeriesKind::Baseline}), 10);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 10);
+  EXPECT_EQ(count(r, "", "H1", collect::kBaseline), 10);
+  EXPECT_EQ(count(r, "", "CDD", collect::kBaseline), 10);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 10);
   EXPECT_EQ(r.data.counts.at("main"), 10);
   EXPECT_EQ(r.data.counts.at("baseline.before"), 5);
   EXPECT_EQ(r.data.counts.at("baseline.after"), 5);
@@ -535,7 +547,7 @@ TEST_F(EngineTest, EquilibrationTimingAndTimeZeroOnInletClose) {
   EXPECT_EQ(overlap, 1);
   EXPECT_EQ(closed_cb, 1);
   // Sniff stops at its counts; equilibration still runs its full time.
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Sniff}), 10);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSniff), 10);
   EXPECT_FALSE(valves_.state["B"]);
 }
 
@@ -553,7 +565,7 @@ TEST_F(EngineTest, TimeZeroOnFirstCountAndOffset) {
   p.sniff.enabled = false;
   p.main.time_zero = {plan::TimeZeroKind::OnFirstCount, 0};
   auto r = run(p);
-  const auto& s = r.data.series.at({"Ar40", "H1", SeriesKind::Signal});
+  const auto s = merged_series(r.data, "Ar40", "H1", collect::kSignal).value();
   EXPECT_DOUBLE_EQ(*r.data.timing.time_zero, s.t.front());
 
   p.main.time_zero = {plan::TimeZeroKind::Offset, 4};
@@ -587,7 +599,7 @@ TEST_F(EngineTest, OneHopTimesNCyclesEqualsOneHopWithNTimesCounts) {
   ASSERT_EQ(rb.outcome, MeasurementOutcome::Completed);
   EXPECT_EQ(ra.data.series.size(), rb.data.series.size());
   for (const auto& [key, s] : ra.data.series) {
-    if (key.kind == SeriesKind::Signal) {
+    if (key.kind == collect::kSignal) {
       EXPECT_EQ(s.v.size(), 20u) << to_string(key);
       EXPECT_EQ(s.t, rb.data.series.at(key).t) << to_string(key);
       EXPECT_EQ(s.v, rb.data.series.at(key).v) << to_string(key);
@@ -628,15 +640,15 @@ TEST_F(EngineTest, PeakHopOrderingProtectionAndBaselineHops) {
       "position Ar39@CDD", "position 34.200000@CDD",
   };
   EXPECT_EQ(moves, expected);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 6);
-  EXPECT_EQ(count(r, {"Ar36", "CDD", SeriesKind::Signal}), 6);
-  EXPECT_EQ(count(r, {"Ar39", "CDD", SeriesKind::Signal}), 4);
-  EXPECT_EQ(count(r, {"Ar36", "CDD", SeriesKind::Baseline}), 2);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 6);
+  EXPECT_EQ(count(r, "Ar36", "CDD", collect::kSignal), 6);
+  EXPECT_EQ(count(r, "Ar39", "CDD", collect::kSignal), 4);
+  EXPECT_EQ(count(r, "Ar36", "CDD", collect::kBaseline), 2);
   EXPECT_EQ(r.data.counts.at("main"), 12);
   EXPECT_TRUE(spec_.protected_.empty());
   // Ar39 on CDD reads Ar39's abundance, not Ar36's.
-  EXPECT_NEAR(r.data.series.at({"Ar39", "CDD", SeriesKind::Signal}).v.front() /
-                  r.data.series.at({"Ar36", "CDD", SeriesKind::Signal}).v.front(),
+  EXPECT_NEAR(merged_series(r.data, "Ar39", "CDD", collect::kSignal).value().v.front() /
+                  merged_series(r.data, "Ar36", "CDD", collect::kSignal).value().v.front(),
               100.0 / 3.0, 1.0);
 }
 
@@ -650,7 +662,7 @@ TEST_F(EngineTest, TruncationScalesLaterCollections) {
   set.items.back().abbreviated_count_ratio = 0.3;
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 11);  // first check after reading start + 1
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 11);  // first check after reading start + 1
   EXPECT_DOUBLE_EQ(r.count_scale, 0.3);                         // the conditional's ratio (pychron)
   EXPECT_EQ(r.data.counts.at("baseline.after"), 9);  // ceil(30 * 0.3)
   ASSERT_EQ(r.data.trips.size(), 1u);
@@ -667,7 +679,7 @@ TEST_F(EngineTest, UserQuickTruncateScalesByAQuarter) {
   };
   auto r = run(p);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 5);  // requested while reading 5 was in flight
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 5);  // requested while reading 5 was in flight
   EXPECT_DOUBLE_EQ(r.count_scale, 0.25);
   EXPECT_EQ(r.data.counts.at("baseline.after"), 8);  // ceil(30 * 0.25); later cycles skipped
 }
@@ -682,7 +694,7 @@ TEST_F(EngineTest, TerminationKeepsDataAndSkipsLaterBlocks) {
   set.items.push_back(conditional(ConditionalKind::Termination, "stop", "count(Ar40) >= 7"));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Terminated);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 7);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 7);
   EXPECT_EQ(r.blocks.back(), Block::Main);
   EXPECT_TRUE(peak_.requests.empty());
   EXPECT_FALSE(valves_.state["B"]);
@@ -714,7 +726,7 @@ TEST_F(EngineTest, ActionsAndModifications) {
   EXPECT_EQ(r.modifications[0].name, "skip");
   EXPECT_EQ(r.notes, (std::vector<std::string>{"notify: note"}));
   EXPECT_EQ(hook_.entries, (std::vector<std::string>{"before_main", "on_big", "after_main"}));
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 7);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 7);
   EXPECT_DOUBLE_EQ(r.count_scale, 1.0);  // a user/action truncate keeps later counts
   EXPECT_EQ(r.data.counts.at("baseline.after"), 30);
   EXPECT_FALSE(r.cancel_queue);
@@ -731,7 +743,7 @@ TEST_F(EngineTest, NonResumingActionEndsMainWithoutTruncating) {
                                   action(ActionSpec::Type::Notify)));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Completed);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 4);  // later cycles skipped
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 4);  // later cycles skipped
   EXPECT_EQ(r.data.counts.at("baseline.after"), 30);
   EXPECT_EQ(r.notes, (std::vector<std::string>{"notify: note"}));
 }
@@ -748,7 +760,7 @@ TEST_F(EngineTest, ModificationFlagsActInRun) {
   set.items.back().abbreviated_count_ratio = 0.5;
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Truncated);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 5);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 5);
   EXPECT_EQ(r.data.counts.at("baseline.after"), 10);
   ASSERT_EQ(r.modifications.size(), 1u);
   EXPECT_TRUE(r.modifications[0].truncate);
@@ -831,10 +843,10 @@ TEST_F(EngineTest, WhiffRunRemainderPumpAbort) {
       << " notes=" << testing::PrintToString(r.notes);
   EXPECT_EQ(r.whiff, WhiffCheck::Action::RunRemainder);  // nothing matched
   EXPECT_EQ(hook_.whiff_result, "run_remainder");
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Whiff}), 3);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Sniff}), 7);  // the rest of the 10 s equilibration
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kWhiff), 3);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSniff), 7);  // the rest of the 10 s equilibration
   // The whiff happens after the inlet opens.
-  EXPECT_GT(r.data.series.at({"Ar40", "H1", SeriesKind::Whiff}).t.front(), *r.data.timing.inlet_open);
+  EXPECT_GT(merged_series(r.data, "Ar40", "H1", collect::kWhiff).value().t.front(), *r.data.timing.inlet_open);
 
   p.whiff.checks = {{"Ar40.cur > 500", "pump"}};
   valves_.log.clear();
@@ -844,7 +856,7 @@ TEST_F(EngineTest, WhiffRunRemainderPumpAbort) {
   EXPECT_FALSE(valves_.state["B"]);
   EXPECT_TRUE(valves_.state["C"]);  // outlet opened to pump the gas away
   EXPECT_EQ(r.blocks.back(), Block::Equilibrate);
-  EXPECT_FALSE(r.data.series.contains({"Ar40", "H1", SeriesKind::Signal}));
+  EXPECT_FALSE(merged_series(r.data, "Ar40", "H1", collect::kSignal).has_value());
 
   p.whiff.checks = {{"Ar40.cur > 500", "abort"}};
   r = run(p);
@@ -878,7 +890,7 @@ TEST_F(EngineTest, CancelMidMainLeavesTheLineSafe) {
   EXPECT_FALSE(spec_.acquiring);
   EXPECT_TRUE(spec_.protected_.empty());
   EXPECT_EQ(r.blocks.back(), Block::Main);
-  EXPECT_LT(count(r, {"Ar40", "H1", SeriesKind::Signal}), 40);
+  EXPECT_LT(count(r, "Ar40", "H1", collect::kSignal), 40);
 }
 
 TEST_F(EngineTest, AbortDuringEquilibrationClosesTheInlet) {
@@ -900,7 +912,7 @@ TEST_F(EngineTest, CancelationConditionalCancels) {
   set.items.push_back(conditional(ConditionalKind::Cancelation, "bad", "Ar40 > 0", 2));
   auto r = run(p, set);
   EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 3);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 3);
 }
 
 TEST_F(EngineTest, AcquisitionFailureFailsAndCleansUp) {
@@ -975,7 +987,7 @@ TEST_F(EngineTest, APeakCenterAfterRunsWhenTheSignalReachesTheMinimum) {
   p.peak_center.after = true;
   p.peak_center.isotope = "Ar40";
   auto plain = run(p);
-  const auto& v = plain.data.series.at({"Ar40", "H1", SeriesKind::Signal}).v;
+  const auto v = merged_series(plain.data, "Ar40", "H1", collect::kSignal).value().v;
   ASSERT_EQ(v.size(), 12u);
   double last_ten = 0;
   for (std::size_t i = 2; i < v.size(); ++i) last_ten += v[i] / 10;
@@ -1105,12 +1117,33 @@ TEST_F(EngineTest, ResultsFitInterceptsAndBaselines) {
   EXPECT_TRUE(found);
 }
 
+// Until the record has positions (v3), one label on one detector is one
+// record series and one intercept, its positions merged in time order.
+TEST_F(EngineTest, RecordMergesThePositionsOfOneLabelOnOneDetector) {
+  collect::RunData d;
+  d.series[skey("Ar40", "H1", collect::kSignal, 1, 0)] = collect::Series{{1, 3}, {10, 30}, {}, {false, false}};
+  d.series[skey("Ar40", "H1", collect::kSignal, 1, 1)] = collect::Series{{2, 4}, {20, 40}, {}, {false, false}};
+  d.series[skey("", "H1", collect::kBaseline, 0, 0)] = collect::Series{{0}, {1}, {}, {false}};
+  d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{5}, {3}, {}, {false}};
+  const auto data = to_record_data(d);
+  ASSERT_EQ(data.series.size(), 2u);
+  // By label, as v2 records were: the baseline segment's (no label) first.
+  EXPECT_EQ(data.series[0].kind, "baseline");
+  EXPECT_EQ(data.series[0].trace.v, (std::vector<float>{1, 3}));
+  EXPECT_EQ(data.series[1].iso, "Ar40");
+  EXPECT_EQ(data.series[1].trace.v, (std::vector<float>{10, 20, 30, 40}));
+  const auto out = fit_results(d, plan::Fits{});
+  EXPECT_EQ(out.results.intercepts.size(), 1u);
+  EXPECT_NEAR(out.results.intercepts.at("Ar40").intercept.value, 0, 1e-9);  // y = 10 t
+  EXPECT_DOUBLE_EQ(out.results.baselines.at("H1").value, 2);
+}
+
 TEST_F(EngineTest, IsotopeOnTwoDetectorsGetsDetectorQualifiedIntercepts) {
   collect::RunData d;
-  d.series[{"Ar36", "CDD", SeriesKind::Signal}] = collect::Series{{1, 2, 3}, {1, 2, 3}, {}, {}};
-  d.series[{"Ar36", "L2", SeriesKind::Signal}] = collect::Series{{1, 2, 3}, {2, 4, 6}, {}, {}};
-  d.series[{"Ar40", "H1", SeriesKind::Signal}] = collect::Series{{1}, {5}, {}, {}};  // too few for linear
-  d.series[{"Ar39", "AX", SeriesKind::Signal}] =
+  d.series[skey("Ar36", "CDD", collect::kSignal)] = collect::Series{{1, 2, 3}, {1, 2, 3}, {}, {}};
+  d.series[skey("Ar36", "L2", collect::kSignal)] = collect::Series{{1, 2, 3}, {2, 4, 6}, {}, {}};
+  d.series[skey("Ar40", "H1", collect::kSignal)] = collect::Series{{1}, {5}, {}, {}};  // too few for linear
+  d.series[skey("Ar39", "AX", collect::kSignal)] =
       collect::Series{{1, 2}, {1, std::numeric_limits<double>::quiet_NaN()}, {}, {}};
   auto out = fit_results(d, plan::Fits{});
   EXPECT_TRUE(out.results.intercepts.contains("Ar36:CDD"));
@@ -1182,7 +1215,7 @@ TEST_F(MeasurementGaps, AShortSilenceIsRecordedAndTheBlockEndsOnTime) {
   EXPECT_EQ(published_[0].from, r.gaps[0].from);
   // The block ends at its planned end (100 s after it began), with what 80 s gives.
   EXPECT_EQ(*last_main_ - main_began(), 100s);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 80);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 80);
 }
 
 TEST_F(MeasurementGaps, NothingIsDoneToTheLineWhileWaiting) {
@@ -1205,7 +1238,7 @@ TEST_F(MeasurementGaps, ASilenceLongerThanMaxGapEndsTheBlock) {
   const auto restarts = std::count(spec_.log.begin() + static_cast<std::ptrdiff_t>(spec_log_at_silence_), spec_.log.end(),
                                    "start 1.000000");
   EXPECT_EQ(restarts, 1);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 100);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 100);
 }
 
 TEST_F(MeasurementGaps, EnoughCountsIsTruncatedWithReasonLink) {
@@ -1260,7 +1293,7 @@ TEST_F(MeasurementGaps, AnAcquisitionStartOfUnknownOutcomeIsRestartedOnce) {
   ASSERT_NE(lost, spec_.log.end());
   EXPECT_EQ(*(lost + 1), "stop");
   EXPECT_EQ(*(lost + 2), "start 1.000000");
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 10);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 10);
 }
 
 TEST_F(MeasurementGaps, EquilibrationFollowsTheSameRule) {
@@ -1520,7 +1553,7 @@ TEST_F(EngineV2, AWhiffReadsWhereTheMagnetIs) {
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
   EXPECT_EQ(std::count_if(spec_.log.begin(), spec_.log.end(), [](const std::string& l) { return l.starts_with("position"); }),
             1);
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Whiff}), 2);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kWhiff), 2);
 }
 
 // An excluded cup the hop protects is still protected during the move.
@@ -1533,7 +1566,7 @@ TEST_F(EngineV2, AnExcludedCupTheHopProtectsIsStillProtected) {
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
   EXPECT_NE(std::find(spec_.log.begin(), spec_.log.end(), "protect CDD"), spec_.log.end());
   EXPECT_TRUE(spec_.protected_.empty());
-  EXPECT_FALSE(r.data.series.contains({"Ar36", "CDD", SeriesKind::Signal}));
+  EXPECT_FALSE(merged_series(r.data, "Ar36", "CDD", collect::kSignal).has_value());
 }
 
 // ---- position execution (measurement plan v2 spec 5.2, Task 8) ---------------
@@ -1628,7 +1661,7 @@ settle_s = 20
   EXPECT_EQ(std::vector<std::string>(what.end() - 3, what.end()),
             (std::vector<std::string>{"move mass 34.2@H1", "settle 20", "collect 120"}));
   EXPECT_DOUBLE_EQ(spec_.deflections.at("CDD"), 0);
-  EXPECT_EQ(count(r, {"mass35", "CDD", SeriesKind::Signal}), 20 * 8);
+  EXPECT_EQ(count(r, "mass35", "CDD", collect::kSignal), 20 * 8);
 }
 
 // Worked plan 7.4, second position: the inactive H2(CDD) is protected for the
@@ -1644,9 +1677,9 @@ TEST_F(PositionExec, InactiveEntryIsProtectedNotCollected) {
                                       "deflect L1(CDD)=600", "move Ar38@AX(CDD)", "settle 3", "protect H2(CDD) off",
                                       "collect 10", "deflect H1(CDD)=0", "deflect H2(CDD)=0",
                                       "deflect L1(CDD)=0"}));
-  EXPECT_FALSE(r.data.series.contains({"Ar40", "H2(CDD)", SeriesKind::Signal}));
-  EXPECT_TRUE(r.data.series.contains({"Ar40", "H2", SeriesKind::Signal}));
-  EXPECT_TRUE(r.data.series.contains({"Ar39", "H1(CDD)", SeriesKind::Signal}));
+  EXPECT_FALSE(merged_series(r.data, "Ar40", "H2(CDD)", collect::kSignal).has_value());
+  EXPECT_TRUE(merged_series(r.data, "Ar40", "H2", collect::kSignal).has_value());
+  EXPECT_TRUE(merged_series(r.data, "Ar39", "H1(CDD)", collect::kSignal).has_value());
   EXPECT_TRUE(spec_.protected_.empty());
 }
 
@@ -1682,7 +1715,7 @@ integration_s = 2
   EXPECT_EQ(changes, expected);
   EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "start 2.000000"), 15);
   EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "start 1.000000"), 15);
-  const auto& t = r.data.series.at({"Ar39", "IC0", SeriesKind::Signal}).t;
+  const auto t = merged_series(r.data, "Ar39", "IC0", collect::kSignal).value().t;
   ASSERT_GE(t.size(), 2u);
   EXPECT_DOUBLE_EQ(t[1] - t[0], 2);  // readings 2 s apart
 }
@@ -1703,7 +1736,7 @@ settle_s = 2
   EXPECT_EQ(what_of(r.trace),
             (std::vector<std::string>{"deflect CDD=50", "move Ar40@H1", "settle 2", "collect 4", "collect 4",
                                       "collect 4", "deflect CDD=0"}));
-  EXPECT_EQ(count(r, {"Ar40", "H1", SeriesKind::Signal}), 12);
+  EXPECT_EQ(count(r, "Ar40", "H1", collect::kSignal), 12);
 }
 
 TEST_F(PositionExec, DacAndHvTargets) {

@@ -347,7 +347,7 @@ class MeasurementEngine {
   // Records which mode each collector of `pos` is in.
   void note_modes(const plan::Position& pos);
   // Large-beam state from one reading; a baseline reading changes nothing.
-  void note_beams(collect::SeriesKind kind, const spectrometer::Reading& reading);
+  void note_beams(std::string_view kind, const spectrometer::Reading& reading);
   Result<collect::CollectStatus> collect(Block block, collect::CollectionSpec spec, double integration_s,
                                          collect::ReadingHook hook);
   bool main_reading(int count, double t);

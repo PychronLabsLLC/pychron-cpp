@@ -7,16 +7,49 @@
 
 namespace pychron::experiment::measurement {
 
+namespace {
+
+// Until the record carries gas, segment and position (AnalysisRecord v3), a
+// record has one series per label, detector and kind: the collector's series
+// that differ only in where in the plan they were measured are merged, in
+// time order. Ordered as the v2 record always was: by label, detector, then
+// signal, baseline, sniff, whiff (and any other kind after them, by name).
+struct RecordKey {
+  std::string label, detector;
+  int rank = 0;
+  std::string kind;
+  friend auto operator<=>(const RecordKey&, const RecordKey&) = default;
+};
+
+int rank_of(std::string_view kind) {
+  if (kind == collect::kSignal) return 0;
+  if (kind == collect::kBaseline) return 1;
+  if (kind == collect::kSniff) return 2;
+  if (kind == collect::kWhiff) return 3;
+  return 4;
+}
+
+std::map<RecordKey, collect::Series> record_series(const collect::RunData& data) {
+  std::map<RecordKey, std::vector<const collect::Series*>> parts;
+  for (const auto& [key, s] : data.series)
+    parts[RecordKey{key.label, key.detector, rank_of(key.kind), key.kind}].push_back(&s);
+  std::map<RecordKey, collect::Series> out;
+  for (const auto& [key, p] : parts) out.emplace(key, collect::merge_series(p));
+  return out;
+}
+
+}  // namespace
+
 record::Data to_record_data(const collect::RunData& data) {
   record::Data out;
   const double t0 = data.timing.time_zero.value_or(0.0);
   out.time_zero = t0;
   out.counts = data.counts;
-  for (const auto& [key, s] : data.series) {
+  for (const auto& [key, s] : record_series(data)) {
     record::DataSeries ds;
-    ds.iso = key.isotope;
+    ds.iso = key.label;
     ds.det = key.detector;
-    ds.kind = std::string(collect::to_string(key.kind));
+    ds.kind = key.kind;
     for (double t : s.t) ds.trace.t.push_back(static_cast<float>(t - t0));
     for (double v : s.v) ds.trace.v.push_back(static_cast<float>(v));
     for (double e : s.sigma) ds.trace.sigma.push_back(static_cast<float>(e));
@@ -28,23 +61,24 @@ record::Data to_record_data(const collect::RunData& data) {
 FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits) {
   FitOutput out;
   const double t0 = data.timing.time_zero.value_or(0.0);
+  const auto merged = record_series(data);
 
   std::map<std::string, std::set<std::string>> detectors_of;
-  for (const auto& [key, s] : data.series) {
-    if (key.kind == collect::SeriesKind::Signal) detectors_of[key.isotope].insert(key.detector);
+  for (const auto& [key, s] : merged) {
+    if (key.kind == collect::kSignal) detectors_of[key.label].insert(key.detector);
   }
 
-  for (const auto& [key, s] : data.series) {
-    if (key.kind != collect::SeriesKind::Signal) continue;
+  for (const auto& [key, s] : merged) {
+    if (key.kind != collect::kSignal) continue;
     // On several detectors: one intercept a detector, under a name of its own
     // (record/names.hpp says what an analysis then calls it).
-    const std::string name = detectors_of[key.isotope].size() > 1
-                                 ? record::acquisition_isotope_key(key.isotope, key.detector)
-                                 : key.isotope;
+    const std::string name = detectors_of[key.label].size() > 1
+                                 ? record::acquisition_isotope_key(key.label, key.detector)
+                                 : key.label;
     reduction::Series series;
     series.y = s.v;
     for (double t : s.t) series.x.push_back(t - t0);
-    auto spec = plan::signal_fit(fits, key.isotope);
+    auto spec = plan::signal_fit(fits, key.label);
     // Too few points for the plan's fit (e.g. truncated early): average them;
     // the recorded fit says so.
     if (!series.x.empty() && series.x.size() < reduction::parameter_count(spec)) {
@@ -60,8 +94,8 @@ FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits) {
   }
 
   std::map<std::string, reduction::Series> baselines;
-  for (const auto& [key, s] : data.series) {
-    if (key.kind != collect::SeriesKind::Baseline) continue;
+  for (const auto& [key, s] : merged) {
+    if (key.kind != collect::kBaseline) continue;
     auto& b = baselines[key.detector];
     b.y.insert(b.y.end(), s.v.begin(), s.v.end());
     for (double t : s.t) b.x.push_back(t - t0);

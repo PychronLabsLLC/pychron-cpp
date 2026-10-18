@@ -33,6 +33,7 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -75,7 +76,7 @@ struct EvolutionPanel {
 // baseline) or "Ar40 H1"; a sniff "Ar40" (sniffs are multicollection: one
 // detector an isotope).
 [[nodiscard]] std::vector<EvolutionPanel> evolution_panels(
-    const std::vector<experiment::collect::SeriesKey>& arrived, experiment::collect::SeriesKind kind);
+    const std::vector<experiment::collect::SeriesKey>& arrived, std::string_view kind);
 
 class EvolutionsView : public QWidget {
   Q_OBJECT
@@ -102,8 +103,8 @@ class EvolutionsView : public QWidget {
   void clear();               // a run's: series, fits, the peak centers list
   void clear_peak_centers();  // a queue's: the peak center graph and its kept results
 
-  void set_kind(experiment::collect::SeriesKind kind);
-  experiment::collect::SeriesKind kind() const noexcept { return kind_; }
+  void set_kind(std::string_view kind);
+  const std::string& kind() const noexcept { return kind_; }
 
   // For tests.
   QCustomPlot* plot() const noexcept { return plot_; }
@@ -116,7 +117,7 @@ class EvolutionsView : public QWidget {
   [[nodiscard]] bool panel_has_time_labels(int i) const;
   [[nodiscard]] int panel_plot_height(int i) const;  // pixels inside the panel's axes, as last laid out
   [[nodiscard]] QScrollArea* scroll_area() const noexcept { return scroll_; }
-  std::size_t point_count(experiment::collect::SeriesKind kind) const;  // over every series of `kind`
+  std::size_t point_count(std::string_view kind) const;  // over every series of `kind`
   QString title_text() const;
   QStringList peak_centers() const;
   // The intercepts table of the shown kind: its column titles, and each row's cells.
@@ -157,7 +158,7 @@ class EvolutionsView : public QWidget {
   std::map<experiment::collect::SeriesKey, Line> lines_;
   std::vector<experiment::collect::SeriesKey> arrived_;  // every key, in the order its first point came
   std::vector<Graphs> graphs_;                          // a panel a series of the shown kind
-  experiment::collect::SeriesKind kind_ = experiment::collect::SeriesKind::Signal;
+  std::string kind_{experiment::collect::kSignal};
   QString run_;
   QString block_;
   QTabBar* tabs_;

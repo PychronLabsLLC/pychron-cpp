@@ -77,7 +77,7 @@ class TestExperimentBridge : public QObject {
               ++fit_batches;
               for (const auto& f : batch)
                 for (const auto& sf : f.fits)
-                  if (sf.key.isotope == "Ar40" && sf.key.kind == pychron::experiment::collect::SeriesKind::Signal)
+                  if (sf.key.label == "Ar40" && sf.key.kind == pychron::experiment::collect::kSignal)
                     ar40_values.insert(sf.fit.value);
             });
     connect(bridge.get(), &ExperimentBridge::queueEnded, this, [&](const pychron::experiment::lab::QueueEnded& e) {

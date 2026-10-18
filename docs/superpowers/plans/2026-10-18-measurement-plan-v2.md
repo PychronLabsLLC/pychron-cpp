@@ -362,11 +362,13 @@ Done notes: Step 2 as planned: `WorkedPlan74` failed on `helix_v2/spectrometer.t
   - `Channel` field `isotope` is renamed `label`; `CollectionSpec` gains `std::string gas; int segment = 0; int position = 0;` and its `kind` becomes `std::string`.
   - `std::optional<reduction::Intercept> Collector::intercept(const std::string& name) const;` — `"Ar40"` → most recently measured detector's series (today's rule); `"Ar40@H1"` → that detector. Several series of one label on one detector (several positions) are fitted as one series in time order.
 
-- [ ] **Step 1: Write failing tests:** `Collector.KeysCarryGasSegmentPosition`; `Collector.InterceptByLabelPicksMostRecentDetector`; `Collector.InterceptByQualifiedName` (`Ar40@H2` vs `Ar40@H1` from worked plan 7.3 shape); `Collector.OneLabelOneDetectorTwoPositionsFitsAsOneSeries`.
-- [ ] **Step 2: Run** `--gtest_filter='Collector.*'` → FAIL.
-- [ ] **Step 3: Implement**; every existing `SeriesKind::X` use becomes the string constant.
-- [ ] **Step 4: Run** the whole binary → PASS.
-- [ ] **Step 5: Commit** `refactor(experiment): series keyed by label, detector, kind, gas, segment and position`.
+- [x] **Step 1: Write failing tests:** `Collector.KeysCarryGasSegmentPosition`; `Collector.InterceptByLabelPicksMostRecentDetector`; `Collector.InterceptByQualifiedName` (`Ar40@H2` vs `Ar40@H1` from worked plan 7.3 shape); `Collector.OneLabelOneDetectorTwoPositionsFitsAsOneSeries`.
+- [x] **Step 2: Run** `--gtest_filter='Collector.*'` → FAIL.
+- [x] **Step 3: Implement**; every existing `SeriesKind::X` use becomes the string constant.
+- [x] **Step 4: Run** the whole binary → PASS.
+- [x] **Step 5: Commit** `refactor(experiment): series keyed by label, detector, kind, gas, segment and position`.
+
+Built as well (2026-10-18): `merge_series(parts)` (points of several series as one, in time order), `merged_series(RunData, label, detector, kind)` (every series of a label on a detector wherever in the plan it was read; the tests' lookups and the peak-center `min_signal` check use it) and `Collector::series_of(name, kind)`. Until Task 13, `to_record_data` and `fit_results` merge the series of one label, detector and kind, so a record keeps its v2 shape and order; the evolutions view draws them as one line. The tests are in the `CollectorTest` fixture (`--gtest_filter='Collector*'`).
 
 ### Task 12: `AnalysisRecord` v3 types and serialization
 

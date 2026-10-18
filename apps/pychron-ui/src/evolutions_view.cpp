@@ -28,26 +28,36 @@ namespace pychron::ui {
 namespace {
 
 using experiment::collect::SeriesKey;
-using experiment::collect::SeriesKind;
 
-constexpr SeriesKind kKinds[] = {SeriesKind::Signal, SeriesKind::Baseline, SeriesKind::Sniff};
+constexpr std::array<std::string_view, 3> kKinds{experiment::collect::kSignal, experiment::collect::kBaseline,
+                                                 experiment::collect::kSniff};
 constexpr int kPeakCenterTab = static_cast<int>(std::size(kKinds));  // after the kinds
 
 bool is_kind_tab(int i) { return i >= 0 && std::cmp_less(i, std::size(kKinds)); }
 
+// One line per label, detector and kind: the series of one label on one
+// detector at several places in the plan are drawn, and fitted, as one.
+SeriesKey line_key(const SeriesKey& key) {
+  SeriesKey k;
+  k.label = key.label;
+  k.detector = key.detector;
+  k.kind = key.kind;
+  return k;
+}
+
 QString series_name(const SeriesKey& key) {
-  return key.isotope.empty() ? QString::fromStdString(key.detector)
-                             : QStringLiteral("%1 %2").arg(QString::fromStdString(key.isotope),
+  return key.label.empty() ? QString::fromStdString(key.detector)
+                           : QStringLiteral("%1 %2").arg(QString::fromStdString(key.label),
                                                           QString::fromStdString(key.detector));
 }
 
 }  // namespace
 
-std::vector<EvolutionPanel> evolution_panels(const std::vector<SeriesKey>& arrived, SeriesKind kind) {
+std::vector<EvolutionPanel> evolution_panels(const std::vector<SeriesKey>& arrived, std::string_view kind) {
   std::vector<EvolutionPanel> out;
   for (const auto& key : arrived) {
     if (key.kind != kind) continue;
-    const QString title = kind == SeriesKind::Sniff ? QString::fromStdString(key.isotope) : series_name(key);
+    const QString title = kind == experiment::collect::kSniff ? QString::fromStdString(key.label) : series_name(key);
     out.push_back({key, title});
   }
   return out;
@@ -71,7 +81,7 @@ EvolutionsView::EvolutionsView(std::map<std::string, QColor> colors,
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
   for (auto k : kKinds) {
-    QString name = QString::fromLatin1(experiment::collect::to_string(k).data());
+    QString name = QString::fromLatin1(k.data(), static_cast<qsizetype>(k.size()));
     if (!name.isEmpty()) name[0] = name[0].toUpper();
     tabs_->addTab(name);
   }
@@ -176,7 +186,8 @@ void EvolutionsView::on_run_started(const experiment::executor::RunStarted& e) {
 void EvolutionsView::on_series(const std::vector<experiment::collect::SeriesUpdated>& batch) {
   bool new_line = false;
   for (const auto& u : batch) {
-    for (const auto& [key, value] : u.values) {
+    for (const auto& [where, value] : u.values) {
+      const SeriesKey key = line_key(where);
       auto it = lines_.find(key);
       if (it == lines_.end()) {
         Line line;
@@ -238,7 +249,7 @@ void EvolutionsView::on_peak_center(const jobs::PeakCenterDone& e) {
 void EvolutionsView::on_fits(const std::vector<experiment::collect::FitsUpdated>& batch) {
   for (const auto& u : batch)
     for (const auto& f : u.fits) {
-      auto it = lines_.find(f.key);
+      auto it = lines_.find(line_key(f.key));
       if (it == lines_.end()) continue;  // a fit arrives after its points
       it->second.fit = f.fit;
       it->second.time_zero = u.time_zero;
@@ -246,9 +257,9 @@ void EvolutionsView::on_fits(const std::vector<experiment::collect::FitsUpdated>
   dirty_ = true;
 }
 
-void EvolutionsView::set_kind(SeriesKind kind) {
+void EvolutionsView::set_kind(std::string_view kind) {
   if (kind == kind_) return;
-  kind_ = kind;
+  kind_ = std::string(kind);
   // The tab follows the kind, unless the peak center is shown.
   if (is_kind_tab(tabs_->currentIndex()))
     for (int i = 0; std::cmp_less(i, std::size(kKinds)); ++i)
@@ -330,7 +341,7 @@ void EvolutionsView::refresh() {
           ey.push_back(line.v[static_cast<qsizetype>(idx)]);
         }
       const double rel = line.fit->value != 0 ? 100.0 * line.fit->error / std::abs(line.fit->value) : 0.0;
-      const std::array<QString, 7> cells = {QString::fromStdString(g.key.isotope),
+      const std::array<QString, 7> cells = {QString::fromStdString(g.key.label),
                                QString::fromStdString(g.key.detector),
                                QString::fromLatin1(reduction::to_string(line.fit->kind).data()),
                                QString::number(line.fit->value, 'g', 7),
@@ -459,7 +470,7 @@ QList<QStringList> EvolutionsView::intercept_rows() const {
   return out;
 }
 
-std::size_t EvolutionsView::point_count(SeriesKind kind) const {
+std::size_t EvolutionsView::point_count(std::string_view kind) const {
   std::size_t n = 0;
   for (const auto& [key, line] : lines_)
     if (key.kind == kind) n += static_cast<std::size_t>(line.t.size());

@@ -20,12 +20,23 @@
 using pychron::experiment::collect::FitsUpdated;
 using pychron::experiment::collect::SeriesFit;
 using pychron::experiment::collect::SeriesKey;
-using pychron::experiment::collect::SeriesKind;
+using pychron::experiment::collect::kBaseline;
+using pychron::experiment::collect::kSignal;
+using pychron::experiment::collect::kSniff;
 using pychron::experiment::collect::SeriesUpdated;
 using pychron::ui::evolution_panels;
 using pychron::ui::EvolutionsView;
 namespace reduction = pychron::reduction;
 namespace jobs = pychron::jobs;
+
+// A series key at the plan's first place (gas "", segment 0, position 0).
+static SeriesKey skey(std::string label, std::string detector, std::string_view kind) {
+  SeriesKey k;
+  k.label = std::move(label);
+  k.detector = std::move(detector);
+  k.kind = std::string(kind);
+  return k;
+}
 
 class TestEvolutionsView : public QObject {
   Q_OBJECT
@@ -87,7 +98,7 @@ class TestEvolutionsView : public QObject {
   void drawsFitsToTimeZeroAndListsIntercepts() {
     EvolutionsView view({{"H1", QColor(Qt::red)}});
     view.on_run_started({0, "uuid", "66001", {}});
-    const SeriesKey ar40{"Ar40", "H1", SeriesKind::Signal};
+    const SeriesKey ar40 = skey("Ar40", "H1", kSignal);
     // y = 100 + 2 (t - 10), one outlier at t = 13.
     reduction::Series s;
     std::vector<SeriesUpdated> batch;
@@ -110,7 +121,7 @@ class TestEvolutionsView : public QObject {
     QCOMPARE(fit->filtered_idx, std::vector<std::size_t>{2});
     FitsUpdated fu;
     fu.label = "main";
-    fu.kind = SeriesKind::Signal;
+    fu.kind = kSignal;
     fu.time_zero = 10;
     fu.fits.push_back(SeriesFit{ar40, *fit});
     view.on_fits({fu});
@@ -135,15 +146,15 @@ class TestEvolutionsView : public QObject {
     QTRY_VERIFY(view.panel_x_range(0).first <= 10.0);
 
     // Other kinds have their own fits; baselines have none here.
-    view.set_kind(SeriesKind::Baseline);
+    view.set_kind(kBaseline);
     QCOMPARE(view.fit_curve_count(), 0);
     QVERIFY(view.intercept_rows().isEmpty());
-    view.set_kind(SeriesKind::Signal);
+    view.set_kind(kSignal);
     QCOMPARE(view.fit_curve_count(), 1);
     QCOMPARE(view.intercept_rows().size(), 1);
 
     // A second series is a panel of its own, below the first.
-    const SeriesKey ar39{"Ar39", "H2", SeriesKind::Signal};
+    const SeriesKey ar39 = skey("Ar39", "H2", kSignal);
     view.on_series({point(ar39, 11, 5.0), point(ar39, 12, 5.1)});
     QCOMPARE(view.graph_count(), 2);
     QCOMPARE(view.panel_titles(), (QStringList{"Ar40 H1", "Ar39 H2"}));
@@ -176,20 +187,20 @@ class TestEvolutionsView : public QObject {
 
   void palette_change_recolors_open_panels() {
     EvolutionsView view({}, {{"AX", 2}});
-    const SeriesKey ar39{"Ar39", "AX", SeriesKind::Signal};
+    const SeriesKey ar39 = skey("Ar39", "AX", kSignal);
     view.on_series(readings(ar39, {{1, 5}, {2, 6}}));
     QCOMPARE(view.series_color(ar39), pychron::ui::plot_series_color(2));
     pychron::ui::set_plot_style(changed_style());
     QCOMPARE(view.series_color(ar39).name(), QColor::fromHsv(50, 200, 150).name());
     QCOMPARE(panel_pen(view, 0).name(), QColor::fromHsv(50, 200, 150).name());
     QCOMPARE(view.plot()->axisRect(0)->backgroundBrush().color().name(), QStringLiteral("#fafad2"));
-    QCOMPARE(view.point_count(SeriesKind::Signal), std::size_t{2});  // the points stay
+    QCOMPARE(view.point_count(kSignal), std::size_t{2});  // the points stay
   }
 
   void a_config_color_survives_a_palette_change() {
     EvolutionsView view({{"H1", QColor("#123456")}}, {{"AX", 2}});
-    const SeriesKey ar40{"Ar40", "H1", SeriesKind::Signal};
-    const SeriesKey ar39{"Ar39", "AX", SeriesKind::Signal};
+    const SeriesKey ar40 = skey("Ar40", "H1", kSignal);
+    const SeriesKey ar39 = skey("Ar39", "AX", kSignal);
     view.on_series(readings(ar40, {{1, 10}}));
     view.on_series(readings(ar39, {{1, 5}}));
     pychron::ui::set_plot_style(changed_style());
@@ -200,8 +211,8 @@ class TestEvolutionsView : public QObject {
 
   void palette_change_keeps_peak_hop_lines_apart() {
     EvolutionsView view({}, {{"H1", 0}});
-    const SeriesKey ar40{"Ar40", "H1", SeriesKind::Signal};
-    const SeriesKey ar36{"Ar36", "H1", SeriesKind::Signal};
+    const SeriesKey ar40 = skey("Ar40", "H1", kSignal);
+    const SeriesKey ar36 = skey("Ar36", "H1", kSignal);
     view.on_series(readings(ar40, {{1, 10}}));
     view.on_series(readings(ar36, {{2, 1}}));
     QVERIFY(view.series_color(ar40) != view.series_color(ar36));
@@ -214,30 +225,43 @@ class TestEvolutionsView : public QObject {
 
   void onePanelPerSeriesOfTheShownKind() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar39", "AX", SeriesKind::Signal}, {{1, 5}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
-    view.on_series(readings({"", "H1", SeriesKind::Baseline}, {{1, 0.01}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar39", "AX", kSignal), {{1, 5}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
+    view.on_series(readings(skey("", "H1", kBaseline), {{1, 0.01}}));
     QCOMPARE(view.graph_count(), 3);
     QCOMPARE(view.panel_titles().size(), 3);
-    view.set_kind(SeriesKind::Baseline);
+    view.set_kind(kBaseline);
     QCOMPARE(view.graph_count(), 1);
     QCOMPARE(view.panel_titles(), QStringList{"H1"});
   }
 
+  void aLabelReadAtTwoPositionsOnOneDetectorIsOnePanel() {
+    EvolutionsView view;
+    auto first = skey("Ar40", "H1", kSignal);
+    auto second = first;
+    second.segment = 2;
+    second.position = 1;
+    view.on_series(readings(first, {{1, 10}}));
+    view.on_series(readings(second, {{2, 11}}));
+    QCOMPARE(view.graph_count(), 1);
+    QCOMPARE(view.panel_titles(), QStringList{"Ar40 H1"});
+    QCOMPARE(view.point_count(kSignal), std::size_t{2});
+  }
+
   void aNewSeriesIsAddedAtTheBottom() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
     QCOMPARE(view.panel_titles(), (QStringList{"Ar40 H1", "Ar36 CDD"}));
-    view.on_series(readings({"Ar39", "AX", SeriesKind::Signal}, {{2, 5}}));
+    view.on_series(readings(skey("Ar39", "AX", kSignal), {{2, 5}}));
     QCOMPARE(view.panel_titles(), (QStringList{"Ar40 H1", "Ar36 CDD", "Ar39 AX"}));
   }
 
   void eachPanelScalesItsOwnY() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 999}, {2, 1000}, {3, 1001}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 0.9}, {2, 1.0}, {3, 1.1}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 999}, {2, 1000}, {3, 1001}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 0.9}, {2, 1.0}, {3, 1.1}}));
     // Waits for a refresh: before one, a panel has QCustomPlot's default range (0 to 5).
     QTRY_VERIFY(holds(view.panel_y_range(0), 999) && holds(view.panel_y_range(0), 1001));
     QVERIFY(holds(view.panel_y_range(1), 0.9) && holds(view.panel_y_range(1), 1.1));
@@ -247,15 +271,15 @@ class TestEvolutionsView : public QObject {
 
   void everyPanelSharesTheTimeAxis() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{10, 1}, {20, 2}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{15, 1}, {30, 2}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{10, 1}, {20, 2}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{15, 1}, {30, 2}}));
     QTRY_VERIFY(view.panel_x_range(0).first <= 10 && view.panel_x_range(0).second >= 30);
     QCOMPARE(view.panel_x_range(1), view.panel_x_range(0));
   }
 
   void onlyTheBottomPanelHasTimeLabels() {
     EvolutionsView view;
-    for (const char* iso : {"Ar40", "Ar39", "Ar36"}) view.on_series(readings({iso, "H1", SeriesKind::Signal}, {{1, 1}}));
+    for (const char* iso : {"Ar40", "Ar39", "Ar36"}) view.on_series(readings(skey(iso, "H1", kSignal), {{1, 1}}));
     QCOMPARE(view.graph_count(), 3);
     QVERIFY(!view.panel_has_time_labels(0));
     QVERIFY(!view.panel_has_time_labels(1));
@@ -264,58 +288,58 @@ class TestEvolutionsView : public QObject {
 
   void aRunStartingEmptiesThePanels() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
     view.on_run_started({1, "uuid", "66002", {}});
     QCOMPARE(view.graph_count(), 0);
     QVERIFY(view.panel_titles().isEmpty());
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
     QCOMPARE(view.panel_titles(), QStringList{"Ar36 CDD"});
   }
 
   void aFlatSeriesStillHasARange() {
     EvolutionsView view;
-    view.on_series(readings({"", "H1", SeriesKind::Signal}, {{1, 200.0}, {2, 200.0}, {3, 200.0}}));
+    view.on_series(readings(skey("", "H1", kSignal), {{1, 200.0}, {2, 200.0}, {3, 200.0}}));
     QTRY_VERIFY(holds(view.panel_y_range(0), 200.0));
     QVERIFY(view.panel_y_range(0).second > view.panel_y_range(0).first);
   }
 
   void aKindWithoutSeriesShowsNoPanels() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
-    view.set_kind(SeriesKind::Sniff);
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
+    view.set_kind(kSniff);
     QCOMPARE(view.graph_count(), 0);
     QVERIFY(view.panel_titles().isEmpty());
-    view.set_kind(SeriesKind::Signal);
+    view.set_kind(kSignal);
     QCOMPARE(view.graph_count(), 2);
   }
 
   void aReadingThatIsNoNumberLeavesTheRangeFinite() {
     EvolutionsView view;
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10.0}, {2, nan}, {3, 30.0}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10.0}, {2, nan}, {3, 30.0}}));
     QTRY_VERIFY(holds(view.panel_y_range(0), 10.0) && holds(view.panel_y_range(0), 30.0));
     QVERIFY(std::isfinite(view.panel_y_range(0).first) && std::isfinite(view.panel_y_range(0).second));
   }
 
   void aSeriesOfAnotherKindLeavesTheShownPanels() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
     const QStringList shown = view.panel_titles();
-    view.on_series(readings({"", "H1", SeriesKind::Baseline}, {{5, 0.01}}));
+    view.on_series(readings(skey("", "H1", kBaseline), {{5, 0.01}}));
     QCOMPARE(view.panel_titles(), shown);
-    view.set_kind(SeriesKind::Baseline);
+    view.set_kind(kBaseline);
     QCOMPARE(view.panel_titles(), QStringList{"H1"});
   }
 
   void aNewSeriesIsScaledAtOnce() {
     EvolutionsView view;
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 999}, {2, 1001}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 999}, {2, 1001}}));
     // No wait for the refresh timer: a panel is never shown at QCustomPlot's default 0 to 5.
     QVERIFY(holds(view.panel_y_range(0), 999) && holds(view.panel_y_range(0), 1001));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 100}, {2, 101}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 100}, {2, 101}}));
     QVERIFY(holds(view.panel_y_range(1), 100) && holds(view.panel_y_range(1), 101));
     QVERIFY(holds(view.panel_y_range(0), 999));
   }
@@ -325,7 +349,7 @@ class TestEvolutionsView : public QObject {
     view.resize(400, 900);
     view.show();
     QVERIFY(QTest::qWaitForWindowExposed(&view));
-    for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37"}) view.on_series(readings({iso, "H1", SeriesKind::Signal}, {{1, 1}}));
+    for (const char* iso : {"Ar40", "Ar39", "Ar38", "Ar37"}) view.on_series(readings(skey(iso, "H1", kSignal), {{1, 1}}));
     QCOMPARE(view.graph_count(), 4);
     // The plotting area of each panel, its time axis aside: settles within a few refreshes.
     const auto even = [&] {
@@ -340,12 +364,12 @@ class TestEvolutionsView : public QObject {
     view.resize(400, 700);  // the plot's area at least its 200 px floor, under tabs, title and tables
     view.show();
     QVERIFY(QTest::qWaitForWindowExposed(&view));
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
     QCOMPARE(view.graph_count(), 2);
     QTRY_COMPARE(view.scroll_area()->verticalScrollBar()->maximum(), 0);  // two fit
     for (int i = 0; i < 8; ++i)
-      view.on_series(readings({"Ar" + std::to_string(30 + i), "L" + std::to_string(i), SeriesKind::Signal}, {{1, 1}}));
+      view.on_series(readings(skey("Ar" + std::to_string(30 + i), "L" + std::to_string(i), kSignal), {{1, 1}}));
     QCOMPARE(view.graph_count(), 10);
     QTRY_VERIFY(view.scroll_area()->verticalScrollBar()->maximum() > 0);
     QVERIFY(view.plot()->height() >= 10 * EvolutionsView::kPanelMinHeight);
@@ -360,39 +384,39 @@ class TestEvolutionsView : public QObject {
   }
 
   void panelsComeInArrivalOrder() {
-    const std::vector<SeriesKey> arrived{{"Ar40", "H1", SeriesKind::Signal},
-                                         {"Ar36", "CDD", SeriesKind::Signal},
-                                         {"Ar39", "AX", SeriesKind::Signal}};
-    const auto panels = evolution_panels(arrived, SeriesKind::Signal);
+    const std::vector<SeriesKey> arrived{skey("Ar40", "H1", kSignal),
+                                         skey("Ar36", "CDD", kSignal),
+                                         skey("Ar39", "AX", kSignal)};
+    const auto panels = evolution_panels(arrived, kSignal);
     QCOMPARE(titles(panels), (QStringList{"Ar40 H1", "Ar36 CDD", "Ar39 AX"}));
     QCOMPARE(panels.size(), std::size_t{3});
     for (std::size_t i = 0; i < panels.size(); ++i) QVERIFY(panels[i].key == arrived[i]);
   }
 
   void anIsotopeOnTwoDetectorsHasTwoPanels() {
-    const auto panels = evolution_panels({{"Ar40", "H1", SeriesKind::Signal}, {"Ar40", "H2", SeriesKind::Signal}},
-                                         SeriesKind::Signal);
+    const auto panels = evolution_panels({skey("Ar40", "H1", kSignal), skey("Ar40", "H2", kSignal)},
+                                         kSignal);
     QCOMPARE(titles(panels), (QStringList{"Ar40 H1", "Ar40 H2"}));
   }
 
   void baselinePanelsAreTitledByDetector() {
-    QCOMPARE(titles(evolution_panels({{"", "H1", SeriesKind::Baseline}}, SeriesKind::Baseline)), QStringList{"H1"});
-    QCOMPARE(titles(evolution_panels({{"Ar40", "H1", SeriesKind::Baseline}}, SeriesKind::Baseline)),
+    QCOMPARE(titles(evolution_panels({skey("", "H1", kBaseline)}, kBaseline)), QStringList{"H1"});
+    QCOMPARE(titles(evolution_panels({skey("Ar40", "H1", kBaseline)}, kBaseline)),
              QStringList{"Ar40 H1"});
   }
 
   void sniffPanelsAreTitledByIsotope() {
-    QCOMPARE(titles(evolution_panels({{"Ar40", "H1", SeriesKind::Sniff}}, SeriesKind::Sniff)), QStringList{"Ar40"});
+    QCOMPARE(titles(evolution_panels({skey("Ar40", "H1", kSniff)}, kSniff)), QStringList{"Ar40"});
   }
 
   void eachKindKeepsItsOwnOrder() {
-    const std::vector<SeriesKey> arrived{{"", "H1", SeriesKind::Baseline},
-                                         {"Ar40", "H1", SeriesKind::Signal},
-                                         {"", "AX", SeriesKind::Baseline},
-                                         {"Ar39", "AX", SeriesKind::Signal}};
-    QCOMPARE(titles(evolution_panels(arrived, SeriesKind::Signal)), (QStringList{"Ar40 H1", "Ar39 AX"}));
-    QCOMPARE(titles(evolution_panels(arrived, SeriesKind::Baseline)), (QStringList{"H1", "AX"}));
-    QVERIFY(evolution_panels(arrived, SeriesKind::Sniff).empty());
+    const std::vector<SeriesKey> arrived{skey("", "H1", kBaseline),
+                                         skey("Ar40", "H1", kSignal),
+                                         skey("", "AX", kBaseline),
+                                         skey("Ar39", "AX", kSignal)};
+    QCOMPARE(titles(evolution_panels(arrived, kSignal)), (QStringList{"Ar40 H1", "Ar39 AX"}));
+    QCOMPARE(titles(evolution_panels(arrived, kBaseline)), (QStringList{"H1", "AX"}));
+    QVERIFY(evolution_panels(arrived, kSniff).empty());
   }
 
   void hasAPeakCenterTabAfterTheKinds() {
@@ -405,20 +429,20 @@ class TestEvolutionsView : public QObject {
     EvolutionsView view;
     QVERIFY(kind_page_shown(view));
     QVERIFY(!view.peak_center_view()->isVisibleTo(&view));
-    view.set_kind(SeriesKind::Baseline);
+    view.set_kind(kBaseline);
     tab_bar(view)->setCurrentIndex(kPeakCenterTab);
     QVERIFY(view.peak_center_view()->isVisibleTo(&view));
     QVERIFY(!kind_page_shown(view));
-    QCOMPARE(view.kind(), SeriesKind::Baseline);
+    QVERIFY(view.kind() == kBaseline);
     // Back to the kind it was on: the kind is unchanged, its page is shown again.
     tab_bar(view)->setCurrentIndex(1);
     QVERIFY(kind_page_shown(view));
     QVERIFY(!view.peak_center_view()->isVisibleTo(&view));
-    QCOMPARE(view.kind(), SeriesKind::Baseline);
+    QVERIFY(view.kind() == kBaseline);
     tab_bar(view)->setCurrentIndex(kPeakCenterTab);
     tab_bar(view)->setCurrentIndex(0);
     QVERIFY(kind_page_shown(view));
-    QCOMPARE(view.kind(), SeriesKind::Signal);
+    QVERIFY(view.kind() == kSignal);
   }
 
   void aTryStartingSelectsTheTab() {
@@ -435,8 +459,8 @@ class TestEvolutionsView : public QObject {
   void aSeriesArrivingDoesNotLeaveIt() {
     EvolutionsView view;
     view.on_peak_center_try(try_started(0));
-    view.on_series(readings({"Ar40", "H1", SeriesKind::Signal}, {{1, 10}}));
-    view.on_series(readings({"Ar36", "CDD", SeriesKind::Signal}, {{1, 1}}));
+    view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
+    view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
     QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
     QVERIFY(view.peak_center_view()->isVisibleTo(&view));
     tab_bar(view)->setCurrentIndex(0);
@@ -447,9 +471,9 @@ class TestEvolutionsView : public QObject {
   void aKindSetInCodeDoesNotLeaveIt() {
     EvolutionsView view;
     view.on_peak_center_try(try_started(0));
-    view.set_kind(SeriesKind::Baseline);
+    view.set_kind(kBaseline);
     QCOMPARE(tab_bar(view)->currentIndex(), kPeakCenterTab);
-    QCOMPARE(view.kind(), SeriesKind::Baseline);
+    QVERIFY(view.kind() == kBaseline);
   }
 
   void aPeakCenterStillAddsItsLine() {
@@ -495,17 +519,17 @@ class TestEvolutionsView : public QObject {
 
   void aRunStartingReturnsToTheSignalTab() {
     EvolutionsView view;
-    view.set_kind(SeriesKind::Sniff);
+    view.set_kind(kSniff);
     view.on_peak_center_try(try_started(0));
     view.on_run_started({1, "uuid", "66002", {}});
     QCOMPARE(tab_bar(view)->currentIndex(), 0);
-    QCOMPARE(view.kind(), SeriesKind::Signal);
+    QVERIFY(view.kind() == kSignal);
     QVERIFY(kind_page_shown(view));
     // From another kind's tab too.
     tab_bar(view)->setCurrentIndex(2);
     view.on_run_started({2, "uuid2", "66003", {}});
     QCOMPARE(tab_bar(view)->currentIndex(), 0);
-    QCOMPARE(view.kind(), SeriesKind::Signal);
+    QVERIFY(view.kind() == kSignal);
   }
 
   void clearingPeakCentersEmptiesTheGraph() {
@@ -565,9 +589,9 @@ class TestEvolutionsView : public QObject {
   void aFitBeforeItsPointsIsIgnored() {
     EvolutionsView view;
     FitsUpdated fu;
-    fu.fits.push_back(SeriesFit{{"Ar39", "H2", SeriesKind::Signal}, reduction::Intercept{}});
+    fu.fits.push_back(SeriesFit{skey("Ar39", "H2", kSignal), reduction::Intercept{}});
     view.on_fits({fu});
-    QVERIFY(!view.fit_of({"Ar39", "H2", SeriesKind::Signal}).has_value());
+    QVERIFY(!view.fit_of(skey("Ar39", "H2", kSignal)).has_value());
   }
 };
 

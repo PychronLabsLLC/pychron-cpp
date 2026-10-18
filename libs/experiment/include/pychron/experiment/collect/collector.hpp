@@ -3,11 +3,12 @@
 // Collector (experiment spec 8.1): turns spectrometer readings into series.
 //
 // One class serves every collection. The MeasurementEngine calls begin() with
-// a CollectionSpec (kind, counts, detector -> isotope map), feeds it readings
-// with add(), and the Collector appends one point per active detector to
-// Series[isotope, detector, kind]. Peak hop is the engine calling it once per
-// hop; series stay keyed by (isotope, detector, kind) so an isotope measured
-// on two detectors keeps two series.
+// a CollectionSpec (kind, counts, label -> detector channels, and the gas,
+// segment and position it collects for), feeds it readings with add(), and the
+// Collector appends one point per active detector to Series[label, detector,
+// kind, gas, segment, position]. Peak hop is the engine calling it once per
+// hop; a label measured on two detectors keeps two series, and one measured at
+// two positions on one detector two series that read as one (series_of).
 //
 // Time: every point's `t` is seconds since the measurement epoch (set by
 // start()); time_zero is a separate offset on the same axis, set once by the
@@ -36,19 +37,26 @@
 
 namespace pychron::experiment::collect {
 
-enum class SeriesKind { Signal, Baseline, Sniff, Whiff };
+// What a series holds. An open set: these four, "peak_center", and whatever
+// a later kind of collection adds.
+inline constexpr std::string_view kSignal = "signal", kBaseline = "baseline", kSniff = "sniff", kWhiff = "whiff";
 
-std::string_view to_string(SeriesKind kind) noexcept;
-
+// One series: a label on a detector, of one kind, in one gas, segment and
+// position of the plan. A label measured at several positions is several
+// series; Collector::intercept fits them as one.
 struct SeriesKey {
-  std::string isotope;   // empty for a before/after baseline block (per detector)
+  std::string label;  // empty for a baseline segment's series (per detector)
   std::string detector;
-  SeriesKind kind = SeriesKind::Signal;
+  std::string kind{kSignal};
+  std::string gas{};  // braced: a key written {label, detector, kind} leaves the rest at their defaults
+  int segment = 0;
+  int position = 0;
   friend auto operator<=>(const SeriesKey&, const SeriesKey&) = default;
   friend bool operator==(const SeriesKey&, const SeriesKey&) = default;
 };
 
-// "Ar40:H1:signal" or ":H1:baseline".
+// "Ar40@H1:signal:<gas>:<segment>.<position>", e.g. "Ar40@H1:signal::0.2" or
+// "@H1:baseline:argon:3.0".
 std::string to_string(const SeriesKey& key);
 
 struct Series {
@@ -58,23 +66,31 @@ struct Series {
   std::vector<bool> saturated;
 };
 
-// One isotope on one detector during a collection.
+// The points of several series as one, in time order (a point's t, v, sigma
+// and saturated stay together). sigma is filled with 0 for the points of a
+// part without one when any part has it.
+Series merge_series(const std::vector<const Series*>& parts);
+
+// One label on one detector during a collection.
 struct Channel {
-  std::string isotope;
+  std::string label;
   std::string detector;
 };
 
 struct CollectionSpec {
-  SeriesKind kind = SeriesKind::Signal;
+  std::string kind{kSignal};
   int counts = 0;
   std::vector<Channel> channels;
-  std::string label;  // block name for events, e.g. "main", "baseline.after"
+  std::string label{};  // block name for events, e.g. "main", "baseline.after"
+  std::string gas{};    // where in the plan: every series this collection makes is keyed by these
+  int segment = 0;
+  int position = 0;
 };
 
 // Published on the SignalBus once per reading added.
 struct SeriesUpdated {
   std::string label;
-  SeriesKind kind = SeriesKind::Signal;
+  std::string kind{kSignal};
   int count = 0;   // readings in this collection so far
   int target = 0;  // current target
   std::vector<std::pair<SeriesKey, double>> values;  // the points just appended (t, v): v
@@ -82,7 +98,8 @@ struct SeriesUpdated {
 };
 
 // Published after each signal or baseline reading (after its SeriesUpdated):
-// the live fit of every series the reading touched, with the plan's fit, the
+// the live fit of every series the reading touched (a signal series together
+// with the other series of its label on its detector), with the plan's fit, the
 // same computation as the conditionals' intercept and the record's. x is
 // seconds since time zero (the epoch until it is set). A series with fewer
 // points than its fit's parameters is averaged; one that cannot be fitted is
@@ -93,7 +110,7 @@ struct SeriesFit {
 };
 struct FitsUpdated {
   std::string label;
-  SeriesKind kind = SeriesKind::Signal;
+  std::string kind{kSignal};
   double time_zero = 0;  // seconds since the measurement epoch
   std::vector<SeriesFit> fits;
 };
@@ -111,6 +128,11 @@ struct RunData {
   Timing timing;
   std::map<std::string, int> counts;  // readings per collection label, summed over its collections
 };
+
+// Every series of a label on a detector of one kind, wherever in the plan it
+// was measured, merged in time order; nullopt when there is none.
+std::optional<Series> merged_series(const RunData& data, std::string_view label, std::string_view detector,
+                                    std::string_view kind);
 
 // Why a collection stopped.
 enum class CollectStatus { Running, Complete, Truncated };
@@ -161,6 +183,9 @@ class Collector {
   // Copies, safe from any thread.
   RunData data() const;
   std::optional<Series> series(const SeriesKey& key) const;
+  // Every series of `kind` for a label on one detector, merged in time order.
+  // `name` is "Ar40" (its most recently measured detector) or "Ar40@H1".
+  std::optional<Series> series_of(const std::string& name, std::string_view kind) const;
 
   // x = t - time_zero (or t if time zero is unset).
   std::optional<reduction::Series> fit_series(const SeriesKey& key) const;
@@ -187,8 +212,10 @@ class Collector {
   void set_icfactors(std::map<std::string, double> icfactors);  // by detector; 1.0 when absent
   void set_arar(std::optional<reduction::ArArConstants> constants);
 
-  // Live intercept of an isotope (its most recently measured detector).
-  std::optional<reduction::Intercept> intercept(const std::string& isotope) const;
+  // Live intercept of a label: "Ar40" fits its most recently measured
+  // detector, "Ar40@H1" that detector. The series of one label on one detector
+  // (several gases, segments or positions) are fitted as one, in time order.
+  std::optional<reduction::Intercept> intercept(const std::string& name) const;
 
  private:
   class Metrics final : public MetricContext {
@@ -204,12 +231,14 @@ class Collector {
     const Collector& c_;
   };
 
-  // Signal values of an isotope (latest-written detector first wins when the
-  // isotope is on several detectors: the one with the most recent point).
-  std::optional<std::vector<double>> isotope_values_locked(const std::string& iso, SeriesKind kind) const;
+  // Values of a label ("Ar40" or "Ar40@H1"). Unqualified, on several
+  // detectors: the detector with the most recent point.
+  std::optional<std::vector<double>> isotope_values_locked(const std::string& iso, std::string_view kind) const;
   std::optional<std::string> detector_of_locked(const std::string& iso) const;
   std::optional<std::vector<double>> baseline_values_locked(const std::string& det) const;
-  const Series* isotope_series_locked(const std::string& iso, SeriesKind kind, std::string* det = nullptr) const;
+  // Every series of `kind` of the label on its detector, merged in time order.
+  std::optional<Series> isotope_series_locked(const std::string& iso, std::string_view kind,
+                                              std::string* det = nullptr) const;
   std::optional<reduction::Intercept> intercept_locked(const std::string& iso, std::string* det = nullptr) const;
   double baseline_mean_locked(const std::string& det) const;
   double icfactor_locked(const std::string& det) const;

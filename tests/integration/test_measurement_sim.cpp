@@ -52,7 +52,7 @@ using namespace pychron;
 using namespace pychron::experiment;
 using namespace pychron::experiment::measurement;
 using namespace std::chrono_literals;
-using collect::SeriesKind;
+using collect::merged_series;
 
 namespace {
 
@@ -262,10 +262,10 @@ TEST_F(MeasurementSim, MeasuresThroughTheRealFacades) {
   EXPECT_NEAR(*r.data.timing.inlet_close - *r.data.timing.inlet_open, 20.0, 1.5);
 
   // Series: two cycles of each hop.
-  EXPECT_EQ(r.data.series.at({"Ar40", "H1", SeriesKind::Signal}).v.size(), 30u);
-  EXPECT_EQ(r.data.series.at({"Ar39", "H2", SeriesKind::Signal}).v.size(), 30u);
-  EXPECT_EQ(r.data.series.at({"Ar36", "CDD", SeriesKind::Signal}).v.size(), 30u);
-  EXPECT_EQ(r.data.series.at({"Ar40", "H1", SeriesKind::Sniff}).v.size(), 10u);
+  EXPECT_EQ(merged_series(r.data, "Ar40", "H1", collect::kSignal).value().v.size(), 30u);
+  EXPECT_EQ(merged_series(r.data, "Ar39", "H2", collect::kSignal).value().v.size(), 30u);
+  EXPECT_EQ(merged_series(r.data, "Ar36", "CDD", collect::kSignal).value().v.size(), 30u);
+  EXPECT_EQ(merged_series(r.data, "Ar40", "H1", collect::kSniff).value().v.size(), 10u);
   EXPECT_EQ(r.data.counts.at("baseline.after"), 10);
 
   // Intercepts recover the BeamModel's gas (default argon abundances).
@@ -369,7 +369,7 @@ TEST_F(MeasurementSim, LabConditionalsActOnLiveData) {
   ASSERT_EQ(r.data.trips.size(), 1u);
   EXPECT_EQ(r.data.trips[0].name, "plan.truncation[0]");
   EXPECT_EQ(r.data.trips[0].reading, 4);
-  EXPECT_EQ(r.data.series.at({"Ar40", "H1", SeriesKind::Signal}).v.size(), 4u);
+  EXPECT_EQ(merged_series(r.data, "Ar40", "H1", collect::kSignal).value().v.size(), 4u);
   // The vacuum check read the live gauge through InstrumentMetrics without errors.
   for (const auto& e : r.conditional_errors) EXPECT_NE(e.name, "vacuum_excursion") << e.message;
   const auto rec = to_record_conditionals(r.installed, r.data.trips, r.conditional_errors);
@@ -938,9 +938,9 @@ TEST_F(MeasurementSimV2, WorkedPlan72) {
             (std::vector<std::string>{"move mass 34.2@H1", "settle 20", "collect 120"}));
 
   // Ar36, Ar39 and the Cl monitor are all on CDD, each once.
-  EXPECT_EQ(r.data.series.at({"Ar36", "CDD", SeriesKind::Signal}).v.size(), 20u * 15u);
-  EXPECT_EQ(r.data.series.at({"Ar39", "CDD", SeriesKind::Signal}).v.size(), 20u * 15u);
-  EXPECT_EQ(r.data.series.at({"mass35", "CDD", SeriesKind::Signal}).v.size(), 20u * 8u);
+  EXPECT_EQ(merged_series(r.data, "Ar36", "CDD", collect::kSignal).value().v.size(), 20u * 15u);
+  EXPECT_EQ(merged_series(r.data, "Ar39", "CDD", collect::kSignal).value().v.size(), 20u * 15u);
+  EXPECT_EQ(merged_series(r.data, "mass35", "CDD", collect::kSignal).value().v.size(), 20u * 8u);
   const auto fits = fit_results(r.data, plan.fits);
   ASSERT_TRUE(fits.errors.empty()) << fits.errors.front();
   for (const char* key : {"Ar40", "Ar41", "Ar38", "Ar37", "Ar36", "Ar39", "mass35"})
@@ -971,7 +971,7 @@ TEST_F(MeasurementSimHelix, WorkedPlan74) {
   std::vector<double> h1_cdd;
   auto sub = bus_.subscribe<collect::SeriesUpdated>([&](const collect::SeriesUpdated& e) {
     for (const auto& [key, v] : e.values) {
-      if (key.isotope != "Ar39" || key.detector != "H1(CDD)") continue;
+      if (key.label != "Ar39" || key.detector != "H1(CDD)") continue;
       auto det = beam_->detector("H1(CDD)");
       h1_cdd.push_back(det ? det->deflection : -1);
     }
@@ -981,11 +981,11 @@ TEST_F(MeasurementSimHelix, WorkedPlan74) {
   measure("v2_74_helix_hydride_hcl.toml", plan, r);
   if (HasFatalFailure()) return;
 
-  EXPECT_EQ(r.data.series.at({"Ar40", "H2", SeriesKind::Signal}).v.size(), 10u * 10u);
-  EXPECT_EQ(r.data.series.at({"Ar40H", "H2(CDD)", SeriesKind::Signal}).v.size(), 10u * 5u);
-  EXPECT_EQ(r.data.series.at({"HCl", "L2(CDD)", SeriesKind::Signal}).v.size(), 10u * 5u);
+  EXPECT_EQ(merged_series(r.data, "Ar40", "H2", collect::kSignal).value().v.size(), 10u * 10u);
+  EXPECT_EQ(merged_series(r.data, "Ar40H", "H2(CDD)", collect::kSignal).value().v.size(), 10u * 5u);
+  EXPECT_EQ(merged_series(r.data, "HCl", "L2(CDD)", collect::kSignal).value().v.size(), 10u * 5u);
   // The inactive entry is deflected and protected, never read.
-  EXPECT_FALSE(r.data.series.contains({"Ar40", "H2(CDD)", SeriesKind::Signal}));
+  EXPECT_FALSE(merged_series(r.data, "Ar40", "H2(CDD)", collect::kSignal).has_value());
 
   ASSERT_EQ(h1_cdd.size(), 10u * 10u);
   EXPECT_TRUE(std::all_of(h1_cdd.begin(), h1_cdd.end(), [](double d) { return d == 200; }))

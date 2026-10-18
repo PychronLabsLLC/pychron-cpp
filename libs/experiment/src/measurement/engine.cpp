@@ -114,8 +114,15 @@ class MeasurementEngine::Api final : public scripting::IMeasurementApi {
     auto channels = e_.last_channels_;
     if (channels.empty() && e_.gas_ != nullptr)
       channels = channels_of(e_.gas_->segments[e_.main_].positions.front());
-    auto r = e_.collect(Block::Main, {collect::SeriesKind::Signal, counts, std::move(channels), "hook"},
-                        integration_time_s, {});
+    collect::CollectionSpec spec;
+    spec.counts = counts;
+    spec.channels = std::move(channels);
+    spec.label = "hook";
+    if (e_.gas_ != nullptr) {
+      spec.gas = e_.gas_->name;
+      spec.segment = static_cast<int>(e_.main_);
+    }
+    auto r = e_.collect(Block::Main, std::move(spec), integration_time_s, {});
     if (!r) return fail(r.error());
     return {};
   }
@@ -412,7 +419,7 @@ Result<void> MeasurementEngine::peak_center(const plan::PeakCenterStep& step) {
   // field table. Only signal readings say how much signal there is: with
   // none (before the gas is in) the step runs.
   if (step.min_signal > 0) {
-    const auto series = collector_.series({req.isotope, req.detector, collect::SeriesKind::Signal});
+    const auto series = collector_.series_of(req.isotope + "@" + req.detector, collect::kSignal);
     if (series && !series->v.empty()) {
       const auto n = std::min(series->v.size(), plan::kPeakCenterSignalReadings);
       const double mean = std::accumulate(series->v.end() - static_cast<std::ptrdiff_t>(n), series->v.end(), 0.0) /
@@ -480,8 +487,14 @@ Result<void> MeasurementEngine::equilibrate() {
     acquiring_ = true;
     last_reading_ = ctx_.clock.now();
     trace(static_cast<int>(sniff_at - segs.begin()), 0, "collect", std::to_string(sniff_counts));
-    collector_.begin({collect::SeriesKind::Sniff, sniff_counts, std::move(channels), "sniff"},
-                     [this](int, double) { return sniff_reading(); });
+    collect::CollectionSpec spec;
+    spec.kind = std::string(collect::kSniff);
+    spec.counts = sniff_counts;
+    spec.channels = std::move(channels);
+    spec.label = "sniff";
+    spec.gas = gas_->name;
+    spec.segment = static_cast<int>(sniff_at - segs.begin());
+    collector_.begin(std::move(spec), [this](int, double) { return sniff_reading(); });
     collecting_ = true;
     sniffing = true;
     return {};
@@ -559,7 +572,7 @@ Result<void> MeasurementEngine::equilibrate() {
         reading = std::move(w->reading);
       }
       last_reading_ = ctx_.clock.now();
-      note_beams(collect::SeriesKind::Sniff, *reading);
+      note_beams(collect::kSniff, *reading);
       const auto status = collector_.add(*reading);
       ++sniffed;
       if (ctx_.bus != nullptr) ctx_.bus->publish(CountsProgress{in_.run_id, Block::Equilibrate, sniffed, sniff_counts});
@@ -627,20 +640,20 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
     if (auto r = enter_position(seg, pos, si, pi); !r) return fail(r.error());
   }
 
-  auto kind = collect::SeriesKind::Signal;
+  std::string_view kind = collect::kSignal;
   switch (seg.kind) {
-    case plan::SegmentKind::Baseline: kind = collect::SeriesKind::Baseline; break;
-    case plan::SegmentKind::Sniff: kind = collect::SeriesKind::Sniff; break;
-    case plan::SegmentKind::Whiff: kind = collect::SeriesKind::Whiff; break;
+    case plan::SegmentKind::Baseline: kind = collect::kBaseline; break;
+    case plan::SegmentKind::Sniff: kind = collect::kSniff; break;
+    case plan::SegmentKind::Whiff: kind = collect::kWhiff; break;
     default:
-      if (pos.kind == plan::PositionKind::Baseline) kind = collect::SeriesKind::Baseline;
+      if (pos.kind == plan::PositionKind::Baseline) kind = collect::kBaseline;
       break;
   }
   auto channels = seg.kind == plan::SegmentKind::Baseline ? baseline_channels(pos) : channels_of(pos);
   collect::ReadingHook hook;
   if (seg.kind == plan::SegmentKind::Signal) {
     last_channels_ = channels;
-    if (kind == collect::SeriesKind::Signal) hook = [this](int count, double t) { return main_reading(count, t); };
+    if (kind == collect::kSignal) hook = [this](int count, double t) { return main_reading(count, t); };
   }
   const double integration_s = pos.integration_s.value_or(seg.integration_s);
   if (counts > 0) {
@@ -648,8 +661,15 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
     if (integration_ && *integration_ != seconds_to(integration_s)) trace(si, pi, "integration", plain(integration_s));
     trace(si, pi, "collect", std::to_string(counts));
   }
-  auto status = collect(block_, {kind, counts, std::move(channels), collection_label(segment, block_)}, integration_s,
-                        std::move(hook));
+  collect::CollectionSpec spec;
+  spec.kind = std::string(kind);
+  spec.counts = counts;
+  spec.channels = std::move(channels);
+  spec.label = collection_label(segment, block_);
+  spec.gas = gas.name;
+  spec.segment = si;
+  spec.position = pi;
+  auto status = collect(block_, std::move(spec), integration_s, std::move(hook));
   if (!status || in_place) return status;
   // What this position deflected and the next one (cyclically) does not set goes back.
   const auto& next = seg.positions[(position + 1) % seg.positions.size()];
@@ -769,8 +789,8 @@ void MeasurementEngine::note_modes(const plan::Position& pos) {
   }
 }
 
-void MeasurementEngine::note_beams(collect::SeriesKind kind, const spectrometer::Reading& reading) {
-  if (kind == collect::SeriesKind::Baseline) return;  // owner, 2026-10-15: a baseline does not clear it
+void MeasurementEngine::note_beams(std::string_view kind, const spectrometer::Reading& reading) {
+  if (kind == collect::kBaseline) return;  // owner, 2026-10-15: a baseline does not clear it
   for (const auto& [det, value] : reading.values) {
     const auto it = ctx_.timing.find(det);
     if (it == ctx_.timing.end() || !it->second.large_beam_threshold || !value) continue;

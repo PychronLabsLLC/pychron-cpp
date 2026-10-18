@@ -94,6 +94,15 @@ struct RefusingPersister : pychron::experiment::persist::IAnalysisPersister {
 
 // What the References dock reads: counts the refreshes the dock asks the
 // bridge for (one a tab a read), and can hold one until released.
+// A series key at the plan's first place (gas "", segment 0, position 0).
+static pychron::experiment::collect::SeriesKey skey(std::string label, std::string detector, std::string_view kind) {
+  pychron::experiment::collect::SeriesKey k;
+  k.label = std::move(label);
+  k.detector = std::move(detector);
+  k.kind = std::string(kind);
+  return k;
+}
+
 class RefreshCountingSource : public pychron::processing::MemorySource {
  public:
   pychron::Result<void> refresh() override {
@@ -602,7 +611,7 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(pane->counts_maximum(), 1);  // the last block (the peak center) has no counts
     // The last run's evolutions and peak center.
     auto* evo = window.evolutions();
-    QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Signal) > 0);
+    QVERIFY(evo->point_count(pychron::experiment::collect::kSignal) > 0);
     QVERIFY(evo->graph_count() > 0);
     // A panel a signal series, Ar40 on H1 among them.
     QCOMPARE(evo->panel_titles().size(), evo->graph_count());
@@ -611,7 +620,7 @@ class TestExperimentWindow : public QObject {
     // The live fits: a curve per signal series and its intercept listed.
     QVERIFY(evo->fit_curve_count() > 0);
     QVERIFY(!evo->intercept_rows().isEmpty());
-    const auto ar40 = evo->fit_of({"Ar40", "H1", pychron::experiment::collect::SeriesKind::Signal});
+    const auto ar40 = evo->fit_of(skey("Ar40", "H1", pychron::experiment::collect::kSignal));
     QVERIFY(ar40.has_value());
     // The run measured one pipette of the tank's air, and nothing left of
     // the run before it: within 2 % of a shot worked out from the lab's
@@ -645,8 +654,8 @@ class TestExperimentWindow : public QObject {
     QVERIFY(!drawn.front().x.isEmpty());
     QCOMPARE(evo->peak_center_view()->marker_x().size(), 4);
     QVERIFY(evo->peak_center_view()->kept() >= 1);
-    evo->set_kind(pychron::experiment::collect::SeriesKind::Baseline);
-    QVERIFY(evo->point_count(pychron::experiment::collect::SeriesKind::Baseline) > 0);
+    evo->set_kind(pychron::experiment::collect::kBaseline);
+    QVERIFY(evo->point_count(pychron::experiment::collect::kBaseline) > 0);
     QVERIFY(evo->graph_count() > 0);
     QVERIFY(fs::exists(sim.dir / "data" / "records" / "66001" / "66001-2.json"));
     // The timeline: a state segment per phase of each run, all closed.
