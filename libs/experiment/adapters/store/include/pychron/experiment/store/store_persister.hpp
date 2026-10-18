@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +38,12 @@ class StorePersister final : public persist::IAnalysisPersister {
   // be read the last value read for the identifier stands in; with none, the
   // error is returned.
   Result<int> next_aliquot(const std::string& identifier) override;
+  // The later, by (aliquot, step), of the store's last analysis of the
+  // identifier and the spool's records of it; nullopt with neither. When the
+  // store cannot be read the last answer read for the identifier stands in;
+  // with none, the error is returned. Hands out nothing: next_aliquot() is not
+  // moved by it.
+  Result<std::optional<persist::LastRun>> last_run(const std::string& identifier) override;
   Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override;
   Result<void> save_extraction(const record::AnalysisRecord& record) override;
   // Ingests the record's raw series, then the analysis. An item the store has
@@ -55,7 +62,8 @@ class StorePersister final : public persist::IAnalysisPersister {
   std::filesystem::path data_;
   persist::FilePersister files_;
   std::mutex mutex_;
-  std::map<std::string, int> read_;    // identifier -> last aliquot read from the store
+  // identifier -> last run read from the store (aliquot 0: the store had none)
+  std::map<std::string, persist::LastRun> read_;
   std::map<std::string, int> issued_;  // identifier -> highest aliquot handed out
 };
 

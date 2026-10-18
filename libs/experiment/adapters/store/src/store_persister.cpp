@@ -13,9 +13,11 @@
 #include <optional>
 #include <set>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #include "pychron/core/host_name.hpp"
+#include "pychron/experiment/factory/increments.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
 #include "pychron/persistence/catalog.hpp"
 
@@ -41,6 +43,12 @@ Result<void> ingest(ps::IStore& store, const ps::IngestItem& item) {
   return {};
 }
 
+// The store's answer as a LastRun (increment is the step's index; none: aliquot 0).
+persist::LastRun to_last_run(const std::optional<ps::LastAnalysis>& last) {
+  if (!last) return persist::LastRun{0, -1};
+  return persist::LastRun{last->aliquot, last->increment};
+}
+
 }  // namespace
 
 StorePersister::StorePersister(ps::IStore& store, ps::Uuid client, std::filesystem::path data)
@@ -52,10 +60,11 @@ Result<int> StorePersister::next_aliquot(const std::string& identifier) {
   {
     const std::lock_guard<std::mutex> lock(mutex_);
     if (last) {
-      highest = *last ? (*last)->aliquot : 0;
-      read_[identifier] = highest;
+      const persist::LastRun read = to_last_run(*last);
+      read_[identifier] = read;
+      highest = read.aliquot;
     } else if (const auto cached = read_.find(identifier); cached != read_.end()) {
-      highest = cached->second;
+      highest = cached->second.aliquot;
     } else {
       return fail(last.error());
     }
@@ -74,6 +83,35 @@ Result<int> StorePersister::next_aliquot(const std::string& identifier) {
   int& issued = issued_[identifier];
   issued = std::max(issued, highest + 1);
   return highest + 1;
+}
+
+Result<std::optional<persist::LastRun>> StorePersister::last_run(const std::string& identifier) {
+  persist::LastRun best;
+  auto last = store_.last_analysis(identifier);
+  {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    if (last) {
+      best = to_last_run(*last);
+      read_[identifier] = best;
+    } else if (const auto cached = read_.find(identifier); cached != read_.end()) {
+      best = cached->second;
+    } else {
+      return fail(last.error());
+    }
+  }
+  // A record waiting to be sent is a saved run too; the file read stays outside the lock.
+  const persist::Spool spool(data_ / "spool");
+  auto waiting = spool.pending();  // a missing folder is an empty spool, not an error
+  if (!waiting) return fail(waiting.error());
+  for (const auto& uuid : *waiting) {
+    // A record that cannot be read can never be sent, so it is no saved run.
+    auto rec = spool.get(uuid);
+    if (!rec || rec->identity.identifier != identifier) continue;
+    const persist::LastRun run{rec->identity.aliquot, step_index(rec->identity.step)};
+    if (std::tie(run.aliquot, run.step) > std::tie(best.aliquot, best.step)) best = run;
+  }
+  if (best.aliquot == 0) return std::optional<persist::LastRun>{};
+  return std::optional<persist::LastRun>{best};
 }
 
 Result<void> StorePersister::begin_run(const RunIdentity& id, const QueueSpec& queue) {
@@ -405,6 +443,10 @@ class Marshalled final : public persist::IAnalysisPersister {
 
   Result<int> next_aliquot(const std::string& identifier) override {
     return impl_.call<Result<int>>([&](StorePersister& p) { return p.next_aliquot(identifier); });
+  }
+  Result<std::optional<persist::LastRun>> last_run(const std::string& identifier) override {
+    return impl_.call<Result<std::optional<persist::LastRun>>>(
+        [&](StorePersister& p) { return p.last_run(identifier); });
   }
   Result<void> begin_run(const RunIdentity& id, const QueueSpec& queue) override {
     return impl_.call<Result<void>>([&](StorePersister& p) { return p.begin_run(id, queue); });

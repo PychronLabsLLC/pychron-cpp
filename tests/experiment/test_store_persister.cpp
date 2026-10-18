@@ -74,6 +74,15 @@ record::AnalysisRecord numbered(const std::string& identifier = "66573", int ali
   return r;
 }
 
+// One step of a heating: its uuid includes the step, since numbered()'s does
+// not and two steps of one aliquot would otherwise be one analysis.
+record::AnalysisRecord stepped(const std::string& identifier, int aliquot, const std::string& step) {
+  auto r = numbered(identifier, aliquot);
+  r.identity.step = step;
+  r.identity.uuid = ps::Uuid::v5(ps::Uuid{}, identifier + "/" + std::to_string(aliquot) + step).str();
+  return r;
+}
+
 // A run that measured nothing: no series, so no raw blob to wait for.
 record::AnalysisRecord record_without_series() {
   auto r = numbered();
@@ -222,6 +231,56 @@ TEST_P(StorePersisterTest, AliquotsSurviveAnUnreadableStore) {
   EXPECT_FALSE(fresh.next_aliquot("66573").has_value());
   std::error_code ignored;
   fs::remove_all(other, ignored);
+}
+
+TEST_P(StorePersisterTest, LastRunFollowsTheStore) {
+  ASSERT_TRUE(persister_->save_analysis(stepped("66573", 2, "")));
+  ASSERT_TRUE(persister_->save_analysis(stepped("66573", 3, "A")));
+  ASSERT_TRUE(persister_->save_analysis(stepped("66573", 3, "B")));
+  EXPECT_EQ(persister_->last_run("66573").value(), (persist::LastRun{3, 1}));
+  EXPECT_FALSE(persister_->last_run("66574").value().has_value());
+}
+
+TEST_P(StorePersisterTest, LastRunCountsARecordWaitingInTheSpool) {
+  ASSERT_TRUE(persister_->save_analysis(stepped("66573", 3, "A")));
+  persist::Spool spool(data_ / "spool");
+  ASSERT_TRUE(spool.put(stepped("66573", 3, "B")));
+  ASSERT_TRUE(spool.put(stepped("66574", 9, "C")));  // another identifier's
+  EXPECT_EQ(persister_->last_run("66573").value(), (persist::LastRun{3, 1}));
+}
+
+TEST_P(StorePersisterTest, LastRunSurvivesAnUnreadableStore) {
+  ASSERT_TRUE(persister_->save_analysis(stepped("66573", 3, "A")));
+  ASSERT_EQ(persister_->last_run("66573").value(), (persist::LastRun{3, 0}));
+  failing_->fail_reads(true);
+  EXPECT_EQ(persister_->last_run("66573").value(), (persist::LastRun{3, 0}));  // the cached answer
+  const fs::path other = scratch_dir();
+  store::StorePersister fresh(*failing_, lab_.acquisition_client, other);
+  EXPECT_FALSE(fresh.last_run("66573"));  // nothing cached: the error
+  std::error_code ignored;
+  fs::remove_all(other, ignored);
+}
+
+TEST_P(StorePersisterTest, LastRunIssuesNothing) {
+  ASSERT_TRUE(persister_->save_analysis(stepped("66573", 3, "B")));
+  (void)persister_->last_run("66573");
+  EXPECT_EQ(persister_->next_aliquot("66573").value(), 4);
+}
+
+// Spec 5: the store and the files answer the same for the same runs.
+TEST_P(StorePersisterTest, LastRunIsTheSameFromTheStoreAndFromFiles) {
+  const fs::path files_dir = scratch_dir();
+  persist::FilePersister files(files_dir);
+  for (const auto& r : {stepped("66573", 2, ""), stepped("66573", 3, "A"), stepped("66573", 3, "C"),
+                        stepped("66573", 1, "D")}) {
+    ASSERT_TRUE(files.begin_run(RunIdentity{r.identity.identifier, r.identity.aliquot, r.identity.step}, {}));
+    ASSERT_TRUE(files.save_analysis(r));
+    ASSERT_TRUE(persister_->save_analysis(r));
+  }
+  EXPECT_EQ(files.last_run("66573").value(), persister_->last_run("66573").value());
+  EXPECT_EQ(files.last_run("66574").value(), persister_->last_run("66574").value());
+  std::error_code ignored;
+  fs::remove_all(files_dir, ignored);
 }
 
 TEST_P(StorePersisterTest, CheckQueueNamesExactlyWhatIsMissing) {
@@ -460,6 +519,14 @@ TEST_P(AcquisitionTest, ServesCallsFromOtherThreads) {
   EXPECT_EQ(first, 1);
   EXPECT_EQ(persister.next_aliquot("66573").value(), 2);
   EXPECT_EQ(analyses_of("66573"), 1U);
+}
+
+TEST_P(AcquisitionTest, ForwardsLastRun) {
+  auto acquisition = open();
+  ASSERT_TRUE(acquisition);
+  auto& persister = acquisition->persister();
+  ASSERT_TRUE(persister.save_analysis(stepped("66573", 1, "A")));
+  EXPECT_EQ(persister.last_run("66573").value(), (persist::LastRun{1, 0}));
 }
 
 namespace {

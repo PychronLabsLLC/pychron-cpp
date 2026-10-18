@@ -248,7 +248,7 @@ git commit -m "fix(experiment): a step heat resumed after a restart keeps its al
 - Consumes: `persist::LastRun`, `IAnalysisPersister::last_run` (Task 1); `ps::IStore::last_analysis(identifier) -> Result<std::optional<ps::LastAnalysis>>` (`aliquot`, `increment`, -1 for none; ordered `aliquot DESC, increment DESC`); `persist::Spool::pending()`, `get()`; `step_index`.
 - Produces: `Result<std::optional<persist::LastRun>> StorePersister::last_run(const std::string& identifier) override;`
 
-- [ ] **Step 1: Write the failing tests.** A local helper `stepped(identifier, aliquot, step)` = `numbered(identifier, aliquot)` with `identity.step = step` and `identity.uuid = Uuid::v5(Uuid{}, identifier + "/" + aliquot + step)` (`numbered`'s uuid does not include the step: two steps of one aliquot would otherwise be one analysis).
+- [x] **Step 1: Write the failing tests.** A local helper `stepped(identifier, aliquot, step)` = `numbered(identifier, aliquot)` with `identity.step = step` and `identity.uuid = Uuid::v5(Uuid{}, identifier + "/" + aliquot + step)` (`numbered`'s uuid does not include the step: two steps of one aliquot would otherwise be one analysis).
 
 ```cpp
 TEST_P(StorePersisterTest, LastRunFollowsTheStore) {
@@ -307,26 +307,26 @@ TEST_P(AcquisitionTest, ForwardsLastRun) {
 
 (`RunIdentity`'s aggregate order is `{identifier, aliquot, step}` as `test_persist.cpp` uses it. If `AcquisitionTest`'s `open()` needs a catalog row for `66573`, follow `ServesCallsFromOtherThreads`, which saves `numbered("66573", 1)` the same way.)
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
 Run: `cmake --build --preset dev --target pychron_experiment_store_tests && build/dev/tests/experiment/pychron_experiment_store_tests --gtest_filter='*LastRun*'`
 Expected: `StorePersisterTest.*` answers `nullopt` (the default); `ForwardsLastRun` answers `nullopt`.
 
-- [ ] **Step 3: Implement `StorePersister::last_run`**
+- [x] **Step 3: Implement `StorePersister::last_run`**
 
 Same shape as `next_aliquot`: `store_.last_analysis(identifier)` outside the lock; under `mutex_`, on success map it (`increment` → `step`; none → `LastRun{0, -1}`) and store it in `read_[identifier]`; on failure use `read_[identifier]` when present, else return the error. Outside the lock, read the spool as `next_aliquot` does (a spool that cannot be listed: its error; a record that cannot be read: skipped) and take the maximum by `(aliquot, step_index(step))` over the identifier's records. Answer `nullopt` when the result's aliquot is 0. Do not touch `issued_`. `next_aliquot` keeps its results: it reads `read_[identifier].aliquot` where it read the `int` before. Add `Marshalled::last_run` beside `next_aliquot` in the proxy.
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
 Run: `build/dev/tests/experiment/pychron_experiment_store_tests` (all of it: the existing `Aliquots*` tests guard the `read_` change). With `PYCHRON_TEST_PG_URL` set (see `docs/dev_setup.md`) the PostgreSQL engine runs too; without it those cases skip.
 Expected: all PASS.
 
-- [ ] **Step 5: Checks**
+- [x] **Step 5: Checks**
 
 Run: `python3 tools/quality_check.py && python3 tools/compiler_sweep.py --changed`
 Expected: exit 0 from both.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add libs/experiment/adapters/store/include/pychron/experiment/store/store_persister.hpp libs/experiment/adapters/store/src/store_persister.cpp tests/experiment/test_store_persister.cpp
