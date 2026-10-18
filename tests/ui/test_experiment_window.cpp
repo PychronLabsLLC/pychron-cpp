@@ -587,7 +587,9 @@ class TestExperimentWindow : public QObject {
     }
     QCOMPARE(measuring, 3);
     QVERIFY(waits >= 2);  // the delays before the runs
-    QVERIFY(pane->start_enabled());
+    // Every row was executed: nothing is left to start (queue-tables design 2).
+    QCOMPARE(window.model().executed_rows(), 3u);
+    QVERIFY(!pane->start_enabled());
     // A second queue in the same window starts with no peak center kept.
     emit bridge.queueStarted(pychron::experiment::lab::QueueStarted{3, 0});
     QCOMPARE(evo->peak_center_view()->kept(), 0);

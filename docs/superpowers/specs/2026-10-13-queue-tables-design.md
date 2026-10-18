@@ -54,6 +54,22 @@ Executed.
   live; after the queue ends, they stay read-only until Reset, owner
   2026-10-15).
   `row_editable(row) = !locked_ && row >= max(frozen_rows(), executed_rows())`.
+  `insert_position(at) = max(at, frozen_rows(), executed_rows())`.
+- Row operations on executed rows (plan decision 6): `adopt()` refuses any
+  edit that changes a row below `max(frozen_rows(), executed_rows())`, live
+  or not, with existing `editRefused` text `rows the executor has reached
+  cannot change`. `clear_executed()` (4.2) is the one operation past that
+  guard.
+- Nothing left to start (plan decision 5): `runnable()` is `check_.ok() &&
+  queue_.size() > executed_rows()`. After a queue runs to its end Start is
+  disabled until Reset.
+- Start's statuses (plan decision 7): `clear_status(from)` forgets statuses
+  of rows `>= from` and their run ids; Start clears from `executed_rows()`,
+  so Executed keeps what it showed after a Stop.
+- Who moves it: `set_live(from, …)` sets it to `from`; `set_frozen(n)`, when
+  it advances, to `n`; `end_live()` leaves it; `set_queue(spec, false)` sets
+  0, `set_queue(spec, true)` (executor's `QueueEdited`) keeps it.
+  `executedChanged` emitted after `frozenChanged`, once model state updated.
 
 ## 3. Views
 

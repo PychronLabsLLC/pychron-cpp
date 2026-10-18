@@ -202,6 +202,15 @@ void QueueTableModel::set_queue(QueueSpec spec, bool keep_status) {
   }
   endResetModel();
   revalidate();
+  if (!keep_status) set_executed(0);
+}
+
+bool QueueTableModel::runnable() const { return check_.ok() && queue_.size() > executed_; }
+
+void QueueTableModel::set_executed(std::size_t rows) {
+  if (rows == executed_) return;
+  executed_ = rows;
+  emit executedChanged(static_cast<int>(rows));
 }
 
 void QueueTableModel::revalidate() {
@@ -245,15 +254,17 @@ bool QueueTableModel::apply(const std::function<Result<void>(experiment::Experim
 
 bool QueueTableModel::adopt(experiment::ExperimentQueue next, bool reset, int row) {
   if (locked_) return false;
+  // Rows the executor reached, live or after the queue ended, never change.
+  // Checked here too so a plainly bad edit never reaches the executor.
+  const auto& now = queue_.runs();
+  const std::size_t reached = std::min(std::max(frozen_rows(), executed_), now.size());
+  const bool kept = next.size() >= reached && std::equal(now.begin(), now.begin() + static_cast<std::ptrdiff_t>(reached),
+                                                         next.runs().begin());
+  if (!kept) {
+    emit editRefused(tr("rows the executor has reached cannot change"));
+    return false;
+  }
   if (live()) {
-    // Checked here too so a plainly bad edit never reaches the executor.
-    const auto& now = queue_.runs();
-    bool kept = next.size() >= frozen_;
-    for (std::size_t i = 0; kept && i < frozen_; ++i) kept = next.runs()[i] == now[i];
-    if (!kept) {
-      emit editRefused(tr("rows the executor has reached cannot change"));
-      return false;
-    }
     auto v = commit_(version_, next.spec());
     if (!v) {
       emit editRefused(QString::fromStdString(v.error().what));
@@ -396,11 +407,12 @@ void QueueTableModel::set_live(std::size_t frozen, Committer commit) {
   version_ = 0;
   if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
   emit frozenChanged();
+  set_executed(frozen);
 }
 
 void QueueTableModel::end_live() {
   commit_ = nullptr;
-  frozen_ = 0;
+  frozen_ = 0;  // executed_ stays: the rows reached remain executed
   if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
   emit frozenChanged();
 }
@@ -410,6 +422,7 @@ void QueueTableModel::set_frozen(std::size_t rows) {
   frozen_ = rows;
   if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
   emit frozenChanged();
+  set_executed(rows);
 }
 
 bool QueueTableModel::on_queue_edited(const experiment::executor::QueueEdited& e) {
@@ -420,10 +433,11 @@ bool QueueTableModel::on_queue_edited(const experiment::executor::QueueEdited& e
   return true;
 }
 
-void QueueTableModel::clear_status() {
-  status_.clear();
-  run_rows_.clear();
-  if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, Count - 1));
+void QueueTableModel::clear_status(std::size_t from) {
+  const auto first = static_cast<int>(std::min(from, queue_.size()));
+  std::erase_if(status_, [first](const auto& kv) { return kv.first >= first; });
+  std::erase_if(run_rows_, [first](const auto& kv) { return kv.second >= first; });
+  if (first < rowCount()) emit dataChanged(index(first, 0), index(rowCount() - 1, Count - 1));
 }
 
 void QueueTableModel::row_changed(int row) {

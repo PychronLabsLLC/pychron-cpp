@@ -12,6 +12,8 @@
 // to the committer (the running session); it is kept only if accepted, else
 // editRefused says why and nothing changes. The executor's own changes
 // (QueueEdited) are adopted by version; the echo of an accepted edit is not.
+// The rows the executor reached are the executed rows (executed_rows()); they
+// stay read-only when the queue ends, until a new queue replaces them.
 //
 // Run status is keyed by row. Neither the executor nor a live edit changes
 // rows the executor has reached, so rows that already have a status never
@@ -67,7 +69,8 @@ class QueueTableModel : public QAbstractTableModel {
   const experiment::QueueSpec& queue() const { return queue_.spec(); }
   void revalidate();
   const experiment::lab::LabCheck& check() const { return check_; }
-  bool runnable() const { return check_.ok() && queue_.size() > 0; }
+  // Valid, and with a row the executor has not reached yet.
+  bool runnable() const;
   // Queue-level diagnostics (run -1), one line each.
   QStringList queue_diagnostics() const;
   QStringList row_diagnostics(int row) const;
@@ -102,24 +105,34 @@ class QueueTableModel : public QAbstractTableModel {
   void set_locked(bool locked);
   bool locked() const noexcept { return locked_; }
 
-  // Live editing while a queue runs, from row `frozen` on (the start row).
+  // Live editing while a queue runs, from row `frozen` on (the start row,
+  // which also becomes the executed boundary).
   void set_live(std::size_t frozen, Committer commit);
+  // Ends live editing; the executed rows stay executed.
   void end_live();
   bool live() const noexcept { return static_cast<bool>(commit_); }
   // Rows the executor has reached (QueueFrontier); only grows while live.
   void set_frozen(std::size_t rows);
   std::size_t frozen_rows() const noexcept { return live() ? frozen_ : 0; }
+  // Leading rows shown as executed (queue-tables design 2): the frontier
+  // while live, kept when the queue ends, 0 for a new queue.
+  std::size_t executed_rows() const noexcept { return executed_; }
   std::uint64_t version() const noexcept { return version_; }
-  bool row_editable(std::size_t row) const noexcept { return !locked_ && row >= frozen_rows(); }
-  // Clamps an insert position so it never lands among the frozen rows.
-  std::size_t insert_position(std::size_t at) const noexcept { return std::max(at, frozen_rows()); }
+  bool row_editable(std::size_t row) const noexcept {
+    return !locked_ && row >= std::max(frozen_rows(), executed_rows());
+  }
+  // Clamps an insert position so it never lands among the frozen or executed rows.
+  std::size_t insert_position(std::size_t at) const noexcept {
+    return std::max({at, frozen_rows(), executed_rows()});
+  }
   // The executor changed the queue (a queue action, a post-run conditional,
   // or the echo of a live edit); adopted when newer than what the model has.
   // True when adopted.
   bool on_queue_edited(const experiment::executor::QueueEdited& e);
 
   // Run status, fed from the bridge.
-  void clear_status();
+  // Forgets the statuses of rows `from` on (and their run ids).
+  void clear_status(std::size_t from = 0);
   void on_run_started(const experiment::executor::RunStarted& e);
   void on_run_state(const experiment::run::RunStateChanged& e);
   void on_run_finished(const experiment::executor::RunFinished& e);
@@ -137,8 +150,12 @@ class QueueTableModel : public QAbstractTableModel {
   void editRefused(const QString& why);
   // More rows became read-only while live.
   void frozenChanged();
+  // The number of executed rows changed (emitted only when it does).
+  void executedChanged(int rows);
 
  private:
+  // Sets the executed boundary; emits executedChanged when it moved.
+  void set_executed(std::size_t rows);
   struct RowStatus {
     std::string run_id;
     experiment::run::RunState state = experiment::run::RunState::Pending;
@@ -165,6 +182,7 @@ class QueueTableModel : public QAbstractTableModel {
   bool locked_ = false;
   Committer commit_;
   std::size_t frozen_ = 0;
+  std::size_t executed_ = 0;
   std::uint64_t version_ = 0;
 };
 

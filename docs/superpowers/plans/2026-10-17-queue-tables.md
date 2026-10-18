@@ -180,7 +180,7 @@ Each is written back into the spec by the task that makes it, so the two never d
   sets it to `n`; `end_live()` leaves it; `set_queue(spec, false)` sets it to 0, `set_queue(spec, true)` keeps it.
   `executedChanged` is emitted after `frozenChanged` and after the model's state is updated.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   - `executedFollowsTheFrontierAndOutlivesTheQueue`: `set_live(0, accept-all committer)`; `QSignalSpy` on
     `executedChanged`; `set_frozen(1)` → `executed_rows() == 1`, spy count 1, last argument 1; `set_frozen(1)`
@@ -194,22 +194,22 @@ Each is written back into the spec by the task that makes it, so the two never d
     `status(0)` is `Success`, `status(1)` empty.
   - `runnableNeedsARowNotExecuted`: live, `set_frozen(3)` (all rows), `end_live()` → `!runnable()`.
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   `cmake --build --preset dev-ui --target pychron_ui_test_queue_table_model` fails (`executed_rows`,
   `executedChanged` undeclared).
 
-- [ ] **Step 3: Implement as the Interfaces block says**
+- [x] **Step 3: Implement as the Interfaces block says**
 
   `adopt()`'s kept-rows check runs over `max(frozen_rows(), executed_)` rows, live or not (decision 6), with the
   existing `editRefused` text. Write decisions 5, 6, 7 into spec section 2 (compressed, as the spec is).
 
-- [ ] **Step 4: Run the model's tests**
+- [x] **Step 4: Run the model's tests**
 
   `build/dev-ui/tests/ui/pychron_ui_test_queue_table_model` passes, old cases included
   (`liveEditsGoThroughTheCommitter`, `setConditionalsFollowsTheFrozenRows`, `statusFollowsRunEvents`).
 
-- [ ] **Step 5: Checks and commit**
+- [x] **Step 5: Checks and commit**
 
   `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
   `git commit -m "feat(ui): the queue model keeps the rows the executor reached as executed"`

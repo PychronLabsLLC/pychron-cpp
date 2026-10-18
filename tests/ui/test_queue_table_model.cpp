@@ -207,11 +207,87 @@ class TestQueueTableModel : public QObject {
     QCOMPARE(m->version(), 3u);
     QCOMPARE(m->frozen_rows(), 2u);
 
+    // Once the queue ends the rows it reached stay read-only (they are the
+    // executed rows) until a new queue replaces them; edits are no longer offered.
     m->end_live();
     QVERIFY(!m->live());
+    QVERIFY(!m->row_editable(0));
+    QVERIFY(!m->toggle_skip({0}));
+    m->set_queue(m->queue());
     QVERIFY(m->row_editable(0));
     QVERIFY(m->toggle_skip({0}));
     QCOMPARE(offered.size(), 3u);  // not offered once the queue ended
+  }
+
+  // The rows the executor reached stay executed when the queue ends; a new
+  // queue has none.
+  void executedFollowsTheFrontierAndOutlivesTheQueue() {
+    auto m = model();
+    m->set_live(0, [](std::uint64_t base, const QueueSpec&) -> pychron::Result<std::uint64_t> { return base + 1; });
+    QSignalSpy executed(m.get(), &QueueTableModel::executedChanged);
+    QSignalSpy refused(m.get(), &QueueTableModel::editRefused);
+    m->set_frozen(1);
+    QCOMPARE(m->executed_rows(), 1u);
+    QCOMPARE(executed.count(), 1);
+    QCOMPARE(executed.last().front().toInt(), 1);
+    m->set_frozen(1);
+    QCOMPARE(executed.count(), 1);
+    m->set_frozen(2);
+    m->end_live();
+    QCOMPARE(m->frozen_rows(), 0u);
+    QCOMPARE(m->executed_rows(), 2u);
+    QVERIFY(!(m->flags(m->index(1, QueueTableModel::Identifier)) & Qt::ItemIsEditable));
+    QVERIFY(m->flags(m->index(2, QueueTableModel::Identifier)) & Qt::ItemIsEditable);
+    QCOMPARE(m->insert_position(0), 2u);
+    QVERIFY(!m->move_up({2}));
+    QVERIFY(!m->remove({0}));
+    QVERIFY(!m->toggle_skip({1}));
+    QVERIFY(!refused.isEmpty());
+    QVERIFY(refused.last().front().toString().contains(QStringLiteral("reached")));
+    QCOMPARE(m->rowCount(), 3);
+
+    m->set_queue(pychron::ui::test::example_queue(dir_, lab_->ids));
+    QCOMPARE(m->executed_rows(), 0u);
+    QCOMPARE(executed.last().front().toInt(), 0);
+  }
+
+  void aQueueEditKeepsTheBoundary() {
+    auto m = model();
+    m->set_live(0, [](std::uint64_t base, const QueueSpec&) -> pychron::Result<std::uint64_t> { return base + 1; });
+    m->set_frozen(1);
+    exec::QueueEdited e;
+    e.queue = m->queue();
+    e.version = 5;
+    e.frozen = 1;
+    QVERIFY(m->on_queue_edited(e));
+    QCOMPARE(m->executed_rows(), 1u);
+  }
+
+  void clearStatusFromKeepsTheExecutedRows() {
+    auto m = model();
+    exec::RunSummary s;
+    s.row = 0;
+    s.run_id = "uuid-0";
+    s.state = RunState::Success;
+    m->on_run_finished(exec::RunFinished{s});
+    s.row = 1;
+    s.run_id = "uuid-1";
+    m->on_run_finished(exec::RunFinished{s});
+    m->clear_status(1);
+    QCOMPARE(m->status(0), std::optional<RunState>(RunState::Success));
+    QVERIFY(!m->status(1));
+    // The cleared row's run id is forgotten too: a late state change for it is ignored.
+    m->on_run_state(pychron::experiment::run::RunStateChanged{"uuid-1", RunState::Preparing, RunState::Measuring, {}, {}});
+    QVERIFY(!m->status(1));
+  }
+
+  void runnableNeedsARowNotExecuted() {
+    auto m = model();
+    QVERIFY(m->runnable());
+    m->set_live(0, [](std::uint64_t base, const QueueSpec&) -> pychron::Result<std::uint64_t> { return base + 1; });
+    m->set_frozen(3);
+    m->end_live();
+    QVERIFY(!m->runnable());
   }
 
   void conditionalsColumn() {
