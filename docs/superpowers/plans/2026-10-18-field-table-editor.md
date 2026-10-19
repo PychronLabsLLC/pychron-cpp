@@ -433,15 +433,17 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
     int point_count() const; int curve_sample_count() const;
     std::pair<double, double> curve_mass_range() const;
     QStringList point_tooltips() const;                   // "Ar40: value 5.00100, residual 0.00012"
+    QColor point_color() const; QColor curve_color() const;  // for the restyle test
+    const std::string& detector() const;
   };
   ```
-  Curve: 200 samples over `[min mass − FieldTable::kInverseMargin, max mass + kInverseMargin]`; none for Discrete or a failed fit (points only). Colours from `plot_series_color(0)` and `plot_style()`.
+  Curve: 200 samples over `[min mass − FieldTable::kInverseMargin, max mass + kInverseMargin]`; none for Discrete or a failed fit (points only). Colours from `plot_series_color(0)` and `plot_style()`. The editor's plot follows the grid's current detector column (the isotope and mass columns keep the last one; first detector at open) and redraws on every edit (`FieldTableEditorWindow::plot()`, test `plotFollowsTheSelectedColumn`).
 
-- [ ] **Step 1: Write failing tests**: `pointsAndCurveCoverTheMarginedRange`, `discreteDrawsPointsOnly`, `failedFitDrawsPointsOnly`, `tooltipsCarryResiduals`, `restylesOnPlotStyleChange` (emit hub `changed()`, colour of the point graph equals the new `plot_series_color(0)`).
-- [ ] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_plot && build/dev-ui/tests/ui/pychron_ui_test_field_table_plot`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** same, plus `pychron_ui_test_field_table_editor`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(ui): field table fit plot`.
+- [x] **Step 1: Write failing tests**: `pointsAndCurveCoverTheMarginedRange`, `discreteDrawsPointsOnly`, `failedFitDrawsPointsOnly`, `tooltipsCarryResiduals`, `restylesOnPlotStyleChange` (emit hub `changed()`, colour of the point graph equals the new `plot_series_color(0)`).
+- [x] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_plot && build/dev-ui/tests/ui/pychron_ui_test_field_table_plot`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** same, plus `pychron_ui_test_field_table_editor`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(ui): field table fit plot`.
 
 ### Task 15: Add Row, Set Value, Compare, Import CSV dialogs
 

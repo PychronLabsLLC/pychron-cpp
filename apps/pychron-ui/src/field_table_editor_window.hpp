@@ -28,6 +28,7 @@
 #include <QTimer>
 
 #include "field_table_model.hpp"
+#include "field_table_plot.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/systems/spectrometer/config.hpp"
 #include "pychron/systems/spectrometer/field_table_check.hpp"
@@ -73,6 +74,8 @@ class FieldTableEditorWindow : public QMainWindow {
   const QString& open_version() const { return open_version_; }
   const QString& base_version() const { return base_version_; }
   FieldTableModel* model() noexcept { return &model_; }
+  // Follows the grid's current detector column.
+  FieldTablePlot* plot() noexcept { return plot_; }
   bool modified() const { return model_.modified(); }
   bool read_only() const { return model_.read_only(); }
   const QString& load_error() const { return load_error_; }
@@ -124,6 +127,7 @@ class FieldTableEditorWindow : public QMainWindow {
   void update_actions();
   void update_title();
   void set_banner(const QString& text);
+  void redraw_plot();
   void start_save(const QString& base);
   void finish_save(const QString& name, const Result<std::string>& result);
   void finish_restore(const QString& name, const QString& version, const Result<void>& result);
@@ -161,6 +165,7 @@ class FieldTableEditorWindow : public QMainWindow {
   QFormLayout* overrides_;
   QLabel* axis_;
   QListWidget* diagnostics_list_;
+  FieldTablePlot* plot_;
   QToolBar* toolbar_ = nullptr;
   QVBoxLayout* centre_layout_ = nullptr;
   QAction* save_action_;

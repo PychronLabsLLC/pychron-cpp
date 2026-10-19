@@ -49,6 +49,7 @@ add_library(pychron_ui_lib STATIC
   src/conditionals_editor_window.cpp
   src/field_table_model.cpp
   src/field_table_editor_window.cpp
+  src/field_table_plot.cpp
   src/scene_view.cpp
   src/flow_layout.cpp
   src/options_editor.cpp
@@ -137,6 +138,7 @@ add_library(pychron_ui_lib STATIC
   src/conditionals_editor_window.hpp
   src/field_table_model.hpp
   src/field_table_editor_window.hpp
+  src/field_table_plot.hpp
   src/scene_view.hpp
   src/flow_layout.hpp
   src/options_editor.hpp

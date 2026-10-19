@@ -82,7 +82,8 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
       default_fit_(new QComboBox),
       overrides_(new QFormLayout),
       axis_(new QLabel),
-      diagnostics_list_(new QListWidget) {
+      diagnostics_list_(new QListWidget),
+      plot_(new FieldTablePlot) {
   resize(1100, 720);
   tables_->setObjectName(QStringLiteral("tables"));
   versions_->setObjectName(QStringLiteral("versions"));
@@ -121,7 +122,12 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   auto* centre_col = new QVBoxLayout(centre);
   centre_col->addWidget(banner_);
   centre_col->addWidget(load_error_label_);
-  centre_col->addWidget(grid_, 1);
+  auto* centre_split = new QSplitter(Qt::Vertical);
+  centre_split->addWidget(grid_);
+  centre_split->addWidget(plot_);
+  centre_split->setStretchFactor(0, 3);
+  centre_split->setStretchFactor(1, 2);
+  centre_col->addWidget(centre_split, 1);
   centre_layout_ = centre_col;
 
   // Right: fits, axis, diagnostics.
@@ -210,6 +216,10 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
     sync_fit_combos();
     check_timer_.start();
     update_actions();
+  });
+  connect(&model_, &FieldTableModel::tableEdited, this, [this] { redraw_plot(); });
+  connect(grid_->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& at) {
+    if (!model_.detector_at(at.column()).empty()) redraw_plot();
   });
   connect(model_.undo_stack(), &QUndoStack::cleanChanged, this, [this] {
     update_actions();
@@ -538,6 +548,15 @@ void FieldTableEditorWindow::set_banner(const QString& text) {
   banner_text_ = text;
   banner_->setText(text);
   banner_->setVisible(!text.isEmpty());
+}
+
+// The grid's current detector column; else the one drawn last, while the
+// table still has that column; else the first detector.
+void FieldTableEditorWindow::redraw_plot() {
+  std::string det = model_.detector_at(grid_->currentIndex().column());
+  if (det.empty() && model_.column_of(plot_->detector()) >= 0) det = plot_->detector();
+  if (det.empty() && !model_.detector_columns().empty()) det = model_.detector_columns().front();
+  plot_->show_detector(model_.table(), det);
 }
 
 void FieldTableEditorWindow::revert() { load_version(open_name_, open_version_); }

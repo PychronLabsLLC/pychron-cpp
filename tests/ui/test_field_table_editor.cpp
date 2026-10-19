@@ -232,7 +232,10 @@ class TestFieldTableEditor : public QObject {
     const auto* first = spectrometer::first_error(w->diagnostics());
     QVERIFY(first);
     QCOMPARE(w->save_disabled_reason(), QString::fromStdString(spectrometer::to_string(*first)));
-    QTest::qWait(1);  // a redraw after the edit must not fail either
+    // The plot redrew with the edit: two points, no curve.
+    QCOMPARE(w->plot()->point_count(), 2);
+    QCOMPARE(w->plot()->curve_sample_count(), 0);
+    QTest::qWait(1);  // the queued replot must not fail either
   }
 
   void conflictReloadDiscardsEdits() {
@@ -507,6 +510,23 @@ class TestFieldTableEditor : public QObject {
     QCOMPARE(current(), QString("20261019T120000Z"));
     QCOMPARE(value_at(argon().load().value(), "Ar40", "H1"), 5.0123);
     QVERIFY(!w->modified());
+  }
+
+  void plotFollowsTheSelectedColumn() {
+    auto w = make_window();
+    auto* m = w->model();
+    QCOMPARE(w->plot()->detector(), m->detector_columns().front());
+    auto* grid = w->findChild<QTableView*>("grid");
+    QVERIFY(grid);
+    grid->setCurrentIndex(m->index(0, m->column_of("AX")));
+    QCOMPARE(w->plot()->detector(), std::string("AX"));
+    QCOMPARE(w->plot()->point_count(), 3);
+    QCOMPARE(w->plot()->curve_sample_count(), ui::FieldTablePlot::kCurveSamples);
+    // The isotope column keeps the detector drawn last.
+    grid->setCurrentIndex(m->index(0, FieldTableModel::kIsotopeColumn));
+    QCOMPARE(w->plot()->detector(), std::string("AX"));
+    edit_h1(*w, "5.0123");
+    QCOMPARE(w->plot()->detector(), std::string("AX"));
   }
 
   void diagnosticClickSelectsTheCell() {
