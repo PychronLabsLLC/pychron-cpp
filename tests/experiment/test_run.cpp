@@ -165,6 +165,24 @@ TEST_F(RunTest, ACryostatThatDoesNotAnswerIsSaidAndLeftOut) {
   EXPECT_TRUE(said) << ::testing::PrintToString(r.messages);
 }
 
+// A run measured by the engine records where each series was read (its
+// segment, its baselines' when and choice): v3, with its own sha. A record
+// v2 can say all of stays v2 (RecordBuilder, test_analysis_record.cpp).
+TEST_F(RunTest, ARealRunsRecordIsV3) {
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.schema_version, record::kRecordSchemaVersion);
+  EXPECT_TRUE(record::verify_sha(*r.record));
+  EXPECT_FALSE(r.record->results.baseline_choices.empty());
+  bool located = false;
+  for (const auto& s : r.record->data.series) located |= s.segment != 0;
+  EXPECT_TRUE(located);
+  auto back = record::from_json(record::to_json(*r.record));
+  ASSERT_TRUE(back) << back.error().what;
+  EXPECT_EQ(*back, *r.record);
+}
+
 TEST_F(RunTest, FullRunSucceedsAndSaves) {
   int overlap = 0, pump = 0;
   RunHooks hooks;

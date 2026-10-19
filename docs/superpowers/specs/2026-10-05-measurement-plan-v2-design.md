@@ -411,9 +411,13 @@ This is `AnalysisRecord` v3; the v2 reader stays and v2 records load with a
 single implicit gas and segment. v2 record read is written back, and its sha
 computed, in v2 layout. Record builder finalizes as v2 a record v2 can say all
 of (no gas but implicit one, every series at segment and position 0, one
-baseline position a detector, no baseline choice or modifier): ordinary run
+baseline position a detector, no baseline choice or modifier): such a record
 keeps bytes and stored items it had before v3, as `instrument.simulated` and
-`provenance.status` did (`RecordIngest.AnOrdinaryRunConvertsAsItAlwaysDid`).
+`provenance.status` did (`RecordIngest.AnOrdinaryRunConvertsAsItAlwaysDid`,
+`tests/experiment/test_record_ingest.cpp`, pins one). A run measured by this
+engine records where each series was read (segment indexes, baseline `when`
+and choice), which v2 cannot say: its record is v3 (decided 2026-10-19,
+review; plan "Decided here": only new records are v3).
 
 ### 6.2 Reduction
 
