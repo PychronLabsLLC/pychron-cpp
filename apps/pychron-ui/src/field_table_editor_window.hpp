@@ -23,6 +23,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <QDateTime>
 #include <QMainWindow>
@@ -176,6 +177,7 @@ class FieldTableEditorWindow : public QMainWindow {
   bool save_pending_ = false;
   std::function<void()> after_save_;
   bool filling_ = false;
+  std::vector<std::string> fit_combo_columns_;  // the detectors rebuild_fit_combos made a combo for
 
   QListWidget* tables_;
   QTreeWidget* versions_;

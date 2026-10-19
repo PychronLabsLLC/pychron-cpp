@@ -608,6 +608,26 @@ class TestFieldTableEditor : public QObject {
     QVERIFY(!w->modified());
   }
 
+  void importingANewDetectorGivesItAColumnAFitAndAPlot() {
+    auto w = make_window();
+    const fs::path csv = root() / "x.csv";
+    write_file(csv, "iso,H1,X9\nAr40,5.0,6.0\nAr39,4.9,5.9\nAr36,4.5,5.5\n");
+    w->set_pick_csv([csv] { return std::optional<fs::path>(csv); });
+    w->import_csv();
+    QVERIFY(errors_.isEmpty());
+    auto* m = w->model();
+    QVERIFY(m->column_of("X9") >= 0);
+    QVERIFY(w->findChild<QComboBox*>("fit_X9") != nullptr);
+    auto* grid = w->findChild<QTableView*>("grid");
+    grid->setCurrentIndex(m->index(0, m->column_of("X9")));
+    QCOMPARE(w->plot()->detector(), std::string("X9"));
+    QCOMPARE(w->plot()->point_count(), 3);
+    m->undo_stack()->undo();
+    QCOMPARE(m->column_of("X9"), -1);
+    QVERIFY(w->findChild<QComboBox*>("fit_X9") == nullptr);
+    QVERIFY(w->plot()->detector() != "X9");
+  }
+
   void importCsvErrorIsShown() {
     auto w = make_window();
     const fs::path bad = root() / "bad.csv";

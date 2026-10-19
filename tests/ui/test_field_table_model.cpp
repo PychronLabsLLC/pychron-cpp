@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include <QSignalSpy>
 #include <QUndoStack>
 #include <QtTest/QtTest>
 
@@ -256,6 +257,29 @@ class TestFieldTableModel : public QObject {
     m.undo_stack()->undo();
     QCOMPARE(m.table().default_fit(), FitKind::Quadratic);
     QVERIFY(!m.modified());
+  }
+
+  void anEditBringingANewDetectorAddsItsColumnAndUndoTakesItAway() {
+    FieldTableModel m(config_detectors(), weights());
+    m.set_table(table());
+    FieldTable imported = m.table();
+    imported.mutable_points().front().values["CDD"] = 4.0;  // in neither config nor table
+    QSignalSpy reset(&m, &QAbstractItemModel::modelReset);
+    m.edit_table(imported, "Import CSV");
+    QCOMPARE(reset.count(), 1);
+    QCOMPARE(m.detector_columns(), (std::vector<std::string>{"AX", "H1", "L1", "H2", "CDD"}));
+    QCOMPARE(m.columnCount(), 7);
+    const int c = m.column_of("CDD");
+    QCOMPARE(cell(m, 0, c), QString("4.00000"));
+    QCOMPARE(m.headerData(c, Qt::Horizontal).toString(), QString("CDD (not in config)"));
+    QVERIFY(m.setData(m.index(0, c), QString("4.5")));
+    m.undo_stack()->undo();
+    m.undo_stack()->undo();
+    // Back to the table as loaded: its own columns, H2 kept though it is in the table only.
+    QCOMPARE(m.detector_columns(), (std::vector<std::string>{"AX", "H1", "L1", "H2"}));
+    // Clearing a table-only column's last value keeps the column while editing.
+    for (int r = 0; r < m.rowCount(); ++r) QVERIFY(m.setData(m.index(r, m.column_of("H2")), QString()));
+    QCOMPARE(m.column_of("H2"), FieldTableModel::kFirstDetectorColumn + 3);
   }
 
   void readOnlyRefusesEdits() {

@@ -244,6 +244,7 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   if (bridge_ != nullptr) hold_timer_.start();
 
   connect(&model_, &FieldTableModel::tableEdited, this, [this] {
+    if (fit_combo_columns_ != model_.detector_columns()) rebuild_fit_combos();  // an import's new detector
     sync_fit_combos();
     check_timer_.start();
     update_actions();
@@ -489,6 +490,7 @@ void FieldTableEditorWindow::fill_versions() {
 
 void FieldTableEditorWindow::rebuild_fit_combos() {
   while (overrides_->rowCount() > 0) overrides_->removeRow(0);
+  fit_combo_columns_ = model_.detector_columns();
   for (const std::string& det : model_.detector_columns()) {
     auto* combo = new QComboBox;
     combo->setObjectName(q("fit_" + det));

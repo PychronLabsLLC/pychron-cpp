@@ -6,8 +6,9 @@
 //   Isotope | Mass | one column per detector
 //
 // Detector columns are the config's detectors in config order, then any
-// detector only the table has (header marked "not in config"); the set is
-// fixed when a table is loaded. Rows are the table's points, kept sorted by
+// detector only the loaded table has (header marked "not in config"), then
+// any an edit brings (an import); a column of the loaded table stays while
+// its values are cleared, one an edit brought goes with its undo. Rows are the table's points, kept sorted by
 // mass (lightest first) after every edit. An empty cell is no value for that
 // detector.
 //
@@ -94,11 +95,13 @@ class FieldTableModel : public QAbstractTableModel {
   // Installs `table` (from an undo command), telling the views.
   void apply(spectrometer::FieldTable table);
   bool set_isotope(std::size_t row, const QString& text);
+  std::vector<std::string> columns_for(const spectrometer::FieldTable& table) const;
 
   std::vector<std::string> config_detectors_;
   spectrometer::MolecularWeights weights_;
   spectrometer::FieldTable table_;
-  std::vector<std::string> columns_;
+  std::vector<std::string> loaded_columns_;  // config, then the loaded table's
+  std::vector<std::string> columns_;         // those, then the current table's
   QUndoStack undo_;
   bool read_only_ = false;
 };

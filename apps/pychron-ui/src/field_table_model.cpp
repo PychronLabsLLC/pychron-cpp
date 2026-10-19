@@ -54,10 +54,11 @@ void FieldTableModel::set_table(sp::FieldTable table) {
   sort_by_mass(table);
   beginResetModel();
   table_ = std::move(table);
-  columns_ = config_detectors_;
+  loaded_columns_ = config_detectors_;
   for (const auto& det : table_.detectors()) {
-    if (std::ranges::find(columns_, det) == columns_.end()) columns_.push_back(det);
+    if (std::ranges::find(loaded_columns_, det) == loaded_columns_.end()) loaded_columns_.push_back(det);
   }
+  columns_ = loaded_columns_;
   undo_.clear();
   undo_.setClean();
   endResetModel();
@@ -92,18 +93,28 @@ void FieldTableModel::push(sp::FieldTable after, const QString& text) {
   undo_.push(new Edit(*this, table_, std::move(after), text));  // the stack owns it
 }
 
+std::vector<std::string> FieldTableModel::columns_for(const sp::FieldTable& table) const {
+  std::vector<std::string> out = loaded_columns_;
+  for (const auto& det : table.detectors()) {
+    if (std::ranges::find(out, det) == out.end()) out.push_back(det);
+  }
+  return out;
+}
+
 void FieldTableModel::apply(sp::FieldTable table) {
   const auto& old_points = table_.points();
   const auto& new_points = table.points();
   const bool same_rows = old_points.size() == new_points.size() &&
                          std::ranges::equal(old_points, new_points, {}, &sp::ControlPoint::isotope,
                                             &sp::ControlPoint::isotope);
-  if (same_rows) {
+  std::vector<std::string> columns = columns_for(table);
+  if (same_rows && columns == columns_) {
     table_ = std::move(table);
     if (rowCount() > 0) emit dataChanged(index(0, 0), index(rowCount() - 1, columnCount() - 1));
   } else {
     beginResetModel();
     table_ = std::move(table);
+    columns_ = std::move(columns);
     endResetModel();
   }
   emit tableEdited();
