@@ -11,3 +11,4 @@ tests/dvc/fixtures/** -text
 tests/systems/data/** -text
 # The SVG and PDF of a scene are compared byte for byte: never convert them.
 tests/processing/fixtures/scene/** -text
+tests/processing/fixtures/scene/*.pdf binary
