@@ -246,3 +246,18 @@ TEST(Tables, RowHashesEqualTheCommittedFixture) {
   expected << in.rdbuf();
   EXPECT_EQ(actual, expected.str()) << "the tables' rows differ from the committed fixture";
 }
+
+// Every column of every table is documented in docs/release_format.md, in
+// a backticked span (the reader's reference; Task 11 of the phase 1 plan).
+TEST(Tables, EveryColumnIsDocumented) {
+  const std::filesystem::path doc = std::filesystem::path(PYCHRON_SOURCE_DIR) / "docs" / "release_format.md";
+  std::ifstream in(doc, std::ios::binary);
+  ASSERT_TRUE(in) << doc;
+  std::stringstream ss;
+  ss << in.rdbuf();
+  const std::string text = ss.str();
+  const auto tables = build_tables(inputs());
+  for (const Table* t : {&tables.samples, &tables.positions, &tables.analyses, &tables.isotopes, &tables.interpreted_ages})
+    for (const auto& c : t->columns)
+      EXPECT_NE(text.find("`" + c.name + "`"), std::string::npos) << t->name << "." << c.name << " is not documented";
+}

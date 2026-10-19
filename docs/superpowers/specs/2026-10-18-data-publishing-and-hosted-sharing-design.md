@@ -276,7 +276,8 @@ version of a name and links the chain.
 ```
 
 Names: `<sample>` is the sample name made file-safe (`[^A-Za-z0-9._-]` ->
-`_`; collision -> suffix `-<first 8 of uuid>`). Paths in manifest are the
+`_`; collision -> suffix `-<last 8 hex of uuid>`; a v7's first 8 are a shared
+timestamp). Paths in manifest are the
 truth; names are for people.
 
 Every file written by `elctl publish` or the UI goes through
@@ -304,7 +305,8 @@ quarantined application would otherwise quarantine its own release.
   Nulls where the store has nothing; never a sentinel.
 - Compression ZSTD, one row group per table (release tables are small: a
   decade of one lab is about 10^5 analyses, 10^6 isotope rows, tens of MB).
-- Writer: Apache Arrow C++ with Parquet, from vcpkg (`arrow[parquet]`,
+- Writer: Apache Arrow C++ with Parquet (Homebrew `apache-arrow`, Ubuntu
+  `libarrow-dev libparquet-dev`, or vcpkg's `publish` feature: `arrow[parquet]`,
   port 26.0.0; core pulls boost-filesystem, thrift, zstd, snappy, re2 and
   others: a heavy dependency). Behind `PYCHRON_PUBLISH=AUTO|ON|OFF` as
   OpenCV is behind `PYCHRON_VISION_OPENCV`; without it `libs/publish`
@@ -1054,13 +1056,15 @@ release is the citable unit and EarthBank one more place it is listed.
 
 Static tier first. Each phase ends merged on `develop` with its tests.
 
-1. **Release model.** Migration `0006`, `release*`, `embargo`, `external_id`,
-   `pub.*` views (PostgreSQL), `load_analysis_at`, `libs/publish` core
-   (`release.hpp`, `embargo.hpp`, `tables.hpp`, `manifest.hpp`, `records.hpp`),
-   `elctl publish create|build|verify|publish|withdraw|list|show`,
+1. **Release model.** Done 2026-10-19 (plan
+   `docs/superpowers/plans/2026-10-18-data-publishing-phase-1.md`). Migration
+   `0007`, `release*`, `embargo`, `external_id`, `pub_*` views (PostgreSQL),
+   `load_analysis_at`, `libs/publish` core (`release.hpp`, `embargo.hpp`,
+   `tables.hpp`, `manifest.hpp`, `records.hpp`, `build.hpp`, `parquet.hpp`),
+   `elctl publish create|build|verify|publish|withdraw|list|show|delete`,
    `elctl embargo`. Build writes Schaen tables, records, constants,
    CITATION, README, manifest; Parquet behind `PYCHRON_PUBLISH` with Arrow
-   from vcpkg; `docs/release_format.md`.
+   (Homebrew, apt or the vcpkg `publish` feature); `docs/release_format.md`.
 2. **Figures.** `scene_layout.hpp` moved down, `scene_svg`, `scene_pdf`;
    `--with-figures`.
 3. **Viewer.** `viewer/` in-repo, installer ships it, `--with-viewer`,

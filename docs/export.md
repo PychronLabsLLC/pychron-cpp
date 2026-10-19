@@ -78,3 +78,11 @@ material and age are the position's flux record; the reactor is the level's
 production record. What the store does not have is left empty rather than
 guessed, so a report from a freshly imported legacy database may have empty
 location columns until the samples are filled in.
+
+## Releases
+
+A report is one file of one moment. To publish a selection as a citable,
+verifiable directory (this report per sample and for the whole, GeoParquet
+tables, an OGC API - Records catalogue, a manifest of every file's hash and
+of the revisions pinned), use `elctl publish` ([elctl reference](user/08-elctl-reference.md#publish));
+the directory's format is in [release format](release_format.md).

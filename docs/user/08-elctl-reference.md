@@ -31,7 +31,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Lasers](#lasers): `laser ...`
 - [Legacy data](#legacy-data): `import ...`
 - [The store's schema](#the-stores-schema): `db status`, `db migrate`, `db derive`
-- [Publication data](#publication-data): `export`
+- [Publication data](#publication-data): `export`, `publish`, `embargo`
 - [EarthBank workbooks and account](#earthbank-workbooks): `earthbank export-xlsx`, `login`, `account`, `packages`, `preflight`, `upload`, `import-profiles`
 - [Sample and package entry](#sample-and-package-entry): `entry ...`
 - [Not yet implemented / unverified](#not-yet-implemented--unverified)
@@ -841,6 +841,63 @@ elctl export --db postgresql://user:pw@host/pychron --out report.json \
 
 The file is marked as a user file after it is written so macOS Gatekeeper lets
 you open it.
+
+### publish
+
+`elctl publish` makes a *release*: an immutable, citable directory of a
+selection's reduced data (GeoParquet tables, an OGC API - Records catalogue,
+the Schaen report, a manifest of every file's hash and of the revisions
+pinned). **Needs persistence.** The directory's contents are documented in
+[release format](../release_format.md); `elctl publish help` prints every
+option. Nothing is public by default: a release is a private draft until it
+is published, and private until it is made public.
+
+```bash
+elctl publish create  --db <url> [selection] [--tag T]... [--ia NAME|--no-ia] --name <slug> --title <text>
+                      --author "<name>[|orcid|affiliation]"... [--licence <spdx>] [--description <text>]
+                      [--publisher <name>] [--embargo-until YYYY-MM-DD] [--supersedes <name|name@vN|uuid>]
+                      [reduction and report options as export]
+elctl publish build   --db <url> --release <r> --out <dir> [--private] [--with-figures] [--with-viewer]
+elctl publish verify  <dir> [--db <url>]
+elctl publish publish --db <url> --release <r> --manifest <dir>/manifest.json [--public]
+elctl publish withdraw --db <url> --release <r> --reason <text>
+elctl publish list    --db <url> [--state draft|published|withdrawn]
+elctl publish show    --db <url> --release <r>
+elctl publish delete  --db <url> --release <r>
+```
+
+`<r>` is a release name (its newest version), `name@vN`, or a uuid.
+
+| Command | Does |
+|---|---|
+| `create` | Pins the selection's heads and references (and every interpreted age whose members are all selected, or the ones named by `--ia`) in a bookmark and writes a new draft release. The selection and reduction flags are `export`'s; `--tag` keeps only analyses with those head tags (default: every tag but `invalid`). A second `create` of a name makes version 2, superseding version 1. The licence preselects `CC-BY-4.0`; the texts of CC-BY-4.0, CC-BY-SA-4.0 and CC0-1.0 ship with pychron, another id is named in `LICENSE.txt` only. Prints the release's uuid and counts; exit 1 when nothing matched. |
+| `build` | Writes `<dir>/<name>-v<N>`. Embargoed samples and analyses are left out and counted in the manifest; `--private` keeps them and marks the build private. Without Apache Arrow (`PYCHRON_PUBLISH`) the Parquet tables are not written and the command says so. `--with-figures` and `--with-viewer` are accepted and ignored in this version. |
+| `verify` | Every file against `manifest.json`; with `--db`, also against a rebuild of the same release from that store (row hashes per table, bytes per non-Parquet file). Exit 1 names each difference. |
+| `publish` | Marks the draft published, recording the manifest of the build given; refuses a manifest whose pins are not this release's. Private unless `--public`. |
+| `withdraw` | A published release, with a reason; it goes private and never changes again. |
+| `list`, `show` | What releases the store has; one release's details, counts and bookmark. |
+| `delete` | A draft only. |
+
+`doi`, `igsn` and `upload` are not built yet.
+
+### embargo
+
+An embargo hides a project, a sample or an analysis from every public release
+and hosted view until a date, or until it is lifted. **Needs persistence.**
+
+```bash
+elctl embargo set  --db <url> (--project P | --sample S | --analysis A)... [--until YYYY-MM-DD] [--reason <text>]
+elctl embargo lift --db <url> (--id <uuid> | --project P | --sample S | --analysis A)...
+elctl embargo list --db <url> [--live]
+```
+
+A project is its name or uuid; a sample `name`, `name@project` or a uuid; an
+analysis a run id (`70001-01`, `70001-01A`) or a uuid. An ambiguous name
+(a sample in several projects) is refused naming the candidates. `--until`
+is an inclusive date: the embargo ends at midnight UTC after it; without it
+the embargo lasts until lifted. `lift` by scope lifts every live embargo on
+it. `list` shows each embargo's id, scope, end and reason; `--live` only the
+ones in force. Exit 2 for a usage error or an ambiguous name.
 
 ## EarthBank workbooks
 
