@@ -19,7 +19,7 @@
 - Nothing is copied or moved (old database, `records/`). A local file that exists is never migrated from here; a server is never migrated from here.
 - Paths stored as given; relative ones resolve against the root (`SiteInstall::path`). Outside the root allowed.
 - `store-common` version 1 → 2; defaults `db_file = "data/pychron.db"`, `data_folder = "data"` keep every first install as today.
-- Password never on the command line: `--password-stdin`, or a no-echo prompt (`read_password`, `apps/elctl/src/earthbank_prompt.cpp`).
+- Password never on the command line: `--password-stdin`, or a no-echo prompt (`read_password`, `apps/elctl/src/password_prompt.hpp`, moved there from `earthbank_prompt.cpp` in Task 7).
 - `elctl data-source set` exit codes: 0 written (or nothing to change), 1 refused or check failed, 2 usage.
 - The Data source page uses neither QSettings nor the line's local override file.
 - Commit messages: Conventional Commits with component scope: `feat(setup)`, `feat(elctl)`, `feat(ui)`, `refactor(ui)`, `docs`.
@@ -230,17 +230,17 @@ Every case in `tests/setup/test_data_source.cpp` (this task and Tasks 4 and 5) i
 - Consumes: `read_password(Io, std::string_view)`, `at_terminal(Io)` (`earthbank_impl.hpp`; move both to a header both commands include if `earthbank_impl.hpp` is not built without the store), `database_url(const SiteInstall&)`.
 - Produces: `--server HOST[:PORT]/DB` (port default 5432; no `/DB` → usage 2), `--user USER` required with `--server`, `--password-stdin` (one line, trailing `\r\n` stripped), prompt without echo only when terminal attached and server new or different from current; `--no-check` skips `check_data_source` and says `skip  check: --no-check`. `int db_command(const std::vector<std::string>& args, std::optional<std::string> install, Io io);`: `--db` absent and an install given (or a default one) → `setup::database_url(install)`.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `SetServerUnreachableIsRefused` (store): `--server 127.0.0.1:1/pychron --user u --password-stdin --yes`, input `pw\n` → exit 1, site unchanged, no credentials file.
   - `SetServerWithNoCheckIsWritten`: same with `--no-check` → exit 0; site `postgresql://u@127.0.0.1:1/pychron`; credentials holds `pw`; `pw` not in site nor record.
   - `SetServerWithoutPasswordStdinKeepsThePassword`: second `set --server ... --no-check --yes` with no stdin, not a terminal → credentials unchanged.
   - `SetServerAgainstPostgres`: `PYCHRON_TEST_PG_URL` set (else `GTEST_SKIP`): parsed host/port/db/user/password from it → exit 0, doctor's database line `[OK]`.
   - `test_db_cmd.cpp`: `DbStatusUsesTheInstallsDatabase` (store): install made, `elctl --install NAME db status` → exit 0, same output as with `--db <its url>`; no install and no `--db` → exit 2 as today.
-- [ ] **Step 2: Run, expect FAIL** after building `pychron_elctl_tests`, filter `'ElctlSetupTest.SetServer*:*DbStatusUsesTheInstallsDatabase*'`.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** the filter, then `ElctlSetupTest.*:*Db*`; expect PASS (with `PYCHRON_TEST_PG_URL` exported once, per memory "Postgres for tests").
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
-- [ ] **Step 6: Commit** `feat(elctl): data-source set points an install at the lab's server; db commands take --install`
+- [x] **Step 2: Run, expect FAIL** after building `pychron_elctl_tests`, filter `'ElctlSetupTest.SetServer*:*DbStatusUsesTheInstallsDatabase*'`.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** the filter, then `ElctlSetupTest.*:*Db*`; expect PASS (with `PYCHRON_TEST_PG_URL` exported once, per memory "Postgres for tests").
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed`.
+- [x] **Step 6: Commit** `feat(elctl): data-source set points an install at the lab's server; db commands take --install`
 
 ### Task 8: Shared question editors (wizard refactor)
 

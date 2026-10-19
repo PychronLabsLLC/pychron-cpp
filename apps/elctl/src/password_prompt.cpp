@@ -14,9 +14,9 @@
 #include <unistd.h>
 #endif
 
-#include "earthbank_impl.hpp"
+#include "password_prompt.hpp"
 
-namespace elctl::earthbank_cli {
+namespace elctl {
 
 // cppcheck-suppress passedByValue ; Io is three references, and every command takes it by value
 bool at_terminal(Io io) {
@@ -56,4 +56,4 @@ std::optional<std::string> read_password(Io io, std::string_view prompt) {
   return password;
 }
 
-}  // namespace elctl::earthbank_cli
+}  // namespace elctl

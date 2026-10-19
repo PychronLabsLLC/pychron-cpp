@@ -129,6 +129,26 @@ TEST_F(DbCmd, UsageErrors) {
   EXPECT_EQ(run_raw({"db", "help"}).code, elctl::kOk);
 }
 
+// With --install and no --db: the install's database.
+TEST_F(DbCmd, DbStatusUsesTheInstallsDatabase) {
+  const fs::path root = path("dr");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--name", "dr", "--yes"}).code, elctl::kOk);
+  const std::string url = "sqlite:" + (root / "data" / "pychron.db").generic_string();
+  const Outcome by_url = run_raw({"db", "status", "--db", url});
+  ASSERT_EQ(by_url.code, elctl::kOk) << by_url.err;
+  const Outcome by_install = run_raw({"--install", "dr", "db", "status"});
+  EXPECT_EQ(by_install.code, elctl::kOk) << by_install.err;
+  EXPECT_EQ(by_install.out, by_url.out);
+  // The default install, when --install is not given.
+  const Outcome by_default = run_raw({"db", "status"});
+  EXPECT_EQ(by_default.code, elctl::kOk) << by_default.err;
+  EXPECT_EQ(by_default.out, by_url.out);
+  // An install that is not there is an error, as for every command, not the default one.
+  const Outcome nowhere = run_raw({"--install", "nowhere", "db", "status"});
+  EXPECT_EQ(nowhere.code, elctl::kFailed);
+  EXPECT_FALSE(contains(nowhere.out, "up to date")) << nowhere.out;
+}
+
 // elctl db derive, on the seeded store: two heating steps of an irradiated
 // unknown, which have ages, and an air, which has none.
 class DbDerive : public elctl::testing::StoreTest {};

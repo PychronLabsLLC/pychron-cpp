@@ -3,8 +3,12 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
 #include <iterator>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "elctl_fixture.hpp"
 #include "pychron/setup/site.hpp"
@@ -395,6 +399,140 @@ TEST_F(ElctlSetupTest, SetAsksBeforeWriting) {
   EXPECT_EQ(bytes_of(path("site.toml")), before);
   EXPECT_FALSE(fs::exists(root / "runs"));
 }
+
+// --server: the password from standard input, kept in the credentials file
+// and nowhere else; an unreachable server refused unless --no-check.
+
+#ifdef PYCHRON_ELCTL_HAS_STORE
+TEST_F(ElctlSetupTest, SetServerUnreachableIsRefused) {
+  const auto root = path("dr-unreachable");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  const std::string before = bytes_of(path("site.toml"));
+  auto o = run_raw({"data-source", "set", "--server", "127.0.0.1:1/pychron", "--user", "u", "--password-stdin", "--yes"},
+                   "pw\n");
+  EXPECT_EQ(o.code, 1) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "postgresql://u@127.0.0.1:1/pychron")) << o.err;
+  EXPECT_FALSE(contains(o.out + o.err, "pw@")) << "the password is never said: " << o.out << o.err;
+  EXPECT_EQ(bytes_of(path("site.toml")), before);
+  EXPECT_FALSE(fs::exists(root / ".pychron" / "credentials.toml"));
+}
+#endif
+
+TEST_F(ElctlSetupTest, SetServerWithNoCheckIsWritten) {
+  const auto root = path("dr-nocheck");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  auto o = run_raw({"data-source", "set", "--server", "127.0.0.1:1/pychron", "--user", "u", "--password-stdin",
+                    "--no-check", "--yes"},
+                   "pw\r\n");
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "skip  check: --no-check")) << o.out;
+  EXPECT_EQ(site().find("data-reduction")->database, "postgresql://u@127.0.0.1:1/pychron");
+  const std::string credentials = bytes_of(root / ".pychron" / "credentials.toml");
+  EXPECT_TRUE(contains(credentials, "password = \"pw\"")) << credentials;
+  EXPECT_FALSE(contains(bytes_of(path("site.toml")), "pw\""));
+  EXPECT_FALSE(contains(bytes_of(path("site.toml")), ":pw"));
+  EXPECT_FALSE(contains(bytes_of(root / ".pychron" / "install.toml"), "\"pw\""));
+}
+
+TEST_F(ElctlSetupTest, SetServerWithoutPasswordStdinKeepsThePassword) {
+  const auto root = path("dr-keep");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  ASSERT_EQ(run_raw({"data-source", "set", "--server", "127.0.0.1:1/pychron", "--user", "u", "--password-stdin",
+                     "--no-check", "--yes"},
+                    "pw\n")
+                .code,
+            0);
+  const fs::path file = root / ".pychron" / "credentials.toml";
+  const std::string before = bytes_of(file);
+  // Another database on the same server; standard input is no terminal, so
+  // nothing is asked and the password is kept.
+  auto o = run_raw({"data-source", "set", "--server", "127.0.0.1:1/other", "--user", "u", "--no-check", "--yes"});
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_EQ(bytes_of(file), before);
+  EXPECT_EQ(site().find("data-reduction")->database, "postgresql://u@127.0.0.1:1/other");
+  o = run_raw({"data-source"});
+  EXPECT_TRUE(contains(o.out, "password kept")) << o.out;
+}
+
+TEST_F(ElctlSetupTest, SetServerUsageMistakes) {
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr-server-usage").string(), "--yes"}).code, 0);
+  for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+           {"--server", "h", "--user", "u"},              // no /DB
+           {"--server", "h/", "--user", "u"},             // empty DB
+           {"--server", "h:port/db", "--user", "u"},      // port not a number
+           {"--server", "h/db"},                          // no --user
+           {"--user", "u", "--data", "runs"},             // --user without --server
+           {"--password-stdin", "--data", "runs"},        // a password without --server
+           {"--server", "h/db", "--user", "u", "--password-stdin"},  // standard input ended
+       }) {
+    std::vector<std::string> argv{"data-source", "set"};
+    argv.insert(argv.end(), args.begin(), args.end());
+    argv.emplace_back("--yes");
+    const auto o = run_raw(argv);
+    EXPECT_EQ(o.code, 2) << args.front() << " " << o.out << o.err;
+  }
+}
+
+// Against the lab-like server of the developer's machine, when there is one:
+// the base database of PYCHRON_TEST_PG_URL, brought up to date first (its
+// public schema; the persistence tests use schemas of their own).
+#ifdef PYCHRON_ELCTL_HAS_STORE
+struct PgParts {
+  std::string host, port = "5432", name, user, password;
+};
+
+std::optional<PgParts> parse_pg(std::string url) {
+  for (const std::string_view prefix : {"postgresql://", "postgres://"}) {
+    if (url.starts_with(prefix)) {
+      url.erase(0, prefix.size());
+      PgParts p;
+      if (const auto q = url.find('?'); q != std::string::npos) url.erase(q);
+      const auto at = url.rfind('@');
+      if (at == std::string::npos) return std::nullopt;
+      const std::string userinfo = url.substr(0, at);
+      p.user = userinfo.substr(0, userinfo.find(':'));
+      if (const auto colon = userinfo.find(':'); colon != std::string::npos) p.password = userinfo.substr(colon + 1);
+      const std::string rest = url.substr(at + 1);
+      const auto slash = rest.find('/');
+      if (slash == std::string::npos) return std::nullopt;
+      p.name = rest.substr(slash + 1);
+      const std::string hostport = rest.substr(0, slash);
+      const auto colon = hostport.find(':');
+      p.host = hostport.substr(0, colon);
+      if (colon != std::string::npos) p.port = hostport.substr(colon + 1);
+      // A percent-encoded user or password is left to a plainer URL.
+      if (p.user.empty() || p.name.empty() || p.host.empty() || contains(userinfo, "%")) return std::nullopt;
+      return p;
+    }
+  }
+  return std::nullopt;
+}
+
+TEST_F(ElctlSetupTest, SetServerAgainstPostgres) {
+  const char* raw = std::getenv("PYCHRON_TEST_PG_URL");
+  if (raw == nullptr || *raw == '\0') GTEST_SKIP() << "PYCHRON_TEST_PG_URL not set";
+  const auto pg = parse_pg(raw);
+  if (!pg) GTEST_SKIP() << "PYCHRON_TEST_PG_URL is not postgresql://user[:password]@host[:port]/db";
+  {
+    auto store = pychron::persistence::open_store(pychron::persistence::StoreConfig{raw, true});
+    ASSERT_TRUE(store) << store.error().what;
+  }
+  const auto root = path("dr-pg");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  std::vector<std::string> argv{"data-source", "set", "--server", pg->host + ":" + pg->port + "/" + pg->name,
+                                "--user", pg->user, "--yes"};
+  std::string input;
+  if (!pg->password.empty()) {
+    argv.emplace_back("--password-stdin");
+    input = pg->password + "\n";
+  }
+  auto o = run_raw(argv, input);
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  EXPECT_TRUE(contains(o.out, "[OK] database")) << o.out << o.err;
+  EXPECT_EQ(site().find("data-reduction")->database,
+            "postgresql://" + pg->user + "@" + pg->host + ":" + pg->port + "/" + pg->name);
+}
+#endif
 
 TEST_F(ElctlSetupTest, SetUsageMistakes) {
   ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr-usage").string(), "--yes"}).code, 0);

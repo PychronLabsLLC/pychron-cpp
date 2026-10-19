@@ -2,7 +2,7 @@
 
 // What the parts of `elctl earthbank` share (earthbank.cpp: the workbooks and
 // the pre-flight check; earthbank_account.cpp: login, account, packages,
-// import-profiles; earthbank_prompt.cpp: a password asked for at a terminal).
+// import-profiles; the password prompt is password_prompt.hpp's).
 // Internal to elctl; built with persistence only.
 
 #include <filesystem>
@@ -14,6 +14,7 @@
 
 #include "cli.hpp"
 #include "earthbank.hpp"
+#include "password_prompt.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/earthbank/http.hpp"
 #include "pychron/earthbank/profiles.hpp"
@@ -71,9 +72,8 @@ int account_command(const std::vector<std::string>& args, Io io, const Earthbank
 int packages_command(const std::vector<std::string>& args, Io io, const EarthbankDeps& deps);
 int import_profiles_command(const std::vector<std::string>& args, Io io);
 
-// Whether the program's input is a terminal a password can be typed at
-// without echo; and that password, read. Null if it could not be read.
-bool at_terminal(Io io);
-std::optional<std::string> read_password(Io io, std::string_view prompt);
+// The password prompt (password_prompt.hpp), shared with data-source.
+using elctl::at_terminal;
+using elctl::read_password;
 
 }  // namespace elctl::earthbank_cli

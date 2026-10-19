@@ -8,6 +8,8 @@
 #include <system_error>
 
 #include "derive_summary.hpp"
+#include "pychron/setup/doctor.hpp"
+#include "setup.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/derive.hpp"
 #include "pychron/processing/store_source.hpp"
@@ -20,11 +22,12 @@ namespace fs = std::filesystem;
 namespace ps = pychron::persistence;
 
 constexpr const char* kShortUsage =
-    "usage: elctl db status --db <url>     is the store's schema up to date? (exit 1 when not)\n"
-    "       elctl db migrate --db <url>    apply the migrations the store lacks\n"
-    "       elctl db derive --db <url> [--all] [--limit N] [--quiet]\n"
+    "usage: elctl [--install NAME] db status [--db <url>]     is the store's schema up to date? (exit 1 when not)\n"
+    "       elctl [--install NAME] db migrate [--db <url>]    apply the migrations the store lacks\n"
+    "       elctl [--install NAME] db derive [--db <url>] [--all] [--limit N] [--quiet]\n"
     "                                      fill the cache of ages the browser filters by\n"
-    "  <url>: sqlite:/path/to/store.db or postgresql://user:password@host/dbname\n";
+    "  <url>: sqlite:/path/to/store.db or postgresql://user:password@host/dbname;\n"
+    "         without --db, the database of the install (--install NAME, or the default one)\n";
 
 int usage(Io io, const std::string& message) {
   io.err << "elctl db: " << message << '\n' << kShortUsage;
@@ -74,9 +77,22 @@ int derive(const std::string& url, bool all, std::optional<int> limit, bool quie
   return stats->failed > 0 ? kFailed : kOk;
 }
 
+// The database of the install `name` names (or the default one), with its
+// kept password; an empty string with no --install and no install at all.
+pychron::Result<std::string> install_url(const std::optional<std::string>& name) {
+  auto install = resolve_install(name);
+  if (!install) {
+    if (name) return pychron::fail(std::move(install).error());
+    return std::string();
+  }
+  if (install->database.empty())
+    return pychron::fail(pychron::ErrorKind::Config, "install '" + install->name + "' names no database");
+  return pychron::setup::database_url(*install);
+}
+
 }  // namespace
 
-int db_command(const std::vector<std::string>& args, Io io) {
+int db_command(const std::vector<std::string>& args, const std::optional<std::string>& install, Io io) {
   if (args.empty() || args[0] == "help" || args[0] == "--help") {
     io.out << kShortUsage;
     return args.empty() ? kUsage : kOk;
@@ -104,7 +120,12 @@ int db_command(const std::vector<std::string>& args, Io io) {
       return usage(io, "unexpected '" + args[i] + "'");
     }
   }
-  if (url.empty()) return usage(io, "--db <url> is required");
+  if (url.empty()) {
+    auto from_install = install_url(install);
+    if (!from_install) return fatal(io, from_install.error().what);
+    url = std::move(*from_install);
+  }
+  if (url.empty()) return usage(io, "--db <url> is required (or an install: --install NAME)");
   if (const std::string why = not_a_store(url); !why.empty()) return fatal(io, why);
   if (what == "derive") return derive(url, all, limit, quiet, io);
 

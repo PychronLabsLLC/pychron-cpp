@@ -96,8 +96,9 @@ constexpr const char* kUsageText =
     "                              re-render an install with new answers; edited files are kept\n"
     "  doctor [--strict] [--probe] check an install (the default, or --install NAME)\n"
     "  data-source                 the install's database and data folder\n"
-    "  data-source set [--local [FILE]] [--data DIR] [--yes]\n"
-    "                              point the install at another database file or data folder;\n"
+    "  data-source set (--local [FILE] | --server HOST[:PORT]/DB --user USER [--password-stdin])\n"
+    "                  [--data DIR] [--no-check] [--yes]\n"
+    "                              point the install at another database or data folder;\n"
     "                              checks it first, moves nothing\n"
     "  import-line <folder> [--out DIR] [--force]\n"
     "                              convert a legacy Pychron setupfiles extraction line and canvas\n"
@@ -112,8 +113,9 @@ constexpr const char* kUsageText =
     "                              progress, what could not be imported, and whether to trust it\n"
     "\n"
     "The store's schema:\n"
-    "  db status --db <url>        is the store's schema the one this build needs?\n"
-    "  db migrate --db <url>       bring an existing store up to date after an update of pychron\n"
+    "  db status [--db <url>]      is the store's schema the one this build needs?\n"
+    "  db migrate [--db <url>]     bring an existing store up to date after an update of pychron\n"
+    "                              (without --db: the install's database)\n"
     "\n"
     "Publication data (elctl export help lists every option):\n"
     "  export --db <url> --out <file.csv|file.json> [--sample S]... [--identifier I]... [--project P]...\n"
@@ -270,7 +272,7 @@ class Session {
     if (cmd == "export") return export_command(args, io_);
     if (cmd == "publish") return publish_command(args, io_);
     if (cmd == "embargo") return embargo_command(args, io_);
-    if (cmd == "db") return db_command(args, io_);
+    if (cmd == "db") return db_command(args, g_.install, io_);
     if (cmd == "flux") return flux_command(args, io_);
     if (cmd == "earthbank") return earthbank_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
