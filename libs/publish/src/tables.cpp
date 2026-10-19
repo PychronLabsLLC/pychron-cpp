@@ -96,6 +96,16 @@ std::string file_safe(std::string_view name) {
                     c == '_' || c == '-';
     if (!ok) c = '_';
   }
+  // Not a directory name of its own: empty, dots only ("." and ".." are the
+  // directory and its parent), a trailing dot (Windows drops it), or a
+  // Windows device name.
+  if (out.empty() || out.find_first_not_of('.') == std::string::npos) return "sample";
+  if (out.back() == '.') out.back() = '_';
+  std::string upper = out;
+  std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  for (const char* device : {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+                             "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"})
+    if (upper == device) return out + "_";
   return out;
 }
 
@@ -666,7 +676,8 @@ ReleaseTables build_tables(const TableInputs& in) {
   {
     Builder b("interpreted_ages", true);
     for (const char* c : {"ia_uuid", "name", "sample_uuid", "identifier", "age_kind"}) b.col(c, ColumnType::String);
-    b.pm("age_ma");
+    b.col("age_ma", ColumnType::Double);
+    b.col("age_err_ma", ColumnType::Double);
     b.col("mswd", ColumnType::Double);
     b.col("n", ColumnType::Int32);
     b.pm("kca");
@@ -699,7 +710,7 @@ ReleaseTables build_tables(const TableInputs& in) {
       b.set(row, "identifier", text(ia->identifier));
       b.set(row, "age_kind", age_kind_of(ia->value.age_kind));
       b.set(row, "age_ma", num(ia->value.age));
-      b.set(row, "age_ma_err", num(ia->value.age_err));
+      b.set(row, "age_err_ma", num(ia->value.age_err));
       b.set(row, "mswd", num(ia->value.mswd));
       if (ia->value.nanalyses) b.set(row, "n", i32(*ia->value.nanalyses));
       b.set(row, "kca", num(ia->value.kca));

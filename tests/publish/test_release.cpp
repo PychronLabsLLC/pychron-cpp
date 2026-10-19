@@ -210,6 +210,49 @@ TEST_P(ReleaseTest, FindReleaseByNameVersionAndUuid) {
   EXPECT_FALSE(find_release(*store_, "r@v9"));
 }
 
+TEST_P(ReleaseTest, CreateRefusesMembersThatDisagreeOnAReferenceRevision) {
+  // Member 1 pins the flux of position 1 to its first revision; a new flux
+  // revision is published; member 1's sibling on the same position resolves
+  // the head. One bookmark cannot hold both.
+  auto objects = store_->ref_objects(ps::RefType::FluxPosition, std::nullopt);
+  ASSERT_TRUE(objects);
+  ps::Uuid flux;
+  for (const auto& o : *objects)
+    if (o.key == "NM-300/A/2") flux = o.uuid;
+  ASSERT_FALSE(flux.is_nil()) << objects->size() << " flux objects, none NM-300/A/2";
+  ASSERT_TRUE(*store_->head(flux, ps::Kind::RefValue));
+  const ps::Uuid old_rev = **store_->head(flux, ps::Kind::RefValue);
+  const ps::Uuid sibling = ingest("70001", 2, "2026-10-02T13:00:00Z");
+  {
+    auto uow = *store_->begin(reducer());
+    ASSERT_TRUE(uow->add_revision(analysis1_, ps::Kind::RefPins, ps::RefPins{{flux, old_rev}}, std::nullopt));
+    ASSERT_TRUE(uow->commit(ps::ChangesetKind::Reduction, "pin"));
+  }
+  publish_ref(flux, [] {
+    ps::FluxValue v;
+    v.j = 0.002;
+    return v;
+  }());
+  ReleaseSpec s = spec("conflict");
+  s.analyses = {analysis1_.str(), sibling.str()};
+  auto refused = create_release(*store_, reducer(), s);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_NE(refused.error().what.find("revision"), std::string::npos) << refused.error().what;
+}
+
+TEST_P(ReleaseTest, PublishAgainKeepsTheManifest) {
+  auto created = create_release(*store_, reducer(), spec());
+  ASSERT_TRUE(created);
+  const Sha256Digest one = sha256(std::string_view{"one"}), two = sha256(std::string_view{"two"});
+  ASSERT_TRUE(publish_release(*store_, reducer(), created->release, one, false));
+  EXPECT_FALSE(publish_release(*store_, reducer(), created->release, two, true));
+  EXPECT_TRUE(publish_release(*store_, reducer(), created->release, one, true)) << "same build, now public";
+  auto row = store_->release(created->release);
+  EXPECT_EQ((*row)->visibility, ps::Visibility::Public);
+  EXPECT_EQ((*row)->manifest_sha256, one);
+}
+
 TEST(Authors, JsonRoundTrip) {
   const std::vector<Author> authors{{"J. Ross", "0000-0002-1825-0097", "NMT"}, {"A. N. Other", std::nullopt, std::nullopt}};
   const std::string json = authors_json(authors);

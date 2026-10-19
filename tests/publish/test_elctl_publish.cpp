@@ -156,6 +156,15 @@ TEST_P(ElctlPublishTest, PublishKeepsPrivateUnlessPublicFlag) {
   EXPECT_EQ(run({"withdraw", "--db", db_->url(), "--release", "a"}).code, elctl::kUsage) << "no reason";
 }
 
+TEST_P(ElctlPublishTest, PublishPublicRefusesAPrivateBuild) {
+  ASSERT_EQ(run(create_args()).code, elctl::kOk);
+  ASSERT_EQ(run({"build", "--db", db_->url(), "--release", "r", "--out", out_.string(), "--private"}).code, elctl::kOk);
+  const Outcome pub = run({"publish", "--db", db_->url(), "--release", "r", "--manifest", (out_ / "r-v1" / "manifest.json").string(), "--public"});
+  EXPECT_EQ(pub.code, elctl::kUsage) << pub.err;
+  EXPECT_NE(pub.err.find("private"), std::string::npos) << pub.err;
+  EXPECT_EQ((*store_->find_release("r", std::nullopt))->state, ps::ReleaseState::Draft);
+}
+
 TEST_P(ElctlPublishTest, ListAndShow) {
   ASSERT_EQ(run(create_args()).code, elctl::kOk);
   const Outcome l = run({"list", "--db", db_->url()});

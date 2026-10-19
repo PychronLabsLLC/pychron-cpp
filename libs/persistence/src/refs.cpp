@@ -72,18 +72,27 @@ Result<RefResolution> resolve_refs(Db& db, Uuid analysis, const RefPolicy& polic
   return out;
 }
 
+// The references as of a bookmark: the ones it pins, at the pinned revision.
+// A reference object the bookmark does not name (one made after the release
+// was created, or a production its level named later) is dropped: the
+// release's values must not depend on it (data publishing spec R3).
 Result<RefResolution> resolve_refs_at(Db& db, Uuid analysis, Uuid bookmark) {
-  auto out = resolve_refs(db, analysis, RefPolicy{false});
-  if (!out) return fail(out.error());
-  auto rows = db.select(sql::kBookmarkValueEntries, {qv(bookmark)});
+  auto now = resolve_refs(db, analysis, RefPolicy{false});
+  if (!now) return fail(now.error());
+  if (now->refs.empty()) return now;
+  Bindings b{qv(bookmark)};
+  for (const auto& ref : now->refs) b.push_back(qv(ref.ref_object));
+  auto rows = db.select(sql::bookmark_value_entries(static_cast<qsizetype>(now->refs.size())), b);
   if (!rows) return fail(rows.error());
   std::map<Uuid, Uuid> pinned;
   for (const auto& r : *rows) pinned[to_uuid(r.value("subject_uuid"))] = to_uuid(r.value("revision_uuid"));
-  for (auto& ref : out->refs) {
-    if (auto it = pinned.find(ref.ref_object); it != pinned.end()) {
-      ref.revision = it->second;
-      ref.pinned = true;
-    }
+  RefResolution out;
+  for (auto ref : now->refs) {
+    const auto it = pinned.find(ref.ref_object);
+    if (it == pinned.end()) continue;
+    ref.revision = it->second;
+    ref.pinned = true;
+    out.refs.push_back(ref);
   }
   return out;
 }

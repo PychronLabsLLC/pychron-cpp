@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 
@@ -120,7 +121,7 @@ Json ages_of(const ReleaseTables& t, const std::string& sample_uuid) {
     a["name"] = str(ia, r, "name");
     a["kind"] = str(ia, r, "age_kind");
     a["age_ma"] = json_of(cell(ia, r, "age_ma"));
-    a["err_ma"] = json_of(cell(ia, r, "age_ma_err"));
+    a["err_ma"] = json_of(cell(ia, r, "age_err_ma"));
     a["n"] = json_of(cell(ia, r, "n"));
     out.push_back(a);
   }
@@ -129,14 +130,24 @@ Json ages_of(const ReleaseTables& t, const std::string& sample_uuid) {
 
 }  // namespace
 
+namespace {
+std::string lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
+}
+}  // namespace
+
 std::string sample_dir_name(const Table& samples, std::size_t row) {
-  std::string safe = file_safe(str(samples, row, "name"));
+  const std::string name = str(samples, row, "name");
+  std::string safe = file_safe(name);
+  // Names that collide, case ignored (macOS and Windows file systems do not
+  // tell them apart), and names file_safe had to invent, get a suffix: the
+  // last 8 hex of the uuid (a v7's first 8 are a timestamp that rows made in
+  // the same millisecond share).
   std::size_t same = 0;
   for (std::size_t r = 0; r < samples.rows.size(); ++r)
-    if (file_safe(str(samples, r, "name")) == safe) ++same;
-  if (same <= 1) return safe;
-  // The last 8 hex of the uuid: a v7's first 8 are a timestamp that rows made
-  // in the same millisecond share.
+    if (lower(file_safe(str(samples, r, "name"))) == lower(safe)) ++same;
+  if (same <= 1 && safe != "sample") return safe;
   const std::string uuid = str(samples, row, "sample_uuid");
   return safe + "-" + uuid.substr(uuid.size() - 8);
 }

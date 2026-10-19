@@ -153,8 +153,9 @@ std::string citation_cff(const Manifest& m) {
 
 std::string readme_md(const Manifest& m, const ReleaseTables& t) {
   std::string out = "# " + m.release.title + "\n\n";
-  out += "Release `" + m.release.name + "` version " + std::to_string(m.release.version) + ", built by " +
-         m.build.software + " on " + m.build.built.iso().substr(0, 10) + ": " +
+  out += "Release `" + m.release.name + "` version " + std::to_string(m.release.version) + " of " +
+         (m.release.published ? *m.release.published : m.release.created).iso().substr(0, 10) + ", built by " +
+         m.build.software + ": " +
          std::to_string(t.analyses.rows.size()) + " analyses of " + std::to_string(t.samples.rows.size()) +
          " samples, with " + std::to_string(t.interpreted_ages.rows.size()) + " interpreted ages. ";
   out += "Licence " + m.release.licence + " (LICENSE.txt). ";
@@ -204,11 +205,11 @@ bool any_step(const pp::Dataset& d) {
   return false;
 }
 
-// The dataset's items of one sample, as a dataset of its own.
-pp::Dataset dataset_of_sample(const pp::Dataset& d, const std::string& sample) {
+// The dataset's items of one sample (by the analyses that are its), as a dataset of its own.
+pp::Dataset dataset_of_sample(const pp::Dataset& d, const std::set<std::string>& analyses) {
   std::vector<pp::DatasetItem> items;
   for (const auto& it : d.items())
-    if (it.analysis->analysis->sample == sample) items.push_back(it);
+    if (analyses.contains(it.analysis->analysis->uuid)) items.push_back(it);
   pp::Dataset out(std::move(items));
   out.group_names = d.group_names;
   out.graph_names = d.graph_names;
@@ -351,7 +352,12 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
   }
   if (loaded.empty()) return fail(ErrorKind::Config, "nothing to build: every member of the release is under embargo");
 
-  // Interpreted ages at their pinned revisions, those of a kept sample.
+  // Interpreted ages at their pinned revisions: those of a kept sample whose
+  // members are all kept (spec R4: an embargoed analysis leaks through no age).
+  auto ia_rows = store.interpreted_ages();
+  if (!ia_rows) return fail(ia_rows.error());
+  std::set<Uuid> kept_members;
+  for (const auto& p : inputs.pins) kept_members.insert(p.analysis);
   for (const auto& [ia, revision] : *ia_pins) {
     auto payload = store.load_payload(revision);
     if (!payload) return fail(payload.error());
@@ -370,9 +376,10 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
       if (!rec.sample.is_nil()) break;
     }
     if (rec.sample.is_nil() || hidden_samples.contains(rec.sample)) continue;
-    auto rows = store.interpreted_ages();
-    if (!rows) return fail(rows.error());
-    for (const auto& r : *rows)
+    const bool every_member_kept = std::all_of(value->members.begin(), value->members.end(),
+                                               [&](const ps::InterpretedAgeMember& member) { return kept_members.contains(member.analysis); });
+    if (!every_member_kept) continue;
+    for (const auto& r : *ia_rows)
       if (r.uuid == ia) rec.name = r.name;
     inputs.interpreted_ages.push_back(std::move(rec));
   }
@@ -486,9 +493,12 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
   if (auto r = writer.write("tables/release.csv", pp::report_csv(report)); !r) return fail(r.error());
   if (auto r = writer.write("tables/release.json", pp::report_json(report)); !r) return fail(r.error());
   for (std::size_t r = 0; r < tables.samples.rows.size(); ++r) {
-    const auto name_col = tables.samples.column("name");
-    const std::string name = name_col ? std::get<std::string>(tables.samples.rows[r][*name_col]) : std::string{};
-    const pp::Dataset sub = dataset_of_sample(*dataset, name);
+    const auto uuid_col = tables.samples.column("sample_uuid");
+    const auto sample_uuid = Uuid::parse(std::get<std::string>(tables.samples.rows[r][*uuid_col]));
+    std::set<std::string> of_sample;
+    for (const auto& p : inputs.pins)
+      if (sample_uuid && p.sample == *sample_uuid) of_sample.insert(p.analysis.str());
+    const pp::Dataset sub = dataset_of_sample(*dataset, of_sample);
     if (sub.empty()) continue;
     const pp::Report sample_report = pp::make_report(sub, report_options);
     const std::string sdir = "tables/" + sample_dir_name(tables.samples, r) + "/";

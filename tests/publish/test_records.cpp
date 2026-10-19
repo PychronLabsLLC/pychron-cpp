@@ -161,4 +161,17 @@ TEST(Records, SampleDirNamesAreSafeAndUnique) {
   EXPECT_NE(a, b);
   EXPECT_EQ(a.rfind("FC-2-", 0), 0u);
   EXPECT_EQ(a.size(), std::string("FC-2-").size() + 8);
+  // Names differing only by case collide on macOS and Windows: both get a suffix.
+  in.samples[0].name = "fc-2";
+  in.samples[1].name = "FC-2";
+  const auto t3 = build_tables(in);
+  EXPECT_NE(sample_dir_name(t3.samples, 0).find('-'), std::string::npos);
+  EXPECT_EQ(sample_dir_name(t3.samples, 1).size(), std::string("FC-2-").size() + 8);
+  // A name that is no directory name at all gets one.
+  in.samples[0].name = "..";
+  in.samples[1].name = "";
+  const auto t4 = build_tables(in);
+  // Rows are by name: "" before "..".
+  EXPECT_EQ(sample_dir_name(t4.samples, 0), "sample-" + in.samples[1].uuid.str().substr(28));
+  EXPECT_EQ(sample_dir_name(t4.samples, 1), "sample-" + in.samples[0].uuid.str().substr(28));
 }

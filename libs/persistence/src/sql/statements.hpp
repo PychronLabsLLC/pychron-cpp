@@ -159,8 +159,13 @@ inline const QString kBookmarkEntries = QStringLiteral(
 inline const QString kBookmarkEntriesOfSubject = QStringLiteral(
     "SELECT subject_uuid, kind, revision_uuid FROM bookmark_entry WHERE bookmark_uuid = ? AND subject_uuid = ? "
     "ORDER BY kind");
-inline const QString kBookmarkValueEntries = QStringLiteral(
-    "SELECT subject_uuid, revision_uuid FROM bookmark_entry WHERE bookmark_uuid = ? AND kind = 'value'");
+// The bookmark's `value` entries for the given n ref objects (one seek each on the primary key).
+inline QString bookmark_value_entries(qsizetype n) {
+  return QStringLiteral(
+             "SELECT subject_uuid, revision_uuid FROM bookmark_entry WHERE bookmark_uuid = ? AND kind = 'value' "
+             "AND subject_uuid IN (%1)")
+      .arg(placeholders(n));
+}
 inline const QString kCurrentHeadsOfBookmark = QStringLiteral(
     "SELECT e.subject_uuid, e.kind, h.revision_uuid FROM bookmark_entry e "
     "LEFT JOIN head h ON h.subject_uuid = e.subject_uuid AND h.kind = e.kind WHERE e.bookmark_uuid = ?");

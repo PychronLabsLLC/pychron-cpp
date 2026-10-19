@@ -224,6 +224,11 @@ TEST(Tables, FileSafeReplacesEverythingButWordChars) {
   EXPECT_EQ(file_safe("FC-2 / split (b)"), "FC-2___split__b_");
   EXPECT_EQ(file_safe("ok.name_1"), "ok.name_1");
   EXPECT_EQ(file_safe("ümlaut"), "__mlaut");  // two UTF-8 bytes
+  EXPECT_EQ(file_safe(".."), "sample");
+  EXPECT_EQ(file_safe("."), "sample");
+  EXPECT_EQ(file_safe(""), "sample");
+  EXPECT_EQ(file_safe("CON"), "CON_");
+  EXPECT_EQ(file_safe("trailing."), "trailing_");
 }
 
 // The row hashes of the fixed in-memory inputs, against the committed

@@ -404,6 +404,13 @@ int publish(const std::vector<std::string>& args, Io io) {
   const std::string bytes = ss.str();
   auto manifest = pb::parse_manifest(bytes);
   if (!manifest) return fatal(io, manifest.error());
+  if (make_public && manifest->build.private_build)
+    return fatal(io, "this is a private build (it holds embargoed rows): it cannot be published as public");
+  if (auto files = pb::verify_files(fs::path(manifest_path).parent_path()); !files) {
+    return fatal(io, files.error());
+  } else if (!files->ok()) {
+    return fatal(io, "the directory does not match its manifest (elctl publish verify says what differs)");
+  }
   auto opened = open_store_as_publisher(c.db);
   if (!opened) return fatal(io, opened.error());
   auto row = pb::find_release(*opened->store, c.release);

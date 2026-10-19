@@ -96,7 +96,12 @@ Result<ReleaseCreated> create_release(ps::IStore& store, const ps::Actor& actor,
     entries.insert(entries.end(), heads->begin(), heads->end());
     auto resolved = store.resolve_refs(a, ps::RefPolicy{});
     if (!resolved) return fail(resolved.error());
-    for (const auto& r : resolved->refs) refs.emplace(r.ref_object, r.revision);
+    for (const auto& r : resolved->refs) {
+      const auto [it, inserted] = refs.emplace(r.ref_object, r.revision);
+      if (!inserted && it->second != r.revision)
+        return fail(ErrorKind::Config, "the selection's analyses disagree about the revision of reference " + r.key +
+                                           " (one is pinned to another): a release pins one revision per reference");
+    }
     auto detail = store.load_analysis_detail(a);
     if (!detail) return fail(detail.error());
     if (*detail && (*detail)->row.sample_uuid) samples.insert(*(*detail)->row.sample_uuid);
@@ -234,7 +239,8 @@ Result<ps::ReleaseRow> find_release(ps::IStore& store, std::string_view name_or_
   if (const auto at = text.rfind("@v"); at != std::string::npos) {
     name = text.substr(0, at);
     const std::string v = text.substr(at + 2);
-    if (v.empty() || !std::all_of(v.begin(), v.end(), [](unsigned char c) { return std::isdigit(c); }))
+    // Digits only, and few enough for an int: std::stoi throws on more.
+    if (v.empty() || v.size() > 9 || !std::all_of(v.begin(), v.end(), [](unsigned char c) { return std::isdigit(c); }))
       return fail(ErrorKind::Config, "'" + text + "' is not <name>@v<version>");
     version = std::stoi(v);
   }

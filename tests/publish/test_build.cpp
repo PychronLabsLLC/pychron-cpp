@@ -215,6 +215,66 @@ TEST_P(BuildTest, SampleNamesAreMadeFileSafeAndUnique) {
   for (const auto& f : built->manifest.files) EXPECT_TRUE(fs::exists(built->dir / f.path)) << f.path;
 }
 
+TEST_P(BuildTest, PerSampleReportsHoldOnlyTheirOwnAnalyses) {
+  const ps::Uuid twin = *store_->add_sample(lab_.reduction_client, {"FC-1", project2_, material_});
+  ASSERT_TRUE(store_->add_identifier(lab_.acquisition_client, {.identifier = "70004", .sample = twin}));
+  const ps::Uuid extra = ingest("70004", 1, "2026-10-02T13:00:00Z");
+  ReleaseSpec s;
+  s.name = "twins";
+  s.title = "Twins";
+  s.analyses = analysis_texts();
+  s.analyses.push_back(extra.str());
+  s.options_json = release_options_json(ReleaseOptions{});
+  s.reduction_version = "arar-1";
+  s.software_version = "pychron-cpp/0.4.0";
+  auto created = create_release(*store_, reducer(), s);
+  ASSERT_TRUE(created);
+  auto built = build_release(*store_, *source_, created->release, options(), nullptr);
+  ASSERT_TRUE(built) << to_string(built.error());
+  std::size_t fc1_dirs = 0;
+  for (const auto& entry : fs::directory_iterator(built->dir / "tables")) {
+    if (!entry.is_directory() || !entry.path().filename().string().starts_with("FC-1-")) continue;
+    ++fc1_dirs;
+    const std::string csv = slurp(entry.path() / "report.csv");
+    const bool has1 = csv.find("70001-01") != std::string::npos, has4 = csv.find("70004-01") != std::string::npos;
+    EXPECT_NE(has1, has4) << entry.path() << " holds both samples' analyses";
+  }
+  EXPECT_EQ(fc1_dirs, 2u);
+}
+
+TEST_P(BuildTest, ReadmeAndRecordsCarryTheReleaseDateNotTheBuildDate) {
+  const Uuid release = create();
+  auto built = build_release(*store_, *source_, release, options(), nullptr);
+  ASSERT_TRUE(built) << to_string(built.error());
+  const std::string readme = slurp(built->dir / "README.md");
+  EXPECT_NE(readme.find(built->manifest.release.created.iso().substr(0, 10)), std::string::npos) << readme;
+  EXPECT_EQ(readme.find("built on"), std::string::npos) << readme;
+}
+
+TEST_P(BuildTest, PublicBuildDropsAnInterpretedAgeWithAnEmbargoedMember) {
+  auto ia = *store_->add_interpreted_age(lab_.reduction_client, {"FC-1 and BT-1"});
+  {
+    auto uow = *store_->begin(reducer());
+    ps::InterpretedAgeValue v;
+    v.age = 28.2;
+    v.members = {{analysis1_, std::nullopt, std::nullopt, std::nullopt}, {analysis3_, std::nullopt, std::nullopt, std::nullopt}};
+    ASSERT_TRUE(uow->add_revision(ia, ps::Kind::InterpretedAge, v, std::nullopt));
+    ASSERT_TRUE(uow->commit(ps::ChangesetKind::Reduction, "ia"));
+  }
+  ASSERT_TRUE(store_->add_embargo(reducer(), {{ps::EmbargoScopeType::Analysis, analysis3_}, std::nullopt, "x"}));
+  const Uuid release = create();
+  auto built = build_release(*store_, *source_, release, options(), nullptr);
+  ASSERT_TRUE(built) << to_string(built.error());
+  EXPECT_TRUE(built->manifest.pins.interpreted_ages.empty()) << "a member is hidden";
+  EXPECT_EQ(built->manifest.build.omitted_analyses, 1u);
+  BuildOptions priv = options(true);
+  priv.out = out_ / "private";
+  fs::create_directories(priv.out);
+  auto whole = build_release(*store_, *source_, release, priv, nullptr);
+  ASSERT_TRUE(whole);
+  EXPECT_EQ(whole->manifest.pins.interpreted_ages.size(), 1u);
+}
+
 TEST_P(BuildTest, RefusesANonEmptyTargetDirectory) {
   const Uuid release = create();
   fs::create_directories(out_ / "r-v1");

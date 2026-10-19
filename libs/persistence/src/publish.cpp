@@ -260,7 +260,11 @@ Result<void> update_release(Db& db, const Actor& actor, const ReleaseUpdate& upd
   }
   if (update.doi) set("doi", qv(*update.doi));
   if (update.doi_state) set("doi_state", qv(*update.doi_state));
-  if (update.manifest_sha256) set("manifest_sha256", qv(*update.manifest_sha256));
+  if (update.manifest_sha256) {
+    if (row.manifest_sha256 && *row.manifest_sha256 != *update.manifest_sha256)
+      return refuse("its published build is recorded and never changes (spec R2)");
+    if (!row.manifest_sha256) set("manifest_sha256", qv(*update.manifest_sha256));
+  }
   if (sets.isEmpty()) return tx.commit();
   bindings.push_back(qv(update.release));
   auto n = db.affecting(QStringLiteral("UPDATE release SET ") + sets.join(QStringLiteral(", ")) +
@@ -385,27 +389,40 @@ Result<std::vector<EmbargoRow>> embargoes(Db& db, bool live_only, UtcTime at) {
   return out;
 }
 
+// IN (...) lists are bound in parts of at most kChunk uuids (SQLite's
+// default variable limit is 32766; refs.cpp chunks the same way).
+constexpr std::size_t kChunk = 500;
+
 Result<std::vector<Uuid>> embargoed_samples(Db& db, std::span<const Uuid> samples, UtcTime at) {
-  if (samples.empty()) return std::vector<Uuid>{};
-  Bindings b = uuid_bindings(samples);
-  b.push_back(qv(at));
-  b.push_back(qv(at));
-  return uuid_column(db, sql::embargoed_samples(static_cast<qsizetype>(samples.size())), b, "uuid");
+  std::set<Uuid> out;
+  for (std::size_t start = 0; start < samples.size(); start += kChunk) {
+    const auto part = samples.subspan(start, std::min(kChunk, samples.size() - start));
+    Bindings b = uuid_bindings(part);
+    b.push_back(qv(at));
+    b.push_back(qv(at));
+    auto found = uuid_column(db, sql::embargoed_samples(static_cast<qsizetype>(part.size())), b, "uuid");
+    if (!found) return fail(found.error());
+    out.insert(found->begin(), found->end());
+  }
+  return std::vector<Uuid>(out.begin(), out.end());
 }
 
 Result<std::vector<Uuid>> embargoed_analyses(Db& db, std::span<const Uuid> analyses, UtcTime at) {
   if (analyses.empty()) return std::vector<Uuid>{};
   // The analyses' samples, then the samples under embargo, then the analyses named directly.
-  auto rows = db.select(sql::analysis_samples(static_cast<qsizetype>(analyses.size())), uuid_bindings(analyses));
-  if (!rows) return fail(rows.error());
   std::map<Uuid, Uuid> sample_of;
   std::set<Uuid> samples;
-  for (const auto& r : *rows) {
-    auto s = opt_uuid(r.value("own"));
-    if (!s) s = opt_uuid(r.value("positioned"));
-    if (!s) continue;
-    sample_of[to_uuid(r.value("uuid"))] = *s;
-    samples.insert(*s);
+  for (std::size_t start = 0; start < analyses.size(); start += kChunk) {
+    const auto part = analyses.subspan(start, std::min(kChunk, analyses.size() - start));
+    auto rows = db.select(sql::analysis_samples(static_cast<qsizetype>(part.size())), uuid_bindings(part));
+    if (!rows) return fail(rows.error());
+    for (const auto& r : *rows) {
+      auto s = opt_uuid(r.value("own"));
+      if (!s) s = opt_uuid(r.value("positioned"));
+      if (!s) continue;
+      sample_of[to_uuid(r.value("uuid"))] = *s;
+      samples.insert(*s);
+    }
   }
   const std::vector<Uuid> sample_list(samples.begin(), samples.end());
   auto embargoed = embargoed_samples(db, sample_list, at);
@@ -414,11 +431,14 @@ Result<std::vector<Uuid>> embargoed_analyses(Db& db, std::span<const Uuid> analy
   std::set<Uuid> out;
   for (const auto& [analysis, sample] : sample_of)
     if (hidden.contains(sample)) out.insert(analysis);
-  Bindings b = uuid_bindings(analyses);
-  b.push_back(qv(at));
-  auto direct = uuid_column(db, sql::embargoed_analyses_direct(static_cast<qsizetype>(analyses.size())), b, "uuid");
-  if (!direct) return fail(direct.error());
-  out.insert(direct->begin(), direct->end());
+  for (std::size_t start = 0; start < analyses.size(); start += kChunk) {
+    const auto part = analyses.subspan(start, std::min(kChunk, analyses.size() - start));
+    Bindings b = uuid_bindings(part);
+    b.push_back(qv(at));
+    auto direct = uuid_column(db, sql::embargoed_analyses_direct(static_cast<qsizetype>(part.size())), b, "uuid");
+    if (!direct) return fail(direct.error());
+    out.insert(direct->begin(), direct->end());
+  }
   return std::vector<Uuid>(out.begin(), out.end());
 }
 

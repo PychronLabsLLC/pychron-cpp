@@ -409,5 +409,66 @@ TEST_P(PublishStoreTest, ResolveRefsAtBookmarkUsesPinnedFluxRevision) {
   EXPECT_NE(find(*head, flux)->revision, pinned);
 }
 
+TEST_P(PublishStoreTest, PublishedManifestHashNeverChanges) {
+  const auto spec = insert("r");
+  ASSERT_TRUE(store_->add_release(reducer(), spec));
+  ReleaseUpdate publish;
+  publish.release = spec.uuid;
+  publish.state = ReleaseState::Published;
+  publish.manifest_sha256 = sha256(std::string_view{"one"});
+  ASSERT_TRUE(store_->update_release(reducer(), publish));
+  ReleaseUpdate other;
+  other.release = spec.uuid;
+  other.manifest_sha256 = sha256(std::string_view{"two"});
+  auto refused = store_->update_release(reducer(), other);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  ReleaseUpdate same;
+  same.release = spec.uuid;
+  same.manifest_sha256 = sha256(std::string_view{"one"});
+  same.visibility = Visibility::Public;
+  EXPECT_TRUE(store_->update_release(reducer(), same)) << "the same hash is no change";
+  EXPECT_EQ(*(*store_->release(spec.uuid))->manifest_sha256, sha256(std::string_view{"one"}));
+}
+
+TEST_P(PublishStoreTest, EmbargoLookupsTakeManyUuids) {
+  std::vector<Uuid> many;
+  many.reserve(40001);
+  for (int i = 0; i < 40000; ++i) many.push_back(Uuid::v7());
+  many.push_back(sample1_);
+  ASSERT_TRUE(store_->add_embargo(reducer(), {{EmbargoScopeType::Sample, sample1_}, std::nullopt, std::nullopt}));
+  auto es = store_->embargoed_samples(many, at("2026-10-18T12:00:00Z"));
+  ASSERT_TRUE(es) << to_string(es.error());
+  EXPECT_EQ(*es, std::vector<Uuid>{sample1_});
+  many.push_back(analysis1_);
+  auto ea = store_->embargoed_analyses(many, at("2026-10-18T12:00:00Z"));
+  ASSERT_TRUE(ea) << to_string(ea.error());
+  EXPECT_EQ(*ea, std::vector<Uuid>{analysis1_});
+}
+
+TEST_P(PublishStoreTest, ResolveRefsAtDropsReferencesMadeAfterTheBookmark) {
+  const auto item = analysis_item(lab_, 2, series(1), series(0), "66573");
+  ASSERT_TRUE(store_->ingest(item));
+  const Uuid analysis = std::get<AnalysisIngest>(item.body).analysis;
+  const std::vector<HeadInfo> heads = *store_->heads(analysis);
+  BookmarkSpec bm{"before the flux", std::nullopt, std::nullopt, group_};
+  bm.entries = heads;  // no reference pinned: none existed
+  const Uuid bookmark = *store_->create_bookmark(reducer(), bm);
+  RefObjectSpec spec;
+  spec.type = RefType::FluxPosition;
+  spec.key = "NM-300/A/1";
+  spec.position = lab_.position;
+  const Uuid flux = *store_->add_ref_object(lab_.reduction_client, spec);
+  auto uow = *store_->begin(reducer());
+  FluxValue v;
+  v.j = 0.001;
+  ASSERT_TRUE(uow->add_revision(flux, Kind::RefValue, RevisionPayload{RefPayload{v}}, std::nullopt));
+  ASSERT_TRUE(uow->commit(ChangesetKind::Reference, "flux"));
+  EXPECT_FALSE(store_->resolve_refs(analysis, RefPolicy{})->refs.empty()) << "at head the flux resolves";
+  auto at_bookmark = store_->resolve_refs_at(analysis, bookmark);
+  ASSERT_TRUE(at_bookmark);
+  EXPECT_TRUE(at_bookmark->refs.empty()) << "as of the bookmark there was no flux";
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, PublishStoreTest, ::testing::ValuesIn(engines()),
                          [](const ::testing::TestParamInfo<std::string>& i) { return i.param; });

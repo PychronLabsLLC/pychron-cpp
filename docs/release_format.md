@@ -31,8 +31,10 @@ this page is the reader's reference to what is in the directory.
 ```
 
 `<sample>` is the sample's name with every character outside `A-Z a-z 0-9 . _ -`
-replaced by `_`; when two samples of the release have the same safe name,
-each gets `-<last 8 hex of its uuid>`. The paths in `manifest.json` are the
+replaced by `_` (an empty name, dots only, a Windows device name or a
+trailing dot become `sample`, `name_`); when two samples of the release have
+the same safe name (case ignored), or the name had to be invented, each gets
+`-<last 8 hex of its uuid>`. The paths in `manifest.json` are the
 truth; the names are for people.
 
 Every file the build writes is marked as a user file, so macOS Gatekeeper
@@ -185,7 +187,7 @@ One row per interpreted age of the release, at its pinned revision.
 | `ia_uuid`, `name` | uuid, text | the interpreted age |
 | `sample_uuid`, `identifier` | uuid, text | whose it is (of its first member) |
 | `age_kind` | text | `plateau`, `weighted_mean`, `isochron`, `integrated` or `other` |
-| `age_ma`, `age_ma_err` | double | the age |
+| `age_ma`, `age_err_ma` | double | the age |
 | `mswd`, `n` | double, int32 | MSWD and the number of analyses |
 | `kca`, `kca_err` | double | K/Ca |
 | `plateau_k39_pct` | double | percent of 39ArK in the plateau (reserved; null in this version) |
