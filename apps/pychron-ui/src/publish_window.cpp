@@ -5,7 +5,10 @@
 #include <vector>
 
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDateEdit>
 #include <QDateTime>
+#include <QDockWidget>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -57,7 +60,45 @@ struct ReleaseLine {
 
 struct Listing {
   std::vector<ReleaseLine> releases;
+  std::vector<pb::EmbargoListing> embargoes;
 };
+
+std::optional<PublishWindow::EmbargoForm> ask_embargo_dialog(QWidget* parent) {
+  QDialog dialog(parent);
+  dialog.setWindowTitle(QObject::tr("Set an embargo"));
+  auto* form = new QFormLayout(&dialog);
+  auto* scope = new QComboBox(&dialog);
+  scope->addItem(QObject::tr("Project"), static_cast<int>(ps::EmbargoScopeType::Project));
+  scope->addItem(QObject::tr("Sample"), static_cast<int>(ps::EmbargoScopeType::Sample));
+  scope->addItem(QObject::tr("Analysis"), static_cast<int>(ps::EmbargoScopeType::Analysis));
+  scope->setCurrentIndex(1);
+  auto* name = new QLineEdit(&dialog);
+  name->setPlaceholderText(QObject::tr("project name; sample name or name@project; run id (70001-01)"));
+  auto* until_on = new QCheckBox(QObject::tr("Until"), &dialog);
+  auto* until = new QDateEdit(QDate::currentDate().addYears(1), &dialog);
+  until->setCalendarPopup(true);
+  until->setEnabled(false);
+  QObject::connect(until_on, &QCheckBox::toggled, until, &QWidget::setEnabled);
+  auto* until_row = new QHBoxLayout;
+  until_row->addWidget(until_on);
+  until_row->addWidget(until, 1);
+  auto* reason = new QLineEdit(&dialog);
+  form->addRow(QObject::tr("Scope"), scope);
+  form->addRow(QObject::tr("Name"), name);
+  form->addRow(QObject::tr("End"), until_row);
+  form->addRow(QObject::tr("Reason"), reason);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) return std::nullopt;
+  PublishWindow::EmbargoForm out;
+  out.type = static_cast<ps::EmbargoScopeType>(scope->currentData().toInt());
+  out.name = name->text().trimmed();
+  if (until_on->isChecked()) out.until = until->date();
+  out.reason = reason->text().trimmed();
+  return out;
+}
 
 // The stages build_release reports, in order (build.hpp).
 const QStringList& build_stages() {
@@ -129,7 +170,9 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
       verify_button_(new QPushButton(tr("Verify…"), this)),
       publish_button_(new QPushButton(tr("Publish…"), this)),
       withdraw_button_(new QPushButton(tr("Withdraw…"), this)),
-      public_button_(new QPushButton(tr("Make public"), this)) {
+      public_button_(new QPushButton(tr("Make public"), this)),
+      embargoes_(new QTableView(this)),
+      embargo_model_(new QStandardItemModel(0, kEmbargoColumns, this)) {
   setWindowTitle(tr("Publish"));
   setObjectName(QStringLiteral("publish_window"));
   model_->setHorizontalHeaderLabels(
@@ -184,6 +227,32 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
     return QMessageBox::question(this, tr("Publish"), question) == QMessageBox::Yes;
   };
   report_ = [this](const QString& text) { QMessageBox::warning(this, tr("Verify"), text); };
+  ask_embargo_ = [this] { return ask_embargo_dialog(this); };
+
+  // The Embargoes dock.
+  embargo_model_->setHorizontalHeaderLabels({tr("Scope"), tr("Until"), tr("Reason"), tr("Set")});
+  embargoes_->setModel(embargo_model_);
+  embargoes_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  embargoes_->setSelectionMode(QAbstractItemView::SingleSelection);
+  embargoes_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  embargoes_->verticalHeader()->hide();
+  embargoes_->horizontalHeader()->setStretchLastSection(true);
+  auto* set_button = new QPushButton(tr("Set…"), this);
+  auto* lift_button = new QPushButton(tr("Lift"), this);
+  connect(set_button, &QPushButton::clicked, this, &PublishWindow::set_embargo);
+  connect(lift_button, &QPushButton::clicked, this, &PublishWindow::lift_embargo);
+  auto* host = new QWidget(this);
+  auto* host_layout = new QVBoxLayout(host);
+  auto* host_buttons = new QHBoxLayout;
+  host_buttons->addWidget(set_button);
+  host_buttons->addWidget(lift_button);
+  host_buttons->addStretch();
+  host_layout->addLayout(host_buttons);
+  host_layout->addWidget(embargoes_, 1);
+  auto* dock = new QDockWidget(tr("Embargoes"), this);
+  dock->setObjectName(QStringLiteral("embargoes"));
+  dock->setWidget(host);
+  addDockWidget(Qt::RightDockWidgetArea, dock);
   ask_release_ = [this](const QStringList& analyses, std::size_t embargoed) {
     QStringList names;
     for (int r = 0; r < model_->rowCount(); ++r) names << model_->item(r, Name)->text();
@@ -346,6 +415,35 @@ void PublishWindow::withdraw() {
   });
 }
 
+void PublishWindow::set_embargo() {
+  const auto form = ask_embargo_ ? ask_embargo_() : std::nullopt;
+  if (!form) return;
+  pb::EmbargoRequest request;
+  request.type = form->type;
+  request.name_or_uuid = form->name.toStdString();
+  if (form->until)
+    request.until = ps::UtcTime::parse(form->until->toString(Qt::ISODate).toStdString() + "T00:00:00Z");
+  if (!form->reason.isEmpty()) request.reason = form->reason.toStdString();
+  change(tr("embargo set on %1").arg(form->name), [request](ps::IStore& store, const ps::Actor& actor) -> Result<void> {
+    auto set = pb::set_embargo(store, actor, request);
+    if (!set) return fail(set.error());
+    return {};
+  });
+}
+
+void PublishWindow::lift_embargo() {
+  const QModelIndex current = embargoes_->currentIndex();
+  if (!current.isValid()) {
+    say(tr("Select an embargo first."));
+    return;
+  }
+  const QString uuid = embargo_model_->item(current.row(), EmbargoScope)->data(Qt::UserRole).toString();
+  const QString scope = embargo_model_->item(current.row(), EmbargoScope)->text();
+  change(tr("embargo on %1 lifted").arg(scope), [uuid](ps::IStore& store, const ps::Actor& actor) {
+    return pb::lift_embargo(store, actor, uuid.toStdString());
+  });
+}
+
 void PublishWindow::make_public() {
   const QString uuid = selected_release();
   if (uuid.isEmpty()) {
@@ -499,6 +597,9 @@ void PublishWindow::refresh() {
             if (h.kind != ps::Kind::RefValue && h.kind != ps::Kind::InterpretedAge) members.insert(h.subject);
           out.releases.push_back({std::move(row), members.size()});
         }
+        auto embargoes = pb::list_embargoes(store, true, ps::UtcTime::now());
+        if (!embargoes) return fail(embargoes.error());
+        out.embargoes = std::move(*embargoes);
         return out;
       },
       [this, keep](Result<Listing> listing) {
@@ -521,6 +622,15 @@ void PublishWindow::refresh() {
           model_->appendRow(items);
         }
         if (!keep.isEmpty()) select_release(keep);
+        embargo_model_->removeRows(0, embargo_model_->rowCount());
+        for (const auto& e : listing->embargoes) {
+          QList<QStandardItem*> items;
+          items << new QStandardItem(qs(e.scope_name))
+                << new QStandardItem(e.row.until ? qs(e.row.until->iso()).left(10) : tr("until lifted"))
+                << new QStandardItem(qs(e.row.reason.value_or(""))) << new QStandardItem(qs(e.row.created.iso()).left(10));
+          items[EmbargoScope]->setData(qs(e.row.uuid.str()), Qt::UserRole);
+          embargo_model_->appendRow(items);
+        }
         update_buttons();
         Q_EMIT refreshed();
       });

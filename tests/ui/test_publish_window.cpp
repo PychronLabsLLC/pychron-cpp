@@ -375,6 +375,55 @@ class TestPublishWindow : public QObject {
     QVERIFY(o.window->withdraw_button()->isEnabled());
     QVERIFY(o.window->public_button()->isEnabled());
   }
+  void setAndLiftAnEmbargo() {
+    Open o = open();
+    o.window->set_ask_embargo([]() -> std::optional<PublishWindow::EmbargoForm> {
+      return PublishWindow::EmbargoForm{ps::EmbargoScopeType::Sample, QStringLiteral("FC-1"), QDate(2030, 1, 1),
+                                        QStringLiteral("paper")};
+    });
+    o.window->set_embargo();
+    QTRY_COMPARE_WITH_TIMEOUT(o.window->embargoes()->model()->rowCount(), 1, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    const auto at = [&](int c) { return o.window->embargoes()->model()->index(0, c).data().toString(); };
+    QVERIFY2(at(PublishWindow::EmbargoScope).contains(QStringLiteral("FC-1")), qPrintable(at(PublishWindow::EmbargoScope)));
+    QCOMPARE(at(PublishWindow::EmbargoUntil), QStringLiteral("2030-01-01"));
+    QCOMPARE(at(PublishWindow::EmbargoReason), QStringLiteral("paper"));
+    o.window->embargoes()->setCurrentIndex(o.window->embargoes()->model()->index(0, 0));
+    o.window->lift_embargo();
+    QTRY_COMPARE_WITH_TIMEOUT(o.window->embargoes()->model()->rowCount(), 0, kWaitMs);
+  }
+
+  void anUnknownScopeIsSaid() {
+    Open o = open();
+    o.window->set_ask_embargo([]() -> std::optional<PublishWindow::EmbargoForm> {
+      return PublishWindow::EmbargoForm{ps::EmbargoScopeType::Sample, QStringLiteral("NOPE"), std::nullopt, QString()};
+    });
+    o.window->set_embargo();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY2(o.window->status()->text().contains(QStringLiteral("NOPE")), qPrintable(o.window->status()->text()));
+    QCOMPARE(o.window->embargoes()->model()->rowCount(), 0);
+  }
+
+  void anEmbargoSetInTheDockIsCountedByNewRelease() {
+    QStringList chosen = {QString::fromStdString(seed_.analysis1.str()), QString::fromStdString(seed_.analysis2.str())};
+    Open o = open([chosen] { return chosen; });
+    o.window->set_ask_embargo([]() -> std::optional<PublishWindow::EmbargoForm> {
+      return PublishWindow::EmbargoForm{ps::EmbargoScopeType::Project, QStringLiteral("Alpha"), std::nullopt, QString()};
+    });
+    o.window->set_embargo();
+    QTRY_COMPARE_WITH_TIMEOUT(o.window->embargoes()->model()->rowCount(), 1, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    std::size_t embargoed = 99;
+    bool asked = false;
+    o.window->set_ask_release([&](const QStringList&, std::size_t n) -> std::optional<pb::ReleaseSpec> {
+      embargoed = n;
+      asked = true;
+      return std::nullopt;
+    });
+    o.window->new_release();
+    QTRY_VERIFY_WITH_TIMEOUT(asked, kWaitMs);
+    QCOMPARE(embargoed, std::size_t{2});
+  }
 };
 
 QTEST_MAIN(TestPublishWindow)

@@ -14,6 +14,7 @@
 #include <string>
 
 #include <QMainWindow>
+#include <QDate>
 #include <QMap>
 #include <QString>
 #include <QStringList>
@@ -21,6 +22,7 @@
 // Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
+#include "pychron/persistence/publish.hpp"
 #include "pychron/publish/release.hpp"
 #pragma pop_macro("signals")
 
@@ -104,6 +106,22 @@ class PublishWindow : public QMainWindow {
   void withdraw();
   void make_public();
 
+  // The Embargoes dock: the live embargoes (Scope, Until, Reason, Set), set
+  // and lift. A new one asks for its scope (project, sample, analysis), the
+  // scope's name, an optional end and a reason; default: a dialog.
+  enum EmbargoColumn { EmbargoScope, EmbargoUntil, EmbargoReason, EmbargoSet, kEmbargoColumns };
+  struct EmbargoForm {
+    persistence::EmbargoScopeType type = persistence::EmbargoScopeType::Sample;
+    QString name;
+    std::optional<QDate> until;
+    QString reason;
+  };
+  using AskEmbargo = std::function<std::optional<EmbargoForm>()>;
+  void set_ask_embargo(AskEmbargo ask) { ask_embargo_ = std::move(ask); }
+  void set_embargo();
+  void lift_embargo();  // the current row of the dock
+  QTableView* embargoes() const noexcept { return embargoes_; }
+
   QPushButton* publish_button() const noexcept { return publish_button_; }
   QPushButton* withdraw_button() const noexcept { return withdraw_button_; }
   QPushButton* public_button() const noexcept { return public_button_; }
@@ -141,6 +159,9 @@ class PublishWindow : public QMainWindow {
   AskText ask_text_;
   Confirm confirm_;
   Report report_;
+  AskEmbargo ask_embargo_;
+  QTableView* embargoes_;
+  QStandardItemModel* embargo_model_;
   QMap<QString, QString> last_build_;  // release uuid -> directory
   int jobs_ = 0;
 };
