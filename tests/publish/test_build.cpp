@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -144,6 +146,79 @@ TEST_P(BuildTest, TwoBuildsGiveEqualRowHashesAndEqualNonParquetBytes) {
   auto rebuilt = verify_rebuild(first->dir, second->manifest);
   ASSERT_TRUE(rebuilt) << to_string(rebuilt.error());
   EXPECT_TRUE(rebuilt->ok());
+}
+
+TEST_P(BuildTest, WithFiguresWritesSvgAndPdfPerSampleInTheManifest) {
+  const Uuid release = create();
+  BuildOptions o = options();
+  o.with_figures = true;
+  auto built = build_release(*store_, *source_, release, o, nullptr);
+  ASSERT_TRUE(built) << to_string(built.error());
+  for (const auto& w : built->warnings) EXPECT_EQ(w.find("phase 2"), std::string::npos) << w;
+  EXPECT_TRUE(has_figures(built->manifest));
+  for (const char* file : {"figures/FC-1/ideogram.svg", "figures/FC-1/ideogram.pdf"}) {
+    const auto it = std::find_if(built->manifest.files.begin(), built->manifest.files.end(),
+                                 [&](const ManifestFile& f) { return f.path == file; });
+    ASSERT_NE(it, built->manifest.files.end()) << file;
+    const std::string bytes = slurp(built->dir / file);
+    EXPECT_EQ(it->sha256, sha256(std::string_view(bytes))) << file;
+    EXPECT_EQ(it->media_type, std::string(file).ends_with(".svg") ? "image/svg+xml" : "application/pdf");
+  }
+  auto verified = verify_files(built->dir);
+  ASSERT_TRUE(verified) << to_string(verified.error());
+  EXPECT_TRUE(verified->ok());
+  const auto record = nlohmann::json::parse(slurp(built->dir / "records/release.json"));
+  const auto& formats = record.at("properties").at("formats");
+  EXPECT_NE(std::find(formats.begin(), formats.end(), "SVG"), formats.end());
+}
+
+TEST_P(BuildTest, FiguresAreByteIdenticalAcrossTwoBuilds) {
+  const Uuid release = create();
+  BuildOptions o = options();
+  o.with_figures = true;
+  auto first = build_release(*store_, *source_, release, o, nullptr);
+  ASSERT_TRUE(first) << to_string(first.error());
+  o.out = out_ / "again";
+  fs::create_directories(o.out);
+  auto second = build_release(*store_, *source_, release, o, nullptr);
+  ASSERT_TRUE(second) << to_string(second.error());
+  int figures = 0;
+  for (const auto& f : first->manifest.files) {
+    if (!f.path.starts_with("figures/")) continue;
+    ++figures;
+    const auto it = std::find_if(second->manifest.files.begin(), second->manifest.files.end(),
+                                 [&](const ManifestFile& g) { return g.path == f.path; });
+    ASSERT_NE(it, second->manifest.files.end()) << f.path;
+    EXPECT_EQ(it->sha256, f.sha256) << f.path;
+  }
+  EXPECT_GT(figures, 0);
+}
+
+TEST_P(BuildTest, WithoutFiguresThereIsNoFiguresDirectory) {
+  auto built = build_release(*store_, *source_, create(), options(), nullptr);
+  ASSERT_TRUE(built) << to_string(built.error());
+  EXPECT_FALSE(has_figures(built->manifest));
+  EXPECT_FALSE(fs::exists(built->dir / "figures"));
+}
+
+TEST_P(BuildTest, ProgressReportsTheFiguresStage) {
+  struct Recorder : IProgress {
+    std::vector<std::string> stages;
+    void stage(std::string_view name) override { stages.emplace_back(name); }
+  };
+  const Uuid release = create();
+  Recorder plain;
+  ASSERT_TRUE(build_release(*store_, *source_, release, options(), &plain));
+  EXPECT_EQ(std::find(plain.stages.begin(), plain.stages.end(), "figures"), plain.stages.end());
+  Recorder with;
+  BuildOptions o = options();
+  o.with_figures = true;
+  o.out = out_ / "figures";
+  fs::create_directories(o.out);
+  ASSERT_TRUE(build_release(*store_, *source_, release, o, &with));
+  const auto at = [&](const char* s) { return std::find(with.stages.begin(), with.stages.end(), s) - with.stages.begin(); };
+  EXPECT_LT(at("files"), at("figures"));
+  EXPECT_LT(at("figures"), at("parquet"));
 }
 
 TEST_P(BuildTest, PublicBuildOmitsEmbargoedSample) {

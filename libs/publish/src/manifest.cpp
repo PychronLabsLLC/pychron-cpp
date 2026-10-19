@@ -302,6 +302,11 @@ Result<Manifest> read_manifest(const fs::path& dir) {
   return parse_manifest(*text);
 }
 
+bool has_figures(const Manifest& manifest) {
+  return std::any_of(manifest.files.begin(), manifest.files.end(),
+                     [](const ManifestFile& f) { return f.path.starts_with("figures/"); });
+}
+
 std::string_view media_type_of(std::string_view path) {
   const auto dot = path.rfind('.');
   const std::string ext = dot == std::string_view::npos ? "" : std::string(path.substr(dot));

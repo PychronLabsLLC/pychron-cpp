@@ -102,6 +102,10 @@ std::string manifest_json(const Manifest& manifest);
 Result<Manifest> parse_manifest(std::string_view json);
 Result<Manifest> read_manifest(const std::filesystem::path& dir);
 
+// Whether the release directory holds figures (a build with --with-figures):
+// any file under figures/. verify rebuilds with figures when it does.
+bool has_figures(const Manifest& manifest);
+
 // The media type of a release file by its path ("application/vnd.apache.parquet", ...).
 std::string_view media_type_of(std::string_view path);
 

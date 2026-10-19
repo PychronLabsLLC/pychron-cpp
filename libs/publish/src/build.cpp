@@ -17,6 +17,7 @@
 #include "pychron/processing/report.hpp"
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
+#include "pychron/publish/figures.hpp"
 #include "pychron/publish/parquet.hpp"
 #include "pychron/publish/records.hpp"
 #include "pychron/reduction/arar_types.hpp"
@@ -492,13 +493,17 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
   Writer writer(dir, m);
   if (auto r = writer.write("tables/release.csv", pp::report_csv(report)); !r) return fail(r.error());
   if (auto r = writer.write("tables/release.json", pp::report_json(report)); !r) return fail(r.error());
-  for (std::size_t r = 0; r < tables.samples.rows.size(); ++r) {
+  // The analyses of the samples table's row r.
+  const auto analyses_of_sample = [&](std::size_t r) {
     const auto uuid_col = tables.samples.column("sample_uuid");
     const auto sample_uuid = Uuid::parse(std::get<std::string>(tables.samples.rows[r][*uuid_col]));
     std::set<std::string> of_sample;
     for (const auto& p : inputs.pins)
       if (sample_uuid && p.sample == *sample_uuid) of_sample.insert(p.analysis.str());
-    const pp::Dataset sub = dataset_of_sample(*dataset, of_sample);
+    return of_sample;
+  };
+  for (std::size_t r = 0; r < tables.samples.rows.size(); ++r) {
+    const pp::Dataset sub = dataset_of_sample(*dataset, analyses_of_sample(r));
     if (sub.empty()) continue;
     const pp::Report sample_report = pp::make_report(sub, report_options);
     const std::string sdir = "tables/" + sample_dir_name(tables.samples, r) + "/";
@@ -520,7 +525,15 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
   }
   if (auto r = writer.write("CITATION.cff", citation_cff(m)); !r) return fail(r.error());
   if (auto r = writer.write("README.md", readme_md(m, tables)); !r) return fail(r.error());
-  if (options.with_figures) result.warnings.emplace_back("figures are not written yet (phase 2); --with-figures ignored");
+  if (options.with_figures) {
+    stage("figures");
+    const auto created = static_cast<std::int64_t>(release.created.micros / 1000000);
+    for (std::size_t r = 0; r < tables.samples.rows.size(); ++r) {
+      const pp::Dataset sub = dataset_of_sample(*dataset, analyses_of_sample(r));
+      for (const auto& f : sample_figures(sub, sample_dir_name(tables.samples, r), *opts, created, result.warnings))
+        if (auto w = writer.write(f.path, f.bytes); !w) return fail(w.error());
+    }
+  }
   if (options.with_viewer) result.warnings.emplace_back("the viewer is not shipped yet (phase 3); --with-viewer ignored");
 
   stage("parquet");

@@ -268,6 +268,11 @@ Result<std::string> sample_record_json(const Manifest& m, const ReleaseTables& t
   }
   p["contacts"] = contacts;
   p["formats"] = Json::array({"GeoParquet", "CSV"});
+  const std::string figures = "figures/" + sample_dir_name(t.samples, r) + "/";
+  if (std::any_of(m.files.begin(), m.files.end(), [&](const ManifestFile& f) { return f.path.starts_with(figures); })) {
+    p["formats"].push_back("SVG");
+    p["formats"].push_back("PDF");
+  }
   Json theme;
   theme["scheme"] = "https://pychronlabs.com/themes";
   theme["concepts"] = Json::array({Json{{"id", "40Ar/39Ar"}}});
@@ -340,6 +345,10 @@ std::string release_record_json(const Manifest& m, const ReleaseTables& t) {
   p["externalIds"] = external;
   p["contacts"] = contacts_of(m.release.authors);
   p["formats"] = Json::array({"GeoParquet", "CSV", "JSON"});
+  if (has_figures(m)) {
+    p["formats"].push_back("SVG");
+    p["formats"].push_back("PDF");
+  }
   p["pychron:release_uuid"] = m.release.uuid.str();
   p["pychron:version"] = m.release.version;
   p["pychron:n_samples"] = t.samples.rows.size();

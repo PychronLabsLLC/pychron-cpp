@@ -147,6 +147,19 @@ TEST(Records, ReleaseRecordLinksEveryEnclosure) {
   EXPECT_EQ(j.at("properties").at("pychron:n_analyses"), 4);
 }
 
+TEST(Records, SampleWithFiguresListsSvgAndPdfFormats) {
+  const auto in = inputs();
+  const auto tables = build_tables(in);
+  auto m = manifest_of(in, tables);
+  const auto plain = nlohmann::json::parse(*sample_record_json(m, tables, in.samples[1].uuid));
+  EXPECT_EQ(plain.at("properties").at("formats"), nlohmann::json::array({"GeoParquet", "CSV"}));
+  m.files.push_back({"figures/FC-2/ideogram.svg", 1, sha256(std::string_view{"x"}), "image/svg+xml"});
+  const auto j = nlohmann::json::parse(*sample_record_json(m, tables, in.samples[1].uuid));
+  EXPECT_EQ(j.at("properties").at("formats"), nlohmann::json::array({"GeoParquet", "CSV", "SVG", "PDF"}));
+  const auto release = nlohmann::json::parse(release_record_json(m, tables));
+  EXPECT_EQ(release.at("properties").at("formats"), nlohmann::json::array({"GeoParquet", "CSV", "JSON", "SVG", "PDF"}));
+}
+
 TEST(Records, SampleDirNamesAreSafeAndUnique) {
   auto in = inputs();
   in.samples[0].name = "FC-2";  // U1 sample renamed to clash with FC-2

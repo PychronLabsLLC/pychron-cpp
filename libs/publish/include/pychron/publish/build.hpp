@@ -3,7 +3,8 @@
 // Building a release directory from the store (data publishing design,
 // sections 5 and 6.1): the members at their pins, reduced and grouped as
 // `elctl export` does, the Schaen tables, the row tables, the records
-// catalog, the licence, citation and readme, the Parquet tables when the
+// catalog, the licence, citation and readme, the figures when asked for,
+// the Parquet tables when the
 // build has Arrow, and the manifest last. Every file written goes through
 // mark_as_user_file.
 
@@ -42,7 +43,7 @@ Result<ReleaseOptions> parse_release_options(std::string_view json);
 struct BuildOptions {
   std::filesystem::path out;  // the directory the release directory is made in
   bool private_build = false; // keep embargoed rows; the manifest says so
-  bool with_figures = false;  // accepted, not yet (phase 2)
+  bool with_figures = false;  // figures/<sample>/*.svg|pdf (figures.hpp)
   bool with_viewer = false;   // accepted, not yet (phase 3)
   std::string store_url;      // for manifest.build.store (kind and id); may be empty
 };
@@ -50,7 +51,7 @@ struct BuildOptions {
 class IProgress {
  public:
   virtual ~IProgress() = default;
-  virtual void stage(std::string_view name) = 0;  // select, load, reduce, tables, files, parquet, records, manifest
+  virtual void stage(std::string_view name) = 0;  // select, load, reduce, tables, files, figures, parquet, records, manifest
 };
 
 struct BuildResult {
