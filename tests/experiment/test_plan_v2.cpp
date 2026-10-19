@@ -1700,3 +1700,36 @@ counts = 5
     EXPECT_EQ(plan::fit_for(p, gas, &seg, "baseline", "", "AX").kind, FitKind::Average) << i;
   }
 }
+
+// ---- baseline modifiers (plan Task 21) -------------------------------------------
+
+TEST(PlanV2Parse, BaselineModifier) {
+  const auto p = load_worked("v2_71_argus_syn_baseline.toml");
+  ASSERT_EQ(p.baseline_modifiers.size(), 1u);
+  const auto& m = p.baseline_modifiers.at("CDD");
+  EXPECT_EQ(m.variable, "Ar40+Ar39");
+  EXPECT_EQ(m.model, "baseline_model.csv");
+  EXPECT_EQ(m.error, "counting_statistics");
+}
+
+TEST(PlanV2Parse, BaselineModifierExpressionsAreChecked) {
+  const auto bad = [](std::string_view table) {
+    const std::string text = std::string(kHeader) + std::string(kReferenceH1) + R"(
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)" + std::string(table);
+    auto r = plan::detail::resolve_plan_ungated(text, plan::PlanResolvers{nullptr, &kCatalog}, "m");
+    return r ? std::string() : r.error().what;
+  };
+  EXPECT_NE(bad("[baseline.modifier.CDD]\nvariable = \"Ar40.cur\"\nmodel = \"x\"\n").find("reads only intercepts"),
+            std::string::npos);
+  EXPECT_NE(bad("[baseline.modifier.CDD]\nvariable = \"Ar40\"\nmodel = \"Ar39*2\"\n").find("reads only 'x'"),
+            std::string::npos);
+  EXPECT_NE(bad("[baseline.modifier.CDD]\nmodel = \"x\"\n").find("baseline.modifier.CDD.variable: required"),
+            std::string::npos);
+  EXPECT_NE(bad("[baseline.modifier.CDD]\nvariable = \"Ar40\"\nmodel = \"x\"\nfoo = 1\n").find("unknown key 'foo'"),
+            std::string::npos);
+  EXPECT_EQ(bad("[baseline.modifier.CDD]\nvariable = \"Ar40@H1 + Ar39\"\nmodel = \"m.csv\"\n"), "");
+}

@@ -887,3 +887,23 @@ TEST(RecordIngest, SeveralBaselinePositionsGoToExtra) {
   EXPECT_EQ(extra.at("choices").at("Ar40@H1").at("rule"), "bracketing_average");
   EXPECT_EQ(extra.at("choices").at("Ar40@H1").at("baselines"), json::array({0, 1}));
 }
+
+// Baseline modifiers (measurement plan v2 spec 3.5) have a producer: the
+// detector's row carries the modifier's value and error, the analysis's
+// meta every modifier.
+TEST(RecordIngest, BaselineModifiersHaveAProducer) {
+  auto rec = sample_record();
+  EXPECT_FALSE(body_of(convert(rec)).meta->baseline_modifiers_json);
+  rec.provenance.schema_version = record::kRecordSchemaVersion;
+  rec.results.baseline_modifiers["H1"] = {"Ar40+Ar36", "0.01*x", "counting_statistics", 11.0, 0.5};
+  const auto out = convert(rec);
+  const auto& a = body_of(out);
+  ASSERT_EQ(a.roots.baselines_rows.size(), 1u);
+  EXPECT_EQ(a.roots.baselines_rows[0].modifier_value, 11.0);
+  EXPECT_EQ(a.roots.baselines_rows[0].modifier_error, 0.5);
+  ASSERT_TRUE(a.meta && a.meta->baseline_modifiers_json);
+  const auto mods = json::parse(*a.meta->baseline_modifiers_json);
+  EXPECT_EQ(mods.at("H1").at("variable"), "Ar40+Ar36");
+  EXPECT_EQ(mods.at("H1").at("model"), "0.01*x");
+  EXPECT_EQ(mods.at("H1").at("value"), 11.0);
+}

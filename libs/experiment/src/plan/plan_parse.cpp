@@ -278,8 +278,42 @@ void read_peak_center(const Section& s, V1PeakCenter& out) {
     s.problems().add(s.at("isotope"), "required when before or after");
 }
 
+// [baseline.modifier.<detector>]: the variable an expression over intercept
+// names, the model a CSV file or an expression in x (spec 3.5).
+void read_modifiers(const Section& s, std::map<std::string, BaselineModifier>& out) {
+  const auto m = s.sub("modifier");
+  if (!m.table()) return;
+  for (const auto& [k, v] : *m.table()) {
+    const std::string det(k.str());
+    const auto e = m.sub(det);
+    if (!e.table()) {
+      m.problems().add(m.at(det), "expected a table");
+      continue;
+    }
+    e.keys({"variable", "model", "error"});
+    BaselineModifier mod;
+    e.get("variable", mod.variable);
+    e.get("model", mod.model);
+    e.get("error", mod.error);
+    const auto check = [&](const std::string& key, const std::string& text, bool in_x) {
+      if (text.empty()) return e.problems().add(e.at(key), "required");
+      auto expr = parse_expression(text);
+      if (!expr) return e.problems().add(e.at(key), expr.error().what);
+      for (const auto& metric : metrics_of(**expr)) {
+        const bool ok = metric.kind == MetricRef::Kind::Isotope && (!in_x || metric.a == "x");
+        if (!ok)
+          return e.problems().add(e.at(key), in_x ? "a model expression reads only 'x', not '" + to_string(metric) + "'"
+                                                  : "reads only intercepts, not '" + to_string(metric) + "'");
+      }
+    };
+    check("variable", mod.variable, false);
+    if (!is_model_file(mod.model)) check("model", mod.model, true);
+    out[det] = std::move(mod);
+  }
+}
+
 void read_baseline(const Section& s, V1Baseline& out) {
-  s.keys({"before", "after", "counts", "mass", "detector", "settle_s", "integration_s"});
+  s.keys({"before", "after", "counts", "mass", "detector", "settle_s", "integration_s", "modifier"});
   s.get("before", out.before);
   s.get("after", out.after);
   s.get("counts", out.counts);
@@ -902,6 +936,10 @@ class V2Rules {
       : plan_(plan), cat_(r.spectrometer), has_extraction_(r.has_extraction), v1_(v1), p_(p) {}
 
   void run() {
+    for (const auto& [det, mod] : plan_.baseline_modifiers) {
+      (void)mod;
+      known(det, join(join("baseline", "modifier"), det));
+    }
     if (v1_ != nullptr) return v1_masses();
     for (std::size_t g = 0; g < plan_.gases.size(); ++g) {
       const auto& gas = plan_.gases[g];
@@ -1218,6 +1256,7 @@ Result<MeasurementPlan> resolve_plan_ungated(std::string_view effective_toml, co
   read_sniff(top.sub("sniff"), v1.sniff);
   read_peak_center(top.sub("peak_center"), v1.peak_center);
   read_baseline(top.sub("baseline"), v1.baseline);
+  read_modifiers(top.sub("baseline"), plan.baseline_modifiers);
   if (!v2 || top.has("main")) read_main(top.sub("main"), plan.detectors, v1.main);
   read_fits(top.sub("fits"), plan.fits);
   read_conditionals(top.sub("conditionals"), plan.conditionals);

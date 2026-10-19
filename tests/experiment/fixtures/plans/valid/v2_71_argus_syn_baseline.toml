@@ -39,5 +39,7 @@ kind = "peak_center"
 when = "after_run"
 peak_center = { label = "Ar40", detector = "H1", extra_detectors = ["AX", "L2", "CDD"] }
 
-# The worked plan's [baseline.modifier.CDD] table is added by plan Task 21
-# (baseline modifiers), which builds what reads it.
+[baseline.modifier.CDD]
+variable = "Ar40+Ar39"
+model = "baseline_model.csv"
+error = "counting_statistics"

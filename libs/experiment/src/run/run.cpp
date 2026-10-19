@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <random>
 #include <set>
@@ -675,11 +677,21 @@ Result<void> Run::save(const std::optional<Error>& failure) {
   for (const auto& gas : data.gases) b.add_gas(gas);
   b.set_time_zero(data.time_zero);
   for (const auto& [k, n] : data.counts) b.set_count(k, n);
-  auto fits = measurement::fit_results(meas.data, plan_->plan, s_.reference_detector);
+  // A modifier's model file, read from the plan library (spec 3.5).
+  measurement::ModelFiles models;
+  for (const auto& [det, mod] : plan_->plan.baseline_modifiers) {
+    (void)det;
+    if (!plan::is_model_file(mod.model) || models.contains(mod.model)) continue;
+    std::ifstream in(s_.plan_dir / mod.model, std::ios::binary);
+    if (!in) continue;  // fit_results says it was not read
+    models[mod.model] = std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  }
+  auto fits = measurement::fit_results(meas.data, plan_->plan, s_.reference_detector, models);
   for (const auto& [iso, ir] : fits.results.intercepts) b.set_intercept(iso, ir);
   for (const auto& [det, br] : fits.results.baselines) b.set_baseline(det, br);
   for (const auto& pos : fits.results.baseline_positions) b.add_baseline_position(pos);
   for (const auto& [key, c] : fits.results.baseline_choices) b.set_baseline_choice(key, c);
+  for (const auto& [detector, modifier] : fits.results.baseline_modifiers) b.set_baseline_modifier(detector, modifier);
   for (const auto& [det, f] : s_.icfactors) b.set_icfactor(det, f);
   for (const auto& e : fits.errors) note("fit: " + e);
   if (meas.whiff) b.set_whiff(std::string(to_string(*meas.whiff)));

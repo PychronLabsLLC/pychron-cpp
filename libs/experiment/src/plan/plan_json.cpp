@@ -198,7 +198,7 @@ std::string to_json(const MeasurementPlan& plan) {
   for (const auto& e : plan.expose) expose.push_back(json{{"path", e.path}, {"label", e.label}});
 
   // nlohmann::json's object is a std::map: keys come out sorted.
-  const json out{
+  json out{
       {"info",
        {{"name", plan.info.name},
         {"instrument_family", plan.info.instrument_family},
@@ -211,6 +211,13 @@ std::string to_json(const MeasurementPlan& plan) {
       {"expose", std::move(expose)},
       {"hook", opt(plan.hook)},
   };
+  // Only when there are any: a plan without keeps the golden it had.
+  if (!plan.baseline_modifiers.empty()) {
+    json mods = json::object();
+    for (const auto& [det, m] : plan.baseline_modifiers)
+      mods[det] = {{"variable", m.variable}, {"model", m.model}, {"error", m.error}};
+    out["baseline_modifiers"] = std::move(mods);
+  }
   return out.dump(2) + "\n";
 }
 

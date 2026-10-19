@@ -85,6 +85,7 @@ struct LabSession::Services {
       };
     }
     s.plans = lab.plans.get();
+    s.plan_dir = lab.paths.dir / "plans";
     s.conditionals = lab.conditionals.get();
     s.aliquots = &aliquots;
     // executor.toml: how a measurement and a failed run ride out a link.

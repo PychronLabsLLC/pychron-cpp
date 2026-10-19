@@ -234,6 +234,19 @@ struct Gas {
   friend bool operator==(const Gas&, const Gas&) = default;
 };
 
+// [baseline.modifier.<detector>] (spec 3.5): `variable` an expression over
+// the run's intercepts, `model` a CSV of (variable, baseline[, error]) points
+// to fit by weighted least squares (a path relative to the plan library) or
+// an expression in `x`, `error` the name of an error model (optional). The
+// record keeps what it gives; the reduction applies it.
+struct BaselineModifier {
+  std::string variable, model, error;
+  friend bool operator==(const BaselineModifier&, const BaselineModifier&) = default;
+};
+
+// A modifier's model is a CSV file, not an expression.
+bool is_model_file(std::string_view model);
+
 struct MeasurementPlan {
   PlanInfo info;
   DetectorsSpec detectors;
@@ -245,6 +258,7 @@ struct MeasurementPlan {
   // Always filled after resolve; a v1 file is one implicit gas desugared from
   // its [main], [baseline], [peak_center], [sniff] and [whiff] tables.
   std::vector<Gas> gases;
+  std::map<std::string, BaselineModifier> baseline_modifiers;  // by detector
   friend bool operator==(const MeasurementPlan&, const MeasurementPlan&) = default;
 };
 

@@ -1,0 +1,21 @@
+# expect: baseline.modifier.QQ: unknown detector 'QQ'
+[plan]
+name = "v2_modifier_unknown_detector"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+
+[baseline.modifier.QQ]
+variable = "Ar40"
+model = "0.01*x"

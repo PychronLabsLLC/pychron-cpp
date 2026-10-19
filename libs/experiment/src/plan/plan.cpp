@@ -104,6 +104,8 @@ std::vector<CollectEntry> collecting(const Position& position) {
   return out;
 }
 
+bool is_model_file(std::string_view model) { return model.ends_with(".csv"); }
+
 std::vector<std::size_t> segments_at(const Gas& gas, When when) {
   std::vector<std::size_t> out;
   for (std::size_t i = 0; i < gas.segments.size(); ++i)

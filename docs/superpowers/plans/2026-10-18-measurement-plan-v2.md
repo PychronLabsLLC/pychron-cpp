@@ -556,11 +556,13 @@ Done notes: Step 2 was not observed failing apart from the gate (the plans did n
 
 **Interfaces:**
 - Produces: `struct BaselineModifier { std::string variable, model, error; };` `MeasurementPlan` gains `std::map<std::string, BaselineModifier> baseline_modifiers;` (`[baseline.modifier.<detector>]`; `baseline` table allowed keys add `modifier`). `model` is a CSV path relative to the plan library or an expression in `x`; `variable` an expression over this run's intercepts (the conditionals expression parser, intercept names only). Applied in `fit_results`: `Results::baseline_modifiers[det]` with the evaluated variable, the model's value and error; the detector's baseline value is not changed in the record (applied at reduction, §3.5). `to_ingest` writes `baseline_modifiers_json` and the detector's `modifier_value`/`modifier_error`.
-- [ ] **Step 1: Write failing tests:** `PlanV2Parse.BaselineModifier` (worked plan 7.1 table read: put the worked plan's `[baseline.modifier.CDD]` back into `v2_71_argus_syn_baseline.toml`, left out by Task 2); invalid fixture `v2_modifier_unknown_detector.toml` (`# expect: unknown detector`); `FitResults.BaselineModifierEvaluated` (model expression `0.01*x`, variable `Ar40+Ar39` → value); `RecordIngest.BaselineModifiersHaveAProducer` (row in the field table of that test file).
-- [ ] **Step 2: Run** → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `pychron_experiment_tests`, `pychron_experiment_store_tests` → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): baseline modifiers in plan and record`.
+- [x] **Step 1: Write failing tests:** `PlanV2Parse.BaselineModifier` (worked plan 7.1 table read: put the worked plan's `[baseline.modifier.CDD]` back into `v2_71_argus_syn_baseline.toml`, left out by Task 2); invalid fixture `v2_modifier_unknown_detector.toml` (`# expect: unknown detector`); `FitResults.BaselineModifierEvaluated` (model expression `0.01*x`, variable `Ar40+Ar39` → value); `RecordIngest.BaselineModifiersHaveAProducer` (row in the field table of that test file).
+- [x] **Step 2: Run** → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `pychron_experiment_tests`, `pychron_experiment_store_tests` → PASS.
+- [x] **Step 5: Commit** `feat(experiment): baseline modifiers in plan and record`.
+
+Done notes: Step 2 was observed failing as build failures (no `baseline_modifiers`). Settled here (spec 3.5 updated): the variable reads only intercept names (`Ar40`, the label's first detector's intercept, or `Ar40@H1`) and the model only `x`, both checked at load; a CSV model is the weighted least-squares line through its `x, baseline[, error]` points (weights 1/error^2, or equal weights and the scatter's variance without errors; `#` comment lines, a header line skipped), its value and standard error at the run's variable; an expression model's `error_value` is 0. `error` is the name of an error model, kept in the record and the store for the reduction to apply, not evaluated here. The CSV is read by the run from `RunServices::plan_dir` (`<lab>/plans`, set by `LabSession`) and handed to `fit_results` as `ModelFiles`; one not read is a fit error and no modifier is recorded. `to_json` writes `baseline_modifiers` only when there are any, so only the 7.1 golden changed. The store: the detector's `modifier_value`/`modifier_error` and `analysis_meta.baseline_modifiers` JSON. Added: `PlanV2Parse.BaselineModifierExpressionsAreChecked`, `FitResults.BaselineModifierFromAModelFile`.
 
 ---
 

@@ -1,12 +1,17 @@
 #include "pychron/experiment/measurement/results.hpp"
 
 #include <algorithm>
+#include <array>
+#include <functional>
+#include <charconv>
 #include <cmath>
 #include <map>
+#include <sstream>
 #include <set>
 #include <tuple>
 #include <utility>
 
+#include "pychron/experiment/conditionals/evaluator.hpp"
 #include "pychron/experiment/record/names.hpp"
 
 namespace pychron::experiment::measurement {
@@ -140,6 +145,96 @@ std::optional<record::BaselineChoice> choose(const Signal& sig, const std::vecto
   return c;
 }
 
+// A modifier's expressions: intercept names ("Ar40", "Ar40@H1") for its
+// variable, `x` for its model.
+class ValuesContext final : public MetricContext {
+ public:
+  explicit ValuesContext(std::function<std::optional<double>(const std::string&)> value) : value_(std::move(value)) {}
+  std::optional<std::vector<double>> series(const MetricRef& m) const override {
+    if (auto v = scalar(m)) return std::vector<double>{*v};
+    return std::nullopt;
+  }
+  std::optional<double> scalar(const MetricRef& m) const override {
+    if (m.kind != MetricRef::Kind::Isotope) return std::nullopt;
+    return value_(qualified_a(m));
+  }
+  std::optional<double> elapsed() const override { return std::nullopt; }
+
+ private:
+  std::function<std::optional<double>(const std::string&)> value_;
+};
+
+Result<double> evaluate_text(const std::string& text, const ValuesContext& ctx) {
+  auto expr = parse_expression(text);
+  if (!expr) return fail(expr.error());
+  return evaluate(**expr, ctx, Variables{});
+}
+
+// A model CSV: lines "x, baseline" or "x, baseline, error"; '#' starts a
+// comment line, and a first line that is not numbers is a header.
+Result<std::vector<std::array<double, 3>>> read_model(const std::string& text) {
+  std::vector<std::array<double, 3>> out;
+  std::istringstream in(text);
+  std::string line;
+  int n = 0;
+  while (std::getline(in, line)) {
+    ++n;
+    const auto first = line.find_first_not_of(" \t\r");
+    if (first == std::string::npos || line[first] == '#') continue;
+    std::vector<double> cells;
+    bool numbers = true;
+    std::size_t at = 0;
+    while (at <= line.size()) {
+      const auto comma = line.find(',', at);
+      std::string cell = line.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+      const auto b = cell.find_first_not_of(" \t\r"), e = cell.find_last_not_of(" \t\r");
+      cell = b == std::string::npos ? std::string() : cell.substr(b, e - b + 1);
+      double v = 0;
+      const auto [p, ec] = std::from_chars(cell.data(), cell.data() + cell.size(), v);
+      if (ec != std::errc() || p != cell.data() + cell.size()) numbers = false;
+      cells.push_back(v);
+      if (comma == std::string::npos) break;
+      at = comma + 1;
+    }
+    if (!numbers) {
+      if (out.empty()) continue;  // the header
+      return fail(ErrorKind::Config, "line " + std::to_string(n) + ": not numbers");
+    }
+    if (cells.size() != 2 && cells.size() != 3)
+      return fail(ErrorKind::Config, "line " + std::to_string(n) + ": expected x, baseline[, error]");
+    out.push_back({cells[0], cells[1], cells.size() == 3 ? cells[2] : 0.0});
+  }
+  if (out.size() < 2) return fail(ErrorKind::Config, "fewer than two points");
+  return out;
+}
+
+// The weighted least-squares line through the model's points (weights
+// 1/error^2; without errors, equal weights and the scatter's variance) at
+// `x0`: value and standard error.
+Result<std::pair<double, double>> model_at(const std::vector<std::array<double, 3>>& points, double x0) {
+  const bool weighted = std::all_of(points.begin(), points.end(), [](const auto& p) { return p[2] > 0; });
+  double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const auto& [x, y, e] : points) {
+    const double w = weighted ? 1.0 / (e * e) : 1.0;
+    sw += w;
+    sx += w * x;
+    sy += w * y;
+    sxx += w * x * x;
+    sxy += w * x * y;
+  }
+  const double d = sw * sxx - sx * sx;
+  if (!(std::abs(d) > 0)) return fail(ErrorKind::Config, "the model's points do not fix a line");
+  const double a = (sxx * sy - sx * sxy) / d, b = (sw * sxy - sx * sy) / d;
+  double scale = 1;
+  if (!weighted) {
+    double rss = 0;
+    for (const auto& [x, y, e] : points) rss += (y - a - b * x) * (y - a - b * x);
+    scale = points.size() > 2 ? rss / static_cast<double>(points.size() - 2) : 0.0;
+  }
+  const double var = scale * (sxx - 2 * x0 * sx + x0 * x0 * sw) / d;
+  return std::make_pair(a + b * x0, std::sqrt(std::max(var, 0.0)));
+}
+
 }  // namespace
 
 record::Data to_record_data(const collect::RunData& data, const plan::MeasurementPlan& plan) {
@@ -175,7 +270,7 @@ record::Data to_record_data(const collect::RunData& data, const plan::Measuremen
 }
 
 FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan& plan,
-                      std::string_view spectrometer_reference) {
+                      std::string_view spectrometer_reference, const ModelFiles& model_files) {
   FitOutput out;
   const double t0 = data.timing.time_zero.value_or(0.0);
   const auto ordered = record_series(data);
@@ -289,6 +384,63 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
   }
   for (const auto& b : baselines)
     if (!out.results.baselines.contains(b.rec.detector)) out.results.baselines[b.rec.detector] = b.rec.result;
+
+  // Baseline modifiers (spec 3.5): evaluated and recorded; the baseline
+  // itself is left as fitted (the reduction applies them).
+  const ValuesContext intercepts([&](const std::string& name) -> std::optional<double> {
+    const auto& ints = out.results.intercepts;
+    if (name.find('@') != std::string::npos) {
+      const auto it = ints.find(name);
+      return it == ints.end() ? std::nullopt : std::optional(it->second.intercept.value);
+    }
+    const auto it = std::find_if(ints.begin(), ints.end(), [&](const auto& e) { return e.first.starts_with(name + "@"); });
+    return it == ints.end() ? std::nullopt : std::optional(it->second.intercept.value);
+  });
+  for (const auto& [det, mod] : plan.baseline_modifiers) {
+    const auto failed = [&, &d = det](const std::string& why) {
+      std::string what = "baseline modifier " + d;
+      what += ": ";
+      what += why;
+      out.errors.push_back(std::move(what));
+    };
+    auto x = evaluate_text(mod.variable, intercepts);
+    if (!x) {
+      failed("variable '" + mod.variable + "': " + x.error().what);
+      continue;
+    }
+    record::BaselineModifierRec rec;
+    rec.variable = mod.variable;
+    rec.model = mod.model;
+    rec.error = mod.error;
+    if (plan::is_model_file(mod.model)) {
+      const auto file = model_files.find(mod.model);
+      if (file == model_files.end()) {
+        failed("model file '" + mod.model + "' not read");
+        continue;
+      }
+      auto points = read_model(file->second);
+      auto at = points ? model_at(*points, *x) : Result<std::pair<double, double>>(fail(points.error()));
+      if (!at) {
+        failed(mod.model + ": " + at.error().what);
+        continue;
+      }
+      rec.value = at->first;
+      rec.error_value = at->second;
+    } else {
+      const double x0 = *x;
+      const ValuesContext in_x([x0](const std::string& name) -> std::optional<double> {
+        if (name == "x") return x0;
+        return std::nullopt;
+      });
+      auto v = evaluate_text(mod.model, in_x);
+      if (!v) {
+        failed("model '" + mod.model + "': " + v.error().what);
+        continue;
+      }
+      rec.value = *v;
+    }
+    out.results.baseline_modifiers[det] = std::move(rec);
+  }
   return out;
 }
 

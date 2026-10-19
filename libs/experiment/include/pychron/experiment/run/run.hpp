@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -95,6 +96,8 @@ struct RunServices {
   pychron::Duration critical_window = measurement::kCriticalWindow;
 
   const plan::PlanLibrary* plans = nullptr;
+  // Where a plan's files are (a baseline modifier's model CSV, spec 3.5).
+  std::filesystem::path plan_dir;
   const ConditionalLibrary* conditionals = nullptr;
 
   persist::AliquotAllocator* aliquots = nullptr;

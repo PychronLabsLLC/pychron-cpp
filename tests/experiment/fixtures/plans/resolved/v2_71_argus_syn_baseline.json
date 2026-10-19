@@ -1,4 +1,11 @@
 {
+  "baseline_modifiers": {
+    "CDD": {
+      "error": "counting_statistics",
+      "model": "baseline_model.csv",
+      "variable": "Ar40+Ar39"
+    }
+  },
   "conditionals": {
     "include": [],
     "truncations": []

@@ -1738,6 +1738,67 @@ TEST(FitResults, BaselineRuleBracketingAverage) {
   EXPECT_DOUBLE_EQ(out.results.baselines.at("H1").value, 2.75);
 }
 
+// ---- baseline modifiers (spec 3.5, plan Task 21) ---------------------------------
+
+std::string modifier_plan(std::string_view model) {
+  return std::string(R"toml(
+[plan]
+name = "mod"
+instrument_family = "thermo_argus"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX" }
+counts = 3
+
+[baseline.modifier.CDD]
+variable = "Ar40+Ar39"
+model = ")toml") + std::string(model) + R"toml("
+error = "counting_statistics"
+)toml";
+}
+
+collect::RunData modifier_data() {
+  collect::RunData d;
+  d.series[skey("Ar40", "H1", collect::kSignal)] = collect::Series{{1, 2, 3}, {1000, 1000, 1000}, {}, {}};
+  d.series[skey("Ar39", "AX", collect::kSignal)] = collect::Series{{1, 2, 3}, {100, 100, 100}, {}, {}};
+  d.series[skey("", "CDD", collect::kBaseline, 1, 0)] = collect::Series{{5, 6}, {0.5, 0.5}, {}, {}};
+  return d;
+}
+
+TEST(FitResults, BaselineModifierEvaluated) {
+  const auto out = fit_results(modifier_data(), plan_from(modifier_plan("0.01*x")));
+  ASSERT_TRUE(out.errors.empty()) << out.errors.front();
+  const auto& m = out.results.baseline_modifiers.at("CDD");
+  EXPECT_EQ(m.variable, "Ar40+Ar39");
+  EXPECT_EQ(m.model, "0.01*x");
+  EXPECT_EQ(m.error, "counting_statistics");
+  EXPECT_NEAR(m.value, 0.01 * 1100, 1e-9);
+  EXPECT_EQ(m.error_value, 0);
+  EXPECT_DOUBLE_EQ(out.results.baselines.at("CDD").value, 0.5);  // applied at reduction, not here
+}
+
+// A model file: the weighted least-squares line through its points.
+TEST(FitResults, BaselineModifierFromAModelFile) {
+  const ModelFiles files{{"model.csv", "# variable, baseline, error\nx, baseline, error\n0, 1, 0.1\n1000, 2, 0.1\n2000, 3, 0.1\n"}};
+  const auto out = fit_results(modifier_data(), plan_from(modifier_plan("model.csv")), {}, files);
+  ASSERT_TRUE(out.errors.empty()) << out.errors.front();
+  const auto& m = out.results.baseline_modifiers.at("CDD");
+  EXPECT_NEAR(m.value, 1 + 1100.0 / 1000, 1e-9);
+  EXPECT_GT(m.error_value, 0);
+  EXPECT_LT(m.error_value, 0.1);
+  // Not read: said, and nothing recorded.
+  const auto missing = fit_results(modifier_data(), plan_from(modifier_plan("model.csv")));
+  ASSERT_EQ(missing.errors.size(), 1u);
+  EXPECT_NE(missing.errors[0].find("model file 'model.csv' not read"), std::string::npos) << missing.errors[0];
+  EXPECT_TRUE(missing.results.baseline_modifiers.empty());
+}
+
 TEST_F(EngineTest, IsotopeOnTwoDetectorsGetsDetectorQualifiedIntercepts) {
   collect::RunData d;
   d.series[skey("Ar36", "CDD", collect::kSignal)] = collect::Series{{1, 2, 3}, {1, 2, 3}, {}, {}};

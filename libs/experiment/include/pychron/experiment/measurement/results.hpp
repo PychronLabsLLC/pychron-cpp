@@ -3,6 +3,7 @@
 // RunData -> AnalysisRecord pieces (experiment spec 8.2, 8.3). The fits are
 // the same pure reduction::fit used live in the UI and by conditionals.
 
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,9 +38,14 @@ struct FitOutput {
 // Results::baselines by detector: the choice of the detector's first signal
 // (by label), or its first baseline position when it has no signal.
 // `spectrometer_reference` positions a plan that names no reference (as the
-// engine was given it).
+// engine was given it). Baseline modifiers (spec 3.5): each detector's
+// variable evaluated over the intercepts, its model at that value (an
+// expression in x, or the weighted least-squares line through a CSV's
+// (x, baseline[, error]) points, its text in `model_files` by the plan's
+// name), in Results::baseline_modifiers; the baselines are not changed.
+using ModelFiles = std::map<std::string, std::string>;
 FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan& plan,
-                      std::string_view spectrometer_reference = {});
+                      std::string_view spectrometer_reference = {}, const ModelFiles& model_files = {});
 
 // Record provenance of the conditionals that applied, tripped and failed.
 record::InstalledConditional to_record(const Conditional& c);

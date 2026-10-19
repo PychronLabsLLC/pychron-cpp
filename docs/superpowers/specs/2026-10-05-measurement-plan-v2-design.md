@@ -153,7 +153,13 @@ model = "baseline_model.csv"    # WLS of baseline vs variable, or an expression 
 error = "counting_statistics"   # optional
 ```
 
-applied at reduction, stored in the record **[legacy: `baseline_modifiers`]**.
+applied at reduction, stored in the record **[legacy: `baseline_modifiers`]**. As built (Task 21):
+variable reads intercept names only (`Ar40`: label's first detector;
+`Ar40@H1`), model `x` only, checked at load. CSV model: weighted
+least-squares line through `x, baseline[, error]` points (1/error²; equal
+weights and scatter's variance without errors), value and standard error at
+run's variable; CSV read from plan library dir by run. Expression model:
+value, error 0. `error` is an error model's name, kept for reduction.
 
 ### 3.6 Spectrometer config additions **[decision]**
 

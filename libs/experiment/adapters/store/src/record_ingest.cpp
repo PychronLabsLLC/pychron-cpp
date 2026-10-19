@@ -265,6 +265,10 @@ Result<void> fill_fits(const record::Results& res, const record::Data& data, ps:
     row.error_type = error_type_of(r.fit);
     row.filter_outliers_json = outliers_json(r.fit.outliers);
     row.extra_json = baseline_extra(res, det);
+    if (const auto m = res.baseline_modifiers.find(det); m != res.baseline_modifiers.end()) {
+      row.modifier_value = finite(m->second.value);
+      row.modifier_error = finite(m->second.error_value);
+    }
     a.roots.baselines_rows.push_back(std::move(row));
   }
   for (const auto& [det, v] : res.icfactors) {
@@ -337,6 +341,16 @@ void fill_meta(const record::AnalysisRecord& rec, ps::AnalysisIngest& a) {
     set(meta.tripped_conditional_json, dump(arr));
   }
   if (!rec.results.whiff.empty()) set(meta.whiff_result_json, dump(json(rec.results.whiff)));
+  if (!rec.results.baseline_modifiers.empty()) {
+    json mods = json::object();
+    for (const auto& [det, m] : rec.results.baseline_modifiers)
+      mods[det] = {{"variable", m.variable},
+                   {"model", m.model},
+                   {"error", m.error},
+                   {"value", finite_json(m.value)},
+                   {"error_value", finite_json(m.error_value)}};
+    set(meta.baseline_modifiers_json, dump(mods));
+  }
 
   const auto& act = rec.extraction.actuals;
   if (!act.grain_polygons.empty()) {
