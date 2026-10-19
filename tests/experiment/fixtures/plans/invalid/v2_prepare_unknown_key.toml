@@ -1,0 +1,20 @@
+# expect: gas 'He': prepare: unknown key 'temp'
+[plan]
+name = "v2_prepare_unknown_key"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "He"
+prepare = { script = "cryo:release", temp = 35 }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 10

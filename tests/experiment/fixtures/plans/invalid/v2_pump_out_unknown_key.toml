@@ -1,0 +1,20 @@
+# expect: gas 'He': pump_out: unknown key 'valves'
+[plan]
+name = "v2_pump_out_unknown_key"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "He"
+pump_out = { valves = "V30", time_s = 120 }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 10

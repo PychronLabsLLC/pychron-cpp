@@ -178,13 +178,21 @@ json segment_json(const Segment& s) {
 json gas_json(const Gas& g) {
   json segments = json::array();
   for (const auto& s : g.segments) segments.push_back(segment_json(s));
-  return json{{"name", g.name},
-              {"equilibration", equilibration_json(g.equilibration)},
-              {"source_dark_phase", g.source_dark_phase},
-              {"time_zero", opt(g.time_zero, time_zero_json)},
-              {"fits", opt(g.fits, fits_json)},
-              {"segments", std::move(segments)},
-              {"implicit", g.implicit}};
+  json out{{"name", g.name},
+           {"equilibration", equilibration_json(g.equilibration)},
+           {"source_dark_phase", g.source_dark_phase},
+           {"time_zero", opt(g.time_zero, time_zero_json)},
+           {"fits", opt(g.fits, fits_json)},
+           {"segments", std::move(segments)},
+           {"implicit", g.implicit}};
+  // Only when there: a gas without keeps the golden it had (spec 11).
+  if (g.prepare) {
+    json vars = json::object();
+    for (const auto& [k, v] : g.prepare->variables) std::visit([&, &key = k](const auto& x) { vars[key] = x; }, v);
+    out["prepare"] = {{"script", g.prepare->script}, {"variables", std::move(vars)}};
+  }
+  if (g.pump_out) out["pump_out"] = {{"valve", g.pump_out->valve}, {"time_s", g.pump_out->time_s}};
+  return out;
 }
 
 }  // namespace

@@ -1,0 +1,51 @@
+# Staged gas release (spec 11 of docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md):
+# the sample's noble gases frozen on a cryotrap, released one species at a
+# time by warming it, each measured as a gas of its own.
+
+[plan]
+name = "v2_staged_cryo_release"
+instrument_family = "thermo_helix_sft"
+analysis_types = ["unknown"]
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+close_inlet = true
+
+[[gas]]
+name = "He"
+prepare = { script = "cryo:release", variables = { cryo_temp = 35, hold_s = 300 } }
+pump_out = { valve = "@valves.ion_pump", time_s = 120 }
+inlet = "@valves.he_inlet"
+time_zero = "on_inlet_close"
+[[gas.segment]]
+kind = "signal"
+[[gas.segment.positions]]
+collect = { He4 = "Faraday", He3 = "SEM" }
+counts = 100
+[[gas.segment]]
+kind = "baseline"
+when = "after_main"
+[[gas.segment.positions]]
+collect = { He4 = "Faraday", He3 = "SEM" }
+at = { mass = 3.5, detector = "SEM" }
+counts = 20
+
+[[gas]]
+name = "Ne"
+prepare = { script = "cryo:release", variables = { cryo_temp = 75, hold_s = 300 } }
+inlet = "@valves.ne_inlet"
+[[gas.segment]]
+kind = "signal"
+cycles = 5
+[[gas.segment.positions]]
+collect = { Ne20 = "SEM" }
+counts = 5
+[[gas.segment.positions]]
+collect = { Ne22 = "SEM" }
+counts = 5
+
+[parameters]
+expose = [{ path = "gas[1].prepare.variables.cryo_temp", label = "Ne release temperature" }]

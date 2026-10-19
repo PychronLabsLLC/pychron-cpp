@@ -73,10 +73,17 @@ class FakeSpectrometer : public ISpectrometerCatalog {
   bool has_source_output() const override { return false; }
 };
 
+// The lab's scripts: a gas's prepare names "cryo:release" (v2_prepare_unknown_script.toml).
+class FakeScripts final : public IScriptResolver {
+ public:
+  bool has_script(std::string_view name) const override { return name == "cryo:release"; }
+};
+
 const FakeExtractionLine kLine;
 const FakeSpectrometer kSpec;
+const FakeScripts kScripts;
 // An air analysis has no extraction here (v2_during_extraction_no_extraction.toml).
-const PlanResolvers kResolvers{&kLine, &kSpec, [](std::string_view type) { return type != "air"; }};
+const PlanResolvers kResolvers{&kLine, &kSpec, [](std::string_view type) { return type != "air"; }, &kScripts};
 
 PlanTemplate fixture_template(const std::string& name) {
   auto t = parse_plan_template(read_file(kFixtures / "valid" / name), name);

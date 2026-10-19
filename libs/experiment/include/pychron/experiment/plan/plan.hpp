@@ -7,6 +7,7 @@
 // degenerate case of one position and one cycle.
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -222,6 +223,25 @@ struct Segment {
   friend bool operator==(const Segment&, const Segment&) = default;
 };
 
+// What a gas's prepare script is handed (spec 11.2): a TOML value.
+using PrepareValue = std::variant<bool, std::int64_t, double, std::string>;
+
+// A gas's prepare (spec 11.2): an extraction script run before its inlet,
+// with variables over the run's own.
+struct Prepare {
+  std::string script;
+  std::map<std::string, PrepareValue> variables;
+  friend bool operator==(const Prepare&, const Prepare&) = default;
+};
+
+// A gas's pump-out (spec 11.3): after its last segment, `valve` open for
+// `time_s`, then closed.
+struct PumpOut {
+  std::string valve;
+  double time_s = 0;
+  friend bool operator==(const PumpOut&, const PumpOut&) = default;
+};
+
 // A gas (spec 3.4). `implicit`: built from a plan without `[[gas]]`.
 struct Gas {
   std::string name;
@@ -231,6 +251,8 @@ struct Gas {
   std::optional<Fits> fits;
   std::vector<Segment> segments;
   bool implicit = false;
+  std::optional<Prepare> prepare;
+  std::optional<PumpOut> pump_out;
   friend bool operator==(const Gas&, const Gas&) = default;
 };
 

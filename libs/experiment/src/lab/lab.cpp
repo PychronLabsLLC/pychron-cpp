@@ -121,7 +121,9 @@ Lab load_lab(const LabPaths& paths) {
   if (lab.spectrometer)
     lab.catalog = std::make_unique<measurement::SpectrometerCatalog>(
         lab.spectrometer->config, lab.spectrometer->weights, measurement::table_names(*lab.spectrometer));
+  lab.scripts = std::make_unique<LabScripts>(dir / "scripts");
   plan::PlanResolvers resolvers{lab.aliases.get(), lab.catalog.get()};
+  resolvers.scripts = lab.scripts.get();  // a gas's prepare script (spec 11.2)
   // spec 3.7: a during_extraction segment needs a type that extracts.
   resolvers.has_extraction = [](std::string_view type) {
     const auto t = parse_analysis_type(type);
@@ -143,7 +145,6 @@ Lab load_lab(const LabPaths& paths) {
   lab.conditionals = std::make_unique<ConditionalLibrary>(*lab.condition_source);
   lab.condition_files = std::make_unique<ConditionalFiles>(dir / "conditionals");
   lab.condition_names = std::make_unique<LabConditionals>(*lab.condition_source);
-  lab.scripts = std::make_unique<LabScripts>(dir / "scripts");
   if (fs::exists(dir / "peak_center.toml", ec)) {
     auto pc = jobs::parse_peak_center_configs(read_text(dir / "peak_center.toml"), (dir / "peak_center.toml").string());
     if (pc) lab.peak_centers = std::move(*pc);

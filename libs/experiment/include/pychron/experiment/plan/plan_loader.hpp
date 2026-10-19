@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "pychron/core/error.hpp"
+#include "pychron/experiment/model/queue_validation.hpp"
 #include "pychron/experiment/model/types.hpp"
 #include "pychron/experiment/plan/plan.hpp"
 
@@ -69,6 +70,8 @@ struct PlanResolvers {
   // Whether a run of this analysis type has an extraction (a
   // during_extraction segment needs one). Null: every type has one.
   std::function<bool(std::string_view analysis_type)> has_extraction = nullptr;
+  // Whether a gas's prepare script exists (spec 11.2). Null: not checked.
+  const IScriptResolver* scripts = nullptr;
 };
 
 struct PlanTemplate {

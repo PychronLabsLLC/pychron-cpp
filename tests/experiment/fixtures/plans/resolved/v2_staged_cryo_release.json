@@ -1,0 +1,263 @@
+{
+  "conditionals": {
+    "include": [],
+    "truncations": []
+  },
+  "detectors": {
+    "exclude": [],
+    "reference": ""
+  },
+  "expose": [
+    {
+      "label": "Ne release temperature",
+      "path": "gas[1].prepare.variables.cryo_temp"
+    }
+  ],
+  "fits": {
+    "baseline": {
+      "default": "average"
+    },
+    "error": "sem",
+    "outliers": {
+      "enabled": false,
+      "iterations": 1,
+      "std_devs": 2.0
+    },
+    "signal": {
+      "default": "linear"
+    }
+  },
+  "gases": [
+    {
+      "equilibration": {
+        "close_inlet": true,
+        "inlet": "V20",
+        "inlet_delay_s": 3.0,
+        "outlet": "V13",
+        "time_s": 20.0
+      },
+      "fits": {
+        "baseline": {
+          "default": "average"
+        },
+        "error": "sem",
+        "outliers": {
+          "enabled": false,
+          "iterations": 1,
+          "std_devs": 2.0
+        },
+        "signal": {
+          "default": "linear"
+        }
+      },
+      "implicit": false,
+      "name": "He",
+      "prepare": {
+        "script": "cryo:release",
+        "variables": {
+          "cryo_temp": 35,
+          "hold_s": 300
+        }
+      },
+      "pump_out": {
+        "time_s": 120.0,
+        "valve": "V30"
+      },
+      "segments": [
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "signal",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "He3",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "Faraday",
+                  "label": "He4",
+                  "protect": false
+                }
+              ],
+              "counts": 100,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_inlet"
+        },
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 1,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "baseline",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": {
+                "detector": "SEM",
+                "mass": 3.5
+              },
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "He3",
+                  "protect": false
+                },
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "Faraday",
+                  "label": "He4",
+                  "protect": false
+                }
+              ],
+              "counts": 20,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_main"
+        }
+      ],
+      "source_dark_phase": false,
+      "time_zero": {
+        "kind": "on_inlet_close",
+        "offset_s": 0.0
+      }
+    },
+    {
+      "equilibration": {
+        "close_inlet": true,
+        "inlet": "V21",
+        "inlet_delay_s": 3.0,
+        "outlet": "V13",
+        "time_s": 20.0
+      },
+      "fits": {
+        "baseline": {
+          "default": "average"
+        },
+        "error": "sem",
+        "outliers": {
+          "enabled": false,
+          "iterations": 1,
+          "std_devs": 2.0
+        },
+        "signal": {
+          "default": "linear"
+        }
+      },
+      "implicit": false,
+      "name": "Ne",
+      "prepare": {
+        "script": "cryo:release",
+        "variables": {
+          "cryo_temp": 75,
+          "hold_s": 300
+        }
+      },
+      "segments": [
+        {
+          "blank_beam": null,
+          "checks": [],
+          "cycles": 5,
+          "delay_s": null,
+          "fits": {},
+          "integration_s": 1.0,
+          "kind": "signal",
+          "park": null,
+          "peak_center": null,
+          "positions": [
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ne20",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            },
+            {
+              "at": null,
+              "collect": [
+                {
+                  "active": true,
+                  "deflection": null,
+                  "detector": "SEM",
+                  "label": "Ne22",
+                  "protect": false
+                }
+              ],
+              "counts": 5,
+              "integration_s": null,
+              "kind": "signal",
+              "optics": "",
+              "settle_s": 0.0,
+              "table": ""
+            }
+          ],
+          "set": null,
+          "table": "",
+          "time_zero": null,
+          "truncations": [],
+          "when": "after_inlet"
+        }
+      ],
+      "source_dark_phase": false,
+      "time_zero": null
+    }
+  ],
+  "hook": null,
+  "info": {
+    "analysis_types": [
+      "unknown"
+    ],
+    "description": "",
+    "instrument_family": "thermo_helix_sft",
+    "name": "v2_staged_cryo_release"
+  }
+}

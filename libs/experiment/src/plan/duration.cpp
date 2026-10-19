@@ -1,6 +1,7 @@
 #include "pychron/experiment/plan/duration.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -102,6 +103,14 @@ void run_gas(const Gas& gas, const DurationOptions& options, Tally& tally) {
     for (const auto& s : gas.segments)
       if (s.when == when && !in_window(s)) run_segment(s, options, tally);
   };
+  // A prepare script's length cannot be known: its `hold_s` variable when it
+  // has one (spec 11.2), else nothing.
+  if (gas.prepare) {
+    if (const auto it = gas.prepare->variables.find("hold_s"); it != gas.prepare->variables.end()) {
+      if (const auto* d = std::get_if<double>(&it->second)) tally.wait(*d);
+      else if (const auto* i = std::get_if<std::int64_t>(&it->second)) tally.wait(static_cast<double>(*i));
+    }
+  }
   phase(When::BeforeInlet);
 
   const auto& eq = gas.equilibration;
@@ -112,6 +121,7 @@ void run_gas(const Gas& gas, const DurationOptions& options, Tally& tally) {
 
   phase(When::AfterInlet);
   phase(When::AfterMain);
+  if (gas.pump_out) tally.wait(gas.pump_out->time_s);
 }
 
 // after_run segments run once every gas is measured, in gas order.

@@ -1,0 +1,28 @@
+# expect: gas 'Ne': unknown script 'cryo:nope'
+[plan]
+name = "v2_prepare_unknown_script"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "He"
+prepare = { script = "cryo:release" }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 10
+
+[[gas]]
+name = "Ne"
+prepare = { script = "cryo:nope" }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ne20 = "H1" }
+counts = 10

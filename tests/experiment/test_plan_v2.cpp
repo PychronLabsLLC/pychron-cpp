@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "pychron/experiment/plan/plan.hpp"
+#include "pychron/experiment/plan/duration.hpp"
 #include "pychron/experiment/plan/plan_json.hpp"
 #include "pychron/experiment/plan/plan_loader.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
@@ -493,7 +494,8 @@ class Line final : public plan::IAliasResolver {
     static const std::map<std::string, pychron::experiment::ParamValue, std::less<>> aliases{
         {"valves.inlet", std::string("V12")},     {"valves.outlet", std::string("V13")},
         {"valves.he_inlet", std::string("V20")},  {"valves.ne_inlet", std::string("V21")},
-        {"valves.ar_inlet", std::string("V22")},  {"extraction.eqtime", std::int64_t{20}}};
+        {"valves.ar_inlet", std::string("V22")},  {"valves.ion_pump", std::string("V30")},
+        {"extraction.eqtime", std::int64_t{20}}};
     if (const auto it = aliases.find(key); it != aliases.end()) return it->second;
     return std::nullopt;
   }
@@ -1427,7 +1429,7 @@ TEST(PlanV2Gate, AV1FileNeverTripsIt) {
   std::size_t n = 0;
   for (const auto& entry : fs::directory_iterator(kPlanFixtures / "valid")) {
     const auto name = entry.path().filename().string();
-    if (entry.path().extension() != ".toml" || name.starts_with("v2_7")) continue;
+    if (entry.path().extension() != ".toml" || name.starts_with("v2_7") || name.starts_with("v2_staged")) continue;
     ++n;
     SCOPED_TRACE(name);
     auto t = plan::parse_plan_template(read_text(entry.path()), name);
@@ -1741,4 +1743,57 @@ at = { mass = 34.2, detector = "H1" }
 counts = 1
 )", &kCatalog, "");
   EXPECT_EQ(p.gases.size(), 2u);
+}
+
+// ---- staged gas release: the plan (plan Task 24) ----------------------------------
+
+TEST(StagedPlan, PrepareAndPumpOutParse) {
+  const auto p = load_worked("v2_staged_cryo_release.toml");
+  ASSERT_EQ(p.gases.size(), 2u);
+  const auto& he = p.gases[0];
+  const auto& ne = p.gases[1];
+  ASSERT_TRUE(he.prepare && ne.prepare);
+  EXPECT_EQ(he.prepare->script, "cryo:release");
+  EXPECT_EQ(he.prepare->variables.at("cryo_temp"), plan::PrepareValue{std::int64_t{35}});
+  EXPECT_EQ(he.prepare->variables.at("hold_s"), plan::PrepareValue{std::int64_t{300}});
+  EXPECT_EQ(ne.prepare->variables.at("cryo_temp"), plan::PrepareValue{std::int64_t{75}});
+  ASSERT_TRUE(he.pump_out);
+  EXPECT_EQ(he.pump_out->valve, "V30");  // through the alias, as an inlet is
+  EXPECT_EQ(he.pump_out->time_s, 120);
+  EXPECT_FALSE(ne.pump_out);
+}
+
+// Without prepare or pump_out a plan is what it was.
+TEST(StagedPlan, NoPrepareNoChange) {
+  const auto p = load_worked("v2_76_helix_sft_he_ne_ar.toml");
+  for (const auto& g : p.gases) {
+    EXPECT_FALSE(g.prepare);
+    EXPECT_FALSE(g.pump_out);
+  }
+  const auto golden = read_text(kPlanFixtures / "resolved" / "v2_76_helix_sft_he_ne_ar.json");
+  EXPECT_EQ(plan::to_json(p), golden);
+}
+
+TEST(PlanV2Gate, PrepareRefusedUntilTask25) {
+  const std::string name = "v2_staged_cryo_release.toml";
+  auto t = plan::parse_plan_template(read_text(kPlanFixtures / "valid" / name), name);
+  ASSERT_TRUE(t.has_value()) << t.error().what;
+  auto r = plan::load_plan(*t, {}, kWorkedResolvers);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("gas[0].prepare: prepare: not run by this build yet"), std::string::npos)
+      << r.error().what;
+  EXPECT_NE(r.error().what.find("gas[0].pump_out: pump_out: not run by this build yet"), std::string::npos)
+      << r.error().what;
+}
+
+// Duration: a pump-out's time, and a prepare's hold_s.
+TEST(StagedPlan, DurationCountsPumpOutAndHold) {
+  const auto p = load_worked("v2_staged_cryo_release.toml");
+  auto without = p;
+  for (auto& g : without.gases) {
+    g.prepare.reset();
+    g.pump_out.reset();
+  }
+  const auto d = plan::estimate_duration(p, {}) - plan::estimate_duration(without, {});
+  EXPECT_DOUBLE_EQ(std::chrono::duration<double>(d).count(), 300 + 300 + 120);
 }

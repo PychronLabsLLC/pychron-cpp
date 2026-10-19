@@ -796,8 +796,64 @@ void read_segments(const Section& s, std::string_view key, const DetectorsSpec& 
 
 // A [[gas]]. Equilibration values it does not give are the top-level
 // [equilibration] table's; its `fits` overrides the plan's [fits] key by key.
+// A gas's `prepare` and `pump_out` (spec 11.2, 11.3); errors name the gas.
+void read_staged(const Section& s, Gas& out) {
+  auto& p = s.problems();
+  const std::string who = "gas '" + out.name + "': ";
+  const auto unknown = [&](const Section& t, std::initializer_list<std::string_view> allowed, const char* what) {
+    for (const auto& [k, v] : *t.table()) {
+      (void)v;
+      if (std::find(allowed.begin(), allowed.end(), k.str()) == allowed.end())
+        p.add(t.path(), who + what + ": unknown key '" + std::string(k.str()) + "'");
+    }
+  };
+  if (s.has("prepare")) {
+    const auto t = s.sub("prepare");
+    if (!t.table()) {
+      p.add(s.at("prepare"), who + "prepare: expected { script, variables }");
+    } else {
+      unknown(t, {"script", "variables"}, "prepare");
+      Prepare prep;
+      t.get("script", prep.script);
+      if (prep.script.empty()) p.add(t.at("script"), who + "prepare: script required");
+      if (const auto vars = t.sub("variables"); vars.table()) {
+        for (const auto& [k, v] : *vars.table()) {
+          const std::string key(k.str());
+          if (const auto b = v.value_exact<bool>()) prep.variables[key] = *b;
+          else if (const auto i = v.value_exact<std::int64_t>()) prep.variables[key] = *i;
+          else if (const auto d = v.value_exact<double>()) prep.variables[key] = *d;
+          else if (const auto str = v.value_exact<std::string>()) prep.variables[key] = *str;
+          else {
+            std::string what = who;
+            what += "prepare: variable '" + key + "' is not a boolean, number or string";
+            p.add(vars.at(key), what);
+          }
+        }
+      } else if (t.has("variables")) {
+        p.add(t.at("variables"), who + "prepare: variables: expected a table");
+      }
+      out.prepare = std::move(prep);
+    }
+  }
+  if (s.has("pump_out")) {
+    const auto t = s.sub("pump_out");
+    if (!t.table()) {
+      p.add(s.at("pump_out"), who + "pump_out: expected { valve, time_s }");
+    } else {
+      unknown(t, {"valve", "time_s"}, "pump_out");
+      PumpOut po;
+      t.get("valve", po.valve);
+      t.get("time_s", po.time_s);
+      if (po.valve.empty()) p.add(t.at("valve"), who + "pump_out: valve required");
+      t.at_least("time_s", po.time_s, 0);
+      out.pump_out = std::move(po);
+    }
+  }
+}
+
 void read_gas(const Section& s, const MeasurementPlan& plan, Gas& out) {
-  s.keys({"name", "inlet", "outlet", "equilibration", "source_dark_phase", "time_zero", "fits", "segment"});
+  s.keys({"name", "inlet", "outlet", "equilibration", "source_dark_phase", "time_zero", "fits", "segment", "prepare",
+          "pump_out"});
   s.get("name", out.name);
   if (out.name.empty()) s.problems().add(s.at("name"), "required");
   out.equilibration = plan.equilibration;
@@ -816,6 +872,7 @@ void read_gas(const Section& s, const MeasurementPlan& plan, Gas& out) {
   if (s.has("time_zero")) read_time_zero(s, out.time_zero.emplace());
   out.fits = plan.fits;
   if (s.has("fits")) read_fits(s.sub("fits"), *out.fits);
+  read_staged(s, out);
   read_segments(s, "segment", plan.detectors, out.segments);
   if (out.segments.empty() && (!s.has("segment") || s.node("segment")->is_array()))
     s.problems().add(s.at("segment"), "at least one segment required");
@@ -934,7 +991,7 @@ class V2Rules {
  public:
   // `v1`: the plan's v1 tables when it is a v1 file, else null.
   V2Rules(const MeasurementPlan& plan, const PlanResolvers& r, const V1Tables* v1, Problems& p)
-      : plan_(plan), cat_(r.spectrometer), has_extraction_(r.has_extraction), v1_(v1), p_(p) {}
+      : plan_(plan), cat_(r.spectrometer), has_extraction_(r.has_extraction), scripts_(r.scripts), v1_(v1), p_(p) {}
 
   void run() {
     for (const auto& [det, mod] : plan_.baseline_modifiers) {
@@ -946,6 +1003,10 @@ class V2Rules {
       const auto& gas = plan_.gases[g];
       for (std::size_t s = 0; s < gas.segments.size(); ++s) segment(g, s);
       time_zero(g);
+      if (gas.prepare && scripts_ != nullptr && !gas.prepare->script.empty() &&
+          !scripts_->has_script(gas.prepare->script))
+        p_.add(join(join(join("gas", g), "prepare"), "script"),
+               "gas '" + gas.name + "': unknown script '" + gas.prepare->script + "'");
       if (gas.source_dark_phase && cat_ != nullptr && !cat_->has_source_output())
         p_.add(join(join("gas", g), "source_dark_phase"), "source_dark_phase needs source output control");
     }
@@ -1170,6 +1231,7 @@ class V2Rules {
   const MeasurementPlan& plan_;
   const ISpectrometerCatalog* cat_;
   std::function<bool(std::string_view)> has_extraction_;
+  const IScriptResolver* scripts_;
   const V1Tables* v1_;
   Problems& p_;
 };
@@ -1240,6 +1302,8 @@ std::vector<std::string> unbuilt_features(const MeasurementPlan& plan) {
     const auto& gas = plan.gases[g];
     // An implicit gas is the file's top-level segments (or its v1 tables).
     const std::string at = gas.implicit ? std::string() : join("gas", g);
+    if (gas.prepare) out.push_back(join(at, "prepare") + ": prepare");      // Task 25
+    if (gas.pump_out) out.push_back(join(at, "pump_out") + ": pump_out");  // Task 25
     
     const auto seg_at = [&](std::size_t i) { return at.empty() ? join("segment", i) : join(join(at, "segment"), i); };
     for (std::size_t i = 0; i < gas.segments.size(); ++i) unbuilt_segment(gas.segments[i], seg_at(i), out);

@@ -231,4 +231,23 @@ counts = 5
   EXPECT_EQ(resolved_path(*r, "baseline.counts"), std::nullopt);
 }
 
+// A gas's prepare variable is a plan parameter (spec 11.2): a run in a queue
+// changes a release temperature without a new plan.
+TEST(PlanParameters, PrepareVariableIsExposable) {
+  std::ifstream in(std::filesystem::path(PYCHRON_PLAN_FIXTURES_DIR) / "valid" / "v2_staged_cryo_release.toml");
+  std::stringstream ss;
+  ss << in.rdbuf();
+  auto tmpl = parse_plan_template(ss.str(), "v2_staged_cryo_release.toml");
+  ASSERT_TRUE(tmpl) << tmpl.error().what;
+  auto params = plan_parameters(*tmpl);
+  ASSERT_TRUE(params) << params.error().what;
+  ASSERT_EQ(params->size(), 1u);
+  EXPECT_EQ((*params)[0].path, "gas[1].prepare.variables.cryo_temp");
+  auto effective = render_effective_plan(*tmpl, {{"gas[1].prepare.variables.cryo_temp", std::int64_t{80}}}, LoadOptions{false});
+  ASSERT_TRUE(effective) << effective.error().what;
+  // Valves and times are aliases the lab resolves; the variable is the override's.
+  EXPECT_NE(effective->find("cryo_temp = 80"), std::string::npos) << *effective;
+  EXPECT_NE(effective->find("cryo_temp = 35"), std::string::npos);  // He's, not exposed, as it was
+}
+
 }  // namespace pychron::experiment::plan
