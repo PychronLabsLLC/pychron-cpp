@@ -89,7 +89,8 @@ struct GitConfig {
 
 class GitReader {
  public:
-  // Checks that git runs and is new enough, that `repo` is a repository, that it is not a
+  // Checks that git runs and is new enough (asked of git once per process:
+  // the git on PATH does not change under it), that `repo` is a repository, that it is not a
   // shallow clone, and that `branch` names a commit; that commit is head()
   // for the life of the reader, whatever happens to the branch afterwards.
   // Each failure names the repository path and the reason.

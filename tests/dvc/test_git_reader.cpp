@@ -924,6 +924,25 @@ TEST(GitReader, OpenRejectsShallowClone) {
   expect_open_fails(config, "shallow");
 }
 
+// git's version is read once per process; every open still checks the rest.
+TEST(GitReader, OpensTwiceInOneProcess) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  auto first = GitReader::open(config_for(repo));
+  ASSERT_OK(first);
+  auto second = GitReader::open(config_for(repo));
+  ASSERT_OK(second);
+  EXPECT_EQ(first->head(), c1);
+  EXPECT_EQ(second->head(), c1);
+  GitConfig missing = config_for(repo);
+  missing.branch = "develop";
+  expect_open_fails(missing, "branch 'develop' not found");
+  EXPECT_EQ(scratch_files(repo), 0u);
+}
+
 TEST(GitReader, ReadsABareMirrorAndUpdatesIt) {
   SKIP_WITHOUT_GIT();
   GitFixture repo;

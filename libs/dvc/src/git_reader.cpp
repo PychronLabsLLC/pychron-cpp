@@ -5,7 +5,9 @@
 #include <charconv>
 #include <cstdint>
 #include <fstream>
+#include <mutex>
 #include <new>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -354,6 +356,36 @@ Result<std::vector<GitChange>> parse_changes(const Site& site, std::string_view 
 }
 
 
+// git's version, read once per process: the git on PATH does not change
+// under a running process. Only a version read is kept; after a failure
+// (git missing, a timeout) the next open asks again.
+Result<GitVersion> git_version(const std::string& where, const Layout& layout, std::chrono::milliseconds timeout) {
+  static std::mutex mutex;
+  static std::optional<GitVersion> known;
+  {
+    const std::lock_guard lock(mutex);
+    if (known) return *known;
+  }
+  // Not held across the child: two first opens may both ask, and agree.
+  ProcessSpec spec;
+  spec.argv = {"git", "--version"};
+  spec.env = environment(layout.git_dir, layout.common_dir, layout.git_dir);
+  spec.timeout = timeout;
+  const auto ran = run_process(spec);
+  if (!ran) {
+    if (ran.error().kind == ErrorKind::Timeout) return fail(ran.error());
+    return fail(ErrorKind::Io, where + ": git not found or cannot be started: " + ran.error().what);
+  }
+  const auto version = parse_git_version(ran->output);
+  if (ran->exit_code != 0 || !version) {
+    return fail(ErrorKind::Io, where + ": cannot read the git version from `git --version`: " +
+                                   std::string(trimmed(ran->output)).substr(0, 200));
+  }
+  const std::lock_guard lock(mutex);
+  known = *version;
+  return *version;
+}
+
 }  // namespace
 
 std::optional<GitVersion> parse_git_version(std::string_view text) {
@@ -399,29 +431,15 @@ Result<GitReader> GitReader::open(GitConfig config) {
   Layout layout = layout_of(config.repo);
   const Site site{config.repo, layout.git_dir, layout.common_dir, config.scratch, config.timeout};
 
-  {
-    ProcessSpec spec;
-    spec.argv = {"git", "--version"};
-    spec.env = environment(layout.git_dir, layout.common_dir, layout.git_dir);
-    spec.timeout = config.timeout;
-    const auto ran = run_process(spec);
-    if (!ran) {
-      if (ran.error().kind == ErrorKind::Timeout) return fail(ran.error());
-      return fail(ErrorKind::Io, where + ": git not found or cannot be started: " + ran.error().what);
-    }
-    const auto version = parse_git_version(ran->output);
-    if (ran->exit_code != 0 || !version) {
-      return fail(ErrorKind::Io, where + ": cannot read the git version from `git --version`: " +
-                                     std::string(trimmed(ran->output)).substr(0, 200));
-    }
-    if (*version < kMinimumGitVersion) {
-      const auto text = [](const GitVersion& v) {
-        return std::to_string(v.major_number) + "." + std::to_string(v.minor_number) + "." +
-               std::to_string(v.patch_number);
-      };
-      return fail(ErrorKind::Config, where + ": git " + text(*version) + " found; git " + text(kMinimumGitVersion) +
-                                         " or newer is required");
-    }
+  const auto version = git_version(where, layout, config.timeout);
+  if (!version) return fail(version.error());
+  if (*version < kMinimumGitVersion) {
+    const auto text = [](const GitVersion& v) {
+      return std::to_string(v.major_number) + "." + std::to_string(v.minor_number) + "." +
+             std::to_string(v.patch_number);
+    };
+    return fail(ErrorKind::Config, where + ": git " + text(*version) + " found; git " + text(kMinimumGitVersion) +
+                                       " or newer is required");
   }
 
   auto git_dir = run(site, {"rev-parse", "--git-dir"});
