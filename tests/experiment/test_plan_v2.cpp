@@ -62,6 +62,7 @@ class Catalog final : public plan::ISpectrometerCatalog {
   bool has_table(std::string_view name) const override { return name == "argon"; }
   bool positions_by_dac() const override { return true; }
   bool positions_by_hv() const override { return true; }
+  bool has_source_output() const override { return true; }
 };
 
 const Catalog kCatalog;
@@ -1077,6 +1078,7 @@ class NoRawPositioning final : public plan::ISpectrometerCatalog {
   bool has_table(std::string_view name) const override { return kCatalog.has_table(name); }
   bool positions_by_dac() const override { return false; }
   bool positions_by_hv() const override { return false; }
+  bool has_source_output() const override { return false; }
 };
 
 }  // namespace
@@ -1560,15 +1562,6 @@ at = { mass = 34.2, detector = "H1" }
 counts = 1
 [[segment]]
 [[segment.positions]]
-collect = { Ar40 = "H1" }
-counts = 1
-)"},
-      {"gas[0].source_dark_phase: source_dark_phase", R"(
-[[gas]]
-name = "a"
-source_dark_phase = true
-[[gas.segment]]
-[[gas.segment.positions]]
 collect = { Ar40 = "H1" }
 counts = 1
 )"},

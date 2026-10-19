@@ -52,6 +52,8 @@ class ISpectrometerCatalog {
   // source's HV can position a beam (`at = { hv, detector }`).
   virtual bool positions_by_dac() const = 0;
   virtual bool positions_by_hv() const = 0;
+  // The source's output can be switched off and on (source_dark_phase).
+  virtual bool has_source_output() const = 0;
   virtual std::optional<ParamValue> resolve_alias(std::string_view /*key*/) const { return std::nullopt; }
 };
 

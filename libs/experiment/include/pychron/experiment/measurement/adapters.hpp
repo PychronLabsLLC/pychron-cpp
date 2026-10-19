@@ -125,6 +125,7 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
   bool has_table(std::string_view name) const override;
   bool positions_by_dac() const override;
   bool positions_by_hv() const override;
+  bool has_source_output() const override { return false; }  // no driver controls it yet (phase 8)
 
  private:
   std::map<std::string, std::string, std::less<>> detectors_;  // name -> configured isotope

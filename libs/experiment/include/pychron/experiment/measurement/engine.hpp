@@ -439,6 +439,7 @@ class MeasurementEngine {
   std::optional<double> step_integration_;          // a set step's integration_s, for the gas
   bool time_zero_by_step_ = false;                  // a time_zero step set it
   bool blanked_ = false;                            // a blank_beam step blanked the beam
+  bool dark_ = false;                               // source_dark_phase switched the source off
   bool settle_due_ = false;                         // a restore moved a beam since the last settle
   // For the whole measurement, across segments and gases (DetectorTiming).
   std::set<std::string> large_beam_;                // detectors whose last gas reading was large

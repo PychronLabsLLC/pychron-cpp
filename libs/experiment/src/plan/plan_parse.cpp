@@ -946,6 +946,8 @@ class V2Rules {
       const auto& gas = plan_.gases[g];
       for (std::size_t s = 0; s < gas.segments.size(); ++s) segment(g, s);
       time_zero(g);
+      if (gas.source_dark_phase && cat_ != nullptr && !cat_->has_source_output())
+        p_.add(join(join("gas", g), "source_dark_phase"), "source_dark_phase needs source output control");
     }
     tables();
     during_extraction();
@@ -1238,7 +1240,7 @@ std::vector<std::string> unbuilt_features(const MeasurementPlan& plan) {
     const auto& gas = plan.gases[g];
     // An implicit gas is the file's top-level segments (or its v1 tables).
     const std::string at = gas.implicit ? std::string() : join("gas", g);
-    if (gas.source_dark_phase) out.push_back(join(at, "source_dark_phase") + ": source_dark_phase");
+    
     const auto seg_at = [&](std::size_t i) { return at.empty() ? join("segment", i) : join(join(at, "segment"), i); };
     for (std::size_t i = 0; i < gas.segments.size(); ++i) unbuilt_segment(gas.segments[i], seg_at(i), out);
     // What the engine runs of a gas until its phases are built (spec 5.1):

@@ -127,7 +127,9 @@ Steps carry one table named after the kind:
 `[[gas]]` has `name`, `inlet`, `outlet`, `equilibration` (`time_s`,
 `inlet_delay_s`, `close_inlet`), optional `source_dark_phase = true` (hold
 the source below ionisation during inlet and switch on at time zero, Thermo
-EST **[literature]**), `time_zero`, `fits` defaults, and `[[gas.segment]]`.
+EST **[literature]**; as built: off just before inlet opens, on when
+equilibration ends, which is time zero by default; on again on any exit;
+refused at load without catalog's `has_source_output`), `time_zero`, `fits` defaults, and `[[gas.segment]]`.
 Gases run in file order. A plan without `[[gas]]` has one implicit gas built
 from the top-level `[equilibration]`, `[fits]` and segments. Equilibration
 values (`inlet`, `outlet`, `time_s`, `inlet_delay_s`, `close_inlet`) a gas

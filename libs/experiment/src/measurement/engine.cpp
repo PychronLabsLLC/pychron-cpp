@@ -280,6 +280,7 @@ void MeasurementEngine::begin() {
   step_integration_.reset();
   time_zero_by_step_ = false;
   blanked_ = false;
+  dark_ = false;
   optics_.clear();
   deflected_.clear();
   settle_due_ = false;
@@ -772,6 +773,15 @@ Result<void> MeasurementEngine::equilibrate() {
   while (!stopping()) {
     const double now = now_s();
     if (!close_at && now >= open_at) {
+      // The source held dark while the gas is let in, on at time zero (spec 3.4).
+      if (gas_->source_dark_phase && !dark_) {
+        if (auto r = ctx_.spectrometer.set_source_output(false); !r) {
+          out = r;
+          break;
+        }
+        dark_ = true;
+        trace(-1, -1, "source", "off");
+      }
       if (!eq.inlet.empty()) {
         if (auto r = ctx_.valves->open(eq.inlet); !r) {
           out = r;
@@ -1325,6 +1335,11 @@ Result<void> MeasurementEngine::critical(const std::string& what, const std::fun
 Result<void> MeasurementEngine::finish_inlet(double now) {
   close_inlet_at_.reset();
   inlet_done_ = true;
+  if (dark_) {
+    if (auto r = ctx_.spectrometer.set_source_output(true); !r) return r;
+    dark_ = false;
+    trace(-1, -1, "source", "on");
+  }
   if (equilibration().close_inlet) {
     if (auto r = close_inlet(); !r) return r;
     collector_.set_inlet_close(now);
@@ -1494,6 +1509,11 @@ void MeasurementEngine::cleanup(bool abnormal) {
   }
   if (auto r = restore_deflections(nullptr, -1, -1); !r)
     publish_log(LogLevel::Error, "could not restore a deflection: " + r.error().what);
+  // A source the engine darkened is switched on again on every exit.
+  if (dark_) {
+    if (auto r = ctx_.spectrometer.set_source_output(true); r) dark_ = false;
+    else publish_log(LogLevel::Error, "could not switch the source on: " + r.error().what);
+  }
   // What a set step left standing goes back, and a beam it blanked is let
   // through again.
   for (auto it = standing_.begin(); it != standing_.end();) {

@@ -1118,6 +1118,64 @@ TEST_F(EngineTest, GasesOverlapReadyAfterLastInlet) {
   EXPECT_EQ(ready[0], std::stod(close->substr(close->find('@') + 1)));
 }
 
+constexpr std::string_view kDarkPlan = R"toml(
+[plan]
+name = "dark"
+instrument_family = "thermo_argus"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "Ar"
+source_dark_phase = true
+[[gas.segment]]
+kind = "sniff"
+when = "during_equilibration"
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 5
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+)toml";
+
+// The source is held dark while the gas is let in and switched on at time
+// zero; a stop in the equilibration switches it on too.
+TEST_F(EngineTest, GasesSourceDarkPhase) {
+  auto r = run(plan_from(kDarkPlan));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  const auto off = std::find(spec_.log.begin(), spec_.log.end(), "source_output off");
+  const auto on = std::find(spec_.log.begin(), spec_.log.end(), "source_output on");
+  ASSERT_NE(off, spec_.log.end());
+  ASSERT_NE(on, spec_.log.end());
+  EXPECT_LT(off, on);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "source_output on"), 1);
+  // Off before the inlet opens, on as it closes, which is time zero.
+  ASSERT_TRUE(r.data.timing.inlet_open && r.data.timing.inlet_close);
+  double off_t = -1, on_t = -1;
+  for (const auto& e : r.trace) {
+    if (e.what == "source" && e.detail == "off") off_t = e.t;
+    if (e.what == "source" && e.detail == "on") on_t = e.t;
+  }
+  EXPECT_LE(off_t, *r.data.timing.inlet_open);
+  EXPECT_DOUBLE_EQ(on_t, *r.data.timing.inlet_close);
+  EXPECT_DOUBLE_EQ(on_t, *r.data.timing.time_zero);
+
+  spec_.log.clear();
+  const int before = spec_.readings;
+  spec_.on_reading = [&](int n) {
+    if (n == before + 2) token_.cancel();  // in the sniff
+  };
+  auto cancelled = run(plan_from(kDarkPlan));
+  EXPECT_EQ(cancelled.outcome, MeasurementOutcome::Cancelled);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "source_output off"), 1);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "source_output on"), 1);  // by the cleanup
+}
+
 // ---- live edits (plan Task 15) -------------------------------------------------
 
 constexpr std::string_view kTwoSegmentPlan = R"toml(

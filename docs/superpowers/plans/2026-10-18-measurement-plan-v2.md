@@ -592,11 +592,13 @@ Done notes: Step 2 was observed failing at the gate (more than one gas) and as b
 - Modify: `libs/experiment/src/measurement/engine.cpp`, `libs/experiment/src/plan/plan_parse.cpp` (gate; validation: `source_dark_phase` only when the catalog reports source output control, catalog `virtual bool has_source_output() const = 0;`)
 - Test: `tests/experiment/test_measurement_engine.cpp`
 
-- [ ] **Step 1: Write failing tests:** `Gases.SourceDarkPhase` (journal: `set_source_output(false)` before inlet open, `set_source_output(true)` at time zero; on cancel during equilibration the engine's cleanup turns the source back on); invalid fixture `v2_dark_phase_unsupported.toml` (`# expect: source_dark_phase needs source output control`).
-- [ ] **Step 2: Run** → FAIL.
-- [ ] **Step 3: Implement**; safety rule in `cleanup`: a source the engine darkened is switched on again on every exit.
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): source dark phase during inlet`.
+- [x] **Step 1: Write failing tests:** `Gases.SourceDarkPhase` (journal: `set_source_output(false)` before inlet open, `set_source_output(true)` at time zero; on cancel during equilibration the engine's cleanup turns the source back on); invalid fixture `v2_dark_phase_unsupported.toml` (`# expect: source_dark_phase needs source output control`).
+- [x] **Step 2: Run** → FAIL.
+- [x] **Step 3: Implement**; safety rule in `cleanup`: a source the engine darkened is switched on again on every exit.
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat(experiment): source dark phase during inlet`.
+
+Done notes: Step 2 was observed failing at the gate and as a build failure (`has_source_output`). The source goes off just before the gas's inlet opens and on when its equilibration ends (`finish_inlet`: the inlet's close, time zero by default; spec 3.4 updated), traced `source off`/`source on`; cleanup switches on a source the engine darkened. `SpectrometerCatalog::has_source_output` answers false until Task 29 gives a driver the control, so a lab plan with `source_dark_phase` is refused at load until then; the gate entry is gone. Test is `EngineTest.GasesSourceDarkPhase` (with a stop in the sniff).
 
 ---
 

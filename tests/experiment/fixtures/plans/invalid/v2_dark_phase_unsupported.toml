@@ -1,0 +1,20 @@
+# expect: source_dark_phase needs source output control
+[plan]
+name = "v2_dark_phase_unsupported"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "Ar"
+source_dark_phase = true
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10

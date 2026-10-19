@@ -70,6 +70,7 @@ class FakeSpectrometer : public ISpectrometerCatalog {
   bool has_table(std::string_view name) const override { return name == "argon"; }
   bool positions_by_dac() const override { return true; }
   bool positions_by_hv() const override { return false; }
+  bool has_source_output() const override { return false; }
 };
 
 const FakeExtractionLine kLine;
