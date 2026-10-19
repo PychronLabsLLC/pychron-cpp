@@ -41,6 +41,11 @@ struct DataSourcePageDeps {
   std::optional<std::string> session_database;  // --db given
 };
 
+// What a window that runs on an install is given to add the page: its
+// dependencies, read each time Preferences opens (the install as the site
+// file has it then); nullopt: no page.
+using DataSourceDepsFactory = std::function<std::optional<DataSourcePageDeps>()>;
+
 class DataSourcePage : public QWidget {
   Q_OBJECT
 
@@ -66,6 +71,9 @@ class DataSourcePage : public QWidget {
   [[nodiscard]] QPushButton* test_button() const noexcept { return test_button_; }
   [[nodiscard]] QLabel* result() const noexcept { return result_; }
   [[nodiscard]] QLabel* note() const noexcept { return note_; }
+
+ protected:
+  void showEvent(QShowEvent* event) override;  // read-only again if a queue started meanwhile
 
  private:
   struct Field {

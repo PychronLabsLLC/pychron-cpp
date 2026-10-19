@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -111,6 +112,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
       plot_background_(new ColorField),
       reset_plot_colors_(new QPushButton(tr("Reset colors"))),
       problem_(new QLabel),
+      save_without_checking_(new QPushButton(tr("Save without checking"))),
       buttons_(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply |
                                     QDialogButtonBox::RestoreDefaults)) {
   setWindowTitle(tr("Preferences"));
@@ -192,6 +194,9 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
   problem_->setWordWrap(true);
   style::set_tone(problem_, style::Tone::Error);
   problem_->hide();
+  save_without_checking_->setObjectName(QStringLiteral("save-without-checking"));
+  save_without_checking_->hide();
+  connect(save_without_checking_, &QPushButton::clicked, this, [this] { commit(false); });
 
   pages_->setFixedWidth(150);
   pages_->setCurrentRow(0);
@@ -205,7 +210,10 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
   layout->setContentsMargins(kMargin, kMargin, kMargin, kMargin);
   layout->setSpacing(kGutter);
   layout->addLayout(body, 1);
-  layout->addWidget(problem_);
+  auto* problem_row = new QHBoxLayout;
+  problem_row->addWidget(problem_, 1);
+  problem_row->addWidget(save_without_checking_, 0, Qt::AlignTop);
+  layout->addLayout(problem_row);
   layout->addWidget(buttons_);
 
   connect(buttons_, &QDialogButtonBox::accepted, this, [this] {
@@ -254,8 +262,28 @@ ColorField* PreferencesDialog::plot_series(std::size_t slot) const {
   return slot < plot_series_.size() ? plot_series_[slot] : nullptr;
 }
 
-bool PreferencesDialog::commit() {
+void PreferencesDialog::add_data_source_page(DataSourcePageDeps deps, Reopen reopen, AskReopen ask) {
+  if (data_source_ != nullptr) return;
+  data_source_ = new DataSourcePage(std::move(deps));
+  reopen_ = std::move(reopen);
+  ask_reopen_ = std::move(ask);
+  if (!ask_reopen_) {
+    ask_reopen_ = [this] {
+      QMessageBox box(QMessageBox::Question, tr("Data source"), tr("Pychron must reopen to use the new data source."),
+                      QMessageBox::NoButton, this);
+      QPushButton* now = box.addButton(tr("Reopen now"), QMessageBox::AcceptRole);
+      box.addButton(tr("Later"), QMessageBox::RejectRole);
+      box.setDefaultButton(now);
+      box.exec();
+      return box.clickedButton() == now;
+    };
+  }
+  add_page(tr("Data source"), data_source_);
+}
+
+bool PreferencesDialog::commit(bool check_data_source) {
   problem_->hide();
+  save_without_checking_->hide();
   if (metrics_ != nullptr) {
     if (const QString wrong = metrics_->problem(); !wrong.isEmpty()) {
       complain(wrong, metrics_);
@@ -265,6 +293,16 @@ bool PreferencesDialog::commit() {
   if (const QString wrong = earthbank_->apply(); !wrong.isEmpty()) {
     complain(wrong, earthbank_);
     return false;
+  }
+  // The install's data source: checked, then written, or nothing of it is.
+  bool source_written = false;
+  if (data_source_ != nullptr && data_source_->changed()) {
+    if (const QString wrong = data_source_->apply(check_data_source); !wrong.isEmpty()) {
+      complain(wrong, data_source_);
+      if (check_data_source) save_without_checking_->show();
+      return false;
+    }
+    source_written = true;
   }
   const Values v = values();
   // The line's file first: it is the part that can fail, and nothing else
@@ -276,6 +314,8 @@ bool PreferencesDialog::commit() {
     }
   }
   if (apply_) apply_(v);
+  // Last: reopening closes the window this dialog belongs to.
+  if (source_written && reopen_ && ask_reopen_ && ask_reopen_()) reopen_();
   return true;
 }
 

@@ -59,11 +59,20 @@ void DataMainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory
   data_->set_settings(preferences_settings_);
 }
 
+void DataMainWindow::set_data_source(DataSourceDepsFactory deps, PreferencesDialog::Reopen reopen) {
+  data_source_deps_ = std::move(deps);
+  data_source_reopen_ = std::move(reopen);
+}
+
 PreferencesDialog* DataMainWindow::open_preferences() {
-  return PreferencesDialog::show_for(this, preferences_dialog_, preferences_settings_, std::nullopt,
-                                     [this](const PreferencesDialog::Values& values) {
-                                       apply_preferences(values.preferences);
-                                     });
+  PreferencesDialog* dialog = PreferencesDialog::show_for(this, preferences_dialog_, preferences_settings_, std::nullopt,
+                                                          [this](const PreferencesDialog::Values& values) {
+                                                            apply_preferences(values.preferences);
+                                                          });
+  if (data_source_deps_) {
+    if (auto deps = data_source_deps_()) dialog->add_data_source_page(std::move(*deps), data_source_reopen_);
+  }
+  return dialog;
 }
 
 void DataMainWindow::apply_preferences(const Preferences& preferences) {

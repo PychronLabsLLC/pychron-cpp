@@ -583,6 +583,18 @@ class TestPreferences : public QObject {
     QVERIFY(with.metrics_page() != nullptr);
   }
 
+  // Preferences > Data source is added by a window that runs on an install
+  // (test_data_source_page.cpp); without one there is no such page.
+  void noDataSourcePageWithoutAnInstall() {
+    QWidget window;
+    QPointer<PreferencesDialog> open;
+    PreferencesDialog* d = PreferencesDialog::show_for(&window, open, factory(), std::nullopt, {});
+    for (int i = 0; i < d->pages()->count(); ++i) QVERIFY(d->pages()->item(i)->text() != QStringLiteral("Data source"));
+    QVERIFY(d->data_source_page() == nullptr);
+    QVERIFY(d->save_without_checking()->isHidden());
+    d->close();
+  }
+
   void line_settings_load_what_is_in_force_and_what_is_shared() {
     write_file(local_file_, "[logging]\ndefault_level = \"trace\"\n\n[metrics]\nenabled = true\n");
     const LineSettings s = line_settings();

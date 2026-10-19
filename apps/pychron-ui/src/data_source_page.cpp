@@ -252,6 +252,7 @@ void DataSourcePage::test_connection() {
 
 QString DataSourcePage::apply(bool check) {
   if (!changed()) return {};
+  if (deps_.queue_running && deps_.queue_running()) return tr("Stop the queue to change the data source");
   auto to = source();
   if (!to) return qs(to.error().what);
   auto change = plan_data_source(deps_.install, *to);
@@ -287,6 +288,11 @@ QString DataSourcePage::apply(bool check) {
   current_ = std::move(now);
   show_kept_password();
   return {};
+}
+
+void DataSourcePage::showEvent(QShowEvent* event) {
+  refresh_read_only();
+  QWidget::showEvent(event);
 }
 
 void DataSourcePage::refresh_read_only() {

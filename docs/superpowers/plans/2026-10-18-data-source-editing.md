@@ -333,17 +333,18 @@ The page must use the wizard's widgets, not copies (spec 3.5).
   DataSourcePage* data_source_page() const noexcept;   // null when not added
   QPushButton* save_without_checking() const noexcept; // shown after a failed check
   ```
+  As built: both windows take `set_data_source(DataSourceDepsFactory, Reopen)` (`DataSourceDepsFactory = std::function<std::optional<DataSourcePageDeps>()>`, in `data_source_page.hpp`), read each time Preferences opens so the page plans from the site entry as it is then; `MainWindow` fills an empty `queue_running` from `ExperimentBridge::running()`. The page's `apply` also refuses while a queue runs, and `showEvent` refreshes read-only. In `commit()` the page is written after the EarthBank page and before the line's file; `ask()`/`reopen()` come last, after `apply_`. main.cpp's `reopen_on` defers `window->close()` + `start_install` with `QTimer::singleShot(0, ...)`, so the dialog has returned before its window closes. Extra test: `laterDoesNotReopen`.
   Page added only when the window runs on an install (callers skip it for `--sim` examples without one). `commit()`: page `changed()` → `apply(true)`; failure → `complain(reason, page)` and `save_without_checking` shown, which calls `apply(false)`; success → `ask()` true → `reopen()`. Text: `"Pychron must reopen to use the new data source."`, buttons `Reopen now`, `Later`.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_data_source_page.cpp` `applyWritesSiteAndRecordAndOffersReopen`: dialog with page (temp site, `AskReopen` returning true, `Reopen` counting calls), set `data_folder` to `runs`, press Apply → site entry `data == "runs"`, record answer `data_folder == "runs"`, reopen called once; unchanged page → Apply does not ask.
   - `aFailedCheckOffersSaveWithoutChecking`: opener returning an error → `problem()` visible with the reason, site unchanged, `save_without_checking()` visible; pressing it → site written.
   - `test_preferences.cpp` `noDataSourcePageWithoutAnInstall`: `show_for` without `add_data_source_page` → page list has no "Data source".
-- [ ] **Step 2: Run, expect FAIL:** build and run `pychron_ui_test_data_source_page`, `pychron_ui_test_preferences` (dev-ui).
-- [ ] **Step 3: Implement** dialog and the three callers.
-- [ ] **Step 4: Run** those binaries plus `pychron_ui_test_setup_wizard`, `pychron_ui_test_database_choice`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
-- [ ] **Step 6: Commit** `feat(ui): Preferences changes the install's data source and reopens on it`
+- [x] **Step 2: Run, expect FAIL:** build and run `pychron_ui_test_data_source_page`, `pychron_ui_test_preferences` (dev-ui).
+- [x] **Step 3: Implement** dialog and the three callers.
+- [x] **Step 4: Run** those binaries plus `pychron_ui_test_setup_wizard`, `pychron_ui_test_database_choice`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
+- [x] **Step 6: Commit** `feat(ui): Preferences changes the install's data source and reopens on it`
 
 ### Task 11: Docs
 

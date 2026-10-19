@@ -157,6 +157,10 @@ class MainWindow : public QMainWindow {
   // (default: the application's); tests pass a temp file.
   void set_preferences_settings(PreferencesDialog::SettingsFactory settings);
   QAction* preferences_action() const noexcept { return preferences_; }
+  // Preferences > Data source, for a window on an install: the page's
+  // dependencies, read when the dialog opens, and what reopens pychron-ui on
+  // the install once a new source is written. Unset: no such page.
+  void set_data_source(DataSourceDepsFactory deps, PreferencesDialog::Reopen reopen);
   // The dialog, window modal; OK and Apply save and apply what it holds.
   // Over `over` (default: this window). File > Preferences… opens it over the
   // window in front, whichever one's bar it was chosen from.
@@ -259,6 +263,8 @@ class MainWindow : public QMainWindow {
   QAction* preferences_;
   PreferencesDialog::SettingsFactory preferences_settings_;
   QPointer<PreferencesDialog> preferences_dialog_;
+  DataSourceDepsFactory data_source_deps_;
+  PreferencesDialog::Reopen data_source_reopen_;
   std::filesystem::path line_config_file_;
   QString metrics_status_;
   GaugePopup* gauge_popup_ = nullptr;

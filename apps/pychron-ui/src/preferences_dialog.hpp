@@ -13,6 +13,13 @@
 // The EarthBank page keeps a file of its own too, the profiles `elctl` also
 // reads (earthbank_preferences_page.hpp). It is written before anything else,
 // and a row that is wrong likewise leaves the dialog open with nothing applied.
+//
+// A window that runs on an install adds Data source (data_source_page.hpp,
+// add_data_source_page), last. Changed, OK and Apply check it and write the
+// install's credentials, record and site entry, after the EarthBank page and
+// before the line's; a failed check leaves it unwritten, says why and offers
+// "Save without checking". Written, the store is fixed for the life of the
+// process, so the dialog asks to reopen.
 
 #include <array>
 #include <cstddef>
@@ -26,6 +33,7 @@
 #include <QSettings>
 #include <QWidget>
 
+#include "data_source_page.hpp"
 #include "line_settings.hpp"
 #include "plot_style.hpp"
 #include "preferences.hpp"
@@ -100,6 +108,14 @@ class PreferencesDialog : public QDialog {
   // Called by OK and Apply before `apply`, with the line's pages' values.
   void set_line_save(LineSave save) { line_save_ = std::move(save); }
 
+  // Closes the window and starts pychron-ui on the install again.
+  using Reopen = std::function<void()>;
+  // Whether to reopen now; default: "Pychron must reopen to use the new data
+  // source." with Reopen now / Later.
+  using AskReopen = std::function<bool()>;
+  // Adds the Data source page, last; once (a second call does nothing).
+  void add_data_source_page(DataSourcePageDeps deps, Reopen reopen, AskReopen ask = {});
+
   // What a main window's File > Preferences… does: opens the dialog, window
   // modal, on the preferences kept in `settings` (empty: the application's
   // QSettings); OK and Apply save them there, then call `apply`. While `open`
@@ -133,6 +149,8 @@ class PreferencesDialog : public QDialog {
   LoggingPage* logging_page() const noexcept { return logging_; }          // null without a line
   MetricsPage* metrics_page() const noexcept { return metrics_; }          // null without a line
   EarthbankPreferencesPage* earthbank_page() const noexcept { return earthbank_; }
+  DataSourcePage* data_source_page() const noexcept { return data_source_; }  // null when not added
+  QPushButton* save_without_checking() const noexcept { return save_without_checking_; }  // shown after a failed check
   QLabel* problem() const noexcept { return problem_; }                    // why OK or Apply did nothing
   QDialogButtonBox* buttons() const noexcept { return buttons_; }
 
@@ -144,7 +162,9 @@ class PreferencesDialog : public QDialog {
   void show_plot_style(const PlotStyle& style);
   // Saves and applies what the fields hold; false (and a word in problem())
   // when a field is wrong or the line's settings could not be saved.
-  bool commit();
+  // `check_data_source` false: the Data source page is written without its
+  // checks (Save without checking).
+  bool commit(bool check_data_source = true);
   void complain(const QString& what, QWidget* page);
 
   Apply apply_;
@@ -165,7 +185,11 @@ class PreferencesDialog : public QDialog {
   LoggingPage* logging_ = nullptr;
   MetricsPage* metrics_ = nullptr;
   EarthbankPreferencesPage* earthbank_ = nullptr;
+  DataSourcePage* data_source_ = nullptr;
+  Reopen reopen_;
+  AskReopen ask_reopen_;
   QLabel* problem_;
+  QPushButton* save_without_checking_;
   QDialogButtonBox* buttons_;
 };
 

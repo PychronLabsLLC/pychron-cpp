@@ -5,8 +5,10 @@
 
 #include <QtTest>
 
+#include <QDialogButtonBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSpinBox>
@@ -20,8 +22,10 @@
 #include <vector>
 
 #include "data_source_page.hpp"
+#include "preferences_dialog.hpp"
 #include "pychron/setup/install.hpp"
 #include "pychron/setup/installer.hpp"
+#include "pychron/setup/template.hpp"
 #include "pychron/setup/profile.hpp"
 #include "pychron/setup/site.hpp"
 #include "setup_support.hpp"
@@ -196,6 +200,11 @@ class TestDataSourcePage : public QObject {
       QVERIFY2(!page.editor(QString::fromLatin1(id))->isEnabled(), id);
     QVERIFY(!page.test_button()->isEnabled());
     QVERIFY(page.note()->text().contains(QStringLiteral("Stop the queue to change the data source")));
+    // Nor written from code while it runs.
+    const std::string site_before = read_text(lab.site_path);
+    page.editor(QStringLiteral("data_folder"))->findChild<QLineEdit*>(QStringLiteral("text"))->setText(QStringLiteral("runs"));
+    QVERIFY(page.apply().contains(QStringLiteral("Stop the queue")));
+    QCOMPARE(read_text(lab.site_path), site_before);
     running = false;
     page.refresh_read_only();
     QVERIFY(page.editor(QStringLiteral("data_folder"))->isEnabled());
@@ -212,6 +221,93 @@ class TestDataSourcePage : public QObject {
     QVERIFY2(note.contains(QStringLiteral("postgresql://ar@db.lab:5432/pychron")), qPrintable(note));
     QVERIFY2(!note.contains(QStringLiteral("s3cret")), qPrintable(note));
     QVERIFY(page.editor(QStringLiteral("data_folder"))->isEnabled());  // editing still allowed
+  }
+
+  // ---- in Preferences: OK/Apply, Save without checking, reopen ----------------
+
+  void applyWritesSiteAndRecordAndOffersReopen() {
+    const Lab lab;
+    int reopened = 0;
+    int asked = 0;
+    PreferencesDialog dialog({Preferences{}, std::nullopt, std::nullopt}, {});
+    dialog.add_data_source_page(
+        lab.deps(), [&reopened] { ++reopened; },
+        [&asked] {
+          ++asked;
+          return true;
+        });
+    DataSourcePage* page = dialog.data_source_page();
+    QVERIFY(page != nullptr);
+    QCOMPARE(dialog.pages()->item(dialog.pages()->count() - 1)->text(), QStringLiteral("Data source"));
+
+    // Unchanged: Apply writes nothing and asks nothing.
+    const std::string site_before = read_text(lab.site_path);
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QCOMPARE(asked, 0);
+    QCOMPARE(read_text(lab.site_path), site_before);
+
+    page->editor(QStringLiteral("data_folder"))->findChild<QLineEdit*>(QStringLiteral("text"))->setText(QStringLiteral("runs"));
+    QVERIFY(page->changed());
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY2(dialog.problem()->isHidden(), qPrintable(dialog.problem()->text()));
+    auto site = setup::load_site(lab.site_path);
+    QVERIFY(site);
+    QCOMPARE(site->find("lab")->data, std::string("runs"));
+    auto record = setup::read_install_record(lab.root);
+    QVERIFY(record);
+    QCOMPARE(setup::to_text(record->answers.at("data_folder")), std::string("runs"));
+    QVERIFY(fs::is_directory(lab.root / "runs"));
+    QCOMPARE(asked, 1);
+    QCOMPARE(reopened, 1);
+
+    // Written: the page holds what the install now uses.
+    QVERIFY(!page->changed());
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QCOMPARE(asked, 1);
+  }
+
+  void laterDoesNotReopen() {
+    const Lab lab;
+    int reopened = 0;
+    PreferencesDialog dialog({Preferences{}, std::nullopt, std::nullopt}, {});
+    dialog.add_data_source_page(lab.deps(), [&reopened] { ++reopened; }, [] { return false; });
+    dialog.data_source_page()->editor(QStringLiteral("data_folder"))->findChild<QLineEdit*>(QStringLiteral("text"))->setText(
+        QStringLiteral("runs"));
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QCOMPARE(setup::load_site(lab.site_path)->find("lab")->data, std::string("runs"));
+    QCOMPARE(reopened, 0);
+  }
+
+  void aFailedCheckOffersSaveWithoutChecking() {
+    const Lab lab;
+    auto deps = lab.deps();
+    int opened = 0;
+    deps.openers.open_database = [&opened](const std::string&, bool) -> Result<std::string> {
+      ++opened;
+      return fail(ErrorKind::Io, "the server went away");
+    };
+    int reopened = 0;
+    PreferencesDialog dialog({Preferences{}, std::nullopt, std::nullopt}, {});
+    dialog.add_data_source_page(std::move(deps), [&reopened] { ++reopened; }, [] { return true; });
+    QVERIFY(dialog.save_without_checking()->isHidden());
+    const std::string site_before = read_text(lab.site_path);
+    dialog.data_source_page()->editor(QStringLiteral("data_folder"))->findChild<QLineEdit*>(QStringLiteral("text"))->setText(
+        QStringLiteral("runs"));
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY(opened > 0);
+    QVERIFY(!dialog.problem()->isHidden());
+    QVERIFY2(dialog.problem()->text().contains(QStringLiteral("the server went away")), qPrintable(dialog.problem()->text()));
+    QCOMPARE(read_text(lab.site_path), site_before);
+    QCOMPARE(reopened, 0);
+    QVERIFY(!dialog.save_without_checking()->isHidden());
+
+    const int opened_before = opened;
+    dialog.save_without_checking()->click();
+    QCOMPARE(opened, opened_before);  // not checked
+    QCOMPARE(setup::load_site(lab.site_path)->find("lab")->data, std::string("runs"));
+    QVERIFY(dialog.problem()->isHidden());
+    QVERIFY(dialog.save_without_checking()->isHidden());
+    QCOMPARE(reopened, 1);
   }
 };
 

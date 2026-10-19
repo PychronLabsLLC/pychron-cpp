@@ -70,10 +70,12 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTimer>
 
 #include "brand.hpp"
 #include "command_line.hpp"
 #include "data_main_window.hpp"
+#include "data_source_page.hpp"
 #include "database_choice.hpp"
 #include "experiment_bridge.hpp"
 #include "installations_dialog.hpp"
@@ -183,6 +185,45 @@ std::function<void()> installations_handler(QWidget* window, const setup::Resour
   };
 }
 
+// Preferences > Data source for install `name`: the install as the site file
+// has it when the dialog opens, the store-common questions, and this build's
+// openers. `session_database`: --db, which overrides the install for this run.
+pychron::ui::DataSourceDepsFactory data_source_deps(std::string name, const setup::Resources& resources,
+                                                    std::optional<std::string> session_database) {
+  return [name = std::move(name), resources, session_database = std::move(session_database)]()
+             -> std::optional<pychron::ui::DataSourcePageDeps> {
+    const fs::path site_path = setup::default_site_path();
+    auto site = setup::load_site(site_path);
+    const auto* install = site ? site->find(name) : nullptr;
+    if (install == nullptr) return std::nullopt;
+    auto library = setup::ProfileLibrary::load(resources.profiles, resources.examples);
+    const auto* store = library ? library->find("store-common") : nullptr;
+    if (store == nullptr) return std::nullopt;
+    pychron::ui::DataSourcePageDeps deps;
+    deps.install = *install;
+    deps.site_path = site_path;
+    deps.questions = store->questions;
+    deps.openers.open_database = pychron::ui::database_opener();
+    deps.openers.seed_database = pychron::ui::database_seeder();
+    deps.session_database = session_database;
+    return deps;
+  };
+}
+
+// Reopens on install `name` after its data source changed: as File >
+// Installations switches, once the dialog that asked has returned. The
+// window's own close guards (unsaved queue edits) still apply.
+std::function<void()> reopen_on(QWidget* window, std::string name) {
+  return [window, name = std::move(name)] {
+    QTimer::singleShot(0, window, [window, name] {
+      if (!window->close()) return;
+      if (!pychron::ui::start_install(name)) {
+        QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QStringLiteral("could not start pychron-ui"));
+      }
+    });
+  };
+}
+
 // A data-reduction install: the data browser on its database, nothing else.
 int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::CommandLine& cli,
                        const setup::Resources& resources) {
@@ -213,6 +254,7 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
       install.root / "figures");
   pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
   window.set_installations_handler(installations_handler(&window, resources, install.name));
+  window.set_data_source(data_source_deps(install.name, resources, cli.db), reopen_on(&window, install.name));
 #ifdef PYCHRON_UI_HAS_STORE
   // Entry: samples and packages in the install's database; Fit: the flux of a
   // level. Both parented to the window, Entry made first (fit_actions.hpp).
@@ -572,6 +614,8 @@ int main(int argc, char** argv) {
     // (inside the bundle on macOS), and nothing is written there.
     if (install || !files.empty()) window.set_line_config_file(system_file);
     window.set_installations_handler(installations_handler(&window, resources, install ? install->name : std::string{}));
+    // Not for the examples that come with the application: no install to change.
+    if (install) window.set_data_source(data_source_deps(install->name, resources, cli->db), reopen_on(&window, install->name));
 
     // Runtime level changes go to the line's LogHub; without one (creation
     // failed) the "Set logger level..." action stays hidden.

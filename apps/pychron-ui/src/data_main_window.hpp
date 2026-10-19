@@ -33,6 +33,10 @@ class DataMainWindow : public QMainWindow {
   // File > Preferences…, as in MainWindow.
   void set_preferences_settings(PreferencesDialog::SettingsFactory settings);
   QAction* preferences_action() const noexcept { return preferences_; }
+  // Preferences > Data source, for a window on an install: the page's
+  // dependencies, read when the dialog opens, and what reopens pychron-ui on
+  // the install once a new source is written. Unset: no such page.
+  void set_data_source(DataSourceDepsFactory deps, PreferencesDialog::Reopen reopen);
   PreferencesDialog* open_preferences();
   void apply_preferences(const Preferences& preferences);
 
@@ -44,6 +48,8 @@ class DataMainWindow : public QMainWindow {
   QAction* preferences_;
   PreferencesDialog::SettingsFactory preferences_settings_;
   QPointer<PreferencesDialog> preferences_dialog_;
+  DataSourceDepsFactory data_source_deps_;
+  PreferencesDialog::Reopen data_source_reopen_;
 };
 
 }  // namespace pychron::ui

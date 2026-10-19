@@ -691,6 +691,11 @@ QWidget* MainWindow::preferences_parent() {
   return front;
 }
 
+void MainWindow::set_data_source(DataSourceDepsFactory deps, PreferencesDialog::Reopen reopen) {
+  data_source_deps_ = std::move(deps);
+  data_source_reopen_ = std::move(reopen);
+}
+
 PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
   std::optional<double> confirm_move;
   if (spectrometer_window_ != nullptr) {
@@ -705,7 +710,7 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
     line = load_line_settings(line_config_file_);
     if (line) line->metrics_status = metrics_status_;
   }
-  return PreferencesDialog::show_for(
+  PreferencesDialog* dialog = PreferencesDialog::show_for(
       over != nullptr ? over : this, preferences_dialog_, preferences_settings_, confirm_move,
       [this](const PreferencesDialog::Values& values) {
         apply_preferences(values.preferences);
@@ -736,6 +741,14 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
         }
         return QString();
       });
+  // The data source is not changed under a running queue.
+  if (data_source_deps_) {
+    if (auto deps = data_source_deps_()) {
+      if (!deps->queue_running) deps->queue_running = [this] { return experiment_ != nullptr && experiment_->running(); };
+      dialog->add_data_source_page(std::move(*deps), data_source_reopen_);
+    }
+  }
+  return dialog;
 }
 
 void MainWindow::apply_preferences(const Preferences& preferences) {
