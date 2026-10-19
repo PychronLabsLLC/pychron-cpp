@@ -342,10 +342,33 @@ class TestFieldTableEditor : public QObject {
     edit_h1(*w, "5.0123");
     unsaved_answer_ = FieldTableEditorWindow::Unsaved::Save;
     QSignalSpy saved(w.get(), &FieldTableEditorWindow::saved);
+    QSignalSpy changed(bridge_.get(), &SpectrometerBridge::fieldTableChanged);
     w->open_version("argon", kShipped);
     QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, kWaitMs);
     QTRY_COMPARE_WITH_TIMEOUT(w->open_version(), kShipped, kWaitMs);
+    // The save's own fieldTableChanged, arriving after the switch, does not
+    // take the window back to the version it saved.
+    QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), kWaitMs);
+    QCoreApplication::processEvents();
+    QCOMPARE(w->open_version(), kShipped);
     QCOMPARE(current(), saved.first().at(1).toString());
+    QVERIFY(!w->modified());
+  }
+
+  void aSaveThatTheCoreRefusesAsAConflictStillSwitchesAfterSaveAnyway() {
+    core_save(1);
+    auto w = make_window();
+    edit_h1(*w, "5.0123");
+    unsaved_answer_ = FieldTableEditorWindow::Unsaved::Save;
+    conflict_answer_ = FieldTableEditorWindow::Conflict::SaveAnyway;
+    w->open_version("argon", kShipped);  // asks, saves, then is to switch
+    QCOMPARE(w->open_version(), current());
+    // The core says conflict (another writer between the window's check and
+    // the executor); the window's own check passed.
+    Error conflict{ErrorKind::Config, "table changed", {}, "table_conflict"};
+    emit bridge_->tableSaved("argon", Result<std::string>(fail(conflict)));
+    QCOMPARE(conflict_now_.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(w->open_version(), kShipped, kWaitMs);  // the switch the Save answer was for
     QVERIFY(!w->modified());
   }
 

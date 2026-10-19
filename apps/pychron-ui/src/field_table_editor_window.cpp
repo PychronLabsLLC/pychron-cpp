@@ -658,6 +658,7 @@ void FieldTableEditorWindow::finish_save(const QString& name, const Result<std::
   std::function<void()> then = std::exchange(after_save_, nullptr);
   if (!result) {
     if (result.error().code == "table_conflict" && name == open_name_) {
+      after_save_ = std::move(then);  // Save Anyway still owes the switch or close
       on_conflict(store_current());
     } else {
       show_error_(q(result.error().what));
@@ -718,14 +719,19 @@ void FieldTableEditorWindow::finish_restore(const QString& name, const QString& 
   if (!modified() && open_version_ != version) load_version(name, version);
 }
 
-void FieldTableEditorWindow::on_table_changed(const QString& name, const QString& version) {
+// The event says the store moved; the store says where to. An event can
+// come late (its re-read waits on the bridge's executor), after a switch or
+// another save: only a current version the window has not seen as current
+// is news.
+void FieldTableEditorWindow::on_table_changed(const QString& name, const QString& /*version*/) {
   if (name != open_name_ || save_pending_) return;
   fill_versions();
-  if (version == open_version_ && version == base_version_) return;
+  const QString now = store_current();
+  if (now.isEmpty() || now == base_version_) return;
   if (!modified()) {
-    load_version(name, version);
+    load_version(name, now);
   } else {
-    set_banner(tr("table changed since you opened it (now %1)").arg(version));
+    set_banner(tr("table changed since you opened it (now %1)").arg(now));
   }
 }
 
