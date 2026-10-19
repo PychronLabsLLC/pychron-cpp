@@ -1,0 +1,76 @@
+# A simulated Helix MC Plus for worked plan 7.7 of the measurement plan v2
+# spec (docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md):
+# five Faradays and a xenon field table. Read by MeasurementSimV2Worked in
+# tests/integration/test_measurement_sim.cpp.
+
+[system]
+name = "sim-helix-xe"
+reference_detector = "H2"
+integration_time_s = 1.0
+
+[transports.sim]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers.sim]
+kind = "sim_integrated"
+transport = "sim"
+roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
+channels = ["H2", "H1", "AX", "L1", "L2"]
+move_time_ms = 200
+
+[magnet]
+positioner = "sim"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 500
+field_table = "xenon"
+propagate = false
+corrections = { deflection = true, hv = true }
+
+[source]
+driver = "sim"
+nominal_hv = 4500
+
+[acquisition]
+acquirers = ["sim"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[detector_control]
+driver = "sim"
+
+[[detectors]]
+name = "H2"
+kind = "faraday"
+channel = "sim:H2"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "H1"
+kind = "faraday"
+channel = "sim:H1"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "AX"
+kind = "faraday"
+channel = "sim:AX"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "L1"
+kind = "faraday"
+channel = "sim:L1"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "L2"
+kind = "faraday"
+channel = "sim:L2"
+units = "fA"
+saturation = 4.9e6

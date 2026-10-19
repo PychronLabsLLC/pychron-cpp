@@ -1,0 +1,3 @@
+# Isotope / species -> mass (amu), extending the built-in noble-gas table with
+# the CO2 of worked plan 7.6 (CO2++ interferes with Ne22).
+CO2 = 43.9898292

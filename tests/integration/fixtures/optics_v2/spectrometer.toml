@@ -1,0 +1,80 @@
+# A simulated multicollector with a Faraday (F0) and three ion counters
+# (IC0-IC2) and two optics presets, for worked plan 7.5 of the measurement
+# plan v2 spec (docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md).
+# The simulator records the preset applied; it does not move a peak. Read by
+# MeasurementSimV2Worked in tests/integration/test_measurement_sim.cpp.
+
+[system]
+name = "sim-optics"
+reference_detector = "F0"
+integration_time_s = 1.0
+
+[transports.sim]
+kind = "sim"
+timeout_ms = 2000
+
+[drivers.sim]
+kind = "sim_integrated"
+transport = "sim"
+roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank", "optics"]
+channels = ["F0", "IC0", "IC1", "IC2"]
+move_time_ms = 200
+
+[magnet]
+positioner = "sim"
+native_axis = "dac"
+limits = { min = 0.0, max = 10.0 }
+settle_ms = 500
+field_table = "noblesse"
+propagate = false
+corrections = { deflection = true, hv = true }
+protection = { detectors = ["IC0", "IC1", "IC2"], beam_blank_threshold = 0.5 }
+
+[source]
+driver = "sim"
+nominal_hv = 4500
+
+[acquisition]
+acquirers = ["sim"]
+stale_frame_guard = true
+timeout_factor = 2.0
+
+[detector_control]
+driver = "sim"
+
+[optics.ar_config_a]
+zoom = 2.5
+source_tune = "argon_a"
+deflector_a = -880
+
+[optics.ar_config_b]
+zoom = 1.0
+source_tune = "argon_b"
+
+[[detectors]]
+name = "F0"
+kind = "faraday"
+channel = "sim:F0"
+units = "fA"
+saturation = 4.9e6
+
+[[detectors]]
+name = "IC0"
+kind = "counter"
+channel = "sim:IC0"
+units = "cps"
+protection = { threshold = 5e5, on_move = true }
+
+[[detectors]]
+name = "IC1"
+kind = "counter"
+channel = "sim:IC1"
+units = "cps"
+protection = { threshold = 5e5, on_move = true }
+
+[[detectors]]
+name = "IC2"
+kind = "counter"
+channel = "sim:IC2"
+units = "cps"
+protection = { threshold = 5e5, on_move = true }

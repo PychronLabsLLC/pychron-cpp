@@ -1,0 +1,70 @@
+# DAC of each mass on each collector: SEM sits one mass unit below the
+# Faraday, so He4 on the Faraday puts He3 on the SEM.
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "He3"
+mass = 3.0160293
+Faraday = 0.2111
+SEM = 0.2811
+
+[[points]]
+isotope = "He4"
+mass = 4.0026032
+Faraday = 0.2802
+SEM = 0.3502
+
+[[points]]
+isotope = "Ne20"
+mass = 19.9924402
+Faraday = 1.3995
+SEM = 1.4695
+
+[[points]]
+isotope = "Ne21"
+mass = 20.9938467
+Faraday = 1.4696
+SEM = 1.5396
+
+[[points]]
+isotope = "Ne22"
+mass = 21.9913851
+Faraday = 1.5394
+SEM = 1.6094
+
+[[points]]
+isotope = "Ar36"
+mass = 35.9675451
+Faraday = 2.5177
+SEM = 2.5877
+
+[[points]]
+isotope = "Ar37"
+mass = 36.9667759
+Faraday = 2.5877
+SEM = 2.6577
+
+[[points]]
+isotope = "Ar38"
+mass = 37.9627322
+Faraday = 2.6574
+SEM = 2.7274
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+Faraday = 2.7275
+SEM = 2.7975
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831
+Faraday = 2.7974
+SEM = 2.8674
+
+[[points]]
+isotope = "CO2"
+mass = 43.9898292
+Faraday = 3.0793
+SEM = 3.1493

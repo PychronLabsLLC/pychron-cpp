@@ -1,0 +1,44 @@
+# DAC of each mass on each collector: IC0 sits with F0, IC1 two and IC2
+# four mass units below them.
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "Ar36"
+mass = 35.9675451
+F0 = 4.6038
+IC0 = 4.6038
+IC1 = 4.8598
+IC2 = 5.1158
+
+[[points]]
+isotope = "Ar37"
+mass = 36.9667759
+F0 = 4.7317
+IC0 = 4.7317
+IC1 = 4.9877
+IC2 = 5.2437
+
+[[points]]
+isotope = "Ar38"
+mass = 37.9627322
+F0 = 4.8592
+IC0 = 4.8592
+IC1 = 5.1152
+IC2 = 5.3712
+
+[[points]]
+isotope = "Ar39"
+mass = 38.964313
+F0 = 4.9874
+IC0 = 4.9874
+IC1 = 5.2434
+IC2 = 5.4994
+
+[[points]]
+isotope = "Ar40"
+mass = 39.9623831
+F0 = 5.1152
+IC0 = 5.1152
+IC1 = 5.3712
+IC2 = 5.6272

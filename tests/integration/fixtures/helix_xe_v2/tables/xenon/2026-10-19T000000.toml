@@ -1,0 +1,86 @@
+# DAC of each xenon isotope on each collector, laid out for position 1 of
+# worked plan 7.7 (Xe136 on H2 puts Xe134 on H1, Xe132 on AX, Xe131 on L1,
+# Xe130 on L2).
+fit = "quadratic"
+axis = "dac"
+
+[[points]]
+isotope = "Xe124"
+mass = 123.905893
+H2 = 8.6734
+H1 = 8.8134
+AX = 8.9534
+L1 = 9.0234
+L2 = 9.0934
+
+[[points]]
+isotope = "Xe126"
+mass = 125.904274
+H2 = 8.8133
+H1 = 8.9533
+AX = 9.0933
+L1 = 9.1633
+L2 = 9.2333
+
+[[points]]
+isotope = "Xe128"
+mass = 127.903531
+H2 = 8.9532
+H1 = 9.0932
+AX = 9.2332
+L1 = 9.3032
+L2 = 9.3732
+
+[[points]]
+isotope = "Xe129"
+mass = 128.904779
+H2 = 9.0233
+H1 = 9.1633
+AX = 9.3033
+L1 = 9.3733
+L2 = 9.4433
+
+[[points]]
+isotope = "Xe130"
+mass = 129.903508
+H2 = 9.0932
+H1 = 9.2332
+AX = 9.3732
+L1 = 9.4432
+L2 = 9.5132
+
+[[points]]
+isotope = "Xe131"
+mass = 130.905082
+H2 = 9.1634
+H1 = 9.3034
+AX = 9.4434
+L1 = 9.5134
+L2 = 9.5834
+
+[[points]]
+isotope = "Xe132"
+mass = 131.904154
+H2 = 9.2333
+H1 = 9.3733
+AX = 9.5133
+L1 = 9.5833
+L2 = 9.6533
+
+[[points]]
+isotope = "Xe134"
+mass = 133.905395
+H2 = 9.3734
+H1 = 9.5134
+AX = 9.6534
+L1 = 9.7234
+L2 = 9.7934
+
+[[points]]
+isotope = "Xe136"
+mass = 135.907219
+H2 = 9.5135
+H1 = 9.6535
+AX = 9.7935
+L1 = 9.8635
+L2 = 9.9335

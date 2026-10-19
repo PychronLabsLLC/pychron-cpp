@@ -111,8 +111,8 @@ class SystemConfigAliases final : public plan::IAliasResolver {
 // What a plan is checked against: the detectors of spectrometer.toml (with
 // their isotope and whether their deflection can be set), the molecular
 // weights, the names of the field tables loaded with the spectrometer and
-// how the magnet and source can position. No optics presets yet: no driver
-// applies one (plan v2, phase 8).
+// how the magnet and source can position, and the [optics.*] presets when a
+// driver of the "optics" role applies them.
 class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
  public:
   SpectrometerCatalog(const spectrometer::cfg::SpectrometerConfig& config,

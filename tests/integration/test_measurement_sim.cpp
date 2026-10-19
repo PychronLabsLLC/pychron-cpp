@@ -22,7 +22,9 @@
 #include <optional>
 #include <sstream>
 #include <set>
+#include <map>
 #include <memory>
+#include <ostream>
 #include <vector>
 #include <string>
 #include <string_view>
@@ -148,6 +150,12 @@ class MeasurementSim : public pychron::testing::VirtualTimeTest {
     ASSERT_TRUE(cfg) << cfg.error().what;
     for (auto& v : cfg->valves) v.settle_ms = 0;
     if (const auto scan = line_scan_interval_ms()) cfg->system.scan_interval_ms = *scan;
+    for (const auto& [key, valve] : extra_aliases()) {
+      config::AliasConfig alias;
+      alias.key = key;
+      alias.value = valve;
+      cfg->aliases[key] = alias;
+    }
     aliases_ = std::make_unique<SystemConfigAliases>(*cfg);
     auto canvas = canvas::load_canvas(kDir / "canvas.toml");
     ASSERT_TRUE(canvas) << canvas.error().what;
@@ -204,6 +212,8 @@ class MeasurementSim : public pychron::testing::VirtualTimeTest {
   virtual std::filesystem::path spectrometer_config() const { return kDir / "spectrometer.sim-integrated.toml"; }
   // The line's scan interval when not the config's.
   virtual std::optional<std::int64_t> line_scan_interval_ms() const { return std::nullopt; }
+  // [aliases] the example line does not have (key -> value), added to it.
+  virtual std::map<std::string, std::string> extra_aliases() const { return {}; }
 
   VirtualClock clock_;  // before everything that is given a reference to it
   // Time moves only while the test waits in the clock (a measurement, a job).
@@ -952,7 +962,8 @@ class MeasurementSimV2 : public MeasurementSim {
   // second, four fifths of this suite's cost). Nothing here reads a gauge.
   std::optional<std::int64_t> line_scan_interval_ms() const override { return 60000; }
 
-  // Loads a plan fixture against this suite's spectrometer and measures it.
+  // Loads a plan fixture against this suite's spectrometer and measures it:
+  // its during_extraction phase first, as a run does while it extracts.
   void measure(const std::string& file, plan::MeasurementPlan& plan, MeasurementResult& out) {
     auto tmpl = plan::parse_plan_template(read_file(kPlans / file), file);
     ASSERT_TRUE(tmpl) << tmpl.error().what;
@@ -961,10 +972,15 @@ class MeasurementSimV2 : public MeasurementSim {
     plan = loaded->plan;
     SpectrometerPort port(*spec_);
     ExtractionLineValves valves(*line_);
-    EngineContext ctx{port, clock_, &valves, nullptr, nullptr, &bus_, nullptr};
+    SpectrometerPeakCenter peak_center(*spec_);
+    EngineContext ctx{port, clock_, &valves, &peak_center, nullptr, &bus_, nullptr};
     ctx.reference = reference_;
     MeasurementEngine engine(ctx, inputs(plan, file));
     scripting::CancelToken token;
+    if (engine.has_phase(plan::When::DuringExtraction)) {
+      auto phase = engine.run_phase(plan::When::DuringExtraction, token);
+      ASSERT_TRUE(phase) << phase.error().what;
+    }
     out = engine.run(token);
     ASSERT_EQ(out.outcome, MeasurementOutcome::Completed) << (out.error ? out.error->what : "");
   }
@@ -1058,5 +1074,145 @@ TEST_F(MeasurementSimHelix, WorkedPlan74) {
   EXPECT_DOUBLE_EQ(det->deflection, 0);
   for (const auto& d : spec_->detectors().states()) EXPECT_FALSE(d.protected_) << d.detector;
 }
+
+
+// ---- Every worked plan of the spec, each on a simulator of its family -------
+
+const std::filesystem::path kFixtures(PYCHRON_INTEGRATION_FIXTURES_DIR);
+
+std::size_t count_of(const std::vector<std::string>& what, std::string_view entry) {
+  return static_cast<std::size_t>(std::count(what.begin(), what.end(), entry));
+}
+
+// The number of readings of `label` on `detector` of `kind`; 0 when none.
+std::size_t readings(const collect::RunData& data, std::string_view label, std::string_view detector,
+                     std::string_view kind = collect::kSignal) {
+  const auto s = merged_series(data, label, detector, kind);
+  return s ? s->v.size() : 0;
+}
+
+struct WorkedCase {
+  std::string name;  // test name suffix
+  std::string plan;  // file under tests/experiment/fixtures/plans/valid
+  std::filesystem::path spectrometer;
+  std::map<std::string, std::string> aliases;
+};
+
+void PrintTo(const WorkedCase& c, std::ostream* os) { *os << c.plan; }
+
+class MeasurementSimV2Worked : public MeasurementSimV2, public ::testing::WithParamInterface<WorkedCase> {
+ protected:
+  std::filesystem::path spectrometer_config() const override { return GetParam().spectrometer; }
+  std::map<std::string, std::string> extra_aliases() const override { return GetParam().aliases; }
+};
+
+// Each of the seven worked plans (spec section 7) as written, through the
+// real facades: the trace's positions, deflections, optics, settles and
+// counts, and the series the record keeps, each under its label@detector.
+TEST_P(MeasurementSimV2Worked, EveryWorkedPlanRunsWithItsTrace) {
+  plan::MeasurementPlan plan;
+  MeasurementResult r;
+  measure(GetParam().plan, plan, r);
+  if (HasFatalFailure()) return;
+  const auto what = what_of(r.trace);
+  ASSERT_FALSE(what.empty());
+  const auto& name = GetParam().name;
+
+  if (name == "argus_syn_baseline") {  // 7.1
+    // The baseline was read while the sample was extracted, before anything else.
+    EXPECT_EQ(std::vector<std::string>(what.begin(), what.begin() + 3),
+              (std::vector<std::string>{"move mass 34.2@H1", "settle 20", "collect 120"}));
+    for (const char* det : {"H1", "AX", "L1", "L2", "CDD"})
+      EXPECT_EQ(readings(r.data, "", det, collect::kBaseline), 120u) << det;
+    EXPECT_EQ(readings(r.data, "Ar40", "H1"), 400u);
+    EXPECT_EQ(readings(r.data, "Ar36", "CDD"), 400u);
+    EXPECT_EQ(count_of(what, "collect 400"), 1u);
+    EXPECT_EQ(what.back(), "step peak_center Ar40@H1");
+  } else if (name == "argus_hop_fifth") {  // 7.2
+    EXPECT_EQ(count_of(what, "deflect CDD=110"), 20u);
+    EXPECT_EQ(count_of(what, "move mass 35@CDD"), 20u);
+    EXPECT_EQ(readings(r.data, "mass35", "CDD"), 20u * 8u);
+    EXPECT_EQ(readings(r.data, "", "H1", collect::kBaseline), 120u);
+  } else if (name == "argus_ic_table") {  // 7.3
+    // Before the inlet: the deflection (2000 V asked; the example CDD's
+    // `max` is 800 and the facade clamps to it), then one peak-center step
+    // centring on H1, AX and L2 in turn into the run's table, which the
+    // signal segment then selects.
+    ASSERT_GE(what.size(), 4u);
+    EXPECT_EQ(std::vector<std::string>(what.begin(), what.begin() + 4),
+              (std::vector<std::string>{"step set", "deflect CDD=800", "step peak_center Ar40@H1", "table ic_run"}));
+    for (const auto& note : r.notes) EXPECT_FALSE(note.starts_with("table ic_run not written")) << note;
+    for (const char* det : {"H2", "H1", "AX", "L1", "L2"}) {
+      EXPECT_EQ(readings(r.data, "Ar40", det), 6u * 10u) << det;
+      EXPECT_EQ(readings(r.data, "", det, collect::kBaseline), 60u) << det;
+    }
+    EXPECT_EQ(count_of(what, "settle 20"), 6u * 2u + 1u);  // H2 and L1 each cycle, and the baseline
+    // The baseline last, then the standing deflection goes back.
+    EXPECT_EQ(std::vector<std::string>(what.end() - 4, what.end()),
+              (std::vector<std::string>{"move mass 39.5@H1", "settle 20", "collect 60", "deflect CDD=0"}));
+    EXPECT_EQ(std::count_if(what.begin(), what.end(), [](const std::string& w) { return w.starts_with("step time_zero"); }),
+              1);
+    // One intercept a detector: the record keeps Ar40@H2, Ar40@H1, ... apart.
+    const auto fits = fit_results(r.data, plan, reference_);
+    ASSERT_TRUE(fits.errors.empty()) << fits.errors.front();
+    for (const char* key : {"Ar40@H2", "Ar40@H1", "Ar40@AX", "Ar40@L1", "Ar40@L2"})
+      EXPECT_TRUE(fits.results.intercepts.contains(key)) << key;
+  } else if (name == "helix_hydride_hcl") {  // 7.4
+    EXPECT_EQ(readings(r.data, "Ar40", "H2"), 10u * 10u);
+    EXPECT_EQ(readings(r.data, "Ar38", "AX(CDD)"), 10u * 10u);
+    EXPECT_EQ(readings(r.data, "HCl", "L2(CDD)"), 10u * 5u);
+    EXPECT_EQ(count_of(what, "move PHHCl@L2(CDD)"), 10u);
+    EXPECT_FALSE(merged_series(r.data, "Ar40", "H2(CDD)", collect::kSignal).has_value());
+  } else if (name == "noblesse_optics") {  // 7.5
+    EXPECT_EQ(count_of(what, "optics ar_config_a"), 15u);
+    EXPECT_EQ(count_of(what, "optics ar_config_b"), 15u);
+    EXPECT_EQ(count_of(what, "integration 2"), 15u);
+    EXPECT_EQ(readings(r.data, "Ar40", "F0"), 15u * 10u);
+    EXPECT_EQ(readings(r.data, "Ar36", "IC2"), 15u * 10u);
+    EXPECT_EQ(readings(r.data, "Ar39", "IC0"), 15u * 10u);
+    EXPECT_EQ(readings(r.data, "Ar37", "IC1"), 15u * 10u);
+    EXPECT_EQ(beam_->optics(), "ar_config_b");  // the last preset applied
+  } else if (name == "helix_sft_he_ne_ar") {  // 7.6
+    EXPECT_EQ(readings(r.data, "He4", "Faraday"), 200u);
+    EXPECT_EQ(readings(r.data, "He3", "SEM"), 200u);
+    EXPECT_EQ(readings(r.data, "", "SEM", collect::kBaseline), 30u);
+    EXPECT_EQ(readings(r.data, "Ne21", "SEM"), 10u * 8u);
+    EXPECT_EQ(readings(r.data, "CO2", "SEM"), 10u * 3u);
+    // Ar40 on the SEM in the neon gas and on the Faraday in the argon gas: two series.
+    EXPECT_EQ(readings(r.data, "Ar40", "SEM"), 10u * 3u);
+    EXPECT_EQ(readings(r.data, "Ar40", "Faraday"), 8u * 5u);
+    EXPECT_EQ(readings(r.data, "Ar36", "SEM"), 8u * 8u);
+    std::set<std::string> gases;
+    for (const auto& e : r.trace) gases.insert(e.gas);
+    EXPECT_EQ(gases, (std::set<std::string>{"He", "Ne", "Ar"}));
+  } else if (name == "helix_xenon") {  // 7.7
+    EXPECT_EQ(std::vector<std::string>(what.begin(), what.begin() + 3),
+              (std::vector<std::string>{"move mass 133.5@AX", "settle 0", "collect 30"}));
+    EXPECT_EQ(count_of(what, "settle 8"), 12u * 3u);
+    // Xe132 on AX at position 1 and on H2 at position 2: apart.
+    EXPECT_EQ(readings(r.data, "Xe132", "AX"), 12u * 5u);
+    EXPECT_EQ(readings(r.data, "Xe132", "H2"), 12u * 5u);
+    EXPECT_EQ(readings(r.data, "Xe124", "L2"), 12u * 8u);
+  } else {
+    ADD_FAILURE() << "no expectations for " << name;
+  }
+  for (const auto& d : spec_->detectors().states()) EXPECT_FALSE(d.protected_) << d.detector;
+}
+
+const std::map<std::string, std::string> kGasInlets{
+    {"valves.he_inlet", "B"}, {"valves.ne_inlet", "B"}, {"valves.ar_inlet", "B"}};
+
+INSTANTIATE_TEST_SUITE_P(
+    Worked, MeasurementSimV2Worked,
+    ::testing::Values(
+        WorkedCase{"argus_syn_baseline", "v2_71_argus_syn_baseline.toml", kDir / "spectrometer.sim-integrated.toml", {}},
+        WorkedCase{"argus_hop_fifth", "v2_72_argus_hop_fifth.toml", kDir / "spectrometer.sim-integrated.toml", {}},
+        WorkedCase{"argus_ic_table", "v2_73_argus_ic_table.toml", kDir / "spectrometer.sim-integrated.toml", {}},
+        WorkedCase{"helix_hydride_hcl", "v2_74_helix_hydride_hcl.toml", kFixtures / "helix_v2" / "spectrometer.toml", {}},
+        WorkedCase{"noblesse_optics", "v2_75_noblesse_optics.toml", kFixtures / "optics_v2" / "spectrometer.toml", {}},
+        WorkedCase{"helix_sft_he_ne_ar", "v2_76_helix_sft_he_ne_ar.toml",
+                   kFixtures / "helix_sft_v2" / "spectrometer.toml", kGasInlets},
+        WorkedCase{"helix_xenon", "v2_77_helix_xenon.toml", kFixtures / "helix_xe_v2" / "spectrometer.toml", {}}),
+    [](const ::testing::TestParamInfo<WorkedCase>& p) { return p.param.name; });
 
 }  // namespace
