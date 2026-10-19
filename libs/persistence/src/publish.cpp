@@ -304,6 +304,23 @@ Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Db& db, Uuid
   return out;
 }
 
+Result<std::vector<InterpretedAgeRow>> interpreted_ages(Db& db) {
+  auto rows = db.select(sql::kInterpretedAges);
+  if (!rows) return fail(rows.error());
+  std::vector<InterpretedAgeRow> out;
+  for (const auto& r : *rows) {
+    InterpretedAgeRow ia;
+    ia.uuid = to_uuid(r.value("uuid"));
+    ia.name = to_std(r.value("name"));
+    ia.identifier = opt_uuid(r.value("identifier_uuid"));
+    ia.identifier_text = to_std(r.value("identifier_text"));
+    ia.repository = opt_uuid(r.value("repository_uuid"));
+    ia.head = opt_uuid(r.value("revision_uuid"));
+    out.push_back(std::move(ia));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- embargoes
 
 Result<Uuid> add_embargo(Db& db, const Actor& actor, const EmbargoInsert& embargo) {

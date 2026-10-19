@@ -292,6 +292,27 @@ TEST_P(PublishStoreTest, ExternalIdUniquePerSchemeAndValue) {
   EXPECT_FALSE(store_->add_external_id(reducer(), id)) << "same scheme and value twice";
 }
 
+TEST_P(PublishStoreTest, InterpretedAgesListEveryOneWithItsHead) {
+  auto a = store_->add_interpreted_age(lab_.reduction_client, {"B plateau"});
+  auto b = store_->add_interpreted_age(lab_.reduction_client, {"A mean", lab_.identifier});
+  ASSERT_TRUE(a && b);
+  auto uow = *store_->begin(reducer());
+  InterpretedAgeValue v;
+  v.age = 28.2;
+  v.members = {{analysis1_, std::nullopt, std::nullopt, std::nullopt}};
+  ASSERT_TRUE(uow->add_revision(*b, Kind::InterpretedAge, v, std::nullopt));
+  auto outcome = uow->commit(ChangesetKind::Reduction, "ia");
+  ASSERT_TRUE(outcome && std::holds_alternative<Committed>(*outcome));
+  auto rows = store_->interpreted_ages();
+  ASSERT_TRUE(rows) << to_string(rows.error());
+  ASSERT_EQ(rows->size(), 2u);
+  EXPECT_EQ((*rows)[0].name, "A mean");
+  EXPECT_EQ((*rows)[0].identifier_text, "66573");
+  EXPECT_TRUE((*rows)[0].head);
+  EXPECT_EQ((*rows)[1].name, "B plateau");
+  EXPECT_FALSE((*rows)[1].head);
+}
+
 // ---------------------------------------------------------------- as of a bookmark (4.3)
 
 TEST_P(PublishStoreTest, LoadAnalysisAtBookmarkIgnoresLaterHeadMoves) {

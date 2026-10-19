@@ -97,6 +97,17 @@ struct ReleaseInterpretedAge {
   friend bool operator==(const ReleaseInterpretedAge&, const ReleaseInterpretedAge&) = default;
 };
 
+// An interpreted age of the catalog with its head revision (nullopt before
+// its first value), for choosing the ones a release carries (spec 4.3).
+struct InterpretedAgeRow {
+  Uuid uuid;
+  std::string name;
+  std::optional<Uuid> identifier;
+  std::string identifier_text;  // the identifier's labnumber, "" when none
+  std::optional<Uuid> repository;
+  std::optional<Uuid> head;
+};
+
 // ---------------------------------------------------------------- embargoes (4.2)
 
 struct EmbargoScope {

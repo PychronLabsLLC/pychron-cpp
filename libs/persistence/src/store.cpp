@@ -539,6 +539,7 @@ class TinyStore final : public IStore {
   Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Uuid release) override {
     return detail::release_interpreted_ages(*db_, release);
   }
+  Result<std::vector<InterpretedAgeRow>> interpreted_ages() override { return detail::interpreted_ages(*db_); }
   Result<Uuid> add_embargo(const Actor& actor, const EmbargoInsert& embargo) override {
     return detail::add_embargo(*db_, actor, embargo);
   }

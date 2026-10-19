@@ -102,6 +102,7 @@ Result<void> update_release(Db& db, const Actor& actor, const ReleaseUpdate& upd
 Result<void> delete_release(Db& db, const Actor& actor, Uuid release);
 Result<std::vector<Uuid>> release_samples(Db& db, Uuid release);
 Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Db& db, Uuid release);
+Result<std::vector<InterpretedAgeRow>> interpreted_ages(Db& db);
 Result<Uuid> add_embargo(Db& db, const Actor& actor, const EmbargoInsert& embargo);
 Result<void> lift_embargo(Db& db, const Actor& actor, Uuid embargo);
 Result<std::vector<EmbargoRow>> embargoes(Db& db, bool live_only, UtcTime at);

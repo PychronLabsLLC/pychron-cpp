@@ -366,6 +366,7 @@ struct HeadInfo {
   Kind kind = Kind::Intercepts;
   Uuid revision;
   int head_version = 1;
+  friend bool operator==(const HeadInfo&, const HeadInfo&) = default;
 };
 
 }  // namespace pychron::persistence

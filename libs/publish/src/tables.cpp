@@ -516,7 +516,10 @@ ReleaseTables build_tables(const TableInputs& in) {
       PosRow p{rep.str(r, "irradiation"), rep.str(r, "level"), 0, rep.str(r, "identifier"), r};
       if (const auto* c = rep.cell(r, "position")) {
         if (const auto* d = std::get_if<double>(c)) p.position = static_cast<int>(std::lround(*d));
-        if (const auto* t = std::get_if<std::string>(c)) p.position = std::atoi(t->c_str());
+        if (const auto* t = std::get_if<std::string>(c)) {
+          int n = 0;
+          if (std::from_chars(t->data(), t->data() + t->size(), n).ec == std::errc{}) p.position = n;
+        }
       }
       rows.push_back(p);
     }

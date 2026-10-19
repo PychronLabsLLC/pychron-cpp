@@ -104,6 +104,7 @@ class ForwardingStore : public persistence::IStore {
   Result<void> delete_release(const Actor& actor, Uuid release) override { return inner_.delete_release(actor, release); }
   Result<std::vector<Uuid>> release_samples(Uuid release) override { return inner_.release_samples(release); }
   Result<std::vector<persistence::ReleaseInterpretedAge>> release_interpreted_ages(Uuid release) override { return inner_.release_interpreted_ages(release); }
+  Result<std::vector<persistence::InterpretedAgeRow>> interpreted_ages() override { return inner_.interpreted_ages(); }
   Result<Uuid> add_embargo(const Actor& actor, const persistence::EmbargoInsert& embargo) override { return inner_.add_embargo(actor, embargo); }
   Result<void> lift_embargo(const Actor& actor, Uuid embargo) override { return inner_.lift_embargo(actor, embargo); }
   Result<std::vector<persistence::EmbargoRow>> embargoes(bool live_only, persistence::UtcTime at) override { return inner_.embargoes(live_only, at); }

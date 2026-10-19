@@ -37,6 +37,11 @@ inline const QString kDeleteReleaseInterpretedAges =
     QStringLiteral("DELETE FROM release_interpreted_age WHERE release_uuid = ?");
 inline const QString kDeleteRelease = QStringLiteral("DELETE FROM release WHERE uuid = ?");
 
+inline const QString kInterpretedAges = QStringLiteral(
+    "SELECT ia.uuid, ia.name, ia.identifier_uuid, i.identifier AS identifier_text, ia.repository_uuid, "
+    "h.revision_uuid FROM interpreted_age ia LEFT JOIN identifier i ON i.uuid = ia.identifier_uuid "
+    "LEFT JOIN head h ON h.subject_uuid = ia.uuid AND h.kind = 'interpreted_age' ORDER BY ia.name, ia.uuid");
+
 // ---------------------------------------------------------------- embargoes
 
 // A live embargo: not lifted, and either open-ended or not yet at its date.

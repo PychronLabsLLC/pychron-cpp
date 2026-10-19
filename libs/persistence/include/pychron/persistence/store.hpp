@@ -731,6 +731,8 @@ class IStore {
   virtual Result<void> delete_release(const Actor& actor, Uuid release) = 0;              // a draft only
   virtual Result<std::vector<Uuid>> release_samples(Uuid release) = 0;
   virtual Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Uuid release) = 0;
+  // Every interpreted age of the catalog with its head, by name then uuid.
+  virtual Result<std::vector<InterpretedAgeRow>> interpreted_ages() = 0;
   virtual Result<Uuid> add_embargo(const Actor& actor, const EmbargoInsert& embargo) = 0;
   virtual Result<void> lift_embargo(const Actor& actor, Uuid embargo) = 0;  // Config when already lifted
   virtual Result<std::vector<EmbargoRow>> embargoes(bool live_only, UtcTime at) = 0;
