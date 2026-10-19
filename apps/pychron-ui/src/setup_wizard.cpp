@@ -1,31 +1,26 @@
 #include "setup_wizard.hpp"
 
 #include <algorithm>
-#include <cstdint>
-#include <limits>
 #include <utility>
 
 #include <QAbstractButton>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
-#include <QComboBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRadioButton>
-#include <QSpinBox>
-#include <QTableWidget>
 #include <QTextBrowser>
 #include <QVBoxLayout>
 #include <QWizardPage>
 
 #include "pychron/setup/connection.hpp"
 #include "pychron/setup/installer.hpp"
+#include "question_editor.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -56,8 +51,6 @@ class ReadyPage : public QWizardPage {
   bool isComplete() const override { return complete ? complete() : QWizardPage::isComplete(); }
   void changed() { emit completeChanged(); }
 };
-
-constexpr int kChoiceRadioLimit = 4;  // more choices than this: a combo box
 
 }  // namespace
 
@@ -277,215 +270,14 @@ void SetupWizard::rebuild_groups() {
 }
 
 QWidget* SetupWizard::make_editor(Field& field) {
-  const Question& q = field.question;
-  auto changed = [this] { refresh_visibility(); };
-  switch (q.type) {
-    case QuestionType::Bool: {
-      auto* box = new QCheckBox(qs(q.prompt));
-      connect(box, &QCheckBox::toggled, this, changed);
-      return box;
-    }
-    case QuestionType::Port:
-    case QuestionType::Int: {
-      auto* spin = new QSpinBox;
-      if (q.type == QuestionType::Port) spin->setRange(1, 65535);
-      else spin->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
-      spin->setMaximumWidth(140);
-      connect(spin, &QSpinBox::valueChanged, this, changed);
-      return spin;
-    }
-    case QuestionType::Choice: {
-      const bool labelled = q.labels.size() == q.choices.size();
-      if (q.choices.size() <= kChoiceRadioLimit) {
-        auto* box = new QWidget;
-        auto* v = new QVBoxLayout(box);
-        v->setContentsMargins(0, 0, 0, 0);
-        auto* group = new QButtonGroup(box);
-        for (std::size_t i = 0; i < q.choices.size(); ++i) {
-          auto* r = new QRadioButton(qs(labelled ? q.labels[i] : q.choices[i]), box);
-          r->setObjectName(qs(q.id + "-" + q.choices[i]));
-          group->addButton(r, static_cast<int>(i));
-          v->addWidget(r);
-        }
-        connect(group, &QButtonGroup::idClicked, this, changed);
-        return box;
-      }
-      auto* combo = new QComboBox;
-      for (std::size_t i = 0; i < q.choices.size(); ++i) combo->addItem(qs(labelled ? q.labels[i] : q.choices[i]), qs(q.choices[i]));
-      connect(combo, &QComboBox::currentIndexChanged, this, changed);
-      return combo;
-    }
-    case QuestionType::Table: {
-      auto* box = new QWidget;
-      auto* v = new QVBoxLayout(box);
-      v->setContentsMargins(0, 0, 0, 0);
-      auto* table = new QTableWidget(0, static_cast<int>(q.columns.size()), box);
-      table->setObjectName(QStringLiteral("table"));
-      QStringList headers;
-      for (const auto& c : q.columns) headers << qs(c);
-      table->setHorizontalHeaderLabels(headers);
-      table->horizontalHeader()->setStretchLastSection(true);
-      table->verticalHeader()->setVisible(false);
-      table->setMinimumHeight(180);
-      auto* buttons = new QHBoxLayout;
-      auto* add = new QPushButton(tr("Add row"), box);
-      auto* remove = new QPushButton(tr("Remove row"), box);
-      buttons->addWidget(add);
-      buttons->addWidget(remove);
-      buttons->addStretch(1);
-      v->addWidget(table);
-      v->addLayout(buttons);
-      connect(add, &QPushButton::clicked, table, [table] { table->insertRow(table->rowCount()); });
-      connect(remove, &QPushButton::clicked, table, [table] {
-        const int r = table->currentRow();
-        table->removeRow(r >= 0 ? r : table->rowCount() - 1);
-      });
-      return box;
-    }
-    case QuestionType::Path:
-    case QuestionType::Folder: {
-      auto* box = new QWidget;
-      auto* h = new QHBoxLayout(box);
-      h->setContentsMargins(0, 0, 0, 0);
-      auto* edit = new QLineEdit(box);
-      edit->setObjectName(QStringLiteral("text"));
-      auto* browse = new QPushButton(tr("Browse…"), box);
-      h->addWidget(edit, 1);
-      h->addWidget(browse);
-      connect(edit, &QLineEdit::textChanged, this, changed);
-      const bool folder = q.type == QuestionType::Folder;
-      connect(browse, &QPushButton::clicked, this, [this, edit, folder] {
-        const QString f = folder ? QFileDialog::getExistingDirectory(this, QString(), edit->text())
-                                 : QFileDialog::getOpenFileName(this, QString(), edit->text());
-        if (!f.isEmpty()) edit->setText(f);
-      });
-      return box;
-    }
-    case QuestionType::String:
-    case QuestionType::Host:
-    case QuestionType::Float:
-    case QuestionType::Secret:
-    case QuestionType::List: {
-      auto* edit = new QLineEdit;
-      if (q.type == QuestionType::Secret) edit->setEchoMode(QLineEdit::Password);
-      if (q.type == QuestionType::List) edit->setPlaceholderText(tr("comma separated"));
-      connect(edit, &QLineEdit::textChanged, this, changed);
-      return edit;
-    }
-  }
-  return new QWidget;
+  return make_question_editor(field.question, nullptr, [this] { refresh_visibility(); });
 }
 
 // --- values -----------------------------------------------------------------
 
-namespace {
+void SetupWizard::set_value(Field& field, const Value& value) { set_question_value(field.editor, field.question, value); }
 
-QLineEdit* line_edit_of(QWidget* editor) {
-  if (auto* e = qobject_cast<QLineEdit*>(editor)) return e;
-  return editor->findChild<QLineEdit*>(QStringLiteral("text"));
-}
-
-}  // namespace
-
-void SetupWizard::set_value(Field& field, const Value& value) {
-  const Question& q = field.question;
-  switch (q.type) {
-    case QuestionType::Bool:
-      if (auto* b = qobject_cast<QCheckBox*>(field.editor)) b->setChecked(truthy(value));
-      return;
-    case QuestionType::Port:
-    case QuestionType::Int:
-      if (auto* s = qobject_cast<QSpinBox*>(field.editor)) {
-        if (const auto* i = std::get_if<std::int64_t>(&value)) s->setValue(static_cast<int>(*i));
-        else s->setValue(QString::fromStdString(to_text(value)).toInt());
-      }
-      return;
-    case QuestionType::Choice: {
-      const std::string text = to_text(value);
-      const auto it = std::find(q.choices.begin(), q.choices.end(), text);
-      if (it == q.choices.end()) return;
-      const int index = static_cast<int>(it - q.choices.begin());
-      if (auto* combo = qobject_cast<QComboBox*>(field.editor)) {
-        combo->setCurrentIndex(index);
-      } else if (auto* group = field.editor->findChild<QButtonGroup*>()) {
-        if (auto* b = group->button(index)) b->setChecked(true);
-      }
-      return;
-    }
-    case QuestionType::Table: {
-      auto* table = field.editor->findChild<QTableWidget*>(QStringLiteral("table"));
-      const auto* rows = std::get_if<std::vector<Row>>(&value);
-      if (table == nullptr || rows == nullptr) return;
-      table->setRowCount(static_cast<int>(rows->size()));
-      for (std::size_t r = 0; r < rows->size(); ++r) {
-        for (std::size_t c = 0; c < q.columns.size(); ++c) {
-          auto cell = (*rows)[r].find(q.columns[c]);
-          table->setItem(static_cast<int>(r), static_cast<int>(c),
-                         new QTableWidgetItem(cell == (*rows)[r].end() ? QString() : qs(cell->second)));
-        }
-      }
-      return;
-    }
-    default:
-      if (auto* e = line_edit_of(field.editor)) {
-        if (const auto* list = std::get_if<std::vector<std::string>>(&value)) {
-          QStringList parts;
-          for (const auto& s : *list) parts << qs(s);
-          e->setText(parts.join(QStringLiteral(", ")));
-        } else {
-          e->setText(qs(to_text(value)));
-        }
-      }
-      return;
-  }
-}
-
-Result<Value> SetupWizard::value_of(const Field& field) const {
-  const Question& q = field.question;
-  switch (q.type) {
-    case QuestionType::Bool:
-      return Value{qobject_cast<QCheckBox*>(field.editor)->isChecked()};
-    case QuestionType::Port:
-    case QuestionType::Int:
-      return Value{static_cast<std::int64_t>(qobject_cast<QSpinBox*>(field.editor)->value())};
-    case QuestionType::Choice: {
-      int index = -1;
-      if (auto* combo = qobject_cast<QComboBox*>(field.editor)) index = combo->currentIndex();
-      else if (auto* group = field.editor->findChild<QButtonGroup*>()) index = group->checkedId();
-      if (index < 0 || std::cmp_greater_equal(index, q.choices.size())) return fail(ErrorKind::Config, "choose one");
-      return Value{q.choices[static_cast<std::size_t>(index)]};
-    }
-    case QuestionType::Table: {
-      auto* table = field.editor->findChild<QTableWidget*>(QStringLiteral("table"));
-      std::vector<Row> rows;
-      for (int r = 0; r < table->rowCount(); ++r) {
-        Row row;
-        bool any = false;
-        for (int c = 0; c < table->columnCount(); ++c) {
-          const QTableWidgetItem* item = table->item(r, c);
-          const std::string text = item ? ss(item->text().trimmed()) : std::string{};
-          any = any || !text.empty();
-          row[q.columns[static_cast<std::size_t>(c)]] = text;
-        }
-        if (any) rows.push_back(std::move(row));
-      }
-      return Value{std::move(rows)};
-    }
-    default: {
-      const QLineEdit* e = line_edit_of(field.editor);
-      const QString text = e ? e->text().trimmed() : QString();
-      if (q.type == QuestionType::Secret) return Value{ss(e ? e->text() : QString())};
-      auto v = parse_answer(q, ss(text));
-      if (!v) {
-        // parse_answer prefixes the question id; the field shows it alone.
-        std::string what = v.error().what;
-        if (what.starts_with(q.id + ": ")) what = what.substr(q.id.size() + 2);
-        return fail(ErrorKind::Config, what);
-      }
-      return v;
-    }
-  }
-}
+Result<Value> SetupWizard::value_of(const Field& field) const { return question_value(field.editor, field.question); }
 
 Answers SetupWizard::so_far() const {
   Answers out = builtin_answers(ss(name_->text().trimmed()), root());

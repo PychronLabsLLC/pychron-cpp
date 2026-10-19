@@ -79,6 +79,7 @@ add_library(pychron_ui_lib STATIC
   src/plot_style.cpp
   src/data_workspace.cpp
   src/data_main_window.cpp
+  src/question_editor.cpp
   src/setup_wizard.cpp
   src/installations_dialog.cpp
   src/setup_support.cpp
@@ -168,6 +169,7 @@ add_library(pychron_ui_lib STATIC
   src/theme.hpp
   src/data_workspace.hpp
   src/data_main_window.hpp
+  src/question_editor.hpp
   src/setup_wizard.hpp
   src/installations_dialog.hpp
   src/setup_support.hpp

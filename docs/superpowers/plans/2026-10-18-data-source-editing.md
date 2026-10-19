@@ -260,13 +260,14 @@ The page must use the wizard's widgets, not copies (spec 3.5).
   Result<setup::Value> question_value(const QWidget* editor, const setup::Question& q);
   ```
   Same object names as today (`text` line edit, `Browse…` button, radio buttons in a `QButtonGroup`). `List` and `Table` stay in the wizard if they need `Field`'s rows.
+  As built: `make_question_editor` takes a third argument, `const std::function<void()>& changed = {}`, called on every value change (the wizard's `refresh_visibility`); `List` and `Table` moved too (neither needs `Field`). A port or int a spin box cannot hold is kept as text and `question_value` refuses it (`aPortOutOfRangeIsRefused`), not clamped.
 
-- [ ] **Step 1: Write the failing test** `tests/ui/test_question_editor.cpp` (QtTest, `QTEST_MAIN`): for a `Path` question, editor has a `QLineEdit` named `text` and a `Browse…` button, `set_question_value("data/x.db")` then `question_value` returns it; `Choice` with `local`/`server` round-trips; `Port` refuses `70000` with an error; `Secret` line edit echo mode `Password`.
-- [ ] **Step 2: Run, expect compile failure:** `cmake --build --preset dev-ui --target pychron_ui_test_question_editor`.
-- [ ] **Step 3: Move** the three wizard members' type switches into the free functions; wizard members call them.
-- [ ] **Step 4: Run** `build/dev-ui/tests/ui/pychron_ui_test_question_editor` and `build/dev-ui/tests/ui/pychron_ui_test_setup_wizard`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
-- [ ] **Step 6: Commit** `refactor(ui): the setup wizard's question editors are shared`
+- [x] **Step 1: Write the failing test** `tests/ui/test_question_editor.cpp` (QtTest, `QTEST_MAIN`): for a `Path` question, editor has a `QLineEdit` named `text` and a `Browse…` button, `set_question_value("data/x.db")` then `question_value` returns it; `Choice` with `local`/`server` round-trips; `Port` refuses `70000` with an error; `Secret` line edit echo mode `Password`.
+- [x] **Step 2: Run, expect compile failure:** `cmake --build --preset dev-ui --target pychron_ui_test_question_editor`. (Not seen failing on its own: the header went in before the first build.)
+- [x] **Step 3: Move** the three wizard members' type switches into the free functions; wizard members call them.
+- [x] **Step 4: Run** `build/dev-ui/tests/ui/pychron_ui_test_question_editor` and `build/dev-ui/tests/ui/pychron_ui_test_setup_wizard`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
+- [x] **Step 6: Commit** `refactor(ui): the setup wizard's question editors are shared`
 
 ### Task 9: Data source page widget
 
