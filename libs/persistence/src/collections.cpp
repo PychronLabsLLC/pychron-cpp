@@ -101,8 +101,9 @@ Result<Uuid> create_bookmark(Db& db, const Actor& actor, const BookmarkSpec& spe
     if (*stored) return *spec.uuid;
   }
   // Read the heads inside the write transaction so the capture is consistent.
-  auto heads = spec.repository ? heads_of(db, sql::kHeadsInRepository, *spec.repository)
-                               : heads_of(db, sql::kHeadsInGroup, *spec.group);
+  auto heads = spec.entries ? Result<std::vector<HeadInfo>>(*spec.entries)
+               : spec.repository ? heads_of(db, sql::kHeadsInRepository, *spec.repository)
+                                 : heads_of(db, sql::kHeadsInGroup, *spec.group);
   if (!heads) return fail(heads.error());
   const Uuid uuid = spec.uuid.value_or(Uuid::v7());
   Row b;

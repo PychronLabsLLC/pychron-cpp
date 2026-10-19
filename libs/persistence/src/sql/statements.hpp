@@ -156,6 +156,11 @@ inline const QString kHeadsInGroup = QStringLiteral(
 inline const QString kBookmarkEntries = QStringLiteral(
     "SELECT subject_uuid, kind, revision_uuid FROM bookmark_entry WHERE bookmark_uuid = ? "
     "ORDER BY subject_uuid, kind");
+inline const QString kBookmarkEntriesOfSubject = QStringLiteral(
+    "SELECT subject_uuid, kind, revision_uuid FROM bookmark_entry WHERE bookmark_uuid = ? AND subject_uuid = ? "
+    "ORDER BY kind");
+inline const QString kBookmarkValueEntries = QStringLiteral(
+    "SELECT subject_uuid, revision_uuid FROM bookmark_entry WHERE bookmark_uuid = ? AND kind = 'value'");
 inline const QString kCurrentHeadsOfBookmark = QStringLiteral(
     "SELECT e.subject_uuid, e.kind, h.revision_uuid FROM bookmark_entry e "
     "LEFT JOIN head h ON h.subject_uuid = e.subject_uuid AND h.kind = e.kind WHERE e.bookmark_uuid = ?");

@@ -874,28 +874,27 @@ Result<std::vector<std::string>> StoreSource::facet(Facet f, const BrowseQuery& 
       [facet, filter = std::move(filter)](ps::IStore& s) { return s.facet(facet, filter); });
 }
 
-Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
-  const std::uint64_t generation = impl_->generation.load();
-  {
-    std::lock_guard lock(impl_->cache_mutex);
-    if (auto it = impl_->cache.find(uuid); it != impl_->cache.end()) return it->second;
+namespace {
+
+// What one load reads of an analysis: its detail, heads and payloads (at the
+// bookmark when one is given), references and sample row.
+Result<StoreAnalysisParts> read_parts(ps::IStore& s, ps::Uuid id, const std::string& uuid,
+                                      std::optional<ps::Uuid> bookmark) {
+  StoreAnalysisParts p;
+  auto detail = s.load_analysis_detail(id);
+  if (!detail) return fail(detail.error());
+  if (!*detail) return fail(ErrorKind::Config, "no analysis " + uuid + " in the store");
+  p.detail = std::move(**detail);
+  auto view = bookmark ? s.load_analysis_at(id, *bookmark) : s.load_analysis(id);
+  if (!view) return fail(view.error());
+  if (bookmark && !*view)
+    return fail(ErrorKind::Config, "bookmark " + bookmark->str() + " does not pin analysis " + uuid);
+  if (*view) {
+    p.heads = std::move((*view)->payloads);
+    for (const auto& h : (*view)->heads) p.head_revisions[h.kind] = h.revision;
   }
-  auto id = parse_uuid(uuid);
-  if (!id) return fail(id.error());
-  auto parts = impl_->call<StoreAnalysisParts>([id = *id, &uuid](ps::IStore& s) -> Result<StoreAnalysisParts> {
-    StoreAnalysisParts p;
-    auto detail = s.load_analysis_detail(id);
-    if (!detail) return fail(detail.error());
-    if (!*detail) return fail(ErrorKind::Config, "no analysis " + uuid + " in the store");
-    p.detail = std::move(**detail);
-    auto view = s.load_analysis(id);
-    if (!view) return fail(view.error());
-    if (*view) {
-      p.heads = std::move((*view)->payloads);
-      for (const auto& h : (*view)->heads) p.head_revisions[h.kind] = h.revision;
-    }
-    auto refs = s.resolve_refs(id, ps::RefPolicy{});
-    if (!refs) return fail(refs.error());
+  auto refs = bookmark ? s.resolve_refs_at(id, *bookmark) : s.resolve_refs(id, ps::RefPolicy{});
+  if (!refs) return fail(refs.error());
     // Of what this load read: no statement of its own (age cache spec 4.3).
     if (*view)
       p.input_fingerprint =
@@ -919,7 +918,20 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
       if (!samples->empty()) p.sample = std::move(samples->front());
     }
     return p;
-  });
+}
+
+}  // namespace
+
+Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
+  const std::uint64_t generation = impl_->generation.load();
+  {
+    std::lock_guard lock(impl_->cache_mutex);
+    if (auto it = impl_->cache.find(uuid); it != impl_->cache.end()) return it->second;
+  }
+  auto id = parse_uuid(uuid);
+  if (!id) return fail(id.error());
+  auto parts = impl_->call<StoreAnalysisParts>(
+      [id = *id, &uuid](ps::IStore& s) { return read_parts(s, id, uuid, std::nullopt); });
   if (!parts) return fail(parts.error());
   auto analysis = analysis_from_store(*parts);
   if (!analysis) return fail(analysis.error());
@@ -928,6 +940,19 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
   // A refresh while loading may have made this stale: then do not cache it.
   if (impl_->generation.load() == generation) impl_->cache[uuid] = ptr;
   return AnalysisPtr(ptr);
+}
+
+Result<AnalysisPtr> StoreSource::load_at(const std::string& uuid, const std::string& bookmark) {
+  auto id = parse_uuid(uuid);
+  if (!id) return fail(id.error());
+  auto bm = parse_uuid(bookmark);
+  if (!bm) return fail(bm.error());
+  auto parts = impl_->call<StoreAnalysisParts>(
+      [id = *id, bm = *bm, &uuid](ps::IStore& s) { return read_parts(s, id, uuid, bm); });
+  if (!parts) return fail(parts.error());
+  auto analysis = analysis_from_store(*parts);
+  if (!analysis) return fail(analysis.error());
+  return AnalysisPtr(std::make_shared<const Analysis>(std::move(*analysis)));
 }
 
 Result<RawData> StoreSource::load_raw(const std::string& uuid) {

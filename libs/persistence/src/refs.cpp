@@ -72,6 +72,22 @@ Result<RefResolution> resolve_refs(Db& db, Uuid analysis, const RefPolicy& polic
   return out;
 }
 
+Result<RefResolution> resolve_refs_at(Db& db, Uuid analysis, Uuid bookmark) {
+  auto out = resolve_refs(db, analysis, RefPolicy{false});
+  if (!out) return fail(out.error());
+  auto rows = db.select(sql::kBookmarkValueEntries, {qv(bookmark)});
+  if (!rows) return fail(rows.error());
+  std::map<Uuid, Uuid> pinned;
+  for (const auto& r : *rows) pinned[to_uuid(r.value("subject_uuid"))] = to_uuid(r.value("revision_uuid"));
+  for (auto& ref : out->refs) {
+    if (auto it = pinned.find(ref.ref_object); it != pinned.end()) {
+      ref.revision = it->second;
+      ref.pinned = true;
+    }
+  }
+  return out;
+}
+
 // Canonical text, one fact per line, hashed with SHA-256:
 //   pychron-derived-fingerprint/1
 //   head <kind> <revision>          for every head of the analysis, by kind name

@@ -641,14 +641,36 @@ class TinyStore final : public IStore {
   }
 
   Result<std::optional<AnalysisView>> load_analysis(Uuid analysis) override {
+    auto hs = heads(analysis);
+    if (!hs) return fail(hs.error());
+    return view_with_heads(analysis, std::move(*hs));
+  }
+
+  Result<std::optional<AnalysisView>> load_analysis_at(Uuid analysis, Uuid bookmark) override {
+    auto rows = db_->select(sql::kBookmarkEntriesOfSubject, {qv(bookmark), qv(analysis)});
+    if (!rows) return fail(rows.error());
+    if (rows->empty()) return std::optional<AnalysisView>{};
+    std::vector<HeadInfo> hs;
+    for (const auto& r : *rows) {
+      const auto kind = parse_kind(to_std(r.value("kind")));
+      if (!kind) return fail(ErrorKind::Protocol, "unknown bookmark entry kind");
+      hs.push_back(HeadInfo{analysis, *kind, to_uuid(r.value("revision_uuid")), 0});
+    }
+    return view_with_heads(analysis, std::move(hs));
+  }
+
+  Result<RefResolution> resolve_refs_at(Uuid analysis, Uuid bookmark) override {
+    return detail::resolve_refs_at(*db_, analysis, bookmark);
+  }
+
+  // The analysis row with the given heads and their payloads.
+  Result<std::optional<AnalysisView>> view_with_heads(Uuid analysis, std::vector<HeadInfo> hs) {
     auto row = db_->select_one(summary_select() + QStringLiteral(" WHERE a.uuid = ?"), {qv(analysis)});
     if (!row) return fail(row.error());
     if (!*row) return std::optional<AnalysisView>{};
     AnalysisView view;
     view.summary = summary_from(**row);
-    auto hs = heads(analysis);
-    if (!hs) return fail(hs.error());
-    view.heads = std::move(*hs);
+    view.heads = std::move(hs);
     for (const auto& h : view.heads) {
       auto payload = read_payload(*db_, h.revision, h.kind);
       if (!payload) return fail(payload.error());

@@ -56,6 +56,10 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource, public
   Result<BrowsePage> browse(const BrowseQuery& query) override;
   Result<std::vector<std::string>> facet(Facet facet, const BrowseQuery& query) override;
   Result<AnalysisPtr> load(const std::string& uuid) override;
+  // load(uuid) as of `bookmark` (data publishing spec 4.3): heads, payloads
+  // and references from its entries. Not cached; `input_fingerprint` is of
+  // the pinned revisions. Config when the bookmark does not pin the analysis.
+  Result<AnalysisPtr> load_at(const std::string& uuid, const std::string& bookmark);
   Result<RawData> load_raw(const std::string& uuid) override;
   IRevisionSource* revisions() noexcept override { return this; }
   IDerivedSink* derived() noexcept override { return this; }

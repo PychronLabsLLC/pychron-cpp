@@ -82,6 +82,7 @@ Result<CommitOutcome> rollback_to_collection(Db& db, const Actor& actor, Uuid an
 
 // Reference resolution and the derived cache (refs.cpp).
 Result<RefResolution> resolve_refs(Db& db, Uuid analysis, const RefPolicy& policy);
+Result<RefResolution> resolve_refs_at(Db& db, Uuid analysis, Uuid bookmark);
 Result<Sha256Digest> input_fingerprint(Db& db, Uuid analysis, const std::string& reduction_version);
 Result<void> put_derived(Db& db, Uuid analysis, const Sha256Digest& fingerprint, const std::string& reduction_version,
                          const std::vector<DerivedRow>& rows);

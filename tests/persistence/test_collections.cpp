@@ -183,5 +183,20 @@ TEST_P(CollectionTest, IdentityClashIsRejectedAndChangesNothing) {
   EXPECT_FALSE(*store_->head(a, Kind::Identity));
 }
 
+TEST_P(CollectionTest, BookmarkWithExplicitEntriesWritesThem) {
+  const Uuid a = ingest(1), b = ingest(2);
+  const Uuid group = *store_->create_group(reducer(), "g", {a, b});
+  const Uuid blanks = *store_->head(a, Kind::Blanks).value();
+  BookmarkSpec spec{"explicit", std::nullopt, std::nullopt, group};
+  spec.entries = std::vector<HeadInfo>{HeadInfo{a, Kind::Blanks, blanks, 1}};
+  auto bm = store_->create_bookmark(reducer(), spec);
+  ASSERT_TRUE(bm) << to_string(bm.error());
+  auto heads = store_->bookmark_heads(*bm);
+  ASSERT_TRUE(heads);
+  ASSERT_EQ(heads->size(), 1u) << "the given entries, not the group's heads";
+  EXPECT_EQ((*heads)[0].subject, a);
+  EXPECT_EQ((*heads)[0].revision, blanks);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, CollectionTest, ::testing::ValuesIn(engines()),
                          [](const auto& p) { return p.param; });

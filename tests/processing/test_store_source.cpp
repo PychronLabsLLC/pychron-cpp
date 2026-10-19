@@ -241,6 +241,40 @@ class StoreSourceTest : public ::testing::Test {
   ps::Bytes signal_;
 };
 
+TEST_F(StoreSourceTest, LoadAtBookmarkReproducesTheOldIntercept) {
+  StoreSource& src = source();
+  auto before = src.load(unknown_.str());
+  ASSERT_TRUE(before) << to_string(before.error());
+  const double original = (*before)->find_isotope("Ar40")->intercept.value;
+  const std::string old_head = (*before)->heads.at("intercepts");
+  const ps::Uuid group = *store_->create_group(reducer(), "release:r@v1", {unknown_});
+  const ps::Uuid bookmark =
+      *store_->create_bookmark(reducer(), ps::BookmarkSpec{"release r v1", std::nullopt, std::nullopt, group});
+
+  auto uow = *store_->begin(reducer());
+  ps::InterceptRow row;
+  row.isotope = "Ar40";
+  row.detector = "H1";
+  row.value = original + 50.0;
+  ASSERT_TRUE(uow->add_revision(unknown_, ps::Kind::Intercepts, ps::Intercepts{row},
+                                *store_->head(unknown_, ps::Kind::Intercepts)));
+  auto outcome = uow->commit(ps::ChangesetKind::Reduction, "refit");
+  ASSERT_TRUE(outcome && std::holds_alternative<ps::Committed>(*outcome));
+  ASSERT_TRUE(src.refresh());
+
+  auto now = src.load(unknown_.str());
+  ASSERT_TRUE(now);
+  EXPECT_NEAR((*now)->find_isotope("Ar40")->intercept.value, original + 50.0, 1e-9);
+  auto at = src.load_at(unknown_.str(), bookmark.str());
+  ASSERT_TRUE(at) << to_string(at.error());
+  EXPECT_NEAR((*at)->find_isotope("Ar40")->intercept.value, original, 1e-9);
+  EXPECT_EQ((*at)->heads.at("intercepts"), old_head);
+  EXPECT_NE((*at)->input_fingerprint, (*now)->input_fingerprint);
+  EXPECT_EQ((*at)->input_fingerprint, (*before)->input_fingerprint);
+  auto none = src.load_at(unknown_.str(), ps::Uuid::v7().str());
+  EXPECT_FALSE(none) << "a bookmark that does not pin the analysis";
+}
+
 TEST_F(StoreSourceTest, BrowsePagesNewestFirstWithCatalogColumns) {
   BrowseQuery q;
   q.limit = 1;

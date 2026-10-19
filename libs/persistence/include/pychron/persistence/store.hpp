@@ -229,6 +229,11 @@ struct BookmarkSpec {
   // When set, the bookmark is ensured by this id: an existing bookmark with
   // it is returned and nothing is written.
   std::optional<Uuid> uuid = std::nullopt;
+  // When set, these are the bookmark's entries (any subject and kind, a
+  // reference object's `value` revision included) instead of the current
+  // heads of the repository's or group's analyses (a release pins its
+  // references this way, data publishing spec 4.3).
+  std::optional<std::vector<HeadInfo>> entries = std::nullopt;
 };
 
 // ---------------------------------------------------------------- ingest (5.3, 8.3)
@@ -738,6 +743,12 @@ class IStore {
 
   // Reference resolution and the derived cache.
   virtual Result<RefResolution> resolve_refs(Uuid analysis, const RefPolicy& policy) = 0;
+  // As of a bookmark (data publishing spec 4.3): the analysis with its heads
+  // replaced by the bookmark's entries for it (nullopt when the bookmark has
+  // none; kinds it lacks are absent), and its references with every ref
+  // object the bookmark pins (kind `value`) taken at the pinned revision.
+  virtual Result<std::optional<AnalysisView>> load_analysis_at(Uuid analysis, Uuid bookmark) = 0;
+  virtual Result<RefResolution> resolve_refs_at(Uuid analysis, Uuid bookmark) = 0;
   // SHA-256 over the analysis's head revisions, its resolved reference
   // revisions and the reduction version (section 4.3).
   virtual Result<Sha256Digest> input_fingerprint(Uuid analysis, const std::string& reduction_version) = 0;

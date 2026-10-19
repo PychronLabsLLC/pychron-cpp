@@ -292,5 +292,88 @@ TEST_P(PublishStoreTest, ExternalIdUniquePerSchemeAndValue) {
   EXPECT_FALSE(store_->add_external_id(reducer(), id)) << "same scheme and value twice";
 }
 
+// ---------------------------------------------------------------- as of a bookmark (4.3)
+
+TEST_P(PublishStoreTest, LoadAnalysisAtBookmarkIgnoresLaterHeadMoves) {
+  const Uuid old_head = **store_->head(analysis1_, Kind::Intercepts);
+  auto uow = *store_->begin(reducer());
+  InterceptRow row;
+  row.isotope = "Ar40";
+  row.detector = "H1";
+  row.value = 200.0;
+  ASSERT_TRUE(uow->add_revision(analysis1_, Kind::Intercepts, Intercepts{row}, old_head));
+  auto outcome = uow->commit(ChangesetKind::Reduction, "refit");
+  ASSERT_TRUE(outcome && std::holds_alternative<Committed>(*outcome));
+  ASSERT_NE(**store_->head(analysis1_, Kind::Intercepts), old_head);
+
+  auto at_bookmark = store_->load_analysis_at(analysis1_, bookmark_);
+  ASSERT_TRUE(at_bookmark) << to_string(at_bookmark.error());
+  ASSERT_TRUE(*at_bookmark);
+  const auto& view = **at_bookmark;
+  EXPECT_EQ(view.summary.uuid, analysis1_);
+  const auto head_of = [&](Kind kind) {
+    for (const auto& h : view.heads)
+      if (h.kind == kind) return h.revision;
+    return Uuid{};
+  };
+  EXPECT_EQ(head_of(Kind::Intercepts), old_head);
+  ASSERT_TRUE(view.payloads.contains(Kind::Intercepts));
+  EXPECT_EQ(std::get<Intercepts>(view.payloads.at(Kind::Intercepts))[0].value, 100.5);
+  auto now = store_->load_analysis(analysis1_);
+  ASSERT_TRUE(now && *now);
+  EXPECT_EQ(std::get<Intercepts>((*now)->payloads.at(Kind::Intercepts))[0].value, 200.0);
+
+  auto other = store_->load_analysis_at(analysis1_, Uuid::v7());
+  ASSERT_TRUE(other);
+  EXPECT_FALSE(*other) << "a bookmark without an entry for the analysis";
+}
+
+TEST_P(PublishStoreTest, ResolveRefsAtBookmarkUsesPinnedFluxRevision) {
+  // An analysis on the irradiated identifier, whose position has a flux value.
+  const auto item = analysis_item(lab_, 2, series(1), series(0), "66573");
+  ASSERT_TRUE(store_->ingest(item));
+  const Uuid analysis = std::get<AnalysisIngest>(item.body).analysis;
+  RefObjectSpec spec;
+  spec.type = RefType::FluxPosition;
+  spec.key = "NM-300/A/1";
+  spec.position = lab_.position;
+  const Uuid flux = *store_->add_ref_object(lab_.reduction_client, spec);
+  const auto publish = [&](double j) {
+    auto uow = *store_->begin(reducer());
+    FluxValue v;
+    v.j = j;
+    EXPECT_TRUE(uow->add_revision(flux, Kind::RefValue, RevisionPayload{RefPayload{v}},
+                                  *store_->head(flux, Kind::RefValue)));
+    auto outcome = uow->commit(ChangesetKind::Reference, "flux");
+    EXPECT_TRUE(outcome && std::holds_alternative<Committed>(*outcome));
+  };
+  publish(0.001);
+  const Uuid pinned = **store_->head(flux, Kind::RefValue);
+  // A bookmark with explicit entries: the analysis's heads and the flux at its revision.
+  std::vector<HeadInfo> entries = *store_->heads(analysis);
+  entries.push_back(HeadInfo{flux, Kind::RefValue, pinned, 1});
+  BookmarkSpec bm{"release r v2", std::nullopt, std::nullopt, group_};
+  bm.entries = entries;
+  const Uuid bookmark = *store_->create_bookmark(reducer(), bm);
+  EXPECT_EQ(store_->bookmark_heads(bookmark)->size(), entries.size());
+  publish(0.002);
+  ASSERT_NE(**store_->head(flux, Kind::RefValue), pinned);
+
+  auto at = store_->resolve_refs_at(analysis, bookmark);
+  ASSERT_TRUE(at) << to_string(at.error());
+  auto head = store_->resolve_refs(analysis, RefPolicy{});
+  ASSERT_TRUE(head);
+  const auto find = [](const RefResolution& r, Uuid object) -> const ResolvedRef* {
+    for (const auto& ref : r.refs)
+      if (ref.ref_object == object) return &ref;
+    return nullptr;
+  };
+  ASSERT_NE(find(*at, flux), nullptr);
+  EXPECT_EQ(find(*at, flux)->revision, pinned);
+  EXPECT_TRUE(find(*at, flux)->pinned);
+  ASSERT_NE(find(*head, flux), nullptr);
+  EXPECT_NE(find(*head, flux)->revision, pinned);
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, PublishStoreTest, ::testing::ValuesIn(engines()),
                          [](const ::testing::TestParamInfo<std::string>& i) { return i.param; });
