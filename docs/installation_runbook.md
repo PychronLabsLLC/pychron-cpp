@@ -449,6 +449,7 @@ writes its database. Three things follow:
 | Task | How |
 |---|---|
 | Change an answer | `elctl init --reconfigure --install NAME --set id=value`, or `pychron-ui --setup` |
+| Change where data is read and written | Preferences > Data source, or `elctl data-source set` |
 | Edit a config by hand | Edit the TOML in the install folder, then `elctl doctor` |
 | Switch, set default or forget an install | Pychron: File > Installations. Forgetting removes the entry, never the files |
 | Use one install from the command line | `elctl --install NAME <command>`, `pychron-ui --install NAME` |

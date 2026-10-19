@@ -565,6 +565,38 @@ closes; one set here is kept. If the local file cannot be written (the
 config is in a read-only folder), the dialog says so and changes nothing.
 The two pages appear only when a line is loaded.
 
+**Data source** is where the install reads and writes its data: its
+database and its data folder. It appears when Pychron runs on an install
+(not on the bundled examples), and it belongs to the install, not to you: it
+is kept in the install's files and the site config, which `elctl` reads too
+(`elctl data-source`, in the [elctl reference](08-elctl-reference.md#data-source)).
+
+| Setting | Effect |
+|---|---|
+| **Where is the data?** | **On this computer**: a database file. **My lab's database server**: the lab's PostgreSQL server. |
+| **Database file** | The file, relative to the install folder or a full path. **Browse…** picks an existing one; **New file…** names one that is not there yet, made when you apply. |
+| **Database server**, **Port**, **Database**, **User**, **Password** | The server. Leave **Password** blank to keep the one stored; it then reads "kept". |
+| **Data folder** | Where run records are kept, relative to the install folder or a full path. |
+| **Test connection** | Tries what the fields say without writing anything: opens the database and checks the folder, and says what it found (a file or folder that is not there yet is "will be made"). |
+
+On **OK** or **Apply** with this page changed, Pychron checks the new source
+first, as Test connection does, except that a new file and a missing folder
+are made. A file that already exists is only opened: one whose schema is
+behind is refused with the command that brings it up to date, and a server
+is never changed. If the check fails, the dialog says why, writes nothing,
+and offers **Save without checking** (for a server not reachable from here
+now). Nothing is copied or moved: the old database and the records in the
+old data folder stay where they are.
+
+Pychron opens its database once, when it starts, so a new source needs a
+restart: "Pychron must reopen to use the new data source." **Reopen now**
+closes the window, which still asks about unsaved queue edits, and opens the
+install again; **Later** keeps the old source until the next start.
+
+While a queue runs the page is read-only ("Stop the queue to change the data
+source"). Started with `--db`, Pychron uses that database for the session;
+the page says so and still changes the install's own.
+
 A saved value that is missing, unreadable or out of range silently reads as its
 default. The interface is always shown in the light theme; there is no dark
 mode setting.

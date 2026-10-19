@@ -351,11 +351,11 @@ The page must use the wizard's widgets, not copies (spec 3.5).
 **Files:**
 - Modify: `docs/installation_runbook.md` (2.5 table, line ~451), `docs/user/08-elctl-reference.md` (Contents, a `### data-source` under "Setup" after `doctor`; `db status`/`db migrate` `--install`), `docs/user/01-getting-started.md` (section 9, a Data source paragraph), `libs/setup/AGENTS.md`
 
-- [ ] **Step 1:** Runbook row `| Change where data is read and written | Preferences > Data source, or elctl data-source set |`.
-- [ ] **Step 2:** elctl reference: synopsis from spec 3.4, exit codes, password rule, example switching to a server and back.
-- [ ] **Step 3:** Getting started section 9: the page, Test connection, reopen, read-only while a queue runs.
-- [ ] **Step 4:** `libs/setup/AGENTS.md` bullet, compressed: "Data-source change (`data_source.cpp`) writes credentials, install record, site entry; nothing else under root. Reconfigure must keep it: `DataSource*.AReconfigureKeepsTheNewSource`."
-- [ ] **Step 5: Commit** `docs: changing an installation's data source`
+- [x] **Step 1:** Runbook row `| Change where data is read and written | Preferences > Data source, or elctl data-source set |`.
+- [x] **Step 2:** elctl reference: synopsis from spec 3.4, exit codes, password rule, example switching to a server and back.
+- [x] **Step 3:** Getting started section 9: the page, Test connection, reopen, read-only while a queue runs.
+- [x] **Step 4:** `libs/setup/AGENTS.md` bullet, compressed: "Data-source change (`data_source.cpp`) writes credentials, install record, site entry; nothing else under root. Reconfigure must keep it: `DataSource*.AReconfigureKeepsTheNewSource`."
+- [x] **Step 5: Commit** `docs: changing an installation's data source`
 
 ### Task 12: Final run
 

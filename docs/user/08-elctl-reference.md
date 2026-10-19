@@ -25,7 +25,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Exit codes](#exit-codes)
 - [Which commands need persistence](#which-commands-need-persistence)
 - [Offline checks](#offline-checks): `validate`, `canvas-check`, `list-drivers`, `list`, `conditionals-check`
-- [Setup](#setup): `init`, `doctor`, `import-line`
+- [Setup](#setup): `init`, `doctor`, `data-source`, `import-line`
 - [Hardware and simulation](#hardware-and-simulation): `probe`, `state`, `open`, `close`, `read`, `heater`, `scan`, `trace`, `sim`
 - [Experiments](#experiments): `exp validate`, `exp run`, `exp notify`
 - [Lasers](#lasers): `laser ...`
@@ -255,6 +255,81 @@ simulated); notifications (the `curl` program, and whether the secrets named in
 Exit 0, or 1 if any check fails (or warns, with `--strict`), or if no install
 can be found (`nothing is installed yet`, `several installs and no default ...;
 pass --install NAME`).
+
+### data-source
+
+Show, or change, where an install reads and writes its data: its database
+(a SQLite file on this computer, or the lab's PostgreSQL server) and its data
+folder (where run records are kept). The same change as Preferences > Data
+source in the application (see
+[01 Getting started](01-getting-started.md#9-preferences)).
+
+```bash
+elctl [--install NAME] data-source
+elctl [--install NAME] data-source set
+      (--local [FILE] | --server HOST[:PORT]/DB --user USER [--password-stdin])
+      [--data DIR] [--no-check] [--yes]
+```
+
+Without `set` it prints the install's database URL (never a password), its
+data folder and, for a server, whether a password is kept. Exit 0.
+
+| Flag | Meaning |
+|---|---|
+| `--install NAME` | The install (a global flag, before `data-source`). Default: the default install. |
+| `--local [FILE]` | A SQLite file. Relative to the install folder, or a full path. Without `FILE`: `data/pychron.db`. |
+| `--server HOST[:PORT]/DB` | The lab's PostgreSQL server; port 5432 when not given. Needs `--user`. |
+| `--user USER` | The server's user. |
+| `--password-stdin` | Read the server's password from one line of standard input. |
+| `--data DIR` | The data folder. Relative to the install folder, or a full path. |
+| `--no-check` | Write without opening the database (a server not reachable from here now). `doctor` says the rest later. |
+| `--yes`, `-y` | Do not ask `Write them?`. |
+
+Only what is given changes: `--data` alone keeps the database, `--local` or
+`--server` alone keep the data folder. `set` prints the database and data
+folder before and after, and what is not moved; nothing is ever copied or
+moved, not the old database and not the records in the old data folder. It
+asks `Write them? [Y/n]` unless `--yes`, then checks:
+
+- A local file that is not there is made, its folder too, and given the
+  current schema. An instrument install's new database is then seeded with
+  the install's `seed.toml`, as `init` does.
+- A local file that is there is opened as it is. One whose schema is behind
+  is refused with the command that brings it up to date
+  (`elctl db migrate --db <url>`): it is never migrated from here, since it
+  may be a copy that an older pychron still reads. An empty file is refused.
+- A server is opened as it is, with the password given or the one kept, and
+  never migrated. One that cannot be reached, or refuses the user, is
+  refused.
+- The data folder is made when missing, and refused when it cannot be
+  written.
+
+It then writes three files and nothing else: the password, when one was
+given, to `.pychron/credentials.toml` in the install folder (readable by you
+alone); the new source to the install record `.pychron/install.toml`, so a
+later `elctl init --reconfigure` keeps it; and the install's entry in the
+site config. It finishes with doctor's checks of the install.
+
+The password is never an argument (it would show in the process list and the
+shell's history). With `--password-stdin` it is read from standard input;
+without it, at a terminal, it is asked for without echo when the server is a
+new one or another one; otherwise the password the install keeps is kept.
+
+Exit: 0 when written, or when there is nothing to change (prints `nothing to
+change`); 1 if a check fails or you answer no (`nothing written`); 2 for a
+usage error.
+
+```bash
+elctl data-source
+# to the lab's server, the password typed at the prompt
+elctl data-source set --server db.lab.example:5432/pychron --user ar
+# from a script
+printf '%s\n' "$PYCHRON_DB_PASSWORD" | elctl data-source set --server db.lab.example/pychron --user ar --password-stdin --yes
+# and back to the file on this computer
+elctl data-source set --local --yes
+# another file and a data folder on a shared disk
+elctl --install argus data-source set --local /Volumes/lab/argus.db --data /Volumes/lab/runs
+```
 
 ### import-line
 
@@ -722,7 +797,15 @@ After an update, this is how an existing store is brought up to date.
 ```bash
 elctl db status --db sqlite:/path/to/store.db
 elctl db migrate --db sqlite:/path/to/store.db
+elctl --install argus db migrate
 ```
+
+Without `--db`, `db status`, `db migrate` and `db derive` use the database of
+the install `--install NAME` names, or of the default install, its kept
+password included: after `elctl data-source set --local` named an existing
+file that is behind, `elctl --install NAME db migrate` brings it up to date.
+An install name that is not there is an error (exit 1); no `--db` and no
+install at all is a usage error (exit 2).
 
 ### db status
 
@@ -770,7 +853,7 @@ this is only for the ones nobody has looked at since.
 
 | Flag | Meaning |
 |---|---|
-| `--db URL` | The store (`sqlite:<file>` or `postgresql://...`). Required. Its schema must be up to date (`db migrate`); a store that is behind is refused, never migrated. |
+| `--db URL` | The store (`sqlite:<file>` or `postgresql://...`). Default: the install's database (`--install NAME`, or the default install). Its schema must be up to date (`db migrate`); a store that is behind is refused, never migrated. |
 | `--all` | Reduce and store every analysis walked, current or not. |
 | `--limit N` | Walk no more than `N` analyses (the newest `N`). |
 | `--quiet` | Print only the summary line, not one line a page. |

@@ -19,3 +19,6 @@ only this component's. Kept compressed, as that file is.
   over simulated counter's yield 0.9847, since no IC factor is applied.
   Change to simulator's air, counter, shipped plan or field tables shows
   there.
+- Data-source change (`data_source.cpp`) writes credentials, install record,
+  site entry; nothing else under root. Reconfigure must keep it:
+  `DataSource*.AReconfigureKeepsTheNewSource`.
