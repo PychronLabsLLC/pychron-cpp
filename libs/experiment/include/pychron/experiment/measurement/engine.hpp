@@ -306,6 +306,10 @@ class MeasurementEngine {
   // Thread-safe controls for the running measurement.
   void truncate(bool quick = false);
   void set_target(int counts) { collector_.set_target(counts); }
+  // Live `cycles` (spec 6.3): the running segment runs `cycles` (at least
+  // the cycle in progress) and later segments as planned. Nothing between
+  // segments.
+  void set_cycles(int cycles);
 
   const collect::Collector& collector() const noexcept { return collector_; }
 
@@ -428,6 +432,12 @@ class MeasurementEngine {
   bool main_cut_ = false;               // a silence in main did not end
 
   std::mutex truncate_mutex_;
+  // Live cycles of the running segment (set_cycles); guarded by cycles_mutex_.
+  std::mutex cycles_mutex_;
+  bool segment_running_ = false;
+  int cycle_ = 0;                      // the cycle in progress
+  std::optional<int> cycles_override_;
+  int main_cycles_ = 0;                // the cycles main ran to (0: not yet run)
   std::optional<double> truncate_request_;  // count ratio for later collections
   std::atomic<bool> collecting_{false};
 };

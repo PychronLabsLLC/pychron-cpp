@@ -399,8 +399,8 @@ keeps bytes and stored items it had before v3, as `instrument.simulated` and
 
 ### 6.3 Conditionals
 
-Metric names gain an optional detector qualifier (`Ar40@H1.cur`); bare names
-keep the v1 meaning. `cycles` joins `counts` as a live-editable target.
+Metric names gain an optional detector qualifier (`Ar40@H1.cur`, either side
+of a ratio: `Ar40@H1/Ar39@CDD`); bare names keep the v1 meaning. `cycles` joins `counts` as a live-editable target.
 
 ## 7. Worked plans
 

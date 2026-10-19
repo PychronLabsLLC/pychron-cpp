@@ -202,8 +202,8 @@ TEST_F(CollectorTest, MetricsDriveConditionals) {
   EXPECT_EQ(value("slope(Ar40)"), 50);           // raw points, per reading
   EXPECT_EQ(value("max(Ar40.bs_corrected)"), 248);
   EXPECT_EQ(value("elapsed()"), 4);
-  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Gauge, "ion_pump", "", "pressure"}));
-  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Computed, "age", "", ""}));  // no constants
+  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Gauge, "ion_pump", "", "pressure", "", ""}));
+  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Computed, "age", "", "", "", ""}));  // no constants
 
   collector_.set_icfactors({{"H1", 2.0}});
   EXPECT_NEAR(value("Ar40"), 196, 1e-9);
@@ -221,7 +221,7 @@ TEST_F(CollectorTest, FitFollowsThePlanAndFallsBackToAverage) {
   collector_.set_time_zero(0);
   collector_.begin(spec(kSignal, 3, {{"Ar40", "H1"}}));
   collector_.add(reading(t0_ + 1s, {{"H1", 10}}));
-  EXPECT_NEAR(*collector_.metrics().scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", ""}), 10, 1e-12);  // 1 point
+  EXPECT_NEAR(*collector_.metrics().scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", "", "", ""}), 10, 1e-12);  // 1 point
   collector_.add(reading(t0_ + 2s, {{"H1", 20}}));
   collector_.add(reading(t0_ + 3s, {{"H1", 30}}));
   EXPECT_NEAR(collector_.intercept("Ar40")->value, 0, 1e-9);  // linear default
@@ -246,12 +246,12 @@ TEST_F(CollectorTest, ComputedArArValues) {
   const auto& m = collector_.metrics();
   const auto expected = reduction::compute_arar({1.0, std::nullopt, std::nullopt, 100.0, 1000.0}, c);
   for (const char* name : {"radiogenic_yield", "rad40", "atm40", "age"}) {
-    auto v = m.scalar(MetricRef{MetricRef::Kind::Computed, name, "", ""});
+    auto v = m.scalar(MetricRef{MetricRef::Kind::Computed, name, "", "", "", ""});
     ASSERT_TRUE(v) << name;
     EXPECT_DOUBLE_EQ(*v, expected.at(name)) << name;
   }
-  EXPECT_DOUBLE_EQ(*m.scalar(MetricRef{MetricRef::Kind::Computed, "instant_age", "", ""}), expected.at("age"));
-  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Computed, "kca", "", ""}));  // no Ar37
+  EXPECT_DOUBLE_EQ(*m.scalar(MetricRef{MetricRef::Kind::Computed, "instant_age", "", "", "", ""}), expected.at("age"));
+  EXPECT_FALSE(m.scalar(MetricRef{MetricRef::Kind::Computed, "kca", "", "", "", ""}));  // no Ar37
 }
 
 TEST_F(CollectorTest, IsotopeOnTwoDetectorsResolvesToTheLatest) {
@@ -259,7 +259,7 @@ TEST_F(CollectorTest, IsotopeOnTwoDetectorsResolvesToTheLatest) {
   collector_.add(reading(t0_ + 1s, {{"CDD", 1}}));
   collector_.begin(spec(kSignal, 1, {{"Ar36", "L2"}}));
   collector_.add(reading(t0_ + 2s, {{"L2", 2}}));
-  EXPECT_EQ(*collector_.metrics().scalar(MetricRef{MetricRef::Kind::Isotope, "Ar36", "", ""}), 2);
+  EXPECT_EQ(*collector_.metrics().scalar(MetricRef{MetricRef::Kind::Isotope, "Ar36", "", "", "", ""}), 2);
 }
 
 TEST_F(CollectorTest, TripsAndTimingAreRecorded) {
@@ -380,6 +380,34 @@ TEST_F(CollectorTest, InterceptByQualifiedName) {
   EXPECT_FALSE(collector_.intercept("Ar39@H1"));
 }
 
+// "Ar40@H2.cur" reads H2's points live; the bare name the most recent detector's.
+TEST_F(CollectorTest, DetectorQualifiedMetrics) {
+  collector_.set_fits(average());
+  const std::vector<std::pair<std::string, double>> hops{{"H2", 20}, {"H1", 10}};
+  int t = 0;
+  for (int cycle = 0; cycle < 2; ++cycle) {
+    for (std::size_t pos = 0; pos < hops.size(); ++pos) {
+      const auto& [det, v] = hops[pos];
+      collector_.begin(at(kSignal, 1, {{"Ar40", det}}, "", 0, static_cast<int>(pos)));
+      collector_.add(reading(t0_ + std::chrono::seconds(++t), {{det, v + cycle}}));
+    }
+  }
+  const auto& m = collector_.metrics();
+  Variables vars;
+  auto value = [&](const std::string& text) {
+    auto e = parse_expression(text);
+    EXPECT_TRUE(e) << text;
+    auto r = evaluate(**e, m, vars);
+    EXPECT_TRUE(r) << text << ": " << (r ? "" : r.error().what);
+    return r ? *r : -1e300;
+  };
+  EXPECT_EQ(value("Ar40@H2.cur"), 21);
+  EXPECT_EQ(value("Ar40.cur"), 11);
+  EXPECT_DOUBLE_EQ(value("Ar40@H2.intercept"), 20.5);
+  EXPECT_EQ(value("count(Ar40@H2)"), 2);
+  EXPECT_DOUBLE_EQ(value("Ar40@H2/Ar40@H1"), 20.5 / 10.5);
+}
+
 TEST_F(CollectorTest, OneLabelOneDetectorTwoPositionsFitsAsOneSeries) {
   collector_.set_fits(average());
   // Interleaved: position 0 at 1 s and 3 s, position 1 at 2 s and 4 s.
@@ -396,7 +424,7 @@ TEST_F(CollectorTest, OneLabelOneDetectorTwoPositionsFitsAsOneSeries) {
   EXPECT_EQ(merged->t, (std::vector<double>{1, 2, 3, 4}));
   EXPECT_EQ(merged->v, (std::vector<double>{10, 30, 10, 30}));
   EXPECT_EQ(merged->saturated.size(), 4u);
-  EXPECT_EQ(collector_.metrics().series(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", ""})->size(), 4u);
+  EXPECT_EQ(collector_.metrics().series(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", "", "", ""})->size(), 4u);
 }
 
 }  // namespace

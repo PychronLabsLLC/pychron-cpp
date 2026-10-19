@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <tuple>
 #include <utility>
 
 namespace pychron::experiment {
@@ -112,6 +114,12 @@ Result<std::vector<Token>> tokenize(std::string_view s) {
       while (j < s.size() && ident_char(s[j])) ++j;
       // "L2(CDD)": a detector qualifier, unless the name is a function.
       if (!find_func(s.substr(i, j - i))) j += paren_name(s, j);
+      // "Ar40@H1": the detector a label was measured on (plan v2 spec 6.3).
+      if (j + 1 < s.size() && s[j] == '@' && ident_start(s[j + 1])) {
+        ++j;
+        while (j < s.size() && ident_char(s[j])) ++j;
+        j += paren_name(s, j);
+      }
       while (j + 1 < s.size() && s[j] == '.' && ident_start(s[j + 1])) {
         ++j;
         while (j < s.size() && ident_char(s[j])) ++j;
@@ -175,6 +183,13 @@ ExprPtr binary(Expr::Kind k, ExprPtr l, ExprPtr r) {
 }
 
 // A plain name that may be the numerator or denominator of an isotope ratio.
+// "Ar40@H1" -> ("Ar40", "H1"); a name without '@' -> (name, "").
+std::pair<std::string, std::string> split_detector(const std::string& s) {
+  const auto at = s.find('@');
+  if (at == std::string::npos) return {s, {}};
+  return {s.substr(0, at), s.substr(at + 1)};
+}
+
 bool ratio_name(std::string_view s) {
   return !s.empty() && s.find('.') == std::string_view::npos && s.find('(') == std::string_view::npos &&
          !computed(s) && !is_keyword(s) && s != "device" && s != "param" && s != "gauge";
@@ -345,8 +360,8 @@ class Parser {
       next();
       MetricRef m;
       m.kind = MetricRef::Kind::Ratio;
-      m.a = s;
-      m.b = next().text;
+      std::tie(m.a, m.detector) = split_detector(s);
+      std::tie(m.b, m.b_detector) = split_detector(next().text);
       return metric_node(std::move(m));
     }
     MetricRef m;
@@ -377,20 +392,20 @@ class Parser {
       m.a = s.substr(6, s.size() - 6 - 9);
       m.field = "pressure";
     } else if (parts.size() == 1) {
-      if (s.find('(') != std::string::npos) return error("'" + s + "' needs a detector field (e.g. .deflection)");
+      std::tie(m.a, m.detector) = split_detector(s);
+      if (m.a.find('(') != std::string::npos) return error("'" + s + "' needs a detector field (e.g. .deflection)");
       m.kind = MetricRef::Kind::Isotope;
-      m.a = s;
     } else if (parts.size() == 2) {
-      if (auto f = iso_field(parts[1]); f && parts[0].find('(') == std::string::npos) {
+      std::tie(m.a, m.detector) = split_detector(parts[0]);
+      if (auto f = iso_field(parts[1]); f && m.a.find('(') == std::string::npos) {
         m.kind = MetricRef::Kind::IsotopeField;
         m.field = std::string(*f);
-      } else if (det_field(parts[1])) {
+      } else if (det_field(parts[1]) && m.detector.empty()) {
         m.kind = MetricRef::Kind::DetectorField;
         m.field = parts[1];
       } else {
         return error("unknown metric field '" + parts[1] + "' in '" + s + "'");
       }
-      m.a = parts[0];
     } else {
       return error("unknown metric '" + s + "'");
     }
@@ -497,12 +512,15 @@ ExprPtr rewrite(const Expr& e, const std::function<ExprPtr(const Expr&)>& pick) 
 
 }  // namespace
 
+std::string qualified_a(const MetricRef& m) { return m.detector.empty() ? m.a : m.a + "@" + m.detector; }
+std::string qualified_b(const MetricRef& m) { return m.b_detector.empty() ? m.b : m.b + "@" + m.b_detector; }
+
 std::string to_string(const MetricRef& m) {
   using K = MetricRef::Kind;
   switch (m.kind) {
-    case K::Isotope: return m.a;
-    case K::Ratio: return m.a + "/" + m.b;
-    case K::IsotopeField:
+    case K::Isotope: return qualified_a(m);
+    case K::Ratio: return qualified_a(m) + "/" + qualified_b(m);
+    case K::IsotopeField: return qualified_a(m) + "." + m.field;
     case K::DetectorField: return m.a + "." + m.field;
     case K::Computed: return m.a;
     case K::Device: return "device." + m.a;

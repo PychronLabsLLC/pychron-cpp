@@ -67,6 +67,15 @@ bool same_param(const ParamValue& a, const ParamValue& b);
 
 // The overrides that still apply to `tmpl` (each renders on its own), for
 // moving a run to another plan.
+// A v1 path that addresses the resolved plan (a live edit) as its v2 segment
+// path (spec 4.1 path aliases): "main.hops[i].counts" ->
+// "segment[k].positions[i].counts", "main.hops[i].settle_s" likewise,
+// "main.cycles" -> "segment[k].cycles", "main.integration_s" ->
+// "segment[k].integration_s", k the index of the first gas's main segment
+// (its first after_inlet signal segment). nullopt for any other path, or a
+// plan without such a segment or hop.
+std::optional<std::string> resolved_path(const MeasurementPlan& plan, std::string_view v1_path);
+
 ParamOverrides overrides_for(const PlanTemplate& tmpl, const ParamOverrides& overrides, bool advanced);
 
 }  // namespace pychron::experiment::plan

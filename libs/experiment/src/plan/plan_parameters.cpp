@@ -245,4 +245,27 @@ ParamOverrides overrides_for(const PlanTemplate& tmpl, const ParamOverrides& ove
   return out;
 }
 
+std::optional<std::string> resolved_path(const MeasurementPlan& plan, std::string_view v1_path) {
+  if (plan.gases.empty()) return std::nullopt;
+  const auto& gas = plan.gases.front();
+  const auto* main = main_segment(gas);
+  if (main == nullptr) return std::nullopt;
+  const auto k = static_cast<std::size_t>(main - gas.segments.data());
+  const std::string seg = "segment[" + std::to_string(k) + "]";
+  if (v1_path == "main.cycles" || v1_path == "main.integration_s")
+    return seg + "." + std::string(v1_path.substr(5));
+  constexpr std::string_view hops = "main.hops[";
+  if (!v1_path.starts_with(hops)) return std::nullopt;
+  const auto close = v1_path.find(']', hops.size());
+  if (close == std::string_view::npos || close == hops.size()) return std::nullopt;
+  const auto index = v1_path.substr(hops.size(), close - hops.size());
+  std::size_t i = 0;
+  const auto [end, ec] = std::from_chars(index.data(), index.data() + index.size(), i);
+  if (ec != std::errc() || end != index.data() + index.size()) return std::nullopt;
+  const auto field = v1_path.substr(close + 1);
+  if (field != ".counts" && field != ".settle_s") return std::nullopt;
+  if (i >= main->positions.size()) return std::nullopt;
+  return seg + ".positions[" + std::string(index) + "]" + std::string(field);
+}
+
 }  // namespace pychron::experiment::plan

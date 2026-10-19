@@ -123,6 +123,7 @@ class RunControl {
   void abort();
   void truncate(bool quick = false);
   void set_counts(int counts);
+  void set_cycles(int cycles);  // the running segment's (MeasurementEngine::set_cycles)
 
   scripting::CancelToken& token() noexcept { return token_; }
   bool requested() const noexcept { return token_.requested(); }

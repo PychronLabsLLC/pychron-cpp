@@ -36,12 +36,23 @@ struct MetricRef {
   std::string b;      // ratio denominator
   std::string field;  // IsotopeField: cur|bs|bs_corrected|ic_corrected|intercept|std_dev
                       // DetectorField: deflection|inactive|intensity; Gauge: pressure
+  // Isotope, IsotopeField, Ratio: the detector `a` was measured on
+  // ("Ar40@H1.cur", "Ar40@H1/Ar39"); `b_detector` that of a ratio's
+  // denominator ("Ar40/Ar39@CDD"). Empty: the label's most recently measured
+  // detector, as an unqualified name always meant.
+  std::string detector;
+  std::string b_detector;
 
   friend bool operator==(const MetricRef&, const MetricRef&) = default;
 };
 
-// Text form, e.g. "Ar40/Ar39", "Ar40.bs", "L2(CDD).deflection", "gauge.ion_pump.pressure".
+// Text form, e.g. "Ar40/Ar39", "Ar40.bs", "Ar40@H1.cur", "L2(CDD).deflection", "gauge.ion_pump.pressure".
 std::string to_string(const MetricRef& m);
+
+// The label as the collector and a record look it up: "Ar40", or "Ar40@H1"
+// with a detector qualifier; qualified_b likewise for a ratio's denominator.
+std::string qualified_a(const MetricRef& m);
+std::string qualified_b(const MetricRef& m);
 
 // True when the metric only has meaning as a series (baseline readings). Such
 // a metric may not be compared with a scalar without a reducer.

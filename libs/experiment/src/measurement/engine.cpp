@@ -379,8 +379,20 @@ Result<void> MeasurementEngine::run_segment(std::size_t segment) {
   const auto& seg = gas_->segments[segment];
   if (plan::is_step(seg.kind)) return run_step(segment);
   const bool is_main = segment == main_;
+  {
+    std::lock_guard lock(cycles_mutex_);
+    segment_running_ = true;
+    cycle_ = 0;
+    cycles_override_.reset();
+  }
+  // The segment's cycles, or what a live edit made them; notes the cycle in progress.
+  const auto more = [&](int cycle) {
+    std::lock_guard lock(cycles_mutex_);
+    cycle_ = cycle;
+    return cycle < cycles_override_.value_or(seg.cycles);
+  };
   const auto run_cycles = [&]() -> Result<void> {
-    for (int cycle = 0; cycle < seg.cycles; ++cycle) {
+    for (int cycle = 0; more(cycle); ++cycle) {
       for (std::size_t j = 0; j < seg.positions.size(); ++j) {
         if (stopping()) return {};
         const auto& pos = seg.positions[j];
@@ -394,9 +406,20 @@ Result<void> MeasurementEngine::run_segment(std::size_t segment) {
     return {};
   };
   Result<void> r = run_cycles();
+  {
+    std::lock_guard lock(cycles_mutex_);
+    segment_running_ = false;
+    if (is_main) main_cycles_ = cycles_override_.value_or(seg.cycles);
+  }
   if (!r) return r;  // cleanup restores what is left
   // A deflection does not outlive its segment (legacy peak_hop_collector reset).
   return restore_deflections(nullptr, static_cast<int>(segment), -1);
+}
+
+void MeasurementEngine::set_cycles(int cycles) {
+  std::lock_guard lock(cycles_mutex_);
+  if (!segment_running_) return;
+  cycles_override_ = std::max(cycles, cycle_ + 1);
 }
 
 Result<void> MeasurementEngine::run_step(std::size_t segment) {
@@ -1054,7 +1077,7 @@ Result<void> MeasurementEngine::check_main_counts() {
   int planned = 0;
   for (const auto& pos : main.positions)
     if (pos.kind == plan::PositionKind::Signal) planned += scaled(pos.counts);  // after a truncation, what it left
-  planned *= main.cycles;
+  planned *= main_cycles_ > 0 ? main_cycles_ : main.cycles;  // as a live edit left them
   std::size_t fit_minimum = 0;
   for (const auto& [key, kind] : in_.plan.fits.signal) {
     reduction::FitSpec f;

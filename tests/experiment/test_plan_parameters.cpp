@@ -190,4 +190,45 @@ TEST(PlanParameters, OverridesThatSurviveAPlanChange) {
 }
 
 }  // namespace
+// A live edit that names a v1 path finds its v2 segment path (spec 4.1).
+TEST(PlanParameters, V1PathResolvesToSegmentPath) {
+  auto r = resolve_plan(R"(
+[plan]
+name = "v1"
+instrument_family = "argus"
+analysis_types = ["unknown"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[baseline]
+before = true
+counts = 5
+mass = 34.2
+
+[main]
+cycles = 2
+[[main.hops]]
+positions = { Ar40 = "H1" }
+counts = 10
+[[main.hops]]
+positions = { Ar39 = "H1" }
+counts = 5
+)", PlanResolvers{}, "v1");
+  ASSERT_TRUE(r) << r.error().what;
+  // The before baseline is segment 0; main is segment 1.
+  EXPECT_EQ(resolved_path(*r, "main.hops[1].counts"), "segment[1].positions[1].counts");
+  EXPECT_EQ(resolved_path(*r, "main.hops[0].settle_s"), "segment[1].positions[0].settle_s");
+  EXPECT_EQ(resolved_path(*r, "main.cycles"), "segment[1].cycles");
+  EXPECT_EQ(resolved_path(*r, "main.integration_s"), "segment[1].integration_s");
+  EXPECT_EQ(resolved_path(*r, "main.hops[2].counts"), std::nullopt);  // no such hop
+  EXPECT_EQ(resolved_path(*r, "main.hops[x].counts"), std::nullopt);
+  EXPECT_EQ(resolved_path(*r, "baseline.counts"), std::nullopt);
+}
+
 }  // namespace pychron::experiment::plan

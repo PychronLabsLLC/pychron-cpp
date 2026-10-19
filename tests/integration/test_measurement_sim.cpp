@@ -342,9 +342,9 @@ TEST_F(MeasurementSim, InstrumentMetricsAnswerConditionals) {
   EXPECT_TRUE(check("L1.inactive and not H1.inactive"));
   EXPECT_TRUE(check("gauge.IG1.pressure > 0"));
   EXPECT_TRUE(check("device.chiller < 15"));
-  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Device, "pump", "", ""}));
-  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Gauge, "nope", "", "pressure"}));
-  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", ""}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Device, "pump", "", "", "", ""}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Gauge, "nope", "", "pressure", "", ""}));
+  EXPECT_FALSE(metrics.scalar(MetricRef{MetricRef::Kind::Isotope, "Ar40", "", "", "", ""}));
 }
 
 TEST_F(MeasurementSim, LabConditionalsActOnLiveData) {

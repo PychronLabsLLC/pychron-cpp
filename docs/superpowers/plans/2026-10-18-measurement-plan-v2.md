@@ -444,11 +444,13 @@ Done notes: Step 2 was observed failing as a build failure (no `fit_for`). `kind
   - `MetricRef` gains `std::string detector;` (parsed from `Ar40@H1.cur`, `Ar40@H1/Ar39`); bare names unchanged.
   - `void MeasurementEngine::set_cycles(int cycles);` (running segment only, ≥ the cycle in progress); `RunControl::set_cycles(int)` beside its counts control (grep `set_target(` in `run/` and `lab/session.cpp` for the path counts take, and give cycles the same one).
   - `std::optional<std::string> resolved_path(const MeasurementPlan&, std::string_view v1_path);` — `main.hops[i].counts` → `segment[k].positions[i].counts` (k: the desugared signal segment), `main.cycles` → `segment[k].cycles`; used where a live edit names a v1 path.
-- [ ] **Step 1: Write failing tests:** `ConditionalMetrics.DetectorQualifier` (`Ar40@H1.cur` reads H1's series when Ar40 is on H1 and H2); `LiveEdit.CyclesChangeOnlyTheRunningSegment` (Review Focus 5: two signal segments of 5 cycles, `set_cycles(2)` during segment 1 cycle 1 → segment 1 runs 2, segment 2 runs 5); `LiveEdit.CountsChangeOnlyTheRunningPosition`; `PlanParameters.V1PathResolvesToSegmentPath`.
-- [ ] **Step 2: Run** those filters → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** the binary → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): detector-qualified metrics and live cycles`.
+- [x] **Step 1: Write failing tests:** `ConditionalMetrics.DetectorQualifier` (`Ar40@H1.cur` reads H1's series when Ar40 is on H1 and H2); `LiveEdit.CyclesChangeOnlyTheRunningSegment` (Review Focus 5: two signal segments of 5 cycles, `set_cycles(2)` during segment 1 cycle 1 → segment 1 runs 2, segment 2 runs 5); `LiveEdit.CountsChangeOnlyTheRunningPosition`; `PlanParameters.V1PathResolvesToSegmentPath`.
+- [x] **Step 2: Run** those filters → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** the binary → PASS.
+- [x] **Step 5: Commit** `feat(experiment): detector-qualified metrics and live cycles`.
+
+Done notes: Step 2 was observed failing as build failures (no `MetricRef::detector`, `set_cycles`, `resolved_path`). `MetricRef` gained `b_detector` too (`Ar40/Ar39@CDD`); the tokenizer takes `@<detector>` after a label (with a mode, `Ar40@H2(CDD)`); a detector field (`.deflection`) refuses a qualifier. `qualified_a`/`qualified_b` give the collector's and the record's lookup name; `RecordMetrics` reads `Ar40@H1` as that detector's series and intercept. Live cycles: `MeasurementEngine::set_cycles` sets the running segment's cycles (at least the cycle in progress; nothing between segments; cleared at each segment's start), and main's counts check after a gap counts the cycles main ran to. `RunControl::set_cycles` beside `set_counts`; no session or UI path takes counts today (grep found none), so none takes cycles. `resolved_path` lives in `parameters.hpp` (`main.hops[i].counts|settle_s`, `main.cycles`, `main.integration_s`); nothing calls it yet: no live edit names a path today. Tests are `EngineTest.LiveEdit{CyclesChangeOnlyTheRunningSegment,CyclesNeverCutTheCycleInProgress,CountsChangeOnlyTheRunningPosition}` (the engine fixture), `CollectorTest.DetectorQualifiedMetrics` added.
 
 ---
 

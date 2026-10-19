@@ -87,6 +87,11 @@ void RunControl::set_counts(int counts) {
   if (engine_ != nullptr) engine_->set_target(counts);
 }
 
+void RunControl::set_cycles(int cycles) {
+  std::lock_guard lock(mutex_);
+  if (engine_ != nullptr) engine_->set_cycles(cycles);
+}
+
 void RunControl::attach(measurement::MeasurementEngine* engine) {
   std::lock_guard lock(mutex_);
   engine_ = engine;

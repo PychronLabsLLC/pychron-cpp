@@ -23,17 +23,22 @@ std::optional<double> ChainContext::elapsed() const {
   return std::nullopt;
 }
 
-const record::DataSeries* RecordMetrics::signal(const std::string& iso) const {
+const record::DataSeries* RecordMetrics::signal(const std::string& name) const {
+  // "Ar40@H1": that detector's series only.
+  const auto at = name.find('@');
+  const std::string iso = name.substr(0, at);
+  const std::string det = at == std::string::npos ? std::string() : name.substr(at + 1);
   const record::DataSeries* best = nullptr;
   for (const auto& s : rec_.data.series) {
-    if (s.kind != "signal" || s.iso != iso) continue;
+    if (s.kind != "signal" || s.iso != iso || (!det.empty() && s.det != det)) continue;
     if (best == nullptr || s.trace.v.size() > best->trace.v.size()) best = &s;
   }
   return best;
 }
 
-const record::InterceptResult* RecordMetrics::intercept(const std::string& iso, std::string* det) const {
-  const auto* s = signal(iso);
+const record::InterceptResult* RecordMetrics::intercept(const std::string& name, std::string* det) const {
+  const auto* s = signal(name);
+  const std::string iso = name.substr(0, name.find('@'));
   if (s == nullptr) return nullptr;
   if (det != nullptr) *det = s->det;
   const auto& ints = rec_.results.intercepts;
@@ -54,13 +59,14 @@ std::optional<double> RecordMetrics::corrected(const std::string& iso) const {
 
 std::optional<std::vector<double>> RecordMetrics::series(const MetricRef& m) const {
   using K = MetricRef::Kind;
+  const std::string qa = qualified_a(m), qb = qualified_b(m);
   auto floats = [](const std::vector<float>& v) { return std::vector<double>(v.begin(), v.end()); };
   switch (m.kind) {
     case K::Isotope:
-      if (const auto* s = signal(m.a)) return floats(s->trace.v);
+      if (const auto* s = signal(qa)) return floats(s->trace.v);
       break;
     case K::IsotopeField: {
-      const auto* s = signal(m.a);
+      const auto* s = signal(qa);
       if (s == nullptr) break;
       if (m.field == "bs") {
         std::vector<double> out;
@@ -72,8 +78,8 @@ std::optional<std::vector<double>> RecordMetrics::series(const MetricRef& m) con
       return floats(s->trace.v);
     }
     case K::Ratio: {
-      const auto* a = signal(m.a);
-      const auto* b = signal(m.b);
+      const auto* a = signal(qa);
+      const auto* b = signal(qb);
       if (a == nullptr || b == nullptr) break;
       const std::size_t n = std::min(a->trace.v.size(), b->trace.v.size());
       std::vector<double> out;
@@ -91,22 +97,23 @@ std::optional<std::vector<double>> RecordMetrics::series(const MetricRef& m) con
 
 std::optional<double> RecordMetrics::scalar(const MetricRef& m) const {
   using K = MetricRef::Kind;
+  const std::string qa = qualified_a(m), qb = qualified_b(m);
   switch (m.kind) {
-    case K::Isotope: return corrected(m.a);
+    case K::Isotope: return corrected(qa);
     case K::Ratio: {
-      auto a = corrected(m.a), b = corrected(m.b);
+      auto a = corrected(qa), b = corrected(qb);
       if (a && b && *b != 0) return *a / *b;
       return std::nullopt;
     }
     case K::IsotopeField: {
       if (m.field == "bs") return std::nullopt;
       if (m.field == "cur") {
-        const auto* s = signal(m.a);
+        const auto* s = signal(qa);
         if (s == nullptr || s->trace.v.empty()) return std::nullopt;
         return s->trace.v.back();
       }
       std::string det;
-      const auto* i = intercept(m.a, &det);
+      const auto* i = intercept(qa, &det);
       if (i == nullptr) return std::nullopt;
       if (m.field == "intercept") return i->intercept.value;
       if (m.field == "std_dev") return i->intercept.error;

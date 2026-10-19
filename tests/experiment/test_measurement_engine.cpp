@@ -669,6 +669,85 @@ TEST_F(EngineTest, TruncationScalesLaterCollections) {
   EXPECT_EQ(r.data.trips[0].name, "big");
 }
 
+// ---- live edits (plan Task 15) -------------------------------------------------
+
+constexpr std::string_view kTwoSegmentPlan = R"toml(
+[plan]
+name = "live"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[segment]]
+kind = "signal"
+cycles = 5
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 2
+[[segment.positions]]
+collect = { Ar39 = "H1" }
+counts = 3
+
+[[segment]]
+kind = "signal"
+cycles = 5
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 2
+)toml";
+
+// Points a segment collected, over every position and label.
+int points_in(const MeasurementResult& r, int segment) {
+  int n = 0;
+  for (const auto& [key, s] : r.data.series)
+    if (key.segment == segment && key.kind == collect::kSignal) n += static_cast<int>(s.v.size());
+  return n;
+}
+
+// Review Focus 5: a live `cycles` changes the running segment only.
+TEST_F(EngineTest, LiveEditCyclesChangeOnlyTheRunningSegment) {
+  spec_.on_reading = [&](int n) {
+    if (n == 1) engine_->set_cycles(2);
+  };
+  auto r = run(plan_from(kTwoSegmentPlan));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(points_in(r, 0), 2 * (2 + 3));
+  EXPECT_EQ(points_in(r, 1), 5 * 2);
+}
+
+// Fewer cycles than the one in progress: it is finished, no more.
+TEST_F(EngineTest, LiveEditCyclesNeverCutTheCycleInProgress) {
+  spec_.on_reading = [&](int n) {
+    if (n == 12) engine_->set_cycles(1);  // in cycle 3 (readings 11 to 15)
+  };
+  auto r = run(plan_from(kTwoSegmentPlan));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(points_in(r, 0), 3 * (2 + 3));
+  EXPECT_EQ(points_in(r, 1), 5 * 2);
+}
+
+// A live `counts` changes the running position's collection only: the next
+// position, and the same position next cycle, collect as planned.
+TEST_F(EngineTest, LiveEditCountsChangeOnlyTheRunningPosition) {
+  spec_.on_reading = [&](int n) {
+    if (n == 1) engine_->set_target(4);
+  };
+  auto r = run(plan_from(kTwoSegmentPlan));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  const auto first = r.data.series.find(skey("Ar40", "H1", collect::kSignal, 0, 0));
+  ASSERT_NE(first, r.data.series.end());
+  EXPECT_EQ(first->second.v.size(), 4u + 4 * 2);  // cycle 1 took 4, cycles 2 to 5 their 2
+  EXPECT_EQ(r.data.series.at(skey("Ar39", "H1", collect::kSignal, 0, 1)).v.size(), 5u * 3);
+  EXPECT_EQ(points_in(r, 1), 5 * 2);
+}
+
 TEST_F(EngineTest, UserQuickTruncateScalesByAQuarter) {
   auto p = multicollect(40, 3);
   p.sniff.enabled = false;

@@ -410,16 +410,17 @@ std::optional<double> Collector::computed_locked(const std::string& name) const 
 
 std::optional<std::vector<double>> Collector::Metrics::series(const MetricRef& m) const {
   using K = MetricRef::Kind;
+  const std::string qa = qualified_a(m), qb = qualified_b(m);
   {
     std::lock_guard lock(c_.mutex_);
     switch (m.kind) {
       case K::Isotope:
         for (auto kind : kLabelKinds)
-          if (auto v = c_.isotope_values_locked(m.a, kind)) return v;
+          if (auto v = c_.isotope_values_locked(qa, kind)) return v;
         break;
       case K::Ratio: {
-        auto a = c_.isotope_values_locked(m.a, kSignal);
-        auto b = c_.isotope_values_locked(m.b, kSignal);
+        auto a = c_.isotope_values_locked(qa, kSignal);
+        auto b = c_.isotope_values_locked(qb, kSignal);
         if (!a || !b) break;
         const std::size_t n = std::min(a->size(), b->size());
         std::vector<double> out;
@@ -432,12 +433,12 @@ std::optional<std::vector<double>> Collector::Metrics::series(const MetricRef& m
         return out;
       }
       case K::IsotopeField: {
-        auto det = c_.detector_of_locked(m.a);
+        auto det = c_.detector_of_locked(qa);
         if (!det) break;
         if (m.field == "bs") return c_.baseline_values_locked(*det);
         std::optional<std::vector<double>> v;
         for (auto kind : kLabelKinds) {
-          v = c_.isotope_values_locked(m.a, kind);
+          v = c_.isotope_values_locked(qa, kind);
           if (v) break;
         }
         if (!v) break;
@@ -457,14 +458,15 @@ std::optional<std::vector<double>> Collector::Metrics::series(const MetricRef& m
 
 std::optional<double> Collector::Metrics::scalar(const MetricRef& m) const {
   using K = MetricRef::Kind;
+  const std::string qa = qualified_a(m), qb = qualified_b(m);
   {
     std::lock_guard lock(c_.mutex_);
     switch (m.kind) {
       case K::Isotope:
-        if (auto v = c_.corrected_locked(m.a)) return v;
+        if (auto v = c_.corrected_locked(qa)) return v;
         break;
       case K::Ratio: {
-        auto a = c_.corrected_locked(m.a), b = c_.corrected_locked(m.b);
+        auto a = c_.corrected_locked(qa), b = c_.corrected_locked(qb);
         if (a && b && *b != 0.0) return *a / *b;
         break;
       }
@@ -473,10 +475,10 @@ std::optional<double> Collector::Metrics::scalar(const MetricRef& m) const {
         std::string det;
         if (m.field == "cur") {
           for (auto kind : kLabelKinds)
-            if (const auto s = c_.isotope_series_locked(m.a, kind)) return s->v.back();
+            if (const auto s = c_.isotope_series_locked(qa, kind)) return s->v.back();
           break;
         }
-        auto i = c_.intercept_locked(m.a, &det);
+        auto i = c_.intercept_locked(qa, &det);
         if (!i) break;
         if (m.field == "intercept") return i->value;
         if (m.field == "std_dev") return i->error;
@@ -526,12 +528,12 @@ std::size_t Collector::Metrics::contiguous_from(const MetricRef& m) const {
     case K::Isotope:
     case K::IsotopeField: {
       if (m.kind == K::IsotopeField && m.field == "bs") return 0;
-      const auto s = isotope(m.a);
+      const auto s = isotope(qualified_a(m));
       return s ? before(*s) : 0;
     }
     case K::Ratio: {
-      const auto a = c_.isotope_series_locked(m.a, kSignal);
-      const auto b = c_.isotope_series_locked(m.b, kSignal);
+      const auto a = c_.isotope_series_locked(qualified_a(m), kSignal);
+      const auto b = c_.isotope_series_locked(qualified_b(m), kSignal);
       if (!a || !b) return 0;
       // The ratio is the tail both have: n points, of which these came after.
       const std::size_t n = std::min(a->v.size(), b->v.size());
