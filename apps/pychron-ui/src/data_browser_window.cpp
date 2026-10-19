@@ -604,10 +604,15 @@ void DataBrowserWindow::request_figure(const QString& kind) {
 
 void DataBrowserWindow::show_message(const QString& text) { status_->setText(text); }
 
-void DataBrowserWindow::request_export() {
+QStringList DataBrowserWindow::export_uuids() const {
   QStringList ids = selected_uuids();
   if (ids.isEmpty())
     for (const auto& r : model_->rows()) ids << qs(r.uuid);
+  return ids;
+}
+
+void DataBrowserWindow::request_export() {
+  const QStringList ids = export_uuids();
   if (ids.isEmpty()) {
     status_->setText(tr("Nothing to export"));
     return;

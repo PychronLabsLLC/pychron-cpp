@@ -2217,6 +2217,15 @@ class TestDataWindows : public QObject {
     QVERIFY(e.section_button(spans)->isChecked());
   }
 
+  void export_uuids_are_the_selection_else_the_shown_rows() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.select_rows({0, 2});
+    QCOMPARE(w.export_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
+    w.table()->clearSelection();
+    QCOMPARE(w.export_uuids().size(), 10);
+  }
+
   void browser_export_button_asks_for_a_file_and_emits() {
     auto src = make_source(10);
     DataBrowserWindow w(*src);

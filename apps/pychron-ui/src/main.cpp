@@ -108,6 +108,7 @@
 #pragma pop_macro("signals")
 #include "entry_actions.hpp"
 #include "fit_actions.hpp"
+#include "publish_actions.hpp"
 #include "store_identifier_source.hpp"
 #endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
@@ -219,6 +220,11 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
     auto* entry = new pychron::ui::EntryActions(&window, url);
     new pychron::ui::FitActions(&window, url, *entry, presets,
                                 [&window](const QString& uuid) { window.workspace()->open_recall(uuid); });
+    // View > Publish…: releases of this database, made of the browser's selection.
+    new pychron::ui::PublishActions(&window, url, [&window] {
+      const auto* browser = window.workspace()->existing_browser();
+      return browser != nullptr ? browser->export_uuids() : QStringList();
+    });
   }
 #endif
   window.apply_preferences(pychron::ui::load_preferences(QSettings()));
@@ -597,6 +603,11 @@ int main(int argc, char** argv) {
       window.set_identifier_source(new pychron::ui::StoreIdentifierSource(*entry));
       new pychron::ui::FitActions(&window, database, *entry, presets,
                                   [&window](const QString& uuid) { window.open_recall(uuid); });
+      // View > Publish…: releases of this database, made of the Data browser's selection.
+      new pychron::ui::PublishActions(&window, database, [&window] {
+        const auto* browser = window.data_window();
+        return browser != nullptr ? browser->export_uuids() : QStringList();
+      });
     }
     if (database_error) {
       // The data window shows the records folder, and says so and what is missing.

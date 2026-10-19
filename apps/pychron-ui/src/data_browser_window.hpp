@@ -121,6 +121,8 @@ class DataBrowserWindow : public QWidget {
   // The file name Export asks for; tests replace the dialog. Empty: cancelled.
   std::function<QString(const QString& suggested)> ask_export_path;
   QStringList selected_uuids() const;
+  // What Export, and a new release, take: the selected rows, else every row shown.
+  QStringList export_uuids() const;
   // By index among the analyses (model()->rows()), not by row of the table.
   void select_rows(const QList<int>& rows);
   void recall_step(int delta);  // Ctrl+N (+1) / Ctrl+B (-1)
