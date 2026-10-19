@@ -511,6 +511,109 @@ TEST_F(RunTest, DuringExtractionNeedsAnExtractionScript) {
   EXPECT_NE(r.error->what.find("during_extraction"), std::string::npos) << r.error->what;
 }
 
+// --- a staged release's prepare scripts (spec 11, plan Task 26) ---------------
+
+TEST_F(RunTest, PrepareScriptsRunWithPlanVariables) {
+  auto spec = unknown_run("12345", "staged");
+  spec.extraction.cryo_temp = 20.0;
+  auto r = go(spec);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "") << ::testing::PrintToString(r.messages);
+  const auto ran = host_.ran_scripts();
+  const auto globals = host_.globals();
+  std::vector<std::size_t> prepares;
+  for (std::size_t i = 0; i < ran.size(); ++i)
+    if (ran[i] == "cryo:release") prepares.push_back(i);
+  ASSERT_EQ(prepares.size(), 2u) << ::testing::PrintToString(ran);
+  EXPECT_EQ(globals[prepares[0]].at("cryo_temp"), scripting::Value{std::int64_t{35}});
+  EXPECT_EQ(globals[prepares[1]].at("cryo_temp"), scripting::Value{std::int64_t{75}});
+  EXPECT_EQ(globals[prepares[0]].at("hold_s"), scripting::Value{std::int64_t{300}});
+  // The run's own variables are there under them.
+  EXPECT_EQ(globals[prepares[0]].at("cryo_temperature"), scripting::Value{20.0});
+  // After the extraction script, before anything after the measurement.
+  EXPECT_EQ(ran.front(), "extract");
+  // Recorded a gas each.
+  ASSERT_TRUE(r.record);
+  ASSERT_EQ(r.record->data.gases.size(), 2u);
+  const auto& he = r.record->data.gases[0];
+  ASSERT_TRUE(he.prepare);
+  EXPECT_EQ(he.prepare->script, "cryo:release");
+  EXPECT_EQ(he.prepare->variables.at("cryo_temp"), "35");
+  EXPECT_FALSE(he.prepare->started.empty());
+  EXPECT_LE(he.prepare->started, he.prepare->finished);
+  ASSERT_TRUE(he.pump_out);
+  EXPECT_EQ(he.pump_out->valve, "IP");
+  EXPECT_EQ(he.pump_out->time_s, 60);
+  EXPECT_EQ(r.record->data.gases[1].prepare->variables.at("cryo_temp"), "75");
+  EXPECT_FALSE(r.record->data.gases[1].pump_out);
+}
+
+TEST_F(RunTest, PrepareScriptRunsAsExtractionKind) {
+  auto r = go(unknown_run("12345", "staged"));
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  const auto ran = host_.ran_scripts();
+  const auto kinds = host_.kinds();
+  int n = 0;
+  for (std::size_t i = 0; i < ran.size(); ++i) {
+    if (ran[i] != "cryo:release") continue;
+    ++n;
+    EXPECT_EQ(kinds[i], scripting::ScriptKind::Extraction);
+  }
+  EXPECT_EQ(n, 2);
+}
+
+TEST_F(RunTest, StagedPlanHoldsTheExtractionLineForTheWholeRun) {
+  std::vector<std::string> calls;
+  RunHooks hooks;
+  hooks.acquire_extraction = [&] {
+    calls.emplace_back("+extraction");
+    return true;
+  };
+  hooks.release_extraction = [&] { calls.emplace_back("-extraction"); };
+  hooks.acquire_spectrometer = [&] {
+    calls.emplace_back("+spectrometer");
+    return true;
+  };
+  hooks.release_spectrometer = [&] { calls.emplace_back("-spectrometer"); };
+  auto r = go(unknown_run("12345", "staged"), hooks);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "");
+  EXPECT_EQ(calls, (std::vector<std::string>{"+extraction", "+spectrometer", "-spectrometer", "-extraction"}));
+}
+
+// Spec 11.2: a failed prepare ends the run as a failed extraction does;
+// what the gases before it measured is saved.
+TEST_F(RunTest, FailingPrepareSavesEarlierGases) {
+  host_.bodies["cryo:release"] = [](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    if (env.context.globals.at("cryo_temp") == scripting::Value{std::int64_t{75}})
+      return fail(ErrorKind::Io, "cryostat did not reach 75 K");
+    return {};
+  };
+  auto r = go(unknown_run("12345", "staged"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Failed);
+  EXPECT_NE(r.record->provenance.failure.find("gas 'Ne'"), std::string::npos) << r.record->provenance.failure;
+  EXPECT_NE(r.record->provenance.failure.find("cryostat did not reach 75 K"), std::string::npos);
+  EXPECT_TRUE(r.record->results.intercepts.contains("He4@H1"));
+  EXPECT_FALSE(r.record->results.intercepts.contains("Ne20@AX"));
+  EXPECT_TRUE(std::filesystem::exists(lab_.files.analysis_path(*r.record)));
+}
+
+// What the host's static check refuses fails the gas with the host's words.
+TEST_F(RunTest, PrepareScriptRefusedByTheHostFailsTheGas) {
+  host_.bodies["cryo:release"] = [](const scripting::ScriptEnvironment& env, scripting::CancelToken&) -> Result<void> {
+    if (env.context.globals.at("cryo_temp") == scripting::Value{std::int64_t{75}})
+      return fail(ErrorKind::Config, "cryo:release:3: 'position' is not defined");
+    return {};
+  };
+  auto r = go(unknown_run("12345", "staged"));
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("gas 'Ne'"), std::string::npos) << r.error->what;
+  EXPECT_NE(r.error->what.find("'position' is not defined"), std::string::npos) << r.error->what;
+  ASSERT_TRUE(r.record);
+  EXPECT_TRUE(r.record->results.intercepts.contains("He4@H1"));
+}
+
 // --- the run's extraction device (laser system design, section 5) -----------
 
 class RunDeviceTest : public RunTest {

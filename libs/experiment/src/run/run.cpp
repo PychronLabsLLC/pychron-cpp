@@ -1,5 +1,7 @@
 #include "pychron/experiment/run/run.hpp"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -13,6 +15,7 @@
 #include <set>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 
 #include "pychron/devices/link.hpp"
 #include "pychron/experiment/measurement/keep_trying.hpp"
@@ -439,6 +442,57 @@ void Run::alarm(AlarmSeverity severity, std::string message) {
   if (s_.bus != nullptr) s_.bus->publish(Alarm{"safe state", severity, std::move(message), s_.clock->now()});
 }
 
+// The engine's prepare port (spec 11.2): the gas's script resolved and run as
+// an extraction script, on the run's host, token and clock, its variables
+// over the run's own.
+Result<measurement::PrepareReport> Run::PrepareScripts::run(const measurement::PrepareRequest& request,
+                                                            scripting::CancelToken& token) {
+  auto& r = run_;
+  if (r.s_.resolver == nullptr || r.s_.scripts == nullptr)
+    return fail(ErrorKind::Config, "no script host for prepare '" + request.script + "'");
+  auto script = r.s_.resolver->resolve(request.script, scripting::ScriptKind::Extraction);
+  if (!script) return fail(script.error());
+  script->kind = scripting::ScriptKind::Extraction;  // whatever was asked: no measurement calls
+  scripting::ScriptEnvironment env;
+  env.line = r.s_.line;
+  env.line.device = r.device_;
+  env.resources = r.s_.resources;
+  env.resolver = r.s_.resolver;
+  env.clock = r.s_.clock;
+  env.context = r.script_context();
+  measurement::PrepareReport out;
+  for (const auto& [k, v] : request.variables) {
+    // A plan variable wins over a run variable of the same name.
+    env.context.globals[k] = std::visit([](const auto& x) { return scripting::Value{x}; }, v);
+    out.variables[k] = std::visit(
+        [](const auto& x) -> std::string {
+          if constexpr (std::is_same_v<std::decay_t<decltype(x)>, std::string>) return x;
+          else if constexpr (std::is_same_v<std::decay_t<decltype(x)>, bool>) return x ? "true" : "false";
+          else if constexpr (std::is_same_v<std::decay_t<decltype(x)>, double>) {
+            std::array<char, 32> buf{};
+            std::snprintf(buf.data(), buf.size(), "%.15g", x);
+            return std::string(buf.data());
+          }
+          else return std::to_string(x);
+        },
+        v);
+  }
+  env.log = [&r](std::string_view line) { r.note(std::string(line)); };
+  r.note("prepare " + request.gas + ": " + request.script);
+  out.started = r.s_.clock->now();
+  out.started_utc = utc(r.s_.clock->wall_now());
+  auto ran = r.s_.scripts->run(*script, env, token);
+  out.finished = r.s_.clock->now();
+  out.finished_utc = utc(r.s_.clock->wall_now());
+  if (!ran) return fail(ran.error());
+  return out;
+}
+
+bool Run::has_prepare() const {
+  return plan_ && std::any_of(plan_->plan.gases.begin(), plan_->plan.gases.end(),
+                              [](const plan::Gas& g) { return g.prepare.has_value(); });
+}
+
 bool Run::has_extraction_phase() const {
   return plan_ && !plan_->plan.gases.empty() &&
          !plan::segments_at(plan_->plan.gases.front(), plan::When::DuringExtraction).empty();
@@ -449,6 +503,7 @@ void Run::build_engine(RunControl& control) {
                                  s_.bus,                s_.instrument_metrics};
   ctx.timing = s_.detector_timing;
   ctx.reference = s_.reference_detector;
+  if (has_prepare()) ctx.prepare = &prepare_scripts_;
   measurement::MeasurementInputs in;
   in.plan = plan_->plan;
   in.conditionals = conditionals_;
@@ -533,7 +588,13 @@ Result<void> Run::extract(RunControl& control) {
   auto r = run_script(*extraction_, scripting::ScriptKind::Extraction, control);
   end_extraction();  // always: the device never stays on after this phase
   record_cryo();
-  if (hooks_.release_extraction) hooks_.release_extraction();
+  // A staged plan's gases are prepared on the line during the measurement
+  // (spec 11.4): it keeps the line until the measurement ends.
+  if (r && !control.requested() && has_prepare()) {
+    extraction_held_ = true;
+  } else if (hooks_.release_extraction) {
+    hooks_.release_extraction();
+  }
   actuals_.duration = std::chrono::duration<double>(s_.clock->now() - start).count();
   if (phase) {
     if (!r) phase_token_.cancel();  // spec 5.4: the baseline phase ends with a failed extraction
@@ -568,7 +629,10 @@ Result<void> Run::measure(RunControl& control) {
   if (s_.spectrometer == nullptr) return fail(ErrorKind::Config, "no spectrometer for the measurement");
   // Claimed already when the plan measured during the extraction.
   if (!spectrometer_held_) {
-    if (hooks_.acquire_spectrometer && !hooks_.acquire_spectrometer()) return {};  // cancelled while waiting
+    if (hooks_.acquire_spectrometer && !hooks_.acquire_spectrometer()) {  // cancelled while waiting
+      release_held_extraction();
+      return {};
+    }
     spectrometer_held_ = true;
   }
   if (!engine_) build_engine(control);
@@ -594,7 +658,14 @@ Result<void> Run::measure(RunControl& control) {
     advance(RunEvent::Equilibrated);
   spectrometer_held_ = false;
   if (hooks_.release_spectrometer) hooks_.release_spectrometer();
+  release_held_extraction();
   return {};
+}
+
+void Run::release_held_extraction() {
+  if (!extraction_held_) return;
+  extraction_held_ = false;
+  if (hooks_.release_extraction) hooks_.release_extraction();
 }
 
 Result<void> Run::post_measure(RunControl& control) {
@@ -674,7 +745,24 @@ Result<void> Run::save(const std::optional<Error>& failure) {
   const auto& meas = result_.measurement;
   const auto data = measurement::to_record_data(meas.data, plan_->plan, meas.states);
   for (const auto& series : data.series) b.add_series(series);
-  for (const auto& gas : data.gases) b.add_gas(gas);
+  for (auto gas : data.gases) {
+    // What its prepare and pump-out did (spec 11.5).
+    for (const auto& o : meas.gases) {
+      if (o.name != gas.name) continue;
+      if (o.prepare) {
+        const auto& gases = plan_->plan.gases;
+        const auto g = std::find_if(gases.begin(), gases.end(), [&](const plan::Gas& pg) { return pg.name == o.name; });
+        record::PrepareRec rec;
+        if (g != gases.end() && g->prepare) rec.script = g->prepare->script;
+        rec.variables = o.prepare->variables;
+        rec.started = o.prepare->started_utc;
+        rec.finished = o.prepare->finished_utc;
+        gas.prepare = std::move(rec);
+      }
+      if (o.pump_out) gas.pump_out = record::PumpOutRec{o.pump_out->valve, o.pump_out->time_s};
+    }
+    b.add_gas(std::move(gas));
+  }
   b.set_time_zero(data.time_zero);
   for (const auto& [k, n] : data.counts) b.set_count(k, n);
   // A modifier's model file, read from the plan library (spec 3.5).

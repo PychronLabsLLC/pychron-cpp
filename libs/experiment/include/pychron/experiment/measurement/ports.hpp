@@ -111,6 +111,7 @@ struct PrepareRequest {
 };
 struct PrepareReport {
   TimePoint started{}, finished{};
+  std::string started_utc, finished_utc;  // ISO-8601 from the clock's wall time (the record's)
   std::map<std::string, std::string> variables;
 };
 class IPrepareScriptPort {

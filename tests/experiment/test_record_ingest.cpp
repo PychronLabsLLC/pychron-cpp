@@ -934,3 +934,28 @@ TEST(RecordIngest, MultiGasRecordStores) {
   for (const auto& row : a.roots.intercepts_rows) intercepts.insert(row.isotope);
   EXPECT_EQ(intercepts, (std::set<std::string>{"Ar36", "Ar40", "He4", "Ne20", "Ne22"}));
 }
+
+// A gas's prepare and pump-out (staged release, spec 11.5) are the record's:
+// the store keeps no row of them, and a record with them converts as one
+// without (the e2e spec's not-stored list).
+TEST(RecordIngest, PrepareRecordIsNotStored) {
+  auto b = sample_builder();
+  b.add_series({"He4", "H1", "signal", {{1.f, 2.f}, {5.f, 5.f}, {}}, "He", 0, 0, 0});
+  record::InterceptResult ir;
+  ir.intercept.value = 5;
+  ir.intercept.n_used = 2;
+  b.set_intercept("He4@H1", ir);
+  const auto plain = finalized(b);
+  b.add_gas({"He", 10.0, {{{}, 1.0, "", ""}},
+             record::PrepareRec{"cryo:release", {{"cryo_temp", "35"}}, "2026-10-10T12:31:00Z", "2026-10-10T12:36:00Z"},
+             record::PumpOutRec{"IP", 120}});
+  const auto staged = finalized(b);
+  auto rows = body_of(convert(staged));
+  auto without = body_of(convert(plain));
+  EXPECT_EQ(rows.roots.signal_refs.size(), without.roots.signal_refs.size());
+  EXPECT_EQ(rows.roots.intercepts_rows, without.roots.intercepts_rows);
+  EXPECT_EQ(rows.roots.baselines_rows, without.roots.baselines_rows);
+  ASSERT_TRUE(rows.meta && without.meta);
+  EXPECT_EQ(rows.meta->software_json, without.meta->software_json);
+  EXPECT_EQ(rows.meta->baseline_modifiers_json, without.meta->baseline_modifiers_json);
+}

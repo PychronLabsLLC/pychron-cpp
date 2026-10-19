@@ -91,6 +91,34 @@ TEST_F(ScriptHostTest, SameHostServesAllScriptKinds) {
   EXPECT_TRUE(rig.log.contains("open A"));
 }
 
+// A gas's prepare script (measurement plan v2 spec 11.6) is an extraction
+// script: the measurement calls are the hook API's (`api`, handed only to a
+// measurement hook) and not in the extraction vocabulary, so the host refuses
+// a script that makes them before it moves anything. (In an extraction
+// script `position` is the run's hole and `acquire` takes a resource.)
+TEST_F(ScriptHostTest, ExtractionScriptCannotMakeMeasurementCalls) {
+  for (const char* call : {"api.position('Ar40', 'H1')", "add_conditional('Ar40 > 1 -> truncate')", "truncate()"}) {
+    SCOPED_TRACE(call);
+    auto r = host->run(inline_script(std::string("def main():\n    close('A')\n    ") + call + "\n",
+                                     ScriptKind::Extraction),
+                       rig.env, token);
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, pychron::ErrorKind::Config);
+    const std::string name = std::string(call).substr(0, std::string(call).find_first_of(".("));
+    EXPECT_NE(to_string(r.error()).find(name), std::string::npos) << to_string(r.error());
+    EXPECT_TRUE(rig.log.snapshot().empty()) << ::testing::PrintToString(rig.log.snapshot());
+  }
+  // Through a measurement hook the same calls reach the API.
+  auto hook = inline_script("def before_main(api):\n"
+                            "    api.position('Ar40', 'H1')\n"
+                            "    api.acquire(5, 1.0)\n",
+                            ScriptKind::MeasurementHook);
+  auto h = host->call_hook(hook, "before_main", {}, rig.env, token);
+  ASSERT_TRUE(h) << to_string(h.error());
+  EXPECT_TRUE(rig.log.contains("position Ar40 H1"));
+  EXPECT_TRUE(rig.log.contains("acquire 5 1"));
+}
+
 // A safe_state script works the line and has no acquisition verbs: a call to
 // one fails it, naming the verb (spec 4.7).
 TEST_F(ScriptHostTest, ASafeStateScriptHasTheLineAndNoAcquisition) {

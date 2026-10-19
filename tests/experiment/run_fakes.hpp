@@ -269,6 +269,8 @@ class FakeScriptHost final : public scripting::IScriptHost {
     {
       std::lock_guard lock(mutex_);
       ran.push_back(script.name);
+      kinds_.push_back(script.kind);
+      globals_.push_back(env.context.globals);
       auto it = bodies.find(script.name);
       if (it != bodies.end()) body = it->second;
     }
@@ -287,11 +289,22 @@ class FakeScriptHost final : public scripting::IScriptHost {
     std::lock_guard lock(mutex_);
     return ran;
   }
+  // The kind and the globals of each script run, in order.
+  std::vector<scripting::ScriptKind> kinds() {
+    std::lock_guard lock(mutex_);
+    return kinds_;
+  }
+  std::vector<scripting::ValueMap> globals() {
+    std::lock_guard lock(mutex_);
+    return globals_;
+  }
   std::map<std::string, Body> bodies;
 
  private:
   std::mutex mutex_;
   std::vector<std::string> ran;
+  std::vector<scripting::ScriptKind> kinds_;
+  std::vector<scripting::ValueMap> globals_;
 };
 
 // Resolves any name to a script of that name.
@@ -387,9 +400,41 @@ counts = 10
 settle_s = 1
 )";
 
+// A staged release (spec 11): He, pumped out, then Ne, each prepared by
+// "cryo:release" at its own temperature.
+inline constexpr const char* kStagedPlan = R"(
+[plan]
+name = "staged"
+instrument_family = "fake"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 5
+inlet_delay_s = 1
+
+[[gas]]
+name = "He"
+prepare = { script = "cryo:release", variables = { cryo_temp = 35, hold_s = 300 } }
+pump_out = { valve = "IP", time_s = 60 }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 5
+
+[[gas]]
+name = "Ne"
+prepare = { script = "cryo:release", variables = { cryo_temp = 75, hold_s = 300 } }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ne20 = "AX" }
+counts = 5
+)";
+
 inline plan::PlanLibrary test_plans() {
   plan::PlanLibrary lib;
   if (auto syn = plan::parse_plan_template(kSynPlan, "syn.toml")) lib.add(*syn);
+  if (auto staged = plan::parse_plan_template(kStagedPlan, "staged.toml")) lib.add(*staged);
   auto t = plan::parse_plan_template(kTestPlan, "mc.toml");
   if (t) lib.add(*t);
   auto p = plan::parse_plan_template(protecting_plan(), "mcp.toml");

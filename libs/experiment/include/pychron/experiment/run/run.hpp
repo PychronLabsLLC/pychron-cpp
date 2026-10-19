@@ -227,6 +227,20 @@ class Run {
   // during_extraction phase, else by measure().
   void build_engine(RunControl& control);
   bool has_extraction_phase() const;
+  bool has_prepare() const;  // a gas of the plan has a prepare script (spec 11.2)
+  void release_held_extraction();
+
+  // A gas's prepare script (spec 11.2), run as an extraction script: the
+  // engine's prepare port.
+  class PrepareScripts final : public measurement::IPrepareScriptPort {
+   public:
+    explicit PrepareScripts(Run& run) : run_(run) {}
+    Result<measurement::PrepareReport> run(const measurement::PrepareRequest& request,
+                                           scripting::CancelToken& token) override;
+
+   private:
+    Run& run_;
+  };
   Result<void> post_measure(RunControl& control);
   // The record as far as the run got. `failure`: the run failed after
   // extraction began, and this is why (status failed); otherwise complete,
@@ -285,6 +299,8 @@ class Run {
   bool phase_done_ = false;
   std::optional<Error> phase_error_;
   scripting::CancelToken phase_token_;
+  bool extraction_held_ = false;  // a staged plan keeps the line to the end of its measurement
+  PrepareScripts prepare_scripts_{*this};
 };
 
 }  // namespace pychron::experiment::run
