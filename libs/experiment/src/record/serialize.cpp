@@ -1,13 +1,16 @@
 #include "pychron/experiment/record/serialize.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cstdlib>
+#include <set>
 #include <sstream>
 #include <variant>
 
 #include <toml++/toml.hpp>
 
+#include "pychron/experiment/record/names.hpp"
 #include "pychron/experiment/record/sha256.hpp"
 
 namespace pychron::experiment::record {
@@ -81,8 +84,53 @@ toml::table fit_table(const reduction::FitSpec& f) {
   return t;
 }
 
+toml::table state_table(const SpectrometerState& st) {
+  toml::table t;
+  t.insert_or_assign("deflections", dmap(st.deflections));
+  t.insert_or_assign("integration_time", st.integration_time);
+  t.insert_or_assign("optics", st.optics);
+  t.insert_or_assign("table", st.table);
+  return t;
+}
+
+toml::table gas_table(const GasRec& g) {
+  toml::table t;
+  t.insert_or_assign("name", g.name);
+  t.insert_or_assign("time_zero", g.time_zero);
+  toml::array states;
+  for (const auto& st : g.states) states.push_back(state_table(st));
+  t.insert_or_assign("states", std::move(states));
+  if (g.prepare) {
+    toml::table p;
+    p.insert_or_assign("script", g.prepare->script);
+    toml::table vars;
+    for (const auto& [k, v] : g.prepare->variables) vars.insert_or_assign(k, v);
+    p.insert_or_assign("variables", std::move(vars));
+    p.insert_or_assign("started", g.prepare->started);
+    p.insert_or_assign("finished", g.prepare->finished);
+    t.insert_or_assign("prepare", std::move(p));
+  }
+  if (g.pump_out) {
+    toml::table p;
+    p.insert_or_assign("valve", g.pump_out->valve);
+    p.insert_or_assign("time_s", g.pump_out->time_s);
+    t.insert_or_assign("pump_out", std::move(p));
+  }
+  return t;
+}
+
+toml::table baseline_table(const BaselineResult& b) {
+  toml::table t;
+  t.insert_or_assign("value", b.value);
+  t.insert_or_assign("error", b.error);
+  t.insert_or_assign("fit", fit_table(b.fit));
+  return t;
+}
+
 toml::table to_table(const AnalysisRecord& r) {
   toml::table root;
+  // A record read as v2 is written as v2 was, so it keeps its bytes and sha.
+  const bool v2 = r.provenance.schema_version == kRecordSchemaV2;
 
   toml::table id;
   id.insert_or_assign("uuid", r.identity.uuid);
@@ -193,9 +241,20 @@ toml::table to_table(const AnalysisRecord& r) {
     t.insert_or_assign("iso", s.iso);
     t.insert_or_assign("det", s.det);
     t.insert_or_assign("kind", s.kind);
+    if (!v2) {
+      t.insert_or_assign("gas", s.gas);
+      t.insert_or_assign("segment", s.segment);
+      t.insert_or_assign("position", s.position);
+      t.insert_or_assign("state", s.state);
+    }
     ds.push_back(std::move(t));
   }
   data.insert_or_assign("series", std::move(ds));
+  if (!v2) {
+    toml::array gases;
+    for (const auto& g : r.data.gases) gases.push_back(gas_table(g));
+    data.insert_or_assign("gases", std::move(gases));
+  }
   data.insert_or_assign("time_zero", r.data.time_zero);
   toml::table counts;
   for (const auto& [k, v] : r.data.counts) counts.insert_or_assign(k, v);
@@ -212,17 +271,48 @@ toml::table to_table(const AnalysisRecord& r) {
     t.insert_or_assign("filtered_idx", num_array(idx));
     t.insert_or_assign("residual_sd", v.intercept.residual_sd);
     t.insert_or_assign("fit", fit_table(v.fit));
-    ints.insert_or_assign(k, std::move(t));
+    ints.insert_or_assign(v2 ? v2_intercept_key(r.data, k) : k, std::move(t));
   }
-  for (const auto& [k, v] : r.results.baselines) {
-    toml::table t;
-    t.insert_or_assign("value", v.value);
-    t.insert_or_assign("error", v.error);
-    t.insert_or_assign("fit", fit_table(v.fit));
-    bases.insert_or_assign(k, std::move(t));
-  }
+  for (const auto& [k, v] : r.results.baselines) bases.insert_or_assign(k, baseline_table(v));
   res.insert_or_assign("intercepts", std::move(ints));
   res.insert_or_assign("baselines", std::move(bases));
+  if (!v2) {
+    toml::array positions;
+    for (const auto& b : r.results.baseline_positions) {
+      auto t = baseline_table(b.result);
+      t.insert_or_assign("detector", b.detector);
+      t.insert_or_assign("gas", b.gas);
+      t.insert_or_assign("segment", b.segment);
+      t.insert_or_assign("position", b.position);
+      t.insert_or_assign("when", b.when);
+      if (b.magnet) t.insert_or_assign("magnet", *b.magnet);
+      if (b.deflection) t.insert_or_assign("deflection", *b.deflection);
+      positions.push_back(std::move(t));
+    }
+    res.insert_or_assign("baseline_positions", std::move(positions));
+    toml::table choices;
+    for (const auto& [k, c] : r.results.baseline_choices) {
+      toml::table t;
+      t.insert_or_assign("rule", c.rule);
+      std::vector<std::int64_t> idx(c.baselines.begin(), c.baselines.end());
+      t.insert_or_assign("baselines", num_array(idx));
+      t.insert_or_assign("value", c.value);
+      t.insert_or_assign("error", c.error);
+      choices.insert_or_assign(k, std::move(t));
+    }
+    res.insert_or_assign("baseline_choices", std::move(choices));
+    toml::table modifiers;
+    for (const auto& [k, m] : r.results.baseline_modifiers) {
+      toml::table t;
+      t.insert_or_assign("variable", m.variable);
+      t.insert_or_assign("model", m.model);
+      t.insert_or_assign("error", m.error);
+      t.insert_or_assign("value", m.value);
+      t.insert_or_assign("error_value", m.error_value);
+      modifiers.insert_or_assign(k, std::move(t));
+    }
+    res.insert_or_assign("baseline_modifiers", std::move(modifiers));
+  }
   res.insert_or_assign("blanks_ref", r.results.blanks_ref);
   res.insert_or_assign("icfactors", dmap(r.results.icfactors));
   res.insert_or_assign("whiff", r.results.whiff);
@@ -444,6 +534,28 @@ reduction::FitSpec read_fit(const Rd& r) {
   return f;
 }
 
+// A v2 record in v3's terms (spec 6.1): one implicit gas named "" with the
+// record's time zero and its one spectrometer state, every series at segment
+// and position 0 of it, intercepts keyed "<label>@<detector>", and one
+// baseline position a detector. schema_version stays 2, so it is written back
+// as it was read.
+void as_v3(AnalysisRecord& r) {
+  GasRec gas;
+  gas.time_zero = r.data.time_zero;
+  gas.states.push_back({r.spectrometer.deflections, r.spectrometer.integration_time, "", ""});
+  r.data.gases = {std::move(gas)};
+  std::map<std::string, InterceptResult> keyed;
+  for (auto& [k, v] : r.results.intercepts) keyed[v3_intercept_key(r.data, k)] = std::move(v);
+  r.results.intercepts = std::move(keyed);
+  r.results.baseline_positions.clear();
+  for (const auto& [det, b] : r.results.baselines) {
+    BaselineRec rec;
+    rec.detector = det;
+    rec.result = b;
+    r.results.baseline_positions.push_back(std::move(rec));
+  }
+}
+
 Result<AnalysisRecord> from_table(const toml::table& root) {
   std::string err;
   const Rd top{&root, "record", &err};
@@ -451,9 +563,12 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
 
   const auto pv = top.sub("provenance");
   pv.integer("schema_version", r.provenance.schema_version);
-  if (err.empty() && r.provenance.schema_version != kRecordSchemaVersion)
+  if (err.empty() && r.provenance.schema_version != kRecordSchemaVersion &&
+      r.provenance.schema_version != kRecordSchemaV2)
     return fail(ErrorKind::Config, "unsupported record schema_version " + std::to_string(r.provenance.schema_version) +
-                                       " (expected " + std::to_string(kRecordSchemaVersion) + ")");
+                                       " (expected " + std::to_string(kRecordSchemaV2) + " or " +
+                                       std::to_string(kRecordSchemaVersion) + ")");
+  const bool v2 = r.provenance.schema_version == kRecordSchemaV2;
   pv.str("sha", r.provenance.sha);
   pv.strs("persister_refs", r.provenance.persister_refs);
   std::string status{to_string(RecordStatus::Complete)};  // absent: complete
@@ -582,11 +697,51 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
         er.str("iso", s.iso);
         er.str("det", s.det);
         er.str("kind", s.kind);
+        if (!v2) {
+          er.str("gas", s.gas);
+          er.integer("segment", s.segment);
+          er.integer("position", s.position);
+          er.integer("state", s.state);
+        }
         s.trace = read_trace(er);
         r.data.series.push_back(std::move(s));
       }
     } else data.fail("series", "array");
   }
+  if (!v2)
+    data.each_entry("gases", [&](const Rd& e) {
+      auto& g = r.data.gases.emplace_back();
+      e.str("name", g.name);
+      e.num("time_zero", g.time_zero);
+      e.each_entry("states", [&](const Rd& se) {
+        auto& st = g.states.emplace_back();
+        se.dmap("deflections", st.deflections);
+        se.num("integration_time", st.integration_time);
+        se.str("optics", st.optics);
+        se.str("table", st.table);
+      });
+      if (e.find("prepare")) {
+        const auto p = e.sub("prepare");
+        PrepareRec rec;
+        p.str("script", rec.script);
+        if (const auto vars = p.sub("variables"); vars.t)
+          for (const auto& [k, v] : *vars.t) {
+            auto text = v.value<std::string>();
+            if (!text) vars.fail(std::string(k.str()), "string");
+            else rec.variables[std::string(k.str())] = *text;
+          }
+        p.str("started", rec.started);
+        p.str("finished", rec.finished);
+        g.prepare = std::move(rec);
+      }
+      if (e.find("pump_out")) {
+        const auto p = e.sub("pump_out");
+        PumpOutRec rec;
+        p.str("valve", rec.valve);
+        p.num("time_s", rec.time_s);
+        g.pump_out = std::move(rec);
+      }
+    });
   const auto counts = data.sub("counts");
   if (counts.t)
     for (const auto& [k, v] : *counts.t) {
@@ -609,13 +764,44 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
       ir.fit = read_fit(e.sub("fit"));
       r.results.intercepts[std::string(k.str())] = std::move(ir);
     }
-  res.each_table("baselines", [&](const std::string& k, const Rd& e) {
+  auto read_baseline = [](const Rd& e) {
     BaselineResult b;
     e.num("value", b.value);
     e.num("error", b.error);
     b.fit = read_fit(e.sub("fit"));
-    r.results.baselines[k] = std::move(b);
-  });
+    return b;
+  };
+  res.each_table("baselines", [&](const std::string& k, const Rd& e) { r.results.baselines[k] = read_baseline(e); });
+  if (!v2) {
+    res.each_entry("baseline_positions", [&](const Rd& e) {
+      auto& b = r.results.baseline_positions.emplace_back();
+      b.result = read_baseline(e);
+      e.str("detector", b.detector);
+      e.str("gas", b.gas);
+      e.integer("segment", b.segment);
+      e.integer("position", b.position);
+      e.str("when", b.when);
+      e.opt_num("magnet", b.magnet);
+      e.opt_num("deflection", b.deflection);
+    });
+    res.each_table("baseline_choices", [&](const std::string& k, const Rd& e) {
+      BaselineChoice c;
+      e.str("rule", c.rule);
+      e.nums("baselines", c.baselines);
+      e.num("value", c.value);
+      e.num("error", c.error);
+      r.results.baseline_choices[k] = std::move(c);
+    });
+    res.each_table("baseline_modifiers", [&](const std::string& k, const Rd& e) {
+      BaselineModifierRec m;
+      e.str("variable", m.variable);
+      e.str("model", m.model);
+      e.str("error", m.error);
+      e.num("value", m.value);
+      e.num("error_value", m.error_value);
+      r.results.baseline_modifiers[k] = std::move(m);
+    });
+  }
   res.str("blanks_ref", r.results.blanks_ref);
   res.dmap("icfactors", r.results.icfactors);
   res.str("whiff", r.results.whiff);
@@ -678,6 +864,7 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   }
 
   if (!err.empty()) return fail(ErrorKind::Config, err);
+  if (v2) as_v3(r);
   return r;
 }
 
@@ -801,6 +988,30 @@ class Json {
 };
 
 }  // namespace
+
+std::optional<AnalysisRecord> as_v2(const AnalysisRecord& rec) {
+  const auto& series = rec.data.series;
+  if (std::any_of(series.begin(), series.end(), [](const DataSeries& s) {
+        return !s.gas.empty() || s.segment != 0 || s.position != 0 || s.state != 0;
+      }))
+    return std::nullopt;
+  if (!rec.results.baseline_choices.empty() || !rec.results.baseline_modifiers.empty()) return std::nullopt;
+  AnalysisRecord out = rec;
+  out.provenance.schema_version = kRecordSchemaV2;
+  as_v3(out);
+  if (!rec.data.gases.empty() && rec.data.gases != out.data.gases) return std::nullopt;
+  if (!rec.results.baseline_positions.empty() && rec.results.baseline_positions != out.results.baseline_positions)
+    return std::nullopt;
+  // Keys v2 writes apart, and reads back as they are.
+  std::set<std::string> v2_keys;
+  for (const auto& [k, v] : out.results.intercepts) {
+    (void)v;
+    if (!v2_keys.insert(v2_intercept_key(out.data, k)).second) return std::nullopt;
+    if (v3_intercept_key(out.data, v2_intercept_key(out.data, k)) != k) return std::nullopt;
+  }
+  if (out.results.intercepts.size() != rec.results.intercepts.size()) return std::nullopt;
+  return out;
+}
 
 std::string to_toml(const AnalysisRecord& rec) {
   std::ostringstream os;

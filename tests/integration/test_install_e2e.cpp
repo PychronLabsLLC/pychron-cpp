@@ -642,8 +642,8 @@ TEST_P(InstallE2E, EveryShippedPlanIsStoredAndReadsAsItsRecord) {
       }
       std::sort(keys.begin(), keys.end());
       EXPECT_EQ(keys, (std::vector<std::string>{"AX:Ar40", "H1:Ar40", "L1:Ar40", "L2:Ar40"}));
-      // The record itself keeps the acquisition's names.
-      EXPECT_TRUE(rec.results.intercepts.contains("Ar40:H1"));
+      // The record keeps the acquisition's names, read in v3 terms.
+      EXPECT_TRUE(rec.results.intercepts.contains("Ar40@H1"));
     }
     if (plans[i] == "hop_baseline") {
       std::size_t in_record = 0, points = 0;

@@ -186,7 +186,7 @@ TEST_F(RunTest, FullRunSucceedsAndSaves) {
   EXPECT_EQ(r.record->identity.run_index, 3);
   EXPECT_EQ(r.record->instrument.mass_spectrometer, "argus");
   EXPECT_EQ(r.record->measurement.scripts.at("extraction").sha, "sha-extract");
-  EXPECT_TRUE(r.record->results.intercepts.contains("Ar40"));
+  EXPECT_TRUE(r.record->results.intercepts.contains("Ar40@H1"));
   EXPECT_TRUE(r.record->results.baselines.contains("H1"));
   EXPECT_FALSE(r.record->provenance.sha.empty());
   EXPECT_FALSE(r.record->events.empty());

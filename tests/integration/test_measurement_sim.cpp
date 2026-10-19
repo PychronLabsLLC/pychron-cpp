@@ -460,7 +460,7 @@ TEST_F(MeasurementSim, ExecutorRunsAQueueOnTheSimLab) {
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     auto rec = record::from_json(text);
     ASSERT_TRUE(rec) << rec.error().what;
-    EXPECT_NEAR(rec->results.intercepts.at("Ar40").intercept.value, 1e6, 1e4);
+    EXPECT_NEAR(rec->results.intercepts.at("Ar40@H1").intercept.value, 1e6, 1e4);  // read in v3 terms
     EXPECT_FALSE(rec->spectrometer.state_hash.empty());
     EXPECT_FALSE(rec->conditionals.installed.empty());
     if (host->available()) {

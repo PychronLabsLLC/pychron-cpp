@@ -1,0 +1,473 @@
+{
+    "conditionals" : {
+        "errors" : [
+            {
+                "count" : 4,
+                "message" : "metric 'gauge.x.pressure' unavailable",
+                "name" : "other"
+            }
+        ],
+        "installed" : [
+            {
+                "abbreviated_count_ratio" : 0.5,
+                "action" : "truncate",
+                "analysis_types" : [
+                    "unknown",
+                    "blank"
+                ],
+                "check" : "average(Ar40, window=5) > 800000",
+                "frequency" : 2,
+                "id" : "abc",
+                "kind" : "truncation",
+                "level" : "queue",
+                "location" : "conditionals/q.toml",
+                "mapper" : "x + 1",
+                "name" : "big",
+                "ntrips" : 3,
+                "resume" : false,
+                "start" : 20,
+                "terminate" : false,
+                "truncate" : false,
+                "window" : 5
+            }
+        ],
+        "tripped" : [
+            {
+                "action" : "truncate",
+                "check" : "average(Ar40, window=5) > 800000",
+                "context" : {
+                    "Ar39" : 1.25,
+                    "Ar40" : 812345.5
+                },
+                "count" : 3,
+                "id" : "abc",
+                "kind" : "truncation",
+                "name" : "big",
+                "reading" : 26,
+                "t" : 41.5,
+                "value" : 812345.5
+            }
+        ]
+    },
+    "data" : {
+        "counts" : {
+            "Ar40" : 3
+        },
+        "gases" : [
+            {
+                "name" : "He",
+                "pump_out" : {
+                    "time_s" : 120.0,
+                    "valve" : "ion_pump"
+                },
+                "states" : [
+                    {
+                        "deflections" : {
+                            "CDD" : 110.0
+                        },
+                        "integration_time" : 1.0,
+                        "optics" : "",
+                        "table" : ""
+                    }
+                ],
+                "time_zero" : 2.5
+            },
+            {
+                "name" : "Ne",
+                "prepare" : {
+                    "finished" : "2026-09-30T12:06:00Z",
+                    "script" : "cryo:release",
+                    "started" : "2026-09-30T12:01:00Z",
+                    "variables" : {
+                        "cryo_temp" : "75",
+                        "hold_s" : "300"
+                    }
+                },
+                "states" : [
+                    {
+                        "deflections" : {},
+                        "integration_time" : 1.0,
+                        "optics" : "ne_optics",
+                        "table" : "ic_run"
+                    },
+                    {
+                        "deflections" : {
+                            "CDD" : 2000.0
+                        },
+                        "integration_time" : 2.0,
+                        "optics" : "",
+                        "table" : ""
+                    }
+                ],
+                "time_zero" : 9.75
+            }
+        ],
+        "series" : [
+            {
+                "det" : "H1",
+                "gas" : "",
+                "iso" : "Ar40",
+                "kind" : "signal",
+                "position" : 0,
+                "segment" : 0,
+                "sigma" : [
+                    0.0099999997764825821,
+                    0.0099999997764825821,
+                    0.0099999997764825821
+                ],
+                "state" : 0,
+                "t" : [
+                    0.0,
+                    1.0,
+                    2.0
+                ],
+                "v" : [
+                    1.0,
+                    0.89999997615814209,
+                    0.80000001192092896
+                ]
+            },
+            {
+                "det" : "H1",
+                "gas" : "",
+                "iso" : "Ar40",
+                "kind" : "baseline",
+                "position" : 0,
+                "segment" : 0,
+                "state" : 0,
+                "t" : [
+                    0.0,
+                    1.0
+                ],
+                "v" : [
+                    0.10000000149011612,
+                    0.10000000149011612
+                ]
+            },
+            {
+                "det" : "H1",
+                "gas" : "He",
+                "iso" : "He4",
+                "kind" : "signal",
+                "position" : 0,
+                "segment" : 0,
+                "state" : 0,
+                "t" : [
+                    0.0,
+                    1.0
+                ],
+                "v" : [
+                    5.0,
+                    4.0
+                ]
+            },
+            {
+                "det" : "H1",
+                "gas" : "Ne",
+                "iso" : "Ne20",
+                "kind" : "signal",
+                "position" : 0,
+                "segment" : 1,
+                "state" : 1,
+                "t" : [
+                    10.0,
+                    11.0
+                ],
+                "v" : [
+                    2.0,
+                    2.5
+                ]
+            },
+            {
+                "det" : "AX",
+                "gas" : "Ne",
+                "iso" : "Ne22",
+                "kind" : "signal",
+                "position" : 1,
+                "segment" : 1,
+                "state" : 0,
+                "t" : [
+                    10.0,
+                    11.0
+                ],
+                "v" : [
+                    0.5,
+                    0.60000002384185791
+                ]
+            }
+        ],
+        "time_zero" : 3.5
+    },
+    "events" : [
+        {
+            "detail" : "measuring",
+            "kind" : "state",
+            "t" : 1.0
+        }
+    ],
+    "extraction" : {
+        "actuals" : {
+            "beam_diameter" : 0.0,
+            "cleanup" : 0.0,
+            "cryo_measured" : {
+                "A" : 77.120000000000005,
+                "B" : 80.5
+            },
+            "duration" : 30.0,
+            "grain_polygons" : [
+                [
+                    [
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        1.5,
+                        2.5
+                    ]
+                ]
+            ],
+            "manometer_pressure" : 9.9999999999999995e-07,
+            "pattern" : "",
+            "pid_params" : {
+                "kp" : 0.5
+            },
+            "pipette_counts" : 0,
+            "positions" : [],
+            "series" : {
+                "response" : {
+                    "t" : [
+                        0.0,
+                        1.0
+                    ],
+                    "v" : [
+                        0.10000000149011612,
+                        0.20000000298023224
+                    ]
+                }
+            },
+            "snapshot_refs" : [
+                "snap1.jpg"
+            ],
+            "value" : 9.9000000000000004
+        },
+        "spec" : {
+            "cleanup" : 60.0,
+            "cryo_temperature" : 77.0,
+            "duration" : 30.0,
+            "pattern" : "circle",
+            "positions" : [
+                1,
+                2
+            ],
+            "units" : "watts",
+            "value" : 10.0
+        }
+    },
+    "identity" : {
+        "aliquot" : 2,
+        "analysis_type" : "unknown",
+        "identifier" : "12345",
+        "queue_uuid" : "q-1",
+        "run_index" : 7,
+        "step" : "A",
+        "timestamp" : "2026-09-30T12:00:00Z",
+        "uuid" : "u-1"
+    },
+    "instrument" : {
+        "analyst" : "me",
+        "extract_device" : "co2",
+        "laboratory" : "lab",
+        "mass_spectrometer" : "jan",
+        "software_git_sha" : "abc123",
+        "software_version" : "0.1.0"
+    },
+    "measurement" : {
+        "hook" : {
+            "name" : "h",
+            "sha" : "deadbeef"
+        },
+        "plan" : {
+            "effective_plan_toml" : "[plan]\nx=1\n",
+            "overrides" : {
+                "count" : "10"
+            },
+            "template" : "argon",
+            "version" : "3"
+        },
+        "scripts" : {
+            "extraction" : {
+                "name" : "ext.py",
+                "sha" : "sha1",
+                "text_ref" : "ref1"
+            }
+        }
+    },
+    "provenance" : {
+        "persister_refs" : [
+            "db:1"
+        ],
+        "schema_version" : 3,
+        "sha" : "ae8dc9b1e09d2b6f60459d9fff5d9f39e1b66ad2e9e8cedd2cecdf006ecf293f"
+    },
+    "results" : {
+        "baseline_choices" : {
+            "Ne20@H1" : {
+                "baselines" : [
+                    0,
+                    1
+                ],
+                "error" : 0.0011180339887498947,
+                "rule" : "bracketing_average",
+                "value" : 0.059999999999999998
+            }
+        },
+        "baseline_modifiers" : {
+            "CDD" : {
+                "error" : "0.001",
+                "error_value" : 0.002,
+                "model" : "0.01*x",
+                "value" : 1.5,
+                "variable" : "Ar40+Ar39"
+            }
+        },
+        "baseline_positions" : [
+            {
+                "deflection" : 110.0,
+                "detector" : "H1",
+                "error" : 0.001,
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "linear",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "gas" : "Ne",
+                "magnet" : 34.200000000000003,
+                "position" : 0,
+                "segment" : 0,
+                "value" : 0.050000000000000003,
+                "when" : "before_inlet"
+            },
+            {
+                "detector" : "H1",
+                "error" : 0.002,
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "linear",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "gas" : "Ne",
+                "position" : 0,
+                "segment" : 2,
+                "value" : 0.070000000000000007,
+                "when" : "after_main"
+            }
+        ],
+        "baselines" : {
+            "H1" : {
+                "error" : 0.0,
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "linear",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "value" : 0.10000000000000001
+            }
+        },
+        "blanks_ref" : "",
+        "icfactors" : {},
+        "intercepts" : {
+            "Ar40" : {
+                "error" : 0.01,
+                "filtered_idx" : [
+                    1
+                ],
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "parabolic",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "n_used" : 3,
+                "residual_sd" : 0.0,
+                "value" : 1.1000000000000001
+            },
+            "He4@H1" : {
+                "error" : 0.0,
+                "filtered_idx" : [],
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "linear",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "n_used" : 0,
+                "residual_sd" : 0.0,
+                "value" : 4.5
+            },
+            "Ne20@H1" : {
+                "error" : 0.0,
+                "filtered_idx" : [],
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "linear",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "n_used" : 0,
+                "residual_sd" : 0.0,
+                "value" : 4.5
+            },
+            "Ne22@AX" : {
+                "error" : 0.0,
+                "filtered_idx" : [],
+                "fit" : {
+                    "degree" : 0,
+                    "error" : "sem",
+                    "kind" : "linear",
+                    "outliers_enabled" : false,
+                    "outliers_iterations" : 1,
+                    "outliers_std_devs" : 2.0
+                },
+                "n_used" : 0,
+                "residual_sd" : 0.0,
+                "value" : 4.5
+            }
+        },
+        "whiff" : "run_remainder"
+    },
+    "sample" : {
+        "irradiation" : "NM-300",
+        "level" : "A",
+        "material" : "sanidine",
+        "note" : "a \"note\"\nline2",
+        "pi" : "Doe",
+        "position" : "5",
+        "project" : "proj",
+        "sample" : "FC-2"
+    },
+    "spectrometer" : {
+        "deflections" : {},
+        "field_table_version" : "ft1",
+        "gains" : {
+            "H1" : 1.0
+        },
+        "integration_time" : 1.0,
+        "source_params" : {},
+        "state_hash" : "hash"
+    }
+}

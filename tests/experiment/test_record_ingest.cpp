@@ -317,7 +317,7 @@ TEST(RecordIngest, IdentityInstrumentAndExtractionAreCarried) {
   EXPECT_EQ(a.laboratory, "lab");
   EXPECT_EQ(a.analyst, "jdoe");
   EXPECT_EQ(a.extract_device, "co2");
-  EXPECT_EQ(a.record_schema_version, record::kRecordSchemaVersion);
+  EXPECT_EQ(a.record_schema_version, record::kRecordSchemaV2);  // an ordinary run needs nothing of v3
   EXPECT_FALSE(a.queue);
   EXPECT_FALSE(a.load_name);
   EXPECT_TRUE(a.peak_centers.empty());

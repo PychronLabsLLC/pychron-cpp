@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -168,7 +169,7 @@ TEST(RecordBuilder, DetectsTraceLengthMismatch) {
 TEST(RecordBuilder, FinalizeStampsVersionAndSha) {
   auto rec = full_builder().finalize();
   ASSERT_TRUE(rec.has_value()) << rec.error().what;
-  EXPECT_EQ(rec->provenance.schema_version, kRecordSchemaVersion);
+  EXPECT_EQ(rec->provenance.schema_version, kRecordSchemaV2);  // nothing in it needs v3
   EXPECT_EQ(rec->provenance.sha.size(), 64u);
   EXPECT_TRUE(verify_sha(*rec));
   auto tampered = *rec;
@@ -216,7 +217,7 @@ TEST(RecordSerialize, ShaChangesWithContent) {
 
 TEST(RecordSerialize, SchemaVersionBumpIsRejected) {
   auto rec = full_builder().finalize().value();
-  EXPECT_EQ(rec.provenance.schema_version, 2);  // bump kRecordSchemaVersion deliberately, with a migration
+  EXPECT_EQ(rec.provenance.schema_version, 2);  // a record v2 can say all of is v2
   rec.provenance.schema_version = kRecordSchemaVersion + 1;
   auto r = from_toml(to_toml(rec));
   ASSERT_FALSE(r.has_value());
@@ -296,6 +297,7 @@ TEST(RecordSerialize, ARecordWrittenBeforeTheSimulatedMarkStillReadsWithItsSha) 
   EXPECT_EQ(*from_t, *from_j);
   // And what the code builds today for the same run is that record.
   EXPECT_EQ(full_builder().finalize()->provenance.sha, sha);
+  EXPECT_EQ(*full_builder().finalize(), *from_t);
 }
 
 // The mark is part of the record: it is in both renderings and in the sha,
@@ -307,7 +309,7 @@ TEST(RecordSerialize, ASimulatedRecordSaysSoAndKeepsSayingSo) {
   meta.simulated = true;
   b.set_instrument(meta);
   const auto simulated = b.finalize().value();
-  EXPECT_EQ(simulated.provenance.schema_version, 2);
+  EXPECT_EQ(simulated.provenance.schema_version, kRecordSchemaV2);
   EXPECT_NE(simulated.provenance.sha, real.provenance.sha);
   EXPECT_TRUE(verify_sha(simulated));
 
@@ -406,6 +408,122 @@ TEST(AnalysisRecord, ARecordWrittenBeforeStatusStillReadsWithItsSha) {
     EXPECT_EQ(rec->provenance.status, RecordStatus::Complete);
     EXPECT_TRUE(rec->provenance.failure.empty());
     EXPECT_TRUE(verify_sha(*rec));
-    EXPECT_EQ(rec->provenance.schema_version, kRecordSchemaVersion);
+    EXPECT_EQ(rec->provenance.schema_version, kRecordSchemaV2);
+  }
+}
+
+// ---- v3 (measurement plan v2 spec 6.1) ----------------------------------------
+
+// A v2 record keeps its sha and its bytes: it is written back in the v2
+// layout, whatever v3 adds when it is read.
+TEST(AnalysisRecord, V2FixturesKeepTheirSha) {
+  for (const char* name : {"v2.json", "v2.toml"}) {
+    const std::string text = fixture(name);
+    ASSERT_FALSE(text.empty()) << name;
+    const bool json = std::string(name).ends_with(".json");
+    auto rec = json ? from_json(text) : from_toml(text);
+    ASSERT_TRUE(rec.has_value()) << rec.error().what;
+    EXPECT_TRUE(verify_sha(*rec)) << name;
+    EXPECT_EQ(json ? to_json(*rec) : to_toml(*rec), text) << name;
+  }
+}
+
+TEST(AnalysisRecord, V2LoadsAsOneImplicitGas) {
+  auto rec = from_toml(fixture("v2.toml"));
+  ASSERT_TRUE(rec.has_value()) << rec.error().what;
+  EXPECT_EQ(rec->provenance.schema_version, kRecordSchemaV2);
+  ASSERT_EQ(rec->data.gases.size(), 1u);
+  EXPECT_EQ(rec->data.gases[0].name, "");
+  EXPECT_EQ(rec->data.gases[0].time_zero, 3.5);
+  ASSERT_EQ(rec->data.gases[0].states.size(), 1u);
+  EXPECT_EQ(rec->data.gases[0].states[0].integration_time, 1.0);
+  for (const auto& s : rec->data.series) {
+    EXPECT_EQ(s.gas, "");
+    EXPECT_EQ(s.segment, 0);
+    EXPECT_EQ(s.position, 0);
+    EXPECT_EQ(s.state, 0);
+  }
+  ASSERT_EQ(rec->results.intercepts.size(), 1u);
+  EXPECT_EQ(rec->results.intercepts.begin()->first, "Ar40@H1");
+  ASSERT_EQ(rec->results.baseline_positions.size(), 1u);
+  EXPECT_EQ(rec->results.baseline_positions[0].detector, "H1");
+  EXPECT_EQ(rec->results.baseline_positions[0].result.value, 0.1);
+  EXPECT_TRUE(rec->results.baseline_choices.empty());
+}
+
+namespace {
+
+// Two gases, three states, two baseline positions on H1 and one choice.
+AnalysisRecord v3_record() {
+  RecordBuilder v3 = full_builder();
+  v3.add_series({"He4", "H1", "signal", {{0.f, 1.f}, {5.f, 4.f}, {}}, "He", 0, 0, 0});
+  v3.add_series({"Ne20", "H1", "signal", {{10.f, 11.f}, {2.f, 2.5f}, {}}, "Ne", 1, 0, 1});
+  v3.add_series({"Ne22", "AX", "signal", {{10.f, 11.f}, {0.5f, 0.6f}, {}}, "Ne", 1, 1, 0});
+  GasRec he{"He", 2.5, {{{{"CDD", 110.0}}, 1.0, "", ""}}, std::nullopt, PumpOutRec{"ion_pump", 120}};
+  GasRec ne{"Ne", 9.75,
+            {{{}, 1.0, "ne_optics", "ic_run"}, {{{"CDD", 2000.0}}, 2.0, "", ""}},
+            PrepareRec{"cryo:release", {{"cryo_temp", "75"}, {"hold_s", "300"}}, "2026-09-30T12:01:00Z",
+                       "2026-09-30T12:06:00Z"},
+            std::nullopt};
+  v3.add_gas(he).add_gas(ne);
+  InterceptResult ir;
+  ir.intercept.value = 4.5;
+  v3.set_intercept("He4@H1", ir);
+  v3.set_intercept("Ne20@H1", ir);
+  v3.set_intercept("Ne22@AX", ir);
+  BaselineRec before{"H1", "Ne", 0, 0, "before_inlet", 34.2, 110.0, {0.05, 0.001, {}}};
+  BaselineRec after{"H1", "Ne", 2, 0, "after_main", std::nullopt, std::nullopt, {0.07, 0.002, {}}};
+  v3.add_baseline_position(before).add_baseline_position(after);
+  v3.set_baseline_choice("Ne20@H1", {"bracketing_average", {0, 1}, 0.06, 0.0011180339887498948});
+  v3.set_baseline_modifier("CDD", {"Ar40+Ar39", "0.01*x", "0.001", 1.5, 0.002});
+  return v3.finalize().value();
+}
+
+}  // namespace
+
+TEST(AnalysisRecord, V3RoundTrips) {
+  const auto rec = v3_record();
+  EXPECT_EQ(rec.provenance.schema_version, 3);
+  EXPECT_TRUE(verify_sha(rec));
+  const auto toml = to_toml(rec);
+  auto t = from_toml(toml);
+  ASSERT_TRUE(t.has_value()) << t.error().what;
+  EXPECT_EQ(*t, rec);
+  EXPECT_TRUE(verify_sha(*t));
+  EXPECT_EQ(to_toml(*t), toml);
+  const auto json = to_json(rec);
+  auto j = from_json(json);
+  ASSERT_TRUE(j.has_value()) << j.error().what;
+  EXPECT_EQ(*j, rec);
+  EXPECT_TRUE(verify_sha(*j));
+  EXPECT_EQ(to_json(*j), json);
+  // What is absent is not written.
+  EXPECT_EQ(t->data.gases[0].prepare, std::nullopt);
+  EXPECT_EQ(t->data.gases[1].pump_out, std::nullopt);
+  EXPECT_EQ(t->results.baseline_positions[1].magnet, std::nullopt);
+}
+
+// tests/data/records/v3.{toml,json} were written by this serializer on macOS:
+// a record written on one compiler reads with its sha on every other (Windows
+// CI checks these). PYCHRON_UPDATE_GOLDENS=1 rewrites them.
+TEST(AnalysisRecord, V3FixtureSha) {
+  const auto rec = v3_record();
+  if (const char* update = std::getenv("PYCHRON_UPDATE_GOLDENS"); update && std::string(update) == "1") {
+    for (const char* name : {"v3.toml", "v3.json"}) {
+      std::ofstream out(std::string(PYCHRON_TEST_DATA_DIR) + "/records/" + name, std::ios::binary);
+      out << (std::string(name).ends_with(".json") ? to_json(rec) : to_toml(rec));
+    }
+    FAIL() << "golden rewritten: review the diff";
+  }
+  for (const char* name : {"v3.toml", "v3.json"}) {
+    const std::string text = fixture(name);
+    ASSERT_FALSE(text.empty()) << name;
+    const bool json = std::string(name).ends_with(".json");
+    auto back = json ? from_json(text) : from_toml(text);
+    ASSERT_TRUE(back.has_value()) << back.error().what;
+    EXPECT_TRUE(verify_sha(*back)) << name;
+    EXPECT_EQ(back->provenance.sha, rec.provenance.sha) << name;
+    EXPECT_EQ(*back, rec) << name;
+    EXPECT_EQ(json ? to_json(*back) : to_toml(*back), text) << name;
   }
 }

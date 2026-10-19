@@ -367,7 +367,12 @@ least as capable as the plan.
   has a producer.
 
 This is `AnalysisRecord` v3; the v2 reader stays and v2 records load with a
-single implicit gas and segment.
+single implicit gas and segment. v2 record read is written back, and its sha
+computed, in v2 layout. Record builder finalizes as v2 a record v2 can say all
+of (no gas but implicit one, every series at segment and position 0, one
+baseline position a detector, no baseline choice or modifier): ordinary run
+keeps bytes and stored items it had before v3, as `instrument.simulated` and
+`provenance.status` did (`RecordIngest.AnOrdinaryRunConvertsAsItAlwaysDid`).
 
 ### 6.2 Reduction
 

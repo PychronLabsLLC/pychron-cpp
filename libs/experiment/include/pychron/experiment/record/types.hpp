@@ -4,6 +4,7 @@
 // deterministically by serialize.hpp. Derived values (age, K/Ca, yield) are
 // never stored: they are reductions over this record.
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -20,7 +21,13 @@ namespace pychron::experiment::record {
 // v2: typed conditionals provenance (conditionals spec 6.3), whiff result string.
 // Still v2 with instrument.simulated, an optional key written only when true:
 // every earlier v2 record reads as it did, with the sha it had.
-inline constexpr int kRecordSchemaVersion = 2;
+// v3 (measurement plan v2 spec 6.1): gases, each with its time zero and table
+// of spectrometer states; every series names its gas, segment, position and
+// state; intercepts keyed "<label>@<detector>"; every baseline position, the
+// baseline chosen for each signal series, baseline modifiers. A record read as
+// v2 is written back, and its sha computed, in the v2 layout.
+inline constexpr int kRecordSchemaVersion = 3;
+inline constexpr int kRecordSchemaV2 = 2;
 
 struct Identity {
   std::string uuid, identifier;
@@ -114,16 +121,61 @@ struct SpectrometerRec {
   friend bool operator==(const SpectrometerRec&, const SpectrometerRec&) = default;
 };
 
+// One distinct state of the spectrometer a gas's series were measured in (v3).
+struct SpectrometerState {
+  std::map<std::string, double> deflections;
+  double integration_time = 0;
+  std::string optics, table;
+  friend bool operator==(const SpectrometerState&, const SpectrometerState&) = default;
+};
+
+// A gas's prepare script as it ran (staged release, spec 11.5); started and
+// finished are ISO-8601 UTC.
+struct PrepareRec {
+  std::string script;
+  std::map<std::string, std::string> variables;
+  std::string started, finished;
+  friend bool operator==(const PrepareRec&, const PrepareRec&) = default;
+};
+
+struct PumpOutRec {
+  std::string valve;
+  double time_s = 0;
+  friend bool operator==(const PumpOutRec&, const PumpOutRec&) = default;
+};
+
+// One gas of the run (v3). A v2 record reads as one gas named "".
+struct GasRec {
+  std::string name;
+  double time_zero = 0;
+  std::vector<SpectrometerState> states;
+  std::optional<PrepareRec> prepare;    // written only when present
+  std::optional<PumpOutRec> pump_out;   // written only when present
+  friend bool operator==(const GasRec&, const GasRec&) = default;
+};
+
 struct DataSeries {
-  std::string iso, det, kind;  // kind: "signal", "baseline", ...
+  DataSeries() = default;
+  // Where in the plan may be left out: a v2 run's one gas, segment and position.
+  DataSeries(std::string iso_, std::string det_, std::string kind_, Trace trace_, std::string gas_ = {},
+             int segment_ = 0, int position_ = 0, int state_ = 0)
+      : iso(std::move(iso_)), det(std::move(det_)), kind(std::move(kind_)), trace(std::move(trace_)),
+        gas(std::move(gas_)), segment(segment_), position(position_), state(state_) {}
+
+  std::string iso, det, kind;  // iso: the plan's label; kind: "signal", "baseline", ...
   Trace trace;
+  // Where in the plan it was read (v3): gas name, segment and position index
+  // within the gas, and the index of its state in the gas's `states`.
+  std::string gas;
+  int segment = 0, position = 0, state = 0;
   friend bool operator==(const DataSeries&, const DataSeries&) = default;
 };
 
 struct Data {
   std::vector<DataSeries> series;
-  double time_zero = 0;
+  double time_zero = 0;  // the first gas's (what a v2 record has)
   std::map<std::string, int> counts;
+  std::vector<GasRec> gases;
   friend bool operator==(const Data&, const Data&) = default;
 };
 
@@ -150,11 +202,44 @@ struct BaselineResult {
   }
 };
 
+// One baseline position of one detector (v3).
+struct BaselineRec {
+  std::string detector, gas;
+  int segment = 0, position = 0;
+  std::string when;                  // the plan's when: "before_inlet", "during_extraction", ...
+  std::optional<double> magnet;      // where the magnet was, when known
+  std::optional<double> deflection;  // the detector's deflection in force, when known
+  BaselineResult result;
+  friend bool operator==(const BaselineRec&, const BaselineRec&) = default;
+};
+
+// The baseline a signal series was corrected with (spec 6.2): `rule` is "at",
+// "nearest" or "bracketing_average"; `baselines` index Results::baseline_positions.
+struct BaselineChoice {
+  std::string rule;
+  std::vector<std::size_t> baselines;
+  double value = 0, error = 0;
+  friend bool operator==(const BaselineChoice&, const BaselineChoice&) = default;
+};
+
+// A detector's baseline modifier (spec 3.5), evaluated; applied at reduction.
+struct BaselineModifierRec {
+  std::string variable, model, error;
+  double value = 0, error_value = 0;
+  friend bool operator==(const BaselineModifierRec&, const BaselineModifierRec&) = default;
+};
+
 struct Results {
-  // By isotope; by "<isotope>:<detector>" for an isotope whose signal was
-  // measured on several detectors (record/names.hpp).
+  // v3: by "<label>@<detector>" (a v2 record's keys are re-keyed so when it is
+  // read). v2: by isotope; by "<isotope>:<detector>" for an isotope whose
+  // signal was measured on several detectors (record/names.hpp).
   std::map<std::string, InterceptResult> intercepts;
-  std::map<std::string, BaselineResult> baselines;    // by detector
+  // By detector: the baseline chosen for the detector's first signal series
+  // (what the store keeps).
+  std::map<std::string, BaselineResult> baselines;
+  std::vector<BaselineRec> baseline_positions;              // v3
+  std::map<std::string, BaselineChoice> baseline_choices;   // v3, by signal "<label>@<detector>"
+  std::map<std::string, BaselineModifierRec> baseline_modifiers;  // v3, by detector
   std::string blanks_ref;
   std::map<std::string, double> icfactors;  // by detector; 1.0 when absent
   std::string whiff;  // run_remainder | pump | abort; empty without a whiff

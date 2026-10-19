@@ -32,6 +32,10 @@ class RecordBuilder {
   RecordBuilder& set_count(const std::string& key, int n);
   RecordBuilder& set_intercept(const std::string& iso, InterceptResult v);
   RecordBuilder& set_baseline(const std::string& det, BaselineResult v);
+  RecordBuilder& add_gas(GasRec v);
+  RecordBuilder& add_baseline_position(BaselineRec v);
+  RecordBuilder& set_baseline_choice(const std::string& series, BaselineChoice v);
+  RecordBuilder& set_baseline_modifier(const std::string& det, BaselineModifierRec v);
   RecordBuilder& set_blanks_ref(std::string ref);
   RecordBuilder& set_icfactor(const std::string& det, double v);
   RecordBuilder& set_whiff(std::string result);  // run_remainder | pump | abort

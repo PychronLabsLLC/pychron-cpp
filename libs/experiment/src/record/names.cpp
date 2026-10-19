@@ -1,5 +1,6 @@
 #include "pychron/experiment/record/names.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
 #include <map>
@@ -64,6 +65,28 @@ std::string acquisition_isotope_key(std::string_view isotope, std::string_view d
   return key;
 }
 
+std::string qualified_key(std::string_view label, std::string_view detector) {
+  std::string key(label);
+  key += '@';
+  key += detector;
+  return key;
+}
+
+std::string v3_intercept_key(const Data& data, std::string_view v2_key) {
+  const auto named = intercept_name(data, v2_key);
+  if (!named) return std::string(v2_key);
+  return qualified_key(named->isotope, named->detector);
+}
+
+std::string v2_intercept_key(const Data& data, std::string_view v3_key) {
+  const auto at = v3_key.find('@');
+  if (at == std::string_view::npos) return std::string(v3_key);
+  const auto label = v3_key.substr(0, at);
+  const auto detector = v3_key.substr(at + 1);
+  if (on_several(detectors_of(data), kSignal, label)) return acquisition_isotope_key(label, detector);
+  return std::string(label);
+}
+
 std::vector<std::string> intercept_keys(const Data& data) {
   const Detectors detectors = detectors_of(data);
   std::set<std::string> keys;
@@ -102,6 +125,17 @@ std::vector<NamedSeries> named_series(const Data& data) {
 
 std::optional<InterceptName> intercept_name(const Data& data, std::string_view result_key) {
   const Detectors detectors = detectors_of(data);
+  if (const auto at = result_key.find('@'); at != std::string_view::npos) {
+    const auto label = result_key.substr(0, at);
+    const auto detector = result_key.substr(at + 1);
+    const bool measured = std::any_of(data.series.begin(), data.series.end(), [&](const DataSeries& s) {
+      return s.kind != kBaseline && s.iso == label && s.det == detector;
+    });
+    if (!measured) return std::nullopt;
+    const bool qualified = on_several(detectors, kSignal, label);
+    return InterceptName{qualified ? detector_isotope_key(detector, label) : std::string(label), std::string(label),
+                         std::string(detector)};
+  }
   // The acquisition's name of one detector's share of an isotope on several.
   for (const auto& s : data.series) {
     if (s.kind != kSignal || !on_several(detectors, kSignal, s.iso)) continue;

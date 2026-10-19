@@ -28,6 +28,17 @@ std::string detector_isotope_key(std::string_view detector, std::string_view iso
 // and so the key it has in a record's results.
 std::string acquisition_isotope_key(std::string_view isotope, std::string_view detector);
 
+// "Ar40@H1": a v3 record's key of a label's intercept on one detector.
+std::string qualified_key(std::string_view label, std::string_view detector);
+
+// A v2 record's intercept key ("Ar40", "Ar40:H1") as v3 has it ("Ar40@H1"),
+// from the record's series; a key with no series stays as it is.
+std::string v3_intercept_key(const Data& data, std::string_view v2_key);
+
+// A v3 key ("Ar40@H1") as a v2 record had it: "Ar40", or "Ar40:H1" when the
+// label's signal is on several detectors. Any other key stays as it is.
+std::string v2_intercept_key(const Data& data, std::string_view v3_key);
+
 // The keys a complete record's results have an intercept under: one for each
 // isotope with a signal series, or, for an isotope whose signal is on several
 // detectors, one for each of those detectors. Sorted.
@@ -64,7 +75,8 @@ struct InterceptName {
 };
 
 // What an analysis calls the isotope whose intercept the record keeps under
-// `result_key`. "<isotope>:<detector>" of a signal series of an isotope
+// `result_key`. A v3 key "<label>@<detector>" is that detector's (nullopt
+// without a series of it there). "<isotope>:<detector>" of a signal series of an isotope
 // measured on several detectors is that detector's; any other key is an
 // isotope, on the detector of its signal series, or, with no signal series,
 // on the detector of lowest name among its other series. nullopt: the record

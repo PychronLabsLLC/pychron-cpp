@@ -89,6 +89,11 @@ only this component's. Kept compressed, as that file is.
     it `invalid` too (`analysis_from_record`). `truncated` stored as any run,
     tag `ok`. Spec: `docs/superpowers/specs/2026-10-09-executor-hardening-design.md`
     4.5.
+  - Record v3 (measurement plan v2 spec 6.1): gases, series location,
+    baseline positions, choices, modifiers. v2 record read keeps
+    `schema_version = 2` and is written back in v2 layout (sha unchanged);
+    builder finalizes as v2 whatever v2 can say all of (`record::as_v2`).
+    In memory both read in v3 terms: intercepts `label@detector`.
   - A database url is shown only through `store::without_password`; an
     error text of an `Acquisition` already has url and password taken out.
     The acquisition worker's `try` is the library's one catch (thread

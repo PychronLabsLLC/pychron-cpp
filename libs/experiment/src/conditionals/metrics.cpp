@@ -37,6 +37,7 @@ const record::InterceptResult* RecordMetrics::intercept(const std::string& iso, 
   if (s == nullptr) return nullptr;
   if (det != nullptr) *det = s->det;
   const auto& ints = rec_.results.intercepts;
+  if (auto it = ints.find(iso + "@" + s->det); it != ints.end()) return &it->second;
   if (auto it = ints.find(iso + ":" + s->det); it != ints.end()) return &it->second;
   if (auto it = ints.find(iso); it != ints.end()) return &it->second;
   return nullptr;
