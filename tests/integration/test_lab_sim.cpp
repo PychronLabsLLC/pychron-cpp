@@ -1091,6 +1091,16 @@ std::optional<double> mean_of(const record::AnalysisRecord& rec, std::string_vie
   return std::nullopt;
 }
 
+// A trap's cryostat is one of the line's Lake Shore drivers, or the line
+// does not load.
+TEST_F(LabSim, ACryoTrapOnACryostatTheLineHasNotIsRefused) {
+  ScratchLab lab([](const fs::path& dir) {
+    std::ofstream(dir / "sim.toml", std::ios::app)
+        << "\n[[cryo_trap]]\nvolume = \"cryo\"\ncryostat = \"nope\"\nrelease_k = { He4 = 30 }\n";
+  });
+  EXPECT_NE(lab.problem().find("cryostat 'nope' is not a lakeshore driver"), std::string::npos) << lab.problem();
+}
+
 TEST_F(LabSim, StagedReleaseSimEachGasAppearsOnlyAfterItsRelease) {
   ScratchLab lab(stage_the_lab);
   ASSERT_TRUE(lab.problem().empty()) << lab.problem();

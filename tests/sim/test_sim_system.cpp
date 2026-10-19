@@ -1552,3 +1552,33 @@ TEST(SimCryoTrap, WithoutItsCryostatATrapHoldsNothing) {
   clock.advance(60s);
   EXPECT_GT((*sim.partial_pressures("b"))[kHe4], 0.0);
 }
+
+// What a trap lets through does not depend on how often anyone asks: the
+// line moves in whole seconds, each held as at its start.
+TEST(SimCryoTrap, WhatPassesDoesNotDependOnHowOftenTheLineIsAsked) {
+  auto cfg = config::load_system_config_from_string(kCryoConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  const auto passed = [&](Duration every) {
+    ManualClock clock;
+    auto settings = quiet();
+    settings.default_pressure = 0.0;
+    settings.cryo_traps.push_back({"a", "cryostat", 'A', {{"He4", 30.0}}});
+    SimSystem sim(clock, two_volumes(), settings);
+    (void)sim.hook_for(cfg->drivers.at("cryostat"), *cfg);
+    // 40 K, falling to its 10 K base: helium flows until about 66 s, then freezes.
+    sim.cryostat("cryostat")->set_temperature('A', 40.0);
+    Composition gas{};
+    gas[kHe4] = 1e-4;
+    EXPECT_TRUE(sim.inject("a", gas));
+    sim.set_valve("V", true);
+    while (clock.now() < TimePoint{} + 120s) {
+      clock.advance(every);
+      (void)sim.pressure("a");
+    }
+    return (*sim.partial_pressures("b"))[kHe4];
+  };
+  const double often = passed(100ms);
+  const double once = passed(120s);
+  EXPECT_GT(once, 0.0);
+  EXPECT_NEAR(often, once, once * 1e-9);
+}

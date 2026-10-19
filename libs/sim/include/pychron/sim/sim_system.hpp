@@ -168,8 +168,10 @@ struct SimSettings {
   // `volume`, each species with a `release_k` is held (no valve carries it to
   // or from the volume) while the cryostat `cryostat` (the line's driver of
   // that name, a Lake Shore) reads below that temperature on `input`, and
-  // flows as any gas above it. Applied whenever the line is moved to the
-  // clock, at the temperature of that moment. None by default.
+  // flows as any gas above it. Applied over each whole second of the clock
+  // at the temperature of its start (a cryostat's command first moves the
+  // line to its instant), so the gas does not depend on how often anything
+  // asks. None by default.
   struct CryoTrap {
     std::string volume;
     std::string cryostat;
@@ -307,8 +309,12 @@ class SimSystem {
 
   // Moves the network to clock.now(), and says when that is.
   TimePoint advance_locked() const;
-  // Each cryotrap's held species from its cryostat's temperature now.
-  void apply_traps_locked() const;
+  // Each cryotrap's held species from its cryostat's temperature at `t`.
+  void apply_traps_locked(TimePoint t) const;
+  // Moves the network from last_ to `to`. With cryotraps, in steps of the
+  // trap grid (whole seconds of the clock), each held as at its start: the
+  // same gas whoever asks and however often.
+  void move_to_locked(TimePoint to) const;
   // What beam_gas()'s function answers while this system is there.
   std::vector<BeamGas> beam_gas_at(TimePoint t) const;
   // An isolated volume for a gauge the topology does not have, with what

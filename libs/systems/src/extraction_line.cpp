@@ -343,6 +343,14 @@ Result<void> ExtractionLine::build_sim() {
     if (!settings) return fail(settings.error());
     options_.sim = std::move(*settings);
   }
+  // A cryotrap's cryostat is a Lake Shore driver of this line.
+  for (const auto& trap : options_.sim.cryo_traps) {
+    const auto driver = config_.drivers.find(trap.cryostat);
+    if (driver == config_.drivers.end() || driver->second.kind != "lakeshore")
+      return fail(ErrorKind::Config, (options_.sim.file.empty() ? std::string("sim settings") : options_.sim.file) +
+                                         ": cryo_trap on '" + trap.volume + "': cryostat '" + trap.cryostat +
+                                         "' is not a lakeshore driver of " + config_.source_file);
+  }
 
   sim_ = std::make_unique<sim::SimSystem>(*clock_, topology, options_.sim);
 

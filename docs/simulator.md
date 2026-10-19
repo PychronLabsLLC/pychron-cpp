@@ -323,14 +323,16 @@ in the spectrometer's file.
 section 11): gas frozen in a volume and let out one species at a time by
 warming it. Each species given a release temperature is held in the volume,
 carried by none of its valves either way, while the cryostat reads below that
-temperature, and flows as any gas above it. The rule is applied whenever the
-line is moved to the clock, at the cryostat's temperature of that moment. None
-by default; there may be several.
+temperature, and flows as any gas above it. The line is moved a whole second
+of the clock at a time, each second held as the cryostat's temperature is at
+its start (a command to the cryostat first moves the line to its instant), so
+what passes does not depend on how often anything reads the line. None by
+default; there may be several.
 
 | Key | Unit | Default | Range | Meaning |
 |---|---|---|---|---|
 | `volume` | name | (required) | a volume of the canvas | where the gas is frozen |
-| `cryostat` | name | (required) | a `lakeshore` driver of `extraction_line.toml` | the controller whose input is the trap's temperature. A trap whose cryostat the line has no such driver for holds nothing |
+| `cryostat` | name | (required) | a `lakeshore` driver of `extraction_line.toml` | the controller whose input is the trap's temperature. Any other name stops the line from loading |
 | `input` | letter | `"A"` | `"A"` to `"D"` | the controller's input that reads the trap |
 | `release_k` | K, by species | (required) | above 0, to 1e4 | `{ He4 = 30, Ne20 = 70 }`: each species given is held below its temperature; one not given is never held |
 

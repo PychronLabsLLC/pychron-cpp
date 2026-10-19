@@ -106,6 +106,10 @@ class LakeshoreSim {
   double temperature(char input) const;  // as the last command left it
   // The input's temperature now, on the clock (what a KRDG? would read).
   double current_temperature(char input);
+  // What the input reads at `t` if nothing is changed before then (its lag
+  // towards what its output asks); at or before the last change, what it
+  // read then. Changes nothing.
+  double temperature_at(char input, TimePoint t) const;
   void set_temperature(char input, double kelvin);
   std::optional<double> setpoint(int output) const;
   int range(int output) const;

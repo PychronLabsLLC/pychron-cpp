@@ -219,11 +219,7 @@ std::vector<BeamGas> SimSystem::beam_gas_at(TimePoint t) const {
   // To the instant of the reading: not past the clock, which is as far as
   // anything else has moved this line, and not back.
   const TimePoint to = std::min(t, clock_.now());
-  apply_traps_locked();
-  if (to > last_) {
-    network_.advance(seconds(to - last_));
-    last_ = to;
-  }
+  move_to_locked(to);
   const auto held = network_.partial_pressures(*spectrometer_);
   if (!held) return {};
   // The beam's own argon, for its masses: a peak is where it was. Helium
@@ -263,11 +259,11 @@ void SimSystem::add_gauge_volume_locked(const std::string& name) {
   }
 }
 
-void SimSystem::apply_traps_locked() const {
+void SimSystem::apply_traps_locked(TimePoint t) const {
   for (const auto& trap : settings_.cryo_traps) {
     const auto unit = cryostat_of_.find(trap.cryostat);
     if (unit == cryostat_of_.end() || !network_.has_volume(trap.volume)) continue;  // no such cryostat: no trap
-    const double kelvin = unit->second->current_temperature(trap.input);
+    const double kelvin = unit->second->temperature_at(trap.input, t);
     GasNetwork::Held held{};
     for (std::size_t s = 0; s < kSpeciesCount; ++s) {
       const auto release = trap.release_k.find(std::string(kSpeciesName[s]));
@@ -277,13 +273,28 @@ void SimSystem::apply_traps_locked() const {
   }
 }
 
+void SimSystem::move_to_locked(TimePoint to) const {
+  if (!(to > last_)) return;
+  if (settings_.cryo_traps.empty() || cryostat_of_.empty()) {
+    network_.advance(seconds(to - last_));
+    last_ = to;
+    return;
+  }
+  constexpr Duration kStep = std::chrono::seconds(1);
+  while (last_ < to) {
+    // The next whole second of the clock after last_, or `to`.
+    const auto since = last_.time_since_epoch();
+    const TimePoint grid = TimePoint{} + (since / kStep + 1) * kStep;
+    const TimePoint next = std::min(grid, to);
+    apply_traps_locked(last_);
+    network_.advance(seconds(next - last_));
+    last_ = next;
+  }
+}
+
 TimePoint SimSystem::advance_locked() const {
   const TimePoint now = clock_.now();
-  apply_traps_locked();
-  if (now > last_) {
-    network_.advance(seconds(now - last_));
-    last_ = now;
-  }
+  move_to_locked(now);
   return now;
 }
 
@@ -634,11 +645,19 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     // A cryostat on this system's clock: room temperature at start, each
     // input following its output's setpoint while that heater is on.
     auto unit = std::make_unique<LakeshoreSim>(clock_, "MODEL" + driver.options["model"].value_or(std::string("335")));
-    auto hook = unit->hook();
+    auto inner = unit->hook();
     std::lock_guard lock(mutex_);
     cryostat_of_[driver.name] = unit.get();
     cryostats_.push_back(std::move(unit));
-    return hook;
+    // A command changes what the trap does from its instant: the line is
+    // moved to it first, under the trap as it was.
+    return [this, inner = std::move(inner)](const Bytes& tx) {
+      {
+        std::lock_guard moved(mutex_);
+        advance_locked();
+      }
+      return inner(tx);
+    };
   }
 
   if (driver.kind == "plc2000_heater") {

@@ -297,8 +297,23 @@ double LakeshoreSim::current_temperature(char input) {
   return it == temps_.end() ? 0.0 : it->second;
 }
 
+double LakeshoreSim::temperature_at(char input, TimePoint t) const {
+  std::lock_guard lock(mutex_);
+  const auto it = temps_.find(input);
+  if (it == temps_.end()) return 0.0;
+  const double dt = std::chrono::duration<double>(t - last_).count();
+  if (dt <= 0) return it->second;
+  const int output = input - 'A' + 1;
+  const auto sp = setpoints_.find(output);
+  const auto r = ranges_.find(output);
+  const bool heating = sp != setpoints_.end() && r != ranges_.end() && r->second > 0;
+  const double target = heating ? sp->second : base_k_;
+  return it->second + (target - it->second) * (1.0 - std::exp(-dt / std::chrono::duration<double>(tau_).count()));
+}
+
 void LakeshoreSim::set_temperature(char input, double kelvin) {
   std::lock_guard lock(mutex_);
+  advance_locked();  // the others' lag up to now; this one reads `kelvin` from now
   temps_[input] = kelvin;
 }
 
