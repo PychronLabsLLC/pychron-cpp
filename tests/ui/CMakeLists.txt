@@ -6,6 +6,10 @@ find_package(Qt6 REQUIRED COMPONENTS Test Widgets)
 set(CMAKE_AUTOMOC ON)
 
 file(GLOB PYCHRON_UI_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
+# The Publish window exists only with the store (apps/pychron-ui, PYCHRON_UI_HAS_STORE).
+if(NOT TARGET pychron_publish OR NOT TARGET pychron_processing_store)
+  list(FILTER PYCHRON_UI_TESTS EXCLUDE REGEX "test_publish[^/]*\\.cpp$")
+endif()
 
 foreach(src IN LISTS PYCHRON_UI_TESTS)
   get_filename_component(name ${src} NAME_WE)
@@ -21,6 +25,14 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
     target_link_libraries(${target} PRIVATE pychron::earthbank_fake)
     # tests/earthbank/analyses.hpp builds on "processing/fixtures.hpp"
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+  endif()
+  # the Publish window's suite seeds a store as the release tests do
+  # (tests/publish/release_seed.hpp, over tests/persistence/store_fixture.hpp)
+  if(name MATCHES "^test_publish")
+    target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests ${PROJECT_SOURCE_DIR}/tests/publish
+      "${PROJECT_SOURCE_DIR}/libs/persistence/src")
+    target_compile_definitions(${target} PRIVATE QT_NO_KEYWORDS)
+    target_link_libraries(${target} PRIVATE TinyOrm::TinyOrm Qt6::Sql GTest::gtest)
   endif()
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"

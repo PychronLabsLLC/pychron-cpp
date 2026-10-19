@@ -6,7 +6,8 @@
 // results come back on the GUI thread. The windows never block on the store.
 //
 // Writes are made as one client (role "reduction", which may write catalog
-// rows, DVC spec 11.2) and one user, registered when the bridge opens.
+// rows, DVC spec 11.2, unless Options say another) and one user, registered
+// when the bridge opens.
 
 #include <condition_variable>
 #include <deque>
@@ -34,6 +35,8 @@ class EntryBridge : public QObject {
     std::string url;   // the store; it is never migrated from here
     std::string user;  // empty: $USER, else "pychron"
     std::string host;  // empty: $HOSTNAME, else "localhost"
+    std::string role = "reduction";     // the client's role (DVC spec 11.2); the Publish window's is "publisher"
+    std::string software = "pychron-ui";  // the client's software, as the store records it
   };
 
   // Opens the store on the worker thread and registers the client and user.

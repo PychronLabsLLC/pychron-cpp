@@ -242,6 +242,14 @@ if(TARGET pychron_processing_store)
     src/sample_table_model.hpp
     src/samples_window.hpp)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::entry)
+  # Releases of the store's data (data publishing spec, section 6.3): the
+  # Publish window, over libs/publish.
+  target_sources(pychron_ui_lib PRIVATE
+    src/publish_actions.cpp
+    src/publish_window.cpp
+    src/publish_actions.hpp
+    src/publish_window.hpp)
+  target_link_libraries(pychron_ui_lib PUBLIC pychron::publish)
   # A queue's runs are saved to the same store.
   target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment_store)
 endif()

@@ -48,7 +48,7 @@ void EntryBridge::loop(Options options, std::function<void(Result<ps::Actor>)> o
   }
   const std::string host = !options.host.empty() ? options.host : host_name();
   const std::string user = !options.user.empty() ? options.user : env_var("USER").value_or("pychron");
-  auto client = (*store)->register_client({host, "reduction", std::nullopt, "pychron-ui"});
+  auto client = (*store)->register_client({host, options.role, std::nullopt, options.software});
   if (!client) {
     opened(fail(client.error()));
     return;
