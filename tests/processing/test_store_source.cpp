@@ -248,8 +248,16 @@ TEST_F(StoreSourceTest, LoadAtBookmarkReproducesTheOldIntercept) {
   const double original = (*before)->find_isotope("Ar40")->intercept.value;
   const std::string old_head = (*before)->heads.at("intercepts");
   const ps::Uuid group = *store_->create_group(reducer(), "release:r@v1", {unknown_});
-  const ps::Uuid bookmark =
-      *store_->create_bookmark(reducer(), ps::BookmarkSpec{"release r v1", std::nullopt, std::nullopt, group});
+  // As a release pins: every head and every resolved reference at its revision.
+  ps::BookmarkSpec spec{"release r v1", std::nullopt, std::nullopt, group};
+  std::vector<ps::HeadInfo> entries = *store_->heads(unknown_);
+  auto refs = store_->resolve_refs(unknown_, ps::RefPolicy{});
+  ASSERT_TRUE(refs) << to_string(refs.error());
+  ASSERT_EQ(refs->refs.size(), 5u);
+  for (const auto& ref : refs->refs)
+    entries.push_back(ps::HeadInfo{ref.ref_object, ps::Kind::RefValue, ref.revision, 1});
+  spec.entries = entries;
+  const ps::Uuid bookmark = *store_->create_bookmark(reducer(), spec);
 
   auto uow = *store_->begin(reducer());
   ps::InterceptRow row;
