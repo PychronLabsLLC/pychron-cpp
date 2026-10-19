@@ -513,6 +513,13 @@ TEST_F(RunTest, DuringExtractionNeedsAnExtractionScript) {
 
 // --- a staged release's prepare scripts (spec 11, plan Task 26) ---------------
 
+// What queue validation asks of the library (spec 11.4).
+TEST_F(RunTest, TheLibrarySaysWhichPlansHoldTheExtractionLine) {
+  EXPECT_TRUE(plans_.holds_extraction_line("staged", {}));
+  EXPECT_FALSE(plans_.holds_extraction_line("mc", {}));
+  EXPECT_FALSE(plans_.holds_extraction_line("nope", {}));
+}
+
 TEST_F(RunTest, PrepareScriptsRunWithPlanVariables) {
   auto spec = unknown_run("12345", "staged");
   spec.extraction.cryo_temp = 20.0;

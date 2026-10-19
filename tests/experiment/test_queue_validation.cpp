@@ -10,12 +10,14 @@ namespace {
 const IdentifierRules kIds = IdentifierRules::defaults();
 
 struct Plans : IPlanResolver {
-  std::set<std::string> names{"argon"};
+  std::set<std::string> names{"argon", "staged"};
   bool has_plan(std::string_view name) const override { return names.contains(std::string(name)); }
   std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& o, bool) const override {
     if (!has_plan(name)) return std::nullopt;
     return Duration(o.contains("counts") ? 200 : 100);
   }
+  // "staged" prepares its gases on the line (spec 11.4).
+  bool holds_extraction_line(std::string_view name, const ParamOverrides&) const override { return name == "staged"; }
 };
 
 struct Scripts : IScriptResolver {
@@ -147,4 +149,52 @@ TEST(QueueValidation, SkippedRunsExcludedFromEta) {
   auto r = check_queue(q, kIds, {&p, nullptr, nullptr});
   EXPECT_EQ(r.run_estimates[0], Duration(0));
   EXPECT_EQ(r.eta, Duration(5 + 110));
+}
+
+// ---- a staged plan and overlap (measurement plan v2 spec 11.4) ----------------
+
+namespace {
+QueueSpec staged_queue(const std::string& first_plan, const std::string& second_plan, bool overlap) {
+  QueueSpec q;
+  q.mass_spectrometer = "jan";
+  q.runs = {unknown("100"), unknown("101")};
+  q.runs[0].measurement.plan = first_plan;
+  q.runs[1].measurement.plan = second_plan;
+  if (overlap) q.runs[0].overlap.duration = Duration(30);
+  return q;
+}
+const Plans kPlans;
+const QueueResolvers kRes{&kPlans, nullptr, nullptr};
+}  // namespace
+
+TEST(QueueValidation, OverlapWithStagedPlanIsRefused) {
+  const auto r = check_queue(staged_queue("staged", "argon", true), kIds, kRes);
+  EXPECT_FALSE(r.ok());
+  ASSERT_TRUE(has(r, 0, "overlap"));
+  EXPECT_FALSE(has(r, 1, "overlap"));
+  for (const auto& d : r.diagnostics) {
+    if (d.field == "overlap") {
+      EXPECT_EQ(d.message, "row 0: plan 'staged' holds the extraction line until its last gas; overlap is not possible");
+    }
+  }
+}
+
+TEST(QueueValidation, OverlapBeforeStagedPlanIsFine) {
+  const auto r = check_queue(staged_queue("argon", "staged", true), kIds, kRes);
+  EXPECT_FALSE(has(r, 0, "overlap"));
+  EXPECT_FALSE(has(r, 1, "overlap"));
+}
+
+TEST(QueueValidation, StagedPlanWithoutOverlapIsFine) {
+  const auto r = check_queue(staged_queue("staged", "staged", false), kIds, kRes);
+  EXPECT_FALSE(has(r, 0, "overlap"));
+  // Nor as the last runnable row, which never overlaps.
+  auto last = staged_queue("argon", "staged", false);
+  last.runs[1].overlap.duration = Duration(30);
+  EXPECT_FALSE(has(check_queue(last, kIds, kRes), 1, "overlap"));
+}
+
+TEST(QueueValidation, NullPlanResolverSkipsTheCheck) {
+  const auto r = check_queue(staged_queue("staged", "argon", true), kIds, QueueResolvers{});
+  EXPECT_FALSE(has(r, 0, "overlap"));
 }

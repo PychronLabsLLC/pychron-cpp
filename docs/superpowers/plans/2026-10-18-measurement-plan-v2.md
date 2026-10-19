@@ -674,11 +674,13 @@ Done notes: Step 2 was observed failing as build failures (`kinds()`, `globals()
 
 **Interfaces:**
 - Produces: `IPlanResolver` (model side) gains `virtual bool holds_extraction_line(std::string_view plan, const ParamOverrides& overrides) const = 0;` (`PlanLibrary` answers: any gas has `prepare`). `check_queue` emits an error diagnostic on each row that asks for overlap (`overlap.duration > 0` on an unknown, the `Executor::overlaps` conditions that the queue can know) while its own plan holds the extraction line: text `row <n>: plan '<name>' holds the extraction line until its last gas; overlap is not possible`. That is §11.4 and nothing more. A row's overlap lets the next row's extraction start during this row's measurement (`executor.cpp`, `Executor::overlaps`); it is this row's plan whose `prepare` needs the line then. A staged plan on the next row is not refused: its extraction during the previous row's measurement is ordinary overlap, and its own `prepare` blocks run in its own measurement, after the previous row's.
-- [ ] **Step 1: Write failing tests:** `QueueValidation.OverlapWithStagedPlanIsRefused` (row 0 staged plan with overlap, row 1 any → one error, on row 0); `QueueValidation.OverlapBeforeStagedPlanIsFine` (row 0 ordinary plan with overlap, row 1 staged → no error); `QueueValidation.StagedPlanWithoutOverlapIsFine`; `QueueValidation.NullPlanResolverSkipsTheCheck`.
-- [ ] **Step 2: Run** `--gtest_filter='QueueValidation.*'` → FAIL.
-- [ ] **Step 3: Implement**; update every `IPlanResolver` implementation (grep `public IPlanResolver`).
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): queue validation refuses overlap with staged plans`.
+- [x] **Step 1: Write failing tests:** `QueueValidation.OverlapWithStagedPlanIsRefused` (row 0 staged plan with overlap, row 1 any → one error, on row 0); `QueueValidation.OverlapBeforeStagedPlanIsFine` (row 0 ordinary plan with overlap, row 1 staged → no error); `QueueValidation.StagedPlanWithoutOverlapIsFine`; `QueueValidation.NullPlanResolverSkipsTheCheck`.
+- [x] **Step 2: Run** `--gtest_filter='QueueValidation.*'` → FAIL.
+- [x] **Step 3: Implement**; update every `IPlanResolver` implementation (grep `public IPlanResolver`).
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat(experiment): queue validation refuses overlap with staged plans`.
+
+Done notes: Step 2 was observed failing as build failures (no `holds_extraction_line`). The row's conditions are the executor's the queue knows: an unknown, not skipped, `overlap.duration > 0`, with a later row that is not skipped (`allow_overlap` is the executor's option, not the queue's); the diagnostic is on field `overlap`. `PlanLibrary` loads the plan as advanced (any override key) to ask. Added: `RunTest.TheLibrarySaysWhichPlansHoldTheExtractionLine`.
 
 ### Task 28: Simulated cryotrap releases two fractions
 

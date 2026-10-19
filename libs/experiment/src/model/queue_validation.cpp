@@ -80,6 +80,18 @@ QueueReport check_queue(const QueueSpec& q, const IdentifierRules& ids, const Qu
       else
         first_end_after = i;
     }
+    // Spec 11.4: a staged plan prepares its gases on the line during its
+    // measurement, so the next row's extraction cannot run then. The
+    // conditions are the executor's (Executor::overlaps) that the queue knows.
+    if (res.plans && !r.skip && r.id.type == AnalysisType::Unknown && r.overlap.duration > Duration::zero() &&
+        !r.measurement.plan.empty()) {
+      const bool later = std::any_of(q.runs.begin() + static_cast<std::ptrdiff_t>(n) + 1, q.runs.end(),
+                                     [](const RunSpec& next) { return !next.skip; });
+      if (later && res.plans->holds_extraction_line(r.measurement.plan, r.measurement.overrides))
+        c.error(i, "overlap",
+                "row " + std::to_string(i) + ": plan '" + r.measurement.plan +
+                    "' holds the extraction line until its last gas; overlap is not possible");
+    }
     report.run_estimates.push_back(r.skip ? Duration(0) : estimate_run(r, measurement_time(r, res)));
   }
 
