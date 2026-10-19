@@ -148,8 +148,10 @@ Layout:
   `[magnet] propagate`). Runs `FieldTable::update` on edit copy: same
   semantics as peak center. Legacy "Define Peak Center…".
 - Axis not editable. Changing axis = different table; out of scope.
-- No detector column add/remove: column set fixed by config ∪ table. A
-  detector absent from config keeps its values unless cleared by hand.
+- No detector column add/remove by hand: columns = config ∪ loaded
+  table ∪ detectors an edit brings (import, in-memory table); a column an
+  edit brought goes with its undo. A detector absent from config keeps its
+  values unless cleared by hand; its column stays while cleared.
 - Undo stack per open version (`QUndoStack`), Ctrl+Z / Ctrl+Shift+Z.
 
 ### 3.2 Diagnostics
@@ -192,6 +194,9 @@ Diagnostics function lives in `libs/systems` (pure, testable), not UI:
   refusal itself is in core (`replace_table` returns error while a
   `TableHold` is out, §5), so a race between enable check and Save, or a
   caller other than this window, still refused. Error shown in dialog.
+- Edit made while save is on bridge's executor is not in that version: grid
+  stays modified, no undo state counts as saved. Save Anyway after core's
+  conflict still does switch or close that asked for Save.
 - Saved TOML is canonical `to_toml`: comments of hand-written version lost.
   First save over version whose file text ≠ `to_toml(parse(text))` asks once
   ("comments in <v> are not kept"). Old version file untouched (immutable).
@@ -214,6 +219,7 @@ Diagnostics function lives in `libs/systems` (pure, testable), not UI:
   has a §3.2 error (diagnostics run against current config; version that does
   not parse counts as error): Make Current disabled, tooltip lists first
   error; core refuses too (§5). Confirm dialog naming old and new version.
+- One Make Current at a time: disabled ("restoring") until bridge reports.
 - Revert: drop edits, reload open version.
 - No delete of versions (immutable history; a lab prunes by hand).
 

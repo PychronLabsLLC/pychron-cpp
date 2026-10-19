@@ -344,7 +344,7 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
     void tableEdited();
   };
   ```
-  Rows sorted by mass after every edit. Every mutation is a `QUndoCommand` holding the whole `FieldTable` before and after (tables are tens of rows: copy is fine and keeps undo exact). `data`: Display `%0.5f`, Edit full precision, ToolTip residual `value − fit` when fit succeeds, header ToolTip/`" (not in config)"` suffix for table-only detectors. `setData`: empty text on a value cell removes that detector's value; non-numeric or non-finite text refused (returns false); isotope commit trims and fills mass from weights when mass is 0 or equals the old isotope's weight; mass must be finite and > 0.
+  Rows sorted by mass after every edit. Columns: config, then the loaded table's detectors, then any an edit brings (an import), recomputed on every apply (reset when they change). Every mutation is a `QUndoCommand` holding the whole `FieldTable` before and after (tables are tens of rows: copy is fine and keeps undo exact). `data`: Display `%0.5f`, Edit full precision, ToolTip residual `value − fit` when fit succeeds, header ToolTip/`" (not in config)"` suffix for table-only detectors. `setData`: empty text on a value cell removes that detector's value; non-numeric or non-finite text refused (returns false); isotope commit trims and fills mass from weights when mass is 0 or equals the old isotope's weight; mass must be finite and > 0.
 
 - [x] **Step 1: Write failing tests**: `columnsAreConfigOrderThenTableOnly`, `valuesDisplayFiveDecimalsEditFullPrecision`, `clearingACellRemovesTheValue`, `nonFiniteTextIsRefused`, `isotopeCommitFillsMassFromWeights`, `isotopeCommitKeepsAHandTypedMass`, `rowsStaySortedByMass`, `addAndRemoveRows`, `setValuePropagates` (matches `FieldTable::update`), `undoRedoRestoresTableExactly`, `modifiedFollowsTheCleanState`, `fitChangesAreUndoable`, `residualTooltipWhenTheFitSucceeds`, `readOnlyRefusesEdits`.
 - [x] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_model && build/dev-ui/tests/ui/pychron_ui_test_field_table_model`. Expected: FAIL.
@@ -487,6 +487,10 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
   - `cmake --build --preset dev-ui` then `ctest --preset dev-ui` → all pass (covers `dev`)
   - `build/dev/tests/integration/pychron_outage_tests` (Task 8 touched executor; libs/experiment AGENTS.md) → pass
 - [x] **Step 6: Commit** `feat(ui): field table editor in the spectrometer menus`.
+
+## Review fixes
+
+After the review of the branch: columns follow edits (model test `anEditBringingANewDetectorAddsItsColumnAndUndoTakesItAway`, editor test `importingANewDetectorGivesItAColumnAFitAndAPlot`); an edit made while a save is out stays unsaved (`anEditMadeWhileASaveIsOutStaysUnsaved`); Save Anyway after the core's conflict keeps the switch or close (`aSaveThatTheCoreRefusesAsAConflictStillSwitchesAfterSaveAnyway`), and `fieldTableChanged` reads the store's current version rather than the event's; one Make Current at a time (`makeCurrentTwiceWhileTheFirstIsOutRestoresOnce`); a version's parse and first error read once per listing (`makeCurrentVerdictIsKeptUntilTheListIsReread`; 12 ms to a few us a call, debug build). Not changed: `set_spectrometer` deleting the editor (it runs at start, before there is one, and at teardown after the event loop, when `MainWindow::closeEvent` has already closed the editor through its unsaved prompt, Cancel keeping the application open); the editor's copy of config and weights (`Spectrometer` has no setter for either: fixed for the session); header refresh on a fit change (headers depend on the column set only, which now resets the model; cell tooltips are refreshed by `dataChanged` with all roles).
 
 ## Open questions
 
