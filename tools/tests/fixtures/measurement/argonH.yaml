@@ -1,0 +1,29 @@
+# Helix argon with hydride and HCl monitors (pychron hops YAML).
+- counts: 10
+  settle: 3
+  cup_configuration:
+    - {isotope: Ar40, active: True, detector: H2, protect: False, is_baseline: False}
+  positioning: {detector: H2, isotope: Ar40}
+- counts: 10
+  settle: 3
+  cup_configuration:
+    - {isotope: Ar40, active: False, deflection: 3250, detector: H2(CDD), protect: True, is_baseline: False}
+    - {isotope: Ar39, active: True, deflection: 200, detector: H1(CDD), protect: False, is_baseline: False}
+    - {isotope: Ar38, active: True, detector: AX(CDD), protect: False, is_baseline: False}
+    - {isotope: Ar37, active: True, deflection: 600, detector: L1(CDD), protect: False, is_baseline: False}
+    - {isotope: Ar36, active: True, detector: L2(CDD), protect: False, is_baseline: False}
+  positioning: {detector: AX(CDD), isotope: Ar38}
+- counts: 5
+  settle: 3
+  cup_configuration:
+    - {isotope: Ar40H, active: True, detector: H2(CDD)}
+    - {isotope: Ar39H, active: True, detector: H1(CDD)}
+    - {isotope: Ar38H, active: True, detector: AX(CDD)}
+    - {isotope: Ar37H, active: True, detector: L1(CDD)}
+    - {isotope: Ar36H, active: True, detector: L2(CDD)}
+  positioning: {detector: H2(CDD), isotope: Ar40H}
+- counts: 5
+  settle: 3
+  cup_configuration:
+    - {isotope: HCl, active: True, detector: L2(CDD)}
+  positioning: {detector: L2(CDD), isotope: PHHCl}

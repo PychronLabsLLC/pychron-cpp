@@ -1,0 +1,7 @@
+# Ar40 on each cup in turn, then a baseline at 39.5 on H1.
+('Ar40:H2', 10, 20)
+('Ar40:H1', 10, 6)
+('Ar40:AX', 10, 6)
+('Ar40:L1', 10, 20)
+('Ar40:L2', 10, 6)
+('bs:39.5:H1', 60, 20)

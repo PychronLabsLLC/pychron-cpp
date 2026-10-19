@@ -1,0 +1,6 @@
+# Four static, hop a fifth, Cl monitor at mass 35 (pychron hops file:
+# 'iso:det[:deflection], ...', counts, settle).
+('Ar40:H1, Ar41:H2, Ar38:L1, Ar37:L2, Ar36:CDD:110', 15, 6)
+('Ar39:CDD', 15, 5)
+('35.0:CDD', 8, 3)
+('bs:34.2:H1', 120, 20)

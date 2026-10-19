@@ -1,0 +1,13 @@
+# Baseline measured while the sample is extracted, with the CDD baseline
+# modelled on the signal (synchronous extraction).
+baseline:
+  counts: 120
+  mass: 34.2
+  detector: H1
+  settling_time: 20
+  integration_time: 1
+modifier:
+  CDD:
+    variable: Ar40+Ar39
+    model: baseline_model.csv
+    error: counting_statistics
