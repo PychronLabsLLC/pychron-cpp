@@ -20,6 +20,7 @@ TEST(DbCmd, StubWithoutPersistence) {
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include <QSqlDatabase>
@@ -119,6 +120,28 @@ TEST_F(DbCmd, AnEmptyFileIsNotAStore) {
   EXPECT_EQ(o.code, elctl::kUsage);
   EXPECT_TRUE(contains(o.err, "not a pychron store")) << o.err;
   EXPECT_EQ(fs::file_size(empty), 0u);
+}
+
+// No --db and no install to use: the usage error says why there is none.
+TEST_F(DbCmd, WithoutDbTheReasonThereIsNoInstallIsSaid) {
+  const Outcome none = run_raw({"db", "status"});
+  EXPECT_EQ(none.code, elctl::kUsage);
+  EXPECT_TRUE(contains(none.err, "nothing is installed yet")) << none.err;
+
+  // Two installs, neither the default.
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("a").string(), "--name", "a", "--yes"}).code, elctl::kOk);
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("b").string(), "--name", "b", "--yes"}).code, elctl::kOk);
+  {
+    std::ifstream in(path("site.toml"));
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto at = text.find("default = ");
+    ASSERT_NE(at, std::string::npos) << text;
+    text.erase(at, text.find('\n', at) - at + 1);
+    std::ofstream(path("site.toml"), std::ios::trunc) << text;
+  }
+  const Outcome several = run_raw({"db", "status"});
+  EXPECT_EQ(several.code, elctl::kUsage);
+  EXPECT_TRUE(contains(several.err, "several installs and no default")) << several.err;
 }
 
 TEST_F(DbCmd, UsageErrors) {

@@ -109,6 +109,9 @@ std::variant<SetArgs, std::string> parse_set(const std::vector<std::string>& arg
   if (server && set.local) return std::string("--local and --server name two databases; give one");
   if (!server && user) return std::string("--user goes with --server");
   if (!server && set.password_stdin) return std::string("--password-stdin goes with --server");
+  // Standard input holds the password: nothing is left there to answer "Write them?".
+  if (set.password_stdin && !set.assume_yes)
+    return std::string("--password-stdin needs --yes: standard input holds the password, not the answer");
   if (server) {
     if (!user || user->empty()) return std::string("--server needs --user USER");
     auto parsed = parse_server(*server);
@@ -179,6 +182,8 @@ int set(const SiteInstall& install, SetArgs given, Io io) {
     if (given.password_stdin) {
       server.password = read_line(io.in);
       if (!server.password) return usage("--password-stdin: standard input ended before a password", io);
+      // An empty line is no password, and never replaces the kept one.
+      if (server.password->empty()) return usage("--password-stdin: the password is empty", io);
     } else if ((now == nullptr || !same_server(*now, server)) && at_terminal(io)) {
       server.password = read_password(io, "Password for " + server.user + " at " + server.host + ":" +
                                               std::to_string(server.port) + "/" + server.name + ": ");

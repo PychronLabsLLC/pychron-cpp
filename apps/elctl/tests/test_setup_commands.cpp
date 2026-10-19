@@ -454,6 +454,42 @@ TEST_F(ElctlSetupTest, SetServerWithoutPasswordStdinKeepsThePassword) {
   EXPECT_TRUE(contains(o.out, "password kept")) << o.out;
 }
 
+// An empty line is no password: it never replaces the kept one.
+TEST_F(ElctlSetupTest, AnEmptyPasswordOnStandardInputIsRefused) {
+  const auto root = path("dr-empty-pw");
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", root.string(), "--yes"}).code, 0);
+  ASSERT_EQ(run_raw({"data-source", "set", "--server", "127.0.0.1:1/pychron", "--user", "u", "--password-stdin",
+                     "--no-check", "--yes"},
+                    "pw\n")
+                .code,
+            0);
+  const fs::path file = root / ".pychron" / "credentials.toml";
+  const std::string before = bytes_of(file);
+  const std::string site_before = bytes_of(path("site.toml"));
+  for (const char* input : {"\n", "\r\n"}) {
+    auto o = run_raw({"data-source", "set", "--server", "127.0.0.1:1/other", "--user", "u", "--password-stdin",
+                      "--no-check", "--yes"},
+                     input);
+    EXPECT_EQ(o.code, 2) << o.out << o.err;
+    EXPECT_TRUE(contains(o.err, "empty")) << o.err;
+  }
+  EXPECT_EQ(bytes_of(file), before);
+  EXPECT_EQ(bytes_of(path("site.toml")), site_before);
+}
+
+// Standard input holds the password, so nothing is left there to answer
+// "Write them?": --password-stdin needs --yes, and says so before reading.
+TEST_F(ElctlSetupTest, PasswordStdinNeedsYes) {
+  ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr-pw-yes").string(), "--yes"}).code, 0);
+  const std::string site_before = bytes_of(path("site.toml"));
+  auto o = run_raw({"data-source", "set", "--server", "127.0.0.1:1/pychron", "--user", "u", "--password-stdin",
+                    "--no-check"},
+                   "pw\ny\n");
+  EXPECT_EQ(o.code, 2) << o.out << o.err;
+  EXPECT_TRUE(contains(o.err, "--password-stdin needs --yes")) << o.err;
+  EXPECT_EQ(bytes_of(path("site.toml")), site_before);
+}
+
 TEST_F(ElctlSetupTest, SetServerUsageMistakes) {
   ASSERT_EQ(run_raw({"init", "data-reduction", "--root", path("dr-server-usage").string(), "--yes"}).code, 0);
   for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{

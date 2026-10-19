@@ -16,7 +16,7 @@
 // opened, a server opened as it is), writes, seeds an instrument's new
 // store and runs doctor. --no-check writes without opening anything (a
 // server not reachable from here now). The password is never an argument:
-// --password-stdin reads one line; without it, a terminal is asked (no
+// --password-stdin reads one line (needs --yes; an empty one is refused); without it, a terminal is asked (no
 // echo) when the server is new or another one, and otherwise the kept
 // password is kept.
 // Exit 0 written (or nothing to change), 1 refused or check failed, 2 usage.

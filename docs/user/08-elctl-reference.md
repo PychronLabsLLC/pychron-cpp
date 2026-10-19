@@ -280,7 +280,7 @@ data folder and, for a server, whether a password is kept. Exit 0.
 | `--local [FILE]` | A SQLite file. Relative to the install folder, or a full path. Without `FILE`: `data/pychron.db`. |
 | `--server HOST[:PORT]/DB` | The lab's PostgreSQL server; port 5432 when not given. Needs `--user`. |
 | `--user USER` | The server's user. |
-| `--password-stdin` | Read the server's password from one line of standard input. |
+| `--password-stdin` | Read the server's password from one line of standard input. Needs `--yes` (standard input holds the password, so nothing is left there to answer `Write them?`); an empty line is refused. |
 | `--data DIR` | The data folder. Relative to the install folder, or a full path. |
 | `--no-check` | Write without opening the database (a server not reachable from here now). `doctor` says the rest later. |
 | `--yes`, `-y` | Do not ask `Write them?`. |
@@ -805,7 +805,8 @@ the install `--install NAME` names, or of the default install, its kept
 password included: after `elctl data-source set --local` named an existing
 file that is behind, `elctl --install NAME db migrate` brings it up to date.
 An install name that is not there is an error (exit 1); no `--db` and no
-install at all is a usage error (exit 2).
+install to use is a usage error (exit 2) that says why there is none
+(nothing installed yet, or several installs and no default).
 
 ### db status
 

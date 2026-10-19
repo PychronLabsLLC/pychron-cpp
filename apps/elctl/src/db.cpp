@@ -78,11 +78,13 @@ int derive(const std::string& url, bool all, std::optional<int> limit, bool quie
 }
 
 // The database of the install `name` names (or the default one), with its
-// kept password; an empty string with no --install and no install at all.
-pychron::Result<std::string> install_url(const std::optional<std::string>& name) {
+// kept password. Without --install, no install to use is not an error here:
+// `why_none` says why there is none, and the URL is empty.
+pychron::Result<std::string> install_url(const std::optional<std::string>& name, std::string& why_none) {
   auto install = resolve_install(name);
   if (!install) {
     if (name) return pychron::fail(std::move(install).error());
+    why_none = install.error().what;
     return std::string();
   }
   if (install->database.empty())
@@ -120,12 +122,16 @@ int db_command(const std::vector<std::string>& args, const std::optional<std::st
       return usage(io, "unexpected '" + args[i] + "'");
     }
   }
+  std::string why_none;
   if (url.empty()) {
-    auto from_install = install_url(install);
+    auto from_install = install_url(install, why_none);
     if (!from_install) return fatal(io, from_install.error().what);
     url = std::move(*from_install);
   }
-  if (url.empty()) return usage(io, "--db <url> is required (or an install: --install NAME)");
+  if (url.empty()) {
+    return usage(io, "--db <url> is required (or an install: --install NAME)" +
+                         (why_none.empty() ? std::string() : "; no install to use: " + why_none));
+  }
   if (const std::string why = not_a_store(url); !why.empty()) return fatal(io, why);
   if (what == "derive") return derive(url, all, limit, quiet, io);
 
