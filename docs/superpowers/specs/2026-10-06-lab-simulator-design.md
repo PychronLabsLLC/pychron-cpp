@@ -91,13 +91,14 @@ A partial pressure (mbar) per species per volume. Species are fixed:
 |---|---|---|
 | `Ar36` `Ar37` `Ar38` `Ar39` `Ar40` | 35.968, 36.967, 37.963, 38.964, 39.962 | what the spectrometer measures |
 | `active` | 28 | everything a getter removes (N2, O2, H2O, CO2), as one bulk gas |
+| `He4` `Ne20` | 4.0026, 19.992 | a staged release's gases (measurement plan v2 spec 11; added 2026-10-19). Air here has none |
 
 A volume's total pressure is the sum over species. `active` is there so that
 gauges read sensibly: air is about 1 % argon, and a line that has taken an air
 shot and not yet gettered it must show it.
 
 ```cpp
-enum class Species { Ar36, Ar37, Ar38, Ar39, Ar40, Active };
+enum class Species { Ar36, Ar37, Ar38, Ar39, Ar40, Active, He4, Ne20 };
 using Composition = std::array<double, kSpeciesCount>;   // mbar, mbar L, a rate, or ratios
 constexpr std::size_t index(Species) noexcept;
 constexpr double total(const Composition&) noexcept;

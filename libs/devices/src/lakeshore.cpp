@@ -290,6 +290,13 @@ double LakeshoreSim::temperature(char input) const {
   return it == temps_.end() ? 0.0 : it->second;
 }
 
+double LakeshoreSim::current_temperature(char input) {
+  std::lock_guard lock(mutex_);
+  advance_locked();
+  auto it = temps_.find(input);
+  return it == temps_.end() ? 0.0 : it->second;
+}
+
 void LakeshoreSim::set_temperature(char input, double kelvin) {
   std::lock_guard lock(mutex_);
   temps_[input] = kelvin;

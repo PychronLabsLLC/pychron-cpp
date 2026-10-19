@@ -103,7 +103,9 @@ class LakeshoreSim {
   Bytes respond(const Bytes& tx);
   SimTransport::Hook hook();  // the sim must outlive the transport
 
-  double temperature(char input) const;
+  double temperature(char input) const;  // as the last command left it
+  // The input's temperature now, on the clock (what a KRDG? would read).
+  double current_temperature(char input);
   void set_temperature(char input, double kelvin);
   std::optional<double> setpoint(int output) const;
   int range(int output) const;

@@ -1476,3 +1476,79 @@ transport = "laser_pc"
   EXPECT_EQ(sim.chromium("laser_pc"), nullptr);
   EXPECT_EQ(sim.chromium("nope"), nullptr);
 }
+
+// ---- the cryotrap (staged gas release, measurement plan v2 spec 11) -----------
+
+namespace {
+
+constexpr const char* kCryoConfig = R"(
+[system]
+name = "t"
+
+[transports.cryostat]
+kind = "sim"
+
+[drivers.cryostat]
+kind = "lakeshore"
+transport = "cryostat"
+)";
+
+constexpr std::size_t kHe4 = sim::index(Species::He4);
+constexpr std::size_t kNe20 = sim::index(Species::Ne20);
+
+}  // namespace
+
+// He and Ne frozen in a trap behind a valve: at 20 K neither leaves; at 35 K
+// He does and Ne stays; at 75 K both.
+TEST(SimCryoTrap, HoldsBelowReleaseTemperature) {
+  auto cfg = config::load_system_config_from_string(kCryoConfig, "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  auto settings = quiet();
+  settings.default_pressure = 0.0;
+  settings.cryo_traps.push_back({"a", "cryostat", 'A', {{"He4", 30.0}, {"Ne20", 70.0}}});
+  SimSystem sim(clock, two_volumes(), settings);
+  (void)sim.hook_for(cfg->drivers.at("cryostat"), *cfg);
+  auto* cryostat = sim.cryostat("cryostat");
+  ASSERT_NE(cryostat, nullptr);
+  Composition gas{};
+  gas[kHe4] = 1e-4;
+  gas[kNe20] = 2e-4;
+  ASSERT_TRUE(sim.inject("a", gas));
+
+  const auto at = [&](double kelvin) {
+    // Held there: the controller's input as it reads now, at each step.
+    cryostat->set_temperature('A', kelvin);
+    sim.set_valve("V", true);
+    for (int i = 0; i < 60; ++i) {
+      clock.advance(1s);
+      cryostat->set_temperature('A', kelvin);
+      (void)sim.pressure("a");
+    }
+    sim.set_valve("V", false);
+    return *sim.partial_pressures("b");
+  };
+  auto b = at(20.0);
+  EXPECT_EQ(b[kHe4], 0.0);
+  EXPECT_EQ(b[kNe20], 0.0);
+  b = at(35.0);
+  EXPECT_GT(b[kHe4], 1e-4 / 0.1 * 0.4);  // half of it, in 50 + 50 cc
+  EXPECT_EQ(b[kNe20], 0.0);
+  b = at(75.0);
+  EXPECT_GT(b[kNe20], 2e-4 / 0.1 * 0.4);
+}
+
+// A trap whose cryostat the line has no driver for holds nothing.
+TEST(SimCryoTrap, WithoutItsCryostatATrapHoldsNothing) {
+  ManualClock clock;
+  auto settings = quiet();
+  settings.default_pressure = 0.0;
+  settings.cryo_traps.push_back({"a", "nope", 'A', {{"He4", 300.0}}});
+  SimSystem sim(clock, two_volumes(), settings);
+  Composition gas{};
+  gas[kHe4] = 1e-4;
+  ASSERT_TRUE(sim.inject("a", gas));
+  sim.set_valve("V", true);
+  clock.advance(60s);
+  EXPECT_GT((*sim.partial_pressures("b"))[kHe4], 0.0);
+}

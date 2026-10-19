@@ -980,5 +980,144 @@ TEST_F(LabSim, FiveRunsTakeNoRealTime) {
   }
 }
 
+// ---- a staged release (measurement plan v2 spec 11, plan Task 28) -------------
+
+// The example lab with its sample's noble gases frozen on the cryo trap
+// (behind Y on prep): helium let out at 35 K, neon at 75 K, the argon kept.
+void stage_the_lab(const fs::path& dir) {
+  {
+    std::ofstream sim(dir / "sim.toml", std::ios::app);
+    sim << R"(
+[compositions.staged]
+Ar36 = 1
+Ar40 = 298.56
+He4 = 500
+Ne20 = 100
+
+[volumes.cryo]
+composition = "staged"
+argon40 = 1e-6
+
+[[cryo_trap]]
+volume = "cryo"
+cryostat = "cryostat"
+release_k = { He4 = 30, Ne20 = 70, Ar36 = 150, Ar37 = 150, Ar38 = 150, Ar39 = 150, Ar40 = 150 }
+)";
+  }
+  {
+    // Where helium and neon sit on the magnet: the argon table's dispersion.
+    std::ofstream table(dir / "tables" / "argon" / "2026-09-30T000000.toml", std::ios::app);
+    for (const auto& [isotope, mass] : {std::pair{"He4", 4.0026032541}, std::pair{"Ne20", 19.9924401762}}) {
+      table << "\n[[points]]\nisotope = \"" << isotope << "\"\nmass = " << mass << "\n";
+      const double h1 = mass * (5.001 / 39.9623831237);
+      const std::vector<std::pair<const char*, double>> cups{{"H2", 1.0247}, {"H1", 1.0}, {"AX", 0.9746},
+                                                             {"L1", 0.9498}, {"L2", 0.9254}, {"CDD", 0.9008}};
+      for (const auto& [cup, f] : cups) table << cup << " = " << h1 * f << "\n";
+    }
+  }
+  {
+    std::ofstream script(dir / "scripts" / "extraction" / "cryo_release.py");
+    script << R"(# A staged release: pump prep of the last fraction, warm the trap to
+# cryo_temp and hold it there, then let what it releases into prep.
+def main():
+    info('release at {} K'.format(cryo_temp))
+    close('B')
+    open('C')
+    sleep(30)
+    close('C')
+    set_cryo(cryo_temp, True)
+    sleep(hold_s)
+    open('Y')
+    sleep(20)
+    close('Y')
+)";
+  }
+  {
+    std::ofstream plan(dir / "plans" / "sim_staged.toml");
+    plan << R"([plan]
+name = "sim_staged"
+instrument_family = "sim"
+analysis_types = ["unknown", "blank_unknown", "air", "blank_air"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "@valves.inlet"
+outlet = "@valves.outlet"
+time_s = "@extraction.eqtime"
+inlet_delay_s = 3
+
+[[gas]]
+name = "He"
+prepare = { script = "cryo_release", variables = { cryo_temp = 35, hold_s = 60 } }
+pump_out = { valve = "I", time_s = 60 }
+[[gas.segment]]
+kind = "signal"
+cycles = 2
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 10
+settle_s = 2
+[[gas.segment.positions]]
+collect = { Ne20 = "AX" }
+at = { label = "Ne20", detector = "AX" }
+counts = 10
+settle_s = 2
+
+[[gas]]
+name = "Ne"
+prepare = { script = "cryo_release", variables = { cryo_temp = 75, hold_s = 60 } }
+[[gas.segment]]
+kind = "signal"
+cycles = 2
+[[gas.segment.positions]]
+collect = { Ne20 = "H1" }
+counts = 10
+settle_s = 2
+)";
+  }
+}
+
+// The mean of a series of the record, by label, detector and gas.
+std::optional<double> mean_of(const record::AnalysisRecord& rec, std::string_view label, std::string_view detector,
+                              std::string_view gas) {
+  for (const auto& s : rec.data.series) {
+    if (s.kind != "signal" || s.iso != label || s.det != detector || s.gas != gas || s.trace.v.empty()) continue;
+    double sum = 0;
+    for (const float v : s.trace.v) sum += v;
+    return sum / static_cast<double>(s.trace.v.size());
+  }
+  return std::nullopt;
+}
+
+TEST_F(LabSim, StagedReleaseSimEachGasAppearsOnlyAfterItsRelease) {
+  ScratchLab lab(stage_the_lab);
+  ASSERT_TRUE(lab.problem().empty()) << lab.problem();
+  QueueSpec q = lab.rows({1});  // one air run's row, its plan the staged one
+  ASSERT_EQ(q.runs.size(), 1u);
+  q.runs[0].measurement.plan = "sim_staged";
+  q.runs[0].measurement.overrides.clear();
+  q.runs[0].extraction.script = "sim_blank";
+  const auto runs = lab.run(q);
+  ASSERT_EQ(runs.size(), 1u);
+  const auto& rec = runs[0].record;
+  ASSERT_EQ(rec.data.gases.size(), 2u);
+  ASSERT_TRUE(rec.data.gases[0].prepare && rec.data.gases[1].prepare);
+  EXPECT_EQ(rec.data.gases[0].prepare->variables.at("cryo_temp"), "35");
+  EXPECT_EQ(rec.data.gases[1].prepare->variables.at("cryo_temp"), "75");
+  ASSERT_TRUE(rec.data.gases[0].pump_out);
+  const auto he = mean_of(rec, "He4", "H1", "He");
+  const auto ne_in_he = mean_of(rec, "Ne20", "AX", "He");
+  const auto ne = mean_of(rec, "Ne20", "H1", "Ne");
+  ASSERT_TRUE(he && ne_in_he && ne);
+  record_value("he4_fA", *he);
+  record_value("ne20_in_he_fA", *ne_in_he);
+  record_value("ne20_fA", *ne);
+  EXPECT_GT(*he, 1e4);              // the helium is in
+  EXPECT_LT(*ne_in_he, 0.01 * *he);  // the neon was still frozen
+  EXPECT_GT(*ne, 100 * std::max(*ne_in_he, 1.0));  // and came with its own release
+}
+
 }  // namespace
 }  // namespace pychron::experiment::lab

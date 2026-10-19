@@ -164,6 +164,19 @@ struct SimSettings {
     double drift_per_h = 0.0;  // the same, per hour
   };
   std::map<std::string, DetectorBaseline> detectors;
+  // A cryotrap (staged gas release, measurement plan v2 spec 11): in
+  // `volume`, each species with a `release_k` is held (no valve carries it to
+  // or from the volume) while the cryostat `cryostat` (the line's driver of
+  // that name, a Lake Shore) reads below that temperature on `input`, and
+  // flows as any gas above it. Applied whenever the line is moved to the
+  // clock, at the temperature of that moment. None by default.
+  struct CryoTrap {
+    std::string volume;
+    std::string cryostat;
+    char input = 'A';
+    std::map<std::string, double> release_k;  // by species name (gas.hpp)
+  };
+  std::vector<CryoTrap> cryo_traps;
   // Compositions by name, as ratios to Ar36 (`[compositions.<name>]` of
   // sim.toml); `air` and `cocktail` are there without being listed.
   std::map<std::string, Composition> named;
@@ -284,6 +297,8 @@ class SimSystem {
   extraction::ChromiumSim* chromium(std::string_view driver) const;
   // Likewise the PLC heater simulator of a plc2000_heater driver.
   Plc2000HeaterSim* heater(std::string_view driver) const;
+  // Likewise the Lake Shore simulator of a lakeshore driver.
+  LakeshoreSim* cryostat(std::string_view driver) const;
 
  private:
   // The coils and registers a PLC driver's sim serves; nullopt for other
@@ -292,6 +307,8 @@ class SimSystem {
 
   // Moves the network to clock.now(), and says when that is.
   TimePoint advance_locked() const;
+  // Each cryotrap's held species from its cryostat's temperature now.
+  void apply_traps_locked() const;
   // What beam_gas()'s function answers while this system is there.
   std::vector<BeamGas> beam_gas_at(TimePoint t) const;
   // An isolated volume for a gauge the topology does not have, with what
@@ -322,6 +339,7 @@ class SimSystem {
   std::vector<std::unique_ptr<ProxrBoardSim>> boards_;
   std::vector<std::unique_ptr<AgilentUnitSim>> units_;
   std::vector<std::unique_ptr<LakeshoreSim>> cryostats_;
+  std::map<std::string, LakeshoreSim*, std::less<>> cryostat_of_;  // by driver name: a cryotrap's
   std::map<std::string, std::unique_ptr<Plc2000HeaterSim>, std::less<>> heaters_;  // by driver name
   std::vector<std::unique_ptr<PychronValveServerSim>> valve_servers_;
   std::map<std::string, std::unique_ptr<extraction::ChromiumSim>, std::less<>> lasers_;  // by driver name

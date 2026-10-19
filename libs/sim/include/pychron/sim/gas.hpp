@@ -2,11 +2,14 @@
 
 // The gases the simulated extraction line holds (spec section 3.1).
 //
-// Six species, fixed: the five argon isotopes the spectrometer measures, and
+// Eight species, fixed: the five argon isotopes the spectrometer measures,
 // `Active`, everything a getter removes (N2, O2, H2O, CO2) as one bulk gas of
-// mass 28. `Active` is there so that gauges read sensibly: air is about 1 %
-// argon, and a line that has taken an air shot and not yet gettered it must
-// show it.
+// mass 28, and He4 and Ne20, the noble gases a staged release lets in before
+// the argon (measurement plan v2 spec 11). `Active` is there so that gauges
+// read sensibly: air is about 1 % argon, and a line that has taken an air shot
+// and not yet gettered it must show it. Air here has no helium or neon (they
+// are a few ppm): a lab's numbers are the argon's; a volume or a composition
+// that holds them says so.
 //
 // A `Composition` is one number per species. What the number is belongs to
 // whoever holds it: a partial pressure (mbar), an amount (mbar L), a rate
@@ -19,14 +22,15 @@
 
 namespace pychron::sim {
 
-enum class Species { Ar36, Ar37, Ar38, Ar39, Ar40, Active };
+enum class Species { Ar36, Ar37, Ar38, Ar39, Ar40, Active, He4, Ne20 };
 
-inline constexpr std::size_t kSpeciesCount = 6;
+inline constexpr std::size_t kSpeciesCount = 8;
 
-inline constexpr std::array<double, kSpeciesCount> kSpeciesMass{35.968, 36.967, 37.963, 38.964, 39.962, 28.0};
+inline constexpr std::array<double, kSpeciesCount> kSpeciesMass{35.968, 36.967, 37.963, 38.964,
+                                                                39.962, 28.0,   4.0026, 19.992};
 
-inline constexpr std::array<std::string_view, kSpeciesCount> kSpeciesName{"Ar36", "Ar37", "Ar38",
-                                                                          "Ar39", "Ar40", "active"};
+inline constexpr std::array<std::string_view, kSpeciesCount> kSpeciesName{"Ar36", "Ar37",   "Ar38", "Ar39",
+                                                                          "Ar40", "active", "He4",  "Ne20"};
 
 // Per species; meaning set by the user (mbar, mbar L, mbar L / s).
 using Composition = std::array<double, kSpeciesCount>;

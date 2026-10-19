@@ -90,9 +90,10 @@ GasVolume volume_of(const std::string& name, double cc, SimRole role, bool walls
     for (std::size_t s = 0; s < kSpeciesCount; ++s) volume.source_per_s[s] += air[s];
   }
   if (role == SimRole::Spectrometer) {
-    // The ion source uses each argon at the same rate, and its memory comes
-    // back as Ar40: fA/s over fA/mbar is mbar/s, of this volume.
-    for (const Species s : {Species::Ar36, Species::Ar37, Species::Ar38, Species::Ar39, Species::Ar40}) {
+    // The ion source uses each noble gas at the same rate, and its memory
+    // comes back as Ar40: fA/s over fA/mbar is mbar/s, of this volume.
+    for (const Species s : {Species::Ar36, Species::Ar37, Species::Ar38, Species::Ar39, Species::Ar40, Species::He4,
+                            Species::Ne20}) {
       volume.loss_per_s[index(s)] = settings.source.consumption;
     }
     volume.source_per_s[index(Species::Ar40)] +=
@@ -218,13 +219,15 @@ std::vector<BeamGas> SimSystem::beam_gas_at(TimePoint t) const {
   // To the instant of the reading: not past the clock, which is as far as
   // anything else has moved this line, and not back.
   const TimePoint to = std::min(t, clock_.now());
+  apply_traps_locked();
   if (to > last_) {
     network_.advance(seconds(to - last_));
     last_ = to;
   }
   const auto held = network_.partial_pressures(*spectrometer_);
   if (!held) return {};
-  // The beam's own argon, for its masses: a peak is where it was.
+  // The beam's own argon, for its masses: a peak is where it was. Helium
+  // and neon at their own masses, once there is any.
   std::vector<BeamGas> gas = default_argon_gas();
   for (auto& g : gas) {
     g.abundance = 0.0;
@@ -232,6 +235,12 @@ std::vector<BeamGas> SimSystem::beam_gas_at(TimePoint t) const {
     for (std::size_t s = 0; s < kSpeciesCount; ++s) {
       if (kSpeciesName[s] == g.isotope) g.abundance = (*held)[s] * settings_.source.sensitivity;
     }
+  }
+  for (const Species s : {Species::He4, Species::Ne20}) {
+    const double p = (*held)[index(s)];
+    if (p > 0.0)
+      gas.push_back(BeamGas{std::string(kSpeciesName[index(s)]), kSpeciesMass[index(s)],
+                            p * settings_.source.sensitivity, 0.0});
   }
   return gas;
 }
@@ -254,8 +263,23 @@ void SimSystem::add_gauge_volume_locked(const std::string& name) {
   }
 }
 
+void SimSystem::apply_traps_locked() const {
+  for (const auto& trap : settings_.cryo_traps) {
+    const auto unit = cryostat_of_.find(trap.cryostat);
+    if (unit == cryostat_of_.end() || !network_.has_volume(trap.volume)) continue;  // no such cryostat: no trap
+    const double kelvin = unit->second->current_temperature(trap.input);
+    GasNetwork::Held held{};
+    for (std::size_t s = 0; s < kSpeciesCount; ++s) {
+      const auto release = trap.release_k.find(std::string(kSpeciesName[s]));
+      held[s] = release != trap.release_k.end() && kelvin < release->second;
+    }
+    (void)network_.set_held(trap.volume, held);  // the volume is there: cannot be refused
+  }
+}
+
 TimePoint SimSystem::advance_locked() const {
   const TimePoint now = clock_.now();
+  apply_traps_locked();
   if (now > last_) {
     network_.advance(seconds(now - last_));
     last_ = now;
@@ -612,6 +636,7 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     auto unit = std::make_unique<LakeshoreSim>(clock_, "MODEL" + driver.options["model"].value_or(std::string("335")));
     auto hook = unit->hook();
     std::lock_guard lock(mutex_);
+    cryostat_of_[driver.name] = unit.get();
     cryostats_.push_back(std::move(unit));
     return hook;
   }
@@ -679,6 +704,12 @@ extraction::ChromiumSim* SimSystem::chromium(std::string_view driver) const {
   std::lock_guard lock(mutex_);
   const auto it = lasers_.find(driver);
   return it == lasers_.end() ? nullptr : it->second.get();
+}
+
+LakeshoreSim* SimSystem::cryostat(std::string_view driver) const {
+  std::lock_guard lock(mutex_);
+  const auto it = cryostat_of_.find(driver);
+  return it == cryostat_of_.end() ? nullptr : it->second;
 }
 
 Plc2000HeaterSim* SimSystem::heater(std::string_view driver) const {

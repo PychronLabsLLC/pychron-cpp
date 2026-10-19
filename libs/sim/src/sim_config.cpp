@@ -49,6 +49,7 @@ constexpr Range kNoise{0.0, 10.0, "as a fraction of the reading"};
 constexpr Range kRatio{0.0, 1e9, "as a ratio to Ar36"};
 constexpr Range kMemory{0.0, 1e30, "fA/s"};
 constexpr Range kBaseline{-1e30, 1e30, "fA (cps on a counting detector)"};  // finite, either sign
+constexpr Range kKelvin{0.0, 1e4, "K", true};
 // The most the memory may be as gas, through the sensitivity.
 constexpr Range kMemoryAsGas{0.0, 1e3, "mbar/s"};
 
@@ -100,7 +101,7 @@ class Reader {
 
   Result<SimSettings> read(const toml::table& root) {
     reject_unknown(root, "",
-                   {"defaults", "compositions", "volumes", "valves", "pumps", "spectrometer", "detectors"});
+                   {"defaults", "compositions", "volumes", "valves", "pumps", "spectrometer", "detectors", "cryo_trap"});
     if (const auto* t = table(root, "defaults")) read_defaults(*t);
     // Compositions before the volumes that name them.
     each_named(root, "compositions", [this](const std::string& path, const std::string& name, const toml::table& t) {
@@ -119,6 +120,7 @@ class Reader {
     each_named(root, "detectors", [this](const std::string& path, const std::string& name, const toml::table& t) {
       read_detector(path, name, t);
     });
+    if (const auto* traps = root.get("cryo_trap")) read_cryo_traps(*traps);
     if (!problems_.empty()) return fail(config::to_error(problems_));
     settings_.file = file_;
     return std::move(settings_);
@@ -386,6 +388,63 @@ class Reader {
     if (auto v = number(t, path, "baseline", kBaseline)) detector.baseline = *v;
     if (auto v = number(t, path, "baseline_drift_per_h", kBaseline)) detector.drift_per_h = *v;
     settings_.detectors[name] = detector;
+  }
+
+  // [[cryo_trap]]: volume, cryostat, input (optional, "A"), release_k = { <species> = K }.
+  void read_cryo_traps(const toml::node& node) {
+    const auto* traps = node.as_array();
+    if (traps == nullptr) {
+      problem(node, "cryo_trap", "expected an array of tables ([[cryo_trap]])");
+      return;
+    }
+    settings_.cryo_traps.clear();
+    for (std::size_t i = 0; i < traps->size(); ++i) {
+      const std::string path = "cryo_trap[" + std::to_string(i) + "]";
+      const auto* t = traps->get(i)->as_table();
+      if (t == nullptr) {
+        problem(*traps->get(i), path, "expected a table");
+        continue;
+      }
+      reject_unknown(*t, path, {"volume", "cryostat", "input", "release_k"});
+      SimSettings::CryoTrap trap;
+      const auto text = [&](std::string_view key, std::string& out) {
+        const auto* n = t->get(key);
+        if (n == nullptr) {
+          problem(*t, join(path, key), "required");
+          return;
+        }
+        if (const auto v = n->value<std::string>(); v && !v->empty()) out = *v;
+        else problem(*n, join(path, key), "expected a name");
+      };
+      text("volume", trap.volume);
+      if (!trap.volume.empty() && !roles_.contains(trap.volume))
+        problem(*t->get("volume"), join(path, "volume"), "unknown volume '" + trap.volume + "'" + known(volume_names()));
+      text("cryostat", trap.cryostat);
+      if (const auto* n = t->get("input")) {
+        const auto v = n->value<std::string>();
+        if (v && v->size() == 1 && (*v)[0] >= 'A' && (*v)[0] <= 'D') trap.input = (*v)[0];
+        else problem(*n, join(path, "input"), R"(expected one of "A", "B", "C", "D")");
+      }
+      const auto* release = t->get("release_k");
+      const auto* temps = release != nullptr ? release->as_table() : nullptr;
+      if (temps == nullptr) {
+        problem(release != nullptr ? *release : static_cast<const toml::node&>(*t), join(path, "release_k"),
+                "expected a table of species and kelvin");
+      } else {
+        const std::string at = join(path, "release_k");
+        for (auto&& [key, value] : *temps) {
+          (void)value;
+          bool species = false;
+          for (const auto name : kSpeciesName) species = species || name == key.str();
+          if (!species) {
+            problem(value, join(at, key.str()), "unknown species" + known(kSpeciesName));
+          } else if (auto k = number(*temps, at, key.str(), kKelvin)) {
+            trap.release_k[std::string(key.str())] = *k;
+          }
+        }
+      }
+      settings_.cryo_traps.push_back(std::move(trap));
+    }
   }
 
   std::vector<std::string_view> volume_names() const {

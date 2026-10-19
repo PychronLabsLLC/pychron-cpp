@@ -28,11 +28,14 @@ if the files are simulated already.
 
 Modelled:
 
-- **Gas by species.** Six of them: Ar36, Ar37, Ar38, Ar39, Ar40 and `active`,
+- **Gas by species.** Eight of them: Ar36, Ar37, Ar38, Ar39, Ar40, `active`,
   which stands for everything a getter removes (N2, O2, H2O, CO2) as one gas
-  of mass 28. Air is 298.56 Ar40 and 0.1885 Ar38 to one Ar36, and active gas
-  106 times the argon (argon is 0.93 % of air). A volume's pressure is the
-  sum over the six, and that is what its gauge reads.
+  of mass 28, and He4 and Ne20, for a staged release of noble gases. Air is
+  298.56 Ar40 and 0.1885 Ar38 to one Ar36, and active gas 106 times the argon
+  (argon is 0.93 % of air); it has no helium or neon here (a few ppm), so only
+  a volume or composition that is given them has any. A getter takes neither.
+  A volume's pressure is the sum over the eight, and that is what its gauge
+  reads.
 - **Volumes and valves.** Each volume holds a partial pressure of each
   species. An open valve carries each species from the higher partial
   pressure to the lower at the valve's conductance, so two volumes come to
@@ -255,7 +258,7 @@ volume. Keys are the species; one not given is 0.
 
 | Key | Unit | Range |
 |---|---|---|
-| `Ar36`, `Ar37`, `Ar38`, `Ar39`, `Ar40`, `active` | ratio to Ar36 | 0 to 1e9 |
+| `Ar36`, `Ar37`, `Ar38`, `Ar39`, `Ar40`, `active`, `He4`, `Ne20` | ratio to Ar36 | 0 to 1e9 |
 
 Two are built in and need no table:
 
@@ -316,7 +319,22 @@ in the spectrometer's file.
 | `baseline` | fA (cps on a counting detector) | 0 | -1e30 to 1e30 | what it reads with no beam on it |
 | `baseline_drift_per_h` | the same, per hour | 0 | -1e30 to 1e30 | how that changes, from when the program started |
 
-Nothing else may be in the file: the seven sections above, and under each
+`[[cryo_trap]]`: a cryotrap, for a staged release (measurement plan v2,
+section 11): gas frozen in a volume and let out one species at a time by
+warming it. Each species given a release temperature is held in the volume,
+carried by none of its valves either way, while the cryostat reads below that
+temperature, and flows as any gas above it. The rule is applied whenever the
+line is moved to the clock, at the cryostat's temperature of that moment. None
+by default; there may be several.
+
+| Key | Unit | Default | Range | Meaning |
+|---|---|---|---|---|
+| `volume` | name | (required) | a volume of the canvas | where the gas is frozen |
+| `cryostat` | name | (required) | a `lakeshore` driver of `extraction_line.toml` | the controller whose input is the trap's temperature. A trap whose cryostat the line has no such driver for holds nothing |
+| `input` | letter | `"A"` | `"A"` to `"D"` | the controller's input that reads the trap |
+| `release_k` | K, by species | (required) | above 0, to 1e4 | `{ He4 = 30, Ne20 = 70 }`: each species given is held below its temperature; one not given is never held |
+
+Nothing else may be in the file: the eight sections above, and under each
 the keys listed. A section may be given once.
 
 ### Errors you will meet

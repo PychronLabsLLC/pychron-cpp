@@ -124,6 +124,14 @@ class GasNetwork {
   Result<void> set_partial_pressures(std::string_view volume, const Composition& mbar);
   Result<void> inject(std::string_view volume, const Composition& mbar_litres);
 
+  // Which species the (merged) volume holds fast: a held species neither
+  // leaves nor enters it through its valves (a cryotrap below the species'
+  // release temperature: what reaches the cold surface freezes there too).
+  // All are free at first. Config error on an unknown volume.
+  using Held = std::array<bool, kSpeciesCount>;
+  Result<void> set_held(std::string_view volume, const Held& held);
+  Result<Held> held(std::string_view volume) const;
+
   // A volume joined to nothing (a gauge off the canvas), with the pumps on
   // it (their `volume` is not read: they are this one's). Config error as in
   // `make`, and when a volume or valve already has the name.
@@ -141,6 +149,7 @@ class GasNetwork {
     double litres = 0.0;
     Composition source{};  // mbar L / s
     SpeciesRates loss{};   // 1 / s
+    Held held{};           // species no valve carries to or from it (set_held)
   };
   struct Valve {
     double conductance = 0.0;  // L/s for Ar40

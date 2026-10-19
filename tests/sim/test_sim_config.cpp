@@ -137,6 +137,13 @@ void expect_same(const SimSettings& a, const SimSettings& b) {
     EXPECT_EQ(detector.drift_per_h, b.detectors.at(name).drift_per_h) << name;
   }
   EXPECT_EQ(a.named, b.named);
+  ASSERT_EQ(a.cryo_traps.size(), b.cryo_traps.size());
+  for (std::size_t i = 0; i < a.cryo_traps.size(); ++i) {
+    EXPECT_EQ(a.cryo_traps[i].volume, b.cryo_traps[i].volume) << i;
+    EXPECT_EQ(a.cryo_traps[i].cryostat, b.cryo_traps[i].cryostat) << i;
+    EXPECT_EQ(a.cryo_traps[i].input, b.cryo_traps[i].input) << i;
+    EXPECT_EQ(a.cryo_traps[i].release_k, b.cryo_traps[i].release_k) << i;
+  }
 }
 
 TEST_F(SimConfig, AnEmptyFileGivesTheDefaults) {
@@ -400,6 +407,29 @@ TEST_F(SimConfig, RefusesANumberNoLineCanHave) {
   ASSERT_TRUE(ends) << ends.error().what;
   EXPECT_EQ(ends->default_volume_cc, 1e-6);
   EXPECT_EQ(ends->source.consumption, 1e6);
+}
+
+// [[cryo_trap]] (staged release): a known volume, a cryostat, an input A to
+// D, and release temperatures above 0 K, by species.
+TEST_F(SimConfig, CryoTrapKeysRangeChecked) {
+  const auto ok = load("[[cryo_trap]]\nvolume = \"bone\"\ncryostat = \"cryo\"\ninput = \"B\"\n"
+                       "release_k = { He4 = 30, Ne20 = 70.5 }\n");
+  ASSERT_TRUE(ok) << ok.error().what;
+  ASSERT_EQ(ok->cryo_traps.size(), 1u);
+  EXPECT_EQ(ok->cryo_traps[0].volume, "bone");
+  EXPECT_EQ(ok->cryo_traps[0].cryostat, "cryo");
+  EXPECT_EQ(ok->cryo_traps[0].input, 'B');
+  EXPECT_EQ(ok->cryo_traps[0].release_k, (std::map<std::string, double>{{"He4", 30.0}, {"Ne20", 70.5}}));
+  const std::string head = "[[cryo_trap]]\nvolume = \"bone\"\ncryostat = \"cryo\"\n";
+  expect_refused(head + "release_k = { He4 = 0 }\n", "cryo_trap[0].release_k.He4");
+  expect_refused(head + "release_k = { He4 = -5 }\n", "cryo_trap[0].release_k.He4");
+  expect_refused(head + "release_k = { Xe132 = 100 }\n", "cryo_trap[0].release_k.Xe132");
+  expect_refused(head + "release_k = { He4 = 30 }\ninput = \"E\"\n", "cryo_trap[0].input");
+  expect_refused(head + "release_k = { He4 = 30 }\nwarm = 1\n", "cryo_trap[0].warm");
+  expect_refused(head, "cryo_trap[0].release_k");
+  expect_refused("[[cryo_trap]]\nvolume = \"nowhere\"\ncryostat = \"cryo\"\nrelease_k = { He4 = 30 }\n",
+                 "cryo_trap[0].volume");
+  expect_refused("[[cryo_trap]]\nvolume = \"bone\"\nrelease_k = { He4 = 30 }\n", "cryo_trap[0].cryostat");
 }
 
 TEST_F(SimConfig, RefusesAnUnknownComposition) {
@@ -783,7 +813,7 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   // nobody's default comes back as it went in but for those.
   std::ifstream in(example);
   ASSERT_TRUE(in) << example;
-  const std::regex commented_out(R"(^# (\[[A-Za-z0-9_."~-]+\]\s*$|[A-Za-z0-9_]+ = \S))");
+  const std::regex commented_out(R"(^# (\[\[?[A-Za-z0-9_."~-]+\]\]?\s*$|[A-Za-z0-9_]+ = \S))");
   std::ostringstream uncommented;
   std::vector<std::string> keys;
   int sections = 0;
@@ -846,13 +876,14 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   expect_same(*shipped, tuned);
 
   // Uncommented: every key of the format, each at its default.
-  EXPECT_EQ(sections, 11);
+  EXPECT_EQ(sections, 12);
   const std::vector<std::string> every_key{
       "pressure", "volume_cc",   "pipe_cc",     "gauge_cc",        "valve_conductance", "outgassing", "noise",
       "seed",     "Ar36",        "Ar37",        "Ar38",            "Ar39",              "Ar40",       "active",
+      "He4",      "Ne20",
       "composition", "argon40",  "pressure",    "leak",            "volume_cc",         "conductance", "speed",
       "base",     "speed",       "base",        "sensitivity",     "consumption",       "memory_fA_per_s",
-      "baseline", "baseline_drift_per_h"};
+      "baseline", "baseline_drift_per_h", "volume", "cryostat", "input", "release_k"};
   EXPECT_EQ(keys, every_key);
   const auto loaded = sim::load_sim_settings(write(uncommented.str()), canvas);
   ASSERT_TRUE(loaded) << loaded.error().what;
@@ -870,6 +901,7 @@ TEST_F(SimConfig, TheExampleFileIsTheDefaults) {
   expected.pumps["rough"] = sim::SimPump{defaults.pump_base, sim::SimPump{}.tau};
   expected.pump_speeds["rough"] = defaults.pump_speed;
   expected.detectors["H1"] = {0.0, 0.0};
+  expected.cryo_traps = {{"cryo", "cryostat", 'A', {{"He4", 30.0}, {"Ne20", 70.0}}}};
   expect_same(*loaded, expected);
 }
 
