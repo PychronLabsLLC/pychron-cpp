@@ -429,6 +429,22 @@ class TestFieldTableEditor : public QObject {
     QTRY_COMPARE_WITH_TIMEOUT(bridge_->table_copy("argon"), argon().load(kShipped.toStdString()).value(), kWaitMs);
   }
 
+  void makeCurrentTwiceWhileTheFirstIsOutRestoresOnce() {
+    core_save(1);
+    auto w = make_window();
+    QSignalSpy restored(bridge_.get(), &SpectrometerBridge::tableRestored);
+    w->make_current(kShipped);
+    QVERIFY(!w->make_current_enabled(kShipped));
+    QCOMPARE(w->make_current_disabled_reason(kShipped), QString("restoring"));
+    w->make_current(kShipped);  // a double click
+    QCOMPARE(questions_.size(), 1);
+    QCOMPARE(errors_, QStringList{QString("restoring")});
+    QTRY_COMPARE_WITH_TIMEOUT(restored.count(), 1, kWaitMs);
+    QCoreApplication::processEvents();
+    QCOMPARE(restored.count(), 1);
+    QCOMPARE(current(), kShipped);
+  }
+
   void makeCurrentRefusedWhenCurrentMovedMeanwhile() {
     const QString v2 = core_save(1);
     auto w = make_window();

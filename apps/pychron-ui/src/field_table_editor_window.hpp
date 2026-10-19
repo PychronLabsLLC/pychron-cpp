@@ -175,6 +175,7 @@ class FieldTableEditorWindow : public QMainWindow {
   std::set<QString> comments_asked_;  // "<name>/<version>"
   spectrometer::TableDiagnostics diagnostics_;
   bool save_pending_ = false;
+  bool restore_pending_ = false;  // a Make Current is on the bridge's executor
   int saving_index_ = 0;                // undo index of what the pending save writes
   spectrometer::FieldTable saving_table_;
   std::function<void()> after_save_;

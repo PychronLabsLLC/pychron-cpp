@@ -552,6 +552,7 @@ QString FieldTableEditorWindow::save_disabled_reason() const {
 
 QString FieldTableEditorWindow::make_current_disabled_reason(const QString& version) const {
   if (open_name_.isEmpty() || version.isEmpty()) return tr("no version selected");
+  if (restore_pending_) return tr("restoring");
   if (const auto holder = held()) return tr("table is held by %1").arg(*holder);
   if (version == listed_current_) return tr("%1 is already current").arg(version);
   const auto text = read_text(version_file(open_name_, version));
@@ -702,6 +703,8 @@ void FieldTableEditorWindow::make_current(const QString& version) {
   }
   if (!confirm_(tr("Make %1 current in place of %2?").arg(version, now))) return;
   if (bridge_ != nullptr) {
+    restore_pending_ = true;
+    update_actions();
     bridge_->restore_table_version(open_name_, version);
     return;
   }
@@ -710,6 +713,7 @@ void FieldTableEditorWindow::make_current(const QString& version) {
 }
 
 void FieldTableEditorWindow::finish_restore(const QString& name, const QString& version, const Result<void>& result) {
+  restore_pending_ = false;
   if (name != open_name_) return;
   fill_versions();
   if (!result) {
