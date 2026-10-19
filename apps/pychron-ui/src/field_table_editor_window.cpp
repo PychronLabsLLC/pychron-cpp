@@ -637,6 +637,9 @@ void FieldTableEditorWindow::on_conflict(const QString& now) {
 }
 
 void FieldTableEditorWindow::start_save(const QString& base) {
+  // What is being saved: an edit made while the save is out is not in it.
+  saving_index_ = model_.undo_stack()->index();
+  saving_table_ = model_.table();
   if (bridge_ != nullptr) {
     save_pending_ = true;
     update_actions();
@@ -664,7 +667,11 @@ void FieldTableEditorWindow::finish_save(const QString& name, const Result<std::
   }
   const QString version = q(*result);
   if (name == open_name_) {
-    model_.mark_saved();
+    if (model_.undo_stack()->index() == saving_index_ && model_.table() == saving_table_) {
+      model_.mark_saved();
+    } else {
+      model_.undo_stack()->resetClean();  // edits since Save are unsaved; no state is the saved one
+    }
     open_version_ = version;
     base_version_ = version;
     has_comments_ = false;

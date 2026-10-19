@@ -220,6 +220,26 @@ class TestFieldTableEditor : public QObject {
     QCOMPARE(w->banner_text(), QString());
   }
 
+  void anEditMadeWhileASaveIsOutStaysUnsaved() {
+    auto w = make_window();
+    edit_h1(*w, "5.0123");
+    QSignalSpy saved(w.get(), &FieldTableEditorWindow::saved);
+    w->save();  // on the bridge's executor
+    QVERIFY(saved.isEmpty());
+    edit_h1(*w, "5.0456");  // before the result is back
+    QVERIFY(saved.wait(kWaitMs));
+    QCOMPARE(value_at(argon().load().value(), "Ar40", "H1"), 5.0123);
+    QCOMPARE(value_at(w->model()->table(), "Ar40", "H1"), 5.0456);
+    QVERIFY(w->modified());
+    // No state of the stack is the saved one now: undoing to the old
+    // version's state is an edit too.
+    w->model()->undo_stack()->undo();
+    QCOMPARE(value_at(w->model()->table(), "Ar40", "H1"), 5.0123);
+    QVERIFY(w->modified());
+    w->model()->undo_stack()->undo();
+    QVERIFY(w->modified());
+  }
+
   void duplicateIsotopeDisablesSave() {
     auto w = make_window();
     auto* m = w->model();

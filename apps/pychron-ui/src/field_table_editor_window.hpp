@@ -175,6 +175,8 @@ class FieldTableEditorWindow : public QMainWindow {
   std::set<QString> comments_asked_;  // "<name>/<version>"
   spectrometer::TableDiagnostics diagnostics_;
   bool save_pending_ = false;
+  int saving_index_ = 0;                // undo index of what the pending save writes
+  spectrometer::FieldTable saving_table_;
   std::function<void()> after_save_;
   bool filling_ = false;
   std::vector<std::string> fit_combo_columns_;  // the detectors rebuild_fit_combos made a combo for
