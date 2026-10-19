@@ -85,19 +85,20 @@ a frozen read of either store.
 - R4 Embargo wins over release: an embargoed sample is left out of a public
   build and of every hosted view even when a published release names it.
   A private build (lab's own copy) includes it and says so in manifest.
-- R5 One migration for all of this (`0006_release.sql`), additive only:
+- R5 One migration for all of this (`0007_release.sql`; `0006` is
+  `pi_identity`), additive only:
   new tables, nullable columns, indexes. Old builds keep opening the store.
 - R6 Store never calls the network. Registration (DOI, IGSN) is done by
   `elctl` or the cloud service and written back as a catalog edit.
 
-### 4.2 Tables (migration `0006_release.sql`)
+### 4.2 Tables (migration `0007_release.sql`)
 
 ```sql
 -- A release: metadata plus a pinned revision set. The pins are a bookmark
 -- (bookmark_entry is append-only and FK-checked already); the bookmark sits
 -- on an analysis_group holding the release's analyses.
 CREATE TABLE release (uuid uuid PRIMARY KEY,
-  name text NOT NULL UNIQUE,                   -- slug, directory name: 'nmgrl-2026-10-fc2'
+  name text NOT NULL,                          -- slug, directory name: 'nmgrl-2026-10-fc2'
   title text NOT NULL, description text,
   version int NOT NULL DEFAULT 1,              -- bumps per name: 'v2 of nmgrl-2026-10-fc2'
   supersedes_uuid uuid REFERENCES release,     -- the release this one replaces
@@ -117,7 +118,7 @@ CREATE TABLE release (uuid uuid PRIMARY KEY,
   manifest_sha256 bytea,                       -- of manifest.json of the published build
   created_by_user_uuid uuid NOT NULL REFERENCES app_user, client_uuid uuid NOT NULL REFERENCES client,
   created_utc timestamptz NOT NULL, published_utc timestamptz, withdrawn_utc timestamptz,
-  withdrawn_reason text);
+  withdrawn_reason text, UNIQUE (name, version));  -- one name, several versions
 CREATE INDEX release_state_ix ON release (state, visibility);
 
 -- Samples of a release (derived from members' identifiers at creation; frozen).
@@ -169,7 +170,7 @@ CREATE INDEX external_id_entity_ix ON external_id (entity_type, entity_uuid);
   `doi`, `doi_state`, `manifest_sha256`, `published_utc`, `withdrawn_utc`,
   `withdrawn_reason` (`-- @sqlite guard release allow ...`, as `analysis`).
   `embargo` and `external_id` are mutable operational tables.
-- `SchemaTest.MigrateIsIdempotentAndRecordsChecksums` lists `0006 release`;
+- `SchemaTest.MigrateIsIdempotentAndRecordsChecksums` lists `0007 release`;
   `SchemaIndexes` gets plan tests for `embargo_scope_ix`,
   `release_sample_sample_ix` and the `UNION` embargo query.
 - Commit of the migration carries `BREAKING CHANGE: run elctl db migrate`.
@@ -479,7 +480,7 @@ Qt-free writers:
   "release": {"uuid", "name", "version", "title", "description", "state", "visibility",
               "licence", "authors": [...], "publisher", "doi", "supersedes": {"uuid", "doi"},
               "created_utc", "published_utc", "embargo_until_utc"},
-  "build": {"built_utc", "software": "pychron-cpp/<version.txt>+g<short sha>",
+  "build": {"built_utc", "software": "pychron-cpp/<version.txt>" (plus "+g<short sha>" only when the build defines PYCHRON_GIT_SHA; it does not yet),
             "reduction_version", "constants_preset", "options": {...},
             "store": {"kind": "sqlite|postgresql", "schema_version": 6, "store_id"},
             "private_build": false, "omitted_embargoed": {"samples": 0, "analyses": 0}},
@@ -767,10 +768,13 @@ a `catalog_cache` refresh test; TSan run of uploader (adds a thread).
   region; 30 days. Releases (static directories) are additionally copied to
   a second region: preservation.
 
-### 9.2 Read-only views, schema `pub`
+### 9.2 Read-only views, `pub_*`
 
-Created by migration `0006` (`-- @sqlite skip`; views are PostgreSQL-only;
-SQLite has no hosted tier). Every view applies the visibility rule of 4.5
+Created by migration `0007` (`-- @sqlite skip`; views are PostgreSQL-only;
+SQLite has no hosted tier). They live in the store's own schema, named
+`pub_<name>` (a separate `pub` schema would be shared across the throwaway
+test schemas and across tenants of one cluster); the spec writes them
+`pub.<name>` below for short. Every view applies the visibility rule of 4.5
 with `at = now()`. No base table is ever granted.
 
 | View | Row | Columns |
@@ -781,7 +785,7 @@ with `at = now()`. No base table is ever granted.
 | `pub.release` | a visible release | `release` row less internal uuids, `n_samples`, `n_analyses`, `catalog_url`, `doi_url`, `geom` (convex hull of its samples) |
 | `pub.record` | one Records row per visible sample and per visible release | `id`, `type`, `title`, `description`, `geom`, `time_start_utc`, `time_end_utc`, `keywords` (text[]), `license`, `created_utc`, `updated_utc`, `external_ids` (jsonb), `links` (jsonb), `search` (`tsvector`, GENERATED from title, description, keywords) |
 
-Values in `pub.analysis` are the published build's: a materialised table
+Values in `pub.analysis` are the published build's: a table
 `pub_analysis_value` (`release_uuid`, `analysis_uuid`, the numeric columns),
 written by `publish upload` (9.5) from the release's `analyses.parquet` rows,
 not computed in SQL (the store cannot reduce). `pub.analysis` joins it to
@@ -1035,7 +1039,7 @@ release is the citable unit and EarthBank one more place it is listed.
 | Release | create pins every head and ref; a retag after creation does not change the build; publish freezes; delete only draft; supersede chain |
 | Build | fixture store (tests/persistence five-rows fixture plus IR1010 import fixture) builds; every file in manifest with matching sha; `rows_sha256` stable across two builds; private build includes embargoed rows and says so; public build omits them |
 | Parquet | each table reads back with Arrow (test only) with the listed columns and types; `geo` metadata validates against the GeoParquet 1.1 JSON schema (vendored); built without Arrow: no `data/` and exit message |
-| Records | `catalog.json` and each record validate against the OGC API - Records JSON schemas (vendored from 20-004r1); every `item` link resolves to a file in the directory |
+| Records | `catalog.json` and each record checked structurally (required fields of 20-004r1 present, values of the fixed ones exact); JSON-schema validation when a validator is a dependency; every `item` link resolves to a file in the directory |
 | Figures | SVG and PDF of one Scene: same primitives as `SceneView` places (layout test); byte-stable across two runs; PDF parses (xref offsets right, checked by a 50-line reader in the test) |
 | Verify | corrupt a cell -> names the table; delete a file -> names it; other `reduction_version` -> says so, compares nothing |
 | Viewer | Playwright smoke in `dev-ui` job (7) |

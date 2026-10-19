@@ -30,7 +30,7 @@ const char* const kAppendOnly[] = {
     "chronology_dose",    "detector_gain",      "sensitivity_value", "holder_meta",
     "holder_hole",        "script_version",     "ref_document",      "signal_blob",
     "script_text",        "spectrometer_snapshot", "change_log",     "change_entity",
-    "ingest_receipt"};
+    "ingest_receipt",     "release_sample",     "release_interpreted_age"};
 
 std::unique_ptr<pd::Db> raw(const std::string& url) {
   auto db = pd::Db::open(StoreConfig{url, false});
@@ -82,8 +82,10 @@ std::set<std::string> introspect(pd::Db& db) {
     }
   } else {
     for (const auto& c : column(db,
-                                "SELECT table_name || '|' || column_name AS c FROM information_schema.columns "
-                                "WHERE table_schema = current_schema()",
+                                "SELECT c.table_name || '|' || c.column_name AS c FROM information_schema.columns c "
+                                "JOIN information_schema.tables t ON t.table_schema = c.table_schema "
+                                "AND t.table_name = c.table_name "
+                                "WHERE c.table_schema = current_schema() AND t.table_type = 'BASE TABLE'",
                                 "c"))
       out.insert(c);
     auto rows = db.select(
@@ -137,7 +139,7 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     ASSERT_TRUE(store);
     auto status = store->schema_status();
     ASSERT_TRUE(status) << to_string(status.error());
-    ASSERT_EQ(status->size(), 6u);
+    ASSERT_EQ(status->size(), 7u);
     EXPECT_EQ((*status)[0].version, 1);
     EXPECT_EQ((*status)[0].description, "init");
     EXPECT_EQ((*status)[0].checksum_hex.size(), 64u);
@@ -151,6 +153,8 @@ TEST_P(SchemaTest, MigrateIsIdempotentAndRecordsChecksums) {
     EXPECT_EQ((*status)[4].description, "ref_scope_indexes");
     EXPECT_EQ((*status)[5].version, 6);
     EXPECT_EQ((*status)[5].description, "pi_identity");
+    EXPECT_EQ((*status)[6].version, 7);
+    EXPECT_EQ((*status)[6].description, "release");
   }
   // Reopen: nothing pending, so migrate = false opens fine.
   auto again = open_store(StoreConfig{tdb.url(), false});
@@ -479,6 +483,35 @@ TEST_P(SchemaTest, AppendOnlyRowsRejectUpdateAndDelete) {
   EXPECT_FALSE(db->affecting("DELETE FROM analysis"));
 }
 
+// A release (data publishing spec 4.2) is updated only in its state columns;
+// its pins, members and metadata are frozen with the row.
+TEST_P(SchemaTest, ReleaseRowUpdatesOnlyItsStateColumns) {
+  TestDatabase tdb(GetParam(), true);
+  auto store = open_or_die(tdb.url());
+  ASSERT_TRUE(store);
+  const Lab lab = seed_lab(*store);
+  const Actor actor{lab.reducer, lab.reduction_client};
+  auto group = store->create_group(actor, "release:r@v1", {});
+  ASSERT_TRUE(group) << to_string(group.error());
+  auto bookmark = store->create_bookmark(actor, BookmarkSpec{"release r v1", std::nullopt, std::nullopt, *group});
+  ASSERT_TRUE(bookmark) << to_string(bookmark.error());
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const pd::Bindings values{pd::qv(Uuid::v7()), pd::qv(*group), pd::qv(*bookmark), pd::qv(lab.reducer),
+                            pd::qv(lab.reduction_client), QStringLiteral("2026-10-18T00:00:00.000000Z")};
+  ASSERT_TRUE(db->affecting(
+      "INSERT INTO release (uuid, name, title, version, group_uuid, bookmark_uuid, licence, authors, options, "
+      "reduction_version, software_version, created_by_user_uuid, client_uuid, created_utc) "
+      "VALUES (?, 'r', 'Release r', 1, ?, ?, 'CC-BY-4.0', '[]', '{}', 'arar-1', 'pychron-cpp/0.4.0', ?, ?, ?)",
+      values));
+  EXPECT_FALSE(db->affecting("UPDATE release SET title = 'x'"));
+  EXPECT_FALSE(db->affecting("UPDATE release SET licence = 'CC0-1.0'"));
+  EXPECT_FALSE(db->affecting("DELETE FROM release"));
+  EXPECT_TRUE(db->affecting("UPDATE release SET state = 'published', visibility = 'public', "
+                            "published_utc = '2026-10-18T01:00:00.000000Z'"));
+  EXPECT_TRUE(db->affecting("UPDATE release SET doi = '10.1234/x', doi_state = 'findable'"));
+}
+
 TEST(SchemaParity, PostgresAndSqliteHaveTheSameTablesColumnsAndKeys) {
   if (pg_url().empty()) GTEST_SKIP() << "PYCHRON_TEST_PG_URL not set";
   TestDatabase pg("pg", false), lite("sqlite", true);
@@ -498,3 +531,39 @@ TEST(SchemaParity, PostgresAndSqliteHaveTheSameTablesColumnsAndKeys) {
 
 INSTANTIATE_TEST_SUITE_P(Engines, SchemaTest, ::testing::ValuesIn(engines()),
                          [](const auto& p) { return p.param; });
+
+// Whether a sample or an analysis is under a live embargo is one statement
+// over the three scopes (spec 4.2), each found by the partial index.
+TEST(SchemaIndexes, EmbargoScopeLookupUsesPartialIndex) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const QString sql = QStringLiteral(
+      "SELECT s.uuid FROM sample s WHERE s.uuid IN (?) AND EXISTS ("
+      "SELECT 1 FROM embargo e WHERE e.lifted_utc IS NULL AND (e.until_utc IS NULL OR e.until_utc > ?) "
+      "AND e.scope_type = 'sample' AND e.scope_uuid = s.uuid "
+      "UNION ALL "
+      "SELECT 1 FROM embargo e WHERE e.lifted_utc IS NULL AND (e.until_utc IS NULL OR e.until_utc > ?) "
+      "AND e.scope_type = 'project' AND e.scope_uuid = s.project_uuid)");
+  const pd::Bindings b{pd::qv(Uuid::v7()), QStringLiteral("2026-10-18T00:00:00.000000Z"),
+                       QStringLiteral("2026-10-18T00:00:00.000000Z")};
+  const std::string plan = plan_of(*db, sql, b);
+  ASSERT_FALSE(plan.empty());
+  EXPECT_NE(plan.find("embargo_scope_ix"), std::string::npos) << plan;
+  EXPECT_EQ(plan.find("SCAN e"), std::string::npos) << plan;
+}
+
+// The releases a sample is in are found by the index on release_sample's
+// second column, not by reading every membership.
+TEST(SchemaIndexes, ReleaseSamplesOfASampleUseIndex) {
+  TestDatabase tdb("sqlite", true);
+  ASSERT_TRUE(open_or_die(tdb.url()));
+  auto db = raw(tdb.url());
+  ASSERT_TRUE(db);
+  const std::string plan = plan_of(*db, QStringLiteral("SELECT release_uuid FROM release_sample WHERE sample_uuid = ?"),
+                                   {pd::qv(Uuid::v7())});
+  ASSERT_FALSE(plan.empty());
+  EXPECT_NE(plan.find("release_sample_sample_ix"), std::string::npos) << plan;
+  EXPECT_EQ(plan.find("SCAN"), std::string::npos) << plan;
+}
