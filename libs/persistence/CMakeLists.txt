@@ -43,6 +43,7 @@ add_library(pychron_persistence STATIC
   src/migrate.cpp
   src/model.cpp
   src/payloads.cpp
+  src/publish.cpp
   src/refs.cpp
   src/store.cpp
   src/unit_of_work.cpp

@@ -24,6 +24,7 @@
 #include "pychron/persistence/ids.hpp"
 #include "pychron/persistence/import.hpp"
 #include "pychron/persistence/model.hpp"
+#include "pychron/persistence/publish.hpp"
 
 namespace pychron::persistence {
 
@@ -713,6 +714,27 @@ class IStore {
   // the analysis's collection revisions, as one rollback changeset.
   virtual Result<CommitOutcome> rollback_to_collection(const Actor& actor, Uuid analysis, std::string message,
                                                        std::vector<Kind> kinds = {}) = 0;
+
+  // Publishing (data publishing spec, section 4): releases, embargoes,
+  // external ids. Each write is one transaction ending in a change_log row.
+  virtual Result<Uuid> add_release(const Actor& actor, const ReleaseInsert& release) = 0;
+  virtual Result<std::optional<ReleaseRow>> release(Uuid release) = 0;
+  // The newest version of the name when `version` is absent.
+  virtual Result<std::optional<ReleaseRow>> find_release(const std::string& name, std::optional<int> version) = 0;
+  virtual Result<std::vector<ReleaseRow>> releases(const ReleaseQuery& query) = 0;  // by name, then version
+  virtual Result<void> update_release(const Actor& actor, const ReleaseUpdate& update) = 0;  // Config when illegal
+  virtual Result<void> delete_release(const Actor& actor, Uuid release) = 0;              // a draft only
+  virtual Result<std::vector<Uuid>> release_samples(Uuid release) = 0;
+  virtual Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Uuid release) = 0;
+  virtual Result<Uuid> add_embargo(const Actor& actor, const EmbargoInsert& embargo) = 0;
+  virtual Result<void> lift_embargo(const Actor& actor, Uuid embargo) = 0;  // Config when already lifted
+  virtual Result<std::vector<EmbargoRow>> embargoes(bool live_only, UtcTime at) = 0;
+  // Those of the given samples under a live project or sample embargo at `at`, by uuid.
+  virtual Result<std::vector<Uuid>> embargoed_samples(std::span<const Uuid> samples, UtcTime at) = 0;
+  // Those of the given analyses under a live project, sample or analysis embargo at `at`, by uuid.
+  virtual Result<std::vector<Uuid>> embargoed_analyses(std::span<const Uuid> analyses, UtcTime at) = 0;
+  virtual Result<Uuid> add_external_id(const Actor& actor, const ExternalIdInsert& id) = 0;
+  virtual Result<std::vector<ExternalIdRow>> external_ids(std::string_view entity_type, Uuid entity) = 0;
 
   // Reference resolution and the derived cache.
   virtual Result<RefResolution> resolve_refs(Uuid analysis, const RefPolicy& policy) = 0;

@@ -506,10 +506,10 @@ TEST_P(SchemaTest, ReleaseRowUpdatesOnlyItsStateColumns) {
       values));
   EXPECT_FALSE(db->affecting("UPDATE release SET title = 'x'"));
   EXPECT_FALSE(db->affecting("UPDATE release SET licence = 'CC0-1.0'"));
-  EXPECT_FALSE(db->affecting("DELETE FROM release"));
   EXPECT_TRUE(db->affecting("UPDATE release SET state = 'published', visibility = 'public', "
                             "published_utc = '2026-10-18T01:00:00.000000Z'"));
   EXPECT_TRUE(db->affecting("UPDATE release SET doi = '10.1234/x', doi_state = 'findable'"));
+  EXPECT_FALSE(db->affecting("DELETE FROM release")) << "a published release is never deleted";
 }
 
 TEST(SchemaParity, PostgresAndSqliteHaveTheSameTablesColumnsAndKeys) {

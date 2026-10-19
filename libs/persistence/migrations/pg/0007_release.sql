@@ -76,14 +76,39 @@ CREATE TABLE pub_interpreted_age_value (release_uuid uuid REFERENCES release,
 CREATE INDEX pub_interpreted_age_value_sample_ix ON pub_interpreted_age_value (sample_uuid);
 
 -- ---------- immutability
-CREATE TRIGGER release_sample_append_only BEFORE UPDATE OR DELETE ON release_sample FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
-CREATE TRIGGER release_interpreted_age_append_only BEFORE UPDATE OR DELETE ON release_interpreted_age FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
--- release: never deleted; updated only in its state columns (spec 4.4).
--- @sqlite guard release allow state visibility doi doi_state manifest_sha256 published_utc withdrawn_utc withdrawn_reason
+-- release_sample and release_interpreted_age are never updated, and deleted
+-- only with a draft release (IStore::delete_release); a published release's
+-- rows are frozen with it.
+-- @sqlite skip
+CREATE FUNCTION release_member_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'pychron: % is append-only', TG_TABLE_NAME;
+  END IF;
+  IF (SELECT state FROM release WHERE uuid = OLD.release_uuid) IS DISTINCT FROM 'draft' THEN
+    RAISE EXCEPTION 'pychron: % of a published release is frozen', TG_TABLE_NAME;
+  END IF;
+  RETURN OLD;
+END $$;
+-- @sqlite skip
+CREATE TRIGGER release_sample_guard BEFORE UPDATE OR DELETE ON release_sample FOR EACH ROW EXECUTE FUNCTION release_member_guard();
+-- @sqlite skip
+CREATE TRIGGER release_interpreted_age_guard BEFORE UPDATE OR DELETE ON release_interpreted_age FOR EACH ROW EXECUTE FUNCTION release_member_guard();
+-- @sqlite exec CREATE TRIGGER release_sample_no_update BEFORE UPDATE ON release_sample BEGIN SELECT RAISE(ABORT, 'pychron: release_sample is append-only'); END
+-- @sqlite exec CREATE TRIGGER release_sample_frozen BEFORE DELETE ON release_sample WHEN (SELECT state FROM release WHERE uuid = OLD.release_uuid) IS NOT 'draft' BEGIN SELECT RAISE(ABORT, 'pychron: release_sample of a published release is frozen'); END
+-- @sqlite exec CREATE TRIGGER release_interpreted_age_no_update BEFORE UPDATE ON release_interpreted_age BEGIN SELECT RAISE(ABORT, 'pychron: release_interpreted_age is append-only'); END
+-- @sqlite exec CREATE TRIGGER release_interpreted_age_frozen BEFORE DELETE ON release_interpreted_age WHEN (SELECT state FROM release WHERE uuid = OLD.release_uuid) IS NOT 'draft' BEGIN SELECT RAISE(ABORT, 'pychron: release_interpreted_age of a published release is frozen'); END
+-- release: deleted only while a draft; updated only in its state columns
+-- (spec 4.4). The SQLite triggers are written out below (the guard
+-- directive would forbid every DELETE).
+-- @sqlite skip
 CREATE FUNCTION release_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    RAISE EXCEPTION 'pychron: release is append-only';
+    IF OLD.state <> 'draft' THEN
+      RAISE EXCEPTION 'pychron: a published release is never deleted';
+    END IF;
+    RETURN OLD;
   END IF;
   IF (to_jsonb(NEW) - ARRAY['state','visibility','doi','doi_state','manifest_sha256','published_utc','withdrawn_utc',
                             'withdrawn_reason'])
@@ -94,7 +119,10 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+-- @sqlite skip
 CREATE TRIGGER release_guard BEFORE UPDATE OR DELETE ON release FOR EACH ROW EXECUTE FUNCTION release_guard();
+-- @sqlite exec CREATE TRIGGER release_guard_update BEFORE UPDATE ON release WHEN NEW.uuid IS NOT OLD.uuid OR NEW.name IS NOT OLD.name OR NEW.title IS NOT OLD.title OR NEW.description IS NOT OLD.description OR NEW.version IS NOT OLD.version OR NEW.supersedes_uuid IS NOT OLD.supersedes_uuid OR NEW.group_uuid IS NOT OLD.group_uuid OR NEW.bookmark_uuid IS NOT OLD.bookmark_uuid OR NEW.licence IS NOT OLD.licence OR NEW.authors IS NOT OLD.authors OR NEW.publisher IS NOT OLD.publisher OR NEW.embargo_until_utc IS NOT OLD.embargo_until_utc OR NEW.options IS NOT OLD.options OR NEW.reduction_version IS NOT OLD.reduction_version OR NEW.software_version IS NOT OLD.software_version OR NEW.created_by_user_uuid IS NOT OLD.created_by_user_uuid OR NEW.client_uuid IS NOT OLD.client_uuid OR NEW.created_utc IS NOT OLD.created_utc BEGIN SELECT RAISE(ABORT, 'pychron: release is append-only'); END
+-- @sqlite exec CREATE TRIGGER release_no_delete BEFORE DELETE ON release WHEN OLD.state IS NOT 'draft' BEGIN SELECT RAISE(ABORT, 'pychron: a published release is never deleted'); END
 
 -- ---------- hosted views (PostgreSQL only; spec 9.2)
 -- Every view applies the visibility rule (spec 4.5): a row is served only

@@ -165,10 +165,12 @@ CREATE INDEX external_id_entity_ix ON external_id (entity_type, entity_uuid);
   its analyses; on an `analysis` that row. `is_embargoed(analysis, at)` is
   one query over the three scopes, written as `UNION`, never `OR` across
   tables (`libs/persistence/AGENTS.md`).
-- Append-only triggers: `release_sample`, `release_interpreted_age` get
-  `forbid_mutation`. `release` is updated only in `state`, `visibility`,
-  `doi`, `doi_state`, `manifest_sha256`, `published_utc`, `withdrawn_utc`,
-  `withdrawn_reason` (`-- @sqlite guard release allow ...`, as `analysis`).
+- Triggers: `release_sample`, `release_interpreted_age` are never updated
+  and are deleted only while their release is a `draft` (`delete_release`).
+  `release` is deleted only while a `draft`, and updated only in `state`,
+  `visibility`, `doi`, `doi_state`, `manifest_sha256`, `published_utc`,
+  `withdrawn_utc`, `withdrawn_reason` (`release_guard()`; the SQLite
+  triggers are written out with `-- @sqlite exec`).
   `embargo` and `external_id` are mutable operational tables.
 - `SchemaTest.MigrateIsIdempotentAndRecordsChecksums` lists `0007 release`;
   `SchemaIndexes` gets plan tests for `embargo_scope_ix`,

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "pychron/persistence/publish.hpp"
 #include "pychron/persistence/store.hpp"
 #include "tiny/db.hpp"
 
@@ -90,6 +91,23 @@ Result<int> prune_derived(Db& db, Uuid analysis);
 Result<std::map<Uuid, Sha256Digest>> derived_fingerprints(Db& db, std::span<const Uuid> analyses);
 
 Result<std::vector<HeadInfo>> read_heads(Db& db, Uuid subject);
+
+// Releases, embargoes and external ids (publish.cpp; data publishing spec 4).
+Result<Uuid> add_release(Db& db, const Actor& actor, const ReleaseInsert& release);
+Result<std::optional<ReleaseRow>> release(Db& db, Uuid uuid);
+Result<std::optional<ReleaseRow>> find_release(Db& db, const std::string& name, std::optional<int> version);
+Result<std::vector<ReleaseRow>> releases(Db& db, const ReleaseQuery& query);
+Result<void> update_release(Db& db, const Actor& actor, const ReleaseUpdate& update);
+Result<void> delete_release(Db& db, const Actor& actor, Uuid release);
+Result<std::vector<Uuid>> release_samples(Db& db, Uuid release);
+Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Db& db, Uuid release);
+Result<Uuid> add_embargo(Db& db, const Actor& actor, const EmbargoInsert& embargo);
+Result<void> lift_embargo(Db& db, const Actor& actor, Uuid embargo);
+Result<std::vector<EmbargoRow>> embargoes(Db& db, bool live_only, UtcTime at);
+Result<std::vector<Uuid>> embargoed_samples(Db& db, std::span<const Uuid> samples, UtcTime at);
+Result<std::vector<Uuid>> embargoed_analyses(Db& db, std::span<const Uuid> analyses, UtcTime at);
+Result<Uuid> add_external_id(Db& db, const Actor& actor, const ExternalIdInsert& id);
+Result<std::vector<ExternalIdRow>> external_ids(Db& db, std::string_view entity_type, Uuid entity);
 
 // Import source, provenance and conflict bookkeeping (import.cpp).
 Result<ImportSourceInfo> begin_import(Db& db, Dialect dialect, const ImportSourceSpec& spec);

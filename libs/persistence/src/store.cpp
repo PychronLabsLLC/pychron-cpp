@@ -517,6 +517,50 @@ class TinyStore final : public IStore {
     return detail::rollback_to_collection(*db_, actor, analysis, std::move(message), std::move(kinds));
   }
 
+  // ------------------------------------------------------------ publishing
+
+  Result<Uuid> add_release(const Actor& actor, const ReleaseInsert& release) override {
+    return detail::add_release(*db_, actor, release);
+  }
+  Result<std::optional<ReleaseRow>> release(Uuid release) override { return detail::release(*db_, release); }
+  Result<std::optional<ReleaseRow>> find_release(const std::string& name, std::optional<int> version) override {
+    return detail::find_release(*db_, name, version);
+  }
+  Result<std::vector<ReleaseRow>> releases(const ReleaseQuery& query) override {
+    return detail::releases(*db_, query);
+  }
+  Result<void> update_release(const Actor& actor, const ReleaseUpdate& update) override {
+    return detail::update_release(*db_, actor, update);
+  }
+  Result<void> delete_release(const Actor& actor, Uuid release) override {
+    return detail::delete_release(*db_, actor, release);
+  }
+  Result<std::vector<Uuid>> release_samples(Uuid release) override { return detail::release_samples(*db_, release); }
+  Result<std::vector<ReleaseInterpretedAge>> release_interpreted_ages(Uuid release) override {
+    return detail::release_interpreted_ages(*db_, release);
+  }
+  Result<Uuid> add_embargo(const Actor& actor, const EmbargoInsert& embargo) override {
+    return detail::add_embargo(*db_, actor, embargo);
+  }
+  Result<void> lift_embargo(const Actor& actor, Uuid embargo) override {
+    return detail::lift_embargo(*db_, actor, embargo);
+  }
+  Result<std::vector<EmbargoRow>> embargoes(bool live_only, UtcTime at) override {
+    return detail::embargoes(*db_, live_only, at);
+  }
+  Result<std::vector<Uuid>> embargoed_samples(std::span<const Uuid> samples, UtcTime at) override {
+    return detail::embargoed_samples(*db_, samples, at);
+  }
+  Result<std::vector<Uuid>> embargoed_analyses(std::span<const Uuid> analyses, UtcTime at) override {
+    return detail::embargoed_analyses(*db_, analyses, at);
+  }
+  Result<Uuid> add_external_id(const Actor& actor, const ExternalIdInsert& id) override {
+    return detail::add_external_id(*db_, actor, id);
+  }
+  Result<std::vector<ExternalIdRow>> external_ids(std::string_view entity_type, Uuid entity) override {
+    return detail::external_ids(*db_, entity_type, entity);
+  }
+
   // ------------------------------------------------------------ references, derived cache
 
   Result<RefResolution> resolve_refs(Uuid analysis, const RefPolicy& policy) override {

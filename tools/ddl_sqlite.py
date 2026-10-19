@@ -41,7 +41,8 @@ Non-mechanical rules:
     * '-- @sqlite skip' drops the statement that follows it (PostgreSQL-only:
       CREATE EXTENSION, an UPDATE through PostGIS functions, a GIST index).
       '-- @sqlite exec <statement>' emits that statement, verbatim and without
-      its ';', in the SQLite file at that point.
+      its final ';', in the SQLite file at that point; a ';' inside it (a
+      trigger body) is kept.
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ PG_ONLY_CALLS = ("convert_to(", "sha256(")
 
 
 DIRECTIVE = "@SQLITE_DIRECTIVE "
+SEMICOLON = "@SQLITE_SEMICOLON@"
 
 
 def strip_comments(sql: str) -> str:
@@ -77,7 +79,10 @@ def strip_comments(sql: str) -> str:
             if not in_quote and line.startswith("--", i):
                 comment = line[i + 2 :].strip()
                 if comment.startswith("@sqlite"):
-                    result.append(DIRECTIVE + comment[len("@sqlite") :].strip() + ";")
+                    # A ';' inside an exec directive (a SQLite trigger body) is
+                    # not a statement end; it is hidden until the directive runs.
+                    text = comment[len("@sqlite") :].strip().replace(";", SEMICOLON)
+                    result.append(DIRECTIVE + text + ";")
                 break
             result.append(c)
             i += 1
@@ -234,7 +239,7 @@ def convert(pg_sql: str) -> str:
             if directive == "skip":
                 skip_next = True
             elif directive.startswith("exec "):
-                ordered.append(" ".join(directive[len("exec ") :].split()))
+                ordered.append(" ".join(directive[len("exec ") :].split()).replace(SEMICOLON, ";"))
             elif not directive.startswith("guard "):
                 raise SystemExit(f"ddl_sqlite: unknown directive '@sqlite {directive}'")
             continue
