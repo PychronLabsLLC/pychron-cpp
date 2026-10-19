@@ -20,6 +20,7 @@
 #include "pychron/publish/build.hpp"
 #include "pychron/publish/manifest.hpp"
 #include "pychron/publish/release.hpp"
+#include "pychron/publish/workflow.hpp"
 #include "pychron/reduction/arar_types.hpp"
 #include "selection.hpp"
 
@@ -349,30 +350,13 @@ int verify(const std::vector<std::string>& args, Io io) {
   };
   report(*files, "files");
   if (!db.empty()) {
-    auto manifest = pb::read_manifest(dir);
-    if (!manifest) return fatal(io, manifest.error());
     auto opened = open_store_as_publisher(db);
     if (!opened) return fatal(io, opened.error());
     auto source = open_source(db);
     if (!source) return fatal(io, source.error());
-    const fs::path scratch =
-        fs::temp_directory_path() / ("pychron_verify_" + std::to_string(std::random_device{}()));
-    std::error_code ec;
-    fs::create_directories(scratch, ec);
-    pb::BuildOptions options;
-    options.out = scratch;
-    options.private_build = manifest->build.private_build;
-    options.with_figures = pb::has_figures(*manifest);  // rebuilt as it was built
-    options.store_url = db;
-    auto rebuilt = pb::build_release(*opened->store, **source, manifest->release.uuid, options, nullptr);
-    if (!rebuilt) {
-      fs::remove_all(scratch, ec);
-      return fatal(io, rebuilt.error());
-    }
-    auto against = pb::verify_rebuild(dir, rebuilt->manifest);
-    fs::remove_all(scratch, ec);
+    auto against = pb::verify_against_store(*opened->store, **source, dir, db);
     if (!against) return fatal(io, against.error());
-    report(*against, "rebuild");
+    report(against->rebuild, "rebuild");
   }
   if (!ok) return kFailed;
   io.out << "ok: " << files->missing.size() + files->changed.size() + files->extra.size() << " differences in " << dir
@@ -401,39 +385,11 @@ int publish(const std::vector<std::string>& args, Io io) {
   if (c.db.empty()) return usage(io, "--db <url> is required");
   if (c.release.empty()) return usage(io, "--release <name|uuid> is required");
   if (manifest_path.empty()) return usage(io, "--manifest <dir>/manifest.json is required");
-  std::ifstream in(manifest_path, std::ios::binary);
-  if (!in) return fatal(io, "cannot read " + manifest_path);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  const std::string bytes = ss.str();
-  auto manifest = pb::parse_manifest(bytes);
-  if (!manifest) return fatal(io, manifest.error());
-  if (make_public && manifest->build.private_build)
-    return fatal(io, "this is a private build (it holds embargoed rows): it cannot be published as public");
-  if (auto files = pb::verify_files(fs::path(manifest_path).parent_path()); !files) {
-    return fatal(io, files.error());
-  } else if (!files->ok()) {
-    return fatal(io, "the directory does not match its manifest (elctl publish verify says what differs)");
-  }
   auto opened = open_store_as_publisher(c.db);
   if (!opened) return fatal(io, opened.error());
-  auto row = pb::find_release(*opened->store, c.release);
+  auto row = pb::publish_built(*opened->store, opened->actor, c.release, fs::path(manifest_path).parent_path(),
+                               make_public);
   if (!row) return fatal(io, row.error());
-  if (manifest->release.uuid != row->uuid || manifest->pins.bookmark != row->bookmark)
-    return fatal(io, "the manifest's pins are not this release's (it was built from " + manifest->release.name + " v" +
-                         std::to_string(manifest->release.version) + ")");
-  auto pins = opened->store->bookmark_heads(row->bookmark);
-  if (!pins) return fatal(io, pins.error());
-  for (const auto& a : manifest->pins.analyses)
-    for (const auto& [kind, revision] : a.heads) {
-      const bool pinned = std::any_of(pins->begin(), pins->end(), [&](const ps::HeadInfo& h) {
-        return h.subject == a.uuid && std::string(ps::to_string(h.kind)) == kind && h.revision.str() == revision;
-      });
-      if (!pinned) return fatal(io, "the manifest's pins differ from the release's bookmark (" + a.runid + " " + kind + ")");
-    }
-  auto published = pb::publish_release(*opened->store, opened->actor, row->uuid, pychron::sha256(std::string_view(bytes)),
-                                       make_public);
-  if (!published) return fatal(io, published.error());
   io.out << "published " << row->name << " v" << row->version << (make_public ? " (public)" : " (private)") << '\n';
   return kOk;
 }
