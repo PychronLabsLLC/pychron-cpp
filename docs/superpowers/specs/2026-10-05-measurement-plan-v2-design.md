@@ -314,6 +314,19 @@ Decided 2026-10-18, Task 8:
   table, `integration_s`, inactive entry stay refused by gate. `optics`
   refused everywhere until phase 8.
 
+Decided 2026-10-19, Tasks 16-17:
+- `peak_center` with `write_table`: job puts center into run's own copy of
+  current table (made at first such job, that detector's column only, never
+  saved), forgotten when run ends. Failed job: positions naming that table
+  run on current table, run notes `table <name> not written: <message>`
+  once.
+- `set` calls in fixed order (sub-keys are maps): deflection by detector,
+  gain, source, hv, cdd_voltage, integration_s. Its deflection stands until
+  run ends (cleanup restores), position's own deflection of that detector
+  goes back to it; `integration_s` holds for gas's later collections whose
+  position names none. Beam blanked by `blank_beam` unblanked on every exit.
+  `time_zero` step sets time zero; gas's policy does not set it again.
+
 ### 5.3 Ports
 
 `measurement/ports.hpp` gains `apply_optics(name)`, `with_table(name)`,

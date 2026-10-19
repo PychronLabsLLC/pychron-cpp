@@ -1116,7 +1116,8 @@ bool v1_placement(const Segment& s) {
     case SegmentKind::Baseline: return s.when == When::BeforeInlet || s.when == When::AfterMain;
     case SegmentKind::Sniff: return s.when == When::DuringEquilibration;
     case SegmentKind::PeakCenter: return s.when == When::BeforeInlet || s.when == When::AfterRun;
-    default: return true;  // the other steps are refused by kind
+    default:  // the other steps: where the engine runs every segment of a when
+      return s.when == When::BeforeInlet || s.when == When::AfterMain || s.when == When::AfterRun;
   }
 }
 
@@ -1144,14 +1145,6 @@ void unbuilt_segment(const Segment& s, const std::string& at, std::vector<std::s
   const auto add = [&](const std::string& path, std::string_view feature) {
     out.push_back(path + ": " + std::string(feature));
   };
-  switch (s.kind) {
-    case SegmentKind::Set:
-    case SegmentKind::BlankBeam:
-    case SegmentKind::Park:
-    case SegmentKind::Delay:
-    case SegmentKind::TimeZero: add(at, std::string(to_string(s.kind)) + " step"); break;
-    default: break;
-  }
   // The engine takes one sniff or whiff reading block, at one place.
   if (s.kind == SegmentKind::Sniff || s.kind == SegmentKind::Whiff) {
     const std::string kind(to_string(s.kind));

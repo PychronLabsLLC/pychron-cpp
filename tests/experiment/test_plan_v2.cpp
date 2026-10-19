@@ -1482,7 +1482,7 @@ counts = 1
 collect = { Ar40 = "H1" }
 counts = 1
 )"},
-      {"segment[1]: delay step", R"(
+      {"segment[1].when: when = 'after_inlet' for a delay segment", R"(
 [[segment]]
 [[segment.positions]]
 collect = { Ar40 = "H1" }

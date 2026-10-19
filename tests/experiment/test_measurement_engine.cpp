@@ -671,6 +671,130 @@ TEST_F(EngineTest, TruncationScalesLaterCollections) {
   EXPECT_EQ(r.data.trips[0].name, "big");
 }
 
+// ---- set, blank_beam, park, delay, time_zero steps (plan Task 17) ----------------
+
+std::string steps_plan(std::string_view before, std::string_view after = "") {
+  return std::string(R"toml(
+[plan]
+name = "steps"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+)toml") + std::string(before) + R"toml(
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+)toml" + std::string(after);
+}
+
+// The entries of `log` from the first that starts with `from`.
+std::vector<std::string> log_from(const std::vector<std::string>& log, std::string_view from) {
+  const auto it = std::find_if(log.begin(), log.end(), [&](const std::string& l) { return l.starts_with(from); });
+  return {it, log.end()};
+}
+
+TEST_F(EngineTest, StepsSetMapsEachSubKeyToOneCall) {
+  auto r = run(plan_from(steps_plan(R"(
+[[segment]]
+kind = "set"
+when = "before_inlet"
+set = { deflection = { CDD = 2000, H1 = 10 }, gain = { H1 = 1.5 }, source = { trap_current = 200 }, hv = 4500, cdd_voltage = 1800, integration_s = 2 }
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  const auto from = log_from(spec_.log, "deflect CDD");
+  ASSERT_GE(from.size(), 6u);
+  EXPECT_EQ(std::vector<std::string>(from.begin(), from.begin() + 6),
+            (std::vector<std::string>{"deflect CDD=2000", "deflect H1=10", "gain H1=1.5", "param trap_current=200",
+                                      "hv 4500", "cdd_voltage 1800"}));
+  // integration_s holds for the gas's later collections.
+  EXPECT_NE(std::find(spec_.log.begin(), spec_.log.end(), "start 2.000000"), spec_.log.end());
+  // What the step left standing goes back when the run ends.
+  const auto end = log_from(spec_.log, "deflect CDD=0");
+  EXPECT_FALSE(end.empty());
+  EXPECT_NE(std::find(end.begin(), end.end(), "deflect H1=0"), end.end());
+}
+
+TEST_F(EngineTest, StepsBlankBeam) {
+  auto r = run(plan_from(steps_plan(R"(
+[[segment]]
+kind = "blank_beam"
+when = "before_inlet"
+blank_beam = true
+)", R"(
+[[segment]]
+kind = "blank_beam"
+when = "after_main"
+blank_beam = false
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "blank on"), 1);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "blank off"), 1);
+  // A beam left blanked is let through when the run ends.
+  spec_.log.clear();
+  auto left = run(plan_from(steps_plan(R"(
+[[segment]]
+kind = "blank_beam"
+when = "before_inlet"
+blank_beam = true
+)")));
+  ASSERT_EQ(left.outcome, MeasurementOutcome::Completed);
+  EXPECT_EQ(spec_.log.back(), "blank off");
+}
+
+TEST_F(EngineTest, StepsParkMovesWithoutCollecting) {
+  auto r = run(plan_from(steps_plan("", R"(
+[[segment]]
+kind = "park"
+when = "after_main"
+park = { mass = 36.5, detector = "CDD" }
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(spec_.log.back(), "position 36.500000@CDD");
+  int collections = 0;
+  for (const auto& e : r.trace) collections += e.what == "collect" ? 1 : 0;
+  EXPECT_EQ(collections, 1);  // the signal's only
+}
+
+TEST_F(EngineTest, StepsDelayWaitsOnTheClock) {
+  const auto plain_run = run(plan_from(steps_plan("")));
+  const auto plain_end = clock_.now();
+  ASSERT_EQ(plain_run.outcome, MeasurementOutcome::Completed);
+  clock_.set(t0_);
+  auto r = run(plan_from(steps_plan("", R"(
+[[segment]]
+kind = "delay"
+when = "after_main"
+delay = { seconds = 42 }
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(clock_.now() - plain_end, std::chrono::seconds(42));
+}
+
+// Worked plan 7.3's time zero after its IC block (at after_main here: an
+// after_inlet step runs with Task 19's phases): the clock at the step, not
+// the inlet's close.
+TEST_F(EngineTest, StepsTimeZeroStepAfterIcBlock) {
+  auto r = run(plan_from(steps_plan("", R"(
+[[segment]]
+kind = "time_zero"
+when = "after_main"
+time_zero = "now"
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.data.timing.time_zero);
+  ASSERT_TRUE(r.data.timing.inlet_close);
+  const auto& signal = r.data.series.begin()->second;
+  EXPECT_GT(*r.data.timing.time_zero, *r.data.timing.inlet_close);
+  EXPECT_GE(*r.data.timing.time_zero, signal.t.back());  // the IC block is before it
+  EXPECT_DOUBLE_EQ(*r.data.timing.time_zero, secs(clock_.now() - r.data.timing.epoch));
+}
+
 // ---- live edits (plan Task 15) -------------------------------------------------
 
 constexpr std::string_view kTwoSegmentPlan = R"toml(

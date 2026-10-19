@@ -229,6 +229,10 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   position_.reset();
   table_.clear();
   unwritten_tables_.clear();
+  standing_.clear();
+  step_integration_.reset();
+  time_zero_by_step_ = false;
+  blanked_ = false;
   optics_.clear();
   deflected_.clear();
   settle_due_ = false;
@@ -431,7 +435,94 @@ Result<void> MeasurementEngine::run_step(std::size_t segment) {
     trace(static_cast<int>(segment), -1, "step", "peak_center " + pc.label + "@" + det);
     return peak_center(pc);
   }
+  const int si = static_cast<int>(segment);
+  switch (seg.kind) {
+    case plan::SegmentKind::Set:
+      if (seg.set) return set_step(*seg.set, si);
+      return {};
+    case plan::SegmentKind::BlankBeam: {
+      const bool on = seg.blank_beam.value_or(true);
+      trace(si, -1, "step", std::string("blank_beam ") + (on ? "on" : "off"));
+      if (auto r = ctx_.spectrometer.blank_beam(on); !r) return r;
+      blanked_ = on;
+      return {};
+    }
+    case plan::SegmentKind::Park: {
+      if (!seg.park) return {};
+      const auto& park = *seg.park;
+      plan::At target = park.mass ? plan::At{plan::AtMass{*park.mass, park.detector}}
+                                  : plan::At{plan::AtLabel{park.label, park.detector}};
+      trace(si, -1, "step", "park " + describe(target));
+      if (position_ && *position_ == target) return {};
+      auto r = ctx_.spectrometer.position(target);
+      if (r) position_ = target;
+      else position_.reset();
+      return r;
+    }
+    case plan::SegmentKind::Delay: {
+      const double d = seg.delay_s.value_or(0);
+      trace(si, -1, "step", "delay " + plain(d));
+      wait(d);
+      return {};
+    }
+    case plan::SegmentKind::TimeZero: {
+      const auto tz = seg.time_zero.value_or(plan::TimeZero{plan::TimeZeroKind::Now, 0});
+      const double at = collector_.seconds(ctx_.clock.now()) + (tz.kind == plan::TimeZeroKind::Offset ? tz.offset_s : 0.0);
+      trace(si, -1, "step", "time_zero " + plain(at));
+      collector_.set_time_zero(at);
+      time_zero_by_step_ = true;  // the gas's policy does not set it again
+      return {};
+    }
+    default: break;
+  }
   return fail(ErrorKind::Config, std::string(plan::to_string(seg.kind)) + " step: not run by this build yet");
+}
+
+// Each sub-key one port call, in this order: deflection (by detector),
+// gain, source, hv, cdd_voltage, integration_s. A deflection stands until
+// the run ends (a position's own deflection of that detector goes back to
+// it); integration_s holds for the gas's later collections whose position
+// does not set its own.
+Result<void> MeasurementEngine::set_step(const plan::SetStep& set, int segment) {
+  trace(segment, -1, "step", "set");
+  for (const auto& [det, value] : set.deflection) {
+    double original = 0;
+    if (const auto it = standing_.find(det); it != standing_.end()) {
+      original = it->second.original;
+    } else if (auto now = ctx_.spectrometer.deflection(det)) {
+      original = *now;
+    } else {
+      return fail(now.error());
+    }
+    standing_[det] = Deflected{value, original};  // before the call: a failed set is still restored
+    auto r = ctx_.spectrometer.set_deflection(det, value);
+    if (!r) return fail(r.error());
+    trace(segment, -1, "deflect", det + "=" + plain(*r));
+    settle_due_ = true;
+  }
+  for (const auto& [det, gain] : set.gain) {
+    trace(segment, -1, "gain", det + "=" + plain(gain));
+    if (auto r = ctx_.spectrometer.set_gain(det, gain); !r) return r;
+  }
+  for (const auto& [name, value] : set.source) {
+    trace(segment, -1, "source", name + "=" + plain(value));
+    if (auto r = ctx_.spectrometer.set_param(name, value); !r) return r;
+    settle_due_ = true;
+  }
+  if (set.hv) {
+    trace(segment, -1, "hv", plain(*set.hv));
+    if (auto r = ctx_.spectrometer.set_hv(*set.hv); !r) return r;
+    position_.reset();  // HV moves every mass
+  }
+  if (set.cdd_voltage) {
+    trace(segment, -1, "cdd_voltage", plain(*set.cdd_voltage));
+    if (auto r = ctx_.spectrometer.set_cdd_voltage(*set.cdd_voltage); !r) return r;
+  }
+  if (set.integration_s) {
+    trace(segment, -1, "integration", plain(*set.integration_s));
+    step_integration_ = *set.integration_s;
+  }
+  return {};
 }
 
 Result<void> MeasurementEngine::peak_center(const plan::PeakCenterStep& step) {
@@ -563,7 +654,8 @@ Result<void> MeasurementEngine::equilibrate() {
       }
       collector_.set_inlet_open(now);
       close_at = now + eq.time_s;
-      if (time_zero_.kind == plan::TimeZeroKind::Offset) collector_.set_time_zero(now + time_zero_.offset_s);
+      if (time_zero_.kind == plan::TimeZeroKind::Offset && !time_zero_by_step_)
+        collector_.set_time_zero(now + time_zero_.offset_s);
       if (whiff_at != segs.end()) {
         if (auto r = whiff(static_cast<std::size_t>(whiff_at - segs.begin())); !r) {
           out = r;
@@ -587,7 +679,7 @@ Result<void> MeasurementEngine::equilibrate() {
         if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
         if (options_.on_inlet_closed) options_.on_inlet_closed();
       }
-      if (time_zero_.kind == plan::TimeZeroKind::OnInletClose) collector_.set_time_zero(now);
+      if (time_zero_.kind == plan::TimeZeroKind::OnInletClose && !time_zero_by_step_) collector_.set_time_zero(now);
       break;
     }
     if (sniffing) {
@@ -699,7 +791,7 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
     last_channels_ = channels;
     if (kind == collect::kSignal) hook = [this](int count, double t) { return main_reading(count, t); };
   }
-  const double integration_s = pos.integration_s.value_or(seg.integration_s);
+  const double integration_s = pos.integration_s.value_or(step_integration_.value_or(seg.integration_s));
   if (counts > 0) {
     // Acquisition starts again for every collection; a new integration is traced.
     if (integration_ && *integration_ != seconds_to(integration_s)) trace(si, pi, "integration", plain(integration_s));
@@ -1124,7 +1216,7 @@ Result<void> MeasurementEngine::check_main_counts() {
 
 bool MeasurementEngine::main_reading(int /*count*/, double t) {
   ++main_count_;
-  if (time_zero_.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero())
+  if (time_zero_.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero() && !time_zero_by_step_)
     collector_.set_time_zero(t);
   if (auto trip = conditionals_->evaluate(kMeasurementOrder, collector_.metrics(), in_.variables, main_count_, t)) {
     collector_.add_trips({*trip});
@@ -1233,6 +1325,21 @@ void MeasurementEngine::cleanup(bool abnormal) {
   }
   if (auto r = restore_deflections(nullptr, -1, -1); !r)
     publish_log(LogLevel::Error, "could not restore a deflection: " + r.error().what);
+  // What a set step left standing goes back, and a beam it blanked is let
+  // through again.
+  for (auto it = standing_.begin(); it != standing_.end();) {
+    if (auto r = ctx_.spectrometer.set_deflection(it->first, it->second.original); r) {
+      trace(-1, -1, "deflect", it->first + "=" + plain(*r));
+      it = standing_.erase(it);
+    } else {
+      publish_log(LogLevel::Error, "could not restore the deflection of " + it->first + ": " + r.error().what);
+      ++it;
+    }
+  }
+  if (blanked_) {
+    if (auto r = ctx_.spectrometer.blank_beam(false); r) blanked_ = false;
+    else publish_log(LogLevel::Error, "could not unblank the beam: " + r.error().what);
+  }
   // The run's tables (a peak center's write_table) end with it, after the
   // table they may be selected as is let go.
   if (!table_.empty()) {

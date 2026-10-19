@@ -480,11 +480,13 @@ Done notes: Step 2 was observed failing as build failures (no `extra_detectors`,
 
 **Interfaces:**
 - Consumes: Task 7 port calls. Each `set` sub-key maps to one port call: `deflection` → `set_deflection` per detector, `gain` → `set_gain`, `hv` → `set_hv`, `cdd_voltage` → `set_cdd_voltage`, `source` → `set_param` per entry, `integration_s` → the engine's integration for later collections in the gas. `park` → `position(AtLabel|AtMass)` with no collection. `delay` → `wait(seconds)`. `time_zero` `now` → `collector.set_time_zero(now)`; `{offset_s}` → now + offset.
-- [ ] **Step 1: Write failing tests:** `Steps.SetMapsEachSubKeyToOneCall` (fake journal order = TOML order); `Steps.BlankBeam`; `Steps.ParkMovesWithoutCollecting`; `Steps.DelayWaitsOnTheClock` (ManualClock advances exactly the seconds); `Steps.TimeZeroStepAfterIcBlock` (worked plan 7.3: time zero equals the clock at the step, not inlet close).
-- [ ] **Step 2: Run** `--gtest_filter='Steps.*'` → FAIL.
-- [ ] **Step 3: Implement**; drop the gate entries.
-- [ ] **Step 4: Run** the binary → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): set, blank_beam, park, delay and time_zero steps`.
+- [x] **Step 1: Write failing tests:** `Steps.SetMapsEachSubKeyToOneCall` (fake journal order = TOML order); `Steps.BlankBeam`; `Steps.ParkMovesWithoutCollecting`; `Steps.DelayWaitsOnTheClock` (ManualClock advances exactly the seconds); `Steps.TimeZeroStepAfterIcBlock` (worked plan 7.3: time zero equals the clock at the step, not inlet close).
+- [x] **Step 2: Run** `--gtest_filter='Steps.*'` → FAIL.
+- [x] **Step 3: Implement**; drop the gate entries.
+- [x] **Step 4: Run** the binary → PASS.
+- [x] **Step 5: Commit** `feat(experiment): set, blank_beam, park, delay and time_zero steps`.
+
+Done notes: Step 2 was not observed failing apart from the gate (the plans did not resolve). `SetStep` holds maps, not the file's order, so a `set` calls in a fixed order: deflection (by detector), gain, source, hv, cdd_voltage, integration_s (spec 5.2 updated). A `set` deflection stands until the run ends (`standing_`, restored in cleanup); a position's own deflection of that detector goes back to the standing value. A blanked beam is unblanked in cleanup. `set.integration_s` holds for later collections whose position names none (a segment's `integration_s` always has a value, so it does not win over the step). `hv` forgets the magnet position. A `time_zero` step sets the collector's time zero and the gas's policy does not set it again. Gate: these steps leave the kind gate and are held to before_inlet, after_main or after_run (where the engine runs every segment of a `when`) until Task 19 runs the other phases; `PlanV2Gate.EachUnbuiltFeatureIsNamed` names the delay case by its `when`. `Steps.TimeZeroStepAfterIcBlock` puts the step at after_main for that reason; worked plan 7.3 as written (step at after_inlet) runs with Task 19. Tests are `EngineTest.Steps*`.
 
 ### Task 18: Hooks as capable as the plan (§5.5)
 
