@@ -968,6 +968,156 @@ counts = 3
   EXPECT_DOUBLE_EQ(*r.data.timing.time_zero, *r.data.timing.inlet_close);
 }
 
+// ---- several gases (plan Task 22) ------------------------------------------------
+
+constexpr std::string_view kThreeGases = R"toml(
+[plan]
+name = "gases"
+instrument_family = "thermo_argus"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "He"
+inlet = "He_in"
+outlet = "C"
+equilibration = { time_s = 5 }
+[[gas.segment]]
+kind = "signal"
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 3
+[[gas.segment]]
+kind = "baseline"
+when = "after_main"
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+at = { mass = 3.5, detector = "H1" }
+counts = 2
+
+[[gas]]
+name = "Ne"
+inlet = "Ne_in"
+outlet = "C"
+equilibration = { time_s = 6 }
+[[gas.segment]]
+kind = "signal"
+cycles = 2
+integration_s = 2
+[[gas.segment.positions]]
+collect = { Ne20 = "H1" }
+counts = 2
+[[gas.segment.positions]]
+collect = { Ne21 = "H1" }
+counts = 2
+[[gas.segment.positions]]
+collect = { Ne22 = "H1" }
+counts = 2
+[[gas.segment.positions]]
+collect = { Ar40 = "AX" }
+counts = 2
+[[gas.segment.positions]]
+collect = { CO2 = "H1" }
+counts = 2
+
+[[gas]]
+name = "Ar"
+inlet = "Ar_in"
+outlet = "C"
+[[gas.segment]]
+kind = "signal"
+[[gas.segment.positions]]
+collect = { Ar40 = "H1", Ar36 = "CDD" }
+counts = 3
+[[gas.segment.positions]]
+collect = [ { label = "Ar39", detector = "CDD", deflection = 110 } ]
+at = { label = "Ar39", detector = "CDD" }
+counts = 3
+)toml";
+
+// The gases of each trace entry, as they come.
+std::vector<std::string> gas_order(const MeasurementResult& r) {
+  std::vector<std::string> out;
+  for (const auto& e : r.trace)
+    if (out.empty() || out.back() != e.gas) out.push_back(e.gas);
+  return out;
+}
+
+TEST_F(EngineTest, GasesWorkedPlan76Order) {
+  auto r = run(plan_from(kThreeGases));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(gas_order(r), (std::vector<std::string>{"He", "Ne", "Ar"}));
+  // Each gas through its own inlet, one after the other.
+  std::vector<std::string> inlets;
+  for (const auto& l : valves_.log)
+    if (!l.starts_with("open C") && !l.starts_with("close C")) inlets.push_back(l.substr(0, l.find(" @")));
+  EXPECT_EQ(inlets, (std::vector<std::string>{"open He_in", "close He_in", "open Ne_in", "close Ne_in", "open Ar_in",
+                                              "close Ar_in"}));
+  // He's baseline (after_main) before Ne's inlet opens.
+  double he_baseline = -1, ne_open = -1;
+  for (const auto& e : r.trace) {
+    if (e.gas == "He" && e.segment == 1 && e.what == "collect") he_baseline = e.t;
+    if (e.gas == "Ne" && ne_open < 0) ne_open = e.t;
+  }
+  EXPECT_GE(he_baseline, 0);
+  EXPECT_LT(he_baseline, ne_open);
+  // Collections of a named gas are counted under its name.
+  EXPECT_EQ(r.data.counts.at("He.main"), 3);
+  EXPECT_EQ(r.data.counts.at("Ne.main"), 20);
+}
+
+TEST_F(EngineTest, GasesEachGasItsOwnTimeZero) {
+  const auto plan = plan_from(kThreeGases);
+  auto r = run(plan);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  const auto& zeros = r.data.timing.time_zeros;
+  ASSERT_EQ(zeros.size(), 3u);
+  EXPECT_LT(zeros.at("He"), zeros.at("Ne"));
+  EXPECT_LT(zeros.at("Ne"), zeros.at("Ar"));
+  EXPECT_DOUBLE_EQ(*r.data.timing.time_zero, zeros.at("He"));
+  const auto data = to_record_data(r.data, plan, r.states);
+  ASSERT_EQ(data.gases.size(), 3u);
+  EXPECT_EQ(data.gases[1].name, "Ne");
+  EXPECT_DOUBLE_EQ(data.gases[1].time_zero, zeros.at("Ne"));
+  // A series' t is from its own gas's time zero: each gas's signal starts after it.
+  for (const auto& s : data.series) {
+    if (s.kind == "signal") {
+      EXPECT_GT(s.trace.t.front(), 0.f) << s.gas << " " << s.iso;
+    }
+  }
+}
+
+TEST_F(EngineTest, GasesStatesRecordedOncePerGas) {
+  const auto plan = plan_from(kThreeGases);
+  auto r = run(plan);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  const auto data = to_record_data(r.data, plan, r.states);
+  ASSERT_EQ(data.gases.size(), 3u);
+  EXPECT_EQ(data.gases[1].states.size(), 1u);  // Ne's five positions: one state
+  EXPECT_EQ(data.gases[1].states[0].integration_time, 2);
+  ASSERT_EQ(data.gases[2].states.size(), 2u);  // Ar's second position deflects CDD
+  EXPECT_EQ(data.gases[2].states[1].deflections, (std::map<std::string, double>{{"CDD", 110}}));
+  for (const auto& s : data.series) {
+    if (s.gas != "Ar" || s.kind != "signal") continue;
+    EXPECT_EQ(s.state, s.position) << s.iso;
+  }
+}
+
+TEST_F(EngineTest, GasesOverlapReadyAfterLastInlet) {
+  std::vector<double> ready;
+  auto sub = bus_.subscribe<OverlapReady>([&](const OverlapReady&) { ready.push_back(secs(clock_.now() - t0_)); });
+  auto r = run(plan_from(kThreeGases));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(ready.size(), 1u);
+  const auto close = std::find_if(valves_.log.begin(), valves_.log.end(),
+                                  [](const std::string& l) { return l.starts_with("close Ar_in"); });
+  ASSERT_NE(close, valves_.log.end());
+  EXPECT_EQ(ready[0], std::stod(close->substr(close->find('@') + 1)));
+}
+
 // ---- live edits (plan Task 15) -------------------------------------------------
 
 constexpr std::string_view kTwoSegmentPlan = R"toml(

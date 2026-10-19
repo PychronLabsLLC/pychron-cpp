@@ -1414,7 +1414,7 @@ TEST(PlanV2Gate, WorkedPlansNeedingUnbuiltFeatures) {
     if (entry.path().extension() != ".toml" || !name.starts_with("v2_7")) continue;
     SCOPED_TRACE(name);
     const bool runs = name == "v2_71_argus_syn_baseline.toml" || name == "v2_72_argus_hop_fifth.toml" ||
-                      name == "v2_73_argus_ic_table.toml" ||
+                      name == "v2_73_argus_ic_table.toml" || name == "v2_76_helix_sft_he_ne_ar.toml" ||
                       name == "v2_74_helix_hydride_hcl.toml" || name == "v2_77_helix_xenon.toml";
     EXPECT_EQ(plan::detail::unbuilt_features(load_worked(name)).empty(), runs);
   }
@@ -1480,20 +1480,6 @@ collect = { Ar40 = "H1" }
 counts = 1
 [[segment]]
 [[segment.positions]]
-collect = { Ar40 = "H1" }
-counts = 1
-)"},
-      {"gas[1]: more than one gas", R"(
-[[gas]]
-name = "a"
-[[gas.segment]]
-[[gas.segment.positions]]
-collect = { Ar40 = "H1" }
-counts = 1
-[[gas]]
-name = "b"
-[[gas.segment]]
-[[gas.segment.positions]]
 collect = { Ar40 = "H1" }
 counts = 1
 )"},
@@ -1642,7 +1628,7 @@ name = "B"
 fits = { signal = { Ar40 = "exponential" } }
 [[gas.segment]]
 [[gas.segment.positions]]
-collect = { Ar40 = "H1" }
+collect = { Ar40 = "AX" }
 counts = 1
 )", &kCatalog, "");
   ASSERT_EQ(p.gases.size(), 2u);
@@ -1656,7 +1642,7 @@ counts = 1
   const auto second = plan::fit_for(p, a, &a.segments[1], "signal", "Ar40", "H1");
   EXPECT_EQ(second.kind, FitKind::Parabolic);  // the plan's, through the gas
   EXPECT_EQ(second.error, pychron::reduction::ErrorType::Sem);
-  EXPECT_EQ(plan::fit_for(p, b, &b.segments[0], "signal", "Ar40", "H1").kind, FitKind::Exponential);
+  EXPECT_EQ(plan::fit_for(p, b, &b.segments[0], "signal", "Ar40", "AX").kind, FitKind::Exponential);
   EXPECT_EQ(plan::fit_for(p, b, &b.segments[0], "signal", "Ar39", "AX").kind, FitKind::Linear);
 }
 
@@ -1732,4 +1718,34 @@ counts = 1
   EXPECT_NE(bad("[baseline.modifier.CDD]\nvariable = \"Ar40\"\nmodel = \"x\"\nfoo = 1\n").find("unknown key 'foo'"),
             std::string::npos);
   EXPECT_EQ(bad("[baseline.modifier.CDD]\nvariable = \"Ar40@H1 + Ar39\"\nmodel = \"m.csv\"\n"), "");
+}
+
+// ---- several gases (plan Task 22) ------------------------------------------------
+
+// Only the same kind of the same label on the same detector in two gases is
+// refused (the store keeps one): another kind, or another detector, is fine.
+TEST(Gases, SameLabelOtherKindOrDetectorIsFine) {
+  const auto p = resolve(R"(
+[[gas]]
+name = "A"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+
+[[gas]]
+name = "B"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "AX" }
+counts = 1
+[[gas.segment]]
+kind = "baseline"
+when = "after_main"
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 1
+)", &kCatalog, "");
+  EXPECT_EQ(p.gases.size(), 2u);
 }

@@ -230,29 +230,31 @@ MeasurementEngine::~MeasurementEngine() = default;
 Result<void> MeasurementEngine::validate() const {
   const auto& p = in_.plan;
   std::vector<std::string> problems;
-  const plan::Gas* gas = p.gases.empty() ? nullptr : &p.gases.front();
-  const plan::Segment* main = gas != nullptr ? plan::main_segment(*gas) : nullptr;
-  if (gas == nullptr) problems.emplace_back("plan has no gas");
-  else if (main == nullptr) problems.emplace_back("plan has no after_inlet signal segment");
-  else if (main->positions.empty()) problems.emplace_back("plan has no hops");
-  if (gas != nullptr) {
-    for (std::size_t s = 0; s < gas->segments.size(); ++s) {
-      const auto& seg = gas->segments[s];
+  if (p.gases.empty()) problems.emplace_back("plan has no gas");
+  bool valved = false, centers = false;
+  for (std::size_t g = 0; g < p.gases.size(); ++g) {
+    const auto& gas = p.gases[g];
+    const std::string where = gas.implicit ? std::string() : "gas '" + gas.name + "': ";
+    const plan::Segment* main = plan::main_segment(gas);
+    if (main == nullptr) problems.push_back(where + "plan has no after_inlet signal segment");
+    else if (main->positions.empty()) problems.push_back(where + "plan has no hops");
+    for (std::size_t s = 0; s < gas.segments.size(); ++s) {
+      const auto& seg = gas.segments[s];
       if (seg.kind != plan::SegmentKind::Signal || p.detectors.reference.empty()) continue;
       for (std::size_t j = 0; j < seg.positions.size(); ++j) {
         if (!plan::position_target(p, seg.positions[j]))
-          problems.push_back("segment[" + std::to_string(s) + "].positions[" + std::to_string(j) +
+          problems.push_back(where + "segment[" + std::to_string(s) + "].positions[" + std::to_string(j) +
                              "]: no magnet position (reference detector not in position)");
       }
     }
-    const auto& eq = gas->equilibration;
-    if ((!eq.inlet.empty() || !eq.outlet.empty()) && ctx_.valves == nullptr)
-      problems.emplace_back("plan equilibrates through valves but no valve service is configured");
-    const bool centers = std::any_of(gas->segments.begin(), gas->segments.end(),
-                                     [](const plan::Segment& seg) { return seg.kind == plan::SegmentKind::PeakCenter; });
-    if (centers && ctx_.peak_center == nullptr)
-      problems.emplace_back("plan enables peak centering but no peak-center service is configured");
+    valved |= !gas.equilibration.inlet.empty() || !gas.equilibration.outlet.empty();
+    centers |= std::any_of(gas.segments.begin(), gas.segments.end(),
+                           [](const plan::Segment& seg) { return seg.kind == plan::SegmentKind::PeakCenter; });
   }
+  if (valved && ctx_.valves == nullptr)
+    problems.emplace_back("plan equilibrates through valves but no valve service is configured");
+  if (centers && ctx_.peak_center == nullptr)
+    problems.emplace_back("plan enables peak centering but no peak-center service is configured");
   if (p.hook && ctx_.hook == nullptr) problems.push_back("plan names hook '" + *p.hook + "' but no hook runner is configured");
   if (problems.empty()) return {};
   std::string what;
@@ -314,6 +316,16 @@ bool MeasurementEngine::has_phase(plan::When when) const {
 
 void MeasurementEngine::select_gas(std::size_t g) {
   gas_ = &in_.plan.gases[g];
+  // What is the gas's own: its inlet, its time zero, its main, its set step's integration.
+  inlet_done_ = false;
+  close_inlet_at_.reset();
+  close_inlet_now_ = false;
+  time_zero_by_step_ = false;
+  step_integration_.reset();
+  main_count_ = 0;
+  main_cycles_ = 0;
+  main_gap_ = false;
+  main_cut_ = false;
   const auto& segs = gas_->segments;
   main_ = static_cast<std::size_t>(plan::main_segment(*gas_) - segs.data());
   const auto& main = segs[main_];
@@ -393,17 +405,18 @@ Block MeasurementEngine::block_of(std::size_t segment) const {
 }
 
 std::string MeasurementEngine::collection_label(std::size_t segment, Block block) const {
+  // A named gas's collections are counted apart: "<gas>.main", ...
+  const std::string gas = gas_->implicit || gas_->name.empty() ? std::string() : gas_->name + ".";
   switch (block) {
     case Block::Main:
     case Block::BaselineBefore:
-    case Block::BaselineAfter: return std::string(to_string(block));
+    case Block::BaselineAfter: return gas + std::string(to_string(block));
     default: break;
   }
   const auto& seg = gas_->segments[segment];
-  if (seg.kind == plan::SegmentKind::Sniff) return "sniff";
-  if (seg.kind == plan::SegmentKind::Whiff) return "whiff";
-  const std::string at = "segment[" + std::to_string(segment) + "]";
-  return gas_->name.empty() ? at : gas_->name + "." + at;
+  if (seg.kind == plan::SegmentKind::Sniff) return gas + "sniff";
+  if (seg.kind == plan::SegmentKind::Whiff) return gas + "whiff";
+  return gas + "segment[" + std::to_string(segment) + "]";
 }
 
 void MeasurementEngine::trace(int segment, int position, std::string what, std::string detail) {
@@ -415,12 +428,21 @@ const plan::Equilibration& MeasurementEngine::equilibration() const {
   return gas_ != nullptr ? gas_->equilibration : in_.plan.equilibration;
 }
 
+// Each gas in file order (spec 3.4): its before_inlet after the previous
+// gas's after_main; after_run of every gas once, after the last.
 Result<void> MeasurementEngine::run_blocks() {
-  // One gas for now (Phase 6 of the v2 plan runs every gas).
-  select_gas(0);
-  if (auto r = run_gas(); !r) return r;
-  // after_run once, after the last gas.
-  return run_when(plan::When::AfterRun);
+  const auto& gases = in_.plan.gases;
+  for (std::size_t g = 0; g < gases.size(); ++g) {
+    if (stopping()) return {};
+    select_gas(g);
+    if (auto r = run_gas(); !r) return r;
+  }
+  for (const auto& gas : gases) {
+    if (stopping()) return {};
+    gas_ = &gas;
+    if (auto r = run_when(plan::When::AfterRun); !r) return r;
+  }
+  return {};
 }
 
 Result<void> MeasurementEngine::block(Block b, int segment, const std::function<Result<void>()>& fn) {
@@ -563,7 +585,7 @@ Result<void> MeasurementEngine::run_step(std::size_t segment) {
       const auto tz = seg.time_zero.value_or(plan::TimeZero{plan::TimeZeroKind::Now, 0});
       const double at = collector_.seconds(ctx_.clock.now()) + (tz.kind == plan::TimeZeroKind::Offset ? tz.offset_s : 0.0);
       trace(si, -1, "step", "time_zero " + plain(at));
-      collector_.set_time_zero(at);
+      collector_.set_time_zero(gas_->name, at);
       time_zero_by_step_ = true;  // the gas's policy does not set it again
       return {};
     }
@@ -730,7 +752,7 @@ Result<void> MeasurementEngine::equilibrate() {
     spec.kind = std::string(collect::kSniff);
     spec.counts = sniff_counts;
     spec.channels = std::move(channels);
-    spec.label = "sniff";
+    spec.label = collection_label(static_cast<std::size_t>(sniff_at - segs.begin()), Block::Equilibrate);
     spec.gas = gas_->name;
     spec.segment = static_cast<int>(sniff_at - segs.begin());
     collector_.begin(std::move(spec), [this](int, double) { return sniff_reading(); });
@@ -760,7 +782,7 @@ Result<void> MeasurementEngine::equilibrate() {
       collector_.set_inlet_open(now);
       close_at = now + eq.time_s;
       if (time_zero_.kind == plan::TimeZeroKind::Offset && !time_zero_by_step_)
-        collector_.set_time_zero(now + time_zero_.offset_s);
+        collector_.set_time_zero(gas_->name, now + time_zero_.offset_s);
       if (whiff_at != segs.end() || !during.empty()) {
         if (whiff_at != segs.end()) {
           if (auto r = whiff(static_cast<std::size_t>(whiff_at - segs.begin())); !r) {
@@ -902,6 +924,16 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
     // Acquisition starts again for every collection; a new integration is traced.
     if (integration_ && *integration_ != seconds_to(integration_s)) trace(si, pi, "integration", plain(integration_s));
     trace(si, pi, "collect", std::to_string(counts));
+  }
+  // The state it is read in, once a place.
+  if (counts > 0) {
+    PositionState state;
+    for (const auto& [det, d] : standing_) state.deflections[det] = d.wanted;
+    for (const auto& [det, d] : deflected_) state.deflections[det] = d.wanted;
+    state.integration_s = integration_s;
+    state.optics = optics_;
+    state.table = table_;
+    result_.states.try_emplace(Place{gas.name, si, pi}, std::move(state));
   }
   collect::CollectionSpec spec;
   spec.kind = std::string(kind);
@@ -1296,10 +1328,13 @@ Result<void> MeasurementEngine::finish_inlet(double now) {
   if (equilibration().close_inlet) {
     if (auto r = close_inlet(); !r) return r;
     collector_.set_inlet_close(now);
-    if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
-    if (options_.on_inlet_closed) options_.on_inlet_closed();
+    // The next run may start once the last gas is in (spec 3.4).
+    if (gas_ == &in_.plan.gases.back()) {
+      if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
+      if (options_.on_inlet_closed) options_.on_inlet_closed();
+    }
   }
-  if (time_zero_.kind == plan::TimeZeroKind::OnInletClose && !time_zero_by_step_) collector_.set_time_zero(now);
+  if (time_zero_.kind == plan::TimeZeroKind::OnInletClose && !time_zero_by_step_) collector_.set_time_zero(gas_->name, now);
   return {};
 }
 
@@ -1350,8 +1385,8 @@ Result<void> MeasurementEngine::check_main_counts() {
 
 bool MeasurementEngine::main_reading(int /*count*/, double t) {
   ++main_count_;
-  if (time_zero_.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero() && !time_zero_by_step_)
-    collector_.set_time_zero(t);
+  if (time_zero_.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero(gas_->name) && !time_zero_by_step_)
+    collector_.set_time_zero(gas_->name, t);
   if (auto trip = conditionals_->evaluate(kMeasurementOrder, collector_.metrics(), in_.variables, main_count_, t)) {
     collector_.add_trips({*trip});
     handle_trip(*trip);

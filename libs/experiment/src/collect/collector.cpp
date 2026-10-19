@@ -71,6 +71,7 @@ void Collector::start(TimePoint epoch) {
   data_ = RunData{};
   data_.timing.epoch = epoch;
   resumed_at_.reset();
+  first_gas_.reset();
 }
 
 TimePoint Collector::epoch() const {
@@ -83,6 +84,14 @@ double Collector::seconds(TimePoint t) const {
   return std::chrono::duration<double>(t - data_.timing.epoch).count();
 }
 
+void Collector::set_time_zero(const std::string& gas, double s) {
+  std::lock_guard lock(mutex_);
+  data_.timing.time_zeros[gas] = s;
+  // time_zero() is the first gas's: the gas first given one, set again with it.
+  if (!first_gas_) first_gas_ = gas;
+  if (*first_gas_ == gas) data_.timing.time_zero = s;
+}
+
 void Collector::set_time_zero(double s) {
   std::lock_guard lock(mutex_);
   data_.timing.time_zero = s;
@@ -91,6 +100,19 @@ void Collector::set_time_zero(double s) {
 std::optional<double> Collector::time_zero() const {
   std::lock_guard lock(mutex_);
   return data_.timing.time_zero;
+}
+
+std::optional<double> Collector::time_zero(const std::string& gas) const {
+  std::lock_guard lock(mutex_);
+  const auto it = data_.timing.time_zeros.find(gas);
+  if (it == data_.timing.time_zeros.end()) return std::nullopt;
+  return it->second;
+}
+
+double Collector::time_zero_locked(const std::string& gas) const {
+  const auto it = data_.timing.time_zeros.find(gas);
+  if (it != data_.timing.time_zeros.end()) return it->second;
+  return data_.timing.time_zero.value_or(0.0);
 }
 
 void Collector::set_inlet_open(double s) {
@@ -170,7 +192,7 @@ void Collector::publish_fits(const SeriesUpdated& update) {
   std::vector<Work> work;
   {
     std::lock_guard lock(mutex_);
-    out.time_zero = data_.timing.time_zero.value_or(0.0);
+    out.time_zero = update.values.empty() ? time_zero_locked({}) : time_zero_locked(update.values.front().first.gas);
     for (const auto& [key, value] : update.values) {
       // A signal series is fitted with the rest of its label on its detector,
       // as the intercept is (with the fit of its first part's segment); a
@@ -187,7 +209,8 @@ void Collector::publish_fits(const SeriesUpdated& update) {
       reduction::Series s;
       s.y = std::move(merged->v);
       s.x.reserve(merged->t.size());
-      for (double t : merged->t) s.x.push_back(t - out.time_zero);
+      const double t0 = time_zero_locked(key.gas);
+      for (double t : merged->t) s.x.push_back(t - t0);
       work.push_back({key, std::move(s), fit_spec_locked(first)});
     }
   }
@@ -247,7 +270,7 @@ std::optional<reduction::Series> Collector::fit_series(const SeriesKey& key) con
   std::lock_guard lock(mutex_);
   auto it = data_.series.find(key);
   if (it == data_.series.end()) return std::nullopt;
-  const double t0 = data_.timing.time_zero.value_or(0.0);
+  const double t0 = time_zero_locked(key.gas);
   reduction::Series out;
   out.y = it->second.v;
   out.x.reserve(it->second.t.size());
@@ -368,7 +391,7 @@ std::optional<reduction::Intercept> Collector::intercept_locked(const std::strin
     if (s) break;
   }
   if (!s) return std::nullopt;
-  const double t0 = data_.timing.time_zero.value_or(0.0);
+  const double t0 = time_zero_locked(first.gas);
   reduction::Series series;
   series.y = std::move(s->v);
   series.x.reserve(s->t.size());
@@ -547,7 +570,7 @@ std::size_t Collector::Metrics::contiguous_from(const MetricRef& m) const {
 std::optional<double> Collector::Metrics::elapsed() const {
   const double now = c_.seconds(c_.clock_.now());
   std::lock_guard lock(c_.mutex_);
-  return now - c_.data_.timing.time_zero.value_or(0.0);
+  return now - c_.time_zero_locked(c_.spec_.gas);
 }
 
 }  // namespace pychron::experiment::collect

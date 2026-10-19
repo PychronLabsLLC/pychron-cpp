@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -948,6 +949,7 @@ class V2Rules {
     }
     tables();
     during_extraction();
+    shared_series();
   }
 
  private:
@@ -1101,6 +1103,37 @@ class V2Rules {
     }
   }
 
+  // The store keeps one series of a kind per label per detector: two gases
+  // reading the same would measure and then not be stored (spec 3.7, 11.6).
+  // A baseline is one stored series a detector whatever reads it.
+  void shared_series() {
+    std::map<std::tuple<std::string, std::string, std::string>, std::string> first;  // kind, label, det -> gas
+    std::set<std::tuple<std::string, std::string, std::string, std::string>> said;
+    for (std::size_t g = 0; g < plan_.gases.size(); ++g) {
+      const auto& gas = plan_.gases[g];
+      for (std::size_t s = 0; s < gas.segments.size(); ++s) {
+        const auto& seg = gas.segments[s];
+        for (std::size_t j = 0; j < seg.positions.size(); ++j) {
+          const auto& pos = seg.positions[j];
+          std::string kind = "signal";
+          if (seg.kind == SegmentKind::Baseline || pos.kind == PositionKind::Baseline) continue;
+          if (seg.kind == SegmentKind::Sniff) kind = "sniff";
+          else if (seg.kind == SegmentKind::Whiff) kind = "whiff";
+          else if (seg.kind != SegmentKind::Signal) continue;
+          for (const auto& e : collecting(pos)) {
+            const auto key = std::make_tuple(kind, e.label, e.detector);
+            const auto [it, fresh] = first.try_emplace(key, gas.name);
+            if (fresh || it->second == gas.name) continue;
+            if (!said.insert({kind, e.label, e.detector, gas.name}).second) continue;
+            p_.add(join(join(seg_path(g, s), "positions"), j),
+                   "gas '" + it->second + "' and gas '" + gas.name + "' both collect " + kind + " " + e.label + "@" +
+                       e.detector + ": the store keeps one");
+          }
+        }
+      }
+    }
+  }
+
   // No leak watch while heating (owner, 2026-10-15), and an analysis type
   // without an extraction has no time for such a segment.
   void during_extraction() {
@@ -1205,7 +1238,6 @@ std::vector<std::string> unbuilt_features(const MeasurementPlan& plan) {
     const auto& gas = plan.gases[g];
     // An implicit gas is the file's top-level segments (or its v1 tables).
     const std::string at = gas.implicit ? std::string() : join("gas", g);
-    if (g == 1) out.push_back(at + ": more than one gas");
     if (gas.source_dark_phase) out.push_back(join(at, "source_dark_phase") + ": source_dark_phase");
     const auto seg_at = [&](std::size_t i) { return at.empty() ? join("segment", i) : join(join(at, "segment"), i); };
     for (std::size_t i = 0; i < gas.segments.size(); ++i) unbuilt_segment(gas.segments[i], seg_at(i), out);

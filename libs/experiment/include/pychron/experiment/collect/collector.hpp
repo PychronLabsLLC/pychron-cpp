@@ -117,7 +117,8 @@ struct FitsUpdated {
 
 struct Timing {
   TimePoint epoch{};                // measurement start
-  std::optional<double> time_zero;  // seconds since epoch
+  std::optional<double> time_zero;  // seconds since epoch: the first gas's (the first set)
+  std::map<std::string, double> time_zeros;  // by gas name (set_time_zero(gas, s))
   std::optional<double> inlet_open, inlet_close;
 };
 
@@ -153,8 +154,13 @@ class Collector {
   // Seconds since the epoch for a clock time.
   double seconds(TimePoint t) const;
 
+  // A gas's time zero (several gases, spec 3.4): its series are fitted on
+  // x = t - that. The first set is also time_zero(). The one-argument form
+  // sets time_zero() alone, for every series without a gas's own.
+  void set_time_zero(const std::string& gas, double seconds_since_epoch);
   void set_time_zero(double seconds_since_epoch);
   std::optional<double> time_zero() const;
+  std::optional<double> time_zero(const std::string& gas) const;
   void set_inlet_open(double s);
   void set_inlet_close(double s);
   // Readings resumed after a gap at `s` (seconds since the epoch): windowed
@@ -244,6 +250,7 @@ class Collector {
   std::optional<Series> isotope_series_locked(const std::string& iso, std::string_view kind,
                                               std::string* det = nullptr, SeriesKey* first = nullptr) const;
   reduction::FitSpec fit_spec_locked(const SeriesKey& key) const;
+  double time_zero_locked(const std::string& gas) const;  // the gas's, else time_zero(), else 0
   std::optional<reduction::Intercept> intercept_locked(const std::string& iso, std::string* det = nullptr) const;
   double baseline_mean_locked(const std::string& det) const;
   double icfactor_locked(const std::string& det) const;
@@ -262,6 +269,7 @@ class Collector {
   CollectionSpec spec_;
   ReadingHook hook_;
   plan::MeasurementPlan plan_;
+  std::optional<std::string> first_gas_;  // the gas whose time zero is time_zero()
   std::map<std::string, double> icfactors_;
   std::optional<reduction::ArArConstants> arar_;
   int count_ = 0;

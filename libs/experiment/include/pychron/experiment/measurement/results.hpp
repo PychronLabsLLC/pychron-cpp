@@ -15,13 +15,35 @@
 
 namespace pychron::experiment::measurement {
 
+// Where in the plan a collection was made, and the spectrometer's state for
+// it (deflections in force, integration, optics, table): what the record
+// keeps once a gas for each distinct one (spec 6.1).
+struct Place {
+  std::string gas;
+  int segment = 0, position = 0;
+  friend auto operator<=>(const Place&, const Place&) = default;
+};
+struct PositionState {
+  std::map<std::string, double> deflections;
+  double integration_s = 0;
+  std::string optics, table;
+  friend bool operator==(const PositionState&, const PositionState&) = default;
+};
+using PositionStates = std::map<Place, PositionState>;
+
 // Series as float32 traces with t relative to time zero (the epoch when time
 // zero was never set); Data::time_zero is seconds since the epoch. One record
 // series per collector series (label, detector, kind, gas, segment, position),
 // ordered by label, detector, kind (signal, baseline, sniff, whiff, others by
 // name), gas, segment and position; one GasRec per gas measured, in plan
 // order.
-record::Data to_record_data(const collect::RunData& data, const plan::MeasurementPlan& plan);
+// A series' t is relative to its gas's time zero (Timing::time_zeros, else
+// time_zero); Data::time_zero is the first gas's, GasRec::time_zero each
+// gas's. Each gas's distinct states (`states`, by the place of the
+// collection) are listed once, and each series names its own; a place with
+// no state (a sniff, a whiff) has the gas's main segment's integration.
+record::Data to_record_data(const collect::RunData& data, const plan::MeasurementPlan& plan,
+                            const PositionStates& states = {});
 
 struct FitOutput {
   record::Results results;

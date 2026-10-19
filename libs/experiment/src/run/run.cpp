@@ -672,7 +672,7 @@ Result<void> Run::save(const std::optional<Error>& failure) {
   b.set_spectrometer(spec);
 
   const auto& meas = result_.measurement;
-  const auto data = measurement::to_record_data(meas.data, plan_->plan);
+  const auto data = measurement::to_record_data(meas.data, plan_->plan, meas.states);
   for (const auto& series : data.series) b.add_series(series);
   for (const auto& gas : data.gases) b.add_gas(gas);
   b.set_time_zero(data.time_zero);

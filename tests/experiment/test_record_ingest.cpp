@@ -907,3 +907,30 @@ TEST(RecordIngest, BaselineModifiersHaveAProducer) {
   EXPECT_EQ(mods.at("H1").at("model"), "0.01*x");
   EXPECT_EQ(mods.at("H1").at("value"), 11.0);
 }
+
+// Worked plan 7.6's shape: three gases with labels apart, every series stored.
+TEST(RecordIngest, MultiGasRecordStores) {
+  auto b = sample_builder();
+  b.add_series({"He4", "H1", "signal", {{1.f, 2.f}, {5.f, 5.f}, {}}, "He", 0, 0, 0});
+  b.add_series({"Ne20", "CDD", "signal", {{1.f, 2.f}, {3.f, 3.f}, {}}, "Ne", 0, 0, 0});
+  b.add_series({"Ne22", "CDD", "signal", {{1.f, 2.f}, {1.f, 1.f}, {}}, "Ne", 0, 1, 0});
+  b.add_gas({"He", 10.0, {{{}, 1.0, "", ""}}, std::nullopt, std::nullopt});
+  b.add_gas({"Ne", 50.0, {{{}, 2.0, "", ""}}, std::nullopt, std::nullopt});
+  record::InterceptResult ir;
+  ir.intercept.value = 5;
+  ir.intercept.n_used = 2;
+  b.set_intercept("He4@H1", ir);
+  b.set_intercept("Ne20@CDD", ir);
+  b.set_intercept("Ne22@CDD", ir);
+  const auto rec = finalized(b);
+  EXPECT_EQ(rec.provenance.schema_version, record::kRecordSchemaVersion);
+  const auto out = convert(rec);
+  const auto& a = body_of(out);
+  std::set<std::string> keys;
+  for (const auto& ref : a.roots.signal_refs) keys.insert(ref.series_kind + " " + ref.series_key);
+  for (const char* k : {"signal Ar40", "signal Ar36", "signal He4", "signal Ne20", "signal Ne22"})
+    EXPECT_TRUE(keys.contains(k)) << k;
+  std::set<std::string> intercepts;
+  for (const auto& row : a.roots.intercepts_rows) intercepts.insert(row.isotope);
+  EXPECT_EQ(intercepts, (std::set<std::string>{"Ar36", "Ar40", "He4", "Ne20", "Ne22"}));
+}

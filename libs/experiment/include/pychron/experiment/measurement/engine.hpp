@@ -97,6 +97,7 @@
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/measurement/ports.hpp"
+#include "pychron/experiment/measurement/results.hpp"
 #include "pychron/experiment/plan/plan.hpp"
 #include "pychron/scripting/cancel_token.hpp"
 
@@ -283,6 +284,7 @@ struct MeasurementResult {
   std::vector<MeasurementGap> gaps;       // silences in the readings, in order
   bool truncated_by_link = false;         // main ended by a silence that did not end (Truncated)
   std::vector<TraceEntry> trace;          // what the engine did, in order
+  PositionStates states;                  // the spectrometer's state at each place collected
 };
 
 // The plan's own [conditionals].truncations as a ConditionalSet level (names

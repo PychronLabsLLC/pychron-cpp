@@ -237,42 +237,76 @@ Result<std::pair<double, double>> model_at(const std::vector<std::array<double, 
 
 }  // namespace
 
-record::Data to_record_data(const collect::RunData& data, const plan::MeasurementPlan& plan) {
+record::Data to_record_data(const collect::RunData& data, const plan::MeasurementPlan& plan,
+                            const PositionStates& states) {
   record::Data out;
-  const double t0 = data.timing.time_zero.value_or(0.0);
-  out.time_zero = t0;
+  const auto& timing = data.timing;
+  const auto zero_of = [&](const std::string& gas) {
+    const auto it = timing.time_zeros.find(gas);
+    return it != timing.time_zeros.end() ? it->second : timing.time_zero.value_or(0.0);
+  };
+  out.time_zero = timing.time_zero.value_or(0.0);
   out.counts = data.counts;
-  std::set<std::string> gases;
+
+  // Every gas measured, in plan order (others after, by name).
+  std::vector<std::string> order;
+  order.reserve(plan.gases.size());
+  for (const auto& g : plan.gases) order.push_back(g.name);
+  std::set<std::string> measured;
+  for (const auto& [key, s] : data.series) measured.insert(key.gas);
+  for (const auto& name : measured)
+    if (std::find(order.begin(), order.end(), name) == order.end()) order.push_back(name);
+  std::map<std::string, std::size_t> gas_at;
+  for (const auto& name : order) {
+    if (!measured.contains(name)) continue;
+    gas_at[name] = out.gases.size();
+    record::GasRec rec;
+    rec.name = name;
+    rec.time_zero = zero_of(name);
+    out.gases.push_back(std::move(rec));
+  }
+  // A place's state as the record has it; a place with none, its gas's main's integration.
+  const auto state_of = [&](const collect::SeriesKey& key) {
+    record::SpectrometerState st;
+    if (const auto it = states.find(Place{key.gas, key.segment, key.position}); it != states.end()) {
+      st.deflections = it->second.deflections;
+      st.integration_time = it->second.integration_s;
+      st.optics = it->second.optics;
+      st.table = it->second.table;
+    } else if (const auto* g = gas_named(plan, key.gas)) {
+      if (const auto* main = plan::main_segment(*g)) st.integration_time = main->integration_s;
+    }
+    return st;
+  };
+  const auto index_of = [&](const collect::SeriesKey& key) {
+    auto& gas = out.gases[gas_at.at(key.gas)];
+    const auto st = state_of(key);
+    const auto it = std::find(gas.states.begin(), gas.states.end(), st);
+    if (it != gas.states.end()) return static_cast<int>(it - gas.states.begin());
+    gas.states.push_back(st);
+    return static_cast<int>(gas.states.size() - 1);
+  };
+
   for (const auto& [key, s] : record_series(data)) {
-    record::DataSeries ds(key.label, key.detector, key.kind, {}, key.gas, key.segment, key.position, 0);
+    const collect::SeriesKey sk{key.label, key.detector, key.kind, key.gas, key.segment, key.position};
+    const double t0 = zero_of(key.gas);
+    record::DataSeries ds(key.label, key.detector, key.kind, {}, key.gas, key.segment, key.position, index_of(sk));
     for (double t : s->t) ds.trace.t.push_back(static_cast<float>(t - t0));
     for (double v : s->v) ds.trace.v.push_back(static_cast<float>(v));
     for (double e : s->sigma) ds.trace.sigma.push_back(static_cast<float>(e));
-    gases.insert(key.gas);
     out.series.push_back(std::move(ds));
   }
-  // Every gas measured, in plan order, each with the run's time zero and one
-  // state (Phase 6 of the v2 plan gives each gas its own).
-  auto add_gas = [&](const std::string& name, const plan::Gas* g) {
-    record::GasRec rec;
-    rec.name = name;
-    rec.time_zero = t0;
-    record::SpectrometerState state;
-    if (g != nullptr)
-      if (const auto* main = plan::main_segment(*g)) state.integration_time = main->integration_s;
-    rec.states.push_back(std::move(state));
-    out.gases.push_back(std::move(rec));
-  };
-  for (const auto& g : plan.gases)
-    if (gases.erase(g.name) == 1) add_gas(g.name, &g);
-  for (const auto& name : gases) add_gas(name, nullptr);
   return out;
 }
 
 FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan& plan,
                       std::string_view spectrometer_reference, const ModelFiles& model_files) {
   FitOutput out;
-  const double t0 = data.timing.time_zero.value_or(0.0);
+  // Each gas's series on its own time zero (spec 3.4).
+  const auto zero_of = [&](const std::string& gas) {
+    const auto it = data.timing.time_zeros.find(gas);
+    return it != data.timing.time_zeros.end() ? it->second : data.timing.time_zero.value_or(0.0);
+  };
   const auto ordered = record_series(data);
   auto target_of = [&](const std::string& gas, int segment, int position) -> std::optional<plan::At> {
     const auto* pos = position_of(plan, gas, segment, position);
@@ -304,6 +338,7 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
     auto& sig = signals.at(id);
     reduction::Series series;
     series.y = s.v;
+    const double t0 = zero_of(sig.gas);  // a label on a detector is one gas's (spec 3.7)
     for (double t : s.t) series.x.push_back(t - t0);
     if (!s.t.empty()) {
       sig.first = s.t.front();
@@ -342,6 +377,7 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
     const auto s = collect::merge_series(parts);
     reduction::Series series;
     series.y = s.v;
+    const double t0 = zero_of(gas);
     for (double t : s.t) series.x.push_back(t - t0);
     const auto spec = fit_of(*baseline_first.at(where), plan);
     auto r = reduction::fit(series, spec);

@@ -1,0 +1,26 @@
+# expect: gas 'A' and gas 'B' both collect signal Ar40@H1
+[plan]
+name = "v2_two_gases_same_series"
+instrument_family = "thermo_argus"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "A"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+
+[[gas]]
+name = "B"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10

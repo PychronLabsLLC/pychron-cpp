@@ -225,7 +225,9 @@ In `spectrometer.toml`, not in plans:
   one series of a kind per isotope per detector, so such a run would measure
   and then not save (against 11.6). Refused at load: `gas '<a>' and gas
   '<b>' both collect <kind> <label>@<detector>: the store keeps one`. Other
-  kind, or same label on other detector, allowed;
+  kind, or same label on other detector, allowed. Signal, sniff, whiff only:
+  baseline is one stored series per detector whatever reads it (decided
+  2026-10-19, Task 22);
 - unknown keys at any level remain errors.
 
 ## 4. Desugaring and compatibility

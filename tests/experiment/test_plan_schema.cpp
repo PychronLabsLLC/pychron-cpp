@@ -689,7 +689,8 @@ name = "b"
 equilibration = { time_s = 6 }
 [[gas.segment]]
 [[gas.segment.positions]]
-collect = { Ar40 = "H1" }
+collect = { Ar39 = "H1" }
+at = { label = "Ar40", detector = "H1" }
 counts = 3
 settle_s = 4
 )",
