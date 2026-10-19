@@ -636,37 +636,51 @@ test one (`datacite-test`, `sesar-sandbox`): production is named explicitly.
 the store's; it records `manifest_sha256` and `published_utc`. `--public`
 sets visibility; default stays `private` (R1).
 
-### 6.3 UI: Publish page
+### 6.3 UI: Publish window
 
-`pychron-ui`, Data workspace, new page **Publish** (View > Publish). Qt code
-in `apps/pychron-ui/src/publish_page.*` over a `PublishBridge` calling
-`libs/publish` on the processing thread (as `ExportBridge` does for
-`elctl export`'s report; nothing of `libs/publish` touches Qt).
+As built in phase 4 (plan `docs/superpowers/plans/2026-10-19-data-publishing-phase-4.md`).
+`pychron-ui` has no pages in its Data workspace and no `ExportBridge`, so:
 
+- **View > Publish…** opens `PublishWindow` (`apps/pychron-ui/src/publish_window.*`),
+  a top-level window like the Flux window, made by `PublishActions`
+  (`publish_actions.*`) beside `EntryActions`/`FitActions` in both installs
+  when they have a database. Not a Qt `QWizard`.
+- Store work: an `EntryBridge` of its own opened as client role `publisher`
+  (software `pychron-ui/<version>`; `EntryBridge::Options` gained `role`,
+  `software`), its worker thread owns the store connection; builds read a
+  `StoreSource` the actions open. Member order source, bridge, window: window
+  destroyed first, then bridge joins its worker, then source. Results and
+  build stages return queued to the GUI thread; none reaches a closed window.
+  Nothing of `libs/publish` touches Qt.
+- Checks shared with `elctl`: `libs/publish` `workflow.hpp`:
+  `publish_built(store, actor, release, dir, make_public)` (refuses private
+  build made public, directory not matching manifest, manifest of another
+  release or other pins) and `verify_against_store(store, source, dir, url)`
+  (files, then rebuild to scratch and compare).
 - Left: releases table (name, version, state, visibility, members, DOI,
-  created). Buttons: New release..., Build..., Verify, Publish, Withdraw,
-  Set public.
-- New release dialog: selection from the Data browser's current filter or
-  selection (same path as **Export**), tags, title, authors (table with
-  ORCID), licence (combo of SPDX ids; preselected `CC-BY-4.0`, one constant
-  `kDefaultLicence` in `libs/publish/release.hpp`; owner undecided and may
-  change it before the page ships), description,
-  embargo date, supersedes. Shows member count and count under embargo
-  before OK.
-- Build: directory chooser; options with-viewer, with-figures, private;
-  progress bar per stage; status line names the directory and whether
-  Parquet was written (built without Arrow: says so).
-- Embargo dock on the Publish page: live embargoes, set and lift, scope
-  picker (project, sample, analysis from the browser's selection).
-- Registrations: DOI... and IGSN... buttons open the confirmation dialog of
-  section 10 (what will be sent, to which registrar; production in red).
-  Network work on a worker thread in real time, as `EarthbankWorker`.
-- EarthBank: button **Publish release to EarthBank...** opens the existing
-  EarthBank Publish dialog loaded with the release's analyses at their
-  pins (section 11).
-
-Not a Qt `QWizard`; a page like Flux window. Naming: the EarthBank dialog
-keeps its name; the page is "Publish" and its items say "release".
+  created). Buttons: New release…, Build…, Verify…, Publish…, Withdraw…,
+  Make public (`set_release_public`: private -> public only); enabled by
+  state. Status line, progress bar.
+- New release: analyses = Data browser's `export_uuids()` (selection, else
+  rows shown; same as Export). Dialog (`release_dialog.*`): name, title,
+  description, authors (ORCID, affiliation), licence (combo, editable;
+  preselected `kDefaultLicence`), publisher, kept tags, embargo date,
+  supersedes; shows member count and count under embargo now. Options:
+  default `ReleaseOptions`; versions as `elctl publish create`.
+- Build: directory, With figures, Private build; progress bar per stage of
+  `IProgress`; status names directory and says when no Parquet was written
+  (built without Arrow); warnings in its tooltip. No with-viewer option
+  (phase 3 not done).
+- Embargoes dock (object name `embargoes`): live embargoes (scope, until,
+  reason, set); Set… (project, sample or `name@project`, analysis run id;
+  optional end; reason), Lift.
+- Every dialog is a `std::function` hook tests replace
+  (`tests/ui/test_publish_window.cpp`, store seeded by
+  `tests/publish/release_seed.hpp`).
+- Later phases add to the window: DOI… and IGSN… (phase 7, section 10:
+  confirmation dialog, production in red, network on a worker thread in real
+  time as `EarthbankWorker`); **Publish release to EarthBank…** (phase 8,
+  section 11). Naming: the window is "Publish"; its items say "release".
 
 ## 7. Static viewer
 
@@ -1105,7 +1119,8 @@ Static tier first. Each phase ends merged on `develop` with its tests.
    `--with-figures`, verify with figures.
 3. **Viewer.** `viewer/` in-repo, installer ships it, `--with-viewer`,
    Playwright smoke.
-4. **Publish page** in `pychron-ui` (6.3) with embargo dock.
+4. **Publish window** in `pychron-ui` (6.3) with embargo dock. Done
+   2026-10-19 (plan `docs/superpowers/plans/2026-10-19-data-publishing-phase-4.md`).
 5. **Sync.** D3 outbox, `OutboxPersister`, uploader, `elctl persist`;
    D6 `ChangeFeed`; `catalog_cache`.
 6. **Hosted tier.** `pychron-cloud` repository: tenant provisioning,

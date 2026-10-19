@@ -1,8 +1,8 @@
 # The release directory format
 
 A *release* is an immutable, citable directory of a selection of a lab's
-reduced 40Ar/39Ar data, made by `elctl publish build` (or, later, the
-Publish page) from the store: GeoParquet tables, an OGC API - Records
+reduced 40Ar/39Ar data, made by `elctl publish build` (or **View > Publish…**
+in pychron-ui) from the store: GeoParquet tables, an OGC API - Records
 catalogue, the Schaen et al. (2021) report, and a manifest that lists every
 file with its hash and the revisions the release pins. It is hostable on any
 static web server and verifiable against the store it came from. The design

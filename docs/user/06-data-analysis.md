@@ -32,7 +32,8 @@ instead of repeating them:
 9. [Reading the numbers](#reading-the-numbers)
 10. [Samples and packages](#samples-and-packages)
 11. [Exporting](#exporting)
-12. [Unverified or not yet implemented](#unverified-or-not-yet-implemented)
+12. [Publishing a release](#publishing-a-release)
+13. [Unverified or not yet implemented](#unverified-or-not-yet-implemented)
 
 ## Where the data comes from
 
@@ -879,6 +880,48 @@ file, so a downloaded, unsigned macOS program does not leave it quarantined.
 If macOS refuses to open it anyway, see
 [the installation runbook](../installation_runbook.md) and
 [10 Troubleshooting](10-troubleshooting.md).
+
+## Publishing a release
+
+A *release* is an immutable, citable directory of a selection's reduced data
+(tables, report, figures, a manifest of every file's hash); what is in it is
+[release_format.md](../release_format.md). **View > Publish…** opens the
+Publish window on the install's database; it does what `elctl publish` and
+`elctl embargo` do ([08 elctl reference](08-elctl-reference.md)). It is there
+only when the install has a database.
+
+The table lists every release: name, version, state (draft, published,
+withdrawn), visibility (private unless made public), the analyses it pins,
+DOI and date. Then, in order:
+
+1. **New release…**: made of what **Export** would take in the data browser
+   (the selected rows, else every row shown). The dialog says how many of
+   them are under embargo now and asks for a name, title, description,
+   authors (with ORCID), licence (CC-BY-4.0 unless you choose another),
+   publisher, the tags kept, an embargo date and the release it supersedes.
+   The release pins every analysis's current revisions: later edits do not
+   change it. It starts as a private draft.
+2. **Build…**: writes `<directory>/<name>-v<version>`. **With figures** adds an
+   ideogram, a spectrum per step-heated aliquot and an inverse isochron per
+   sample, as SVG and PDF. **Private build** keeps embargoed analyses (and says
+   so in its manifest); such a build is for the lab, never hosted as public.
+   The bar shows each stage; the status line names the directory, and says so
+   when the program was built without Apache Arrow (no Parquet tables).
+3. **Verify…**: checks a built directory against its manifest and against a
+   rebuild from the database, and lists every file or table that differs.
+4. **Publish…**: from a built directory that still matches its manifest and
+   was built from this release: draft becomes published (it no longer
+   changes), private or public as you choose. A private build cannot be
+   published as public.
+5. **Withdraw…** (with a reason) and **Make public** for a published release.
+
+The **Embargoes** dock lists embargoes in force: a project, a sample (its
+name, or `name@project`) or an analysis (`70001-01`), until a date or until
+lifted. An embargoed analysis is left out of a release's public build and of
+everything built from it. **Set…** adds one, **Lift** ends the selected one.
+
+DOI and IGSN registration and publishing a release to EarthBank are not in
+the window yet.
 
 ## Unverified or not yet implemented
 
