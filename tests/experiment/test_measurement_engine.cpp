@@ -2106,6 +2106,52 @@ TEST(FitResults, BaselineRuleNearest) {
 
 // One before the signal, one after, neither matching: their average, the
 // error a mean of two.
+// Two baselines as near as each other: the first of them (record order).
+TEST(FitResults, BaselineRuleTieTakesTheFirst) {
+  const auto plan = plan_from(kBaselineRulePlan);
+  auto d = baseline_rule_data();  // signal at 10..12, mean 11
+  d.series[skey("", "H1", collect::kBaseline, 1, 0)] = collect::Series{{13, 13}, {7, 7}, {}, {}};
+  d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{13, 13}, {3, 3}, {}, {}};
+  const auto out = fit_results(d, plan);
+  const auto& c = out.results.baseline_choices.at("Ar40@H1");
+  EXPECT_EQ(c.rule, "nearest");
+  EXPECT_EQ(c.baselines, (std::vector<std::size_t>{0}));
+  EXPECT_DOUBLE_EQ(c.value, 7);
+}
+
+// A signal on a detector no baseline was read on, in a run with baselines:
+// no choice, and it is said.
+TEST(FitResults, BaselineRuleNoCandidateIsSaid) {
+  const auto plan = plan_from(kBaselineRulePlan);
+  auto d = baseline_rule_data();
+  d.series[skey("Ar39", "AX", collect::kSignal, 0, 0)] = collect::Series{{10, 11}, {5, 5}, {}, {}};
+  d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{13, 14}, {3, 3}, {}, {}};
+  const auto out = fit_results(d, plan);
+  EXPECT_TRUE(out.results.baseline_choices.contains("Ar40@H1"));
+  EXPECT_FALSE(out.results.baseline_choices.contains("Ar39@AX"));
+  ASSERT_EQ(out.errors.size(), 1u);
+  EXPECT_EQ(out.errors[0], "Ar39@AX: no baseline on AX");
+  // With no baseline in the run at all, nothing to say.
+  const auto none = fit_results(baseline_rule_data(), plan);
+  EXPECT_TRUE(none.errors.empty());
+}
+
+// One label on one detector read in two gases is not fitted as one series.
+TEST(FitResults, ASignalAcrossGasesIsNotMerged) {
+  collect::RunData d;
+  auto in_gas = [](std::string gas) {
+    SeriesKey k = skey("Ar40", "H1", collect::kSignal);
+    k.gas = std::move(gas);
+    return k;
+  };
+  d.series[in_gas("A")] = collect::Series{{1, 2}, {10, 10}, {}, {}};
+  d.series[in_gas("B")] = collect::Series{{5, 6}, {20, 20}, {}, {}};
+  const auto out = fit_results(d, plan::MeasurementPlan{});
+  EXPECT_FALSE(out.results.intercepts.contains("Ar40@H1"));
+  ASSERT_EQ(out.errors.size(), 1u);
+  EXPECT_NE(out.errors[0].find("more than one gas"), std::string::npos) << out.errors[0];
+}
+
 TEST(FitResults, BaselineRuleBracketingAverage) {
   const auto plan = plan_from(kBaselineRulePlan);
   auto d = baseline_rule_data();
@@ -2156,6 +2202,8 @@ collect::RunData modifier_data() {
   d.series[skey("Ar40", "H1", collect::kSignal)] = collect::Series{{1, 2, 3}, {1000, 1000, 1000}, {}, {}};
   d.series[skey("Ar39", "AX", collect::kSignal)] = collect::Series{{1, 2, 3}, {100, 100, 100}, {}, {}};
   d.series[skey("", "CDD", collect::kBaseline, 1, 0)] = collect::Series{{5, 6}, {0.5, 0.5}, {}, {}};
+  d.series[skey("", "H1", collect::kBaseline, 1, 0)] = collect::Series{{5, 6}, {0.1, 0.1}, {}, {}};
+  d.series[skey("", "AX", collect::kBaseline, 1, 0)] = collect::Series{{5, 6}, {0.1, 0.1}, {}, {}};
   return d;
 }
 

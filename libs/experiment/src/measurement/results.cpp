@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <functional>
-#include <charconv>
 #include <cmath>
 #include <map>
 #include <sstream>
@@ -11,6 +10,7 @@
 #include <tuple>
 #include <utility>
 
+#include "pychron/core/number.hpp"
 #include "pychron/experiment/conditionals/evaluator.hpp"
 #include "pychron/experiment/record/names.hpp"
 
@@ -189,10 +189,9 @@ Result<std::vector<std::array<double, 3>>> read_model(const std::string& text) {
       std::string cell = line.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
       const auto b = cell.find_first_not_of(" \t\r"), e = cell.find_last_not_of(" \t\r");
       cell = b == std::string::npos ? std::string() : cell.substr(b, e - b + 1);
-      double v = 0;
-      const auto [p, ec] = std::from_chars(cell.data(), cell.data() + cell.size(), v);
-      if (ec != std::errc() || p != cell.data() + cell.size()) numbers = false;
-      cells.push_back(v);
+      const auto v = parse_double(cell);
+      if (!v) numbers = false;
+      cells.push_back(v.value_or(0.0));
       if (comma == std::string::npos) break;
       at = comma + 1;
     }
@@ -319,9 +318,12 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
   std::map<std::pair<std::string, std::string>, std::vector<const collect::Series*>> signal_parts;
   std::map<std::pair<std::string, std::string>, Signal> signals;
   std::map<std::pair<std::string, std::string>, const RecordKey*> signal_first;  // its fit's segment
+  std::set<std::pair<std::string, std::string>> across;  // read in more than one gas
   for (const auto& [key, s] : ordered) {
     if (key.kind != collect::kSignal) continue;
     const auto id = std::make_pair(key.label, key.detector);
+    if (const auto first = signal_first.find(id); first != signal_first.end() && first->second->gas != key.gas)
+      across.insert(id);
     signal_parts[id].push_back(s);
     signal_first.try_emplace(id, &key);
     if (!signals.contains(id)) {
@@ -332,6 +334,14 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
       sig.at = target_of(key.gas, key.segment, key.position);
       signals.emplace(id, std::move(sig));
     }
+  }
+  for (const auto& id : across) {
+    // Two gases' readings are not one series (the plan's rule, spec 3.7, keeps
+    // a valid plan from this): neither is fitted as one.
+    out.errors.push_back(record::qualified_key(id.first, id.second) +
+                         ": signal read in more than one gas; not fitted as one series");
+    signal_parts.erase(id);
+    signals.erase(id);
   }
   for (const auto& [id, parts] : signal_parts) {
     const auto s = collect::merge_series(parts);
@@ -411,7 +421,11 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
   for (const auto& [id, sig] : signals) {  // record order: by label, then detector
     (void)id;
     auto c = choose(sig, baselines);
-    if (!c) continue;
+    if (!c) {
+      // A run with baselines and none on this signal's detector: said.
+      if (!baselines.empty()) out.errors.push_back(sig.key + ": no baseline on " + sig.detector);
+      continue;
+    }
     if (!out.results.baselines.contains(sig.detector)) {
       const auto& fit = baselines[c->baselines.front()].rec.result.fit;
       out.results.baselines[sig.detector] = record::BaselineResult{c->value, c->error, fit};
