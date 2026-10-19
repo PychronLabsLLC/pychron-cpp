@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <limits>
+#include <utility>
 
 #include "pychron/processing/scene_layout.hpp"
 
@@ -250,6 +251,72 @@ TEST(SceneLayout, MapsIntoThePlotBox) {
   p.log_y = true;
   p.y = {1.0, 100.0};
   EXPECT_DOUBLE_EQ(map_y(p, 10.0), 45.0);
+}
+
+TEST(SceneLayout, XRangeHoldsAPointWhoseErrorIsNotFinite) {
+  Graph g;
+  Panel p;
+  PointLayer pts;
+  pts.x = {1.0, 3.0};
+  pts.y = {0.0, 0.0};
+  pts.x_err = {0.5, std::numeric_limits<double>::quiet_NaN()};
+  p.layers.emplace_back(pts);
+  g.panels.push_back(p);
+  EXPECT_EQ(graph_x_range(g), (Range{0.5, 3.0}));
+}
+
+TEST(SceneLayout, MalformedUtf8IsTheReplacementCharacter) {
+  const auto first = [](std::string_view s) {
+    std::size_t i = 0;
+    const char32_t c = next_code_point(s, i);
+    return std::pair{c, i};
+  };
+  EXPECT_EQ(first("\xb0"), (std::pair<char32_t, std::size_t>{0xFFFD, 1}));          // lone continuation
+  EXPECT_EQ(first("\xc0\x80"), (std::pair<char32_t, std::size_t>{0xFFFD, 1}));      // overlong
+  EXPECT_EQ(first("\xe0\x80\x80"), (std::pair<char32_t, std::size_t>{0xFFFD, 1}));  // overlong, three bytes
+  EXPECT_EQ(first("\xed\xa0\x80"), (std::pair<char32_t, std::size_t>{0xFFFD, 1}));  // surrogate
+  EXPECT_EQ(first("\xf4\x90\x80\x80"), (std::pair<char32_t, std::size_t>{0xFFFD, 1}));  // above U+10FFFF
+  EXPECT_EQ(first("\xff"), (std::pair<char32_t, std::size_t>{0xFFFD, 1}));
+  EXPECT_EQ(first("\xcf\x83"), (std::pair<char32_t, std::size_t>{0x3C3, 2}));
+  EXPECT_EQ(first("\xf0\x9f\x98\x80"), (std::pair<char32_t, std::size_t>{0x1F600, 4}));
+}
+
+TEST(SceneLayout, TicksAtPowersOfTenAreExact) {
+  const Axis a;
+  // 1000 / 5 = 200 exactly: the step is 200 whatever log10 rounds to.
+  EXPECT_EQ(values(axis_ticks(a, {0.0, 1000.0}, 5)), (std::vector<double>{0, 200, 400, 600, 800, 1000}));
+  EXPECT_EQ(labels(axis_ticks(a, {0.0, 0.001}, 5)),
+            (std::vector<std::string>{"0", "0.0002", "0.0004", "0.0006", "0.0008", "0.001"}));
+  Axis log;
+  log.scale = AxisScale::Log;
+  EXPECT_EQ(labels(axis_ticks(log, {1e-3, 1e3}, 5)),
+            (std::vector<std::string>{"0.001", "0.01", "0.1", "1", "10", "100", "1000"}));
+}
+
+TEST(SceneLayout, ExtremeTimeRangesHaveNoTicks) {
+  Axis a;
+  a.format = AxisFormat::Time;
+  EXPECT_TRUE(axis_ticks(a, {0.0, 1e300}, 5).empty());
+  EXPECT_TRUE(axis_ticks(a, {-1e20, 1e20}, 5).empty());
+  EXPECT_EQ(format_utc(1e300, "%Y"), "");
+}
+
+TEST(SceneLayout, YearsArePaddedToFourDigits) {
+  EXPECT_EQ(format_utc(-62135596800.0, "%Y-%m-%d"), "0001-01-01");
+  EXPECT_EQ(format_utc(0.0, "%Y%m%d%H%M%S"), "19700101000000");
+}
+
+TEST(SceneLayout, HugeColumnCountIsOneRow) {
+  Scene s;
+  s.columns = std::numeric_limits<int>::max();
+  for (int i = 0; i < 2; ++i) {
+    Graph g;
+    g.panels.push_back(panel_of({1.0, 2.0}));
+    s.graphs.push_back(g);
+  }
+  const SceneLayout l = layout_scene(s);
+  EXPECT_DOUBLE_EQ(l.width, 2 * 432.0 + 5);
+  EXPECT_DOUBLE_EQ(l.height, 324.0);
 }
 
 }  // namespace

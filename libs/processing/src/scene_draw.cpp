@@ -143,8 +143,12 @@ void draw_points(Builder& b, const PointLayer& pts, const Mapper& map, int clip)
         p.ops = {move(a->x, a->y), line(z->x, z->y)};
         b.path(std::move(p));
       };
-      if (i < pts.y_err.size() && finite(pts.y_err[i]) && pts.y_err[i] > 0)
-        bar(pts.x[i], pts.y[i] - pts.y_err[i], pts.x[i], pts.y[i] + pts.y_err[i]);
+      if (i < pts.y_err.size() && finite(pts.y_err[i]) && pts.y_err[i] > 0) {
+        // On a log axis a bar reaching zero or below runs to the bottom of the panel.
+        double low = pts.y[i] - pts.y_err[i];
+        if (map.panel.log_y && low <= 0) low = map.panel.y.min;
+        bar(pts.x[i], low, pts.x[i], pts.y[i] + pts.y_err[i]);
+      }
       if (i < pts.x_err.size() && finite(pts.x_err[i]) && pts.x_err[i] > 0)
         bar(pts.x[i] - pts.x_err[i], pts.y[i], pts.x[i] + pts.x_err[i], pts.y[i]);
       b.path(marker_path(m, *c, DrawRole::Marker, clip));
@@ -262,9 +266,11 @@ void draw_guide(Builder& b, const GuideLayer& g, const PanelLayout& panel, int c
   const Box& r = panel.plot;
   if (g.horizontal) {
     const double y = map_y(panel, g.value);
+    if (!finite(y)) return;
     p.ops = {move(r.x, y), line(r.x + r.w, y)};
   } else {
     const double x = map_x(panel, g.value);
+    if (!finite(x)) return;
     p.ops = {move(x, r.y), line(x, r.y + r.h)};
   }
   b.path(std::move(p));
@@ -277,6 +283,7 @@ void draw_span(Builder& b, const SpanLayer& s, const PanelLayout& panel, int cli
   if (panel.log_y && ((s.y0 && *s.y0 <= 0) || (s.y1 && *s.y1 <= 0))) return;
   const double x0 = s.x0 ? map_x(panel, *s.x0) : r.x, x1 = s.x1 ? map_x(panel, *s.x1) : r.x + r.w;
   const double y1 = s.y1 ? map_y(panel, *s.y1) : r.y, y0 = s.y0 ? map_y(panel, *s.y0) : r.y + r.h;
+  if (!finite(x0) || !finite(x1) || !finite(y0) || !finite(y1)) return;
   DrawPath p;
   p.role = DrawRole::Span;
   p.clip = clip;

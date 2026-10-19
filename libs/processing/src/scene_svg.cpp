@@ -6,20 +6,40 @@ namespace pychron::processing {
 
 namespace {
 
-// Text and attribute values: markup escaped, control characters (invalid in
-// XML 1.0) dropped but for tab.
+void append_utf8(std::string& out, char32_t c) {
+  if (c < 0x80) {
+    out.push_back(static_cast<char>(c));
+  } else if (c < 0x800) {
+    out.push_back(static_cast<char>(0xC0 | (c >> 6)));
+    out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+  } else if (c < 0x10000) {
+    out.push_back(static_cast<char>(0xE0 | (c >> 12)));
+    out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+  } else {
+    out.push_back(static_cast<char>(0xF0 | (c >> 18)));
+    out.push_back(static_cast<char>(0x80 | ((c >> 12) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+  }
+}
+
+// Text and attribute values: markup escaped; malformed UTF-8 written as
+// U+FFFD; what XML 1.0 does not allow (control characters but tab, U+FFFE,
+// U+FFFF) dropped.
 std::string escape(std::string_view s) {
   std::string out;
   out.reserve(s.size());
-  for (const char c : s) {
+  for (std::size_t i = 0; i < s.size();) {
+    const char32_t c = next_code_point(s, i);
     switch (c) {
-      case '&': out += "&amp;"; break;
-      case '<': out += "&lt;"; break;
-      case '>': out += "&gt;"; break;
-      case '"': out += "&quot;"; break;
+      case U'&': out += "&amp;"; break;
+      case U'<': out += "&lt;"; break;
+      case U'>': out += "&gt;"; break;
+      case U'"': out += "&quot;"; break;
       default:
-        if (static_cast<unsigned char>(c) < 0x20 && c != '\t') break;
-        out.push_back(c);
+        if ((c < 0x20 && c != U'\t') || c == 0xFFFE || c == 0xFFFF) break;
+        append_utf8(out, c);
     }
   }
   return out;
@@ -101,7 +121,7 @@ std::string draw_list_svg(const DrawList& list) {
       (list.font_family.empty() ? std::string() : escape(list.font_family) + ", ") + "Helvetica, Arial, sans-serif";
   std::string out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   out += R"(<svg xmlns="http://www.w3.org/2000/svg" width=")" + w + R"(pt" height=")" + h + R"(pt" viewBox="0 0 )" + w +
-         " " + h + "\" font-family=\"" + family + "\">\n";
+         " " + h + "\" font-family=\"" + family + "\" xml:space=\"preserve\">\n";
   if (!list.clips.empty()) {
     out += "<defs>\n";
     for (std::size_t i = 0; i < list.clips.size(); ++i) {

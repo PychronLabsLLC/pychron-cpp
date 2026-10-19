@@ -4,7 +4,10 @@
 // 5.6): the draw list (scene_draw.hpp) as vector paths and text in the
 // standard 14 fonts (Helvetica, Helvetica-Bold, Symbol for Greek letters;
 // nothing embedded), uncompressed, no /ID, CreationDate the caller's. The
-// same scene and info give the same bytes on every compiler. The UI keeps
+// same scene and info give the same bytes on every compiler. Text outside
+// WinAnsiEncoding and the Greek letters is written '?'; anchors are placed
+// with Helvetica's widths (scene_layout.hpp text_width), so a Greek or other
+// glyph without a width there is off by a little. The UI keeps
 // QPdfWriter for its own interactive export.
 
 #include <cstdint>

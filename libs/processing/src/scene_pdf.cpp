@@ -2,6 +2,7 @@
 
 #include "pychron/processing/scene_pdf.hpp"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -14,6 +15,9 @@
 namespace pychron::processing {
 
 namespace {
+
+// A PDF date has four year digits: 9999-12-31T23:59:59Z is the last one.
+constexpr std::int64_t kLastPdfSecond = 253402300799;
 
 enum class Font { Regular, Bold, Symbol };
 
@@ -242,7 +246,7 @@ std::string draw_list_pdf(const DrawList& list, const PdfInfo& info) {
   objects.emplace_back("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
   objects.emplace_back("<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>");
   std::string meta = "<< /Producer (pychron-cpp) /CreationDate (D:" +
-                     format_utc(static_cast<double>(info.created_unix), "%Y%m%d%H%M%S") + "Z)";
+                     format_utc(static_cast<double>(std::clamp<std::int64_t>(info.created_unix, 0, kLastPdfSecond)), "%Y%m%d%H%M%S") + "Z)";
   if (!info.title.empty()) meta += " /Title " + ascii_literal(info.title);
   objects.push_back(meta + " >>");
   for (auto& g : gs_objects) objects.push_back(std::move(g));

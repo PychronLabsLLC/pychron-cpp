@@ -259,5 +259,36 @@ TEST(SceneDraw, FormatCoord) {
   EXPECT_EQ(format_coord(kNaN), "0");
 }
 
+TEST(SceneDraw, AGuideOrSpanThatMapsOffEveryScaleIsLeftOut) {
+  GuideLayer guide;
+  guide.value = 1e308;
+  SpanLayer span;
+  span.y0 = 0.0;
+  span.y1 = 1e308;
+  Scene s = one_panel({guide, span});
+  s.graphs[0].panels[0].y.min = 0.0;
+  s.graphs[0].panels[0].y.max = 1e-300;
+  const DrawList l = draw_scene(s);
+  EXPECT_TRUE(paths(l, DrawRole::Guide).empty());
+  EXPECT_TRUE(paths(l, DrawRole::Span).empty());
+}
+
+TEST(SceneDraw, ALogErrorBarBelowZeroIsClippedNotDropped) {
+  PointLayer pts;
+  pts.x = {5};
+  pts.y = {1};
+  pts.y_err = {5};
+  Scene s = one_panel({pts});
+  s.graphs[0].panels[0].y.scale = AxisScale::Log;
+  s.graphs[0].panels[0].y.min = 0.1;
+  s.graphs[0].panels[0].y.max = 100.0;
+  const DrawList l = draw_scene(s);
+  const auto bars = paths(l, DrawRole::ErrorBar);
+  ASSERT_EQ(bars.size(), 1u);
+  const SceneLayout layout = layout_scene(s);
+  const Box& plot = layout.graphs[0].panels[0].plot;
+  EXPECT_NEAR(std::max(bars[0]->ops[0].p[0].y, bars[0]->ops[1].p[0].y), plot.y + plot.h, 1e-9);
+}
+
 }  // namespace
 }  // namespace pychron::processing

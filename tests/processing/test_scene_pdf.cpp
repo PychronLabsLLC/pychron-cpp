@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <charconv>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -156,6 +157,11 @@ TEST(ScenePdf, SaveToAMissingDirectoryIsAnIoError) {
   const auto r = save_scene_pdf(Scene{}, {}, pychron::testing::unique_temp_path("no_dir") / "x" / "f.pdf");
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Io);
+}
+
+TEST(ScenePdf, ACreationDateOutOfRangeIsClamped) {
+  EXPECT_NE(scene_pdf(Scene{}, {-5, ""}).find("/CreationDate (D:19700101000000Z)"), std::string::npos);
+  EXPECT_NE(scene_pdf(Scene{}, {INT64_MAX, ""}).find("/CreationDate (D:99991231235959Z)"), std::string::npos);
 }
 
 }  // namespace

@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 namespace pychron::processing {
@@ -55,34 +56,44 @@ int glyph_width(char32_t c, bool bold) {
   }
 }
 
-// Next code point of UTF-8 text; a malformed byte is one code point of its own.
+// Next code point of UTF-8 text. A byte that does not start a well-formed
+// sequence (a lone continuation, an overlong form, a surrogate, a value above
+// U+10FFFF, a truncated sequence) is U+FFFD and one byte.
 char32_t decode_utf8(std::string_view s, std::size_t& i) {
   const auto b = static_cast<unsigned char>(s[i]);
-  const auto cont = [&](std::size_t k) -> std::optional<char32_t> {
-    if (i + k >= s.size()) return std::nullopt;
-    const auto c = static_cast<unsigned char>(s[i + k]);
-    if ((c & 0xC0U) != 0x80U) return std::nullopt;
-    return static_cast<char32_t>(c & 0x3FU);
-  };
+  if (b < 0x80) {
+    ++i;
+    return b;
+  }
   int n = 0;
-  char32_t cp = b;
-  if ((b & 0xE0U) == 0xC0U) {
+  char32_t cp = 0, least = 0;
+  if (b >= 0xC2 && b <= 0xDF) {
     n = 1;
     cp = b & 0x1FU;
-  } else if ((b & 0xF0U) == 0xE0U) {
+    least = 0x80;
+  } else if (b >= 0xE0 && b <= 0xEF) {
     n = 2;
     cp = b & 0x0FU;
-  } else if ((b & 0xF8U) == 0xF0U) {
+    least = 0x800;
+  } else if (b >= 0xF0 && b <= 0xF4) {
     n = 3;
     cp = b & 0x07U;
+    least = 0x10000;
+  } else {
+    ++i;
+    return 0xFFFD;
   }
   for (int k = 1; k <= n; ++k) {
-    const auto c = cont(static_cast<std::size_t>(k));
-    if (!c) {
+    const std::size_t at = i + static_cast<std::size_t>(k);
+    if (at >= s.size() || (static_cast<unsigned char>(s[at]) & 0xC0U) != 0x80U) {
       ++i;
       return 0xFFFD;
     }
-    cp = (cp << 6) | *c;
+    cp = (cp << 6) | (static_cast<unsigned char>(s[at]) & 0x3FU);
+  }
+  if (cp < least || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+    ++i;
+    return 0xFFFD;
   }
   i += static_cast<std::size_t>(n) + 1;
   return cp;
@@ -115,6 +126,7 @@ void add_x(Extent& e, const Layer& layer) {
     for (std::size_t i = 0; i < pts->x.size(); ++i) {
       if (!shown(*pts, i)) continue;
       const double err = i < pts->x_err.size() ? pts->x_err[i] : 0.0;
+      e.add(pts->x[i]);
       e.add(pts->x[i] - err);
       e.add(pts->x[i] + err);
     }
@@ -190,18 +202,37 @@ std::string scientific(double v, int precision) {
   return strip_zeros(s.substr(0, e)) + "e" + std::to_string(exp);
 }
 
+// 10^k, correctly rounded (from_chars), so it is the same double under every
+// compiler's libm; 0 below the smallest subnormal, inf above the largest.
+double pow10(int k) {
+  const std::string text = "1e" + std::to_string(k);
+  double v = k < 0 ? 0.0 : std::numeric_limits<double>::infinity();
+  std::from_chars(text.data(), text.data() + text.size(), v);
+  return v;
+}
+
+// The decade of x > 0: the k with 10^k <= x < 10^(k+1). log10 gives a first
+// guess that a libm may round across a power of ten; the comparisons with
+// pow10 settle it the same way everywhere.
+int decade(double x) {
+  int k = static_cast<int>(std::floor(std::log10(x)));
+  if (pow10(k) > x) --k;
+  else if (pow10(k + 1) <= x) ++k;
+  return k;
+}
+
 std::vector<Tick> linear_ticks(Range r, int target) {
   if (!finite_increasing(r)) return {};
   const double raw = (r.max - r.min) / std::max(1, target);
   if (!std::isfinite(raw) || raw <= 0) return {};
-  int e = static_cast<int>(std::floor(std::log10(raw)));
-  double f = raw / std::pow(10.0, e);
+  int e = decade(raw);
+  const double f = raw / pow10(e);
   int nice = f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10;
   if (nice == 10) {
     nice = 1;
     ++e;
   }
-  const double step = nice * std::pow(10.0, e);
+  const double step = nice * pow10(e);
   if (!std::isfinite(step) || step <= 0) return {};
   const double k0 = std::ceil(r.min / step - 1e-9), k1 = std::floor(r.max / step + 1e-9);
   if (!(k1 >= k0) || k1 - k0 + 1 > static_cast<double>(tick_limit(target))) return {};
@@ -217,7 +248,7 @@ std::vector<Tick> linear_ticks(Range r, int target) {
     else if (!sci)
       label = fixed(v, std::max(0, -e));
     else
-      label = scientific(v, std::max(0, static_cast<int>(std::floor(std::log10(std::abs(v)))) - e));
+      label = scientific(v, std::max(0, decade(std::abs(v)) - e));
     out.push_back({v, std::move(label)});
   }
   return out;
@@ -225,15 +256,15 @@ std::vector<Tick> linear_ticks(Range r, int target) {
 
 std::vector<Tick> log_ticks(Range r, int target) {
   if (!finite_increasing(r) || r.min <= 0) return {};
-  const int lo = static_cast<int>(std::ceil(std::log10(r.min) - 1e-9));
-  const int hi = static_cast<int>(std::floor(std::log10(r.max) + 1e-9));
+  const int lo = decade(r.min) + (pow10(decade(r.min)) < r.min ? 1 : 0);
+  const int hi = decade(r.max);
   if (hi < lo) return {};
   const int n = hi - lo + 1;
   const int per = 2 * std::max(1, target);
   const int stride = std::max(1, (n + per - 1) / per);
   std::vector<Tick> out;
   for (int k = lo; k <= hi; k += stride) {
-    const double v = std::pow(10.0, k);
+    const double v = pow10(k);
     out.push_back({v, k >= -3 && k <= 4 ? fixed(v, std::max(0, -k)) : "1e" + std::to_string(k)});
   }
   return out;
@@ -254,7 +285,19 @@ void civil_from_days(std::int64_t z, int& y, int& m, int& d) {
 
 std::string two(int v) { return (v < 10 ? "0" : "") + std::to_string(v); }
 
+// A year as four digits (0001, 2025), as a PDF date and ISO 8601 want it.
+std::string four(int v) {
+  std::string s = std::to_string(v);
+  if (v >= 0 && s.size() < 4) s.insert(0, 4 - s.size(), '0');
+  return s;
+}
+
+// Times beyond this many seconds from 1970 (about 317,000 years) are not
+// written: their days and years would not fit the arithmetic below.
+constexpr double kMaxSeconds = 1e13;
+
 std::string utc_text(double seconds, const std::string& format) {
+  if (!(std::abs(seconds) <= kMaxSeconds)) return {};
   const auto t = static_cast<std::int64_t>(std::floor(seconds));
   std::int64_t days = t / 86400, rem = t % 86400;
   if (rem < 0) {
@@ -274,7 +317,7 @@ std::string utc_text(double seconds, const std::string& format) {
       continue;
     }
     switch (f[++i]) {
-      case 'Y': out += std::to_string(y); break;
+      case 'Y': out += four(y); break;
       case 'y': out += two(((y % 100) + 100) % 100); break;
       case 'm': out += two(m); break;
       case 'd': out += two(d); break;
@@ -291,7 +334,7 @@ std::string utc_text(double seconds, const std::string& format) {
 }
 
 std::vector<Tick> time_ticks(const Axis& axis, Range r, int target) {
-  if (!finite_increasing(r)) return {};
+  if (!finite_increasing(r) || std::max(std::abs(r.min), std::abs(r.max)) > kMaxSeconds) return {};
   static constexpr std::array<double, 24> kSteps = {
       1,     2,     5,     10,    15,     30,     60,     120,     300,     600,     900,     1800,
       3600,  7200,  10800, 21600, 43200,  86400,  172800, 604800,  1209600, 2592000, 7776000, 31536000};
@@ -411,8 +454,8 @@ double text_width(std::string_view utf8, double size, bool bold) {
 
 SceneLayout layout_scene(const Scene& scene, const FigureSize& size) {
   SceneLayout out;
-  const int columns = std::max(1, scene.columns);
   const auto n = static_cast<int>(scene.graphs.size());
+  const int columns = std::clamp(scene.columns, 1, std::max(1, n));
   const int used = std::max(1, std::min(columns, n));
   const int rows = std::max(1, (n + columns - 1) / columns);
   const double gap = scene.style.graph_spacing;

@@ -81,5 +81,18 @@ TEST(SceneSvg, MatchesTheCommittedFixture) {
   EXPECT_TRUE(why.empty()) << why;
 }
 
+TEST(SceneSvg, InvalidUtf8AndNonCharactersAreReplacedOrDropped) {
+  Scene s;
+  Graph g;
+  g.title = std::string("a\xb0z\xef\xbf\xbe" "b");  // a lone continuation byte, U+FFFE
+  g.panels.emplace_back();
+  s.graphs.push_back(g);
+  EXPECT_NE(scene_svg(s).find(">a\xef\xbf\xbdzb</text>"), std::string::npos);
+}
+
+TEST(SceneSvg, KeepsRunsOfSpaces) {
+  EXPECT_NE(scene_svg(Scene{}).find(" xml:space=\"preserve\""), std::string::npos);
+}
+
 }  // namespace
 }  // namespace pychron::processing

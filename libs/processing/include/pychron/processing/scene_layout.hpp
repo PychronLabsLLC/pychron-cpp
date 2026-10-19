@@ -96,7 +96,9 @@ struct SceneLayout {
 // are proportional to max(0.05, height), style.panel_spacing apart.
 SceneLayout layout_scene(const Scene& scene, const FigureSize& size = {});
 
-// Page position of a data value in a panel; log y when log_y (y > 0).
+// Page position of a data value in a panel; log y when log_y (y > 0). A log
+// axis goes through std::log10, the one libm call whose result reaches a
+// written coordinate; ticks and decades are settled without one.
 double map_x(const PanelLayout& panel, double x);
 double map_y(const PanelLayout& panel, double y);
 
