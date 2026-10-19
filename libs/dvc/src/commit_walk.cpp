@@ -113,17 +113,16 @@ Result<std::size_t> walk_commits(
     std::vector<GitCommit>& commits,
     const std::function<bool(std::size_t index, std::span<const GitChange> changes)>& apply) {
   const std::span<const std::string> slice(order.data() + begin, end - begin);
-  auto listed = reader.commits(slice);  // in the order asked
+  auto listed = reader.commits_and_changes(slice);  // commits in the order asked
   if (!listed) return fail(listed.error());
-  commits = std::move(*listed);
-  auto changes = reader.changes(slice);
-  if (!changes) return fail(changes.error());
+  commits = std::move(listed->commits);
+  const std::vector<GitChange>& changes = listed->changes;
   // Grouped by commit in the order asked; a commit that changes nothing is absent.
   std::size_t at = 0;
   for (std::size_t i = begin; i < end; ++i) {
     std::size_t stop = at;
-    while (stop < changes->size() && (*changes)[stop].commit == order[i]) ++stop;
-    const std::span<const GitChange> of_commit(changes->data() + at, stop - at);
+    while (stop < changes.size() && changes[stop].commit == order[i]) ++stop;
+    const std::span<const GitChange> of_commit(changes.data() + at, stop - at);
     at = stop;
     const auto& parents = commits[i - begin].parents;
     if (parents.size() < 2) {
@@ -143,8 +142,8 @@ Result<std::size_t> walk_commits(
     }
     if (apply(i, merged)) return i + 1;
   }
-  if (at != changes->size())
-    return fail(ErrorKind::Protocol, "git: changes of commit " + (*changes)[at].commit + " were not asked for");
+  if (at != changes.size())
+    return fail(ErrorKind::Protocol, "git: changes of commit " + changes[at].commit + " were not asked for");
   return end;
 }
 

@@ -141,6 +141,14 @@ class GitReader {
   // Submodule entries are skipped.
   Result<std::vector<GitChange>> changes(std::span<const std::string> shas) const;
 
+  struct CommitsAndChanges {
+    std::vector<GitCommit> commits;  // as commits(shas)
+    std::vector<GitChange> changes;  // as changes(shas)
+  };
+  // commits(shas) and changes(shas) together, from one git process instead of
+  // two: what a walk reads for each batch.
+  Result<CommitsAndChanges> commits_and_changes(std::span<const std::string> shas) const;
+
   // The paths whose content differs between the trees of two commits, in
   // git's path order: status and blob as they are in `to` (A: only in `to`,
   // D: only in `from`, M: in both). Each change carries `to` as its commit.

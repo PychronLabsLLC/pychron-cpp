@@ -172,6 +172,10 @@ TEST(GitReader, IgnoresInheritedGitEnvironment) {
     const auto changes = reader->changes(*order);
     ASSERT_OK(changes);
     ASSERT_EQ(changes->size(), 2u);
+    const auto both = reader->commits_and_changes(*order);
+    ASSERT_OK(both);
+    EXPECT_EQ(both->commits.size(), 2u);
+    EXPECT_EQ(both->changes.size(), 2u);
     ASSERT_OK(reader->fetch_blobs(std::vector<std::string>{(*changes)[1].blob_sha}));
     EXPECT_EQ(*reader->blob((*changes)[1].blob_sha), "two");
     const auto tags = reader->tags();
@@ -588,6 +592,116 @@ TEST(GitReader, MergeEqualToItsFirstParentHasNoChanges) {
   const auto changes = reader->changes(shas);
   ASSERT_OK(changes);
   EXPECT_TRUE(changes->empty());
+}
+
+// commits_and_changes() is commits() and changes() from one git process:
+// field by field, the same answer.
+void expect_same_as_commits_plus_changes(const GitReader& reader, const std::vector<std::string>& shas) {
+  const auto commits = reader.commits(shas);
+  ASSERT_OK(commits);
+  const auto changes = reader.changes(shas);
+  ASSERT_OK(changes);
+  const auto both = reader.commits_and_changes(shas);
+  ASSERT_OK(both);
+
+  ASSERT_EQ(both->commits.size(), commits->size());
+  for (std::size_t i = 0; i < commits->size(); ++i) {
+    const GitCommit& want = (*commits)[i];
+    const GitCommit& got = both->commits[i];
+    SCOPED_TRACE("commit " + want.sha);
+    EXPECT_EQ(got.sha, want.sha);
+    EXPECT_EQ(got.parents, want.parents);
+    EXPECT_EQ(got.author.name, want.author.name);
+    EXPECT_EQ(got.author.email, want.author.email);
+    EXPECT_EQ(got.author.utc, want.author.utc);
+    EXPECT_EQ(got.message, want.message);
+  }
+  ASSERT_EQ(both->changes.size(), changes->size());
+  for (std::size_t i = 0; i < changes->size(); ++i) {
+    const GitChange& want = (*changes)[i];
+    const GitChange& got = both->changes[i];
+    SCOPED_TRACE("change " + want.commit + " " + want.path);
+    EXPECT_EQ(got.commit, want.commit);
+    EXPECT_EQ(got.path, want.path);
+    EXPECT_EQ(got.status, want.status);
+    EXPECT_EQ(got.blob_sha, want.blob_sha);
+    EXPECT_EQ(got.old_blob_sha, want.old_blob_sha);
+  }
+}
+
+TEST(GitReader, CommitsAndChangesFromOneLogMatchCommitsPlusChanges) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  const std::string root_empty = repo.commit("an empty root", "2016-03-04T00:00:00+00:00");
+  repo.write("660/a.json", "a");
+  repo.write("660/b.json", "b");
+  repo.write("tool.sh", "#!/bin/sh\n");
+  const std::string files = repo.commit("files\n\nwith a body\n:000000 100644 not a change\n",
+                                        "2016-03-05T00:00:00-07:00");
+  const std::string empty = repo.commit("nothing", "2016-03-06T00:00:00+00:00");
+  repo.write("661/52-01E \xc3\xa9.json", "non-ascii");
+  repo.remove("660/b.json");
+  std::filesystem::permissions(repo.path() / "tool.sh", std::filesystem::perms::owner_exec,
+                               std::filesystem::perm_options::add);
+  repo.write("660/a.json", "a again");
+  const std::string mixed = repo.commit("add, delete, modify, mode", "2016-03-07T00:00:00+00:00");
+  repo.branch("side");
+  repo.write("main.json", "main");
+  repo.commit("main work", "2016-03-08T00:00:00+00:00");
+  repo.checkout("side");
+  repo.write("side.json", "side");
+  repo.commit("side work", "2016-03-09T00:00:00+00:00");
+  repo.checkout("main");
+  const std::string merge = repo.merge("side", "merge side", "2016-03-10T00:00:00+00:00");
+  repo.branch("ours");
+  repo.checkout("ours");
+  repo.write("ours.json", "ours");
+  repo.commit("ours work", "2016-03-11T00:00:00+00:00");
+  repo.checkout("main");
+  repo.git({"merge", "--quiet", "--no-ff", "-s", "ours", "-m", "keep ours", "ours"}, "2016-03-12T00:00:00+00:00");
+  const std::string merge_same = repo.head();
+
+  auto reader = GitReader::open(config_for(repo));
+  ASSERT_OK(reader);
+  const auto order = reader->rev_list(std::nullopt);
+  ASSERT_OK(order);
+  ASSERT_EQ(order->size(), 9u);
+  expect_same_as_commits_plus_changes(*reader, *order);
+
+  // A slice in another order, a slice of one, and nothing.
+  expect_same_as_commits_plus_changes(*reader, {merge_same, mixed, root_empty, merge, files, empty});
+  expect_same_as_commits_plus_changes(*reader, {mixed});
+  expect_same_as_commits_plus_changes(*reader, {});
+
+  const auto both = reader->commits_and_changes(*order);
+  ASSERT_OK(both);
+  EXPECT_TRUE(both->commits[1].message.starts_with("files\n\nwith a body\n:000000 100644 not a change"));
+  EXPECT_EQ(paths_of(both->changes, mixed),
+            (std::vector<std::string>{"660/a.json", "660/b.json", "661/52-01E \xc3\xa9.json", "tool.sh"}));
+  EXPECT_EQ(find_change(both->changes, mixed, "660/b.json")->status, 'D');
+  EXPECT_EQ(find_change(both->changes, mixed, "tool.sh")->status, 'M');
+  EXPECT_EQ(paths_of(both->changes, merge), (std::vector<std::string>{"side.json"}));
+  EXPECT_TRUE(paths_of(both->changes, merge_same).empty());
+  EXPECT_TRUE(paths_of(both->changes, empty).empty());
+  EXPECT_EQ(scratch_files(repo), 0u);
+}
+
+TEST(GitReader, CommitsAndChangesRejectsWhatIsNotASha) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  repo.commit("one", "2016-03-04T05:06:07+00:00");
+  auto reader = GitReader::open(config_for(repo));
+  ASSERT_OK(reader);
+  const auto bad = reader->commits_and_changes(std::vector<std::string>{"--all"});
+  ASSERT_FALSE(bad.has_value());
+  EXPECT_NE(bad.error().what.find("not a commit sha: '--all'"), std::string::npos) << bad.error().what;
+  const std::string absent(40, 'a');
+  const auto missing = reader->commits_and_changes(std::vector<std::string>{absent});
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_NE(missing.error().what.find("git log failed"), std::string::npos) << missing.error().what;
 }
 
 TEST(GitReader, DiffBetweenTwoCommits) {

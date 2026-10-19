@@ -302,6 +302,47 @@ std::string mirror_name(std::string_view url) {
   return stem + "-" + to_hex(std::span<const std::uint8_t>(digest)).substr(0, 16) + ".git";
 }
 
+// One change of --raw -z output, at tokens[i]: ":<old mode> <new mode> <old
+// sha> <new sha> <status>", then the path in the next token, which `i` is
+// left on. Appended to `out` for `commit`, unless it is a submodule entry.
+// False when the tokens are not that.
+bool append_change(std::span<const std::string_view> tokens, std::size_t& i, const std::string& commit,
+                   std::vector<GitChange>& out) {
+  const std::string_view token = tokens[i];
+  if (token.empty() || token.front() != ':') return false;
+  const std::vector<std::string_view> fields = split(token.substr(1), ' ');
+  if (fields.size() != 5 || fields[4].empty() || commit.empty() || i + 1 >= tokens.size()) return false;
+  const std::string_view path = tokens[++i];
+  const char letter = fields[4].front();
+  constexpr std::string_view kSubmodule = "160000";
+  GitChange change;
+  change.commit = commit;
+  change.path = std::string(path);
+  // An all-zero name stands for "no blob" on the side that lacks the file.
+  if (fields[2].find_first_not_of('0') != std::string_view::npos) {
+    change.old_blob_sha = std::string(fields[2]);
+    if (!is_sha(change.old_blob_sha)) return false;
+  }
+  switch (letter) {
+    case 'A':
+    case 'M':
+    case 'T':  // the type changed (file to symlink, ...): new content at the same path
+      if (fields[1] == kSubmodule) return true;
+      change.status = letter == 'A' ? 'A' : 'M';
+      change.blob_sha = std::string(fields[3]);
+      if (!is_sha(change.blob_sha)) return false;
+      break;
+    case 'D':
+      if (fields[0] == kSubmodule) return true;
+      change.status = 'D';
+      break;
+    default:
+      return false;
+  }
+  out.push_back(std::move(change));
+  return true;
+}
+
 // The --raw -z output of diff-tree: NUL-separated tokens, a commit sha (when
 // diff-tree read commits from stdin), then for each change ":<old mode> <new
 // mode> <old sha> <new sha> <status>" and the path. `commit` names the changes
@@ -321,40 +362,43 @@ Result<std::vector<GitChange>> parse_changes(const Site& site, std::string_view 
       commit = std::string(token);
       continue;
     }
-    const std::vector<std::string_view> fields = split(token.substr(1), ' ');
-    if (fields.size() != 5 || fields[4].empty() || commit.empty() || i + 1 >= tokens.size()) return bad(token);
-    const std::string_view path = tokens[++i];
-    const char letter = fields[4].front();
-    constexpr std::string_view kSubmodule = "160000";
-    GitChange change;
-    change.commit = commit;
-    change.path = std::string(path);
-    // An all-zero name stands for "no blob" on the side that lacks the file.
-    if (fields[2].find_first_not_of('0') != std::string_view::npos) {
-      change.old_blob_sha = std::string(fields[2]);
-      if (!is_sha(change.old_blob_sha)) return bad(token);
-    }
-    switch (letter) {
-      case 'A':
-      case 'M':
-      case 'T':  // the type changed (file to symlink, ...): new content at the same path
-        if (fields[1] == kSubmodule) continue;
-        change.status = letter == 'A' ? 'A' : 'M';
-        change.blob_sha = std::string(fields[3]);
-        if (!is_sha(change.blob_sha)) return bad(token);
-        break;
-      case 'D':
-        if (fields[0] == kSubmodule) continue;
-        change.status = 'D';
-        break;
-      default:
-        return bad(token);
-    }
-    result.push_back(std::move(change));
+    if (!append_change(tokens, i, commit, result)) return bad(token);
   }
   return result;
 }
 
+// The format of git log for commits(): six NUL-terminated fields per commit
+// (-z ends the last one). NUL is the one byte that a name, an address or a
+// message cannot hold.
+constexpr std::string_view kLogFormat = "--format=%H%x00%P%x00%aI%x00%an%x00%ae%x00%B";
+constexpr std::size_t kLogFields = 6;
+
+// One commit from its kLogFields fields: sha, parents, date, name, email, message.
+Result<GitCommit> parse_commit(const Site& site, std::span<const std::string_view> fields) {
+  if (!is_sha(fields[0])) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
+  GitCommit commit;
+  commit.sha = std::string(fields[0]);
+  for (const std::string_view parent : split(fields[1], ' '))
+    if (!parent.empty()) commit.parents.emplace_back(parent);
+  commit.author.name = std::string(fields[3]);
+  commit.author.email = std::string(fields[4]);
+  const auto utc = parse_author_date(fields[2]);
+  if (!utc) {
+    return fail(ErrorKind::Protocol, describe(site) + ": commit " + commit.sha + " has an author date that cannot be read: '" +
+                                         std::string(fields[2]) + "'");
+  }
+  commit.author.utc = *utc;
+  std::string_view rest = fields[5];
+  if (rest.ends_with('\n')) rest.remove_suffix(1);
+  commit.message = std::string(rest);
+  return commit;
+}
+
+Result<void> check_shas(const Site& site, std::span<const std::string> shas) {
+  for (const auto& sha : shas)
+    if (!is_sha(sha)) return fail(ErrorKind::Config, describe(site) + ": not a commit sha: '" + sha + "'");
+  return {};
+}
 
 // git's version, read once per process: the git on PATH does not change
 // under a running process. Only a version read is kept; after a failure
@@ -574,40 +618,21 @@ Result<std::vector<GitCommit>> GitReader::commits(std::span<const std::string> s
   const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   std::vector<GitCommit> result;
   if (shas.empty()) return result;  // git log without revisions would show HEAD
-  for (const auto& sha : shas)
-    if (!is_sha(sha)) return fail(ErrorKind::Config, describe(site) + ": not a commit sha: '" + sha + "'");
+  if (auto checked = check_shas(site, shas); !checked) return fail(checked.error());
 
-  auto out = output(site,
-                    {"log", "--no-walk=unsorted", "--stdin", "-z", "--no-show-signature",
-                     "--format=%H%x00%P%x00%aI%x00%an%x00%ae%x00%B"},
+  auto out = output(site, {"log", "--no-walk=unsorted", "--stdin", "-z", "--no-show-signature", std::string(kLogFormat)},
                     lines_of(shas));
   if (!out) return fail(out.error());
 
-  // Six NUL-terminated fields per commit (-z ends the last one). NUL is the
-  // one byte that a name, an address or a message cannot hold.
   std::vector<std::string_view> tokens = split(*out, '\0');
   if (!tokens.empty() && tokens.back().empty()) tokens.pop_back();
-  if (tokens.size() % 6 != 0) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
+  if (tokens.size() % kLogFields != 0) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
   std::unordered_map<std::string, GitCommit> by_sha;
-  for (std::size_t i = 0; i < tokens.size(); i += 6) {
-    const std::string_view* fields = &tokens[i];  // sha, parents, date, name, email, message
-    if (!is_sha(fields[0])) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
-    GitCommit commit;
-    commit.sha = std::string(fields[0]);
-    for (const std::string_view parent : split(fields[1], ' '))
-      if (!parent.empty()) commit.parents.emplace_back(parent);
-    commit.author.name = std::string(fields[3]);
-    commit.author.email = std::string(fields[4]);
-    const auto utc = parse_author_date(fields[2]);
-    if (!utc) {
-      return fail(ErrorKind::Protocol, describe(site) + ": commit " + commit.sha + " has an author date that cannot be read: '" +
-                                           std::string(fields[2]) + "'");
-    }
-    commit.author.utc = *utc;
-    std::string_view rest = fields[5];
-    if (rest.ends_with('\n')) rest.remove_suffix(1);
-    commit.message = std::string(rest);
-    by_sha.insert_or_assign(commit.sha, std::move(commit));
+  for (std::size_t i = 0; i < tokens.size(); i += kLogFields) {
+    auto commit = parse_commit(site, std::span<const std::string_view>(tokens).subspan(i, kLogFields));
+    if (!commit) return fail(commit.error());
+    std::string sha = commit->sha;
+    by_sha.insert_or_assign(std::move(sha), std::move(*commit));
   }
 
   result.reserve(shas.size());
@@ -619,11 +644,63 @@ Result<std::vector<GitCommit>> GitReader::commits(std::span<const std::string> s
   return result;
 }
 
+Result<GitReader::CommitsAndChanges> GitReader::commits_and_changes(std::span<const std::string> shas) const {
+  const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
+  CommitsAndChanges result;
+  if (shas.empty()) return result;  // git log without revisions would show HEAD
+  if (auto checked = check_shas(site, shas); !checked) return fail(checked.error());
+
+  // commits()'s log, each commit followed by what changes() would list for
+  // it: diff-tree's options, and those of git log's own configuration that
+  // could change paths or their order (diff.relative, diff.orderFile) undone.
+  auto out = output(site,
+                    {"log", "--no-walk=unsorted", "--stdin", "-z", "--no-show-signature", std::string(kLogFormat),
+                     "-r", "--raw", "--root", "--diff-merges=first-parent", "--no-renames", "--no-abbrev",
+                     "--no-relative", "--no-color", "--no-ext-diff", std::string("-O") + kNullDevice},
+                    lines_of(shas));
+  if (!out) return fail(out.error());
+
+  // Per commit, its kLogFields fields; when it changes anything, "\n" and
+  // the first change line in the next token, then the changes as diff-tree
+  // gives them, until the next commit's sha.
+  std::vector<std::string_view> tokens = split(*out, '\0');
+  if (!tokens.empty() && tokens.back().empty()) tokens.pop_back();
+  const auto bad = [&](std::string_view token) {
+    return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output: " + std::string(token.substr(0, 200)));
+  };
+  struct Shown {
+    GitCommit commit;
+    std::vector<GitChange> changes;
+  };
+  std::unordered_map<std::string, Shown> by_sha;
+  for (std::size_t i = 0; i < tokens.size();) {
+    if (tokens.size() - i < kLogFields) return fail(ErrorKind::Protocol, describe(site) + ": unexpected log output");
+    auto commit = parse_commit(site, std::span<const std::string_view>(tokens).subspan(i, kLogFields));
+    if (!commit) return fail(commit.error());
+    i += kLogFields;
+    Shown shown{std::move(*commit), {}};
+    if (i < tokens.size() && tokens[i].starts_with("\n:")) tokens[i].remove_prefix(1);
+    for (; i < tokens.size() && tokens[i].starts_with(':'); ++i) {
+      if (!append_change(tokens, i, shown.commit.sha, shown.changes)) return bad(tokens[i]);
+    }
+    std::string sha = shown.commit.sha;
+    by_sha.insert_or_assign(std::move(sha), std::move(shown));
+  }
+
+  result.commits.reserve(shas.size());
+  for (const auto& sha : shas) {
+    const auto found = by_sha.find(sha);
+    if (found == by_sha.end()) return fail(ErrorKind::Protocol, describe(site) + ": git log did not show commit " + sha);
+    result.commits.push_back(found->second.commit);
+    result.changes.insert(result.changes.end(), found->second.changes.begin(), found->second.changes.end());
+  }
+  return result;
+}
+
 Result<std::vector<GitChange>> GitReader::changes(std::span<const std::string> shas) const {
   const Site site{config_.repo, git_dir_, common_dir_, config_.scratch, config_.timeout};
   if (shas.empty()) return std::vector<GitChange>{};
-  for (const auto& sha : shas)
-    if (!is_sha(sha)) return fail(ErrorKind::Config, describe(site) + ": not a commit sha: '" + sha + "'");
+  if (auto checked = check_shas(site, shas); !checked) return fail(checked.error());
 
   // --diff-merges=first-parent, not `-m --first-parent`: diff-tree ignores
   // --first-parent and would print a merge once per parent.
