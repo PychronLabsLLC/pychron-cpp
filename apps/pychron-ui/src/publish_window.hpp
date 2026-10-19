@@ -132,6 +132,9 @@ class PublishWindow : public QMainWindow {
  private:
   void say(const QString& text);
   void update_buttons();
+  void begin_job();  // a job of this window is posted: the action buttons wait for it
+  void end_job();
+  void count_members();  // of the current release, once: a bookmark's heads are read only when shown
   void stage(const QString& name);  // a build's progress, on the GUI thread
   QString current_text(int column) const;  // of the current row; empty when none
   // A state change of the current release on the worker, said and refreshed.
@@ -163,6 +166,8 @@ class PublishWindow : public QMainWindow {
   QTableView* embargoes_;
   QStandardItemModel* embargo_model_;
   QMap<QString, QString> last_build_;  // release uuid -> directory
+  QMap<QString, int> members_;         // release uuid -> analyses pinned, once counted
+  QString pending_select_;             // a release made here, selected by the next refresh
   int jobs_ = 0;
 };
 

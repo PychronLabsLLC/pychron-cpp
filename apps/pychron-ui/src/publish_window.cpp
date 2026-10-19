@@ -57,7 +57,7 @@ QString qs(const std::string& s) { return QString::fromStdString(s); }
 // A release as the table shows it, with the count of analyses it pins.
 struct ReleaseLine {
   ps::ReleaseRow row;
-  std::size_t members = 0;
+  std::size_t members = 0;  // unused: counted when shown
 };
 
 struct Listing {
@@ -76,7 +76,7 @@ std::optional<PublishWindow::EmbargoForm> ask_embargo_dialog(QWidget* parent) {
   scope->setCurrentIndex(1);
   auto* name = new QLineEdit(&dialog);
   name->setPlaceholderText(QObject::tr("project name; sample name or name@project; run id (70001-01)"));
-  auto* until_on = new QCheckBox(QObject::tr("Until"), &dialog);
+  auto* until_on = new QCheckBox(QObject::tr("Until (00:00 UTC)"), &dialog);
   auto* until = new QDateEdit(QDate::currentDate().addYears(1), &dialog);
   until->setCalendarPopup(true);
   until->setEnabled(false);
@@ -185,7 +185,10 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
   releases_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   releases_->verticalHeader()->hide();
   releases_->horizontalHeader()->setStretchLastSection(true);
-  connect(releases_->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this] { update_buttons(); });
+  connect(releases_->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this] {
+    update_buttons();
+    count_members();
+  });
 
   auto* buttons = new QHBoxLayout;
   buttons->addWidget(new_button_);
@@ -300,13 +303,54 @@ void PublishWindow::select_release(const QString& uuid) {
 
 void PublishWindow::update_buttons() {
   refresh_button_->setEnabled(true);
-  const bool any = releases_->currentIndex().isValid();
+  // Nothing new starts while a job of this window runs; Refresh is always there.
+  const bool any = releases_->currentIndex().isValid() && !busy();
+  new_button_->setEnabled(!busy());
   const QString state = current_text(State), visibility = current_text(Visibility);
   build_button_->setEnabled(any);  // any state: a published release is rebuilt to verify it
   verify_button_->setEnabled(any);
-  publish_button_->setEnabled(state == QStringLiteral("draft"));
-  withdraw_button_->setEnabled(state == QStringLiteral("published"));
-  public_button_->setEnabled(state == QStringLiteral("published") && visibility == QStringLiteral("private"));
+  publish_button_->setEnabled(any && state == QStringLiteral("draft"));
+  withdraw_button_->setEnabled(any && state == QStringLiteral("published"));
+  public_button_->setEnabled(any && state == QStringLiteral("published") && visibility == QStringLiteral("private"));
+}
+
+void PublishWindow::begin_job() {
+  ++jobs_;
+  update_buttons();
+}
+
+void PublishWindow::end_job() {
+  --jobs_;
+  update_buttons();
+}
+
+void PublishWindow::count_members() {
+  const QString uuid = selected_release();
+  if (uuid.isEmpty()) return;
+  const int row = releases_->currentIndex().row();
+  if (members_.contains(uuid)) {
+    model_->item(row, Members)->setText(QString::number(members_.value(uuid)));
+    return;
+  }
+  bridge_.run<std::size_t>(
+      this,
+      [uuid](ps::IStore& store, const ps::Actor&) -> Result<std::size_t> {
+        auto release = pb::find_release(store, uuid.toStdString());
+        if (!release) return fail(release.error());
+        auto heads = store.bookmark_heads(release->bookmark);
+        if (!heads) return fail(heads.error());
+        std::set<ps::Uuid> members;
+        for (const auto& h : *heads)
+          if (h.kind != ps::Kind::RefValue && h.kind != ps::Kind::InterpretedAge) members.insert(h.subject);
+        return members.size();
+      },
+      [this, uuid](Result<std::size_t> n) {
+        if (!n) return;
+        members_[uuid] = static_cast<int>(*n);
+        for (int r = 0; r < model_->rowCount(); ++r)
+          if (model_->item(r, Name)->data(Qt::UserRole).toString() == uuid)
+            model_->item(r, Members)->setText(QString::number(*n));
+      });
 }
 
 QString PublishWindow::current_text(int column) const {
@@ -317,7 +361,7 @@ QString PublishWindow::current_text(int column) const {
 
 void PublishWindow::change(const QString& done,
                            std::function<Result<void>(ps::IStore&, const ps::Actor&)> fn) {
-  ++jobs_;
+  begin_job();
   bridge_.run<bool>(
       this,
       [fn = std::move(fn)](ps::IStore& store, const ps::Actor& actor) -> Result<bool> {
@@ -325,17 +369,16 @@ void PublishWindow::change(const QString& done,
         return true;
       },
       [this, done](Result<bool> r) {
-        --jobs_;
-        if (!r) {
-          say(qs(r.error().what));
-          return;
-        }
-        say(done);
+        end_job();
+        // Refreshed either way: a failed step may still have changed the
+        // release (a read after a committed publish), and the buttons follow.
+        say(r ? done : qs(r.error().what));
         refresh();
       });
 }
 
 void PublishWindow::verify() {
+  if (busy()) return;  // one action at a time
   const QString uuid = selected_release();
   if (uuid.isEmpty()) {
     say(tr("Select a release first."));
@@ -344,16 +387,16 @@ void PublishWindow::verify() {
   const QString dir = ask_directory_ ? ask_directory_(last_build(uuid)) : QString();
   if (dir.isEmpty()) return;
   say(tr("Verifying %1 against the store…").arg(dir));
-  ++jobs_;
+  begin_job();
   auto& source = source_;
   const std::string url = url_;
   bridge_.run<pb::StoreVerify>(
       this,
-      [&source, url, dir](ps::IStore& store, const ps::Actor&) {
-        return pb::verify_against_store(store, source, dir.toStdString(), url);
+      [&source, url, dir, uuid](ps::IStore& store, const ps::Actor&) -> Result<pb::StoreVerify> {
+        return pb::verify_against_store(store, source, dir.toStdString(), url, ps::Uuid::parse(uuid.toStdString()));
       },
       [this, dir](Result<pb::StoreVerify> checked) {
-        --jobs_;
+        end_job();
         if (!checked) {
           say(tr("Verify could not run: %1").arg(qs(checked.error().what)));
           return;
@@ -377,6 +420,7 @@ void PublishWindow::verify() {
 }
 
 void PublishWindow::publish() {
+  if (busy()) return;  // one action at a time
   const QString uuid = selected_release();
   if (uuid.isEmpty()) {
     say(tr("Select a release first."));
@@ -397,6 +441,7 @@ void PublishWindow::publish() {
 }
 
 void PublishWindow::withdraw() {
+  if (busy()) return;  // one action at a time
   const QString uuid = selected_release();
   if (uuid.isEmpty()) {
     say(tr("Select a release first."));
@@ -418,6 +463,7 @@ void PublishWindow::withdraw() {
 }
 
 void PublishWindow::set_embargo() {
+  if (busy()) return;  // one action at a time
   const auto form = ask_embargo_ ? ask_embargo_() : std::nullopt;
   if (!form) return;
   pb::EmbargoRequest request;
@@ -437,6 +483,7 @@ void PublishWindow::set_embargo() {
 }
 
 void PublishWindow::lift_embargo() {
+  if (busy()) return;  // one action at a time
   const QModelIndex current = embargoes_->currentIndex();
   if (!current.isValid()) {
     say(tr("Select an embargo first."));
@@ -450,6 +497,7 @@ void PublishWindow::lift_embargo() {
 }
 
 void PublishWindow::make_public() {
+  if (busy()) return;  // one action at a time
   const QString uuid = selected_release();
   if (uuid.isEmpty()) {
     say(tr("Select a release first."));
@@ -473,6 +521,7 @@ void PublishWindow::stage(const QString& name) {
 }
 
 void PublishWindow::build() {
+  if (busy()) return;  // one action at a time
   const QString uuid = selected_release();
   if (uuid.isEmpty()) {
     say(tr("Select a release first."));
@@ -490,7 +539,7 @@ void PublishWindow::build() {
   progress_->setRange(0, static_cast<int>(build_stages().size()));
   progress_->setValue(0);
   say(tr("Building %1…").arg(name));
-  ++jobs_;
+  begin_job();
   QPointer<PublishWindow> guard(this);
   auto reporter = std::make_shared<StageReporter>(&bridge_, [guard](const QString& s) {
     if (guard) guard->stage(s);
@@ -504,7 +553,7 @@ void PublishWindow::build() {
         return pb::build_release(store, source, *release, options, reporter.get());
       },
       [this, uuid](Result<pb::BuildResult> built) {
-        --jobs_;
+        end_job();
         if (!built) {
           progress_->setVisible(false);
           say(tr("The release was not built: %1").arg(qs(built.error().what)));
@@ -527,6 +576,7 @@ void PublishWindow::build() {
 }
 
 void PublishWindow::new_release() {
+  if (busy()) return;  // one action at a time
   const QStringList analyses = selection_ ? selection_() : QStringList();
   if (analyses.isEmpty()) {
     say(tr("Select analyses in the Data browser first: a release is made of them."));
@@ -535,7 +585,7 @@ void PublishWindow::new_release() {
   std::vector<ps::Uuid> uuids;
   for (const QString& a : analyses)
     if (auto u = ps::Uuid::parse(a.toStdString())) uuids.push_back(*u);
-  ++jobs_;
+  begin_job();
   bridge_.run<std::size_t>(
       this,
       [uuids](ps::IStore& store, const ps::Actor&) -> Result<std::size_t> {
@@ -544,7 +594,7 @@ void PublishWindow::new_release() {
         return embargoed->size();
       },
       [this, analyses](Result<std::size_t> embargoed) {
-        --jobs_;
+        end_job();
         if (!embargoed) {
           say(tr("The embargoes could not be read: %1").arg(qs(embargoed.error().what)));
           return;
@@ -561,12 +611,12 @@ void PublishWindow::new_release() {
         spec->software_version = "pychron-cpp";
 #endif
         const std::string name = spec->name;
-        ++jobs_;
+        begin_job();
         bridge_.run<pb::ReleaseCreated>(
             this,
             [spec = *spec](ps::IStore& store, const ps::Actor& actor) { return pb::create_release(store, actor, spec); },
             [this, name](Result<pb::ReleaseCreated> created) {
-              --jobs_;
+              end_job();
               if (!created) {
                 say(tr("The release was not made: %1").arg(qs(created.error().what)));
                 return;
@@ -578,15 +628,14 @@ void PublishWindow::new_release() {
                       .arg(created->members)
                       .arg(created->samples)
                       .arg(created->embargoed_analyses));
-              connect(this, &PublishWindow::refreshed, this, [this, uuid] { select_release(uuid); },
-                      Qt::SingleShotConnection);
+              pending_select_ = uuid;
               refresh();
             });
       });
 }
 
 void PublishWindow::refresh() {
-  ++jobs_;
+  begin_job();
   const QString keep = selected_release();
   bridge_.run<Listing>(
       this,
@@ -594,21 +643,18 @@ void PublishWindow::refresh() {
         auto rows = store.releases({});
         if (!rows) return fail(rows.error());
         Listing out;
-        for (auto& row : *rows) {
-          auto heads = store.bookmark_heads(row.bookmark);
-          if (!heads) return fail(heads.error());
-          std::set<ps::Uuid> members;
-          for (const auto& h : *heads)
-            if (h.kind != ps::Kind::RefValue && h.kind != ps::Kind::InterpretedAge) members.insert(h.subject);
-          out.releases.push_back({std::move(row), members.size()});
-        }
+        // Members are counted for the release shown (count_members), not here:
+        // a bookmark's heads are every head of every member.
+        for (auto& row : *rows) out.releases.push_back({std::move(row), 0});
         auto embargoes = pb::list_embargoes(store, true, ps::UtcTime::now());
         if (!embargoes) return fail(embargoes.error());
         out.embargoes = std::move(*embargoes);
         return out;
       },
       [this, keep](Result<Listing> listing) {
-        --jobs_;
+        end_job();
+        const QString chosen = pending_select_.isEmpty() ? keep : pending_select_;
+        pending_select_.clear();
         if (!listing) {
           say(tr("The releases could not be read: %1").arg(qs(listing.error().what)));
           return;
@@ -620,13 +666,15 @@ void PublishWindow::refresh() {
           items << new QStandardItem(qs(r.name)) << new QStandardItem(QString::number(r.version))
                 << new QStandardItem(qs(std::string(ps::to_string(r.state))))
                 << new QStandardItem(qs(std::string(ps::to_string(r.visibility))))
-                << new QStandardItem(QString::number(line.members)) << new QStandardItem(qs(r.doi.value_or("")))
+                << new QStandardItem(members_.contains(qs(r.uuid.str())) ? QString::number(members_.value(qs(r.uuid.str())))
+                                                                          : QString())
+                << new QStandardItem(qs(r.doi.value_or("")))
                 << new QStandardItem(qs(r.created.iso()).left(10));
           items[Name]->setData(qs(r.uuid.str()), Qt::UserRole);
           items[Name]->setToolTip(qs(r.title));
           model_->appendRow(items);
         }
-        if (!keep.isEmpty()) select_release(keep);
+        if (!chosen.isEmpty()) select_release(chosen);
         embargo_model_->removeRows(0, embargo_model_->rowCount());
         for (const auto& e : listing->embargoes) {
           QList<QStandardItem*> items;

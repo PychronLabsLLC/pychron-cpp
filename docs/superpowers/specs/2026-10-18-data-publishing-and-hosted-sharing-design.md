@@ -652,6 +652,14 @@ As built in phase 4 (plan `docs/superpowers/plans/2026-10-19-data-publishing-pha
   destroyed first, then bridge joins its worker, then source. Results and
   build stages return queued to the GUI thread; none reaches a closed window.
   Nothing of `libs/publish` touches Qt.
+- Known limits (accepted): first View > Publish… opens the store and the
+  source on the GUI thread (as Fit > Flux… does); quitting while a build
+  or verify runs waits for it (the bridge drains its jobs; `build_release`
+  has no cancel). One action at a time: action buttons wait while a job of
+  the window runs. Members counted only for the release shown (a
+  bookmark's heads are every head of every member; not per row of the
+  listing). Verify refuses a directory built from another release.
+  Embargo dates are 00:00 UTC of the day chosen, as `elctl`.
 - Checks shared with `elctl`: `libs/publish` `workflow.hpp`:
   `publish_built(store, actor, release, dir, make_public)` (refuses private
   build made public, directory not matching manifest, manifest of another

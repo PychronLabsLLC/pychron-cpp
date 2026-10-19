@@ -338,8 +338,6 @@ int verify(const std::vector<std::string>& args, Io io) {
   }
   if (bad) return usage(io, bad->what);
   if (dir.empty()) return usage(io, "verify <dir> [--db <url>]");
-  auto files = pb::verify_files(dir);
-  if (!files) return fatal(io, files.error());
   bool ok = true;
   const auto report = [&](const pb::VerifyReport& r, const char* against) {
     for (const auto& p : r.missing) io.err << against << ": missing " << p << '\n';
@@ -348,18 +346,28 @@ int verify(const std::vector<std::string>& args, Io io) {
     if (r.reduction_version_differs) io.err << against << ": " << *r.reduction_version_differs << '\n';
     if (!r.ok()) ok = false;
   };
-  report(*files, "files");
-  if (!db.empty()) {
+  // With --db the files are checked inside verify_against_store: hashed once.
+  pb::VerifyReport files;
+  if (db.empty()) {
+    auto checked = pb::verify_files(dir);
+    if (!checked) return fatal(io, checked.error());
+    files = *checked;
+    report(files, "files");
+  } else {
+    auto manifest = pb::read_manifest(dir);  // before the store: a directory without one says so first
+    if (!manifest) return fatal(io, manifest.error());
     auto opened = open_store_as_publisher(db);
     if (!opened) return fatal(io, opened.error());
     auto source = open_source(db);
     if (!source) return fatal(io, source.error());
     auto against = pb::verify_against_store(*opened->store, **source, dir, db);
     if (!against) return fatal(io, against.error());
+    files = against->files;
+    report(files, "files");
     report(against->rebuild, "rebuild");
   }
   if (!ok) return kFailed;
-  io.out << "ok: " << files->missing.size() + files->changed.size() + files->extra.size() << " differences in " << dir
+  io.out << "ok: " << files.missing.size() + files.changed.size() + files.extra.size() << " differences in " << dir
          << (db.empty() ? "" : ", and the rebuild agrees") << '\n';
   return kOk;
 }
@@ -385,10 +393,18 @@ int publish(const std::vector<std::string>& args, Io io) {
   if (c.db.empty()) return usage(io, "--db <url> is required");
   if (c.release.empty()) return usage(io, "--release <name|uuid> is required");
   if (manifest_path.empty()) return usage(io, "--manifest <dir>/manifest.json is required");
+  // The manifest is read, and a private build refused as public, before the
+  // store is opened (as before publish_built: a refusal writes nothing).
+  if (fs::path(manifest_path).filename() != pb::kManifestFile)
+    return usage(io, "--manifest names a release directory's " + std::string(pb::kManifestFile));
+  const fs::path dir = fs::path(manifest_path).parent_path();
+  auto manifest = pb::read_manifest(dir);
+  if (!manifest) return fatal(io, manifest.error());
+  if (make_public && manifest->build.private_build)
+    return fatal(io, "this is a private build (it holds embargoed rows): it cannot be published as public");
   auto opened = open_store_as_publisher(c.db);
   if (!opened) return fatal(io, opened.error());
-  auto row = pb::publish_built(*opened->store, opened->actor, c.release, fs::path(manifest_path).parent_path(),
-                               make_public);
+  auto row = pb::publish_built(*opened->store, opened->actor, c.release, dir, make_public);
   if (!row) return fatal(io, row.error());
   io.out << "published " << row->name << " v" << row->version << (make_public ? " (public)" : " (private)") << '\n';
   return kOk;

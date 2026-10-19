@@ -142,7 +142,9 @@ class TestPublishWindow : public QObject {
     QCOMPARE(cell(*o.window, 0, PublishWindow::Version), QStringLiteral("1"));
     QCOMPARE(cell(*o.window, 0, PublishWindow::State), QStringLiteral("draft"));
     QCOMPARE(cell(*o.window, 0, PublishWindow::Visibility), QStringLiteral("private"));
-    QCOMPARE(cell(*o.window, 0, PublishWindow::Members), QStringLiteral("3"));
+    // Members are counted for the release shown.
+    o.window->releases()->setCurrentIndex(o.window->releases()->model()->index(0, 0));
+    QTRY_COMPARE_WITH_TIMEOUT(cell(*o.window, 0, PublishWindow::Members), QStringLiteral("3"), kWaitMs);
   }
 
   void theViewMenuOpensIt() {
@@ -437,6 +439,41 @@ class TestPublishWindow : public QObject {
     o.window->new_release();
     QTRY_VERIFY_WITH_TIMEOUT(asked, kWaitMs);
     QCOMPARE(embargoed, std::size_t{2});
+  }
+  void verifyRefusesAnotherReleasesDirectory() {
+    Open o = open();
+    QString dir = built(o, QStringLiteral("out-other"));
+    QVERIFY(!dir.isEmpty());
+    create("s");
+    o.window->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    auto other = pb::find_release(*store_, "s");
+    QVERIFY(other.has_value());
+    o.window->select_release(QString::fromStdString(other->uuid.str()));
+    o.window->set_ask_directory([dir](const QString&) { return dir; });
+    o.window->verify();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY2(o.window->status()->text().contains(QStringLiteral("not of the release chosen")),
+             qPrintable(o.window->status()->text()));
+  }
+
+  void actionsWaitForARunningJob() {
+    Open o = open();
+    QVERIFY(!made(o).isEmpty());
+    QVERIFY(o.window->publish_button()->isEnabled());
+    const QString out = dir_.filePath(QStringLiteral("out-busy"));
+    int asked = 0;
+    o.window->set_ask_build([&](const QString&) -> std::optional<PublishWindow::BuildRequest> {
+      ++asked;
+      return PublishWindow::BuildRequest{out.toStdString(), false, false};
+    });
+    o.window->build();
+    QVERIFY(o.window->busy());
+    QVERIFY(!o.window->publish_button()->isEnabled());
+    o.window->build();  // a second click while the first runs does nothing
+    QCOMPARE(asked, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY(o.window->publish_button()->isEnabled());
   }
 };
 

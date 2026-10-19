@@ -164,6 +164,16 @@ TEST_P(ElctlPublishTest, PublishRequiresABuildOfTheSamePins) {
   EXPECT_EQ(*(*row)->manifest_sha256, sha256(std::string_view(slurp(out_ / "b-v1" / "manifest.json"))));
 }
 
+TEST_P(ElctlPublishTest, PublishWantsTheDirectorysManifestJson) {
+  ASSERT_EQ(run(create_args()).code, elctl::kOk);
+  ASSERT_EQ(run({"build", "--db", db_->url(), "--release", "r", "--out", out_.string()}).code, elctl::kOk);
+  const fs::path other = out_ / "r-v1" / "copy.json";
+  fs::copy_file(out_ / "r-v1" / "manifest.json", other);
+  const Outcome p = run({"publish", "--db", db_->url(), "--release", "r", "--manifest", other.string()});
+  EXPECT_EQ(p.code, elctl::kUsage) << p.err;
+  EXPECT_NE(p.err.find("manifest.json"), std::string::npos) << p.err;
+}
+
 TEST_P(ElctlPublishTest, PublishKeepsPrivateUnlessPublicFlag) {
   ASSERT_EQ(run(create_args("a")).code, elctl::kOk);
   ASSERT_EQ(run(create_args("b")).code, elctl::kOk);

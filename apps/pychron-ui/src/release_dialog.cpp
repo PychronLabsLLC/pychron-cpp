@@ -62,7 +62,7 @@ std::optional<pb::ReleaseSpec> ask_release(QWidget* parent, std::size_t analyses
   auto* publisher = new QLineEdit(&dialog);
   auto* tags = new QLineEdit(&dialog);
   tags->setPlaceholderText(QObject::tr("kept tags, comma separated; empty: every tag but invalid"));
-  auto* embargo_on = new QCheckBox(QObject::tr("Under embargo until"), &dialog);
+  auto* embargo_on = new QCheckBox(QObject::tr("Under embargo until (00:00 UTC)"), &dialog);
   auto* embargo = new QDateEdit(QDate::currentDate().addYears(1), &dialog);
   embargo->setCalendarPopup(true);
   embargo->setEnabled(false);
@@ -86,8 +86,21 @@ std::optional<pb::ReleaseSpec> ask_release(QWidget* parent, std::size_t analyses
   form->addRow(QObject::tr("Supersedes"), supersedes);
   layout->addLayout(form);
 
+  auto* problem = new QLabel(&dialog);
+  problem->setWordWrap(true);
+  layout->addWidget(problem);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  // What the store would refuse is said here, so nothing typed is lost.
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+    bool author = false;
+    for (int r = 0; r < authors->rowCount(); ++r)
+      if (authors->item(r, 0) && !authors->item(r, 0)->text().trimmed().isEmpty()) author = true;
+    if (name->text().trimmed().isEmpty()) problem->setText(QObject::tr("A release needs a name."));
+    else if (title->text().trimmed().isEmpty()) problem->setText(QObject::tr("A release needs a title."));
+    else if (!author) problem->setText(QObject::tr("A release needs at least one author."));
+    else if (licence->currentText().trimmed().isEmpty()) problem->setText(QObject::tr("A release needs a licence."));
+    else dialog.accept();
+  });
   QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   layout->addWidget(buttons);
   if (dialog.exec() != QDialog::Accepted) return std::nullopt;

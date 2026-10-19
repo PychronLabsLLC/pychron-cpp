@@ -32,7 +32,9 @@ Result<ps::ReleaseRow> publish_built(ps::IStore& store, const ps::Actor& actor, 
   auto files = verify_files(dir);
   if (!files) return fail(files.error());
   if (!files->ok())
-    return fail(ErrorKind::Config, "the directory does not match its manifest (verify says what differs)");
+    return fail(ErrorKind::Config,
+                "the directory does not match its manifest (elctl publish verify, or Verify in the Publish window, "
+                "says what differs)");
   auto row = find_release(store, release);
   if (!row) return fail(row.error());
   if (manifest->release.uuid != row->uuid || manifest->pins.bookmark != row->bookmark)
@@ -55,13 +57,16 @@ Result<ps::ReleaseRow> publish_built(ps::IStore& store, const ps::Actor& actor, 
 }
 
 Result<StoreVerify> verify_against_store(ps::IStore& store, processing::StoreSource& source, const fs::path& dir,
-                                         const std::string& store_url) {
+                                         const std::string& store_url, std::optional<Uuid> expected) {
   StoreVerify out;
+  auto manifest = read_manifest(dir);
+  if (!manifest) return fail(manifest.error());
+  if (expected && manifest->release.uuid != *expected)
+    return fail(ErrorKind::Config, "this directory is a build of " + manifest->release.name + " v" +
+                                       std::to_string(manifest->release.version) + ", not of the release chosen");
   auto files = verify_files(dir);
   if (!files) return fail(files.error());
   out.files = *files;
-  auto manifest = read_manifest(dir);
-  if (!manifest) return fail(manifest.error());
   const fs::path scratch = fs::temp_directory_path() / ("pychron_verify_" + std::to_string(std::random_device{}()) +
                                                         "_" + std::to_string(std::random_device{}()));
   std::error_code ec;

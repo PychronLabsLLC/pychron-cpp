@@ -5,12 +5,14 @@
 // verifying one against a rebuild from the store.
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #include "pychron/core/error.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/manifest.hpp"
+#include "pychron/publish/release.hpp"
 
 namespace pychron::publish {
 
@@ -33,7 +35,10 @@ struct StoreVerify {
 // verify_files, then a rebuild of the manifest's release (its private flag,
 // figures when the directory has them) into a scratch directory under the
 // system's temporary directory, removed after, compared with verify_rebuild.
+// With `expected`, a directory built from another release is refused
+// (Config, naming the release it was built from).
 Result<StoreVerify> verify_against_store(persistence::IStore& store, processing::StoreSource& source,
-                                         const std::filesystem::path& dir, const std::string& store_url);
+                                         const std::filesystem::path& dir, const std::string& store_url,
+                                         std::optional<Uuid> expected = std::nullopt);
 
 }  // namespace pychron::publish
