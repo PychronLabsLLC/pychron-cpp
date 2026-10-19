@@ -314,6 +314,33 @@ end = "2026-01-01T10:00:00Z"
   EXPECT_FALSE(src.load("missing"));
 }
 
+
+// Each isotope carries the optics of the state its signal was measured
+// under (measurement plan v2 spec 6.1): what a same-run IC factor keeps.
+TEST(RecordSource, V3IsotopesCarryTheirStatesOptics) {
+  auto r = record("u-op", "ic", 1, "", "detector_ic", "2026-01-01T00:00:00Z");
+  r.provenance.schema_version = rec::kRecordSchemaVersion;
+  r.results.intercepts.clear();
+  r.data.series.clear();
+  rec::GasRec gas;
+  gas.name = "ar";
+  gas.states = {{{}, 1.0, "ar_config_a", ""}, {{}, 1.0, "ar_config_b", ""}};
+  r.data.gases = {gas};
+  auto add = [&](const char* det, int state, float v) {
+    r.data.series.push_back({"Ar40", det, "signal", {{0.f, 1.f}, {v, v}, {}}, "ar", 0, state, state});
+    rec::InterceptResult ir;
+    ir.intercept.value = v;
+    r.results.intercepts[std::string("Ar40@") + det] = ir;
+  };
+  add("H1", 0, 100.f);
+  add("AX", 1, 98.f);
+  const auto a = pp::analysis_from_record(r);
+  ASSERT_NE(a.find_isotope("H1:Ar40"), nullptr);
+  EXPECT_EQ(a.find_isotope("H1:Ar40")->optics, "ar_config_a");
+  ASSERT_NE(a.find_isotope("AX:Ar40"), nullptr);
+  EXPECT_EQ(a.find_isotope("AX:Ar40")->optics, "ar_config_b");
+}
+
 }  // namespace
 
 // A v3 record says which baseline each signal was corrected with: the

@@ -423,7 +423,15 @@ review; plan "Decided here": only new records are v3).
 
 - An intercept for one label on several detectors feeds the IC-factor
   machinery directly: `reference_fit.hpp` gains a same-run source, and the
-  IC factor is stored with the `optics` it was measured under.
+  IC factor is stored with the `optics` it was measured under. As built
+  (Task 30): `same_run_references(analysis, label, reference_detector)`, one
+  `ReferencePoint` per other detector, value reference / detector of
+  baseline-corrected intercepts, relative errors in quadrature, carrying
+  `detector` and `optics`; `IsotopeData::optics` filled from v3 record's
+  state of first signal series (`record_source`). Not built: IC-factor
+  figure taking same-run points as source, and stored IC factor row keeping
+  optics name: store's `icfactor` rows have no optics column, so that needs
+  migration (owner's call, `libs/persistence/AGENTS.md`).
 - With several baselines per detector the reduction picks by rule: the
   baseline position whose `at` matches, else the nearest in time; when two
   baselines bracket the signal and neither is decisive, their average

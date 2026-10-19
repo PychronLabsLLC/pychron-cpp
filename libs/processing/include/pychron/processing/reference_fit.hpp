@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "pychron/core/error.hpp"
@@ -69,11 +70,30 @@ std::string_view to_string(ReferenceErrorKind kind) noexcept;  // "SEM", "SD", "
 std::optional<ReferenceErrorKind> parse_reference_error(std::string_view text) noexcept;
 
 struct ReferencePoint {
+  ReferencePoint() = default;
+  ReferencePoint(double t_, Value value_, std::string uuid_, std::string runid_, bool excluded_ = false,
+                 std::string detector_ = {}, std::string optics_ = {})
+      : t(t_), value(value_), uuid(std::move(uuid_)), runid(std::move(runid_)), excluded(excluded_),
+        detector(std::move(detector_)), optics(std::move(optics_)) {}
+
   double t = 0.0;  // UTC epoch seconds
   Value value;
   std::string uuid, runid;
   bool excluded = false;  // left out of the fit
+  // Same-run IC factors: the detector the factor is for and the optics
+  // preset its series was measured under.
+  std::string detector, optics;
 };
+
+// IC factors from one run (measurement plan v2, worked plans 7.3 and 7.7):
+// for `label` measured on several detectors, one point per detector but
+// `reference_detector`, its value reference / detector of the
+// baseline-corrected intercepts (errors in quadrature), at the run's time,
+// carrying the detector and the optics of the state its series was measured
+// under. Empty when the reference detector did not measure the label; a
+// detector whose corrected intercept is zero or not a number gives none.
+std::vector<ReferencePoint> same_run_references(const Analysis& analysis, std::string_view label,
+                                                std::string_view reference_detector);
 
 // A fit through the included reference points, evaluated at any time.
 class ReferenceModel {

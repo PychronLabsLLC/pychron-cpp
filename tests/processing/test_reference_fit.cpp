@@ -491,5 +491,63 @@ TEST(ReferenceFigure, APresetSavedBeforeTheStyleFieldsStillLoads) {
   }
 }
 
+
+// Measurement plan v2, worked plans 7.3 and 7.7: one label measured on
+// several detectors in one run gives that run's IC factors.
+Analysis two_detector_run() {
+  Analysis a;
+  a.uuid = "u-ic";
+  a.runid = "ic-01";
+  a.timestamp = 1000;
+  IsotopeData h1;
+  h1.key = "H1:Ar40";
+  h1.isotope = "Ar40";
+  h1.detector = "H1";
+  h1.intercept = {101, 0.3};
+  h1.baseline = {1, 0.4};
+  h1.optics = "ar_config_a";
+  IsotopeData ax = h1;
+  ax.key = "AX:Ar40";
+  ax.detector = "AX";
+  ax.intercept = {100, 0.6};
+  ax.baseline = {2, 0.8};
+  ax.optics = "ar_config_b";
+  IsotopeData ar36;
+  ar36.key = "Ar36";
+  ar36.isotope = "Ar36";
+  ar36.detector = "CDD";
+  ar36.intercept = {1, 0.01};
+  a.isotopes = {h1, ax, ar36};
+  return a;
+}
+
+TEST(ReferenceFit, SameRunIcFactorFromTwoDetectors) {
+  const auto pts = same_run_references(two_detector_run(), "Ar40", "H1");
+  ASSERT_EQ(pts.size(), 1u);
+  const auto& p = pts.front();
+  EXPECT_EQ(p.detector, "AX");
+  EXPECT_DOUBLE_EQ(p.value.value, 100.0 / 98.0);
+  // Corrected H1 100 +- 0.5, AX 98 +- 1.0; relative errors add in quadrature.
+  EXPECT_NEAR(p.value.error, 100.0 / 98.0 * std::hypot(0.5 / 100.0, 1.0 / 98.0), 1e-12);
+  EXPECT_DOUBLE_EQ(p.t, 1000);
+  EXPECT_EQ(p.uuid, "u-ic");
+  EXPECT_EQ(p.runid, "ic-01");
+  EXPECT_FALSE(p.excluded);
+
+  EXPECT_TRUE(same_run_references(two_detector_run(), "Ar40", "L2").empty());  // reference not measured
+  EXPECT_TRUE(same_run_references(two_detector_run(), "Ar36", "CDD").empty());  // one detector only
+}
+
+TEST(ReferenceFit, SameRunIcFactorKeepsOptics) {
+  const auto pts = same_run_references(two_detector_run(), "Ar40", "H1");
+  ASSERT_EQ(pts.size(), 1u);
+  EXPECT_EQ(pts.front().optics, "ar_config_b");  // the state the AX series was measured under
+
+  // A model through such points keeps them, optics and all.
+  auto m = ReferenceModel::make(pts, ReferenceFitKind::Average, ReferenceErrorKind::Sem);
+  ASSERT_TRUE(m) << m.error().what;
+  EXPECT_EQ(m->included().front().optics, "ar_config_b");
+}
+
 }  // namespace
 }  // namespace pychron::processing

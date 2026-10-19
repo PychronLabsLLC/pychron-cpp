@@ -751,6 +751,29 @@ std::vector<std::string> default_reference_types(ReferenceFitTarget target) {
   return {"blank_unknown", "blank_air", "blank_cocktail", "blank"};
 }
 
+std::vector<ReferencePoint> same_run_references(const Analysis& analysis, std::string_view label,
+                                                std::string_view reference_detector) {
+  auto corrected = [](const IsotopeData& d) {
+    return Value{d.intercept.value - d.baseline.value, std::hypot(d.intercept.error, d.baseline.error)};
+  };
+  const auto is_label = [&](const IsotopeData& d) { return d.isotope == label; };
+  const auto ref = std::ranges::find_if(analysis.isotopes, [&](const IsotopeData& d) {
+    return is_label(d) && d.detector == reference_detector;
+  });
+  if (ref == analysis.isotopes.end()) return {};
+  const Value r = corrected(*ref);
+  std::vector<ReferencePoint> out;
+  for (const auto& d : analysis.isotopes) {
+    if (!is_label(d) || d.detector == reference_detector) continue;
+    const Value c = corrected(d);
+    if (!r.known() || !c.known() || c.value == 0.0 || r.value == 0.0) continue;
+    const double f = r.value / c.value;
+    const double e = std::abs(f) * std::hypot(r.error / r.value, c.error / c.value);
+    out.emplace_back(analysis.timestamp, Value{f, e}, analysis.uuid, analysis.runid, false, d.detector, d.optics);
+  }
+  return out;
+}
+
 Result<std::vector<std::string>> find_references(IAnalysisSource& source, const std::vector<AnalysisPtr>& unknowns,
                                                  const ReferenceQuery& query) {
   if (unknowns.empty()) return std::vector<std::string>{};

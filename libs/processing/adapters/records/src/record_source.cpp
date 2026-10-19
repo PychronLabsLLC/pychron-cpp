@@ -39,6 +39,18 @@ Result<std::string> read_text(const fs::path& p) {
 
 Value v(double value, double error) { return Value{value, error}; }
 
+// The optics of the state the first signal of `label` on `detector` was
+// measured under (v3); empty for a v2 record, which has no states.
+std::string signal_optics(const rec::Data& data, const std::string& label, const std::string& detector) {
+  const auto s = std::ranges::find_if(data.series, [&](const rec::DataSeries& x) {
+    return x.kind == "signal" && x.iso == label && x.det == detector;
+  });
+  if (s == data.series.end()) return {};
+  const auto g = std::ranges::find_if(data.gases, [&](const rec::GasRec& x) { return x.name == s->gas; });
+  if (g == data.gases.end() || s->state < 0 || static_cast<std::size_t>(s->state) >= g->states.size()) return {};
+  return g->states[static_cast<std::size_t>(s->state)].optics;
+}
+
 }  // namespace
 
 std::optional<double> parse_utc(std::string_view t) {
@@ -145,6 +157,7 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
     }
     if (auto ic = r.results.icfactors.find(d.detector); ic != r.results.icfactors.end()) d.ic_factor = v(ic->second, 0.0);
     d.blank_source = r.results.blanks_ref;
+    d.optics = signal_optics(r.data, d.isotope, d.detector);
     a.isotopes.push_back(std::move(d));
   }
   // Natural isotope order: Ar40 first.

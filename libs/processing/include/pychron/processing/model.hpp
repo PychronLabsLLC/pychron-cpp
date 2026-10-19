@@ -48,6 +48,10 @@ struct IsotopeData {
   bool baseline_reviewed = false;   // the stored baseline of this detector was marked reviewed
   bool blank_reviewed = false;  // the stored blank was marked reviewed
   bool ic_reviewed = false;     // the stored IC factor of this detector was marked reviewed
+  // The optics preset of the spectrometer state its signal was measured
+  // under (a v3 record's; empty when none was applied or the source does
+  // not say).
+  std::string optics;
 };
 
 struct ExtractionInfo {

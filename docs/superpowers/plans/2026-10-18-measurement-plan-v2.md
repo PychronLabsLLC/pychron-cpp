@@ -731,11 +731,13 @@ Read `libs/processing/AGENTS.md` first.
 
 **Interfaces:**
 - Produces: `std::vector<ReferencePoint> same_run_references(const Analysis& analysis, std::string_view label, std::string_view reference_detector);` — for a label measured on several detectors in one run (worked plan 7.3, 7.7), one IC-factor point per non-reference detector: ratio of baseline-corrected intercepts, error propagated; each point carries the `optics` of the state its series was measured under. The IC-factor path (`ReferenceFitTarget::IcFactors`) accepts these as a source beside other runs; the stored IC factor keeps its optics name.
-- [ ] **Step 1: Write failing tests:** `ReferenceFit.SameRunIcFactorFromTwoDetectors` (Ar40 on H1 = 100, on AX = 98 after baselines, reference H1 → factor 100/98 on AX); `ReferenceFit.SameRunIcFactorKeepsOptics`.
-- [ ] **Step 2: Run** `pychron_processing_tests --gtest_filter='ReferenceFit.SameRun*'` → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(processing): IC factor from one run's intercepts`.
+- [x] **Step 1: Write failing tests:** `ReferenceFit.SameRunIcFactorFromTwoDetectors` (Ar40 on H1 = 100, on AX = 98 after baselines, reference H1 → factor 100/98 on AX); `ReferenceFit.SameRunIcFactorKeepsOptics`.
+- [x] **Step 2: Run** `pychron_processing_tests --gtest_filter='ReferenceFit.SameRun*'` → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** → PASS.
+- [x] **Step 5: Commit** `feat(processing): IC factor from one run's intercepts`.
+
+Done: `same_run_references` in `reference_fit.{hpp,cpp}`; `ReferencePoint` gains `detector`, `optics` (and a constructor, so old brace inits stay whole); `IsotopeData::optics` filled by `record_source` from the v3 state of the label's signal (`RecordSource.V3IsotopesCarryTheirStatesOptics`). Left out: the IC-factor figure using same-run points as a source and storing the optics name with the IC factor, which needs a store column and so a migration (spec 6.2; owner's call).
 
 ### Task 31: Qtegra driver: optics, source output, collector mode
 
