@@ -520,6 +520,44 @@ TEST_F(RunTest, TheLibrarySaysWhichPlansHoldTheExtractionLine) {
   EXPECT_FALSE(plans_.holds_extraction_line("nope", {}));
 }
 
+// The line a staged plan keeps goes back however the run ends: a run
+// stopped between its extraction and its measurement, one whose
+// measurement cannot start.
+TEST_F(RunTest, AStagedRunReleasesTheLineHoweverItEnds) {
+  std::vector<std::string> calls;
+  RunHooks hooks;
+  hooks.acquire_extraction = [&] {
+    calls.emplace_back("+extraction");
+    return true;
+  };
+  hooks.release_extraction = [&] { calls.emplace_back("-extraction"); };
+  hooks.acquire_spectrometer = [&] {
+    calls.emplace_back("+spectrometer");
+    return true;
+  };
+  hooks.release_spectrometer = [&] { calls.emplace_back("-spectrometer"); };
+  // Aborted as the extraction script ends.
+  host_.bodies["extract"] = [this](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    control_.abort();
+    return {};
+  };
+  auto aborted = go(unknown_run("12345", "staged"), hooks);
+  EXPECT_EQ(aborted.state, RunState::Aborted);
+  EXPECT_EQ(calls, (std::vector<std::string>{"+extraction", "-extraction"}));
+
+  // No spectrometer to measure on.
+  calls.clear();
+  host_.bodies.erase("extract");
+  RunControl fresh;
+  auto services_without = services();
+  services_without.spectrometer = nullptr;
+  AutomatedRun run(unknown_run("12346", "staged"), queue_, services_without, hooks);
+  auto failed = run.execute(fresh);
+  EXPECT_EQ(failed.state, RunState::Failed);
+  EXPECT_EQ(std::count(calls.begin(), calls.end(), "-extraction"), 1) << ::testing::PrintToString(calls);
+  EXPECT_EQ(calls.back(), "-extraction");
+}
+
 TEST_F(RunTest, PrepareScriptsRunWithPlanVariables) {
   auto spec = unknown_run("12345", "staged");
   spec.extraction.cryo_temp = 20.0;

@@ -123,6 +123,14 @@ Run::Run(RunSpec spec, const QueueSpec& queue, RunServices services, RunHooks ho
 
 RunResult Run::execute(RunControl& control) {
   auto& token = control.token();
+  // A run executed again starts with nothing of the last time.
+  engine_.reset();
+  post_eq_done_ = false;
+  phase_done_ = false;
+  phase_error_.reset();
+  phase_token_.reset();
+  spectrometer_held_ = false;
+  extraction_held_ = false;
   auto fail_with = [&](RunEvent e, const Error& error) {
     result_.error = error;
     advance(e, error.what);
@@ -198,6 +206,13 @@ RunResult Run::execute(RunControl& control) {
       }
     }
   }
+  // Whatever the run still holds goes back, however it ended: the
+  // spectrometer, then the line a staged plan kept (one place, spec 11.4).
+  if (spectrometer_held_) {
+    spectrometer_held_ = false;
+    if (hooks_.release_spectrometer) hooks_.release_spectrometer();
+  }
+  release_held_extraction();
   result_.state = sm_.state();
   result_.history = sm_.history();
   return result_;
