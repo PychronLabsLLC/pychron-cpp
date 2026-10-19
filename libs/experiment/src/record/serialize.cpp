@@ -110,6 +110,11 @@ toml::table gas_table(const GasRec& g) {
     p.insert_or_assign("finished", g.prepare->finished);
     t.insert_or_assign("prepare", std::move(p));
   }
+  if (!g.interferences.empty()) {
+    toml::array pairs;
+    for (const auto& [monitor, corrects] : g.interferences) pairs.push_back(toml::array{monitor, corrects});
+    t.insert_or_assign("interferences", std::move(pairs));
+  }
   if (g.pump_out) {
     toml::table p;
     p.insert_or_assign("valve", g.pump_out->valve);
@@ -733,6 +738,20 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
         p.str("started", rec.started);
         p.str("finished", rec.finished);
         g.prepare = std::move(rec);
+      }
+      if (const auto* ip = e.find("interferences")) {
+        const auto* pairs = ip->as_array();
+        if (pairs == nullptr) e.fail("interferences", "array of [monitor, corrected] pairs");
+        else
+          for (const auto& pr : *pairs) {
+            const auto* two = pr.as_array();
+            if (two == nullptr || two->size() != 2 || !two->get(0)->value<std::string>() ||
+                !two->get(1)->value<std::string>()) {
+              e.fail("interferences", "array of [monitor, corrected] pairs");
+              break;
+            }
+            g.interferences.emplace_back(*two->get(0)->value<std::string>(), *two->get(1)->value<std::string>());
+          }
       }
       if (e.find("pump_out")) {
         const auto p = e.sub("pump_out");

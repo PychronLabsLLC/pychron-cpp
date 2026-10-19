@@ -459,12 +459,14 @@ AnalysisRecord v3_record() {
   v3.add_series({"He4", "H1", "signal", {{0.f, 1.f}, {5.f, 4.f}, {}}, "He", 0, 0, 0});
   v3.add_series({"Ne20", "H1", "signal", {{10.f, 11.f}, {2.f, 2.5f}, {}}, "Ne", 1, 0, 1});
   v3.add_series({"Ne22", "AX", "signal", {{10.f, 11.f}, {0.5f, 0.6f}, {}}, "Ne", 1, 1, 0});
-  GasRec he{"He", 2.5, {{{{"CDD", 110.0}}, 1.0, "", ""}}, std::nullopt, PumpOutRec{"ion_pump", 120}};
+  GasRec he{"He", 2.5, {{{{"CDD", 110.0}}, 1.0, "", ""}}, std::nullopt, PumpOutRec{"ion_pump", 120},
+            {{"Ar40++", "Ne20"}, {"CO2++", "Ne22"}}};
   GasRec ne{"Ne", 9.75,
             {{{}, 1.0, "ne_optics", "ic_run"}, {{{"CDD", 2000.0}}, 2.0, "", ""}},
             PrepareRec{"cryo:release", {{"cryo_temp", "75"}, {"hold_s", "300"}}, "2026-09-30T12:01:00Z",
                        "2026-09-30T12:06:00Z"},
-            std::nullopt};
+            std::nullopt,
+            {}};
   v3.add_gas(he).add_gas(ne);
   InterceptResult ir;
   ir.intercept.value = 4.5;
@@ -526,4 +528,16 @@ TEST(AnalysisRecord, V3FixtureSha) {
     EXPECT_EQ(*back, rec) << name;
     EXPECT_EQ(json ? to_json(*back) : to_toml(*back), text) << name;
   }
+}
+
+// A state's optics and a gas's interferences go into the record and come back.
+TEST(AnalysisRecord, StateCarriesOptics) {
+  const auto rec = v3_record();
+  auto back = from_toml(to_toml(rec));
+  ASSERT_TRUE(back) << back.error().what;
+  EXPECT_EQ(back->data.gases[1].states[0].optics, "ne_optics");
+  EXPECT_EQ(back->data.gases[0].interferences,
+            (std::vector<std::pair<std::string, std::string>>{{"Ar40++", "Ne20"}, {"CO2++", "Ne22"}}));
+  EXPECT_TRUE(back->data.gases[1].interferences.empty());
+  EXPECT_NE(to_toml(rec).find("interferences"), std::string::npos);
 }

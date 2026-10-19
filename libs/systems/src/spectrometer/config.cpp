@@ -13,6 +13,7 @@ constexpr std::array kRoles{
     std::pair<std::string_view, Role>{"acquirer", Role::Acquirer},
     std::pair<std::string_view, Role>{"detector_control", Role::DetectorControl},
     std::pair<std::string_view, Role>{"beam_blank", Role::BeamBlank},
+    std::pair<std::string_view, Role>{"optics", Role::Optics},
 };
 
 constexpr std::array kAxes{

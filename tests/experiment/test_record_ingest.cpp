@@ -914,8 +914,8 @@ TEST(RecordIngest, MultiGasRecordStores) {
   b.add_series({"He4", "H1", "signal", {{1.f, 2.f}, {5.f, 5.f}, {}}, "He", 0, 0, 0});
   b.add_series({"Ne20", "CDD", "signal", {{1.f, 2.f}, {3.f, 3.f}, {}}, "Ne", 0, 0, 0});
   b.add_series({"Ne22", "CDD", "signal", {{1.f, 2.f}, {1.f, 1.f}, {}}, "Ne", 0, 1, 0});
-  b.add_gas({"He", 10.0, {{{}, 1.0, "", ""}}, std::nullopt, std::nullopt});
-  b.add_gas({"Ne", 50.0, {{{}, 2.0, "", ""}}, std::nullopt, std::nullopt});
+  b.add_gas({"He", 10.0, {{{}, 1.0, "", ""}}, std::nullopt, std::nullopt, {}});
+  b.add_gas({"Ne", 50.0, {{{}, 2.0, "", ""}}, std::nullopt, std::nullopt, {}});
   record::InterceptResult ir;
   ir.intercept.value = 5;
   ir.intercept.n_used = 2;
@@ -948,7 +948,7 @@ TEST(RecordIngest, PrepareRecordIsNotStored) {
   const auto plain = finalized(b);
   b.add_gas({"He", 10.0, {{{}, 1.0, "", ""}},
              record::PrepareRec{"cryo:release", {{"cryo_temp", "35"}}, "2026-10-10T12:31:00Z", "2026-10-10T12:36:00Z"},
-             record::PumpOutRec{"IP", 120}});
+             record::PumpOutRec{"IP", 120}, {}});
   const auto staged = finalized(b);
   auto rows = body_of(convert(staged));
   auto without = body_of(convert(plain));

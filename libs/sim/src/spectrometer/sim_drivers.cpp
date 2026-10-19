@@ -171,7 +171,7 @@ SimIntegrated::SimIntegrated(std::string name, std::shared_ptr<BeamModel> beam, 
 
 DriverSchema SimIntegrated::schema() {
   return {"",
-          "simulated integrated vendor box: all five spectrometer roles on one BeamModel",
+          "simulated integrated vendor box: every spectrometer role on one BeamModel, optics too",
           {kRoles,
            kBeam,
            {"channels", KeyType::StringArray, false, "acquirer channels; default H2 H1 AX L1 L2 CDD"},
@@ -308,6 +308,16 @@ Result<void> SimIntegrated::set_cdd_voltage(const ChannelId& channel, double vol
 
 Result<void> SimIntegrated::blank(bool on) {
   beam_->blank(on);
+  return observe(Result<void>{});
+}
+
+Result<void> SimIntegrated::apply_optics(const std::string& name, const spectrometer::OpticsParams& /*params*/) {
+  beam_->set_optics(name);
+  return observe(Result<void>{});
+}
+
+Result<void> SimIntegrated::set_source_output(bool on) {
+  beam_->set_source_output(on);
   return observe(Result<void>{});
 }
 

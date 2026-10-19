@@ -10,6 +10,7 @@
 
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -84,6 +85,19 @@ struct IDetectorControl {
 struct IBeamBlank {
   virtual ~IBeamBlank() = default;
   virtual Result<void> blank(bool on) = 0;
+};
+
+// An optics preset as the spectrometer config gives it (measurement plan v2
+// spec 3.6): each key and its value as text, in file order; what they mean
+// is the driver's.
+using OpticsParams = std::vector<std::pair<std::string, std::string>>;
+
+// Optics presets and the source's output (measurement plan v2 spec 5.3):
+// the role of a driver that declares "optics".
+struct IOpticsControl {
+  virtual ~IOpticsControl() = default;
+  virtual Result<void> apply_optics(const std::string& name, const OpticsParams& params) = 0;
+  virtual Result<void> set_source_output(bool on) = 0;
 };
 
 // "dac", "field", "mass".

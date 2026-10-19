@@ -55,6 +55,16 @@
         },
         "gases" : [
             {
+                "interferences" : [
+                    [
+                        "Ar40++",
+                        "Ne20"
+                    ],
+                    [
+                        "CO2++",
+                        "Ne22"
+                    ]
+                ],
                 "name" : "He",
                 "pump_out" : {
                     "time_s" : 120.0,
@@ -307,7 +317,7 @@
             "db:1"
         ],
         "schema_version" : 3,
-        "sha" : "ae8dc9b1e09d2b6f60459d9fff5d9f39e1b66ad2e9e8cedd2cecdf006ecf293f"
+        "sha" : "152f255aed676084c27cd8ab166220472d58cae6ec2136b34fee29e63aa5fa2f"
     },
     "results" : {
         "baseline_choices" : {

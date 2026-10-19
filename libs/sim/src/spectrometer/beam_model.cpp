@@ -218,6 +218,26 @@ bool BeamModel::blanked() const {
   return blank_;
 }
 
+void BeamModel::set_optics(std::string name) {
+  std::scoped_lock lock(mutex_);
+  optics_ = std::move(name);
+}
+
+std::string BeamModel::optics() const {
+  std::scoped_lock lock(mutex_);
+  return optics_;
+}
+
+void BeamModel::set_source_output(bool on) {
+  std::scoped_lock lock(mutex_);
+  source_on_ = on;
+}
+
+bool BeamModel::source_output() const {
+  std::scoped_lock lock(mutex_);
+  return source_on_;
+}
+
 bool BeamModel::overloaded(std::string_view det) const {
   std::scoped_lock lock(mutex_);
   const auto* d = find_locked(det);
@@ -271,7 +291,7 @@ double BeamModel::shape_locked(double magnet, double center) const {
 }
 
 double BeamModel::true_signal_locked(const BeamDetector& d, TimePoint t) const {
-  if (blank_ || d.protect) return 0.0;
+  if (blank_ || !source_on_ || d.protect) return 0.0;
   double sum = 0.0;
   if (settings_.gas_at) {
     // The provider answers for `t` itself: its rates are not applied.

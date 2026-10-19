@@ -44,12 +44,15 @@ struct Rig {
   std::optional<cfg::Limits> magnet_limits;  // replaces [magnet].limits when set
   bool af_demag = false;                     // enables [magnet].af_demag with a 0.5 swing
   bool log_sleeps = false;                   // facade waits also go to `log`, to show their order
+  IOpticsControl* optics = nullptr;          // the optics role, when bound
+  std::map<std::string, cfg::OpticsPreset> presets;  // [optics.*] added to the config
 
   cfg::SpectrometerData data() {
     auto d = cfg::load_spectrometer(kIntegrated);
     EXPECT_TRUE(d.has_value()) << (d ? "" : d.error().what);
     if (magnet_limits) d->config.magnet.limits = magnet_limits;
     if (af_demag) d->config.magnet.af_demag = cfg::AfDemag{true, 0.4, 0.4, 0.5, 0.5};
+    for (const auto& [name, preset] : presets) d->config.optics[name] = preset;
     return std::move(*d);
   }
 
@@ -64,6 +67,7 @@ struct Rig {
     roles.acquirers = {{"sim", &acquirer}};
     roles.detector_control = with_control ? &control : nullptr;
     roles.beam_blank = &blank;
+    roles.optics = optics;
     Spectrometer::Options options;
     options.sleep = [this](Duration dt) {
       sleeps.push_back(dt);
@@ -608,4 +612,50 @@ TEST_F(SpectrometerVirtual, AScanPollAndAMoveContendWithoutStallingTime) {
   EXPECT_EQ(snapshot.ts, start + 5s);
   EXPECT_EQ(clock.now(), start + 5s);
   EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
+}
+
+namespace {
+// Records what it is told, as a driver with the "optics" role would act on it.
+struct FakeOptics final : IOpticsControl {
+  std::vector<std::string> calls;
+  Result<void> apply_optics(const std::string& name, const OpticsParams& params) override {
+    std::string c = "optics " + name;
+    for (const auto& [k, v] : params) {
+      c += ' ';
+      c += k;
+      c += '=';
+      c += v;
+    }
+    calls.push_back(c);
+    return {};
+  }
+  Result<void> set_source_output(bool on) override {
+    calls.emplace_back(on ? "source on" : "source off");
+    return {};
+  }
+};
+}  // namespace
+
+// Measurement plan v2 spec 5.3: a preset is applied through the optics role;
+// without the role, or for a preset the config has not, it is refused.
+TEST(SpectrometerFacade, ApplyOpticsWithoutRoleIsRefused) {
+  Rig r;
+  r.presets["ar_config_a"] = cfg::OpticsPreset{{{"zoom", "2"}, {"deflector_a", "-880"}}};
+  r.build();
+  EXPECT_FALSE(r.spec->has_optics_control());
+  auto refused = r.spec->apply_optics("ar_config_a");
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(r.spec->set_source_output(false));
+
+  Rig with;
+  FakeOptics optics;
+  with.optics = &optics;
+  with.presets = r.presets;
+  with.build();
+  EXPECT_TRUE(with.spec->has_optics_control());
+  ASSERT_TRUE(with.spec->apply_optics("ar_config_a"));
+  EXPECT_FALSE(with.spec->apply_optics("nope"));
+  ASSERT_TRUE(with.spec->set_source_output(false));
+  EXPECT_EQ(optics.calls, (std::vector<std::string>{"optics ar_config_a zoom=2 deflector_a=-880", "source off"}));
 }

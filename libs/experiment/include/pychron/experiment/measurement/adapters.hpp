@@ -125,7 +125,8 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
   bool has_table(std::string_view name) const override;
   bool positions_by_dac() const override;
   bool positions_by_hv() const override;
-  bool has_source_output() const override { return false; }  // no driver controls it yet (phase 8)
+  // A driver declares the "optics" role: optics presets and source output.
+  bool has_source_output() const override { return optics_control_; }
 
  private:
   std::map<std::string, std::string, std::less<>> detectors_;  // name -> configured isotope
@@ -134,6 +135,8 @@ class SpectrometerCatalog final : public plan::ISpectrometerCatalog {
   std::set<std::string, std::less<>> tables_;
   bool by_dac_ = false;
   bool by_hv_ = false;
+  bool optics_control_ = false;
+  std::set<std::string, std::less<>> optics_;  // the config's presets
 };
 
 // Each detector's large-beam and mode timing, for EngineContext::timing.

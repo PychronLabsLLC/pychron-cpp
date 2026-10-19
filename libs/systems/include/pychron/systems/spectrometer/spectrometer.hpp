@@ -137,6 +137,7 @@ struct SpectrometerRoles {
   std::vector<std::pair<std::string, IIntensityAcquirer*>> acquirers;  // driver name -> acquirer
   IDetectorControl* detector_control = nullptr;
   IBeamBlank* beam_blank = nullptr;
+  IOpticsControl* optics = nullptr;  // the driver declaring "optics"; optional
 
   std::vector<std::unique_ptr<Transport>> transports;  // kept alive, destroyed last
   // One per transport but those of kind "link" ([transports.<name>.recovery]),
@@ -194,6 +195,7 @@ class Spectrometer {
   bool has_source() const noexcept { return roles_.source != nullptr; }
   bool has_detector_control() const noexcept { return roles_.detector_control != nullptr; }
   bool has_beam_blank() const noexcept { return roles_.beam_blank != nullptr; }
+  bool has_optics_control() const noexcept { return roles_.optics != nullptr; }
   // Its links, one per transport but those of kind "link" (spec 4.3).
   std::vector<Link*> links() const {
     std::vector<Link*> out;
@@ -331,6 +333,11 @@ class Spectrometer {
   // Blanks (or unblanks) the beam through the bound IBeamBlank; Config when
   // none is bound. A move that blanks on its own unblanks when it ends.
   Result<void> blank_beam(bool on);
+  // The config's [optics.<name>] preset through the bound optics control;
+  // Config error for a preset the config has not, or with no such control.
+  Result<void> apply_optics(const std::string& name);
+  // The source's output on or off (source_dark_phase); Config without control.
+  Result<void> set_source_output(bool on);
 
   // ---- source ----
   Result<void> set_hv(double volts);

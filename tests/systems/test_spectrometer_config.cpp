@@ -213,6 +213,29 @@ TEST(SpectrometerConfig, LargeBeamAndModeKeys) {
                        "detectors[0].large_beam_threshold", "must be > 0"));
 }
 
+// Measurement plan v2 spec 3.6: presets as text in file order, interference
+// relations, and the "optics" role.
+TEST(SpectrometerConfig, OpticsAndInterferences) {
+  const std::string toml = with("saturation = 4.9e6", "saturation = 4.9e6") +
+                           "\n[optics.ar_config_a]\nzoom = 2.5\nsubcup = \"IC\"\nalpha = true\n"
+                           "\n[optics.ar_config_b]\nzoom = 1\n"
+                           "\n[interferences]\n\"Ar40++\" = \"Ne20\"\n\"CO2++\" = \"Ne22\"\n";
+  auto r = parse(toml);
+  ASSERT_TRUE(r.ok()) << dump(r);
+  const auto& c = *r.config;
+  ASSERT_EQ(c.optics.size(), 2u);
+  EXPECT_EQ(c.optics.at("ar_config_a").params,
+            (std::vector<std::pair<std::string, std::string>>{{"zoom", "2.5"}, {"subcup", "IC"}, {"alpha", "true"}}));
+  EXPECT_EQ(c.optics.at("ar_config_b").params, (std::vector<std::pair<std::string, std::string>>{{"zoom", "1"}}));
+  ASSERT_EQ(c.interferences.size(), 2u);
+  EXPECT_EQ(c.interferences[0], (cfg::Interference{"Ar40++", "Ne20"}));
+  EXPECT_EQ(c.interferences[1], (cfg::Interference{"CO2++", "Ne22"}));
+  EXPECT_EQ(cfg::role_from_string("optics"), cfg::Role::Optics);
+  EXPECT_FALSE(parse(toml + "\n[interferences]\n").ok());  // a section once
+  const auto bad = parse(with("saturation = 4.9e6", "saturation = 4.9e6") + "\n[optics.x]\nzoom = [1, 2]\n");
+  EXPECT_TRUE(mentions(bad, "optics.x.zoom", "expected a string, number or boolean")) << dump(bad);
+}
+
 TEST(SpectrometerConfig, DriverKeepsExtraKeysAsOptions) {
   auto r = parse(with(R"(channels = ["H1", "CDD"])", "channels = [\"H1\", \"CDD\"]\nsample_hz = 100"));
   ASSERT_TRUE(r.ok()) << dump(r);

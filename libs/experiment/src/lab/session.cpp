@@ -76,6 +76,7 @@ struct LabSession::Services {
     if (lab.spectrometer) {
       s.detector_timing = measurement::detector_timing(lab.spectrometer->config);
       s.reference_detector = lab.spectrometer->config.system.reference_detector;
+      for (const auto& i : lab.spectrometer->config.interferences) s.interferences.emplace_back(i.monitor, i.corrects);
     }
     if (auto* spec = hw.spectrometer) {
       s.spectrometer_info = [spec] {

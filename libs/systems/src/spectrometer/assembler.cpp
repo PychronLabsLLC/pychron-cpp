@@ -86,6 +86,10 @@ Result<SpectrometerRoles> SpectrometerAssembler::bind(const cfg::SpectrometerCon
   }
   std::ranges::stable_partition(blankers, [&](const std::string& n) { return n == config.magnet.positioner; });
   if (!blankers.empty()) roles.beam_blank = bind_role<IBeamBlank>(devices, blankers.front(), "beam_blank", problems);
+  for (const auto& [name, dc] : config.drivers) {
+    if (dc.has_role(cfg::Role::Optics) && roles.optics == nullptr)
+      roles.optics = bind_role<IOpticsControl>(devices, name, "optics", problems);
+  }
 
   for (const auto& name : config.acquisition.acquirers) {
     auto* acquirer = bind_role<IIntensityAcquirer>(devices, name, "acquirer", problems);

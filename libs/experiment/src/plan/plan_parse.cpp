@@ -1253,15 +1253,15 @@ bool v1_placement(const Segment& s) {
 }
 
 // The position executor runs deflection, protect, inactive entries, every
-// `at` form, a position's integration and table (spec 5.2); optics wait for a
-// driver that applies them (phase 8). A sniff or whiff reads where the
-// magnet is, so its positions get none of the per-position settings yet.
+// `at` form, a position's integration, table and optics (spec 5.2). A sniff
+// or whiff reads where the magnet is, so its positions get none of the
+// per-position settings yet.
 void unbuilt_position(const Position& pos, const std::string& at, bool in_place, std::vector<std::string>& out) {
   const auto add = [&](const std::string& path, std::string_view feature) {
     out.push_back(path + ": " + std::string(feature));
   };
-  if (!pos.optics.empty()) add(at, "optics");
   if (!in_place) return;
+  if (!pos.optics.empty()) add(at, "optics");
   for (std::size_t k = 0; k < pos.collect.size(); ++k) {
     const auto& e = pos.collect[k];
     const auto where = join(join(at, "collect"), k);

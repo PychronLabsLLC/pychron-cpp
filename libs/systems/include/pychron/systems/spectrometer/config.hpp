@@ -21,9 +21,9 @@ using config::Located;
 using config::SourceLoc;
 
 // Role a driver can play (spec section 2.1).
-enum class Role { Positioner, Source, Acquirer, DetectorControl, BeamBlank };
+enum class Role { Positioner, Source, Acquirer, DetectorControl, BeamBlank, Optics };
 
-// "positioner", "source", "acquirer", "detector_control", "beam_blank".
+// "positioner", "source", "acquirer", "detector_control", "beam_blank", "optics".
 std::string_view to_string(Role role) noexcept;
 std::optional<Role> role_from_string(std::string_view name) noexcept;
 
@@ -174,6 +174,20 @@ struct DetectorConfig : Located {
   double mode_switch_s = 0;
 };
 
+// `[optics.<name>]` (measurement plan v2 spec 3.6): opaque to the plan;
+// each key and its value as text, in file order.
+struct OpticsPreset {
+  std::vector<std::pair<std::string, std::string>> params;
+  friend bool operator==(const OpticsPreset&, const OpticsPreset&) = default;
+};
+
+// `[interferences] "<monitor>" = "<corrected>"`: the monitor's signal
+// corrects the other's (Ar40++ on Ne20), reduction metadata (spec 6.2).
+struct Interference {
+  std::string monitor, corrects;
+  friend bool operator==(const Interference&, const Interference&) = default;
+};
+
 struct SpectrometerConfig {
   std::string source_file;
   SystemSection system;
@@ -184,6 +198,8 @@ struct SpectrometerConfig {
   AcquisitionSection acquisition;
   std::optional<DetectorControlSection> detector_control;
   std::vector<DetectorConfig> detectors;
+  std::map<std::string, OpticsPreset> optics;
+  std::vector<Interference> interferences;
 
   const DriverConfig* driver(const std::string& name) const;
   const DetectorConfig* detector(const std::string& name) const;

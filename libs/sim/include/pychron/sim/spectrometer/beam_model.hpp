@@ -168,6 +168,13 @@ class BeamModel {
   Result<void> protect(std::string_view det, bool on);
   void blank(bool on);
   bool blanked() const;
+  // The optics preset last applied (an optics control's), for tests to see;
+  // empty: none. It does not move or scale a peak.
+  void set_optics(std::string name);
+  std::string optics() const;
+  // The source's output: off, no detector sees gas (source_dark_phase).
+  void set_source_output(bool on);
+  bool source_output() const;
   bool overloaded(std::string_view det) const;
   Result<void> clear_overload(std::string_view det);
 
@@ -202,6 +209,8 @@ class BeamModel {
   double magnet_ = 0.0;
   double hv_ = 0.0;
   bool blank_ = false;
+  bool source_on_ = true;
+  std::string optics_;
 };
 
 // Process-wide named models so drivers built by DriverRegistry from separate

@@ -844,6 +844,20 @@ Result<void> Spectrometer::blank_beam(bool on) {
   return roles_.beam_blank->blank(on);
 }
 
+Result<void> Spectrometer::apply_optics(const std::string& name) {
+  std::scoped_lock lock(mutex_);
+  const auto it = config_.optics.find(name);
+  if (it == config_.optics.end()) return config_error("unknown optics '" + name + "'");
+  if (roles_.optics == nullptr) return config_error("optics: not supported by this spectrometer");
+  return roles_.optics->apply_optics(name, it->second.params);
+}
+
+Result<void> Spectrometer::set_source_output(bool on) {
+  std::scoped_lock lock(mutex_);
+  if (roles_.optics == nullptr) return config_error("source output: not supported by this spectrometer");
+  return roles_.optics->set_source_output(on);
+}
+
 // ---- source -----------------------------------------------------------------
 
 Result<void> Spectrometer::set_hv(double volts) {

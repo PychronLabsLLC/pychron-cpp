@@ -2700,6 +2700,43 @@ TEST_F(PositionExec, InactiveEntryIsProtectedNotCollected) {
   EXPECT_TRUE(spec_.protected_.empty());
 }
 
+// Worked plan 7.5: each position's optics before its move, every cycle.
+TEST_F(PositionExec, OpticsBeforeMove) {
+  spec_.detectors = {"F0", "IC0", "IC1", "IC2"};
+  const auto r = run_toml(R"(
+[[segment]]
+kind = "signal"
+cycles = 3
+[[segment.positions]]
+collect = { Ar40 = "F0", Ar38 = "IC1", Ar36 = "IC2" }
+at = { label = "Ar40", detector = "F0" }
+optics = "ar_config_a"
+counts = 2
+settle_s = 5
+[[segment.positions]]
+collect = { Ar39 = "IC0", Ar37 = "IC1" }
+at = { label = "Ar39", detector = "IC0" }
+optics = "ar_config_b"
+counts = 2
+settle_s = 5
+)");
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  std::vector<std::string> seen;
+  for (const auto& e : r.trace)
+    if (e.what == "optics" || e.what == "move") seen.push_back(e.what + " " + e.detail);
+  ASSERT_EQ(seen.size(), 12u) << ::testing::PrintToString(seen);
+  for (std::size_t i = 0; i < seen.size(); i += 4) {
+    EXPECT_EQ(seen[i], "optics ar_config_a") << i;
+    EXPECT_TRUE(seen[i + 1].starts_with("move ")) << seen[i + 1];
+    EXPECT_EQ(seen[i + 2], "optics ar_config_b") << i;
+    EXPECT_TRUE(seen[i + 3].starts_with("move ")) << seen[i + 3];
+  }
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "optics ar_config_a"), 3);
+  // Each place's state names its optics (the record's).
+  EXPECT_EQ(r.states.at(Place{"", 0, 0}).optics, "ar_config_a");
+  EXPECT_EQ(r.states.at(Place{"", 0, 1}).optics, "ar_config_b");
+}
+
 // Worked plan 7.5 without its optics: acquisition restarts with each
 // position's integration, and the trace says so where it changes.
 TEST_F(PositionExec, IntegrationChangeRestartsAcquisition) {

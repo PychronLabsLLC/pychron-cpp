@@ -746,6 +746,7 @@ Result<void> Run::save(const std::optional<Error>& failure) {
   const auto data = measurement::to_record_data(meas.data, plan_->plan, meas.states);
   for (const auto& series : data.series) b.add_series(series);
   for (auto gas : data.gases) {
+    gas.interferences = s_.interferences;
     // What its prepare and pump-out did (spec 11.5).
     for (const auto& o : meas.gases) {
       if (o.name != gas.name) continue;

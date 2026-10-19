@@ -1,6 +1,8 @@
 #include "pychron/systems/spectrometer/config_loader.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <sstream>
 #include <array>
 #include <cctype>
 #include <utility>
@@ -49,8 +51,9 @@ constexpr std::array<std::string_view, 19> kSourceParams{
 // Keys a `*.local.toml` may set on an existing [transports.<name>].
 constexpr std::array<std::string_view, 4> kOverridable{"host", "port", "baud", "timeout_ms"};
 
-constexpr std::array<std::string_view, 8> kSections{"system", "transports", "drivers",          "magnet",
-                                                    "source", "acquisition", "detector_control", "detectors"};
+constexpr std::array<std::string_view, 10> kSections{"system",           "transports", "drivers",      "magnet",
+                                                     "source",           "acquisition", "detector_control",
+                                                     "detectors",        "optics",      "interferences"};
 
 template <class Arr>
 bool contains(const Arr& arr, std::string_view s) {
@@ -104,6 +107,8 @@ class Builder {
       }
     }
     parse_detectors(root, c.detectors);
+    each_named(top, "optics", [&](const std::string& name, const Obj& o) { c.optics[name] = parse_optics(o); });
+    if (const auto* n = root.get("interferences")) parse_interferences(*n, c.interferences);
     return c;
   }
 
@@ -123,6 +128,51 @@ class Builder {
     for (auto&& [name, node] : s->t) {
       const auto path = Reader::join(s->path, name.str());
       if (const auto* t = r_.table(node, path)) f(std::string(name.str()), Obj{*t, path, r_.loc(node), nullptr});
+    }
+  }
+
+  // A preset's keys and values as text, in file order (a TOML table is not).
+  OpticsPreset parse_optics(const Obj& o) {
+    std::vector<std::pair<const toml::node*, std::string>> keyed;
+    for (auto&& [k, v] : o.t) keyed.emplace_back(&v, std::string(k.str()));
+    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+      const auto& x = a.first->source().begin;
+      const auto& y = b.first->source().begin;
+      return x.line != y.line ? x.line < y.line : x.column < y.column;
+    });
+    OpticsPreset preset;
+    for (const auto& [node, key] : keyed) {
+      std::string text;
+      if (const auto str = node->value_exact<std::string>()) {
+        text = *str;
+      } else if (const auto b = node->value_exact<bool>()) {
+        text = *b ? "true" : "false";
+      } else if (const auto i = node->value_exact<std::int64_t>()) {
+        text = std::to_string(*i);
+      } else if (const auto d = node->value_exact<double>()) {
+        std::ostringstream out;
+        out.precision(15);
+        out << *d;
+        text = out.str();
+      } else {
+        r_.error(r_.loc(*node), Reader::join(o.path, key), "expected a string, number or boolean");
+        continue;
+      }
+      preset.params.emplace_back(key, std::move(text));
+    }
+    return preset;
+  }
+
+  void parse_interferences(const toml::node& n, std::vector<Interference>& out) {
+    const auto* t = r_.table(n, "interferences");
+    if (t == nullptr) return;
+    for (auto&& [k, v] : *t) {
+      const auto corrects = v.value<std::string>();
+      if (!corrects || corrects->empty()) {
+        r_.error(r_.loc(v), Reader::join("interferences", k.str()), "expected the name it corrects");
+        continue;
+      }
+      out.push_back({std::string(k.str()), *corrects});
     }
   }
 
@@ -208,7 +258,7 @@ class Builder {
           d.roles.push_back(*role);
         } else {
           r_.error(r_.loc(*o.t.get("roles")->as_array()->get(i)), Reader::join(o.path, "roles") + "[" + std::to_string(i) + "]",
-                   "unknown role '" + roles[i] + "' (expected positioner, source, acquirer, detector_control, beam_blank)");
+                   "unknown role '" + roles[i] + "' (expected positioner, source, acquirer, detector_control, beam_blank, optics)");
         }
       }
     }

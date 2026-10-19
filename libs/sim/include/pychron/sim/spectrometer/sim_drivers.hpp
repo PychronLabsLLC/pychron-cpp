@@ -84,7 +84,8 @@ class SimIntegrated final : public Device,
                             public spectrometer::IBeamSource,
                             public spectrometer::IIntensityAcquirer,
                             public spectrometer::IDetectorControl,
-                            public spectrometer::IBeamBlank {
+                            public spectrometer::IBeamBlank,
+                            public spectrometer::IOpticsControl {
  public:
   struct Options {
     std::vector<spectrometer::ChannelId> channels{"H2", "H1", "AX", "L1", "L2", "CDD"};
@@ -135,6 +136,10 @@ class SimIntegrated final : public Device,
 
   // IBeamBlank
   Result<void> blank(bool on) override;
+
+  // IOpticsControl: the preset's name handed to the beam (the role "optics").
+  Result<void> apply_optics(const std::string& name, const spectrometer::OpticsParams& params) override;
+  Result<void> set_source_output(bool on) override;
 
   // Integration period after snapping.
   Duration integration() const;

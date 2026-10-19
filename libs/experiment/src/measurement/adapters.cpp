@@ -95,12 +95,11 @@ Result<void> SpectrometerPort::set_param(const std::string& name, double value) 
 Result<void> SpectrometerPort::blank_beam(bool on) { return spec_.blank_beam(on); }
 
 Result<void> SpectrometerPort::apply_optics(const std::string& name) {
-  return fail(ErrorKind::Config, "optics '" + name + "': not supported by this spectrometer");
+  if (name.empty()) return {};  // none asked: the preset in effect stays
+  return spec_.apply_optics(name);
 }
 
-Result<void> SpectrometerPort::set_source_output(bool /*on*/) {
-  return fail(ErrorKind::Config, "source output: not supported by this spectrometer");
-}
+Result<void> SpectrometerPort::set_source_output(bool on) { return spec_.set_source_output(on); }
 
 Result<void> SpectrometerPort::start_acquisition(pychron::Duration integration) {
   auto& engine = spec_.acquisition();
@@ -156,6 +155,8 @@ SpectrometerCatalog::SpectrometerCatalog(const spectrometer::cfg::SpectrometerCo
     detectors_.emplace(d.name, d.isotope);
     if (d.deflection && d.deflection->control) deflectable_.insert(d.name);
   }
+  for (const auto& [name, dc] : config.drivers) optics_control_ |= dc.has_role(spectrometer::cfg::Role::Optics);
+  for (const auto& [name, preset] : config.optics) optics_.insert(name);
 }
 
 std::map<std::string, DetectorTiming> detector_timing(const spectrometer::cfg::SpectrometerConfig& config) {
@@ -183,7 +184,9 @@ bool SpectrometerCatalog::supports_deflection(std::string_view detector) const {
   return deflectable_.contains(detector);
 }
 
-bool SpectrometerCatalog::has_optics(std::string_view /*name*/) const { return false; }
+bool SpectrometerCatalog::has_optics(std::string_view name) const {
+  return optics_control_ && optics_.contains(name);
+}
 
 bool SpectrometerCatalog::has_table(std::string_view name) const { return tables_.contains(name); }
 

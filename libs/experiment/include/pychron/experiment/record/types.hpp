@@ -151,6 +151,9 @@ struct GasRec {
   std::vector<SpectrometerState> states;
   std::optional<PrepareRec> prepare;    // written only when present
   std::optional<PumpOutRec> pump_out;   // written only when present
+  // The spectrometer config's [interferences] (monitor, what it corrects),
+  // reduction metadata (measurement plan v2 spec 6.2); written only when any.
+  std::vector<std::pair<std::string, std::string>> interferences;
   friend bool operator==(const GasRec&, const GasRec&) = default;
 };
 
