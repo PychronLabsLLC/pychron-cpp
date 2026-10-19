@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "pychron/processing/scene_draw.hpp"

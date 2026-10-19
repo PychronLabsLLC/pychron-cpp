@@ -61,8 +61,12 @@ TEST(ReleaseFigures, OneAliquotOfStepsGivesIdeogramSpectrumAndIsochron) {
                                                     "figures/FC-2/spectrum.svg", "figures/FC-2/spectrum.pdf",
                                                     "figures/FC-2/isochron.svg", "figures/FC-2/isochron.pdf"}));
   for (const auto& f : files) {
-    if (f.path.ends_with(".svg")) EXPECT_TRUE(f.bytes.starts_with("<?xml")) << f.path;
-    if (f.path.ends_with(".pdf")) EXPECT_TRUE(f.bytes.starts_with("%PDF-1.4")) << f.path;
+    if (f.path.ends_with(".svg")) {
+      EXPECT_TRUE(f.bytes.starts_with("<?xml")) << f.path;
+    }
+    if (f.path.ends_with(".pdf")) {
+      EXPECT_TRUE(f.bytes.starts_with("%PDF-1.4")) << f.path;
+    }
   }
   EXPECT_TRUE(warnings.empty()) << warnings.front();
   EXPECT_NE(files[1].bytes.find("/CreationDate (D:20251009085320Z)"), std::string::npos);
