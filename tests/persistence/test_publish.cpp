@@ -313,6 +313,19 @@ TEST_P(PublishStoreTest, InterpretedAgesListEveryOneWithItsHead) {
   EXPECT_FALSE((*rows)[1].head);
 }
 
+TEST_P(PublishStoreTest, AnalysisSummaryCarriesTheRecordHash) {
+  auto item = analysis_item(lab_, 3, series(1), series(0), "66574");
+  std::get<AnalysisIngest>(item.body).record_sha256 = sha256(std::string_view{"record"});
+  ASSERT_TRUE(store_->ingest(item));
+  auto view = store_->load_analysis(std::get<AnalysisIngest>(item.body).analysis);
+  ASSERT_TRUE(view && *view);
+  ASSERT_TRUE((*view)->summary.record_sha256);
+  EXPECT_EQ(*(*view)->summary.record_sha256, sha256(std::string_view{"record"}));
+  auto plain = store_->load_analysis(analysis1_);
+  ASSERT_TRUE(plain && *plain);
+  EXPECT_FALSE((*plain)->summary.record_sha256);
+}
+
 // ---------------------------------------------------------------- as of a bookmark (4.3)
 
 TEST_P(PublishStoreTest, LoadAnalysisAtBookmarkIgnoresLaterHeadMoves) {

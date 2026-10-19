@@ -213,7 +213,7 @@ inline QString derived_fingerprints(qsizetype n) {
 
 inline const QString kAnalysisSummarySelect = QStringLiteral(
     "SELECT a.uuid, a.runid_text, i.identifier, a.aliquot, a.increment, a.provisional, a.analysis_type, "
-    "%1 AS ts, m.name AS mass_spectrometer, a.signals_state "
+    "%1 AS ts, m.name AS mass_spectrometer, a.signals_state, a.record_sha256 "
     "FROM analysis a JOIN identifier i ON i.uuid = a.identifier_uuid "
     "JOIN mass_spectrometer m ON m.uuid = a.mass_spectrometer_uuid");
 

@@ -255,7 +255,7 @@ ReleaseTables build_tables(const TableInputs& in) {
     const AnalysisPins* pins;
     const ps::SampleRow* sample;
     Uuid uuid;
-    std::size_t report_row;
+    std::optional<std::size_t> report_row;
   };
   std::vector<Member> members;
   const ReportView analyses_report(in.report.analyses);
@@ -263,7 +263,7 @@ ReleaseTables build_tables(const TableInputs& in) {
   for (std::size_t i = 0; i < analyses_report.rows(); ++i) report_row_of[analyses_report.str(i, "run id")] = i;
   for (const auto& item : in.dataset.items()) {
     const auto& a = *item.analysis->analysis;
-    Member m{&item, nullptr, nullptr, Uuid{}, static_cast<std::size_t>(-1)};
+    Member m{&item, nullptr, nullptr, Uuid{}, std::nullopt};
     for (const auto& p : in.pins) {
       // Pins are keyed by the store's uuid; the dataset's analysis carries it as text.
       if (p.analysis.str() == a.uuid) m.pins = &p;
@@ -369,8 +369,8 @@ ReleaseTables build_tables(const TableInputs& in) {
         b.set(row, "j", num(ra.j->nominal()));
         b.set(row, "j_err", num(ra.j->std_dev()));
       }
-      const std::size_t r = m.report_row;
-      if (r != static_cast<std::size_t>(-1)) {
+      if (m.report_row) {
+        const std::size_t r = *m.report_row;
         b.set(row, "group_id", rep.get(r, "group"));
         for (int i = 0; i < 5; ++i) {
           const std::string iso = std::string(iso_names[i]) + " (fA)";

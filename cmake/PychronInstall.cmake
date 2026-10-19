@@ -109,6 +109,13 @@ if(TARGET pychron_earthbank)
     COMPONENT ${PYCHRON_COMPONENT} FILES_MATCHING PATTERN "*.xlsx")
 endif()
 
+# The licence texts a release directory carries (libs/publish, LICENSE.txt).
+if(TARGET pychron_publish)
+  install(DIRECTORY "${PROJECT_SOURCE_DIR}/libs/publish/licences/"
+    DESTINATION "${PYCHRON_INSTALL_RESOURCES}/publish/licences"
+    COMPONENT ${PYCHRON_COMPONENT} FILES_MATCHING PATTERN "*.txt")
+endif()
+
 if(UNIX AND NOT APPLE AND TARGET pychron-ui)
   install(FILES "${PROJECT_SOURCE_DIR}/packaging/linux/pychron.desktop"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/applications" COMPONENT ${PYCHRON_COMPONENT})

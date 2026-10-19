@@ -89,6 +89,8 @@ AnalysisSummary summary_from(const Row& r) {
   s.timestamp = to_time(r.value("ts"));
   s.mass_spectrometer = to_std(r.value("mass_spectrometer"));
   s.signals_state = to_std(r.value("signals_state"));
+  if (const QVariant sha = r.value("record_sha256"); !sha.isNull() && !sha.toByteArray().isEmpty())
+    s.record_sha256 = to_digest(sha);
   return s;
 }
 

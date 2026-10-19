@@ -22,3 +22,7 @@ target_compile_features(pychron_publish PUBLIC cxx_std_20)
 target_link_libraries(pychron_publish PUBLIC pychron::persistence pychron::processing pychron::processing_store
                                             pychron::reduction pychron::core nlohmann_json::nlohmann_json)
 pychron_set_warnings(pychron_publish)
+# The licence texts a release ships (LICENSE.txt): installed beside the
+# program (cmake/PychronInstall.cmake); an uninstalled build finds them here.
+target_compile_definitions(pychron_publish PRIVATE
+  PYCHRON_PUBLISH_SOURCE_LICENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/licences")

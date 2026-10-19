@@ -39,6 +39,9 @@ struct ReportOptions {
   std::string laboratory;          // who measured; empty: no row
   std::string software;            // what reduced; empty: "pychron-cpp"
   std::vector<std::string> notes;  // free text, one metadata row each
+  // When the report says it was generated (UTC epoch seconds); absent: now.
+  // A release pins it so that a rebuild gives the same bytes.
+  std::optional<double> generated = std::nullopt;
   // Summary statistics, as the spectrum and isochron figures take them.
   reduction::PlateauCriteria plateau;
   reduction::PlateauWeighting plateau_weighting = reduction::PlateauWeighting::InverseVariance;

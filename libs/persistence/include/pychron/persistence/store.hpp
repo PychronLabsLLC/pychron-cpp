@@ -412,6 +412,7 @@ struct AnalysisSummary {
   UtcTime timestamp;
   std::string mass_spectrometer;
   std::string signals_state;  // pending | complete
+  std::optional<Sha256Digest> record_sha256;  // of the acquisition record, when the ingest gave one
 };
 
 struct AnalysisQuery {

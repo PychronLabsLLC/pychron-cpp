@@ -424,3 +424,18 @@ TEST(Report, SaveWritesCsvOrJsonByExtension) {
 }
 
 }  // namespace
+
+TEST(Report, GeneratedTimeCanBePinned) {
+  pp::ReportOptions o;
+  o.generated = 1'700'000'000.0;  // 2023-11-14 22:13:20Z
+  const pp::Report r = pp::make_report(steps(3), o);
+  EXPECT_NE(r.header[1].find("2023-11-14 22:13:20"), std::string::npos) << r.header[1];
+  bool found = false;
+  for (const auto& row : r.metadata.rows)
+    if (std::get<std::string>(row[0]) == "generated (UTC)") {
+      found = true;
+      EXPECT_EQ(std::get<std::string>(row[1]).rfind("2023-11-14 22:13:20", 0), 0u);
+    }
+  EXPECT_TRUE(found);
+  EXPECT_EQ(pp::report_csv(r), pp::report_csv(pp::make_report(steps(3), o))) << "the same bytes twice";
+}
