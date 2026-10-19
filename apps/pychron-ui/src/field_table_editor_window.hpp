@@ -19,6 +19,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -156,6 +157,13 @@ class FieldTableEditorWindow : public QMainWindow {
   void on_table_changed(const QString& name, const QString& version);
   void on_conflict(const QString& now);
   std::optional<QString> held() const;
+  // A listed version, parsed, and its first §3.2 error once asked for.
+  struct VersionVerdict {
+    std::optional<spectrometer::FieldTable> table;  // nullopt: does not parse
+    QString parse_error;
+    mutable std::optional<QString> first_error;  // empty string: none
+  };
+  const VersionVerdict& verdict(const QString& version) const;
   // The store's current version of the open table; empty when unknown.
   QString store_current() const;
 
@@ -176,6 +184,7 @@ class FieldTableEditorWindow : public QMainWindow {
   spectrometer::TableDiagnostics diagnostics_;
   bool save_pending_ = false;
   bool restore_pending_ = false;  // a Make Current is on the bridge's executor
+  mutable std::map<QString, VersionVerdict> verdicts_;  // of the open table, since the last listing
   int saving_index_ = 0;                // undo index of what the pending save writes
   spectrometer::FieldTable saving_table_;
   std::function<void()> after_save_;

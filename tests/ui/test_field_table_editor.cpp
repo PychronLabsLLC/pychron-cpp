@@ -410,6 +410,19 @@ class TestFieldTableEditor : public QObject {
     QCOMPARE(errors_.size(), 1);
   }
 
+  void makeCurrentVerdictIsKeptUntilTheListIsReread() {
+    const auto bad = argon().directory() / "20260101T000000Z.toml";
+    write_file(bad, "fit = \n");
+    auto w = make_window();
+    QVERIFY(w->make_current_disabled_reason("20260101T000000Z").contains("does not parse"));
+    // Version files are immutable; one changed by hand behind the window's
+    // back is read again only with the list.
+    write_file(bad, spectrometer::to_toml(argon().load().value()));
+    QVERIFY(w->make_current_disabled_reason("20260101T000000Z").contains("does not parse"));
+    w->open_table("argon");
+    QCOMPARE(w->make_current_disabled_reason("20260101T000000Z"), QString());
+  }
+
   void makeCurrentConfirmsAndMovesPointer() {
     const QString v2 = core_save(1);
     auto w = make_window();

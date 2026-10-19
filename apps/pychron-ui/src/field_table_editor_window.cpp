@@ -309,7 +309,13 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   update_title();
 }
 
-FieldTableEditorWindow::~FieldTableEditorWindow() = default;
+// The model is a member: its undo stack, cleared as it goes, signals
+// cleanChanged into this window after the members declared after it are
+// gone. Its connections go first.
+FieldTableEditorWindow::~FieldTableEditorWindow() {
+  disconnect(model_.undo_stack(), nullptr, this, nullptr);
+  disconnect(&model_, nullptr, this, nullptr);
+}
 
 sp::FieldTableStore FieldTableEditorWindow::store(const QString& name) const {
   return sp::FieldTableStore(data_root_ / "tables", name.toStdString());
@@ -460,6 +466,7 @@ void FieldTableEditorWindow::fill_versions() {
       versions_->currentItem() != nullptr ? versions_->currentItem()->data(0, Qt::UserRole).toString() : QString();
   const QSignalBlocker block(versions_);
   versions_->clear();
+  verdicts_.clear();  // read again with the list
   listed_current_ = store_current();
   QTreeWidgetItem* keep = nullptr;
   QTreeWidgetItem* open = nullptr;
@@ -467,15 +474,14 @@ void FieldTableEditorWindow::fill_versions() {
     auto* item = new QTreeWidgetItem(versions_);
     item->setData(0, Qt::UserRole, v);
     item->setText(0, v == listed_current_ ? tr("%1 (current)").arg(v) : v);
-    const auto text = read_text(version_file(open_name_, v));
-    auto parsed = text ? sp::parse_field_table(*text) : Result<sp::FieldTable>(fail(ErrorKind::Io, "unreadable"));
-    if (parsed) {
-      item->setText(1, QString::number(parsed->points().size()));
-      item->setText(2, QString::number(parsed->detectors().size()));
+    const VersionVerdict& info = verdict(v);
+    if (info.table) {
+      item->setText(1, QString::number(info.table->points().size()));
+      item->setText(2, QString::number(info.table->detectors().size()));
     } else {
       item->setText(1, QStringLiteral("—"));
       item->setText(2, tr("does not parse"));
-      item->setToolTip(0, q(parsed.error().what));
+      item->setToolTip(0, info.parse_error);
     }
     if (v == selected) keep = item;
     if (v == open_version_) open = item;
@@ -555,13 +561,34 @@ QString FieldTableEditorWindow::make_current_disabled_reason(const QString& vers
   if (restore_pending_) return tr("restoring");
   if (const auto holder = held()) return tr("table is held by %1").arg(*holder);
   if (version == listed_current_) return tr("%1 is already current").arg(version);
-  const auto text = read_text(version_file(open_name_, version));
-  if (!text) return tr("version does not parse: cannot read %1").arg(version);
-  auto parsed = sp::parse_field_table(*text);
-  if (!parsed) return tr("version does not parse: %1").arg(q(parsed.error().what));
-  const auto d = sp::check_field_table(*parsed, config_, model_.weights(), open_name_.toStdString());
-  if (const auto* e = sp::first_error(d)) return q(sp::to_string(*e));
-  return {};
+  const VersionVerdict& info = verdict(version);
+  if (!info.table) return tr("version does not parse: %1").arg(info.parse_error);
+  if (!info.first_error) {
+    const auto d = sp::check_field_table(*info.table, config_, model_.weights(), open_name_.toStdString());
+    const auto* e = sp::first_error(d);
+    info.first_error = e != nullptr ? q(sp::to_string(*e)) : QString();
+  }
+  return *info.first_error;
+}
+
+// Version files are never rewritten and the config is the session's, so a
+// version's parse and check are read once per listing (fill_versions
+// clears them): update_actions asks on every edit and every hold poll.
+const FieldTableEditorWindow::VersionVerdict& FieldTableEditorWindow::verdict(const QString& version) const {
+  auto it = verdicts_.find(version);
+  if (it != verdicts_.end()) return it->second;
+  VersionVerdict info;
+  if (const auto text = read_text(version_file(open_name_, version))) {
+    auto parsed = sp::parse_field_table(*text);
+    if (parsed) {
+      info.table = std::move(*parsed);
+    } else {
+      info.parse_error = q(parsed.error().what);
+    }
+  } else {
+    info.parse_error = tr("cannot read %1").arg(version);
+  }
+  return verdicts_.emplace(version, std::move(info)).first->second;
 }
 
 void FieldTableEditorWindow::update_actions() {
