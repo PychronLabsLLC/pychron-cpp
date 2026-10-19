@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Qt stays out of `libs/`: every new file under `libs/processing` and `libs/publish` is Qt-free.
-- Figure path: `figures/<sample>/<kind>.pdf` and `<kind>.svg`; kind `ideogram`, `spectrum`, `isochron`; `spectrum-<aliquot>.{pdf,svg}` when the sample has more than one step-heated aliquot. `<sample>` is `sample_dir_name` (phase 1, already file-safe and unique).
+- Figure path: `figures/<sample>/<kind>.pdf` and `<kind>.svg`; kind `ideogram`, `spectrum`, `isochron`; `spectrum-<identifier>-<aliquot two digits>.{pdf,svg}` (file-safe, `-2`, `-3` on a case-insensitive collision) when the sample has more than one step-heated aliquot. `<sample>` is `sample_dir_name` (phase 1, already file-safe and unique).
 - SVG: text, deterministic, fonts named not embedded.
 - PDF: PDF 1.4, one page, vector paths, standard 14 fonts (Helvetica), `CreationDate` = release `created_utc`, no `/ID`, no compression, xref table correct.
 - Same Scene twice gives the same bytes; every figure file is in `manifest.files` with its sha256 and media type (`image/svg+xml`, `application/pdf`, already in `media_type_of`).

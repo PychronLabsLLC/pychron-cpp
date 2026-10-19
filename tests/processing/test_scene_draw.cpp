@@ -290,5 +290,19 @@ TEST(SceneDraw, ALogErrorBarBelowZeroIsClippedNotDropped) {
   EXPECT_NEAR(std::max(bars[0]->ops[0].p[0].y, bars[0]->ops[1].p[0].y), plot.y + plot.h, 1e-9);
 }
 
+TEST(SceneDraw, ALogStepBelowZeroIsClippedNotDropped) {
+  StepLayer steps;
+  steps.x0 = {0};
+  steps.x1 = {5};
+  steps.y = {1};
+  steps.y_err = {5};
+  Scene s = one_panel({steps});
+  s.graphs[0].panels[0].y.scale = AxisScale::Log;
+  s.graphs[0].panels[0].y.min = 0.1;
+  s.graphs[0].panels[0].y.max = 100.0;
+  const DrawList l = draw_scene(s);
+  EXPECT_EQ(paths(l, DrawRole::Step).size(), 1u);
+}
+
 }  // namespace
 }  // namespace pychron::processing

@@ -456,13 +456,15 @@ Report metadata gains rows `release`, `release version`, `doi` (when any),
 Per sample (`libs/publish` `figures.hpp`, `sample_figures`): ideogram of its
 ages; spectrum per step-heated aliquot (items with increment >= 0, by
 identifier and aliquot), file `spectrum.{pdf,svg}` when one, else
-`spectrum-<identifier>-<aliquot two digits>.{pdf,svg}` made file-safe;
+`spectrum-<identifier>-<aliquot two digits>.{pdf,svg}` made file-safe,
+`-2`, `-3` on case-insensitive collision;
 inverse isochron only when >= 3 included analyses. Built with
 `build_ideogram`, `build_spectrum`, `build_isochron` (`arar_figures.hpp`)
 from same `Dataset` as report. Options: schema defaults, plus
 `error_bar_nsigma` = `release.options.sigma` and spectrum `plateau.method`,
 `plateau.nsteps`, `plateau.gas_fraction` from `plateau`, `plateau_steps`,
-`plateau_gas`; no per-release figure options yet. A figure whose builder
+`plateau_gas` (value schema refuses: default kept, warning); no
+per-release figure options yet. A figure whose builder
 fails is left out with warning `<sample>: no <kind>: <why>`; build goes on.
 Time series not a release figure (per instrument, not per sample).
 
@@ -471,9 +473,10 @@ writers in `libs/processing`:
 
 - `scene_layout.hpp`: what `SceneView` computed itself, moved down: axis
   ranges (`graph_x_range`, `panel_y_range`: data extent, 8% pad, log rule,
-  axis min/max per side), used by `SceneView::reset_view` too. Plus what
+  axis min/max per side; steps are data), used by `SceneView::reset_view`
+  too. Plus what
   QCustomPlot did for view, writers only: ticks (linear 1-2-5, log decades,
-  time, category; powers of ten via `from_chars`, not libm), Helvetica and
+  time, category; powers of ten by IEEE multiply/divide, not libm), Helvetica and
   Helvetica-Bold AFM widths, margins, panel geometry
   (`layout_scene(const Scene&, const FigureSize&)`; cell 432 x 324 pt per
   graph).

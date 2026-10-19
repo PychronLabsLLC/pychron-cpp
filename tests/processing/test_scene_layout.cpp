@@ -92,25 +92,44 @@ TEST(SceneLayout, LogRangeIgnoresNonPositiveValues) {
   EXPECT_DOUBLE_EQ(r.max, 120.0);
 }
 
-TEST(SceneLayout, StepsGuidesAndSpansAreNotData) {
+TEST(SceneLayout, StepsAreDataGuidesAndSpansAreNot) {
   Panel p;
   StepLayer steps;
-  steps.x0 = {0.0};
-  steps.x1 = {50.0};
-  steps.y = {10.0};
-  steps.y_err = {1.0};
+  steps.x0 = {0.0, 50.0};
+  steps.x1 = {50.0, 80.0};
+  steps.y = {10.0, 20.0};
+  steps.y_err = {1.0, 1.0};
   p.layers.emplace_back(steps);
   GuideLayer guide;
-  guide.value = 3.0;
+  guide.value = 300.0;
   p.layers.emplace_back(guide);
   SpanLayer span;
-  span.y0 = 2.0;
-  span.y1 = 7.0;
+  span.y0 = -50.0;
+  span.y1 = 70.0;
   p.layers.emplace_back(span);
-  EXPECT_EQ(panel_y_range(p), (Range{0.0, 1.0}));
+  const Range y = panel_y_range(p);
+  EXPECT_DOUBLE_EQ(y.min, 9.0 - 12.0 * 0.08);
+  EXPECT_DOUBLE_EQ(y.max, 21.0 + 12.0 * 0.08);
   Graph g;
   g.panels.push_back(p);
-  EXPECT_EQ(graph_x_range(g), (Range{0.0, 1.0}));
+  EXPECT_EQ(graph_x_range(g), (Range{0.0, 80.0}));
+  Panel only;
+  only.layers = {guide, span};
+  EXPECT_EQ(panel_y_range(only), (Range{0.0, 1.0}));
+}
+
+TEST(SceneLayout, LogStepsAreData) {
+  Panel p;
+  p.y.scale = AxisScale::Log;
+  StepLayer steps;
+  steps.x0 = {0.0};
+  steps.x1 = {1.0};
+  steps.y = {10.0};
+  steps.y_err = {20.0};  // the low end is not positive and is not data
+  p.layers.emplace_back(steps);
+  const Range r = panel_y_range(p);
+  EXPECT_DOUBLE_EQ(r.min, 10.0 / 1.2);
+  EXPECT_DOUBLE_EQ(r.max, 30.0 * 1.2);
 }
 
 TEST(SceneLayout, NonFiniteValuesAreNotData) {

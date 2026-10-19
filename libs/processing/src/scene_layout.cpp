@@ -134,6 +134,9 @@ void add_x(Extent& e, const Layer& layer) {
     for (const double v : line->x) e.add(v);
   } else if (const auto* band = std::get_if<BandLayer>(&layer)) {
     for (const double v : band->x) e.add(v);
+  } else if (const auto* steps = std::get_if<StepLayer>(&layer)) {
+    for (const double v : steps->x0) e.add(v);
+    for (const double v : steps->x1) e.add(v);
   } else if (const auto* el = std::get_if<EllipseLayer>(&layer)) {
     for (std::size_t i = 0; i < el->x.size() && i < el->sx.size(); ++i) {
       e.add(el->x[i] - el->scale * el->sx[i]);
@@ -156,6 +159,13 @@ void add_y(Extent& e, const Layer& layer) {
   } else if (const auto* band = std::get_if<BandLayer>(&layer)) {
     for (const double v : band->low) e.add(v);
     for (const double v : band->high) e.add(v);
+  } else if (const auto* steps = std::get_if<StepLayer>(&layer)) {
+    for (std::size_t i = 0; i < steps->y.size(); ++i) {
+      const double err = i < steps->y_err.size() ? steps->y_err[i] : 0.0;
+      e.add(steps->y[i]);
+      e.add(steps->y[i] - err);
+      e.add(steps->y[i] + err);
+    }
   } else if (const auto* el = std::get_if<EllipseLayer>(&layer)) {
     for (std::size_t i = 0; i < el->y.size() && i < el->sy.size(); ++i) {
       e.add(el->y[i] - el->scale * el->sy[i]);
@@ -202,12 +212,20 @@ std::string scientific(double v, int precision) {
   return strip_zeros(s.substr(0, e)) + "e" + std::to_string(exp);
 }
 
-// 10^k, correctly rounded (from_chars), so it is the same double under every
-// compiler's libm; 0 below the smallest subnormal, inf above the largest.
+// 10^k by IEEE multiplication and division alone, so the same double under
+// every compiler (no libm, and no floating-point from_chars, which Apple's
+// libc++ lacks). Exact, or correctly rounded, for |k| <= 22; beyond, the same
+// rounding steps everywhere. 0 or inf past the double range.
 double pow10(int k) {
-  const std::string text = "1e" + std::to_string(k);
-  double v = k < 0 ? 0.0 : std::numeric_limits<double>::infinity();
-  std::from_chars(text.data(), text.data() + text.size(), v);
+  constexpr int kExact = 22;  // 10^22 is the largest power of ten a double holds exactly
+  double exact = 1.0;
+  for (int i = 0; i < std::min(std::abs(k), kExact); ++i) exact *= 10.0;
+  if (k >= 0) {
+    for (int i = kExact; i < k && std::isfinite(exact); ++i) exact *= 10.0;
+    return exact;
+  }
+  double v = 1.0 / exact;
+  for (int i = kExact; i < -k && v > 0; ++i) v /= 10.0;
   return v;
 }
 

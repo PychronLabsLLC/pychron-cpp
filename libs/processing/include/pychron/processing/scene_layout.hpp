@@ -23,11 +23,13 @@ struct Range {
 
 // The x range of a graph: the axis's min and max when both are set, else the
 // extent of its panels' data (the x +- x_err of the points shown, lines,
-// bands, ellipses), with no padding; (0, 1) when there is none.
+// bands, step edges, ellipses), with no padding; (0, 1) when there is none.
 Range graph_x_range(const Graph& graph);
 
 // The y range of a panel: the extent of its data (points y +- y_err, lines,
-// band low and high, ellipses; steps, guides, spans and texts are not data).
+// band low and high, steps y +- y_err, ellipses; guides, spans and texts are
+// not data). Steps are data here, where QCustomPlot's view did not count its
+// step boxes: a log spectrum, whose builder sets no limits, shows its steps.
 // Linear: padded by 8% of the size, or max(|max| * 0.05, 1e-12) when the size
 // is 0. Log: values <= 0 ignored, min = max(min, max * 1e-6), then min / 1.2
 // and max * 1.2. No data: (0, 1), log (0.1, 10). The axis's min and max then

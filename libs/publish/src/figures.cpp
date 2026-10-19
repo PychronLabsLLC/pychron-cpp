@@ -3,7 +3,9 @@
 #include "pychron/publish/figures.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
+#include <set>
 #include <utility>
 
 #include "pychron/processing/arar_figures.hpp"
@@ -23,6 +25,11 @@ pp::Dataset subset(const pp::Dataset& d, std::vector<pp::DatasetItem> items) {
   out.graph_names = d.graph_names;
   out.reduction_tag = d.reduction_tag;
   return out;
+}
+
+std::string lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
 }
 
 std::string two_digits(int v) { return (v >= 0 && v < 10 ? "0" : "") + std::to_string(v); }
@@ -46,11 +53,14 @@ struct Figures {
 
 }  // namespace
 
-pp::Options figure_options(const pp::SchemaPtr& schema, const ReleaseOptions& options) {
+pp::Options figure_options(const pp::SchemaPtr& schema, const ReleaseOptions& options,
+                           std::vector<std::string>* warnings) {
   pp::Options o(schema);
   // A key the schema does not have is left out: not every figure has a plateau.
   const auto set = [&](std::string_view key, pp::OptionValue value) {
-    if (schema && schema->field(key)) (void)o.set(key, std::move(value));
+    if (!schema || !schema->field(key)) return;
+    if (auto ok = o.set(key, std::move(value)); !ok && warnings)
+      warnings->push_back(schema->kind + ": " + std::string(key) + " kept its default: " + ok.error().what);
   };
   set("error_bar_nsigma", static_cast<std::int64_t>(options.sigma));
   set("plateau.method", options.plateau);
@@ -70,10 +80,13 @@ std::vector<FigureFile> sample_figures(const pp::Dataset& sample, const std::str
   for (const auto& it : sample.items())
     if (it.analysis->analysis->increment >= 0)
       aliquots[{it.analysis->analysis->identifier, it.analysis->analysis->aliquot}].push_back(it);
-  const pp::Options spectrum = figure_options(pp::spectrum_schema(), options);
+  const pp::Options spectrum = figure_options(pp::spectrum_schema(), options, &warnings);
+  std::set<std::string> taken;  // folded to lower case: a case-insensitive disk sees one file
   for (auto& [key, items] : aliquots) {
-    const std::string name =
+    const std::string base =
         aliquots.size() == 1 ? "spectrum" : "spectrum-" + file_safe(key.first + "-" + two_digits(key.second));
+    std::string name = base;
+    for (int n = 2; !taken.insert(lower(name)).second; ++n) name = base + "-" + std::to_string(n);
     out.add(name, "spectrum", pp::build_spectrum(subset(sample, std::move(items)), spectrum));
   }
 

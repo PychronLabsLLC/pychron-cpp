@@ -206,7 +206,7 @@ One row per interpreted age of the release, at its pinned revision.
 - `spectrum.svg` and `.pdf`: the age spectrum of a step-heated aliquot. A
   sample with more than one has `spectrum-<identifier>-<aliquot>.svg` and
   `.pdf` per aliquot (`spectrum-66012-01.svg`), the name made safe as
-  `<sample>` is.
+  `<sample>` is, with `-2`, `-3` when two would be the same ignoring case.
 - `isochron.svg` and `.pdf`: the inverse isochron, when at least three of the
   sample's analyses are included.
 

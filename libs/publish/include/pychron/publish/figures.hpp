@@ -22,15 +22,18 @@ struct FigureFile {
 
 // A figure's options: the schema's defaults, with error_bar_nsigma = sigma
 // and, where the schema has them, plateau.method, plateau.nsteps and
-// plateau.gas_fraction from the release options.
-processing::Options figure_options(const processing::SchemaPtr& schema, const ReleaseOptions& options);
+// plateau.gas_fraction from the release options. A value the schema refuses
+// (out of its range) leaves the default and, given `warnings`, says so.
+processing::Options figure_options(const processing::SchemaPtr& schema, const ReleaseOptions& options,
+                                   std::vector<std::string>* warnings = nullptr);
 
 // The figures of one sample (its items of the release dataset), SVG then PDF
 // of each, in the order ideogram, spectrum, isochron. A spectrum per aliquot
 // with steps (increment >= 0), by identifier and aliquot: file spectrum.*
 // when there is one, else spectrum-<identifier>-<aliquot, two digits>.*, made
-// file-safe. An isochron when at least three items are included. The PDFs'
-// CreationDate is created_unix. A figure whose builder fails is left out and
+// file-safe, with -2, -3, ... when two names are the same ignoring case. An
+// isochron when at least three items are included. The PDFs' CreationDate
+// is created_unix. A figure whose builder fails is left out and
 // "<sample_dir>: no <kind>: <why>" added to warnings.
 std::vector<FigureFile> sample_figures(const processing::Dataset& sample, const std::string& sample_dir,
                                        const ReleaseOptions& options, std::int64_t created_unix,

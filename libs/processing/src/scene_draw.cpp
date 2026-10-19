@@ -199,7 +199,10 @@ void draw_band(Builder& b, const BandLayer& band, const Mapper& map, int clip) {
 void draw_steps(Builder& b, const StepLayer& s, const Mapper& map, int clip) {
   for (std::size_t i = 0; i < s.x0.size() && i < s.x1.size() && i < s.y.size(); ++i) {
     const double e = i < s.y_err.size() && finite(s.y_err[i]) ? s.y_err[i] : 0.0;
-    const auto a = map(s.x0[i], s.y[i] + e), z = map(s.x1[i], s.y[i] - e);
+    // On a log axis a box reaching zero or below runs to the bottom of the panel.
+    double low = s.y[i] - e;
+    if (map.panel.log_y && low <= 0) low = map.panel.y.min;
+    const auto a = map(s.x0[i], s.y[i] + e), z = map(s.x1[i], low);
     if (!a || !z) continue;
     const bool ex = i < s.excluded.size() && s.excluded[i];
     const bool hl = i < s.highlighted.size() && s.highlighted[i];
