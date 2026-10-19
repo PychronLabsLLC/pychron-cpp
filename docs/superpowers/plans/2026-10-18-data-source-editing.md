@@ -359,11 +359,11 @@ The page must use the wizard's widgets, not copies (spec 3.5).
 
 ### Task 12: Final run
 
-- [ ] **Step 1:** `git fetch && git rebase origin/develop`.
-- [ ] **Step 2:** `python3 tools/quality_check.py`; expect exit 0.
-- [ ] **Step 3:** `cmake --build --preset dev-ui` and `ctest --preset dev-ui` (covers `dev` and UI); expect all pass. With `PYCHRON_TEST_PG_URL` set so `SetServerAgainstPostgres` runs.
-- [ ] **Step 4:** `python3 tools/compiler_sweep.py` and `python3 tools/compiler_sweep.py --build-dir build/dev-ui`; expect no warnings.
-- [ ] **Step 5:** Spec and code agree: any interface that departed (for example `DataSourceOpeners`, `describe`, `database_url_with_password`, added here beyond spec 3.1) is written into the spec in this branch; commit `docs(setup): the data source spec says what was built`.
+- [x] **Step 1:** `git fetch && git rebase origin/develop`.
+- [x] **Step 2:** `python3 tools/quality_check.py`; expect exit 0.
+- [x] **Step 3:** `cmake --build --preset dev-ui` and `ctest --preset dev-ui` (covers `dev` and UI); expect all pass. With `PYCHRON_TEST_PG_URL` set so `SetServerAgainstPostgres` runs.
+- [x] **Step 4:** `python3 tools/compiler_sweep.py` and `python3 tools/compiler_sweep.py --build-dir build/dev-ui`; expect no warnings. (This worktree has only `build/dev-ui`, which builds every source `dev` does: swept there, 0 warnings.)
+- [x] **Step 5:** Spec and code agree: any interface that departed (for example `DataSourceOpeners`, `describe`, `database_url_with_password`, added here beyond spec 3.1) is written into the spec in this branch; commit `docs(setup): the data source spec says what was built`.
 
 ## Open questions
 

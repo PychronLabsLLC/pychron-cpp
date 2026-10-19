@@ -240,6 +240,76 @@ startup reads it.
   install record and site entry, nothing else; reconfigure must keep it
   (test name).
 
+### 3.7 As built (beyond 3.1 to 3.5)
+
+`libs/setup` `data_source.hpp`, besides 3.1:
+
+```cpp
+// Server: password of `source`, else kept one (read_kept_password), percent-encoded
+// as database_url_for(..., true). Local: as database_url.
+Result<std::string> database_url_with_password(const DataSource& source, const std::filesystem::path& root);
+// "database <url>\ndata folder <as given> (<resolved>)": both apps' before -> after.
+std::string describe(const DataSource& source, const std::filesystem::path& root);
+
+struct DataSourceOpeners {   // injected by an app built with the store
+  std::function<Result<std::string>(const std::string& url, bool migrate)> open_database;
+  std::function<Result<std::string>(const std::string& url, const std::filesystem::path& seed_file, bool migrate)>
+      seed_database;
+};
+struct DataSourceCheck {
+  std::vector<std::string> said;
+  bool made_file = false;   // missing local file made and migrated (create = true)
+  bool opened = false;      // database (made, existing or server) opened
+};
+// 3.3's checks. `create` false (Test connection): nothing written, missing folder
+// or file said as "will be made".
+Result<DataSourceCheck> check_data_source(const DataSourceChange& change, const DataSource& to,
+                                          const DataSourceOpeners& openers, bool create);
+// After apply: seeded only for instrument install AND (local file this change made,
+// or server that opened). Default check (not checked): nothing seeded, said.
+std::vector<std::string> seed_data_source(const DataSourceChange& change, const DataSource& to,
+                                          const DataSourceOpeners& openers, const DataSourceCheck& check);
+```
+
+`elctl`:
+
+- No-echo password prompt (`at_terminal`, `read_password`) in
+  `apps/elctl/src/password_prompt.hpp`, built with or without store
+  (`earthbank` uses same).
+- `--password-stdin`: one line, trailing `\r` stripped; input ended: usage
+  error (2). Prompt only when no `--password-stdin`, stdin is terminal, and
+  server new or other (host, port, name or user differ).
+- `--no-check`: says `skip  check: --no-check`; data folder not made then
+  (doctor says so later).
+- `--user` or `--password-stdin` without `--server`: usage error.
+- `db status|migrate|derive` without `--db`: install `--install NAME` names,
+  else default install, password joined (`setup::database_url`). Unknown
+  `--install` name: exit 1, as every command; no `--db` and no install:
+  usage (2).
+
+`apps/pychron-ui`:
+
+- `question_editor.hpp`: `make_question_editor(q, parent, const std::function<void()>& changed = {})`,
+  `set_question_value`, `question_value`; every question type, `List` and
+  `Table` included. Port or int spin box cannot hold (70000 from hand-edited
+  record): kept, `question_value` refuses it; never clamped.
+- `data_source_page.hpp`: `DataSourcePageDeps` (install, site_path,
+  store-common questions, openers, `queue_running`, `session_database`),
+  `DataSourcePage` (`source`, `changed`, `test_connection`, `apply(check)`,
+  `refresh_read_only`, `install()`). `apply` refused while queue runs too;
+  read-only refreshed on show. `--db` note shows URL without password.
+- `PreferencesDialog::add_data_source_page(deps, Reopen, AskReopen = {})`,
+  page last, once. `commit()`: page written after EarthBank page, before
+  line's file; ask and reopen after `apply_`. Failed check: reason in
+  `problem()`, "Save without checking" (`save_without_checking()`) shown,
+  it commits with checks skipped.
+- Windows: `set_data_source(DataSourceDepsFactory, Reopen)` on `MainWindow`
+  and `DataMainWindow`; factory read each time Preferences opens (site
+  entry as it is then). `MainWindow` fills empty `queue_running` from
+  `ExperimentBridge::running()`. `main.cpp`'s reopen defers
+  `window->close()` then `start_install(name)` with
+  `QTimer::singleShot(0, ...)`: dialog returns before its window closes.
+
 ## 4. Tests
 
 - `tests/setup/test_data_source.cpp`:
