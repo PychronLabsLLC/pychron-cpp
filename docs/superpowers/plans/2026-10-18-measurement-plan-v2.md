@@ -425,11 +425,13 @@ Done notes: Step 2 was observed failing as a build failure (`analysis_name`, the
 
 **Interfaces:**
 - Produces: `reduction::FitSpec fit_for(const MeasurementPlan&, const Gas&, const Segment*, std::string_view kind, std::string_view label, std::string_view detector);` — lookup order: segment `fits` then gas `fits` then plan `fits`; within each, `label@detector`, `label` (signal) or `detector` (baseline), `default`. Replaces `signal_fit`/`baseline_fit`; the collector's live fits and `fit_results` both call it.
-- [ ] **Step 1: Write failing tests:** `PlanFits.QualifiedBeatsBareBeatsDefault`; `PlanFits.SegmentBeatsGasBeatsPlan`; `PlanFits.V1KeysKeepTheirMeaning` (`[fits] signal.Ar40` → every detector of Ar40; `baseline.H1` → every baseline on H1).
-- [ ] **Step 2: Run** `--gtest_filter='PlanFits.*'` → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** the binary → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): fits keyed label@detector, per gas and segment`.
+- [x] **Step 1: Write failing tests:** `PlanFits.QualifiedBeatsBareBeatsDefault`; `PlanFits.SegmentBeatsGasBeatsPlan`; `PlanFits.V1KeysKeepTheirMeaning` (`[fits] signal.Ar40` → every detector of Ar40; `baseline.H1` → every baseline on H1).
+- [x] **Step 2: Run** `--gtest_filter='PlanFits.*'` → FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** the binary → PASS.
+- [x] **Step 5: Commit** `feat(experiment): fits keyed label@detector, per gas and segment`.
+
+Done notes: Step 2 was observed failing as a build failure (no `fit_for`). `kind` "baseline" reads the baseline table, every other kind (signal, sniff, whiff) the signal table; a baseline with no key there is averaged (as `baseline_fit`). A segment override is looked up `label@detector`, `label`, `detector`, `default`, and only the members it sets replace the gas's. A series read in several segments (one intercept) takes the fit of its first part's segment, in `fit_results` and in the collector's live fits. The collector takes the whole plan (`Collector::set_plan`, the engine's call); `set_fits` stays for tests (a plan of those fits alone). `signal_fit` and `baseline_fit` stay as plan-level lookups (`PlanSchema` reads them); nothing in the engine, collector or results calls them now. Segment `fits` left the gate (`PlanV2Gate` lost its case).
 
 ### Task 15: Conditional metric qualifier, live `cycles`, path aliases
 

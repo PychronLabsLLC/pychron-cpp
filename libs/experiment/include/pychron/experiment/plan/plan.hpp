@@ -266,6 +266,17 @@ std::vector<CollectEntry> collecting(const Position& position);
 // has none.
 const Segment* main_segment(const Gas& gas);
 
+// The fit of one series (spec 6.1): the segment's `fits` (when `segment` is
+// given) over the gas's (the plan's when the gas has none). Within the gas's
+// or plan's tables: `label@detector`, then `label` (signal, sniff, whiff) or
+// `detector` (baseline), then `default`; a baseline with none of them is
+// averaged. Within the segment's overrides: `label@detector`, `label` or
+// `detector`, `default`; each member it sets replaces the gas's. `kind` is
+// the series kind ("signal", "baseline", ...): "baseline" reads the baseline
+// table, every other kind the signal table.
+reduction::FitSpec fit_for(const MeasurementPlan& plan, const Gas& gas, const Segment* segment, std::string_view kind,
+                           std::string_view label, std::string_view detector);
+
 // Fit for an isotope (signal) or detector (baseline), falling back to "default".
 reduction::FitSpec signal_fit(const Fits& fits, const std::string& isotope);
 reduction::FitSpec baseline_fit(const Fits& fits, const std::string& detector);

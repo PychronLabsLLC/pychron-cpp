@@ -1504,13 +1504,6 @@ collect = { Ar40 = "H1" }
 at = { mass = 34.2, detector = "H1" }
 counts = 1
 )"},
-      {"segment[0].fits: segment fits", R"(
-[[segment]]
-fits = { Ar40 = { fit = "parabolic" } }
-[[segment.positions]]
-collect = { Ar40 = "H1" }
-counts = 1
-)"},
       {"segment[1].peak_center: peak_center with several detectors", R"(
 [[segment]]
 [[segment.positions]]
@@ -1629,5 +1622,112 @@ counts = 1
     SCOPED_TRACE(expected);
     EXPECT_NE(gated_problems(body).find("v2: " + expected + ": not run by this build yet"), std::string::npos)
         << gated_problems(body);
+  }
+}
+
+// ---- fits by label@detector, per gas and segment (plan Task 14) ---------------
+
+TEST(PlanFits, QualifiedBeatsBareBeatsDefault) {
+  const auto p = resolve(R"(
+[fits]
+signal = { default = "linear", Ar40 = "parabolic", "Ar40@AX" = "cubic" }
+baseline = { default = "average", H1 = "linear", "Ar40@AX" = "parabolic" }
+
+[[segment]]
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX" }
+counts = 1
+)");
+  ASSERT_EQ(p.gases.size(), 1u);
+  const auto& gas = p.gases[0];
+  using pychron::reduction::FitKind;
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "signal", "Ar40", "AX").kind, FitKind::Cubic);
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "signal", "Ar40", "H1").kind, FitKind::Parabolic);
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "signal", "Ar39", "AX").kind, FitKind::Linear);
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "sniff", "Ar40", "H1").kind, FitKind::Parabolic);
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "baseline", "Ar40", "AX").kind, FitKind::Parabolic);
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "baseline", "", "H1").kind, FitKind::Linear);
+  EXPECT_EQ(plan::fit_for(p, gas, nullptr, "baseline", "", "CDD").kind, FitKind::Average);
+}
+
+TEST(PlanFits, SegmentBeatsGasBeatsPlan) {
+  const auto p = resolve(R"(
+[fits]
+signal = { default = "linear", Ar40 = "parabolic" }
+error = "sem"
+
+[[gas]]
+name = "A"
+[[gas.segment]]
+fits = { "Ar40@H1" = { fit = "cubic", error = "sd" }, default = { fit = "average" } }
+[[gas.segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX" }
+counts = 1
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+
+[[gas]]
+name = "B"
+fits = { signal = { Ar40 = "exponential" } }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 1
+)", &kCatalog, "");
+  ASSERT_EQ(p.gases.size(), 2u);
+  using pychron::reduction::FitKind;
+  const auto& a = p.gases[0];
+  const auto& b = p.gases[1];
+  const auto first = plan::fit_for(p, a, &a.segments[0], "signal", "Ar40", "H1");
+  EXPECT_EQ(first.kind, FitKind::Cubic);
+  EXPECT_EQ(first.error, pychron::reduction::ErrorType::Sd);
+  EXPECT_EQ(plan::fit_for(p, a, &a.segments[0], "signal", "Ar39", "AX").kind, FitKind::Average);  // its default
+  const auto second = plan::fit_for(p, a, &a.segments[1], "signal", "Ar40", "H1");
+  EXPECT_EQ(second.kind, FitKind::Parabolic);  // the plan's, through the gas
+  EXPECT_EQ(second.error, pychron::reduction::ErrorType::Sem);
+  EXPECT_EQ(plan::fit_for(p, b, &b.segments[0], "signal", "Ar40", "H1").kind, FitKind::Exponential);
+  EXPECT_EQ(plan::fit_for(p, b, &b.segments[0], "signal", "Ar39", "AX").kind, FitKind::Linear);
+}
+
+// A v1 file's [fits] keys mean what they meant: signal.Ar40 is Ar40 on every
+// detector, baseline.H1 every baseline on H1.
+TEST(PlanFits, V1KeysKeepTheirMeaning) {
+  const auto p = resolve(R"(
+[fits]
+signal = { default = "linear", Ar40 = "parabolic" }
+baseline = { default = "average", H1 = "linear" }
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[baseline]
+after = true
+counts = 5
+mass = 34.2
+
+[main]
+[[main.hops]]
+positions = { Ar40 = "H1", Ar39 = "AX" }
+counts = 5
+[[main.hops]]
+positions = { Ar40 = "AX" }
+position = { isotope = "Ar40", detector = "AX" }
+counts = 5
+)");
+  ASSERT_EQ(p.gases.size(), 1u);
+  const auto& gas = p.gases[0];
+  using pychron::reduction::FitKind;
+  for (std::size_t i = 0; i < gas.segments.size(); ++i) {
+    const auto& seg = gas.segments[i];
+    EXPECT_EQ(plan::fit_for(p, gas, &seg, "signal", "Ar40", "H1").kind, FitKind::Parabolic) << i;
+    EXPECT_EQ(plan::fit_for(p, gas, &seg, "signal", "Ar40", "AX").kind, FitKind::Parabolic) << i;
+    EXPECT_EQ(plan::fit_for(p, gas, &seg, "signal", "Ar39", "AX").kind, FitKind::Linear) << i;
+    EXPECT_EQ(plan::fit_for(p, gas, &seg, "baseline", "", "H1").kind, FitKind::Linear) << i;
+    EXPECT_EQ(plan::fit_for(p, gas, &seg, "baseline", "Ar40", "H1").kind, FitKind::Linear) << i;
+    EXPECT_EQ(plan::fit_for(p, gas, &seg, "baseline", "", "AX").kind, FitKind::Average) << i;
   }
 }

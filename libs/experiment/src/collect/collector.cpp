@@ -162,33 +162,37 @@ void Collector::publish_fits(const SeriesUpdated& update) {
   FitsUpdated out;
   out.label = update.label;
   out.kind = update.kind;
-  std::vector<std::pair<SeriesKey, reduction::Series>> work;
-  plan::Fits fits;
+  struct Work {
+    SeriesKey key;
+    reduction::Series series;
+    reduction::FitSpec spec;
+  };
+  std::vector<Work> work;
   {
     std::lock_guard lock(mutex_);
     out.time_zero = data_.timing.time_zero.value_or(0.0);
-    fits = fits_;
     for (const auto& [key, value] : update.values) {
       // A signal series is fitted with the rest of its label on its detector,
-      // as the intercept is; a baseline series as it is.
+      // as the intercept is (with the fit of its first part's segment); a
+      // baseline series as it is.
       std::optional<Series> merged;
+      SeriesKey first = key;
       if (key.kind == kBaseline) {
         auto it = data_.series.find(key);
         if (it != data_.series.end()) merged = it->second;
       } else {
-        merged = isotope_series_locked(key.label + "@" + key.detector, key.kind);
+        merged = isotope_series_locked(key.label + "@" + key.detector, key.kind, nullptr, &first);
       }
       if (!merged) continue;
       reduction::Series s;
       s.y = std::move(merged->v);
       s.x.reserve(merged->t.size());
       for (double t : merged->t) s.x.push_back(t - out.time_zero);
-      work.emplace_back(key, std::move(s));
+      work.push_back({key, std::move(s), fit_spec_locked(first)});
     }
   }
   // Fitted outside the lock: readers (conditionals, the engine) are not held up.
-  for (auto& [key, series] : work) {
-    auto spec = key.kind == kBaseline ? plan::baseline_fit(fits, key.detector) : plan::signal_fit(fits, key.label);
+  for (auto& [key, series, spec] : work) {
     if (series.x.size() < reduction::parameter_count(spec)) spec = reduction::FitSpec{reduction::FitKind::Average};
     if (auto r = reduction::fit(series, spec)) out.fits.push_back({key, std::move(*r)});
   }
@@ -253,9 +257,29 @@ std::optional<reduction::Series> Collector::fit_series(const SeriesKey& key) con
 
 // ---- metrics ----------------------------------------------------------------
 
+void Collector::set_plan(plan::MeasurementPlan plan) {
+  std::lock_guard lock(mutex_);
+  plan_ = std::move(plan);
+}
+
 void Collector::set_fits(plan::Fits fits) {
   std::lock_guard lock(mutex_);
-  fits_ = std::move(fits);
+  plan_ = plan::MeasurementPlan{};
+  plan_.fits = std::move(fits);
+}
+
+reduction::FitSpec Collector::fit_spec_locked(const SeriesKey& key) const {
+  const plan::Gas* gas = nullptr;
+  for (const auto& g : plan_.gases)
+    if (g.name == key.gas) gas = &g;
+  if (gas == nullptr) {
+    static const plan::Gas kNone{};
+    return plan::fit_for(plan_, kNone, nullptr, key.kind, key.label, key.detector);
+  }
+  const plan::Segment* segment = nullptr;
+  if (key.segment >= 0 && static_cast<std::size_t>(key.segment) < gas->segments.size())
+    segment = &gas->segments[static_cast<std::size_t>(key.segment)];
+  return plan::fit_for(plan_, *gas, segment, key.kind, key.label, key.detector);
 }
 
 void Collector::set_icfactors(std::map<std::string, double> icfactors) {
@@ -274,7 +298,7 @@ std::optional<reduction::Intercept> Collector::intercept(const std::string& isot
 }
 
 std::optional<Series> Collector::isotope_series_locked(const std::string& iso, std::string_view kind,
-                                                      std::string* det) const {
+                                                      std::string* det, SeriesKey* first) const {
   const auto [label, qualifier] = split_name(iso);
   // The detector: the one named, else the one with the most recent point.
   std::string_view detector = qualifier;
@@ -292,8 +316,11 @@ std::optional<Series> Collector::isotope_series_locked(const std::string& iso, s
     if (!found) return std::nullopt;
   }
   std::vector<const Series*> parts;
-  for (const auto& [key, s] : data_.series)
-    if (key.kind == kind && key.label == label && key.detector == detector && !s.v.empty()) parts.push_back(&s);
+  for (const auto& [key, s] : data_.series) {
+    if (key.kind != kind || key.label != label || key.detector != detector || s.v.empty()) continue;
+    if (parts.empty() && first != nullptr) *first = key;
+    parts.push_back(&s);
+  }
   if (parts.empty()) return std::nullopt;
   if (det != nullptr) *det = std::string(detector);
   return merge_series(parts);
@@ -335,8 +362,9 @@ double Collector::icfactor_locked(const std::string& det) const {
 
 std::optional<reduction::Intercept> Collector::intercept_locked(const std::string& iso, std::string* det) const {
   std::optional<Series> s;
+  SeriesKey first;
   for (auto kind : kLabelKinds) {
-    s = isotope_series_locked(iso, kind, det);
+    s = isotope_series_locked(iso, kind, det, &first);
     if (s) break;
   }
   if (!s) return std::nullopt;
@@ -345,7 +373,7 @@ std::optional<reduction::Intercept> Collector::intercept_locked(const std::strin
   series.y = std::move(s->v);
   series.x.reserve(s->t.size());
   for (double t : s->t) series.x.push_back(t - t0);
-  auto spec = plan::signal_fit(fits_, std::string(split_name(iso).first));
+  auto spec = fit_spec_locked(first);
   if (series.x.size() < reduction::parameter_count(spec)) spec = reduction::FitSpec{reduction::FitKind::Average};
   auto r = reduction::fit(series, spec);
   if (!r) return std::nullopt;

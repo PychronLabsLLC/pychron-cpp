@@ -1172,7 +1172,6 @@ void unbuilt_segment(const Segment& s, const std::string& at, std::vector<std::s
                               " segment");
   const bool in_place = s.kind == SegmentKind::Sniff || s.kind == SegmentKind::Whiff;
   if (in_place && !s.table.empty()) add(at, "table");
-  if (!s.fits.empty()) add(join(at, "fits"), "segment fits");
   if (!s.truncations.empty()) add(join(at, "conditionals"), "segment conditionals");
   for (std::size_t j = 0; j < s.positions.size(); ++j)
     unbuilt_position(s.positions[j], join(join(at, "positions"), j), in_place, out);

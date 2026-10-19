@@ -125,6 +125,41 @@ reduction::FitSpec fit_for(const std::map<std::string, reduction::FitKind>& kind
 
 }  // namespace
 
+reduction::FitSpec fit_for(const MeasurementPlan& plan, const Gas& gas, const Segment* segment, std::string_view kind,
+                           std::string_view label, std::string_view detector) {
+  const Fits& fits = gas.fits ? *gas.fits : plan.fits;
+  const bool baseline = kind == "baseline";
+  const auto& kinds = baseline ? fits.baseline : fits.signal;
+  std::vector<std::string> keys;
+  if (!label.empty()) keys.push_back(std::string(label) + "@" + std::string(detector));
+  keys.emplace_back(baseline ? detector : label);
+  keys.emplace_back("default");
+
+  reduction::FitSpec spec;
+  spec.error = fits.error;
+  spec.outliers = fits.outliers;
+  const auto found = std::find_if(keys.begin(), keys.end(), [&](const std::string& k) { return kinds.contains(k); });
+  if (found != keys.end()) spec.kind = kinds.at(*found);
+  else if (baseline) spec.kind = reduction::FitKind::Average;
+
+  if (segment != nullptr) {
+    std::vector<std::string> over;
+    if (!label.empty()) over.push_back(std::string(label) + "@" + std::string(detector));
+    if (!label.empty()) over.emplace_back(label);
+    over.emplace_back(detector);
+    over.emplace_back("default");
+    for (const auto& k : over) {
+      const auto it = segment->fits.find(k);
+      if (it == segment->fits.end()) continue;
+      if (it->second.fit) spec.kind = *it->second.fit;
+      if (it->second.error) spec.error = *it->second.error;
+      if (it->second.outliers) spec.outliers = *it->second.outliers;
+      break;
+    }
+  }
+  return spec;
+}
+
 reduction::FitSpec signal_fit(const Fits& fits, const std::string& isotope) {
   return fit_for(fits.signal, fits, isotope);
 }

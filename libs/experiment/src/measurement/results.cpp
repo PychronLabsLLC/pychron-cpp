@@ -40,6 +40,8 @@ std::map<RecordKey, const collect::Series*> record_series(const collect::RunData
   return out;
 }
 
+const plan::Gas kNoGas{};
+
 const plan::Gas* gas_named(const plan::MeasurementPlan& plan, const std::string& name) {
   for (const auto& g : plan.gases)
     if (g.name == name) return &g;
@@ -57,6 +59,13 @@ const plan::Position* position_of(const plan::MeasurementPlan& plan, const std::
   const auto* seg = segment_of(plan, gas, segment);
   if (seg == nullptr || position < 0 || static_cast<std::size_t>(position) >= seg->positions.size()) return nullptr;
   return &seg->positions[static_cast<std::size_t>(position)];
+}
+
+// The fit of a series at its place in the plan (plan::fit_for).
+reduction::FitSpec fit_of(const RecordKey& key, const plan::MeasurementPlan& plan) {
+  const auto* gas = gas_named(plan, key.gas);
+  return plan::fit_for(plan, gas != nullptr ? *gas : kNoGas, segment_of(plan, key.gas, key.segment), key.kind,
+                       key.label, key.detector);
 }
 
 double mean(const std::vector<double>& v) {
@@ -180,10 +189,12 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
   // as one series in time order.
   std::map<std::pair<std::string, std::string>, std::vector<const collect::Series*>> signal_parts;
   std::map<std::pair<std::string, std::string>, Signal> signals;
+  std::map<std::pair<std::string, std::string>, const RecordKey*> signal_first;  // its fit's segment
   for (const auto& [key, s] : ordered) {
     if (key.kind != collect::kSignal) continue;
     const auto id = std::make_pair(key.label, key.detector);
     signal_parts[id].push_back(s);
+    signal_first.try_emplace(id, &key);
     if (!signals.contains(id)) {
       Signal sig;
       sig.key = record::qualified_key(key.label, key.detector);
@@ -204,7 +215,7 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
       sig.last = s.t.back();
       sig.mean_t = mean(s.t);
     }
-    auto spec = plan::signal_fit(plan.fits, id.first);
+    auto spec = fit_of(*signal_first.at(id), plan);
     // Too few points for the plan's fit (e.g. truncated early): average them;
     // the recorded fit says so.
     if (!series.x.empty() && series.x.size() < reduction::parameter_count(spec)) {
@@ -223,8 +234,13 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
   // one detector are one position).
   using Where = std::tuple<std::string, std::string, int, int>;  // detector, gas, segment, position
   std::map<Where, std::vector<const collect::Series*>> baseline_parts;
-  for (const auto& [key, s] : ordered)
-    if (key.kind == collect::kBaseline) baseline_parts[{key.detector, key.gas, key.segment, key.position}].push_back(s);
+  std::map<Where, const RecordKey*> baseline_first;
+  for (const auto& [key, s] : ordered) {
+    if (key.kind != collect::kBaseline) continue;
+    const Where where{key.detector, key.gas, key.segment, key.position};
+    baseline_parts[where].push_back(s);
+    baseline_first.try_emplace(where, &key);
+  }
   std::vector<Baseline> baselines;
   for (const auto& [where, parts] : baseline_parts) {
     const auto& [det, gas, segment, position] = where;
@@ -232,7 +248,7 @@ FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan&
     reduction::Series series;
     series.y = s.v;
     for (double t : s.t) series.x.push_back(t - t0);
-    const auto spec = plan::baseline_fit(plan.fits, det);
+    const auto spec = fit_of(*baseline_first.at(where), plan);
     auto r = reduction::fit(series, spec);
     if (!r) {
       std::string what = "baseline " + det + " at ";

@@ -208,6 +208,9 @@ class Collector {
   // Every other metric is asked of `fallback` (spectrometer, line, devices).
   const MetricContext& metrics() const noexcept { return metrics_; }
   void set_fallback(const MetricContext* fallback) { metrics_.fallback = fallback; }
+  // The plan whose fits the live fits use (plan::fit_for, by each series'
+  // gas and segment). set_fits: a plan of these fits alone.
+  void set_plan(plan::MeasurementPlan plan);
   void set_fits(plan::Fits fits);
   void set_icfactors(std::map<std::string, double> icfactors);  // by detector; 1.0 when absent
   void set_arar(std::optional<reduction::ArArConstants> constants);
@@ -237,8 +240,10 @@ class Collector {
   std::optional<std::string> detector_of_locked(const std::string& iso) const;
   std::optional<std::vector<double>> baseline_values_locked(const std::string& det) const;
   // Every series of `kind` of the label on its detector, merged in time order.
+  // `first`: the key of its first part (for its gas and segment).
   std::optional<Series> isotope_series_locked(const std::string& iso, std::string_view kind,
-                                              std::string* det = nullptr) const;
+                                              std::string* det = nullptr, SeriesKey* first = nullptr) const;
+  reduction::FitSpec fit_spec_locked(const SeriesKey& key) const;
   std::optional<reduction::Intercept> intercept_locked(const std::string& iso, std::string* det = nullptr) const;
   double baseline_mean_locked(const std::string& det) const;
   double icfactor_locked(const std::string& det) const;
@@ -256,7 +261,7 @@ class Collector {
   RunData data_;
   CollectionSpec spec_;
   ReadingHook hook_;
-  plan::Fits fits_;
+  plan::MeasurementPlan plan_;
   std::map<std::string, double> icfactors_;
   std::optional<reduction::ArArConstants> arar_;
   int count_ = 0;

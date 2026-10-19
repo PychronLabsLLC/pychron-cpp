@@ -248,7 +248,7 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   started_ = ctx_.clock.now();
   collector_.start(started_);
   collector_.set_fallback(ctx_.metrics);
-  collector_.set_fits(in_.plan.fits);
+  collector_.set_plan(in_.plan);
   collector_.set_icfactors(in_.icfactors);
   collector_.set_arar(in_.arar);
   rebuild_conditionals();
