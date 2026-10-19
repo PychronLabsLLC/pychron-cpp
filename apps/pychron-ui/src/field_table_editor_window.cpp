@@ -13,6 +13,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -27,7 +28,9 @@
 #include <QUndoStack>
 #include <QVBoxLayout>
 
+#include "field_table_dialogs.hpp"
 #include "menu_hub.hpp"
+#include "pychron/systems/spectrometer/mftable_csv.hpp"
 #include "spectrometer_bridge.hpp"
 
 namespace pychron::ui {
@@ -97,6 +100,7 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   versions_->setColumnCount(3);
   versions_->setHeaderLabels({tr("Version"), tr("Points"), tr("Detectors")});
   versions_->setRootIsDecorated(false);
+  versions_->setSelectionMode(QAbstractItemView::ExtendedSelection);  // two to compare
 
   grid_->setModel(&model_);
   grid_->setSelectionBehavior(QAbstractItemView::SelectItems);
@@ -153,10 +157,18 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   // Toolbar.
   toolbar_ = addToolBar(tr("Field Table"));
   toolbar_->setObjectName(QStringLiteral("field_table_tools"));
+  add_row_action_ = toolbar_->addAction(tr("Add Row"), this, [this] {
+    auto d = make_add_row_dialog();
+    if (d->exec() == QDialog::Accepted) apply_add_row(*d);
+  });
   remove_row_action_ = toolbar_->addAction(tr("Remove Row"), this, [this] {
     std::vector<int> rows;
     for (const QModelIndex& i : grid_->selectionModel()->selectedIndexes()) rows.push_back(i.row());
     model_.remove_rows(std::move(rows));
+  });
+  set_value_action_ = toolbar_->addAction(tr("Set Value…"), this, [this] {
+    auto d = make_set_value_dialog();
+    if (d->exec() == QDialog::Accepted) apply_set_value(*d);
   });
   toolbar_->addSeparator();
   save_action_ = toolbar_->addAction(tr("Save"), this, [this] { save(); });
@@ -164,6 +176,22 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   make_current_action_ = toolbar_->addAction(tr("Make Current"), this, [this] {
     if (auto* item = versions_->currentItem()) make_current(item->data(0, Qt::UserRole).toString());
   });
+  compare_action_ = toolbar_->addAction(tr("Compare…"), this, [this] {
+    // Two selected: older against newer. Else the open edits, or the
+    // selected version, against the current one.
+    QStringList picked;
+    for (const auto* item : versions_->selectedItems()) picked.append(item->data(0, Qt::UserRole).toString());
+    const QStringList all = versions();  // newest first
+    std::ranges::sort(picked, [&all](const QString& a, const QString& b) { return all.indexOf(a) > all.indexOf(b); });
+    if (picked.size() >= 2) {
+      compare(picked.front(), picked.back());
+    } else if (modified() || picked.isEmpty()) {
+      compare(store_current(), QString());
+    } else {
+      compare(picked.front(), store_current());
+    }
+  });
+  import_action_ = toolbar_->addAction(tr("Import CSV…"), this, [this] { import_csv(); });
   toolbar_->addSeparator();
   undo_action_ = model_.undo_stack()->createUndoAction(this, tr("&Undo"));
   undo_action_->setShortcuts(QKeySequence::Undo);
@@ -204,6 +232,12 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
     return QMessageBox::question(this, tr("Field table"), question) == QMessageBox::Yes;
   };
   show_error_ = [this](const QString& error) { QMessageBox::warning(this, tr("Field table"), error); };
+  pick_csv_ = [this]() -> std::optional<fs::path> {
+    const QString path =
+        QFileDialog::getOpenFileName(this, tr("Import legacy mftable"), QString(), tr("mftable (*.csv);;All files (*)"));
+    if (path.isEmpty()) return std::nullopt;
+    return fs::path(path.toStdString());
+  };
 
   check_timer_.setSingleShot(true);
   check_timer_.setInterval(kCheckDelayMs);
@@ -343,6 +377,11 @@ void FieldTableEditorWindow::open_table(const QString& name) {
 void FieldTableEditorWindow::open_version(const QString& name, const QString& version) {
   if (name == open_name_ && version == open_version_) return;
   if (resolve_unsaved([this, name, version] { load_version(name, version); })) load_version(name, version);
+}
+
+void FieldTableEditorWindow::load_current_saved(const QString& name) {
+  auto current = store(name).current_version();
+  load_version(name, current ? q(*current) : QString());
 }
 
 void FieldTableEditorWindow::load_current(const QString& name) {
@@ -531,6 +570,10 @@ void FieldTableEditorWindow::update_actions() {
   save_action_->setToolTip(why.isEmpty() ? tr("Save the edits as a new current version") : why);
   revert_action_->setEnabled(modified());
   remove_row_action_->setEnabled(!model_.read_only() && grid_->selectionModel()->hasSelection());
+  add_row_action_->setEnabled(!model_.read_only() && !open_name_.isEmpty());
+  set_value_action_->setEnabled(!model_.read_only() && !model_.table().points().empty());
+  import_action_->setEnabled(!open_name_.isEmpty());
+  compare_action_->setEnabled(!open_name_.isEmpty());
   const QString selected =
       versions_->currentItem() != nullptr ? versions_->currentItem()->data(0, Qt::UserRole).toString() : QString();
   const QString mc = make_current_disabled_reason(selected);
@@ -678,6 +721,93 @@ void FieldTableEditorWindow::on_table_changed(const QString& name, const QString
   } else {
     set_banner(tr("table changed since you opened it (now %1)").arg(version));
   }
+}
+
+QDialog* FieldTableEditorWindow::compare(const QString& v1, const QString& v2) {
+  if (open_name_.isEmpty() || v1.isEmpty()) return nullptr;
+  const auto side = [this](const QString& v) -> std::pair<std::string, Result<sp::FieldTable>> {
+    if (v.isEmpty()) return {sp::to_toml(model_.table()), model_.table()};
+    auto text = read_text(version_file(open_name_, v));
+    if (!text) return {std::string(), Result<sp::FieldTable>(fail(ErrorKind::Io, "cannot read " + v.toStdString()))};
+    auto parsed = sp::parse_field_table(*text);
+    return {*text, std::move(parsed)};
+  };
+  auto [old_text, old_table] = side(v1);
+  auto [new_text, new_table] = side(v2);
+  const QString new_title = v2.isEmpty() ? tr("open edits") : v2;
+  QDialog* d = nullptr;
+  if (old_table && new_table) {
+    d = new FieldTableCompareDialog(sp::diff_field_tables(*old_table, *new_table), v1, new_title, this);
+  } else {
+    d = make_text_compare_dialog(v1, q(old_text), new_title, q(new_text), this);
+  }
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  d->show();
+  return d;
+}
+
+void FieldTableEditorWindow::import_csv() {
+  if (open_name_.isEmpty()) return;
+  const auto path = pick_csv_();
+  if (!path) return;
+  const auto text = read_text(*path);
+  if (!text) {
+    show_error_(tr("cannot read %1").arg(q(path->string())));
+    return;
+  }
+  const QString name = open_name_;
+  const auto import = [this, name, text = *text, file = q(path->filename().string())] {
+    load_current_saved(name);
+    if (model_.read_only()) {
+      show_error_(tr("%1 has no current version to import over").arg(name));
+      return;
+    }
+    auto table = sp::read_mftable_csv(text, model_.weights(), model_.table().axis());
+    if (!table) {
+      show_error_(tr("%1: %2").arg(file, q(table.error().what)));
+      return;
+    }
+    model_.edit_table(std::move(*table), tr("Import CSV"));
+  };
+  if (resolve_unsaved(import)) import();
+}
+
+std::unique_ptr<FieldTableSetValueDialog> FieldTableEditorWindow::make_set_value_dialog() {
+  std::vector<std::string> isotopes;
+  for (const auto& p : model_.table().points()) isotopes.push_back(p.isotope);
+  auto d = std::make_unique<FieldTableSetValueDialog>(model_.detector_columns(), isotopes, config_.magnet.propagate,
+                                                      this);
+  // Starts at the grid's current cell.
+  const QModelIndex at = grid_->currentIndex();
+  if (const std::string det = model_.detector_at(at.column()); !det.empty()) d->set_detector(det);
+  if (at.isValid() && at.row() < model_.rowCount()) {
+    const auto& point = model_.table().points()[static_cast<std::size_t>(at.row())];
+    d->set_isotope(point.isotope);
+    if (const auto it = point.values.find(d->detector()); it != point.values.end()) d->set_value(it->second);
+  }
+  return d;
+}
+
+void FieldTableEditorWindow::apply_set_value(const FieldTableSetValueDialog& dialog) {
+  const auto value = dialog.value();
+  if (!value) {
+    show_error_(tr("value is not a finite number"));
+    return;
+  }
+  if (auto r = model_.set_value(dialog.detector(), dialog.isotope(), *value, dialog.propagate()); !r) {
+    show_error_(q(r.error().what));
+  }
+}
+
+std::unique_ptr<FieldTableAddRowDialog> FieldTableEditorWindow::make_add_row_dialog() {
+  std::vector<std::string> names;
+  for (const auto& [name, mass] : model_.weights().entries()) names.push_back(name);
+  return std::make_unique<FieldTableAddRowDialog>(names, this);
+}
+
+void FieldTableEditorWindow::apply_add_row(const FieldTableAddRowDialog& dialog) {
+  if (dialog.isotope().isEmpty()) return;
+  model_.add_row(dialog.isotope());
 }
 
 void FieldTableEditorWindow::closeEvent(QCloseEvent* event) {

@@ -19,6 +19,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -37,6 +38,7 @@
 
 class QAction;
 class QComboBox;
+class QDialog;
 class QFormLayout;
 class QLabel;
 class QListWidget;
@@ -47,6 +49,8 @@ class QVBoxLayout;
 
 namespace pychron::ui {
 
+class FieldTableAddRowDialog;
+class FieldTableSetValueDialog;
 class SpectrometerBridge;
 
 class FieldTableEditorWindow : public QMainWindow {
@@ -97,6 +101,22 @@ class FieldTableEditorWindow : public QMainWindow {
   QString make_current_disabled_reason(const QString& version) const;
   const QString& banner_text() const { return banner_text_; }
 
+  // Compare (spec 3.4): `v1` against `v2`, or against the open edits when
+  // `v2` is empty. A side that does not parse is compared as text. The
+  // dialog is shown, not run, and deletes itself when closed.
+  QDialog* compare(const QString& v1, const QString& v2);
+  // Import CSV (spec 3.5): the picked legacy mftable.csv opens as an unsaved
+  // edit of the open table's current version. A read error goes to
+  // show_error.
+  void import_csv();
+  using PickCsv = std::function<std::optional<std::filesystem::path>()>;
+  void set_pick_csv(PickCsv pick) { pick_csv_ = std::move(pick); }
+  // Set Value… and Add Row…: the toolbar runs the dialog, then applies it.
+  std::unique_ptr<FieldTableSetValueDialog> make_set_value_dialog();
+  void apply_set_value(const FieldTableSetValueDialog& dialog);
+  std::unique_ptr<FieldTableAddRowDialog> make_add_row_dialog();
+  void apply_add_row(const FieldTableAddRowDialog& dialog);
+
   // Dialog hooks; defaults are message boxes. Tests replace them.
   void set_ask_unsaved(std::function<Unsaved(const QString&)> ask) { ask_unsaved_ = std::move(ask); }
   void set_ask_conflict(std::function<Conflict(const QString& now_version)> ask) { ask_conflict_ = std::move(ask); }
@@ -120,6 +140,7 @@ class FieldTableEditorWindow : public QMainWindow {
   // Loads without asking about unsaved edits.
   void load_version(const QString& name, const QString& version);
   void load_current(const QString& name);
+  void load_current_saved(const QString& name);  // without the in-memory check
   void fill_tables();
   void fill_versions();
   void rebuild_fit_combos();
@@ -172,6 +193,10 @@ class FieldTableEditorWindow : public QMainWindow {
   QAction* revert_action_;
   QAction* make_current_action_;
   QAction* remove_row_action_;
+  QAction* add_row_action_ = nullptr;
+  QAction* set_value_action_ = nullptr;
+  QAction* compare_action_ = nullptr;
+  QAction* import_action_ = nullptr;
   QAction* undo_action_;
   QAction* redo_action_;
   QTimer check_timer_;
@@ -181,6 +206,7 @@ class FieldTableEditorWindow : public QMainWindow {
   std::function<Conflict(const QString&)> ask_conflict_;
   std::function<bool(const QString&)> confirm_;
   std::function<void(const QString&)> show_error_;
+  PickCsv pick_csv_;
 };
 
 }  // namespace pychron::ui

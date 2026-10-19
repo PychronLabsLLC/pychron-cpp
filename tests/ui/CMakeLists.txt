@@ -36,6 +36,7 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   endif()
   target_compile_definitions(${target} PRIVATE
     PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
+    PYCHRON_SYSTEMS_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/systems/data"
     PYCHRON_UI_SOURCE_DIR="${PROJECT_SOURCE_DIR}/apps/pychron-ui/src")
   # spectrometer sim drivers register from static initializers nothing references
   pychron_link_drivers(${target} pychron_sim)

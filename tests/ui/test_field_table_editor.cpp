@@ -12,13 +12,18 @@
 #include <thread>
 #include <vector>
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QPlainTextEdit>
 #include <QSignalSpy>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
+#include "field_table_dialogs.hpp"
 #include "field_table_editor_window.hpp"
 #include "field_table_model.hpp"
 #include "pychron/systems/spectrometer/field_table_store.hpp"
@@ -92,9 +97,10 @@ class TestFieldTableEditor : public QObject {
     return QString::fromStdString(*v);
   }
 
-  std::unique_ptr<FieldTableEditorWindow> make_window(bool with_bridge = true) {
+  std::unique_ptr<FieldTableEditorWindow> make_window(bool with_bridge = true,
+                                                      std::optional<spectrometer::cfg::SpectrometerConfig> config = {}) {
     auto w = std::make_unique<FieldTableEditorWindow>(
-        with_bridge ? bridge_.get() : nullptr, root(), sim_->spec->config(), sim_->spec->weights(),
+        with_bridge ? bridge_.get() : nullptr, root(), config ? *config : sim_->spec->config(), sim_->spec->weights(),
         [] { return QDateTime(QDate(2026, 10, 19), QTime(12, 0), QTimeZone::utc()); });
     w->set_confirm([this](const QString& q) {
       questions_.append(q);
@@ -527,6 +533,133 @@ class TestFieldTableEditor : public QObject {
     QCOMPARE(w->plot()->detector(), std::string("AX"));
     edit_h1(*w, "5.0123");
     QCOMPARE(w->plot()->detector(), std::string("AX"));
+  }
+
+  void compareTwoVersionsByIsotope() {
+    // v2: one value changed, Ar36 gone, Ar38 added.
+    auto table = argon().load().value();
+    table.mutable_points().front().values["H1"] += 0.01;
+    std::erase_if(table.mutable_points(), [](const auto& p) { return p.isotope == "Ar36"; });
+    table.mutable_points().push_back(spectrometer::ControlPoint{"Ar38", 37.9627322, {{"H1", 4.7}}});
+    const QString v2 = QString::fromStdString(argon().save(table, std::chrono::system_clock::now()).value());
+    auto w = make_window(true);
+    auto* dialog = qobject_cast<ui::FieldTableCompareDialog*>(w->compare(kShipped, v2));
+    QVERIFY(dialog);
+    const auto diff = spectrometer::diff_field_tables(argon().load(kShipped.toStdString()).value(), table);
+    QCOMPARE(diff.cells.size(), std::size_t{1});
+    QCOMPARE(diff.rows.size(), std::size_t{2});
+    QCOMPARE(dialog->row_count(), static_cast<int>(diff.cells.size() + diff.rows.size() + diff.masses.size()));
+    QVERIFY(dialog->findChild<QWidget*>("differences"));
+    dialog->close();
+  }
+
+  void compareOpenEditsAgainstCurrent() {
+    auto w = make_window();
+    edit_h1(*w, "5.0123");
+    w->model()->set_default_fit(spectrometer::FitKind::Linear);
+    auto* dialog = qobject_cast<ui::FieldTableCompareDialog*>(w->compare(kShipped, QString()));
+    QVERIFY(dialog);
+    QCOMPARE(dialog->row_count(), 1);
+    auto* fits = dialog->findChild<QListWidget*>("fit_changes");
+    QVERIFY(fits);
+    QCOMPARE(fits->count(), 1);
+    QCOMPARE(fits->item(0)->text(), QString("fit: quadratic -> linear"));
+    dialog->close();
+  }
+
+  void compareUnparseableAsText() {
+    write_file(argon().directory() / "20260102T000000Z.toml", "fit = \n# broken\n");
+    auto w = make_window();
+    QDialog* dialog = w->compare("20260102T000000Z", kShipped);
+    QVERIFY(dialog);
+    QVERIFY(!qobject_cast<ui::FieldTableCompareDialog*>(dialog));
+    const auto panes = dialog->findChildren<QPlainTextEdit*>();
+    QCOMPARE(panes.size(), 2);
+    QVERIFY(panes[0]->toPlainText().contains("# broken"));
+    QVERIFY(panes[1]->toPlainText().contains("Ar40"));
+    dialog->close();
+  }
+
+  void importCsvOpensAsUnsavedEdit() {
+    // The melbourne lab's config has no H2.
+    auto config = sim_->spec->config();
+    std::erase_if(config.detectors, [](const auto& d) { return d.name == "H2"; });
+    auto w = make_window(true, config);
+    w->set_pick_csv([] { return fs::path(PYCHRON_SYSTEMS_TEST_DATA_DIR) / "mftable_melbourne.csv"; });
+    w->import_csv();
+    QVERIFY(errors_.isEmpty());
+    QVERIFY(w->modified());
+    QCOMPARE(w->base_version(), kShipped);
+    QCOMPARE(w->open_version(), kShipped);
+    auto* m = w->model();
+    QCOMPARE(value_at(m->table(), "Ar40", "H2"), 6.36);
+    QCOMPARE(m->headerData(m->column_of("H2"), Qt::Horizontal).toString(), QString("H2 (not in config)"));
+    w->check_now();
+    QVERIFY2(w->save_enabled(), qPrintable(w->save_disabled_reason()));  // H2 warns only
+    QVERIFY(w->diagnostic_lines().join("\n").contains("H2"));
+    m->undo_stack()->undo();  // back to the version underneath
+    QVERIFY(!w->modified());
+  }
+
+  void importCsvErrorIsShown() {
+    auto w = make_window();
+    const fs::path bad = root() / "bad.csv";
+    write_file(bad, "iso,H1\nXx99,5.0\n");  // no mass for Xx99
+    w->set_pick_csv([bad] { return std::optional<fs::path>(bad); });
+    w->import_csv();
+    QCOMPARE(errors_.size(), 1);
+    QVERIFY(!w->modified());
+    w->set_pick_csv([this] { return root() / "missing.csv"; });
+    w->import_csv();
+    QCOMPARE(errors_.size(), 2);
+    w->set_pick_csv([] { return std::nullopt; });  // cancelled
+    w->import_csv();
+    QCOMPARE(errors_.size(), 2);
+  }
+
+  void setValueDialogDefaultsPropagateFromConfig() {
+    auto w = make_window();
+    auto dialog = w->make_set_value_dialog();
+    QCOMPARE(dialog->propagate(), sim_->spec->config().magnet.propagate);
+    auto config = sim_->spec->config();
+    config.magnet.propagate = !config.magnet.propagate;
+    auto w2 = make_window(true, config);
+    auto d2 = w2->make_set_value_dialog();
+    QCOMPARE(d2->propagate(), config.magnet.propagate);
+
+    // Filled and applied: FieldTable::update on the edit copy.
+    dialog->set_detector("H1");
+    dialog->set_isotope("Ar40");
+    dialog->set_value(5.011);
+    dialog->set_propagate(true);
+    FieldTable expected = w->model()->table();
+    QVERIFY(expected.update("H1", "Ar40", 5.011, true).has_value());
+    w->apply_set_value(*dialog);
+    QCOMPARE(w->model()->table(), expected);
+    QVERIFY(errors_.isEmpty());
+    // An isotope the table has no row for is refused, and said.
+    auto none = w2->make_set_value_dialog();
+    none->set_detector("H1");
+    none->set_isotope("Ar99");
+    none->set_value(1.0);
+    w2->apply_set_value(*none);
+    QCOMPARE(errors_.size(), 1);
+  }
+
+  void addRowFillsMass() {
+    auto w = make_window();
+    auto dialog = w->make_add_row_dialog();
+    auto* combo = dialog->findChild<QComboBox*>("isotope");
+    QVERIFY(combo);
+    QVERIFY(combo->isEditable());
+    QVERIFY(combo->findText("Ar38") >= 0);  // the weights' names
+    dialog->set_isotope(" Ar38 ");
+    w->apply_add_row(*dialog);
+    const int r = row_of(*w->model(), "Ar38");
+    QVERIFY(r >= 0);
+    QCOMPARE(w->model()->table().points()[static_cast<std::size_t>(r)].mass,
+             sim_->spec->weights().mass("Ar38").value());
+    QVERIFY(w->modified());
   }
 
   void diagnosticClickSelectsTheCell() {

@@ -459,12 +459,13 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
   - `FieldTableEditorWindow::compare(const QString& v1, const QString& v2)` (v2 empty: open edit copy vs current); unparseable side compared as text (two `QPlainTextEdit`s).
   - `FieldTableEditorWindow::set_pick_csv(std::function<std::optional<std::filesystem::path>()>)`, `import_csv()`: result opens as unsaved edit of the selected table, base = its current; a read error goes to `show_error`.
   - Set Value… dialog: detector, isotope, value, Propagate (default config `[magnet] propagate`) → `FieldTableModel::set_value`. Add Row: editable combo of `MolecularWeights` names.
+  - As built: `QDialog* compare(v1, v2)` returns the shown dialog (deletes itself on close); `v2` empty compares `v1` with the open edits (the toolbar passes the current version). Toolbar Compare…: two selected versions, older against newer; else open edits (or the one selected version) against current. `make_set_value_dialog()` / `apply_set_value(dialog)` and `make_add_row_dialog()` / `apply_add_row(dialog)`: the toolbar runs the dialog between the two, so tests need no modal loop. Import loads the current version as saved, then the CSV as one undoable edit. `tests/ui` gets `PYCHRON_SYSTEMS_TEST_DATA_DIR` for the melbourne fixture; the import test drops `H2` from the window's config, as the melbourne lab has none.
 
-- [ ] **Step 1: Write failing tests**: `compareTwoVersionsByIsotope` (row count = changed cells + added/removed), `compareOpenEditsAgainstCurrent`, `compareUnparseableAsText`, `importCsvOpensAsUnsavedEdit` (melbourne fixture; `modified()` true, `base_version()` = current, H2 column header marked not in config), `importCsvErrorIsShown`, `setValueDialogDefaultsPropagateFromConfig`, `addRowFillsMass`.
-- [ ] **Step 2: Run** `pychron_ui_test_field_table_editor` after building. Expected: new tests FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** same. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(ui): compare, import and set value in the field table editor`.
+- [x] **Step 1: Write failing tests**: `compareTwoVersionsByIsotope` (row count = changed cells + added/removed), `compareOpenEditsAgainstCurrent`, `compareUnparseableAsText`, `importCsvOpensAsUnsavedEdit` (melbourne fixture; `modified()` true, `base_version()` = current, H2 column header marked not in config), `importCsvErrorIsShown`, `setValueDialogDefaultsPropagateFromConfig`, `addRowFillsMass`.
+- [x] **Step 2: Run** `pychron_ui_test_field_table_editor` after building. Expected: new tests FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** same. Expected: PASS.
+- [x] **Step 5: Commit** `feat(ui): compare, import and set value in the field table editor`.
 
 ### Task 16: Menus, user doc, full run
 
