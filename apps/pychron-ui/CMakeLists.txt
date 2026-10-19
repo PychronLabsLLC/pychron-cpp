@@ -59,6 +59,7 @@ add_library(pychron_ui_lib STATIC
   src/facet_box.cpp
   src/row_colors.cpp
   src/data_browser_window.cpp
+  src/selection_list.cpp
   src/data_icons.cpp
   src/recall_window.cpp
   src/history_chart.cpp
@@ -151,6 +152,7 @@ add_library(pychron_ui_lib STATIC
   src/facet_box.hpp
   src/row_colors.hpp
   src/data_browser_window.hpp
+  src/selection_list.hpp
   src/data_icons.hpp
   src/recall_window.hpp
   src/history_chart.hpp
