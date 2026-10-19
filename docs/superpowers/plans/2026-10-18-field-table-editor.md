@@ -337,6 +337,8 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
     Result<void> set_value(const std::string& det, const std::string& isotope, double value, bool propagate);
     void set_default_fit(spectrometer::FitKind kind);
     void set_detector_fit(const std::string& det, std::optional<spectrometer::FitKind> kind);
+    void set_read_only(bool on);                      // unparseable or shown-only version: every edit refused
+    std::string detector_at(int column) const;        // empty for Isotope, Mass
     // QAbstractTableModel: rowCount, columnCount, data, setData, flags, headerData
    signals:
     void tableEdited();
@@ -344,11 +346,11 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
   ```
   Rows sorted by mass after every edit. Every mutation is a `QUndoCommand` holding the whole `FieldTable` before and after (tables are tens of rows: copy is fine and keeps undo exact). `data`: Display `%0.5f`, Edit full precision, ToolTip residual `value − fit` when fit succeeds, header ToolTip/`" (not in config)"` suffix for table-only detectors. `setData`: empty text on a value cell removes that detector's value; non-numeric or non-finite text refused (returns false); isotope commit trims and fills mass from weights when mass is 0 or equals the old isotope's weight; mass must be finite and > 0.
 
-- [ ] **Step 1: Write failing tests**: `columnsAreConfigOrderThenTableOnly`, `valuesDisplayFiveDecimalsEditFullPrecision`, `clearingACellRemovesTheValue`, `nonFiniteTextIsRefused`, `isotopeCommitFillsMassFromWeights`, `isotopeCommitKeepsAHandTypedMass`, `rowsStaySortedByMass`, `addAndRemoveRows`, `setValuePropagates` (matches `FieldTable::update`), `undoRedoRestoresTableExactly`, `modifiedFollowsTheCleanState`, `fitChangesAreUndoable`.
-- [ ] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_model && build/dev-ui/tests/ui/pychron_ui_test_field_table_model`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** same. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(ui): field table grid model with undo`.
+- [x] **Step 1: Write failing tests**: `columnsAreConfigOrderThenTableOnly`, `valuesDisplayFiveDecimalsEditFullPrecision`, `clearingACellRemovesTheValue`, `nonFiniteTextIsRefused`, `isotopeCommitFillsMassFromWeights`, `isotopeCommitKeepsAHandTypedMass`, `rowsStaySortedByMass`, `addAndRemoveRows`, `setValuePropagates` (matches `FieldTable::update`), `undoRedoRestoresTableExactly`, `modifiedFollowsTheCleanState`, `fitChangesAreUndoable`, `residualTooltipWhenTheFitSucceeds`, `readOnlyRefusesEdits`.
+- [x] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_model && build/dev-ui/tests/ui/pychron_ui_test_field_table_model`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** same. Expected: PASS.
+- [x] **Step 5: Commit** `feat(ui): field table grid model with undo`.
 
 ### Task 13: `FieldTableEditorWindow`: lists, grid, diagnostics, Save, Make Current, Revert
 
