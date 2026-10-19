@@ -1344,6 +1344,35 @@ TEST_F(EngineTest, HookUsesTheMeasurementApi) {
   EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "position Ar40@H1"), 2);
 }
 
+// Hooks as capable as the plan (spec 5.5, plan Task 18).
+TEST_F(EngineTest, EngineHookApiNewCallsReachThePorts) {
+  auto p = multicollect(4);
+  p.sniff.enabled = false;
+  p.hook = "h.py";
+  hook_.actions["before_main"] = [](scripting::IMeasurementApi& api) -> Result<void> {
+    if (auto r = api.peak_center("Ar40", "AX", "ic_run"); !r) return r;
+    if (auto r = api.set_deflection("CDD", 110); !r) return r;
+    if (auto r = api.set_integration(2); !r) return r;
+    if (auto r = api.with_table("ic"); !r) return r;
+    if (auto r = api.apply_optics("ar_config_a"); !r) return r;
+    if (api.set_integration(0)) return fail(ErrorKind::Config, "zero integration accepted");
+    return {};
+  };
+  auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(peak_.requests.size(), 1u);
+  EXPECT_EQ(peak_.requests[0].isotope, "Ar40");
+  EXPECT_EQ(peak_.requests[0].detector, "AX");
+  EXPECT_EQ(peak_.requests[0].write_table, "ic_run");
+  const auto from = log_from(spec_.log, "deflect CDD=110");
+  ASSERT_GE(from.size(), 3u);
+  EXPECT_EQ(std::vector<std::string>(from.begin(), from.begin() + 3),
+            (std::vector<std::string>{"deflect CDD=110", "table ic", "optics ar_config_a"}));
+  // Main collects with the hook's integration; the deflection stands to the end.
+  EXPECT_NE(std::find(from.begin(), from.end(), "start 2.000000"), from.end());
+  EXPECT_EQ(spec_.log.back(), "deflect CDD=0");
+}
+
 TEST_F(EngineTest, HookErrorFailsTheMeasurement) {
   auto p = multicollect(4);
   p.hook = "h.py";

@@ -326,6 +326,8 @@ class MeasurementEngine {
   Result<void> peak_center(const plan::PeakCenterStep& step);
   Result<void> peak_center_on(PeakCenterRequest request, double min_signal);  // one detector
   Result<void> set_step(const plan::SetStep& set, int segment);
+  // A deflection that stands until the run ends (a set step's, a hook's).
+  Result<void> set_standing_deflection(const std::string& det, double value, int segment);
   Result<void> equilibrate();
   Result<void> whiff(std::size_t segment);
   Result<void> call_hook(std::string_view entry, const scripting::ValueMap& args = {});

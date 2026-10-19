@@ -496,11 +496,13 @@ Done notes: Step 2 was not observed failing apart from the gate (the plans did n
 
 **Interfaces:**
 - Produces on `scripting::IMeasurementApi`: `virtual Result<void> peak_center(std::string_view label, std::string_view detector, std::string_view write_table) = 0; virtual Result<void> set_deflection(std::string_view detector, double value) = 0; virtual Result<void> set_integration(double seconds) = 0; virtual Result<void> with_table(std::string_view name) = 0; virtual Result<void> apply_optics(std::string_view name) = 0;` Python names the same.
-- [ ] **Step 1: Write failing tests:** `EngineHookApi.NewCallsReachThePorts` (a `FakeHook` calling each → fake journal); a scripting test that a hook script calling `set_deflection("CDD", 110)` reaches a fake `IMeasurementApi`.
-- [ ] **Step 2: Run** → FAIL.
-- [ ] **Step 3: Implement**; each Python binding releases the interpreter lock before calling in (root `AGENTS.md`, Time: `host_state.cpp`).
-- [ ] **Step 4: Run** `pychron_scripting_tests` and the engine filter → PASS.
-- [ ] **Step 5: Commit** `feat(scripting): measurement hooks gain peak_center, deflection, integration, table and optics`.
+- [x] **Step 1: Write failing tests:** `EngineHookApi.NewCallsReachThePorts` (a `FakeHook` calling each → fake journal); a scripting test that a hook script calling `set_deflection("CDD", 110)` reaches a fake `IMeasurementApi`.
+- [x] **Step 2: Run** → FAIL.
+- [x] **Step 3: Implement**; each Python binding releases the interpreter lock before calling in (root `AGENTS.md`, Time: `host_state.cpp`).
+- [x] **Step 4: Run** `pychron_scripting_tests` and the engine filter → PASS.
+- [x] **Step 5: Commit** `feat(scripting): measurement hooks gain peak_center, deflection, integration, table and optics`.
+
+Done notes: Step 2 was observed failing as build failures (no such calls). The hook's binding module is `libs/scripting/src/python/runtime.cpp` (`MeasurementAPI`); `peak_center(label, detector, write_table='')` in Python. Engine side: `peak_center` runs one detector as a step does (refused inside a collection, Config without a peak center service); `set_deflection` stands until the run ends as a `set` step's (shared `set_standing_deflection`); `set_integration` is the `set` step's integration (seconds > 0); `with_table` and `apply_optics` hold until a position selects its own and make the next position move again. Nothing in `vocabulary.cpp` names hook API calls (the static check does not look at `api.` attributes), so it is unchanged. Tests: `EngineTest.EngineHookApiNewCallsReachThePorts`, `ScriptHostTest.MeasurementHookReachesThePlansCalls`.
 
 ---
 

@@ -118,6 +118,23 @@ TEST_F(ScriptHostTest, MeasurementHookGetsTypedApi) {
   EXPECT_EQ(rig.log.snapshot(), expected);
 }
 
+// A hook reaches what the plan's steps do (measurement plan v2 spec 5.5).
+TEST_F(ScriptHostTest, MeasurementHookReachesThePlansCalls) {
+  auto hook = inline_script("def before_main(api):\n"
+                            "    api.set_deflection('CDD', 110)\n"
+                            "    api.peak_center('Ar40', 'H1')\n"
+                            "    api.peak_center('Ar40', 'AX', write_table='ic_run')\n"
+                            "    api.set_integration(2.5)\n"
+                            "    api.with_table('ic_run')\n"
+                            "    api.apply_optics('ar_config_a')\n",
+                            ScriptKind::MeasurementHook);
+  auto r = host->call_hook(hook, "before_main", {}, rig.env, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_EQ(rig.log.snapshot(),
+            (std::vector<std::string>{"set_deflection CDD 110", "peak_center Ar40 H1 ", "peak_center Ar40 AX ic_run",
+                                      "set_integration 2.5", "with_table ic_run", "apply_optics ar_config_a"}));
+}
+
 TEST_F(ScriptHostTest, ContextGlobalsAndOptionsAreReadable) {
   auto r = host->run(inline_script("def main():\n"
                                    "    info(duration)\n"

@@ -100,6 +100,38 @@ void bind_classes(py::module_ scope) {
              auto& api = a.state->measurement();
              a.state->unwrap(nogil([&] { return api.close(v); }));
            })
+      .def(
+          "peak_center",
+          [nogil](HookApi& a, const std::string& label, const std::string& det, const std::string& write_table) {
+            a.state->guard();
+            auto& api = a.state->measurement();
+            a.state->unwrap(nogil([&] { return api.peak_center(label, det, write_table); }));
+          },
+          py::arg("label"), py::arg("detector"), py::arg("write_table") = std::string())
+      .def("set_deflection",
+           [nogil](HookApi& a, const std::string& det, double value) {
+             a.state->guard();
+             auto& api = a.state->measurement();
+             a.state->unwrap(nogil([&] { return api.set_deflection(det, value); }));
+           })
+      .def("set_integration",
+           [nogil](HookApi& a, double seconds) {
+             a.state->guard();
+             auto& api = a.state->measurement();
+             a.state->unwrap(nogil([&] { return api.set_integration(seconds); }));
+           })
+      .def("with_table",
+           [nogil](HookApi& a, const std::string& name) {
+             a.state->guard();
+             auto& api = a.state->measurement();
+             a.state->unwrap(nogil([&] { return api.with_table(name); }));
+           })
+      .def("apply_optics",
+           [nogil](HookApi& a, const std::string& name) {
+             a.state->guard();
+             auto& api = a.state->measurement();
+             a.state->unwrap(nogil([&] { return api.apply_optics(name); }));
+           })
       .def("add_conditional",
            [](HookApi& a, const std::string& spec) {
              a.state->unwrap(a.state->measurement().add_conditional(spec));

@@ -169,6 +169,51 @@ class MeasurementEngine::Api final : public scripting::IMeasurementApi {
     e_.publish_log(LogLevel::Info, std::string(message));
   }
 
+  // As the plan's steps do (spec 5.5).
+  Result<void> peak_center(std::string_view label, std::string_view detector, std::string_view write_table) override {
+    if (e_.collecting_) return fail(ErrorKind::Config, "peak_center() is not allowed inside a collection");
+    if (e_.ctx_.peak_center == nullptr) return fail(ErrorKind::Config, "no peak center service");
+    PeakCenterRequest req;
+    req.isotope = std::string(label);
+    req.detector = std::string(detector);
+    req.write_table = std::string(write_table);
+    e_.trace(-1, -1, "step", "peak_center " + req.isotope + "@" + req.detector + " (hook)");
+    return e_.peak_center_on(std::move(req), 0);
+  }
+
+  // Stands until the run ends, as a set step's.
+  Result<void> set_deflection(std::string_view detector, double value) override {
+    return e_.set_standing_deflection(std::string(detector), value, -1);
+  }
+
+  Result<void> set_integration(double seconds) override {
+    if (!(seconds > 0)) return fail(ErrorKind::Config, "set_integration() needs seconds > 0");
+    e_.trace(-1, -1, "integration", plain(seconds));
+    e_.step_integration_ = seconds;
+    return {};
+  }
+
+  // Holds until a position selects its own.
+  Result<void> with_table(std::string_view name) override {
+    if (e_.collecting_) return fail(ErrorKind::Config, "with_table() is not allowed inside a collection");
+    auto r = e_.ctx_.spectrometer.with_table(std::string(name));
+    e_.trace(-1, -1, "table", name.empty() ? "(current)" : std::string(name));
+    if (!r) return r;
+    e_.table_ = std::string(name);
+    e_.position_.reset();
+    return {};
+  }
+
+  Result<void> apply_optics(std::string_view name) override {
+    if (e_.collecting_) return fail(ErrorKind::Config, "apply_optics() is not allowed inside a collection");
+    auto r = e_.ctx_.spectrometer.apply_optics(std::string(name));
+    e_.trace(-1, -1, "optics", std::string(name));
+    if (!r) return r;
+    e_.optics_ = std::string(name);
+    e_.position_.reset();
+    return {};
+  }
+
  private:
   MeasurementEngine& e_;
 };
@@ -478,6 +523,23 @@ Result<void> MeasurementEngine::run_step(std::size_t segment) {
   return fail(ErrorKind::Config, std::string(plan::to_string(seg.kind)) + " step: not run by this build yet");
 }
 
+Result<void> MeasurementEngine::set_standing_deflection(const std::string& det, double value, int segment) {
+  double original = 0;
+  if (const auto it = standing_.find(det); it != standing_.end()) {
+    original = it->second.original;
+  } else if (auto now = ctx_.spectrometer.deflection(det)) {
+    original = *now;
+  } else {
+    return fail(now.error());
+  }
+  standing_[det] = Deflected{value, original};  // before the call: a failed set is still restored
+  auto r = ctx_.spectrometer.set_deflection(det, value);
+  if (!r) return fail(r.error());
+  trace(segment, -1, "deflect", det + "=" + plain(*r));
+  settle_due_ = true;
+  return {};
+}
+
 // Each sub-key one port call, in this order: deflection (by detector),
 // gain, source, hv, cdd_voltage, integration_s. A deflection stands until
 // the run ends (a position's own deflection of that detector goes back to
@@ -485,21 +547,8 @@ Result<void> MeasurementEngine::run_step(std::size_t segment) {
 // does not set its own.
 Result<void> MeasurementEngine::set_step(const plan::SetStep& set, int segment) {
   trace(segment, -1, "step", "set");
-  for (const auto& [det, value] : set.deflection) {
-    double original = 0;
-    if (const auto it = standing_.find(det); it != standing_.end()) {
-      original = it->second.original;
-    } else if (auto now = ctx_.spectrometer.deflection(det)) {
-      original = *now;
-    } else {
-      return fail(now.error());
-    }
-    standing_[det] = Deflected{value, original};  // before the call: a failed set is still restored
-    auto r = ctx_.spectrometer.set_deflection(det, value);
-    if (!r) return fail(r.error());
-    trace(segment, -1, "deflect", det + "=" + plain(*r));
-    settle_due_ = true;
-  }
+  for (const auto& [det, value] : set.deflection)
+    if (auto r = set_standing_deflection(det, value, segment); !r) return r;
   for (const auto& [det, gain] : set.gain) {
     trace(segment, -1, "gain", det + "=" + plain(gain));
     if (auto r = ctx_.spectrometer.set_gain(det, gain); !r) return r;

@@ -47,6 +47,15 @@ struct IMeasurementApi {
   virtual Result<void> add_conditional(std::string_view spec) = 0;
   virtual Result<void> truncate(bool quick) = 0;
   virtual void log(std::string_view message) = 0;
+  // As capable as the plan (measurement plan v2 spec 5.5): a peak center of
+  // `label` on `detector` (an empty write_table updates the current table),
+  // a detector's deflection, the integration of later collections, a field
+  // table (empty: the configured one), an optics preset.
+  virtual Result<void> peak_center(std::string_view label, std::string_view detector, std::string_view write_table) = 0;
+  virtual Result<void> set_deflection(std::string_view detector, double value) = 0;
+  virtual Result<void> set_integration(double seconds) = 0;
+  virtual Result<void> with_table(std::string_view name) = 0;
+  virtual Result<void> apply_optics(std::string_view name) = 0;
 };
 
 // Finds gosub targets. pychron names use ':' as a path separator
