@@ -120,6 +120,10 @@ Result<Where> build_where(Db& db, Dialect dialect, const BrowseFilter& f, std::o
     w.clauses << sql::kBrowseAgeMax;
     w.bindings << *f.age_max;
   }
+  if (!f.uuids.empty()) {
+    w.clauses << sql::kBrowseUuidIn.arg(sql::placeholders(static_cast<qsizetype>(f.uuids.size())));
+    for (const Uuid& id : f.uuids) w.bindings << qv(id);
+  }
   return w;
 }
 
@@ -166,6 +170,35 @@ BrowseRow row_from(const Row& r) {
   return b;
 }
 
+// In parts: a statement takes a bounded number of values (999 on an older
+// SQLite). Every part is a whole page of its own, so the rows are merged into
+// the order of one page; no total and no cursor (count_total is ignored).
+constexpr std::size_t kUuidPart = 500;
+
+Result<BrowseResult> browse_uuids_in_parts(Db& db, Dialect dialect, const BrowseRequest& req) {
+  BrowseResult out;
+  const auto& all = req.filter.uuids;
+  for (std::size_t at = 0; at < all.size(); at += kUuidPart) {
+    const auto n = std::min(kUuidPart, all.size() - at);
+    BrowseRequest part = req;
+    part.filter.uuids.assign(all.begin() + static_cast<std::ptrdiff_t>(at),
+                             all.begin() + static_cast<std::ptrdiff_t>(at + n));
+    part.after.reset();
+    part.limit = static_cast<int>(n);
+    part.count_total = false;
+    auto st = browse_page_statement(db, dialect, part);
+    if (!st) return fail(st.error());
+    auto rows = db.select(st->sql, st->bindings);
+    if (!rows) return fail(rows.error());
+    for (const auto& r : *rows) out.rows.push_back(row_from(r));
+  }
+  std::ranges::sort(out.rows, [](const BrowseRow& a, const BrowseRow& b) {
+    if (a.summary.timestamp != b.summary.timestamp) return a.summary.timestamp > b.summary.timestamp;
+    return a.summary.uuid > b.summary.uuid;
+  });
+  return out;
+}
+
 }  // namespace
 
 Result<BrowseStatement> browse_page_statement(Db& db, Dialect dialect, const BrowseRequest& req) {
@@ -203,6 +236,7 @@ Result<BrowseStatement> facet_statement(Db& db, Dialect dialect, BrowseFacet f, 
 
 Result<BrowseResult> browse(Db& db, Dialect dialect, const BrowseRequest& req) {
   if (req.limit <= 0) return fail(ErrorKind::Protocol, "browse: limit must be positive");
+  if (req.filter.uuids.size() > kUuidPart) return browse_uuids_in_parts(db, dialect, req);
   BrowseResult out;
   if (req.count_total) {
     auto count = browse_count_statement(db, dialect, req.filter);

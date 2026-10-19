@@ -73,6 +73,9 @@ inline const QString kColIrradiation = QStringLiteral("ir.name");
 inline const QString kColLevel = QStringLiteral("lv.name");
 inline const QString kColLoad = QStringLiteral("ld.name");
 
+// %1: placeholders.
+inline const QString kBrowseUuidIn = QStringLiteral("a.uuid IN (%1)");
+
 // %1: column, %2: placeholders.
 inline const QString kBrowseIn = QStringLiteral("%1 IN (%2)");
 inline const QString kBrowseRepositoryIn = QStringLiteral(

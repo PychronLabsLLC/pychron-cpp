@@ -519,6 +519,7 @@ struct BrowseFilter {
   // The cached age (derived_value `age`, Ma), inclusive. An analysis with no
   // cached age, or one cached as having none, matches no bound.
   std::optional<double> age_min, age_max;
+  std::vector<Uuid> uuids;  // non-empty: only these analyses
 };
 
 struct BrowseCursorKey {

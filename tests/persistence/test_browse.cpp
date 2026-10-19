@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "store_fixture.hpp"
+#include "store_impl.hpp"
 
 namespace pychron::persistence::testing {
 namespace {
@@ -307,6 +308,58 @@ TEST_P(BrowseTest, FacetsUnderAnAgeBound) {
   EXPECT_TRUE(store_->facet(BrowseFacet::Sample, middle)->empty());
   EXPECT_TRUE(store_->facet(BrowseFacet::Repository, middle)->empty());
   EXPECT_TRUE(store_->facet(BrowseFacet::AnalysisType, ages(std::nullopt, 5.0))->empty());
+}
+
+TEST_P(BrowseTest, UuidFilter) {
+  BrowseFilter f;
+  f.uuids = {a1_, a4_, a2_};
+  EXPECT_EQ(uuids(browse(f)), (std::vector<Uuid>{a4_, a2_, a1_}));  // page order, invalid kept
+  EXPECT_EQ(browse(f).total, 3);
+  f.exclude_tags = {"invalid"};
+  EXPECT_EQ(uuids(browse(f)), (std::vector<Uuid>{a2_, a1_}));  // ANDed with other fields
+  f = {};
+  f.uuids = {Uuid::v7()};
+  EXPECT_TRUE(browse(f).rows.empty());
+}
+
+TEST_P(BrowseTest, UuidFilterInParts) {
+  BrowseFilter f;
+  for (int i = 0; i < 1200; ++i) f.uuids.push_back(Uuid::v7());
+  f.uuids.push_back(a3_);
+  f.uuids.insert(f.uuids.begin() + 700, a5_);
+  f.uuids.push_back(a1_);
+  const auto r = browse(f, 1203);
+  EXPECT_EQ(uuids(r), (std::vector<Uuid>{a5_, a3_, a1_}));
+  EXPECT_FALSE(r.next);
+}
+
+TEST_P(BrowseTest, NoUuidsLeavesTheStatementAlone) {
+  auto db = detail::Db::open(StoreConfig{"sqlite::memory:", false});
+  ASSERT_TRUE(db) << to_string(db.error());
+  BrowseFilter plain;
+  plain.text = "77";
+  plain.analysis_types = {"unknown"};
+  plain.age_min = 1.0;
+  BrowseFilter with = plain;
+  with.uuids = {a1_, a2_};
+  const auto dialect = Dialect::Sqlite;
+  const BrowseRequest req{plain, 10, std::nullopt, true};
+  const BrowseRequest req_with{with, 10, std::nullopt, true};
+
+  auto expect_same_unless_uuids = [&](const Result<detail::BrowseStatement>& without,
+                                      const Result<detail::BrowseStatement>& with_uuids) {
+    ASSERT_TRUE(without) << to_string(without.error());
+    ASSERT_TRUE(with_uuids) << to_string(with_uuids.error());
+    EXPECT_FALSE(without->sql.contains(QStringLiteral("a.uuid IN")));
+    EXPECT_TRUE(with_uuids->sql.contains(QStringLiteral("a.uuid IN (?, ?)")));
+    EXPECT_EQ(with_uuids->bindings.size(), without->bindings.size() + 2);
+  };
+  expect_same_unless_uuids(detail::browse_page_statement(**db, dialect, req),
+                           detail::browse_page_statement(**db, dialect, req_with));
+  expect_same_unless_uuids(detail::browse_count_statement(**db, dialect, plain),
+                           detail::browse_count_statement(**db, dialect, with));
+  expect_same_unless_uuids(detail::facet_statement(**db, dialect, BrowseFacet::Sample, plain),
+                           detail::facet_statement(**db, dialect, BrowseFacet::Sample, with));
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, BrowseTest, ::testing::ValuesIn(engines()), [](const auto& p) { return p.param; });
