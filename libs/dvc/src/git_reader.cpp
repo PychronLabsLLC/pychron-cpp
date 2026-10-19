@@ -442,6 +442,24 @@ Result<GitReader> GitReader::open(GitConfig config) {
                                        " or newer is required");
   }
 
+  // The usual case in one process: a repository, not shallow, with the
+  // branch under refs/heads. rev-parse prints the git directory, "false" and
+  // the sha, in that order. Anything else (exit 1 for a missing ref, 128
+  // outside a repository) is asked again step by step below, which names
+  // the reason as it always has.
+  {
+    auto ran = run(site, {"rev-parse", "--git-dir", "--is-shallow-repository", "--verify", "--quiet",
+                          "--end-of-options", "refs/heads/" + config.branch + "^{commit}"});
+    if (!ran) return fail(ran.error());
+    if (ran->exit_code == 0) {
+      const std::vector<std::string_view> lines = split(trimmed(ran->out), '\n');
+      if (lines.size() == 3 && trimmed(lines[1]) == "false" && is_sha(trimmed(lines[2]))) {
+        return GitReader(std::move(config), std::move(layout.git_dir), std::move(layout.common_dir),
+                         std::string(trimmed(lines[2])));
+      }
+    }
+  }
+
   auto git_dir = run(site, {"rev-parse", "--git-dir"});
   if (!git_dir) return fail(git_dir.error());
   if (git_dir->exit_code != 0) return fail(ErrorKind::Config, where + ": not a git repository: " + git_dir->err);

@@ -922,6 +922,9 @@ TEST(GitReader, OpenRejectsShallowClone) {
   GitConfig config = config_for(repo);
   config.repo = shallow;
   expect_open_fails(config, "shallow");
+  // The branch being missing as well does not change the reason.
+  config.branch = "develop";
+  expect_open_fails(config, "shallow");
 }
 
 // git's version is read once per process; every open still checks the rest.
@@ -941,6 +944,34 @@ TEST(GitReader, OpensTwiceInOneProcess) {
   missing.branch = "develop";
   expect_open_fails(missing, "branch 'develop' not found");
   EXPECT_EQ(scratch_files(repo), 0u);
+}
+
+// No refs/heads/<branch>: the name as given is tried next, as before.
+TEST(GitReader, OpensABranchGivenByAnotherName) {
+  SKIP_WITHOUT_GIT();
+  GitFixture repo;
+  repo.init();
+  repo.write("a.json", "1");
+  const std::string c1 = repo.commit("one", "2016-03-04T05:06:07+00:00");
+  repo.tag("v1");
+  repo.write("a.json", "2");
+  const std::string c2 = repo.commit("two", "2016-03-05T05:06:07+00:00");
+
+  GitConfig config = config_for(repo);
+  config.branch = "refs/heads/main";
+  auto by_ref = GitReader::open(config);
+  ASSERT_OK(by_ref);
+  EXPECT_EQ(by_ref->head(), c2);
+
+  config.branch = "v1";
+  auto by_tag = GitReader::open(config);
+  ASSERT_OK(by_tag);
+  EXPECT_EQ(by_tag->head(), c1);
+
+  config.branch = c1;
+  auto by_sha = GitReader::open(config);
+  ASSERT_OK(by_sha);
+  EXPECT_EQ(by_sha->head(), c1);
 }
 
 TEST(GitReader, ReadsABareMirrorAndUpdatesIt) {
