@@ -295,14 +295,15 @@ bool PreferencesDialog::commit(bool check_data_source) {
     return false;
   }
   // The install's data source: checked, then written, or nothing of it is.
-  bool source_written = false;
+  // Kept across a commit that fails later (the line's file), so the next one
+  // still asks to reopen.
   if (data_source_ != nullptr && data_source_->changed()) {
     if (const QString wrong = data_source_->apply(check_data_source); !wrong.isEmpty()) {
       complain(wrong, data_source_);
       if (check_data_source) save_without_checking_->show();
       return false;
     }
-    source_written = true;
+    source_written_ = true;
   }
   const Values v = values();
   // The line's file first: it is the part that can fail, and nothing else
@@ -315,7 +316,7 @@ bool PreferencesDialog::commit(bool check_data_source) {
   }
   if (apply_) apply_(v);
   // Last: reopening closes the window this dialog belongs to.
-  if (source_written && reopen_ && ask_reopen_ && ask_reopen_()) reopen_();
+  if (std::exchange(source_written_, false) && reopen_ && ask_reopen_ && ask_reopen_()) reopen_();
   return true;
 }
 

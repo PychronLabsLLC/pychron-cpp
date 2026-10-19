@@ -276,8 +276,10 @@ std::vector<std::string> seed_data_source(const DataSourceChange& change, const 
 - No-echo password prompt (`at_terminal`, `read_password`) in
   `apps/elctl/src/password_prompt.hpp`, built with or without store
   (`earthbank` uses same).
-- `--password-stdin`: one line, trailing `\r` stripped; input ended: usage
-  error (2). Prompt only when no `--password-stdin`, stdin is terminal, and
+- `--password-stdin`: one line, trailing `\r` stripped; input ended or
+  empty line: usage error (2), kept password untouched. Needs `--yes`
+  (stdin holds password, nothing left for `Write them?`): refused (2)
+  before anything read. Prompt only when no `--password-stdin`, stdin is terminal, and
   server new or other (host, port, name or user differ).
 - `--no-check`: says `skip  check: --no-check`; data folder not made then
   (doctor says so later).
@@ -285,7 +287,8 @@ std::vector<std::string> seed_data_source(const DataSourceChange& change, const 
 - `db status|migrate|derive` without `--db`: install `--install NAME` names,
   else default install, password joined (`setup::database_url`). Unknown
   `--install` name: exit 1, as every command; no `--db` and no install:
-  usage (2).
+  usage (2), saying why none (resolve error: nothing installed, several and
+  no default).
 
 `apps/pychron-ui`:
 
@@ -298,14 +301,22 @@ std::vector<std::string> seed_data_source(const DataSourceChange& change, const 
   `DataSourcePage` (`source`, `changed`, `test_connection`, `apply(check)`,
   `refresh_read_only`, `install()`). `apply` refused while queue runs too;
   read-only refreshed on show. `--db` note shows URL without password.
+  Install's source unreadable (bad record): page says why, read-only,
+  `changed()` false, `apply` refuses. Field that is no answer (recorded port
+  70000) counts as change only after user edited page: until then OK/Apply
+  of other pages not blocked.
 - `PreferencesDialog::add_data_source_page(deps, Reopen, AskReopen = {})`,
   page last, once. `commit()`: page written after EarthBank page, before
-  line's file; ask and reopen after `apply_`. Failed check: reason in
+  line's file; ask and reopen after `apply_`. Written-but-not-yet-asked kept
+  across a commit that fails later (line's file), so next OK/Apply asks;
+  asked once per write. Failed check: reason in
   `problem()`, "Save without checking" (`save_without_checking()`) shown,
   it commits with checks skipped.
 - Windows: `set_data_source(DataSourceDepsFactory, Reopen)` on `MainWindow`
-  and `DataMainWindow`; factory read each time Preferences opens (site
-  entry as it is then). `MainWindow` fills empty `queue_running` from
+  and `DataMainWindow`; factory read when Preferences opens a new dialog
+  (site entry as it is then), not for one raised again: that one is still
+  showing and its page holds install as its last apply left it (a re-read
+  there could drop unsaved edits). `MainWindow` fills empty `queue_running` from
   `ExperimentBridge::running()`. `main.cpp`'s reopen defers
   `window->close()` then `start_install(name)` with
   `QTimer::singleShot(0, ...)`: dialog returns before its window closes.

@@ -585,6 +585,35 @@ class TestPreferences : public QObject {
 
   // Preferences > Data source is added by a window that runs on an install
   // (test_data_source_page.cpp); without one there is no such page.
+  // A dialog raised again keeps its page; the window does not read the site
+  // file for a page it does not add (review finding 4).
+  void theDataSourceDepsAreReadOncePerDialog() {
+    auto src = make_source(10);
+    QTemporaryDir presets_dir;
+    pp::PresetStore presets(presets_dir.path().toStdString());
+    ui::DataMainWindow window(*src, presets, QStringLiteral("data-reduction"));
+    window.set_preferences_settings(factory());
+    int read = 0;
+    const fs::path root = config_dir_;
+    window.set_data_source(
+        [&read, root]() -> std::optional<ui::DataSourcePageDeps> {
+          ++read;
+          ui::DataSourcePageDeps deps;
+          deps.install.name = "lab";
+          deps.install.root = root;
+          deps.install.database = "sqlite:" + (root / "p.db").generic_string();
+          deps.site_path = root / "site.toml";
+          return deps;
+        },
+        [] {});
+    PreferencesDialog* first = window.open_preferences();
+    QVERIFY(first->data_source_page() != nullptr);
+    PreferencesDialog* again = window.open_preferences();
+    QCOMPARE(again, first);
+    QCOMPARE(read, 1);
+    first->close();
+  }
+
   void noDataSourcePageWithoutAnInstall() {
     QWidget window;
     QPointer<PreferencesDialog> open;

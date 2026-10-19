@@ -742,7 +742,9 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
         return QString();
       });
   // The data source is not changed under a running queue.
-  if (data_source_deps_) {
+  // Read for a new dialog only: one raised again keeps its page, which holds
+  // the install as its last apply left it.
+  if (data_source_deps_ && dialog->data_source_page() == nullptr) {
     if (auto deps = data_source_deps_()) {
       if (!deps->queue_running) deps->queue_running = [this] { return experiment_ != nullptr && experiment_->running(); };
       dialog->add_data_source_page(std::move(*deps), data_source_reopen_);

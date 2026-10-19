@@ -13,6 +13,7 @@
 #include <QRadioButton>
 #include <QSpinBox>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -22,6 +23,7 @@
 #include <vector>
 
 #include "data_source_page.hpp"
+#include "line_settings.hpp"
 #include "preferences_dialog.hpp"
 #include "pychron/setup/install.hpp"
 #include "pychron/setup/installer.hpp"
@@ -276,6 +278,85 @@ class TestDataSourcePage : public QObject {
     dialog.buttons()->button(QDialogButtonBox::Apply)->click();
     QCOMPARE(setup::load_site(lab.site_path)->find("lab")->data, std::string("runs"));
     QCOMPARE(reopened, 0);
+  }
+
+  // An install record that does not read: the page says so and is never
+  // applied, whatever OK or Apply is pressed for (review finding 1).
+  void anUnreadableSourceIsNeverApplied() {
+    const Lab lab;
+    const fs::path record = lab.root / ".pychron" / "install.toml";
+    { std::ofstream(record, std::ios::trunc) << "[answers\n"; }
+    const auto before = tree(lab.dir);
+    const std::string site_before = read_text(lab.site_path);
+    PreferencesDialog dialog({Preferences{}, std::nullopt, std::nullopt}, {});
+    dialog.add_data_source_page(lab.deps(), [] {}, [] { return true; });
+    DataSourcePage* page = dialog.data_source_page();
+    QVERIFY(!page->changed());
+    QVERIFY(page->result()->text().contains(QStringLiteral("could not be read")));
+    QVERIFY(!page->editor(QStringLiteral("data_folder"))->isEnabled());
+    QVERIFY(!page->test_button()->isEnabled());
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY2(dialog.problem()->isHidden(), qPrintable(dialog.problem()->text()));
+    QCOMPARE(read_text(lab.site_path), site_before);
+    QCOMPARE(tree(lab.dir), before);
+    QVERIFY(!page->apply().isEmpty());  // nor from code
+  }
+
+  // A recorded value the page cannot hold (port 70000, edited by hand)
+  // blocks nothing until the page itself is edited (review finding 2).
+  void aBadRecordedValueBlocksNothingUntilEdited() {
+    const Lab lab(server_answers());
+    auto record = setup::read_install_record(lab.root);
+    QVERIFY(record);
+    record->answers["db_port"] = setup::Value{std::int64_t{70000}};
+    QVERIFY(setup::write_install_record(lab.root, *record));
+    const std::string site_before = read_text(lab.site_path);
+    PreferencesDialog dialog({Preferences{}, std::nullopt, std::nullopt}, {});
+    dialog.add_data_source_page(lab.deps(), [] {}, [] { return true; });
+    DataSourcePage* page = dialog.data_source_page();
+    QVERIFY(!page->source());
+    QVERIFY(!page->changed());
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY2(dialog.problem()->isHidden(), qPrintable(dialog.problem()->text()));
+    QCOMPARE(read_text(lab.site_path), site_before);
+
+    // Edited, and still not an answer: now it is a change, and refused.
+    auto* host = qobject_cast<QLineEdit*>(page->editor(QStringLiteral("db_host")));
+    QVERIFY(host != nullptr);
+    host->setText(QStringLiteral("db2.lab"));
+    QVERIFY(page->changed());
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY(!dialog.problem()->isHidden());
+    QVERIFY2(dialog.problem()->text().contains(QStringLiteral("port")), qPrintable(dialog.problem()->text()));
+    QCOMPARE(read_text(lab.site_path), site_before);
+  }
+
+  // The line's file fails after the data source was written: once it is
+  // saved, the reopen is still asked for (review finding 3).
+  void aFailedLineSaveStillAsksToReopenOnTheNextApply() {
+    const Lab lab;
+    int asked = 0;
+    PreferencesDialog dialog({Preferences{}, std::nullopt, LineSettings{}}, {});
+    int saves = 0;
+    dialog.set_line_save([&saves](const LineSettings&) {
+      return ++saves == 1 ? QStringLiteral("the folder is read-only") : QString();
+    });
+    dialog.add_data_source_page(lab.deps(), [] {},
+                                [&asked] {
+                                  ++asked;
+                                  return false;
+                                });
+    dialog.data_source_page()->editor(QStringLiteral("data_folder"))->findChild<QLineEdit*>(QStringLiteral("text"))->setText(
+        QStringLiteral("runs"));
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY(!dialog.problem()->isHidden());
+    QCOMPARE(asked, 0);
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QVERIFY2(dialog.problem()->isHidden(), qPrintable(dialog.problem()->text()));
+    QCOMPARE(setup::load_site(lab.site_path)->find("lab")->data, std::string("runs"));
+    QCOMPARE(asked, 1);
+    dialog.buttons()->button(QDialogButtonBox::Apply)->click();
+    QCOMPARE(asked, 1);  // asked once per change
   }
 
   void aFailedCheckOffersSaveWithoutChecking() {

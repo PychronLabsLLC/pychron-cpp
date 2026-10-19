@@ -69,7 +69,8 @@ PreferencesDialog* DataMainWindow::open_preferences() {
                                                           [this](const PreferencesDialog::Values& values) {
                                                             apply_preferences(values.preferences);
                                                           });
-  if (data_source_deps_) {
+  // Read for a new dialog only (as MainWindow).
+  if (data_source_deps_ && dialog->data_source_page() == nullptr) {
     if (auto deps = data_source_deps_()) dialog->add_data_source_page(std::move(*deps), data_source_reopen_);
   }
   return dialog;

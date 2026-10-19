@@ -187,6 +187,7 @@ class PreferencesDialog : public QDialog {
   EarthbankPreferencesPage* earthbank_ = nullptr;
   DataSourcePage* data_source_ = nullptr;
   Reopen reopen_;
+  bool source_written_ = false;  // written by an OK/Apply that went on to fail: still to ask about
   AskReopen ask_reopen_;
   QLabel* problem_;
   QPushButton* save_without_checking_;

@@ -55,6 +55,8 @@ class DataSourcePage : public QWidget {
   // What the fields hold; the password nullopt when blank (keep the kept one).
   [[nodiscard]] Result<setup::DataSource> source() const;
   // The fields differ from what the install uses, or a password was typed.
+  // Never when the install's source could not be read (the page is then
+  // read-only); a field that is no answer counts only once the user edited.
   [[nodiscard]] bool changed() const;
   // setup::check_data_source(..., create = false) into result(): nothing written.
   void test_connection();
@@ -96,7 +98,9 @@ class DataSourcePage : public QWidget {
   QPushButton* test_button_ = nullptr;
   QLabel* result_ = nullptr;
   QLabel* note_ = nullptr;
-  bool building_ = true;
+  bool building_ = true;   // the page sets its fields itself: not an edit
+  bool edited_ = false;    // the user changed a field since load or the last apply
+  std::string unreadable_;  // why the install's source could not be read
 };
 
 }  // namespace pychron::ui

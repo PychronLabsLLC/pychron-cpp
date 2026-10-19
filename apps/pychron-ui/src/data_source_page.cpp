@@ -74,7 +74,10 @@ DataSourcePage::DataSourcePage(DataSourcePageDeps deps, QWidget* parent) : QWidg
     f.cell = new QWidget(this);
     auto* row = new QHBoxLayout(f.cell);
     row->setContentsMargins(0, 0, 0, 0);
-    f.editor = make_question_editor(f.question, f.cell, [this] { refresh_visibility(); });
+    f.editor = make_question_editor(f.question, f.cell, [this] {
+      if (!building_) edited_ = true;  // by the user: what the page shows itself is not an edit
+      refresh_visibility();
+    });
     f.editor->setObjectName(qs("answer-" + f.question.id));
     row->addWidget(f.editor, 1);
     if (id == "db_file") {
@@ -119,7 +122,9 @@ DataSourcePage::DataSourcePage(DataSourcePageDeps deps, QWidget* parent) : QWidg
     current_ = *current;
     show_source(*current);
   } else {
-    say({"the install's data source could not be read: " + current.error().what}, false);
+    // Nothing on the page stands for the install then: it is shown, and never applied.
+    unreadable_ = "the install's data source could not be read: " + current.error().what;
+    say({unreadable_}, false);
   }
   show_kept_password();
   building_ = false;
@@ -227,8 +232,12 @@ Result<DataSource> DataSourcePage::source() const {
 }
 
 bool DataSourcePage::changed() const {
+  if (!current_) return false;
+  // A field that is no answer (a recorded port of 70000) is a change only once
+  // the user has edited the page: until then it blocks no other page.
   auto now = source();
-  return !now || !current_ || *now != *current_;
+  if (!now) return edited_;
+  return *now != *current_;
 }
 
 void DataSourcePage::say(const std::vector<std::string>& lines, bool ok) {
@@ -251,6 +260,7 @@ void DataSourcePage::test_connection() {
 }
 
 QString DataSourcePage::apply(bool check) {
+  if (!current_) return qs(unreadable_);
   if (!changed()) return {};
   if (deps_.queue_running && deps_.queue_running()) return tr("Stop the queue to change the data source");
   auto to = source();
@@ -286,7 +296,10 @@ QString DataSourcePage::apply(bool check) {
   DataSource now = *to;
   if (auto* server = std::get_if<ServerDatabase>(&now.database)) server->password.reset();
   current_ = std::move(now);
+  building_ = true;
   show_kept_password();
+  building_ = false;
+  edited_ = false;
   return {};
 }
 
@@ -297,8 +310,9 @@ void DataSourcePage::showEvent(QShowEvent* event) {
 
 void DataSourcePage::refresh_read_only() {
   const bool running = deps_.queue_running && deps_.queue_running();
-  for (const auto& f : fields_) f.cell->setEnabled(!running);
-  test_button_->setEnabled(!running);
+  const bool locked = running || !current_;
+  for (const auto& f : fields_) f.cell->setEnabled(!locked);
+  test_button_->setEnabled(!locked);
   QStringList notes;
   if (running) notes << tr("Stop the queue to change the data source");
   if (deps_.session_database) {

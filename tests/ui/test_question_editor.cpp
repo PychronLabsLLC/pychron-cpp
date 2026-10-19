@@ -68,6 +68,23 @@ class TestQuestionEditor : public QObject {
     QCOMPARE(text_of(question_value(editor, q)), std::string("local"));
   }
 
+  // The wizard's refresh runs once a click, not for the radio switched off
+  // too; a value set from code is heard as well (review finding 8).
+  void aChoiceIsHeardOnceAClick() {
+    QWidget parent;
+    auto q = question("data_source", setup::QuestionType::Choice);
+    q.choices = {"local", "server"};
+    int heard = 0;
+    QWidget* editor = make_question_editor(q, &parent, [&heard] { ++heard; });
+    set_question_value(editor, q, setup::Value{std::string("local")});
+    QCOMPARE(heard, 1);
+    editor->findChild<QRadioButton*>(QStringLiteral("data_source-server"))->click();
+    QCOMPARE(heard, 2);
+    editor->findChild<QRadioButton*>(QStringLiteral("data_source-server"))->click();  // already on
+    QCOMPARE(heard, 2);
+    QCOMPARE(text_of(question_value(editor, q)), std::string("server"));
+  }
+
   void aPortOutOfRangeIsRefused() {
     QWidget parent;
     const auto q = question("db_port", setup::QuestionType::Port);
