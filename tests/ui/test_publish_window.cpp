@@ -5,7 +5,9 @@
 #include <string>
 
 #include <QAction>
+#include <QFile>
 #include <QLabel>
+#include <QProgressBar>
 #include <QMainWindow>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -85,6 +87,18 @@ class TestPublishWindow : public QObject {
     o.bridge = std::move(*bridge);
     o.window = std::make_unique<PublishWindow>(*o.bridge, *o.source, url_, std::move(selection));
     return o;
+  }
+
+  // A release made and selected in an open window.
+  QString made(Open& o) {
+    create("r");
+    o.window->refresh();
+    if (!QTest::qWaitFor([&] { return !o.window->busy(); }, kWaitMs)) return {};
+    auto row = pb::find_release(*store_, "r");
+    if (!row) return {};
+    const QString uuid = QString::fromStdString(row->uuid.str());
+    o.window->select_release(uuid);
+    return uuid;
   }
 
  private Q_SLOTS:
@@ -203,6 +217,50 @@ class TestPublishWindow : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(o.window->status()->text().contains(QStringLiteral("needs a title")), kWaitMs);
     QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
     QCOMPARE(o.window->releases()->model()->rowCount(), 0);
+  }
+  void buildWritesTheDirectoryAndSaysWhere() {
+    Open o = open();
+    const QString uuid = made(o);
+    QVERIFY(!uuid.isEmpty());
+    const QString out = dir_.filePath(QStringLiteral("out-build"));
+    o.window->set_ask_build([&](const QString& name) -> std::optional<PublishWindow::BuildRequest> {
+      if (name != QStringLiteral("r")) return std::nullopt;
+      return PublishWindow::BuildRequest{out.toStdString(), true, false};
+    });
+    o.window->build();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    const QString built = out + QStringLiteral("/r-v1");
+    QVERIFY2(QFile::exists(built + QStringLiteral("/manifest.json")), qPrintable(o.window->status()->text()));
+    QVERIFY(QFile::exists(built + QStringLiteral("/figures/FC-1/ideogram.svg")));
+    QVERIFY2(o.window->status()->text().contains(built), qPrintable(o.window->status()->text()));
+    QCOMPARE(o.window->progress()->value(), o.window->progress()->maximum());
+    QCOMPARE(o.window->last_build(uuid), built);
+  }
+
+  void buildingWithNoReleaseSelectedIsSaid() {
+    Open o = open();
+    bool asked = false;
+    o.window->set_ask_build([&](const QString&) -> std::optional<PublishWindow::BuildRequest> {
+      asked = true;
+      return std::nullopt;
+    });
+    o.window->build();
+    QVERIFY(!asked);
+    QVERIFY(o.window->status()->text().contains(QStringLiteral("Select a release first")));
+  }
+
+  void closingDuringABuildIsSafe() {
+    Open o = open();
+    QVERIFY(!made(o).isEmpty());
+    const QString out = dir_.filePath(QStringLiteral("out-closed"));
+    o.window->set_ask_build([&](const QString&) -> std::optional<PublishWindow::BuildRequest> {
+      return PublishWindow::BuildRequest{out.toStdString(), true, false};
+    });
+    o.window->build();
+    o.window.reset();  // closed while the worker builds
+    QVERIFY((o.bridge->run_sync<bool>([](ps::IStore&, const ps::Actor&) -> pychron::Result<bool> { return true; })));
+    QCoreApplication::processEvents();  // the queued stages and the result find no window
+    QVERIFY(QFile::exists(out + QStringLiteral("/r-v1/manifest.json")));
   }
 };
 

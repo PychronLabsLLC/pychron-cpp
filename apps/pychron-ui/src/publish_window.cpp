@@ -4,7 +4,16 @@
 #include <utility>
 #include <vector>
 
+#include <QCheckBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QMetaObject>
+#include <QPointer>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -47,6 +56,57 @@ struct Listing {
   std::vector<ReleaseLine> releases;
 };
 
+// The stages build_release reports, in order (build.hpp).
+const QStringList& build_stages() {
+  static const QStringList stages = {QStringLiteral("select"), QStringLiteral("load"),    QStringLiteral("reduce"),
+                                     QStringLiteral("tables"), QStringLiteral("files"),   QStringLiteral("figures"),
+                                     QStringLiteral("parquet"), QStringLiteral("records"), QStringLiteral("manifest")};
+  return stages;
+}
+
+std::optional<PublishWindow::BuildRequest> ask_build_dialog(QWidget* parent, const QString& release) {
+  QDialog dialog(parent);
+  dialog.setWindowTitle(QObject::tr("Build %1").arg(release));
+  auto* form = new QFormLayout(&dialog);
+  auto* dir = new QLineEdit(QDir::homePath(), &dialog);
+  auto* browse = new QPushButton(QObject::tr("Choose…"), &dialog);
+  QObject::connect(browse, &QPushButton::clicked, &dialog, [&dialog, dir] {
+    const QString chosen = QFileDialog::getExistingDirectory(&dialog, QObject::tr("Build into"), dir->text());
+    if (!chosen.isEmpty()) dir->setText(chosen);
+  });
+  auto* row = new QHBoxLayout;
+  row->addWidget(dir, 1);
+  row->addWidget(browse);
+  form->addRow(QObject::tr("Directory"), row);
+  auto* figures = new QCheckBox(QObject::tr("With figures (ideogram, spectra, isochron as SVG and PDF)"), &dialog);
+  figures->setChecked(true);
+  auto* private_build = new QCheckBox(QObject::tr("Private build (keeps embargoed rows; never hosted as public)"), &dialog);
+  form->addRow(figures);
+  form->addRow(private_build);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted || dir->text().trimmed().isEmpty()) return std::nullopt;
+  return PublishWindow::BuildRequest{dir->text().trimmed().toStdString(), figures->isChecked(), private_build->isChecked()};
+}
+
+// A build's stages, queued to the window through the bridge (which lives on
+// the GUI thread); dropped once the window is gone.
+class StageReporter : public pb::IProgress {
+ public:
+  StageReporter(QObject* bridge, std::function<void(const QString&)> on_stage)
+      : bridge_(bridge), on_stage_(std::move(on_stage)) {}
+  void stage(std::string_view name) override {
+    QMetaObject::invokeMethod(bridge_, [f = on_stage_, n = QString::fromUtf8(name.data(), static_cast<int>(name.size()))] { f(n); },
+                              Qt::QueuedConnection);
+  }
+
+ private:
+  QObject* bridge_;
+  std::function<void(const QString&)> on_stage_;
+};
+
 }  // namespace
 
 PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& source, std::string store_url,
@@ -61,7 +121,8 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
       status_(new QLabel(this)),
       progress_(new QProgressBar(this)),
       refresh_button_(new QPushButton(tr("Refresh"), this)),
-      new_button_(new QPushButton(tr("New release…"), this)) {
+      new_button_(new QPushButton(tr("New release…"), this)),
+      build_button_(new QPushButton(tr("Build…"), this)) {
   setWindowTitle(tr("Publish"));
   setObjectName(QStringLiteral("publish_window"));
   model_->setHorizontalHeaderLabels(
@@ -76,9 +137,12 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
 
   auto* buttons = new QHBoxLayout;
   buttons->addWidget(new_button_);
+  buttons->addWidget(build_button_);
   buttons->addStretch();
   buttons->addWidget(refresh_button_);
   connect(new_button_, &QPushButton::clicked, this, &PublishWindow::new_release);
+  connect(build_button_, &QPushButton::clicked, this, &PublishWindow::build);
+  ask_build_ = [this](const QString& release) { return ask_build_dialog(this, release); };
   ask_release_ = [this](const QStringList& analyses, std::size_t embargoed) {
     QStringList names;
     for (int r = 0; r < model_->rowCount(); ++r) names << model_->item(r, Name)->text();
@@ -122,7 +186,72 @@ void PublishWindow::select_release(const QString& uuid) {
     }
 }
 
-void PublishWindow::update_buttons() { refresh_button_->setEnabled(true); }
+void PublishWindow::update_buttons() {
+  refresh_button_->setEnabled(true);
+  build_button_->setEnabled(releases_->currentIndex().isValid());  // any state: a published release is rebuilt to verify it
+}
+
+void PublishWindow::stage(const QString& name) {
+  const qsizetype at = build_stages().indexOf(name);
+  progress_->setVisible(true);
+  progress_->setRange(0, static_cast<int>(build_stages().size()));
+  if (at >= 0) progress_->setValue(static_cast<int>(at) + 1);
+  progress_->setFormat(tr("%1 (%v of %m)").arg(name));
+}
+
+void PublishWindow::build() {
+  const QString uuid = selected_release();
+  if (uuid.isEmpty()) {
+    say(tr("Select a release first."));
+    return;
+  }
+  const QString name = model_->item(releases_->currentIndex().row(), Name)->text();
+  auto request = ask_build_ ? ask_build_(name) : std::nullopt;
+  if (!request) return;
+  pb::BuildOptions options;
+  options.out = request->out;
+  options.with_figures = request->figures;
+  options.private_build = request->private_build;
+  options.store_url = url_;
+  progress_->setVisible(true);
+  progress_->setRange(0, static_cast<int>(build_stages().size()));
+  progress_->setValue(0);
+  say(tr("Building %1…").arg(name));
+  ++jobs_;
+  QPointer<PublishWindow> guard(this);
+  auto reporter = std::make_shared<StageReporter>(&bridge_, [guard](const QString& s) {
+    if (guard) guard->stage(s);
+  });
+  auto& source = source_;
+  bridge_.run<pb::BuildResult>(
+      this,
+      [&source, options, uuid, reporter](ps::IStore& store, const ps::Actor&) -> Result<pb::BuildResult> {
+        auto release = ps::Uuid::parse(uuid.toStdString());
+        if (!release) return fail(ErrorKind::Config, "no release " + uuid.toStdString());
+        return pb::build_release(store, source, *release, options, reporter.get());
+      },
+      [this, uuid](Result<pb::BuildResult> built) {
+        --jobs_;
+        if (!built) {
+          progress_->setVisible(false);
+          say(tr("The release was not built: %1").arg(qs(built.error().what)));
+          return;
+        }
+        progress_->setValue(progress_->maximum());
+        const QString dir = QString::fromStdString(built->dir.string());
+        last_build_[uuid] = dir;
+        QString text = tr("built %1: %2 analyses, %3 samples, %4 files")
+                           .arg(dir)
+                           .arg(built->manifest.pins.analyses.size())
+                           .arg(built->manifest.pins.samples.size())
+                           .arg(built->manifest.files.size());
+        if (!built->parquet_written) text += tr(" (no Parquet tables: this program was built without Apache Arrow)");
+        say(text);
+        QStringList warnings;
+        for (const auto& w : built->warnings) warnings << qs(w);
+        status_->setToolTip(warnings.join(QLatin1Char('\n')));
+      });
+}
 
 void PublishWindow::new_release() {
   const QStringList analyses = selection_ ? selection_() : QStringList();

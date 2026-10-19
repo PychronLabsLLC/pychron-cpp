@@ -7,12 +7,14 @@
 // was closed meanwhile. Dialogs are reached through hooks tests replace.
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
 
 #include <QMainWindow>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -66,12 +68,27 @@ class PublishWindow : public QMainWindow {
   void set_ask_release(AskRelease ask) { ask_release_ = std::move(ask); }
   void new_release();
 
+  // Build…: where, and how, the current release is built; nullopt cancels.
+  // Default: a dialog with a directory and the With figures and Private
+  // build options.
+  struct BuildRequest {
+    std::filesystem::path out;
+    bool figures = false;
+    bool private_build = false;
+  };
+  using AskBuild = std::function<std::optional<BuildRequest>(const QString& release)>;
+  void set_ask_build(AskBuild ask) { ask_build_ = std::move(ask); }
+  void build();
+  // The directory the release was last built into from this window; empty when none.
+  QString last_build(const QString& release_uuid) const { return last_build_.value(release_uuid); }
+
  Q_SIGNALS:
   void refreshed();
 
  private:
   void say(const QString& text);
   void update_buttons();
+  void stage(const QString& name);  // a build's progress, on the GUI thread
 
   EntryBridge& bridge_;
   processing::StoreSource& source_;
@@ -83,7 +100,10 @@ class PublishWindow : public QMainWindow {
   QProgressBar* progress_;
   QPushButton* refresh_button_;
   QPushButton* new_button_;
+  QPushButton* build_button_;
   AskRelease ask_release_;
+  AskBuild ask_build_;
+  QMap<QString, QString> last_build_;  // release uuid -> directory
   int jobs_ = 0;
 };
 
