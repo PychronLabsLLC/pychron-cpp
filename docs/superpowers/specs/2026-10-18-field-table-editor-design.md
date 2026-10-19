@@ -99,8 +99,9 @@ for scripted use and for line without UI.
 
 ## 3. Window: `FieldTableEditorWindow` (`apps/pychron-ui`)
 
-Opened from Spectrometer window menu `Spectrometer > Field Table…` and main
-window `Spectrometer > Field Table…`. One window per app (second open raises
+Opened from `Spectrometer > Field Table…`: one item, main window's,
+app-wide, so in every window's bar (spectrometer window's too); new
+`MenuHub::Menu::Spectrometer`, hidden while empty. One window per app (second open raises
 it). Needs spectrometer data root; without one (no spectrometer configured)
 menu item disabled with tooltip giving reason.
 

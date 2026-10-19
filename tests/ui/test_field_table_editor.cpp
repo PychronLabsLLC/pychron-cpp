@@ -15,6 +15,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QAction>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QSignalSpy>
@@ -27,6 +28,7 @@
 #include "field_table_editor_window.hpp"
 #include "field_table_model.hpp"
 #include "pychron/systems/spectrometer/field_table_store.hpp"
+#include "shortcuts.hpp"
 #include "spectrometer_bridge.hpp"
 #include "spectrometer_fixture.hpp"
 
@@ -401,6 +403,11 @@ class TestFieldTableEditor : public QObject {
     w->show();
     w->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(w.get()));
+    // The keys are the catalog's (shortcuts.cpp).
+    QStringList undo_keys;
+    for (const QAction* a : w->actions()) undo_keys << a->shortcut().toString();
+    QVERIFY(undo_keys.contains(ui::key(ui::Shortcut::FieldTableUndo).toString()));
+    QVERIFY(undo_keys.contains(ui::key(ui::Shortcut::FieldTableRedo).toString()));
     const double before = value_at(w->model()->table(), "Ar40", "H1");
     edit_h1(*w, "5.0123");
     QCOMPARE(value_at(w->model()->table(), "Ar40", "H1"), 5.0123);

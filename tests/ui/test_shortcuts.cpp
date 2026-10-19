@@ -139,8 +139,10 @@ class TestShortcuts : public QObject {
       QVERIFY2(known, qPrintable(a->text() + QStringLiteral(" has ") + a->shortcut().toString()));
     }
     for (const auto& e : shortcut_catalog()) {
-      // New's and Open's are on the entry whose window is in front (test_menu_hub).
-      if (e.key.isEmpty() || e.context == ShortcutContext::DataBrowser || e.id == Shortcut::AddRuns ||
+      // New's and Open's are on the entry whose window is in front (test_menu_hub);
+      // the field table editor's are on its toolbar (test_field_table_editor).
+      if (e.key.isEmpty() || e.context == ShortcutContext::DataBrowser ||
+          e.context == ShortcutContext::FieldTableEditor || e.id == Shortcut::AddRuns ||
           e.id == Shortcut::FileNew || e.id == Shortcut::FileOpen)
         continue;
       QVERIFY2(in_menus.count(e.key.toString()) == 1, qPrintable(e.command + QStringLiteral(" is in no menu")));

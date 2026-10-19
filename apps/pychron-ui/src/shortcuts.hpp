@@ -52,13 +52,16 @@ enum class Shortcut {
   // The data browser.
   RecallNext,
   RecallPrevious,
+  // The field table editor.
+  FieldTableUndo,
+  FieldTableRedo,
 };
 
 // Where a shortcut works. Everywhere overlaps every window. FileMenu is the
-// windows that answer the File commands (the experiment window, the script
-// and conditionals editors) and overlaps those. The others are separate
-// windows, so their keys may repeat between them.
-enum class ShortcutContext { Everywhere, FileMenu, ExperimentWindow, ScriptEditor, DataBrowser };
+// windows that answer the File commands (the experiment window, the script,
+// conditionals and field table editors) and overlaps those. The others are
+// separate windows, so their keys may repeat between them.
+enum class ShortcutContext { Everywhere, FileMenu, ExperimentWindow, ScriptEditor, DataBrowser, FieldTableEditor };
 
 // Whether a key of `a` and one of `b` can be live in the same window.
 bool overlap(ShortcutContext a, ShortcutContext b);

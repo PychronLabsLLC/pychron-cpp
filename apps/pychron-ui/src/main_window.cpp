@@ -177,6 +177,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
       alarms_(new AlarmDock(this, [this] { return bridge_.wall_now(); })),
       health_(new HealthBar(this, [this] { return bridge_.now(); })),
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
+      field_table_action_(new QAction(QStringLiteral("Field Table…"), this)),
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
       laser_action_(new QAction(QStringLiteral("Laser"), this)),
@@ -208,6 +209,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
 
   spectrometer_action_->setShortcut(key(Shortcut::SpectrometerWindow));
   spectrometer_action_->setEnabled(false);
+  field_table_action_->setEnabled(false);
+  field_table_action_->setToolTip(QStringLiteral("no spectrometer configured"));
   experiment_action_->setShortcut(key(Shortcut::ExperimentWindow));
   experiment_action_->setEnabled(false);
   installations_->setVisible(false);
@@ -250,6 +253,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
   menus.contribute(this, MenuHub::Menu::View,
                    {line_window, spectrometer_action_, experiment_action_, data_action_, laser_action_},
                    MenuHub::Scope::App);
+  menus.contribute(this, MenuHub::Menu::Spectrometer, {field_table_action_}, MenuHub::Scope::App);
   MenuHub::instance().contribute(this, MenuHub::Menu::Help,
                                  {make_command_palette_action(this), make_shortcuts_action(this)}, MenuHub::Scope::App);
   about_action_ = brand::add_help_menu(this);
@@ -267,6 +271,18 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
     w->activateWindow();
   });
   connect(experiment_action_, &QAction::triggered, this, [this] { show_experiment_window(); });
+  connect(field_table_action_, &QAction::triggered, this, [this] {
+    if (spectrometer_ == nullptr || spectrometer_->data_root().empty()) return;
+    if (field_table_window_ == nullptr) {
+      field_table_window_ =
+          new FieldTableEditorWindow(spectrometer_, spectrometer_->data_root(), spectrometer_->config(),
+                                     spectrometer_->weights(), [this] { return bridge_.wall_now(); }, this);
+      field_table_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+    }
+    field_table_window_->show();
+    field_table_window_->raise();
+    field_table_window_->activateWindow();
+  });
   connect(spectrometer_action_, &QAction::triggered, this, [this] {
     if (spectrometer_ == nullptr) {
       return;
@@ -364,10 +380,20 @@ void MainWindow::set_spectrometer(SpectrometerBridge* bridge, bool simulation,
     delete spectrometer_window_;    // it holds the old bridge
     spectrometer_window_ = nullptr;
   }
+  if (field_table_window_ != nullptr) {
+    // It holds the old bridge. Unsaved edits were asked about when it was
+    // closed; this is the end of the session.
+    delete field_table_window_;
+    field_table_window_ = nullptr;
+  }
   spectrometer_ = bridge;
   simulation_ = simulation;
   settings_factory_ = std::move(settings);
   spectrometer_action_->setEnabled(bridge != nullptr);
+  const bool tables = bridge != nullptr && !bridge->data_root().empty();
+  field_table_action_->setEnabled(tables);
+  field_table_action_->setToolTip(tables ? QStringLiteral("Edit the spectrometer's field tables")
+                                         : QStringLiteral("no spectrometer configured"));
 }
 
 void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::optional<std::filesystem::path> queue,
@@ -726,6 +752,10 @@ QWidget* MainWindow::open_figure(const QString& kind, const QStringList& uuids) 
 void MainWindow::closeEvent(QCloseEvent* event) {
   if (experiment_window_ != nullptr && experiment_window_->isVisible() && !experiment_window_->close()) {
     event->ignore();  // unsaved queue edits, and the user chose Cancel
+    return;
+  }
+  if (field_table_window_ != nullptr && field_table_window_->isVisible() && !field_table_window_->close()) {
+    event->ignore();  // unsaved field table edits, and the user chose Cancel
     return;
   }
   if (spectrometer_window_ != nullptr) {

@@ -430,6 +430,101 @@ peak center still succeeds and moves to the new value, but its result
 carries the note `field table not saved: <why>` and a warning is logged:
 the update then lasts only until pychron is restarted.
 
+## Field table editor
+
+The field table (pychron's mftable) says, for every isotope, the magnet
+setting that puts it on each detector. Choose **Spectrometer > Field
+Table…** in any Pychron window to see and edit it. There is one editor
+window; choosing the item again brings it to the front. The item is greyed,
+with the tooltip `no spectrometer configured`, when there is no spectrometer
+or it has no data directory.
+
+| Part | What it shows |
+|---|---|
+| Left, **Tables** | Every table under the data directory's `tables/`. The one the magnet uses is marked **(active)**, the high-voltage table **(HV)**. |
+| Left, **Versions** | The versions of the selected table, newest first, with their number of points and detectors; the current one is marked **(current)**. Click one to open it. |
+| Centre, grid | The open version: **Isotope**, **Mass**, then one column per detector (the config's, in config order, then any the table has that the config does not, marked **(not in config)**). Rows are sorted by mass. An empty cell means no value for that detector. |
+| Centre, plot | The selected detector column: each value against its mass, and the fit through them over the detector's mass range plus 1 amu each side. Hover a point for its value and residual (value minus fit). A discrete fit, or one that fails, draws points only. |
+| Right | The table's default fit, a fit per detector (**default** uses the table's), the axis (not editable), and the diagnostics. Click a diagnostic to go to its cell. |
+
+### Editing
+
+- Type in a cell to change it. Values keep every digit you type; the grid
+  shows five decimals. Clear a cell to remove that detector's value.
+- Renaming an isotope fills its mass from the molecular weights when the mass
+  was empty or was the old isotope's weight; a mass you typed is kept.
+- **Add Row** offers the molecular weights' names (or type one); the mass
+  comes from the weights and the values start empty. **Remove Row** removes
+  the selected rows.
+- **Set Value…** sets one detector's value at one isotope. With
+  **Propagate** (default: the config's `[magnet] propagate`) the same offset
+  is added to the other detectors at that isotope: what a peak center does.
+- **Undo** and **Redo** (Ctrl+Z, Ctrl+Shift+Z) step through every edit;
+  **Revert** drops all of them.
+- **Import CSV…** reads a legacy pychron `mftable.csv` into the selected
+  table as unsaved edits; **Save** makes it a version.
+
+Diagnostics are checked as you edit. Errors keep the table from being saved:
+an empty or repeated isotope, a mass that is not a positive number, a fit
+that fails (too few points for its degree, repeated masses), and, for the
+active and HV tables, an active detector with no value at all. Warnings do
+not: a fit that is not monotonic over its range, a point far from its fit,
+a detector that is not in the config, an isotope not in the molecular
+weights or whose mass is more than 0.01 amu off its weight.
+
+### Saving and versions
+
+**Save** writes a new version and makes it current; the magnet uses it from
+its next move. Old versions are never changed or deleted. Save is greyed,
+with the reason as tooltip, while there is nothing to save, while a
+diagnostic is an error, and while a queue or a scan (a peak center, a sweep)
+holds the table: the table never changes between the hops of a run. The
+spectrometer refuses such a save itself, whatever the window shows.
+
+If the table got a new version after you opened yours (a peak center, an
+`elctl spec table` command), Save asks: **Reload** (drop your edits and open
+the new current version), **Save Anyway** (your edits become the newest
+version) or **Cancel**. When a peak center saves while you have edits, a
+banner says `table changed since you opened it (now <version>)` and your
+edits stay; without edits the window just opens the new version.
+
+A version written by hand loses its comments when saved over: you are asked
+once. A version that does not parse is shown with its error, read-only. When
+the spectrometer holds a table that differs from the saved current version,
+the window opens what the spectrometer holds, with the banner `in-memory
+table differs from saved version <version>`; saving makes it a version.
+
+**Make Current** points the table back at the selected version (after you
+confirm). It is refused for a version with an error or one that does not
+parse, while the table is held, and when the current version moved since the
+list was read. **Compare…** shows the differences between two selected
+versions (or your edits, or the selected version, against the current one),
+matched by isotope: changed values with old, new and Δ, rows added or
+removed, and fit changes. A version that does not parse is compared as text.
+
+### `elctl spec table`
+
+The same operations, for scripts and for a line without the UI. Each works
+on the files of the data directory named by the spectrometer config
+(`--spectrometer <file>`), opens no device, and takes effect when a process
+next loads the table: a running pychron-ui keeps the table it loaded until
+it saves one itself or is restarted.
+
+```
+elctl spec table list                          # tables, current version, (active) and (HV)
+elctl spec table show [<name>] [--version V]   # a version as a grid
+elctl spec table versions <name>               # newest first
+elctl spec table diff <name> <v1> [<v2>]       # v2 defaults to current; by isotope
+elctl spec table check [<name>]                # diagnostics; exit 1 on an error
+elctl spec table set <name> <det> <isotope> <value> [--propagate|--no-propagate]
+elctl spec table restore <name> <version>
+elctl spec table import <name> <mftable.csv>
+```
+
+`set` and `import` write a new version and refuse, with exit status 1 and
+nothing written, when the result has a diagnostics error; `restore` refuses
+a version with an error.
+
 ## The spectrometer config
 
 The spectrometer is described by one file, `spectrometer.toml` (named by your

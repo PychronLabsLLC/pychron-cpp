@@ -47,6 +47,7 @@
 #include "pychron/core/log_hub.hpp"
 #include "processing_bridge.hpp"
 #include "reading_history.hpp"
+#include "field_table_editor_window.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -96,6 +97,13 @@ class MainWindow : public QMainWindow {
   void set_rise_rate_file(std::filesystem::path path) { rise_rate_file_ = std::move(path); }
   // Null until the action is first triggered.
   SpectrometerWindow* spectrometer_window() const noexcept { return spectrometer_window_; }
+  // Spectrometer > Field Table…, in every window's bar: opens the one field
+  // table editor (or raises it) on the spectrometer's data root. Disabled,
+  // with the reason as tooltip, without a spectrometer or a data root.
+  QAction* field_table_action() const noexcept { return field_table_action_; }
+  // Null until the action is first triggered, and again after
+  // set_spectrometer replaces the bridge.
+  FieldTableEditorWindow* field_table_window() const noexcept { return field_table_window_; }
 
   // Enables View > Experiment for `bridge` (null disables it and closes the
   // window). `queue` is opened the first time the window shows. Same
@@ -221,6 +229,8 @@ class MainWindow : public QMainWindow {
   bool simulation_ = false;
   std::function<std::unique_ptr<QSettings>()> settings_factory_;
   SpectrometerWindow* spectrometer_window_ = nullptr;
+  QAction* field_table_action_;
+  FieldTableEditorWindow* field_table_window_ = nullptr;
   std::filesystem::path rise_rate_file_;
   QAction* experiment_action_;
   ExperimentBridge* experiment_ = nullptr;

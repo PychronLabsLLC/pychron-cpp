@@ -57,6 +57,9 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
 
       {S::RecallNext, C::DataBrowser, QStringLiteral("Recall the next analysis"), keys(Qt::CTRL | Qt::Key_N)},
       {S::RecallPrevious, C::DataBrowser, QStringLiteral("Recall the previous analysis"), keys(Qt::CTRL | Qt::Key_B)},
+
+      {S::FieldTableUndo, C::FieldTableEditor, QStringLiteral("Undo"), QKeySequence(QKeySequence::Undo)},
+      {S::FieldTableRedo, C::FieldTableEditor, QStringLiteral("Redo"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_Z)},
   };
   return catalog;
 }
@@ -70,7 +73,9 @@ QKeySequence key(Shortcut id) {
 bool overlap(ShortcutContext a, ShortcutContext b) {
   using C = ShortcutContext;
   if (a == b || a == C::Everywhere || b == C::Everywhere) return true;
-  const auto answers_file = [](C c) { return c == C::ExperimentWindow || c == C::ScriptEditor; };
+  const auto answers_file = [](C c) {
+    return c == C::ExperimentWindow || c == C::ScriptEditor || c == C::FieldTableEditor;
+  };
   return (a == C::FileMenu && answers_file(b)) || (b == C::FileMenu && answers_file(a));
 }
 
@@ -84,6 +89,8 @@ QString context_name(ShortcutContext context) {
       return QStringLiteral("Experiment window");
     case ShortcutContext::ScriptEditor:
       return QStringLiteral("Script editor");
+    case ShortcutContext::FieldTableEditor:
+      return QStringLiteral("Field table editor");
     case ShortcutContext::DataBrowser:
       break;
   }
@@ -114,7 +121,7 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent)
   const int line = fontMetrics().height();
   for (const ShortcutContext context : {ShortcutContext::Everywhere, ShortcutContext::FileMenu,
                                         ShortcutContext::ExperimentWindow, ShortcutContext::ScriptEditor,
-                                        ShortcutContext::DataBrowser}) {
+                                        ShortcutContext::DataBrowser, ShortcutContext::FieldTableEditor}) {
     auto* group = new QTreeWidgetItem(tree_, {context_name(context)});
     group->setFirstColumnSpanned(true);
     group->setFont(0, heading);

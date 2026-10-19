@@ -74,9 +74,10 @@ class MenuHub : public QObject {
   Q_OBJECT
 
  public:
-  // Entry and Fit come last so the slots of the others keep their values;
-  // kOrder places them between View and Window.
-  enum class Menu { File, Queue, Rows, Executor, Scripts, View, Window, Help, Entry, Fit };
+  // Entry, Fit and Spectrometer come last so the slots of the others keep
+  // their values; kOrder places them between View and Window (Spectrometer
+  // first). Like every menu, each is hidden while nothing is in it.
+  enum class Menu { File, Queue, Rows, Executor, Scripts, View, Window, Help, Entry, Fit, Spectrometer };
   enum class Scope {
     App,     // works from every window
     Window,  // enabled only while `owner`'s window is active
@@ -85,7 +86,7 @@ class MenuHub : public QObject {
     PerWindow,  // each window shows its own copy of the bar
     Shared,     // one parentless bar for every window (macOS)
   };
-  static constexpr std::size_t kMenus = 10;
+  static constexpr std::size_t kMenus = 11;
   enum class FileRole { Save, SaveAs };
   static constexpr std::size_t kFileRoles = 2;
   enum class FileList { New, Open };

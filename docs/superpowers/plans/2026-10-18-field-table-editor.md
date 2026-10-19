@@ -474,18 +474,19 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
 - Test: `tests/ui/test_spectrometer_window.cpp`, `tests/ui/test_menu_hub.cpp` or a main window test that exists for menus
 
 **Interfaces:**
+- As built: `MenuHub` gains `Menu::Spectrometer` (slot 10, `kMenus` 11, placed between View and Entry, hidden while empty). `MainWindow` contributes `Spectrometer > Field Table…` with `Scope::App`, so the one item is in every window's bar, the spectrometer window's included; `spectrometer_window.hpp/.cpp` are not changed (a second, window-scoped item would show twice in macOS's shared bar). `MainWindow::field_table_action()` / `field_table_window()`; `set_spectrometer` deletes the editor (it holds the bridge); closing the main window closes the editor first and stops on Cancel. Tests in `tests/ui/test_docks.cpp` (beside the spectrometer action's) and `test_menu_hub.cpp` (bar lists gain Spectrometer). Keys live only in `shortcuts.cpp` (`TestShortcuts.no_widget_source_spells_out_a_key`): the editor's Undo and Redo are catalog entries `Shortcut::FieldTableUndo` (`QKeySequence::Undo`) and `FieldTableRedo` (Ctrl+Shift+Z) in a new context `ShortcutContext::FieldTableEditor`, which overlaps `FileMenu`; `the_menus_use_the_catalog` skips that context, as the keys are on the editor's toolbar.
 - Consumes: Task 13 constructor. `MainWindow` builds it with `spectrometer_`, `spectrometer_->data_root()`, `config()`, `weights()`, `[this]{ return bridge_.wall_now(); }`; second open raises the existing window. With no spectrometer or empty data root, both menu items disabled with tooltip `"no spectrometer configured"`.
 
-- [ ] **Step 1: Write failing tests**: `fieldTableMenuOpensOneEditor` (trigger twice → same window, raised), `fieldTableMenuDisabledWithoutSpectrometer` (tooltip text), `spectrometerWindowMenuOpensTheSameEditor`.
-- [ ] **Step 2: Run** the two UI test binaries. Expected: FAIL.
-- [ ] **Step 3: Implement**, then write the user doc sections.
-- [ ] **Step 4: Run** the two binaries. Expected: PASS.
-- [ ] **Step 5: Full checks**, all on the rebased branch:
+- [x] **Step 1: Write failing tests**: `fieldTableMenuOpensOneEditor` (trigger twice → same window, raised), `fieldTableMenuDisabledWithoutSpectrometer` (tooltip text), `spectrometerWindowMenuOpensTheSameEditor`.
+- [x] **Step 2: Run** the two UI test binaries. Expected: FAIL.
+- [x] **Step 3: Implement**, then write the user doc sections.
+- [x] **Step 4: Run** the two binaries. Expected: PASS.
+- [x] **Step 5: Full checks**, all on the rebased branch:
   - `python3 tools/quality_check.py` → exit 0
   - `python3 tools/compiler_sweep.py --build-dir build/dev-ui` (whole tree) → no warnings
   - `cmake --build --preset dev-ui` then `ctest --preset dev-ui` → all pass (covers `dev`)
   - `build/dev/tests/integration/pychron_outage_tests` (Task 8 touched executor; libs/experiment AGENTS.md) → pass
-- [ ] **Step 6: Commit** `feat(ui): field table editor in the spectrometer menus`.
+- [x] **Step 6: Commit** `feat(ui): field table editor in the spectrometer menus`.
 
 ## Open questions
 

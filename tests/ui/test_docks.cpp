@@ -14,6 +14,8 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QMenu>
+#include <QMenuBar>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTimeZone>
@@ -23,7 +25,9 @@
 #include "gauge_popup.hpp"
 #include "gauge_window.hpp"
 #include "history_chart.hpp"
+#include "field_table_editor_window.hpp"
 #include "main_window.hpp"
+#include "menu_hub.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "spectrometer_fixture.hpp"
 #include "settings_guard.hpp"
@@ -565,6 +569,81 @@ class TestDocks : public QObject {
     QCOMPARE(window.spectrometer_action()->text(), QStringLiteral("Spectrometer"));
     QCOMPARE(window.spectrometer_action()->shortcut(), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     QVERIFY(window.spectrometer_window() == nullptr);
+  }
+
+  // ---- Spectrometer > Field Table… (field table editor plan, task 16) ----
+  void fieldTableMenuDisabledWithoutSpectrometer() {
+    auto line = pychron::ui::test::make_example_line();
+    pychron::ui::MainWindow window(*line);
+    QAction* action = window.field_table_action();
+    QVERIFY(action != nullptr);
+    QCOMPARE(action->text(), QStringLiteral("Field Table…"));
+    QVERIFY(!action->isEnabled());
+    QCOMPARE(action->toolTip(), QStringLiteral("no spectrometer configured"));
+    action->trigger();
+    QVERIFY(window.field_table_window() == nullptr);
+  }
+
+  void fieldTableMenuOpensOneEditor() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_spectrometer(&bridge, true);
+      QAction* action = window.field_table_action();
+      QVERIFY(action->isEnabled());
+      QVERIFY(action->toolTip() != QStringLiteral("no spectrometer configured"));
+      action->trigger();
+      auto* first = window.field_table_window();
+      QVERIFY(first != nullptr);
+      QVERIFY(first->isVisible());
+      QCOMPARE(first->open_name(), bridge.active_table());
+      first->hide();
+      action->trigger();
+      QCOMPARE(window.field_table_window(), first);
+      QVERIFY(first->isVisible());
+      // Clearing the spectrometer takes the editor (it holds the bridge).
+      window.set_spectrometer(nullptr, false);
+      QVERIFY(window.field_table_window() == nullptr);
+      QVERIFY(!action->isEnabled());
+      QCOMPARE(action->toolTip(), QStringLiteral("no spectrometer configured"));
+    }
+  }
+
+  void spectrometerWindowMenuOpensTheSameEditor() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_spectrometer(&bridge, true,
+                              [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); });
+      window.field_table_action()->trigger();
+      auto* editor = window.field_table_window();
+      QVERIFY(editor != nullptr);
+      window.spectrometer_action()->trigger();
+      auto* spectrometer = window.spectrometer_window();
+      QVERIFY(spectrometer != nullptr);
+      // The spectrometer window's bar has Spectrometer > Field Table…
+      QMenuBar* bar = pychron::ui::MenuHub::instance().install(spectrometer);
+      if (bar == nullptr) bar = pychron::ui::MenuHub::instance().bar_for(spectrometer);
+      QVERIFY(bar != nullptr);
+      QAction* item = nullptr;
+      for (QAction* m : bar->actions()) {
+        if (m->menu() == nullptr || m->text().remove(QLatin1Char('&')) != QStringLiteral("Spectrometer")) continue;
+        for (QAction* a : m->menu()->actions())
+          if (a->text() == QStringLiteral("Field Table…")) item = a;
+      }
+      QVERIFY(item != nullptr);
+      QVERIFY(item->isEnabled());
+      editor->hide();
+      item->trigger();
+      QCOMPARE(window.field_table_window(), editor);
+      QVERIFY(editor->isVisible());
+    }
   }
 
   void spectrometerActionOpensWindowOnce() {

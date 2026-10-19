@@ -30,6 +30,7 @@
 
 #include "field_table_dialogs.hpp"
 #include "menu_hub.hpp"
+#include "shortcuts.hpp"
 #include "pychron/systems/spectrometer/mftable_csv.hpp"
 #include "spectrometer_bridge.hpp"
 
@@ -194,13 +195,9 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   import_action_ = toolbar_->addAction(tr("Import CSV…"), this, [this] { import_csv(); });
   toolbar_->addSeparator();
   undo_action_ = model_.undo_stack()->createUndoAction(this, tr("&Undo"));
-  undo_action_->setShortcuts(QKeySequence::Undo);
+  undo_action_->setShortcut(key(Shortcut::FieldTableUndo));
   redo_action_ = model_.undo_stack()->createRedoAction(this, tr("&Redo"));
-  // Ctrl+Shift+Z on every platform, with the platform's own keys.
-  QList<QKeySequence> redo_keys = QKeySequence::keyBindings(QKeySequence::Redo);
-  const QKeySequence shift_z(Qt::CTRL | Qt::SHIFT | Qt::Key_Z);
-  if (!redo_keys.contains(shift_z)) redo_keys.append(shift_z);
-  redo_action_->setShortcuts(redo_keys);
+  redo_action_->setShortcut(key(Shortcut::FieldTableRedo));
   addAction(undo_action_);
   addAction(redo_action_);
   toolbar_->addAction(undo_action_);

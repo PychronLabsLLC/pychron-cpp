@@ -156,8 +156,9 @@ class TestMenuHub : public QObject {
 
     // The whole bar, from launch: the experiment's menus are there before
     // the experiment window is.
-    const QStringList expected{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("View"),
-                               QStringLiteral("Window"), QStringLiteral("Help")};
+    // Spectrometer holds Field Table…, greyed without a spectrometer.
+    const QStringList expected{QStringLiteral("File"),         QStringLiteral("Experiment"), QStringLiteral("View"),
+                               QStringLiteral("Spectrometer"), QStringLiteral("Window"),     QStringLiteral("Help")};
     QCOMPARE(shown(main), expected);
     QCOMPARE(shown(figure), expected);
     QCOMPARE(shown(recall), expected);
@@ -220,16 +221,17 @@ class TestMenuHub : public QObject {
     QCOMPARE(shown_now.indexOf(QStringLiteral("Fit")), entry + 1);
     QCOMPARE(shown_now.indexOf(QStringLiteral("Window")), entry + 2);
     QCOMPARE(shown_now.size(), entry + 3);  // nor Help
-    // Among all seven in the bar, hidden ones included: ..., View, Entry, Fit, Window, Help.
+    // Among all eight in the bar, hidden ones included: ..., View, Spectrometer, Entry, Fit, Window, Help.
     QStringList all;
     for (const QAction* a : bar_of(main)->actions()) all << a->text().remove(QLatin1Char('&'));
-    QCOMPARE(all.mid(2), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
-                                      QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(all.mid(2), (QStringList{QStringLiteral("View"), QStringLiteral("Spectrometer"), QStringLiteral("Entry"),
+                                      QStringLiteral("Fit"), QStringLiteral("Window"), QStringLiteral("Help")}));
     QCOMPARE(texts(menu_of(main, Menu::Fit)), QStringList{QStringLiteral("Flux…")});
     // The existing slots keep their values.
     QCOMPARE(static_cast<int>(Menu::Entry), 8);
     QCOMPARE(static_cast<int>(Menu::Fit), 9);
-    QCOMPARE(MenuHub::kMenus, std::size_t{10});
+    QCOMPARE(static_cast<int>(Menu::Spectrometer), 10);
+    QCOMPARE(MenuHub::kMenus, std::size_t{11});
   }
 
   void the_shared_bar_has_fit_between_entry_and_window() {
@@ -257,8 +259,9 @@ class TestMenuHub : public QObject {
     QVERIFY(entry >= 0);
     QCOMPARE(now.indexOf(QStringLiteral("Fit")), entry + 1);
     QCOMPARE(now.indexOf(QStringLiteral("Window")), entry + 2);
-    QCOMPARE(titles(true).mid(2), (QStringList{QStringLiteral("View"), QStringLiteral("Entry"), QStringLiteral("Fit"),
-                                               QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(titles(true).mid(2),
+             (QStringList{QStringLiteral("View"), QStringLiteral("Spectrometer"), QStringLiteral("Entry"),
+                          QStringLiteral("Fit"), QStringLiteral("Window"), QStringLiteral("Help")}));
     QCOMPARE(texts(menu_of(main, Menu::Fit)), QStringList{QStringLiteral("Flux…")});
     // Every title's mnemonic is its own.
     QStringList mnemonics;
@@ -269,7 +272,7 @@ class TestMenuHub : public QObject {
       QVERIFY2(!mnemonics.contains(letter), qPrintable(a->text()));
       mnemonics << letter;
     }
-    QCOMPARE(mnemonics.size(), 7);  // File, Experiment, View, Entry, Fit, Window, Help
+    QCOMPARE(mnemonics.size(), 8);  // File, Experiment, View, Spectrometer, Entry, Fit, Window, Help
   }
 
   void shared_one_bar_serves_every_window() {
@@ -295,7 +298,7 @@ class TestMenuHub : public QObject {
     QVERIFY(figure.menuWidget() == nullptr);
     QVERIFY(recall.layout()->menuBar() == nullptr);
     QCOMPARE(shown(main), (QStringList{QStringLiteral("File"), QStringLiteral("Experiment"), QStringLiteral("View"),
-                               QStringLiteral("Window"), QStringLiteral("Help")}));
+                                       QStringLiteral("Spectrometer"), QStringLiteral("Window"), QStringLiteral("Help")}));
     QVERIFY(menu_of(main, Menu::File)->actions().contains(main.preferences_action()));
     QVERIFY(menu_of(main, Menu::Help)->actions().contains(main.about_action()));
 

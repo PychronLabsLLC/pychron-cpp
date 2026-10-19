@@ -30,9 +30,9 @@ namespace pychron::ui {
 namespace {
 
 constexpr std::array<MenuHub::Menu, MenuHub::kMenus> kOrder{
-    MenuHub::Menu::File,    MenuHub::Menu::Queue,  MenuHub::Menu::Rows,   MenuHub::Menu::Executor,
-    MenuHub::Menu::Scripts, MenuHub::Menu::View,   MenuHub::Menu::Entry,  MenuHub::Menu::Fit,
-    MenuHub::Menu::Window,  MenuHub::Menu::Help};
+    MenuHub::Menu::File,  MenuHub::Menu::Queue,        MenuHub::Menu::Rows,  MenuHub::Menu::Executor,
+    MenuHub::Menu::Scripts, MenuHub::Menu::View,       MenuHub::Menu::Spectrometer, MenuHub::Menu::Entry,
+    MenuHub::Menu::Fit,   MenuHub::Menu::Window,       MenuHub::Menu::Help};
 
 std::size_t slot(MenuHub::Menu menu) { return static_cast<std::size_t>(menu); }
 
@@ -198,6 +198,8 @@ QString MenuHub::title(Menu menu) {
       return tr("E&ntry");
     case Menu::Fit:
       return tr("F&it");
+    case Menu::Spectrometer:
+      return tr("S&pectrometer");
     case Menu::Window:
       return tr("&Window");
     case Menu::Help:
