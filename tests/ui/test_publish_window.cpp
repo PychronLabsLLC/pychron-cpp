@@ -18,6 +18,7 @@
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/build.hpp"
+#include "pychron/publish/embargo.hpp"
 #include "pychron/publish/release.hpp"
 #include "release_seed.hpp"
 
@@ -136,6 +137,72 @@ class TestPublishWindow : public QObject {
     QVERIFY(actions->window() == nullptr);
     QCOMPARE(said.size(), 1);
     QVERIFY2(said[0].contains(QString::fromStdString(missing)), qPrintable(said[0]));
+  }
+  void newReleaseFromTheSelection() {
+    QStringList chosen = {QString::fromStdString(seed_.analysis1.str()), QString::fromStdString(seed_.analysis2.str()),
+                                QString::fromStdString(seed_.analysis3.str())};
+    Open o = open([chosen] { return chosen; });
+    QStringList asked;
+    std::size_t embargoed = 99;
+    o.window->set_ask_release([&](const QStringList& analyses, std::size_t n) -> std::optional<pb::ReleaseSpec> {
+      asked = analyses;
+      embargoed = n;
+      return spec("r");
+    });
+    o.window->new_release();
+    QTRY_VERIFY_WITH_TIMEOUT(o.window->releases()->model()->rowCount() == 1, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QCOMPARE(asked, chosen);
+    QCOMPARE(embargoed, std::size_t{0});
+    QVERIFY(!o.window->selected_release().isEmpty());
+    QVERIFY2(o.window->status()->text().contains(QStringLiteral("r v1")), qPrintable(o.window->status()->text()));
+    auto row = pb::find_release(*store_, "r");
+    QVERIFY(row.has_value());
+    QCOMPARE(o.window->selected_release(), QString::fromStdString(row->uuid.str()));
+    QCOMPARE(row->reduction_version, std::string("arar-1"));
+  }
+
+  void nothingSelectedIsSaid() {
+    Open o = open([] { return QStringList(); });
+    bool asked = false;
+    o.window->set_ask_release([&](const QStringList&, std::size_t) -> std::optional<pb::ReleaseSpec> {
+      asked = true;
+      return std::nullopt;
+    });
+    o.window->new_release();
+    QVERIFY(!asked);
+    QVERIFY2(o.window->status()->text().contains(QStringLiteral("Select analyses in the Data browser first")),
+             qPrintable(o.window->status()->text()));
+  }
+
+  void embargoedCountIsShown() {
+    QVERIFY(pb::set_embargo(*store_, seed_.reducer(), {ps::EmbargoScopeType::Sample, "FC-1", std::nullopt, std::nullopt}));
+    QStringList chosen = {QString::fromStdString(seed_.analysis1.str()), QString::fromStdString(seed_.analysis2.str())};
+    Open o = open([chosen] { return chosen; });
+    std::size_t embargoed = 99;
+    bool asked = false;
+    o.window->set_ask_release([&](const QStringList&, std::size_t n) -> std::optional<pb::ReleaseSpec> {
+      embargoed = n;
+      asked = true;
+      return std::nullopt;
+    });
+    o.window->new_release();
+    QTRY_VERIFY_WITH_TIMEOUT(asked, kWaitMs);
+    QCOMPARE(embargoed, std::size_t{1});
+  }
+
+  void aRefusedReleaseIsSaid() {
+    QStringList chosen = {QString::fromStdString(seed_.analysis1.str())};
+    Open o = open([chosen] { return chosen; });
+    o.window->set_ask_release([&](const QStringList&, std::size_t) -> std::optional<pb::ReleaseSpec> {
+      auto s = spec("r");
+      s.title.clear();
+      return s;
+    });
+    o.window->new_release();
+    QTRY_VERIFY_WITH_TIMEOUT(o.window->status()->text().contains(QStringLiteral("needs a title")), kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QCOMPARE(o.window->releases()->model()->rowCount(), 0);
   }
 };
 

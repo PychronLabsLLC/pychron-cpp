@@ -16,18 +16,22 @@
 #include <QWidget>
 
 #include "entry_bridge.hpp"
+#include "release_dialog.hpp"
 
 // Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
 #include "pychron/processing/store_source.hpp"
+#include "pychron/publish/build.hpp"
 #include "pychron/publish/embargo.hpp"
 #include "pychron/publish/release.hpp"
+#include "pychron/reduction/arar_types.hpp"
 #pragma pop_macro("signals")
 
 namespace pychron::ui {
 
 namespace ps = persistence;
+namespace pb = publish;
 
 namespace {
 
@@ -56,7 +60,8 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
       model_(new QStandardItemModel(0, kColumns, this)),
       status_(new QLabel(this)),
       progress_(new QProgressBar(this)),
-      refresh_button_(new QPushButton(tr("Refresh"), this)) {
+      refresh_button_(new QPushButton(tr("Refresh"), this)),
+      new_button_(new QPushButton(tr("New release…"), this)) {
   setWindowTitle(tr("Publish"));
   setObjectName(QStringLiteral("publish_window"));
   model_->setHorizontalHeaderLabels(
@@ -70,8 +75,16 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
   connect(releases_->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this] { update_buttons(); });
 
   auto* buttons = new QHBoxLayout;
-  buttons->addWidget(refresh_button_);
+  buttons->addWidget(new_button_);
   buttons->addStretch();
+  buttons->addWidget(refresh_button_);
+  connect(new_button_, &QPushButton::clicked, this, &PublishWindow::new_release);
+  ask_release_ = [this](const QStringList& analyses, std::size_t embargoed) {
+    QStringList names;
+    for (int r = 0; r < model_->rowCount(); ++r) names << model_->item(r, Name)->text();
+    names.removeDuplicates();
+    return ask_release(this, static_cast<std::size_t>(analyses.size()), embargoed, names);
+  };
   connect(refresh_button_, &QPushButton::clicked, this, &PublishWindow::refresh);
 
   progress_->setVisible(false);
@@ -110,6 +123,65 @@ void PublishWindow::select_release(const QString& uuid) {
 }
 
 void PublishWindow::update_buttons() { refresh_button_->setEnabled(true); }
+
+void PublishWindow::new_release() {
+  const QStringList analyses = selection_ ? selection_() : QStringList();
+  if (analyses.isEmpty()) {
+    say(tr("Select analyses in the Data browser first: a release is made of them."));
+    return;
+  }
+  std::vector<ps::Uuid> uuids;
+  for (const QString& a : analyses)
+    if (auto u = ps::Uuid::parse(a.toStdString())) uuids.push_back(*u);
+  ++jobs_;
+  bridge_.run<std::size_t>(
+      this,
+      [uuids](ps::IStore& store, const ps::Actor&) -> Result<std::size_t> {
+        auto embargoed = store.embargoed_analyses(uuids, ps::UtcTime::now());
+        if (!embargoed) return fail(embargoed.error());
+        return embargoed->size();
+      },
+      [this, analyses](Result<std::size_t> embargoed) {
+        --jobs_;
+        if (!embargoed) {
+          say(tr("The embargoes could not be read: %1").arg(qs(embargoed.error().what)));
+          return;
+        }
+        auto spec = ask_release_ ? ask_release_(analyses, *embargoed) : std::nullopt;
+        if (!spec) return;
+        spec->analyses.clear();
+        for (const QString& a : analyses) spec->analyses.push_back(a.toStdString());
+        if (spec->options_json.empty()) spec->options_json = pb::release_options_json(pb::ReleaseOptions{});
+        spec->reduction_version = std::string(reduction::kReductionVersion);
+#ifdef PYCHRON_VERSION
+        spec->software_version = std::string("pychron-cpp/") + PYCHRON_VERSION;
+#else
+        spec->software_version = "pychron-cpp";
+#endif
+        const std::string name = spec->name;
+        ++jobs_;
+        bridge_.run<pb::ReleaseCreated>(
+            this,
+            [spec = *spec](ps::IStore& store, const ps::Actor& actor) { return pb::create_release(store, actor, spec); },
+            [this, name](Result<pb::ReleaseCreated> created) {
+              --jobs_;
+              if (!created) {
+                say(tr("The release was not made: %1").arg(qs(created.error().what)));
+                return;
+              }
+              const QString uuid = qs(created->release.str());
+              say(tr("release %1 v%2: %3 members, %4 samples, %5 under embargo")
+                      .arg(qs(name))
+                      .arg(created->version)
+                      .arg(created->members)
+                      .arg(created->samples)
+                      .arg(created->embargoed_analyses));
+              connect(this, &PublishWindow::refreshed, this, [this, uuid] { select_release(uuid); },
+                      Qt::SingleShotConnection);
+              refresh();
+            });
+      });
+}
 
 void PublishWindow::refresh() {
   ++jobs_;

@@ -247,8 +247,10 @@ if(TARGET pychron_processing_store)
   target_sources(pychron_ui_lib PRIVATE
     src/publish_actions.cpp
     src/publish_window.cpp
+    src/release_dialog.cpp
     src/publish_actions.hpp
-    src/publish_window.hpp)
+    src/publish_window.hpp
+    src/release_dialog.hpp)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::publish)
   # A queue's runs are saved to the same store.
   target_link_libraries(pychron_ui_lib PUBLIC pychron::experiment_store)
