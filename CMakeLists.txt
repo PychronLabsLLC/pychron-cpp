@@ -29,7 +29,7 @@ include(PychronDependencies)
 # directory exists so each unit can land independently. earthbank (records for
 # the EarthBank data platform) sits on processing; earthbank_qt is its HTTPS
 # client (Qt Network), built only when Qt6 Network is found.
-set(PYCHRON_LIBS core metrics vision persistence ingest dvc entry transport codecs devices laser sim systems reduction scripting experiment processing earthbank earthbank_qt setup)
+set(PYCHRON_LIBS core metrics vision persistence ingest dvc entry transport codecs devices laser sim systems reduction scripting experiment processing earthbank earthbank_qt publish setup)
 
 if(NOT PYCHRON_METRICS)
   list(REMOVE_ITEM PYCHRON_LIBS metrics)
