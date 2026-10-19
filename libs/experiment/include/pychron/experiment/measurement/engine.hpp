@@ -228,6 +228,8 @@ struct EngineContext {
   // spectrometer.toml's reference_detector: positions what the plan's own
   // reference would when the plan names none (plan::position_target).
   std::string reference = {};
+  // Runs a gas's prepare script; required when a gas has one (validate()).
+  IPrepareScriptPort* prepare = nullptr;
 };
 
 struct EngineOptions {
@@ -268,6 +270,13 @@ struct MeasurementInputs {
   std::optional<reduction::ArArConstants> arar;         // enables age, kca, ... in checks
 };
 
+// What became of a gas's prepare and pump-out (staged release, spec 11.5).
+struct GasOutcome {
+  std::string name;
+  std::optional<PrepareReport> prepare;
+  std::optional<plan::PumpOut> pump_out;
+};
+
 struct MeasurementResult {
   MeasurementOutcome outcome = MeasurementOutcome::Completed;
   std::optional<Error> error;  // Failed only
@@ -285,6 +294,7 @@ struct MeasurementResult {
   bool truncated_by_link = false;         // main ended by a silence that did not end (Truncated)
   std::vector<TraceEntry> trace;          // what the engine did, in order
   PositionStates states;                  // the spectrometer's state at each place collected
+  std::vector<GasOutcome> gases;          // a gas's prepare and pump-out, for each gas that has one
 };
 
 // The plan's own [conditionals].truncations as a ConditionalSet level (names
@@ -334,6 +344,8 @@ class MeasurementEngine {
   void begin();                           // a measurement's state, fresh, its time 0 now
   void select_gas(std::size_t g);         // gas_, main_, time_zero_
   Result<void> run_gas();                 // the running gas, before_inlet to after_main
+  Result<void> prepare_gas();             // Block::Prepare: the gas's prepare script
+  Result<void> pump_out_gas();            // Block::PumpOut: the gas's pump-out
   Result<void> run_when(plan::When when);  // the running gas's segments of one phase
   // Publishes the block's start and end around `fn`.
   Result<void> block(Block b, int segment, const std::function<Result<void>()>& fn);

@@ -284,6 +284,21 @@ class TestExperimentWindow : public QObject {
     QCOMPARE(window.toolBarArea(toolbar), Qt::TopToolBarArea);
   }
 
+  // A staged release's prepare and pump-out (spec 11.4) are named with their gas.
+  void aPrepareAndAPumpOutAreNamedWithTheirGas() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    auto* pane = window.executor();
+    namespace meas = pychron::experiment::measurement;
+    sim.line->bus().publish(meas::BlockStarted{"r1", meas::Block::Prepare, "He", -1});
+    QTRY_VERIFY2(pane->run_text().contains(QStringLiteral("prepare He")), qPrintable(pane->run_text()));
+    sim.line->bus().publish(meas::BlockStarted{"r1", meas::Block::PumpOut, "He", -1});
+    QTRY_VERIFY2(pane->run_text().contains(QStringLiteral("pump out He")), qPrintable(pane->run_text()));
+    sim.line->bus().publish(meas::BlockStarted{"r1", meas::Block::Main, "Ne", 0});
+    QTRY_VERIFY2(pane->run_text().endsWith(QStringLiteral("main")), qPrintable(pane->run_text()));
+  }
+
   void panelsLeaveOutTheExecutor() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

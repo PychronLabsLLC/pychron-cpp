@@ -1774,16 +1774,14 @@ TEST(StagedPlan, NoPrepareNoChange) {
   EXPECT_EQ(plan::to_json(p), golden);
 }
 
-TEST(PlanV2Gate, PrepareRefusedUntilTask25) {
+// The staged fixture loads as the lab loads it, gated: the engine runs it.
+TEST(StagedPlan, StagedFixtureLoads) {
   const std::string name = "v2_staged_cryo_release.toml";
   auto t = plan::parse_plan_template(read_text(kPlanFixtures / "valid" / name), name);
   ASSERT_TRUE(t.has_value()) << t.error().what;
   auto r = plan::load_plan(*t, {}, kWorkedResolvers);
-  ASSERT_FALSE(r);
-  EXPECT_NE(r.error().what.find("gas[0].prepare: prepare: not run by this build yet"), std::string::npos)
-      << r.error().what;
-  EXPECT_NE(r.error().what.find("gas[0].pump_out: pump_out: not run by this build yet"), std::string::npos)
-      << r.error().what;
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(r->plan.gases.size(), 2u);
 }
 
 // Duration: a pump-out's time, and a prepare's hold_s.

@@ -1302,8 +1302,6 @@ std::vector<std::string> unbuilt_features(const MeasurementPlan& plan) {
     const auto& gas = plan.gases[g];
     // An implicit gas is the file's top-level segments (or its v1 tables).
     const std::string at = gas.implicit ? std::string() : join("gas", g);
-    if (gas.prepare) out.push_back(join(at, "prepare") + ": prepare");      // Task 25
-    if (gas.pump_out) out.push_back(join(at, "pump_out") + ": pump_out");  // Task 25
     
     const auto seg_at = [&](std::size_t i) { return at.empty() ? join("segment", i) : join(join(at, "segment"), i); };
     for (std::size_t i = 0; i < gas.segments.size(); ++i) unbuilt_segment(gas.segments[i], seg_at(i), out);

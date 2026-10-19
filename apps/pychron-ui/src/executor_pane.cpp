@@ -213,7 +213,10 @@ ExecutorPane::ExecutorPane(ExperimentBridge& bridge, QWidget* parent)
     run_label_->setText(QStringLiteral("%1 — %2%3").arg(run_, run_state_, block_.isEmpty() ? QString() : QStringLiteral(" — ") + block_));
   });
   connect(&bridge_, &ExperimentBridge::blockStarted, this, [this](const meas::BlockStarted& e) {
-    block_ = q(meas::to_string(e.block));
+    // A staged release's blocks are named with their gas (spec 11.4).
+    if (e.block == meas::Block::Prepare) block_ = tr("prepare %1").arg(q(e.gas));
+    else if (e.block == meas::Block::PumpOut) block_ = tr("pump out %1").arg(q(e.gas));
+    else block_ = q(meas::to_string(e.block));
     wait_->clear();
     counts_->setRange(0, 1);  // a block without counts (peak center) shows empty
     counts_->setValue(0);

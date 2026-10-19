@@ -251,6 +251,11 @@ Result<void> MeasurementEngine::validate() const {
     centers |= std::any_of(gas.segments.begin(), gas.segments.end(),
                            [](const plan::Segment& seg) { return seg.kind == plan::SegmentKind::PeakCenter; });
   }
+  for (const auto& gas : p.gases) {
+    valved |= gas.pump_out.has_value();
+    if (gas.prepare && ctx_.prepare == nullptr)
+      problems.push_back("gas '" + gas.name + "' has a prepare script but no prepare service is configured");
+  }
   if (valved && ctx_.valves == nullptr)
     problems.emplace_back("plan equilibrates through valves but no valve service is configured");
   if (centers && ctx_.peak_center == nullptr)
@@ -436,7 +441,16 @@ Result<void> MeasurementEngine::run_blocks() {
   for (std::size_t g = 0; g < gases.size(); ++g) {
     if (stopping()) return {};
     select_gas(g);
+    // A staged release (spec 11): the gas's prepare after the previous gas's
+    // pump-out, its pump-out after its last segment.
+    if (gas_->prepare) {
+      if (auto r = block(Block::Prepare, -1, [&] { return prepare_gas(); }); !r) return r;
+      if (stopping()) return {};
+    }
     if (auto r = run_gas(); !r) return r;
+    if (gas_->pump_out && !stopping()) {
+      if (auto r = block(Block::PumpOut, -1, [&] { return pump_out_gas(); }); !r) return r;
+    }
   }
   for (const auto& gas : gases) {
     if (stopping()) return {};
@@ -494,6 +508,34 @@ Result<void> MeasurementEngine::run_gas() {
     if (auto r = call_hook("after_main"); !r) return r;
   }
   return run_when(plan::When::AfterMain);
+}
+
+Result<void> MeasurementEngine::prepare_gas() {
+  const auto& prep = *gas_->prepare;
+  trace(-1, -1, "prepare", gas_->name + " " + prep.script);
+  auto rep = ctx_.prepare->run(PrepareRequest{gas_->name, prep.script, prep.variables}, *token_);
+  if (!rep) {
+    if (token_->requested()) return {};  // cancelled or aborted: the outcome says so
+    Error e = rep.error();
+    e.what = "prepare for gas '" + gas_->name + "': " + e.what;
+    return fail(std::move(e));
+  }
+  result_.gases.push_back(GasOutcome{gas_->name, *rep, std::nullopt});
+  return {};
+}
+
+Result<void> MeasurementEngine::pump_out_gas() {
+  const auto& po = *gas_->pump_out;
+  trace(-1, -1, "pump_out", gas_->name + " " + po.valve + " " + plain(po.time_s));
+  if (auto r = ctx_.valves->open(po.valve); !r) return r;
+  wait(po.time_s);
+  // Closed whatever the wait gave (a stop included), as the inlet is.
+  if (auto r = critical("close " + po.valve, [&] { return ctx_.valves->close(po.valve); }); !r) return r;
+  auto it = std::find_if(result_.gases.begin(), result_.gases.end(),
+                         [&](const GasOutcome& o) { return o.name == gas_->name; });
+  if (it == result_.gases.end()) it = result_.gases.insert(result_.gases.end(), GasOutcome{gas_->name, {}, {}});
+  it->pump_out = po;
+  return {};
 }
 
 Result<void> MeasurementEngine::run_segment(std::size_t segment) {

@@ -634,17 +634,19 @@ Done notes: Step 2 was observed failing as build failures (no `prepare`, `pump_o
   - `EngineContext` gains `IPrepareScriptPort* prepare = nullptr;` — `validate()` requires it when any gas has `prepare`, and `valves` when any gas has `pump_out`.
   - Engine, per gas with `prepare`: `Block::Prepare` (`BlockStarted{run_id, Prepare, gas}`) runs `prepare->run` after the previous gas's last segment and pump-out and before this gas's `before_inlet`; the first gas's runs before its `before_inlet`. `Block::PumpOut`: after the gas's last segment, `open(valve)`, `wait(time_s)`, `close(valve)` (close through `critical`, as the inlet close). `MeasurementResult` gains `std::vector<GasOutcome> gases;` with `struct GasOutcome { std::string name; std::optional<PrepareReport> prepare; std::optional<plan::PumpOut> pump_out; };`.
   - A failed `prepare` → outcome `Failed`, `error` names the gas (`prepare for gas 'Ne': <error>`), the data of gases already measured stays in `result.data`.
-- [ ] **Step 1: Write failing tests** (fakes: `FakePrepare` journals requests and can fail or block on the token):
+- [x] **Step 1: Write failing tests** (fakes: `FakePrepare` journals requests and can fail or block on the token):
   - `StagedRelease.OrderPrepareInletSegmentsPumpOut`: two gases with `prepare`, first with `pump_out` → trace `prepare He`, `inlet open/close He`, He segments, `pump_out He` (open, 120 s on the ManualClock, close), `prepare Ne`, `inlet Ne`, Ne segments.
   - `StagedRelease.VariablesReachTheScript`: `FakePrepare` saw `cryo_temp == 35` then `75`, `hold_s == 300`.
   - `StagedRelease.FailingSecondPrepareKeepsFirstGas`: second `prepare` fails → outcome `Failed`, error contains `gas 'Ne'`, He's signal series present in `result.data`, no Ne inlet opened.
   - `StagedRelease.CancelDuringPrepareKeepsEarlierGases` (Review Focus 2): token cancelled while `FakePrepare` waits → outcome `Cancelled`, `FakeValves` shows no open inlet, He data kept.
   - `StagedRelease.ValidateNeedsThePorts`: plan with `prepare` and `ctx.prepare == nullptr` → `validate()` error.
   - `StagedPlan.StagedFixtureLoads` (in `tests/experiment/test_plan_v2.cpp`, replacing `PlanV2Gate.PrepareRefusedUntilTask25`): `load_plan` of `valid/v2_staged_cryo_release.toml`, gated → `ok()`.
-- [ ] **Step 2: Run** `--gtest_filter='StagedRelease.*:StagedPlan.StagedFixtureLoads'` → FAIL.
-- [ ] **Step 3: Implement**; drop the `prepare`/`pump_out` gate entries Task 24 added and the test `PlanV2Gate.PrepareRefusedUntilTask25`; the UI label (build with `dev-ui`, sweep with `--build-dir build/dev-ui`).
-- [ ] **Step 4: Run** the engine filter and the UI test → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): prepare and pump-out blocks between gases`.
+- [x] **Step 2: Run** `--gtest_filter='StagedRelease.*:StagedPlan.StagedFixtureLoads'` → FAIL.
+- [x] **Step 3: Implement**; drop the `prepare`/`pump_out` gate entries Task 24 added and the test `PlanV2Gate.PrepareRefusedUntilTask25`; the UI label (build with `dev-ui`, sweep with `--build-dir build/dev-ui`).
+- [x] **Step 4: Run** the engine filter and the UI test → PASS.
+- [x] **Step 5: Commit** `feat(experiment): prepare and pump-out blocks between gases`.
+
+Done notes: Step 2 was observed failing as build failures (no `IPrepareScriptPort`). A prepare that fails with the token stopped is the stop's outcome (Cancelled, Aborted), not a failure; one that fails otherwise fails the measurement with `prepare for gas '<n>': <error>`. A pump-out is skipped once the run is stopping and closes its valve through `critical` whatever the wait gave; `MeasurementResult::gases` has an entry for each gas with a prepare or a pump-out. Traced as `prepare <gas> <script>` and `pump_out <gas> <valve> <s>`. The executor pane names the blocks `prepare <gas>` and `pump out <gas>` (`TestExperimentWindow::aPrepareAndAPumpOutAreNamedWithTheirGas`). `FakePrepare`'s "blocks on the token" is the token cancelled from inside the script, as an operator's stop reaches it.
 
 ### Task 26: The run runs `prepare` scripts and records them
 

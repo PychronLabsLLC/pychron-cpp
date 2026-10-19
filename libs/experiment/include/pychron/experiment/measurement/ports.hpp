@@ -5,6 +5,7 @@
 // measurement hook. Narrow interfaces so the engine runs against fakes in unit
 // tests and against the real facades through adapters.hpp.
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -99,6 +100,24 @@ class IPeakCenterPort {
                                                scripting::CancelToken& token) = 0;
   // The run is over: its own tables (write_table) are forgotten.
   virtual void drop_run_tables() {}
+};
+
+// A gas's prepare script (staged release, spec 11.2): the Run runs it as an
+// extraction script on the run's token. `variables` as given to it, as text.
+struct PrepareRequest {
+  std::string gas;
+  std::string script;
+  std::map<std::string, plan::PrepareValue> variables;
+};
+struct PrepareReport {
+  TimePoint started{}, finished{};
+  std::map<std::string, std::string> variables;
+};
+class IPrepareScriptPort {
+ public:
+  virtual ~IPrepareScriptPort() = default;
+  // An error ends the measurement Failed, unless the token was cancelled.
+  virtual Result<PrepareReport> run(const PrepareRequest& request, scripting::CancelToken& token) = 0;
 };
 
 // Measurement hook (spec 4.3): Python called at named points. A hook that

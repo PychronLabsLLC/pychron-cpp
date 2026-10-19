@@ -251,6 +251,30 @@ class FakePeakCenter final : public IPeakCenterPort {
   int dropped = 0;
 };
 
+// Journals each prepare it is asked for; can fail one gas's, or stop the run
+// while one runs (as the operator would, through the run's token).
+class FakePrepare final : public IPrepareScriptPort {
+ public:
+  Result<PrepareReport> run(const PrepareRequest& request, scripting::CancelToken& token) override {
+    requests.push_back(request);
+    if (request.gas == fail_gas) return fail(ErrorKind::Io, "cryostat did not reach its setpoint");
+    if (request.gas == cancel_gas) {
+      token.cancel();
+      return fail(ErrorKind::Cancelled, "script cancelled");
+    }
+    PrepareReport rep;
+    for (const auto& [k, v] : request.variables)
+      rep.variables[k] = std::visit([](const auto& x) {
+        std::ostringstream o;
+        o << x;
+        return o.str();
+      }, v);
+    return rep;
+  }
+  std::vector<PrepareRequest> requests;
+  std::string fail_gas, cancel_gas;
+};
+
 class FakeHook final : public IMeasurementHook {
  public:
   Result<void> call(std::string_view entry, scripting::IMeasurementApi& api, scripting::CancelToken&,
@@ -475,6 +499,7 @@ class EngineTest : public ::testing::Test {
   EngineContext context() {
     EngineContext c{spec_, clock_, &valves_, &peak_, &hook_, &bus_, nullptr};
     c.timing = timing_;
+    c.prepare = prepare_;
     return c;
   }
 
@@ -493,6 +518,7 @@ class EngineTest : public ::testing::Test {
   FakeValves valves_{clock_};
   FakePeakCenter peak_;
   FakeHook hook_;
+  IPrepareScriptPort* prepare_ = nullptr;  // EngineContext::prepare
   scripting::CancelToken token_;
   std::unique_ptr<MeasurementEngine> engine_;
 };
@@ -1174,6 +1200,128 @@ TEST_F(EngineTest, GasesSourceDarkPhase) {
   EXPECT_EQ(cancelled.outcome, MeasurementOutcome::Cancelled);
   EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "source_output off"), 1);
   EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "source_output on"), 1);  // by the cleanup
+}
+
+// ---- staged release (plan Task 25) ---------------------------------------------
+
+constexpr std::string_view kStaged = R"toml(
+[plan]
+name = "staged"
+instrument_family = "thermo_argus"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 5
+
+[[gas]]
+name = "He"
+inlet = "He_in"
+prepare = { script = "cryo:release", variables = { cryo_temp = 35, hold_s = 300 } }
+pump_out = { valve = "IP", time_s = 120 }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { He4 = "H1" }
+counts = 3
+
+[[gas]]
+name = "Ne"
+inlet = "Ne_in"
+prepare = { script = "cryo:release", variables = { cryo_temp = 75, hold_s = 300 } }
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ne20 = "H1" }
+counts = 3
+)toml";
+
+class StagedRelease : public EngineTest {
+ protected:
+  StagedRelease() { prepare_ = &fake_prepare_; }
+  FakePrepare fake_prepare_;
+
+  // The trace's prepare, pump-out, collect entries and the valves' inlet moves, as words.
+  std::vector<std::string> story(const MeasurementResult& r) {
+    std::vector<std::string> out;
+    for (const auto& e : r.trace) {
+      if (e.what == "prepare") out.push_back("prepare " + e.gas);
+      if (e.what == "pump_out") out.push_back("pump_out " + e.gas);
+      if (e.what == "collect" && (out.empty() || out.back() != "segments " + e.gas)) out.push_back("segments " + e.gas);
+    }
+    return out;
+  }
+};
+
+TEST_F(StagedRelease, OrderPrepareInletSegmentsPumpOut) {
+  auto r = run(plan_from(kStaged));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(story(r), (std::vector<std::string>{"prepare He", "segments He", "pump_out He", "prepare Ne",
+                                                "segments Ne"}));
+  std::vector<std::string> moves;
+  for (const auto& l : valves_.log)
+    if (!l.starts_with("open C") && !l.starts_with("close C")) moves.push_back(l);
+  ASSERT_EQ(moves.size(), 6u);
+  EXPECT_TRUE(moves[0].starts_with("open He_in"));
+  EXPECT_TRUE(moves[1].starts_with("close He_in"));
+  EXPECT_TRUE(moves[2].starts_with("open IP"));
+  EXPECT_TRUE(moves[3].starts_with("close IP"));
+  const auto at = [](const std::string& l) { return std::stod(l.substr(l.find('@') + 1)); };
+  EXPECT_DOUBLE_EQ(at(moves[3]) - at(moves[2]), 120);  // the pump-out's time, on the clock
+  EXPECT_TRUE(moves[4].starts_with("open Ne_in"));
+  EXPECT_TRUE(moves[5].starts_with("close Ne_in"));
+  EXPECT_EQ(r.blocks.front(), Block::Prepare);
+  ASSERT_EQ(r.gases.size(), 2u);
+  EXPECT_EQ(r.gases[0].name, "He");
+  ASSERT_TRUE(r.gases[0].pump_out);
+  EXPECT_EQ(r.gases[0].pump_out->valve, "IP");
+  EXPECT_FALSE(r.gases[1].pump_out);
+}
+
+TEST_F(StagedRelease, VariablesReachTheScript) {
+  auto r = run(plan_from(kStaged));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(fake_prepare_.requests.size(), 2u);
+  EXPECT_EQ(fake_prepare_.requests[0].gas, "He");
+  EXPECT_EQ(fake_prepare_.requests[0].script, "cryo:release");
+  EXPECT_EQ(fake_prepare_.requests[0].variables.at("cryo_temp"), plan::PrepareValue{std::int64_t{35}});
+  EXPECT_EQ(fake_prepare_.requests[0].variables.at("hold_s"), plan::PrepareValue{std::int64_t{300}});
+  EXPECT_EQ(fake_prepare_.requests[1].variables.at("cryo_temp"), plan::PrepareValue{std::int64_t{75}});
+  ASSERT_TRUE(r.gases[1].prepare);
+  EXPECT_EQ(r.gases[1].prepare->variables.at("cryo_temp"), "75");
+}
+
+TEST_F(StagedRelease, FailingSecondPrepareKeepsFirstGas) {
+  fake_prepare_.fail_gas = "Ne";
+  auto r = run(plan_from(kStaged));
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("gas 'Ne'"), std::string::npos) << r.error->what;
+  EXPECT_NE(r.error->what.find("cryostat did not reach its setpoint"), std::string::npos);
+  EXPECT_FALSE(merged_series(r.data, "He4", "H1", collect::kSignal).value_or(collect::Series{}).v.empty());
+  EXPECT_FALSE(merged_series(r.data, "Ne20", "H1", collect::kSignal));
+  for (const auto& l : valves_.log) EXPECT_FALSE(l.starts_with("open Ne_in")) << l;
+}
+
+// Review Focus 2: a stop while a prepare runs ends the run there; no inlet
+// is left open, and the gas already measured is kept.
+TEST_F(StagedRelease, CancelDuringPrepareKeepsEarlierGases) {
+  fake_prepare_.cancel_gas = "Ne";
+  auto r = run(plan_from(kStaged));
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
+  EXPECT_FALSE(merged_series(r.data, "He4", "H1", collect::kSignal).value_or(collect::Series{}).v.empty());
+  for (const auto& [valve, open] : valves_.state) {
+    if (valve != "C") {
+      EXPECT_FALSE(open) << valve;
+    }
+  }
+  for (const auto& l : valves_.log) EXPECT_FALSE(l.starts_with("open Ne_in")) << l;
+}
+
+TEST_F(StagedRelease, ValidateNeedsThePorts) {
+  prepare_ = nullptr;
+  MeasurementEngine e(context(), inputs(plan_from(kStaged), {}));
+  auto v = e.validate();
+  ASSERT_FALSE(v);
+  EXPECT_NE(v.error().what.find("prepare"), std::string::npos) << v.error().what;
 }
 
 // ---- live edits (plan Task 15) -------------------------------------------------
