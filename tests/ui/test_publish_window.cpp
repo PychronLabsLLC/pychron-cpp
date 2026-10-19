@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QLabel>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QMainWindow>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -100,6 +101,21 @@ class TestPublishWindow : public QObject {
     o.window->select_release(uuid);
     return uuid;
   }
+
+  // A release made, selected and built (no figures) in an open window; its directory.
+  QString built(Open& o, const QString& name) {
+    if (made(o).isEmpty()) return {};
+    const QString out = dir_.filePath(name);
+    o.window->set_ask_build([out](const QString&) -> std::optional<PublishWindow::BuildRequest> {
+      return PublishWindow::BuildRequest{out.toStdString(), false, false};
+    });
+    o.window->build();
+    if (!QTest::qWaitFor([&] { return !o.window->busy(); }, kWaitMs)) return {};
+    o.window->set_ask_directory([](const QString& suggested) { return suggested; });
+    return out + QStringLiteral("/r-v1");
+  }
+
+  QString state(const PublishWindow& w) const { return cell(w, 0, PublishWindow::State); }
 
  private Q_SLOTS:
   void init() {
@@ -261,6 +277,103 @@ class TestPublishWindow : public QObject {
     QVERIFY((o.bridge->run_sync<bool>([](ps::IStore&, const ps::Actor&) -> pychron::Result<bool> { return true; })));
     QCoreApplication::processEvents();  // the queued stages and the result find no window
     QVERIFY(QFile::exists(out + QStringLiteral("/r-v1/manifest.json")));
+  }
+  void verifyAgreesWithTheStore() {
+    Open o = open();
+    const QString dir = built(o, QStringLiteral("out-verify"));
+    QVERIFY(!dir.isEmpty());
+    QString reported;
+    o.window->set_report([&](const QString& text) { reported = text; });
+    o.window->verify();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY2(o.window->status()->text().startsWith(QStringLiteral("verified")), qPrintable(o.window->status()->text()));
+    QVERIFY(reported.isEmpty());
+  }
+
+  void verifyNamesAChangedFile() {
+    Open o = open();
+    const QString dir = built(o, QStringLiteral("out-changed"));
+    QVERIFY(!dir.isEmpty());
+    {
+      QFile readme(dir + QStringLiteral("/README.md"));
+      QVERIFY(readme.open(QIODevice::Append));
+      readme.write("edited\n");
+    }
+    QString reported;
+    o.window->set_report([&](const QString& text) { reported = text; });
+    o.window->verify();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY2(reported.contains(QStringLiteral("changed README.md")), qPrintable(reported));
+  }
+
+  void publishMakesItPublished() {
+    Open o = open();
+    QVERIFY(!built(o, QStringLiteral("out-publish")).isEmpty());
+    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
+    o.window->publish();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
+    QCOMPARE(cell(*o.window, 0, PublishWindow::Visibility), QStringLiteral("private"));
+  }
+
+  void publishRefusesAChangedDirectory() {
+    Open o = open();
+    const QString dir = built(o, QStringLiteral("out-refused"));
+    QVERIFY(!dir.isEmpty());
+    {
+      QFile readme(dir + QStringLiteral("/README.md"));
+      QVERIFY(readme.open(QIODevice::Append));
+      readme.write("edited\n");
+    }
+    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
+    o.window->publish();
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY2(o.window->status()->text().contains(QStringLiteral("does not match its manifest")),
+             qPrintable(o.window->status()->text()));
+    QCOMPARE(state(*o.window), QStringLiteral("draft"));
+  }
+
+  void withdrawNeedsAReason() {
+    Open o = open();
+    QVERIFY(!built(o, QStringLiteral("out-withdraw")).isEmpty());
+    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
+    o.window->publish();
+    QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    o.window->set_ask_text([](const QString&) -> std::optional<QString> { return QStringLiteral("  "); });
+    o.window->withdraw();
+    QVERIFY(o.window->status()->text().contains(QStringLiteral("needs a reason")));
+    QCOMPARE(state(*o.window), QStringLiteral("published"));
+    o.window->set_ask_text([](const QString&) -> std::optional<QString> { return QStringLiteral("error in J"); });
+    o.window->withdraw();
+    QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("withdrawn"), kWaitMs);
+  }
+
+  void makePublicChangesVisibility() {
+    Open o = open();
+    QVERIFY(!built(o, QStringLiteral("out-public")).isEmpty());
+    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
+    o.window->publish();
+    QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    o.window->set_confirm([](const QString&) { return true; });
+    o.window->make_public();
+    QTRY_COMPARE_WITH_TIMEOUT(cell(*o.window, 0, PublishWindow::Visibility), QStringLiteral("public"), kWaitMs);
+  }
+
+  void buttonsFollowTheState() {
+    Open o = open();
+    QVERIFY(!built(o, QStringLiteral("out-buttons")).isEmpty());
+    QVERIFY(o.window->publish_button()->isEnabled());
+    QVERIFY(!o.window->withdraw_button()->isEnabled());
+    QVERIFY(!o.window->public_button()->isEnabled());
+    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
+    o.window->publish();
+    QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY(!o.window->publish_button()->isEnabled());
+    QVERIFY(o.window->withdraw_button()->isEnabled());
+    QVERIFY(o.window->public_button()->isEnabled());
   }
 };
 

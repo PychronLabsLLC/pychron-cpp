@@ -11,7 +11,9 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QInputDialog>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QMetaObject>
 #include <QPointer>
 #include <QHBoxLayout>
@@ -34,6 +36,7 @@
 #include "pychron/publish/build.hpp"
 #include "pychron/publish/embargo.hpp"
 #include "pychron/publish/release.hpp"
+#include "pychron/publish/workflow.hpp"
 #include "pychron/reduction/arar_types.hpp"
 #pragma pop_macro("signals")
 
@@ -122,7 +125,11 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
       progress_(new QProgressBar(this)),
       refresh_button_(new QPushButton(tr("Refresh"), this)),
       new_button_(new QPushButton(tr("New release…"), this)),
-      build_button_(new QPushButton(tr("Build…"), this)) {
+      build_button_(new QPushButton(tr("Build…"), this)),
+      verify_button_(new QPushButton(tr("Verify…"), this)),
+      publish_button_(new QPushButton(tr("Publish…"), this)),
+      withdraw_button_(new QPushButton(tr("Withdraw…"), this)),
+      public_button_(new QPushButton(tr("Make public"), this)) {
   setWindowTitle(tr("Publish"));
   setObjectName(QStringLiteral("publish_window"));
   model_->setHorizontalHeaderLabels(
@@ -138,11 +145,45 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
   auto* buttons = new QHBoxLayout;
   buttons->addWidget(new_button_);
   buttons->addWidget(build_button_);
+  buttons->addWidget(verify_button_);
+  buttons->addWidget(publish_button_);
+  buttons->addWidget(withdraw_button_);
+  buttons->addWidget(public_button_);
   buttons->addStretch();
   buttons->addWidget(refresh_button_);
   connect(new_button_, &QPushButton::clicked, this, &PublishWindow::new_release);
   connect(build_button_, &QPushButton::clicked, this, &PublishWindow::build);
   ask_build_ = [this](const QString& release) { return ask_build_dialog(this, release); };
+  connect(verify_button_, &QPushButton::clicked, this, &PublishWindow::verify);
+  connect(publish_button_, &QPushButton::clicked, this, &PublishWindow::publish);
+  connect(withdraw_button_, &QPushButton::clicked, this, &PublishWindow::withdraw);
+  connect(public_button_, &QPushButton::clicked, this, &PublishWindow::make_public);
+  ask_directory_ = [this](const QString& suggested) {
+    return QFileDialog::getExistingDirectory(this, tr("A built release directory"), suggested);
+  };
+  ask_publish_ = [this](const QString& release) -> std::optional<bool> {
+    QMessageBox box(QMessageBox::Question, tr("Publish"),
+                    tr("Publish %1? A published release no longer changes. It stays private unless made public.")
+                        .arg(release),
+                    QMessageBox::Cancel, this);
+    QPushButton* as_private = box.addButton(tr("Publish as private"), QMessageBox::AcceptRole);
+    QPushButton* as_public = box.addButton(tr("Publish as public"), QMessageBox::AcceptRole);
+    box.setDefaultButton(as_private);
+    box.exec();
+    if (box.clickedButton() == as_private) return false;
+    if (box.clickedButton() == as_public) return true;
+    return std::nullopt;
+  };
+  ask_text_ = [this](const QString& question) -> std::optional<QString> {
+    bool ok = false;
+    QString text = QInputDialog::getText(this, tr("Withdraw"), question, QLineEdit::Normal, QString(), &ok);
+    if (!ok) return std::nullopt;
+    return text;
+  };
+  confirm_ = [this](const QString& question) {
+    return QMessageBox::question(this, tr("Publish"), question) == QMessageBox::Yes;
+  };
+  report_ = [this](const QString& text) { QMessageBox::warning(this, tr("Verify"), text); };
   ask_release_ = [this](const QStringList& analyses, std::size_t embargoed) {
     QStringList names;
     for (int r = 0; r < model_->rowCount(); ++r) names << model_->item(r, Name)->text();
@@ -188,7 +229,136 @@ void PublishWindow::select_release(const QString& uuid) {
 
 void PublishWindow::update_buttons() {
   refresh_button_->setEnabled(true);
-  build_button_->setEnabled(releases_->currentIndex().isValid());  // any state: a published release is rebuilt to verify it
+  const bool any = releases_->currentIndex().isValid();
+  const QString state = current_text(State), visibility = current_text(Visibility);
+  build_button_->setEnabled(any);  // any state: a published release is rebuilt to verify it
+  verify_button_->setEnabled(any);
+  publish_button_->setEnabled(state == QStringLiteral("draft"));
+  withdraw_button_->setEnabled(state == QStringLiteral("published"));
+  public_button_->setEnabled(state == QStringLiteral("published") && visibility == QStringLiteral("private"));
+}
+
+QString PublishWindow::current_text(int column) const {
+  const QModelIndex current = releases_->currentIndex();
+  if (!current.isValid()) return {};
+  return model_->item(current.row(), column)->text();
+}
+
+void PublishWindow::change(const QString& done,
+                           std::function<Result<void>(ps::IStore&, const ps::Actor&)> fn) {
+  ++jobs_;
+  bridge_.run<bool>(
+      this,
+      [fn = std::move(fn)](ps::IStore& store, const ps::Actor& actor) -> Result<bool> {
+        if (auto r = fn(store, actor); !r) return fail(r.error());
+        return true;
+      },
+      [this, done](Result<bool> r) {
+        --jobs_;
+        if (!r) {
+          say(qs(r.error().what));
+          return;
+        }
+        say(done);
+        refresh();
+      });
+}
+
+void PublishWindow::verify() {
+  const QString uuid = selected_release();
+  if (uuid.isEmpty()) {
+    say(tr("Select a release first."));
+    return;
+  }
+  const QString dir = ask_directory_ ? ask_directory_(last_build(uuid)) : QString();
+  if (dir.isEmpty()) return;
+  say(tr("Verifying %1 against the store…").arg(dir));
+  ++jobs_;
+  auto& source = source_;
+  const std::string url = url_;
+  bridge_.run<pb::StoreVerify>(
+      this,
+      [&source, url, dir](ps::IStore& store, const ps::Actor&) {
+        return pb::verify_against_store(store, source, dir.toStdString(), url);
+      },
+      [this, dir](Result<pb::StoreVerify> checked) {
+        --jobs_;
+        if (!checked) {
+          say(tr("Verify could not run: %1").arg(qs(checked.error().what)));
+          return;
+        }
+        if (checked->ok()) {
+          say(tr("verified %1: the files and a rebuild from the store agree").arg(dir));
+          return;
+        }
+        QStringList lines;
+        const auto add = [&lines](const pb::VerifyReport& r, const QString& against) {
+          for (const auto& p : r.missing) lines << tr("%1: missing %2").arg(against, qs(p));
+          for (const auto& p : r.changed) lines << tr("%1: changed %2").arg(against, qs(p));
+          for (const auto& p : r.extra) lines << tr("%1: not in the manifest %2").arg(against, qs(p));
+          if (r.reduction_version_differs) lines << tr("%1: %2").arg(against, qs(*r.reduction_version_differs));
+        };
+        add(checked->files, tr("files"));
+        add(checked->rebuild, tr("rebuild"));
+        say(tr("verify found %n difference(s) in %1", nullptr, static_cast<int>(lines.size())).arg(dir));
+        if (report_) report_(lines.join(QLatin1Char('\n')));
+      });
+}
+
+void PublishWindow::publish() {
+  const QString uuid = selected_release();
+  if (uuid.isEmpty()) {
+    say(tr("Select a release first."));
+    return;
+  }
+  const QString name = current_text(Name);
+  const QString dir = ask_directory_ ? ask_directory_(last_build(uuid)) : QString();
+  if (dir.isEmpty()) return;
+  const auto make_public = ask_publish_ ? ask_publish_(name) : std::nullopt;
+  if (!make_public) return;
+  const bool pub = *make_public;
+  change(tr("published %1 (%2)").arg(name, pub ? tr("public") : tr("private")),
+         [uuid, dir, pub](ps::IStore& store, const ps::Actor& actor) -> Result<void> {
+           auto row = pb::publish_built(store, actor, uuid.toStdString(), dir.toStdString(), pub);
+           if (!row) return fail(row.error());
+           return {};
+         });
+}
+
+void PublishWindow::withdraw() {
+  const QString uuid = selected_release();
+  if (uuid.isEmpty()) {
+    say(tr("Select a release first."));
+    return;
+  }
+  const QString name = current_text(Name);
+  const auto reason = ask_text_ ? ask_text_(tr("Why is %1 withdrawn? The reason is kept with it.").arg(name)) : std::nullopt;
+  if (!reason) return;
+  if (reason->trimmed().isEmpty()) {
+    say(tr("A withdrawn release needs a reason."));
+    return;
+  }
+  change(tr("withdrew %1").arg(name), [uuid, why = reason->trimmed().toStdString()](ps::IStore& store,
+                                                                                    const ps::Actor& actor) {
+    auto u = ps::Uuid::parse(uuid.toStdString());
+    if (!u) return Result<void>(fail(ErrorKind::Config, "no release " + uuid.toStdString()));
+    return pb::withdraw_release(store, actor, *u, why);
+  });
+}
+
+void PublishWindow::make_public() {
+  const QString uuid = selected_release();
+  if (uuid.isEmpty()) {
+    say(tr("Select a release first."));
+    return;
+  }
+  const QString name = current_text(Name);
+  if (!confirm_ || !confirm_(tr("Make %1 public? Anyone it is hosted for can then read it.").arg(name))) return;
+  change(tr("%1 is public").arg(name), [uuid](ps::IStore& store, const ps::Actor& actor) {
+    auto u = ps::Uuid::parse(uuid.toStdString());
+    if (!u) return Result<void>(fail(ErrorKind::Config, "no release " + uuid.toStdString()));
+    return pb::set_release_public(store, actor, *u);
+  });
 }
 
 void PublishWindow::stage(const QString& name) {

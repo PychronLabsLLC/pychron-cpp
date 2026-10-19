@@ -82,6 +82,32 @@ class PublishWindow : public QMainWindow {
   // The directory the release was last built into from this window; empty when none.
   QString last_build(const QString& release_uuid) const { return last_build_.value(release_uuid); }
 
+  // Verify… and Publish… ask for a built directory (suggested: the last
+  // build from this window); empty cancels. Default: a directory chooser.
+  using AskDirectory = std::function<QString(const QString& suggested)>;
+  void set_ask_directory(AskDirectory ask) { ask_directory_ = std::move(ask); }
+  // Publish…: true public, false private, nullopt cancels. Default: a dialog.
+  using AskPublish = std::function<std::optional<bool>(const QString& release)>;
+  void set_ask_publish(AskPublish ask) { ask_publish_ = std::move(ask); }
+  // Withdraw…: the reason (required); nullopt cancels. Default: an input dialog.
+  using AskText = std::function<std::optional<QString>(const QString& question)>;
+  void set_ask_text(AskText ask) { ask_text_ = std::move(ask); }
+  // Make public: yes or no. Default: a question box.
+  using Confirm = std::function<bool(const QString& question)>;
+  void set_confirm(Confirm confirm) { confirm_ = std::move(confirm); }
+  // What Verify found, one difference a line. Default: a message box.
+  using Report = std::function<void(const QString& text)>;
+  void set_report(Report report) { report_ = std::move(report); }
+
+  void verify();
+  void publish();
+  void withdraw();
+  void make_public();
+
+  QPushButton* publish_button() const noexcept { return publish_button_; }
+  QPushButton* withdraw_button() const noexcept { return withdraw_button_; }
+  QPushButton* public_button() const noexcept { return public_button_; }
+
  Q_SIGNALS:
   void refreshed();
 
@@ -89,6 +115,9 @@ class PublishWindow : public QMainWindow {
   void say(const QString& text);
   void update_buttons();
   void stage(const QString& name);  // a build's progress, on the GUI thread
+  QString current_text(int column) const;  // of the current row; empty when none
+  // A state change of the current release on the worker, said and refreshed.
+  void change(const QString& done, std::function<Result<void>(persistence::IStore&, const persistence::Actor&)> fn);
 
   EntryBridge& bridge_;
   processing::StoreSource& source_;
@@ -101,8 +130,17 @@ class PublishWindow : public QMainWindow {
   QPushButton* refresh_button_;
   QPushButton* new_button_;
   QPushButton* build_button_;
+  QPushButton* verify_button_;
+  QPushButton* publish_button_;
+  QPushButton* withdraw_button_;
+  QPushButton* public_button_;
   AskRelease ask_release_;
   AskBuild ask_build_;
+  AskDirectory ask_directory_;
+  AskPublish ask_publish_;
+  AskText ask_text_;
+  Confirm confirm_;
+  Report report_;
   QMap<QString, QString> last_build_;  // release uuid -> directory
   int jobs_ = 0;
 };
