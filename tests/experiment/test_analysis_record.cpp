@@ -467,6 +467,7 @@ AnalysisRecord v3_record() {
                        "2026-09-30T12:06:00Z"},
             std::nullopt,
             {}};
+  v3.add_gas(GasRec{"", 3.5, {{{}, 1.0, "", ""}}, std::nullopt, std::nullopt, {}});  // full_builder's argon
   v3.add_gas(he).add_gas(ne);
   InterceptResult ir;
   ir.intercept.value = 4.5;
@@ -500,8 +501,8 @@ TEST(AnalysisRecord, V3RoundTrips) {
   EXPECT_TRUE(verify_sha(*j));
   EXPECT_EQ(to_json(*j), json);
   // What is absent is not written.
-  EXPECT_EQ(t->data.gases[0].prepare, std::nullopt);
-  EXPECT_EQ(t->data.gases[1].pump_out, std::nullopt);
+  EXPECT_EQ(t->data.gases[1].prepare, std::nullopt);   // He
+  EXPECT_EQ(t->data.gases[2].pump_out, std::nullopt);  // Ne
   EXPECT_EQ(t->results.baseline_positions[1].magnet, std::nullopt);
 }
 
@@ -535,9 +536,33 @@ TEST(AnalysisRecord, StateCarriesOptics) {
   const auto rec = v3_record();
   auto back = from_toml(to_toml(rec));
   ASSERT_TRUE(back) << back.error().what;
-  EXPECT_EQ(back->data.gases[1].states[0].optics, "ne_optics");
-  EXPECT_EQ(back->data.gases[0].interferences,
+  EXPECT_EQ(back->data.gases[2].states[0].optics, "ne_optics");
+  EXPECT_EQ(back->data.gases[1].interferences,
             (std::vector<std::pair<std::string, std::string>>{{"Ar40++", "Ne20"}, {"CO2++", "Ne22"}}));
-  EXPECT_TRUE(back->data.gases[1].interferences.empty());
+  EXPECT_TRUE(back->data.gases[2].interferences.empty());
   EXPECT_NE(to_toml(rec).find("interferences"), std::string::npos);
+}
+
+// A v3 record whose indexes point at nothing is refused, not read.
+TEST(AnalysisRecord, AV3RecordWithIndexesToNothingIsRefused) {
+  const auto good = v3_record();
+  ASSERT_TRUE(from_toml(to_toml(good)));
+  const auto refused = [](const AnalysisRecord& r, const std::string& what) {
+    auto back = from_toml(to_toml(r));
+    ASSERT_FALSE(back) << what;
+    EXPECT_EQ(back.error().kind, pychron::ErrorKind::Config);
+    EXPECT_NE(back.error().what.find(what), std::string::npos) << back.error().what;
+  };
+  auto bad_state = good;
+  bad_state.data.series.back().state = 7;
+  refused(bad_state, "is not a state of gas");
+  auto bad_gas = good;
+  bad_gas.data.series.back().gas = "Xe";
+  refused(bad_gas, "no gas 'Xe'");
+  auto negative = good;
+  negative.data.series.back().position = -1;
+  refused(negative, "negative");
+  auto bad_choice = good;
+  bad_choice.results.baseline_choices["Ne20@H1"].baselines = {0, 9};
+  refused(bad_choice, "is not a baseline position");
 }

@@ -561,6 +561,31 @@ void as_v3(AnalysisRecord& r) {
   }
 }
 
+// What a v3 record's indexes point at is there: a series' gas is one of the
+// gases (when the record has any), its state one of that gas's states, its
+// segment and position not negative; a baseline choice's baselines are
+// baseline positions. Empty: it is; else what is not.
+std::string check_v3(const AnalysisRecord& r) {
+  const auto& gases = r.data.gases;
+  for (std::size_t i = 0; i < r.data.series.size(); ++i) {
+    const auto& s = r.data.series[i];
+    const std::string where = "record.data.series[" + std::to_string(i) + "]";
+    if (s.segment < 0 || s.position < 0 || s.state < 0) return where + ": a negative segment, position or state";
+    if (gases.empty()) continue;
+    const auto g = std::find_if(gases.begin(), gases.end(), [&](const GasRec& x) { return x.name == s.gas; });
+    if (g == gases.end()) return where + ".gas: no gas '" + s.gas + "' in record.data.gases";
+    const bool stateless = g->states.empty() && s.state == 0;
+    if (!stateless && static_cast<std::size_t>(s.state) >= g->states.size())
+      return where + ".state: " + std::to_string(s.state) + " is not a state of gas '" + s.gas + "'";
+  }
+  for (const auto& [key, c] : r.results.baseline_choices)
+    for (const auto b : c.baselines)
+      if (b >= r.results.baseline_positions.size())
+        return "record.results.baseline_choices." + key + ": baseline " + std::to_string(b) +
+               " is not a baseline position";
+  return {};
+}
+
 Result<AnalysisRecord> from_table(const toml::table& root) {
   std::string err;
   const Rd top{&root, "record", &err};
@@ -883,7 +908,11 @@ Result<AnalysisRecord> from_table(const toml::table& root) {
   }
 
   if (!err.empty()) return fail(ErrorKind::Config, err);
-  if (v2) as_v3(r);
+  if (v2) {
+    as_v3(r);
+  } else if (auto bad = check_v3(r); !bad.empty()) {
+    return fail(ErrorKind::Config, bad);
+  }
   return r;
 }
 

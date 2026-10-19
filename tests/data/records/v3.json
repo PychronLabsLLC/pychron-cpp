@@ -55,6 +55,18 @@
         },
         "gases" : [
             {
+                "name" : "",
+                "states" : [
+                    {
+                        "deflections" : {},
+                        "integration_time" : 1.0,
+                        "optics" : "",
+                        "table" : ""
+                    }
+                ],
+                "time_zero" : 3.5
+            },
+            {
                 "interferences" : [
                     [
                         "Ar40++",
@@ -317,7 +329,7 @@
             "db:1"
         ],
         "schema_version" : 3,
-        "sha" : "152f255aed676084c27cd8ab166220472d58cae6ec2136b34fee29e63aa5fa2f"
+        "sha" : "29d1b4f4ec5d64057f9c5849cdbb4bef760bdc2f84739a370d02b629baaf8da7"
     },
     "results" : {
         "baseline_choices" : {
