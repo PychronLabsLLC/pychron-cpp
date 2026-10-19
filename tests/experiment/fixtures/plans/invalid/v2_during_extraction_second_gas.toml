@@ -1,0 +1,34 @@
+# expect: during_extraction only in the first gas
+[plan]
+name = "v2_during_extraction_second_gas"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[gas]]
+name = "A"
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 10
+
+[[gas]]
+name = "B"
+[[gas.segment]]
+kind = "baseline"
+when = "during_extraction"
+[[gas.segment.positions]]
+collect = { Ar39 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 10
+[[gas.segment]]
+[[gas.segment.positions]]
+collect = { Ar39 = "H1" }
+counts = 10

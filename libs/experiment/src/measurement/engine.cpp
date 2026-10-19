@@ -273,6 +273,7 @@ void MeasurementEngine::rebuild_conditionals() {
 
 void MeasurementEngine::begin() {
   begun_ = true;
+  extraction_phase_ran_ = false;
   result_ = MeasurementResult{};
   gas_ = nullptr;
   main_ = 0;
@@ -344,6 +345,7 @@ Result<void> MeasurementEngine::run_phase(plan::When when, scripting::CancelToke
   if (auto v = validate(); !v) return v;
   select_gas(0);
   auto r = run_when(when);
+  if (when == plan::When::DuringExtraction) extraction_phase_ran_ = true;
   // What a collection or a move left on goes off; deflections went back at
   // each segment's end. The rest (a standing deflection, the run's tables)
   // is the measurement's to undo.
@@ -438,6 +440,13 @@ const plan::Equilibration& MeasurementEngine::equilibration() const {
 // gas's after_main; after_run of every gas once, after the last.
 Result<void> MeasurementEngine::run_blocks() {
   const auto& gases = in_.plan.gases;
+  // A during_extraction phase nobody ran beside an extraction (a measurement
+  // run on its own) runs first, so the plan runs as written.
+  if (!extraction_phase_ran_ && has_phase(plan::When::DuringExtraction)) {
+    select_gas(0);
+    if (auto r = run_when(plan::When::DuringExtraction); !r) return r;
+    extraction_phase_ran_ = true;
+  }
   for (std::size_t g = 0; g < gases.size(); ++g) {
     if (stopping()) return {};
     select_gas(g);

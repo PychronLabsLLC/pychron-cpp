@@ -899,6 +899,38 @@ delay = { seconds = 1 }
                                           Block::Main, Block::BaselineAfter, Block::Step}));
 }
 
+// A measurement run on its own (no extraction beside it) runs its
+// during_extraction phase first, once; after run_phase it is not run again.
+TEST_F(EngineTest, PhasesDuringExtractionRunsOnceWhoeverStartsIt) {
+  const auto plan = plan_from(phases_plan(R"(
+[[segment]]
+kind = "baseline"
+when = "during_extraction"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 2
+
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+)"));
+  auto alone = run(plan);
+  ASSERT_EQ(alone.outcome, MeasurementOutcome::Completed) << (alone.error ? alone.error->what : "");
+  EXPECT_EQ(run_order(alone), (std::vector<int>{0, 1}));
+  EXPECT_EQ(alone.data.series.at(skey("", "H1", collect::kBaseline, 0, 0)).v.size(), 2u);
+
+  EngineOptions options;
+  options.sleep = [this](pychron::Duration d) { clock_.advance(d); };
+  MeasurementEngine e(context(), inputs(plan, {}), options);
+  ASSERT_TRUE(e.run_phase(plan::When::DuringExtraction, token_));
+  auto after = e.run(token_);
+  ASSERT_EQ(after.outcome, MeasurementOutcome::Completed);
+  EXPECT_EQ(after.data.series.at(skey("", "H1", collect::kBaseline, 0, 0)).v.size(), 2u);  // not twice
+}
+
 TEST_F(EngineTest, PhasesSameWhenRunsInFileOrder) {
   auto r = run(plan_from(phases_plan(R"(
 [[segment]]

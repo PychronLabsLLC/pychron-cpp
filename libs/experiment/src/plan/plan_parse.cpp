@@ -1208,6 +1208,8 @@ class V2Rules {
         const auto where = join(seg_path(g, s), "when");
         if (segs[s].kind == SegmentKind::Signal || segs[s].kind == SegmentKind::Sniff)
           p_.add(where, "no signal or sniff segment during_extraction");
+        // There is one extraction, before the first gas (spec 5.4).
+        if (g > 0) p_.add(where, "during_extraction only in the first gas");
         if (reported_types || !has_extraction_) continue;
         for (const auto& type : plan_.info.analysis_types) {
           if (has_extraction_(type)) continue;

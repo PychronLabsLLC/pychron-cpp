@@ -432,6 +432,7 @@ class MeasurementEngine {
 
   scripting::CancelToken* token_ = nullptr;
   bool begun_ = false;  // begin() ran (run_phase before run)
+  bool extraction_phase_ran_ = false;  // run_phase(DuringExtraction) ran: run() does not again
   std::unique_ptr<ConditionalEngine> conditionals_;
   MeasurementResult result_;
   const plan::Gas* gas_ = nullptr;           // the gas being run
