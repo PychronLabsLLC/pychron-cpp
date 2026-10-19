@@ -24,6 +24,7 @@
 #include "data_source.hpp"
 #include "db.hpp"
 #include "export.hpp"
+#include "publish.hpp"
 #include "flux.hpp"
 #include "laser.hpp"
 #include "spec_table.hpp"
@@ -117,6 +118,12 @@ constexpr const char* kUsageText =
     "  export --db <url> --out <file.csv|file.json> [--sample S]... [--identifier I]... [--project P]...\n"
     "                              write a 40Ar/39Ar data report after Schaen et al. (2021): metadata,\n"
     "                              constants, one row per analysis, and plateau, mean and isochron ages\n"
+    "  publish create|build|verify|publish|withdraw|list|show|delete\n"
+    "                              a release: an immutable, citable directory of a selection's reduced\n"
+    "                              data (GeoParquet, OGC API - Records, the Schaen report, a manifest);\n"
+    "                              private by default (elctl publish help)\n"
+    "  embargo set|lift|list --db <url>\n"
+    "                              hide a project, sample or analysis from every public release\n"
     "  earthbank export-xlsx --db <url> --out <dir> [selection as export] [--overrides <file.toml>]\n"
     "                              fill EarthBank's (AusGeochem) import workbooks, one data point per\n"
     "                              sample, to import by hand on its website (elctl earthbank help)\n"
@@ -260,6 +267,7 @@ class Session {
     if (cmd == "import") return import_command(args, io_);
     if (cmd == "entry") return entry_command(args, io_);
     if (cmd == "export") return export_command(args, io_);
+    if (cmd == "publish") return publish_command(args, io_);
     if (cmd == "db") return db_command(args, io_);
     if (cmd == "flux") return flux_command(args, io_);
     if (cmd == "earthbank") return earthbank_command(args, io_);
