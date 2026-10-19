@@ -60,6 +60,9 @@ class FieldTableModel : public QAbstractTableModel {
   // The detector of a column; empty for Isotope, Mass or out of range.
   std::string detector_at(int column) const;
 
+  // One undoable edit replacing the whole table (an in-memory table shown
+  // over its saved version, an imported file).
+  void edit_table(spectrometer::FieldTable after, const QString& text);
   // Mass from the weights, else 0 (diagnostics then flag it); no values.
   void add_row(const QString& isotope);
   void remove_rows(std::vector<int> rows);

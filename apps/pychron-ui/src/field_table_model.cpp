@@ -109,6 +109,11 @@ void FieldTableModel::apply(sp::FieldTable table) {
   emit tableEdited();
 }
 
+void FieldTableModel::edit_table(sp::FieldTable after, const QString& text) {
+  if (read_only_) return;
+  push(std::move(after), text);
+}
+
 void FieldTableModel::add_row(const QString& isotope) {
   if (read_only_) return;
   const std::string name = isotope.trimmed().toStdString();

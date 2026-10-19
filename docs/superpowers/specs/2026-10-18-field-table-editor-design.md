@@ -131,7 +131,10 @@ Layout:
   holds in memory with content different from store's current version
   (unsaved in-memory change; after D2 fix only on save failure) loads the
   in-memory one and shows banner "in-memory table differs from saved
-  version <v>": saving makes it a version.
+  version <v>": saving makes it a version. In-memory table loaded as one
+  undoable edit over saved version (Undo shows saved one). Conflict Reload
+  and reload after `fieldTableChanged` open store's version as saved, no
+  in-memory check.
 - Value cells: finite double, shown `%0.5f`, typed text kept to full
   precision. Clearing cell removes detector value from that point.
 - Isotope cell: text; on commit, mass filled from `MolecularWeights` when
@@ -191,6 +194,7 @@ Diagnostics function lives in `libs/systems` (pure, testable), not UI:
 - Saved TOML is canonical `to_toml`: comments of hand-written version lost.
   First save over version whose file text ≠ `to_toml(parse(text))` asks once
   ("comments in <v> are not kept"). Old version file untouched (immutable).
+- Save disabled ("no changes") while grid has no edit.
 - Unsaved edits: closing window, switching version or table asks Save /
   Discard / Cancel (as `ConditionalsEditorWindow::Unsaved`).
 - Version that does not parse: listed, shown with parse error, read-only;

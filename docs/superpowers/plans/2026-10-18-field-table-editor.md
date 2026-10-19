@@ -356,7 +356,7 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
 
 **Files:**
 - Create: `apps/pychron-ui/src/field_table_editor_window.hpp`, `field_table_editor_window.cpp`; add to CMake source list
-- Test: `tests/ui/test_field_table_editor.cpp` (uses `spectrometer_fixture.hpp`, shipped qtegra profile tables)
+- Test: `tests/ui/test_field_table_editor.cpp` (uses `spectrometer_fixture.hpp` on a scratch copy of `configs/examples/tables`, the same `argon` tables `profiles/qtegra` ships)
 
 **Interfaces:**
 - Consumes: Tasks 2, 3, 11, 12.
@@ -392,9 +392,9 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
     void changeEvent(QEvent*) override;  // ActivationChange: reread version list
   };
   ```
-  Behaviour per spec §3, §3.1–3.4: left lists (names with `(active)` / `(HV)`, versions with points and detectors counts, current marked); right panel (default fit combo, one override combo per detector with "default", axis label, diagnostics list clicking selects the cell); in-memory-differs banner when `bridge->table_copy(name)` has points and `!= store.load()` (empty for a table that is not the active one); `fieldTableChanged` on the open table reloads when unmodified, else shows banner `"table changed since you opened it (now <v>)"` and keeps edits; Save disabled with reason while `bridge->table_held()` (text `"table is held by <holder>"`) or diagnostics have an error (first error's text); first save over a version whose text ≠ `to_toml(parse(text))` asks `"comments in <v> are not kept"` once per version; a version that does not parse is shown read-only with its parse error; save/restore failures from the bridge go to `show_error`. Undo and Redo actions from `model()->undo_stack()->createUndoAction/createRedoAction` with `QKeySequence::Undo` / `QKeySequence::Redo` (Ctrl+Z / Ctrl+Shift+Z). Make Current applies Save's conflict rule: before restoring, it rereads the store's current version; when that differs from the current version the window last listed, it refuses with `show_error("table changed since you opened it (now <v>)")` and rereads the list. Poll `table_held()` on a 500 ms `QTimer` for enable state (UI convenience only; core refuses anyway).
+  Behaviour per spec §3, §3.1–3.4: left lists (names with `(active)` / `(HV)`, versions with points and detectors counts, current marked); right panel (default fit combo, one override combo per detector with "default", axis label, diagnostics list clicking selects the cell); in-memory-differs banner when `bridge->table_copy(name)` has points and `!= store.load()` (empty for a table that is not the active one); `fieldTableChanged` on the open table reloads when unmodified, else shows banner `"table changed since you opened it (now <v>)"` and keeps edits; Save disabled with reason while `bridge->table_held()` (text `"table is held by <holder>"`) or diagnostics have an error (first error's text); first save over a version whose text ≠ `to_toml(parse(text))` asks `"comments in <v> are not kept"` once per version; a version that does not parse is shown read-only with its parse error; save/restore failures from the bridge go to `show_error`. Undo and Redo actions from `model()->undo_stack()->createUndoAction/createRedoAction` with `QKeySequence::Undo` / `QKeySequence::Redo` (Ctrl+Z / Ctrl+Shift+Z). Make Current applies Save's conflict rule: before restoring, it rereads the store's current version; when that differs from the current version the window last listed, it refuses with `show_error("table changed since you opened it (now <v>)")` and rereads the list. Poll `table_held()` on a 500 ms `QTimer` for enable state (UI convenience only; core refuses anyway). Save is also disabled with `"no changes"` while the model is clean. The in-memory table is loaded as one undoable edit over the saved version (so `modified()` and Save follow, and Undo shows the saved one). Conflict Reload and a `fieldTableChanged` reload open the store's version as saved, without the in-memory check.
 
-- [ ] **Step 1: Write failing tests** (temp copy of `profiles/qtegra` data root, `SimSpectrometer` from the fixture):
+- [x] **Step 1: Write failing tests** (temp copy of `profiles/qtegra` data root, `SimSpectrometer` from the fixture):
   - `opensTheActiveTableAtItsCurrentVersion`
   - `editCellSaveMakesANewCurrentVersionTheBridgeSees` (`fieldTableChanged` received, `bridge.isotopes_for` / `table_copy` show it)
   - `duplicateIsotopeDisablesSave` (reason text contains "duplicate")
@@ -408,10 +408,12 @@ Spec §8 places this test under `tests/experiment`; `tests/experiment` executor 
   - `commentsLostIsAskedOnce`
   - `unparseableVersionIsReadOnly`
   - `withoutBridgeSavesThroughTheStore` (bridge null)
-- [ ] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_editor && build/dev-ui/tests/ui/pychron_ui_test_field_table_editor`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** same. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(ui): field table editor window`.
+  - also: `unsavedSaveSavesThenSwitches`, `aTableChangedWhileUnmodifiedReloads`, `aStoreMovedOnByAnotherProcessOpensTheInMemoryTable`, `diagnosticClickSelectsTheCell`
+  - Versions that must also be in the spectrometer's memory are made with `Spectrometer::replace_table` (`core_save`); a store-only save (`outside_save`) stands for `elctl`, whose change the running process does not see.
+- [x] **Step 2: Run** `cmake --build --preset dev-ui --target pychron_ui_test_field_table_editor && build/dev-ui/tests/ui/pychron_ui_test_field_table_editor`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** same. Expected: PASS.
+- [x] **Step 5: Commit** `feat(ui): field table editor window`.
 
 ### Task 14: Fit plot
 
