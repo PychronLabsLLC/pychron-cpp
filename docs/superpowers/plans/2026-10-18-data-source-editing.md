@@ -301,19 +301,20 @@ The page must use the wizard's widgets, not copies (spec 3.5).
     QPushButton* test_button() const; QLabel* result() const; QLabel* note() const;
   };
   ```
+  As built, beside these: `const setup::SiteInstall& install() const` (the install after the last `apply`). Test connection's tree comparison names a SQLite `-shm` file but does not read it: SQLite rewrites its shared-memory index on every open, a read included.
   Pinned text: password placeholder `"kept"` when `read_kept_password` has one; read-only note `"Stop the queue to change the data source"`; `--db` note `"This session uses --db <url without password>; changes here are for the install"`.
 
-- [ ] **Step 1: Write the failing tests** `tests/ui/test_data_source_page.cpp` (temp root, temp site file, install made with `setup::plan_install`/`apply_install` of `data-reduction`):
+- [x] **Step 1: Write the failing tests** `tests/ui/test_data_source_page.cpp` (temp root, temp site file, install made with `setup::plan_install`/`apply_install` of `data-reduction`):
   - `loadsTheCurrentSource`: `data_source` editor on `local`, `db_file` `data/pychron.db`, `data_folder` `data`; server fields hidden.
   - `aKeptPasswordIsShownAsKept`: server install with credentials → password editor empty, placeholder `kept`.
   - `testConnectionOnATempSqlite` (store builds): existing migrated temp file chosen → `result()` text contains `schema`; nothing on disk changed.
   - `readOnlyWhileAQueueRuns`: `queue_running` returns true → editors disabled, note text pinned above.
   - `aSessionDatabaseIsNoted`: `session_database = "sqlite:/x.db"` → note contains `--db`.
-- [ ] **Step 2: Run, expect compile failure:** `cmake --build --preset dev-ui --target pychron_ui_test_data_source_page`.
-- [ ] **Step 3: Implement** the page: editors from `deps.questions` filtered to `data_source`, `db_host`, `db_port`, `db_name`, `db_user`, `db_password`, `db_file`, `data_folder`; visibility from each question's `when` (`setup::is_asked`); "New file…" button beside `db_file` (`QFileDialog::getSaveFileName`).
-- [ ] **Step 4: Run** `build/dev-ui/tests/ui/pychron_ui_test_data_source_page`; expect PASS.
-- [ ] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
-- [ ] **Step 6: Commit** `feat(ui): a data source page shows and checks an install's database and data folder`
+- [x] **Step 2: Run, expect compile failure:** `cmake --build --preset dev-ui --target pychron_ui_test_data_source_page`. (Not seen failing on its own: the header went in before the first build.)
+- [x] **Step 3: Implement** the page: editors from `deps.questions` filtered to `data_source`, `db_host`, `db_port`, `db_name`, `db_user`, `db_password`, `db_file`, `data_folder`; visibility from each question's `when` (`setup::is_asked`); "New file…" button beside `db_file` (`QFileDialog::getSaveFileName`).
+- [x] **Step 4: Run** `build/dev-ui/tests/ui/pychron_ui_test_data_source_page`; expect PASS.
+- [x] **Step 5: Checks** `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --changed --build-dir build/dev-ui`.
+- [x] **Step 6: Commit** `feat(ui): a data source page shows and checks an install's database and data folder`
 
 ### Task 10: Preferences > Data source, Apply, reopen
 
