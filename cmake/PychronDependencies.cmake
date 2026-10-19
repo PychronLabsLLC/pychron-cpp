@@ -95,6 +95,39 @@ elseif(PYCHRON_VISION)
   message(STATUS "PYCHRON_VISION_OPENCV=OFF: building stubs")
 endif()
 
+# Optional Apache Arrow (with Parquet) for libs/publish: the GeoParquet tables
+# of a release directory. AUTO uses it when found, ON requires it, OFF never
+# looks. Without it make_parquet_writer() is null and a build writes
+# everything but data/*.parquet. Arrow is seen by src/parquet_writer.cpp alone.
+set(PYCHRON_PUBLISH "AUTO" CACHE STRING "Apache Arrow (Parquet) for libs/publish: AUTO, ON or OFF")
+set_property(CACHE PYCHRON_PUBLISH PROPERTY STRINGS AUTO ON OFF)
+set(PYCHRON_PUBLISH_ARROW_ENABLED OFF)
+set(PYCHRON_PUBLISH_ARROW_LIBS "")
+if(NOT PYCHRON_PUBLISH STREQUAL "OFF")
+  if(NOT PYCHRON_PUBLISH STREQUAL "AUTO" AND NOT PYCHRON_PUBLISH STREQUAL "ON")
+    message(FATAL_ERROR "PYCHRON_PUBLISH must be AUTO, ON or OFF (got '${PYCHRON_PUBLISH}')")
+  endif()
+  find_package(Arrow CONFIG QUIET)
+  if(Arrow_FOUND)
+    find_package(Parquet CONFIG QUIET)
+  endif()
+  if(Arrow_FOUND AND Parquet_FOUND)
+    set(PYCHRON_PUBLISH_ARROW_ENABLED ON)
+    if(TARGET Parquet::parquet_shared)
+      set(PYCHRON_PUBLISH_ARROW_LIBS Parquet::parquet_shared Arrow::arrow_shared)
+    else()
+      set(PYCHRON_PUBLISH_ARROW_LIBS Parquet::parquet_static Arrow::arrow_static)
+    endif()
+    message(STATUS "PYCHRON_PUBLISH=${PYCHRON_PUBLISH}: using Apache Arrow ${Arrow_VERSION} with Parquet")
+  elseif(PYCHRON_PUBLISH STREQUAL "ON")
+    message(FATAL_ERROR "PYCHRON_PUBLISH=ON but Apache Arrow with Parquet was not found")
+  else()
+    message(STATUS "PYCHRON_PUBLISH=${PYCHRON_PUBLISH}: Apache Arrow not found; a release has no Parquet tables")
+  endif()
+else()
+  message(STATUS "PYCHRON_PUBLISH=OFF: a release has no Parquet tables")
+endif()
+
 # QCustomPlot (GPL) for the UI strip charts. Ships no CMake project, so the
 # static library is defined here. UI only: Qt must already be found.
 if(BUILD_UI)

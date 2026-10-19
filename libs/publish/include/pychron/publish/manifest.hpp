@@ -103,7 +103,7 @@ Result<Manifest> parse_manifest(std::string_view json);
 Result<Manifest> read_manifest(const std::filesystem::path& dir);
 
 // The media type of a release file by its path ("application/vnd.apache.parquet", ...).
-std::string media_type_of(std::string_view path);
+std::string_view media_type_of(std::string_view path);
 
 struct VerifyReport {
   std::vector<std::string> missing, changed, extra;  // paths

@@ -85,6 +85,13 @@ sudo apt install libopencv-dev   # Ubuntu
 finds it, `ON` fails the configure if it does not, `OFF` never looks. Built
 and tested with OpenCV 5.0; the 4.x path is written but untested. Configure prints one line saying which was chosen.
 
+`-DPYCHRON_PUBLISH=AUTO|ON|OFF`: Apache Arrow with Parquet, for the GeoParquet
+tables of a release directory (`libs/publish`, `elctl publish`). `AUTO`
+(default) uses it when CMake finds it (`brew install apache-arrow`; Ubuntu:
+`libarrow-dev libparquet-dev` from Apache's apt repository; vcpkg: the
+`publish` feature), `ON` fails the configure without it, `OFF` never looks.
+Without it a release is built without `data/*.parquet` and says so.
+
 ## 2. Code
 
 ```bash

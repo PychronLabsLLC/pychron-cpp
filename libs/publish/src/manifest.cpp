@@ -302,7 +302,7 @@ Result<Manifest> read_manifest(const fs::path& dir) {
   return parse_manifest(*text);
 }
 
-std::string media_type_of(std::string_view path) {
+std::string_view media_type_of(std::string_view path) {
   const auto dot = path.rfind('.');
   const std::string ext = dot == std::string_view::npos ? "" : std::string(path.substr(dot));
   if (ext == ".parquet") return "application/vnd.apache.parquet";

@@ -170,9 +170,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # OpenCV too: the only job with it (see the core job's macOS step).
+      # OpenCV too: the only job with it (see the core job's macOS step). And
+      # Apache Arrow (PYCHRON_PUBLISH): the one job that writes a release's
+      # Parquet tables; the others build the stub and still compare the row
+      # hashes against the committed fixture.
       - name: Install Qt and tools
-        run: brew install qt ninja ccache opencv
+        run: brew install qt ninja ccache opencv apache-arrow
 
       - name: Restore ccache
         uses: actions/cache/restore@v4

@@ -36,7 +36,7 @@ Manifest manifest_of(const TableInputs& in, const ReleaseTables& tables) {
   for (const Table* t : {&tables.samples, &tables.positions, &tables.analyses, &tables.isotopes, &tables.interpreted_ages})
     m.tables.push_back({"data/" + t->name + ".parquet", t->rows.size(), rows_sha256(*t), {}});
   for (const auto* path : {"data/samples.parquet", "tables/release.csv", "tables/FC-2/report.csv"})
-    m.files.push_back({path, 1, sha256(std::string_view{path}), media_type_of(path)});
+    m.files.push_back({path, 1, sha256(std::string_view{path}), std::string(media_type_of(path))});
   return m;
 }
 

@@ -24,6 +24,19 @@
         }
       ]
     },
+    "publish": {
+      "description": "Apache Arrow with Parquet for libs/publish (PYCHRON_PUBLISH): the GeoParquet tables of a release",
+      "dependencies": [
+        {
+          "name": "arrow",
+          "default-features": false,
+          "features": [
+            "parquet"
+          ]
+        },
+        "zstd"
+      ]
+    },
     "scripting": {
       "description": "Embedded CPython >= 3.12 for libs/scripting (PYCHRON_SCRIPTING); without it CMake uses a system Python or builds the stub host",
       "dependencies": [

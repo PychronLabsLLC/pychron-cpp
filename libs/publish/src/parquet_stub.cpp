@@ -3,9 +3,13 @@
 
 #include "pychron/publish/parquet.hpp"
 
+#ifndef PYCHRON_PUBLISH_ARROW_ENABLED
+
 namespace pychron::publish {
 
 std::unique_ptr<IParquetWriter> make_parquet_writer() { return nullptr; }
-std::string parquet_writer_name() { return {}; }
+std::string_view parquet_writer_name() { return {}; }
 
 }  // namespace pychron::publish
+
+#endif  // !PYCHRON_PUBLISH_ARROW_ENABLED

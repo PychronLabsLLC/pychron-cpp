@@ -173,13 +173,13 @@ std::string constants_json(const pp::Report& report) {
   const auto& t = report.constants;
   const auto col = [&](const std::string& name) -> std::optional<std::size_t> {
     for (std::size_t i = 0; i < t.columns.size(); ++i)
-      if (t.columns[i] == name || t.columns[i].rfind(name + " ±(", 0) == 0) return i;
+      if (t.columns[i] == name || t.columns[i].starts_with(name + " ±(")) return i;
     return std::nullopt;
   };
   const auto item = col("item"), value = col("value"), units = col("units");
   std::optional<std::size_t> error;
   for (std::size_t i = 0; i < t.columns.size(); ++i)
-    if (t.columns[i].rfind("value ±(", 0) == 0) error = i;
+    if (t.columns[i].starts_with("value ±(")) error = i;
   const auto cell = [](const pp::ReportCell& c) -> Json {
     if (const auto* d = std::get_if<double>(&c)) return *d;
     if (const auto* s = std::get_if<std::string>(&c)) return *s;
@@ -231,7 +231,7 @@ class Writer {
       if (!out) return fail(ErrorKind::Io, "cannot write " + path.string());
     }
     mark_as_user_file(path);
-    manifest_.files.push_back({rel, bytes.size(), sha256(bytes), media_type_of(rel)});
+    manifest_.files.emplace_back(rel, bytes.size(), sha256(bytes), std::string(media_type_of(rel)));
     return {};
   }
 
@@ -241,7 +241,7 @@ class Writer {
     auto bytes = slurp(path);
     if (!bytes) return fail(bytes.error());
     mark_as_user_file(path);
-    manifest_.files.push_back({rel, bytes->size(), sha256(std::string_view(*bytes)), media_type_of(rel)});
+    manifest_.files.emplace_back(rel, bytes->size(), sha256(std::string_view(*bytes)), std::string(media_type_of(rel)));
     return {};
   }
 
@@ -403,8 +403,7 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
   std::string key = opts->group_by;
   if (key == "auto") key = any_step(*before_grouping) ? "aliquot" : "identifier";
   auto& group = pipeline.add(reg, "group", "group", {"reduce"});
-  set(group, "key", key);
-  if (bad) return fail(*bad);
+  if (auto ok = group.options.set("key", key); !ok) return fail(ok.error());
   auto grouped = runner.run(pipeline, "group");
   if (!grouped) return fail(grouped.error());
   const pp::DatasetPtr dataset = std::get<pp::DatasetPtr>(grouped->at(0));
@@ -511,8 +510,8 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
   }
   if (auto r = writer.write("CITATION.cff", citation_cff(m)); !r) return fail(r.error());
   if (auto r = writer.write("README.md", readme_md(m, tables)); !r) return fail(r.error());
-  if (options.with_figures) result.warnings.push_back("figures are not written yet (phase 2); --with-figures ignored");
-  if (options.with_viewer) result.warnings.push_back("the viewer is not shipped yet (phase 3); --with-viewer ignored");
+  if (options.with_figures) result.warnings.emplace_back("figures are not written yet (phase 2); --with-figures ignored");
+  if (options.with_viewer) result.warnings.emplace_back("the viewer is not shipped yet (phase 3); --with-viewer ignored");
 
   stage("parquet");
   if (auto parquet = make_parquet_writer()) {
@@ -524,7 +523,7 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
     }
     result.parquet_written = true;
   } else {
-    result.warnings.push_back("built without Parquet support (PYCHRON_PUBLISH): data/*.parquet were not written");
+    result.warnings.emplace_back("built without Parquet support (PYCHRON_PUBLISH): data/*.parquet were not written");
   }
 
   stage("records");

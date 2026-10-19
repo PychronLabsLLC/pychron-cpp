@@ -233,7 +233,7 @@ TEST_P(BuildTest, EveryItemLinkInCatalogResolvesToAFile) {
   std::size_t items = 0;
   for (const auto& link : catalog.at("links")) {
     const std::string href = link.at("href");
-    if (href.rfind("https://", 0) == 0) continue;
+    if (href.starts_with("https://")) continue;
     EXPECT_TRUE(fs::exists(built->dir / href)) << href;
     if (link.at("rel") == "item") ++items;
   }
@@ -242,7 +242,7 @@ TEST_P(BuildTest, EveryItemLinkInCatalogResolvesToAFile) {
     const auto record = nlohmann::json::parse(slurp(entry.path()));
     for (const auto& link : record.at("links")) {
       const std::string href = link.at("href");
-      if (href.rfind("https://", 0) == 0) continue;
+      if (href.starts_with("https://")) continue;
       EXPECT_TRUE(fs::exists(entry.path().parent_path() / href)) << entry.path().filename() << " -> " << href;
     }
   }

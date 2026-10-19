@@ -130,7 +130,7 @@ Json ages_of(const ReleaseTables& t, const std::string& sample_uuid) {
 }  // namespace
 
 std::string sample_dir_name(const Table& samples, std::size_t row) {
-  const std::string safe = file_safe(str(samples, row, "name"));
+  std::string safe = file_safe(str(samples, row, "name"));
   std::size_t same = 0;
   for (std::size_t r = 0; r < samples.rows.size(); ++r)
     if (file_safe(str(samples, r, "name")) == safe) ++same;
@@ -191,7 +191,7 @@ std::string catalog_json(const Manifest& m, const ReleaseTables& t) {
   // The tables that were written (a build without Arrow has none).
   for (const auto& table : m.tables)
     for (const auto& f : m.files)
-      if (f.path == table.path) links.push_back(link("enclosure", table.path, media_type_of(table.path), table.path));
+      if (f.path == table.path) links.push_back(link("enclosure", table.path, std::string(media_type_of(table.path)), table.path));
   for (std::size_t r = 0; r < t.samples.rows.size(); ++r)
     links.push_back(link("item", "records/" + str(t.samples, r, "sample_uuid") + ".json", "application/geo+json",
                          str(t.samples, r, "name")));
@@ -271,10 +271,10 @@ Result<std::string> sample_record_json(const Manifest& m, const ReleaseTables& t
   links.push_back(link("collection", "../catalog.json", "application/json"));
   const std::string dir = sample_dir_name(t.samples, r);
   for (const auto& f : m.files) {
-    if (f.path.rfind("tables/" + dir + "/", 0) == 0 || f.path.rfind("figures/" + dir + "/", 0) == 0)
+    if (f.path.starts_with("tables/" + dir + "/") || f.path.starts_with("figures/" + dir + "/"))
       links.push_back(link("enclosure", "../" + f.path, f.media_type, f.path));
   }
-  if (const std::string igsn = str(t.samples, r, "igsn"); !igsn.empty() && igsn.rfind("10.", 0) == 0)
+  if (const std::string igsn = str(t.samples, r, "igsn"); !igsn.empty() && igsn.starts_with("10."))
     links.push_back(link("related", "https://doi.org/" + igsn, "", "IGSN"));
   j["links"] = links;
   return j.dump(2) + "\n";

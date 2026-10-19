@@ -4,11 +4,13 @@
 #include "pychron/publish/tables.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstring>
 #include <map>
 #include <set>
+#include <utility>
 
 #include "pychron/processing/reduced.hpp"
 #include "pychron/reduction/fits.hpp"
@@ -27,15 +29,15 @@ std::optional<std::size_t> Table::column(std::string_view column_name) const {
 // ---------------------------------------------------------------- canonical text
 
 std::string canonical_double(double value) {
-  char buf[64];
-  const auto r = std::to_chars(buf, buf + sizeof buf, value);
-  return std::string(buf, r.ptr);
+  std::array<char, 64> buf{};
+  const auto r = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+  return std::string(buf.data(), r.ptr);
 }
 
 namespace {
 
 std::string hex_of(std::string_view bytes) {
-  static constexpr char kDigits[] = "0123456789abcdef";
+  constexpr std::string_view kDigits = "0123456789abcdef";
   std::string out;
   out.reserve(bytes.size() * 2);
   for (const unsigned char c : bytes) {
@@ -235,10 +237,13 @@ std::string json_string(std::string_view s) {
   return out + "\"";
 }
 
-const char* kKindColumns[][2] = {{"signals", "rev_signals"},     {"intercepts", "rev_intercepts"},
-                                 {"baselines", "rev_baselines"}, {"blanks", "rev_blanks"},
-                                 {"icfactors", "rev_icfactors"}, {"tags", "rev_tags"},
-                                 {"annotation", "rev_annotation"}};
+constexpr std::array<std::pair<const char*, const char*>, 7> kKindColumns{{{"signals", "rev_signals"},
+                                                                           {"intercepts", "rev_intercepts"},
+                                                                           {"baselines", "rev_baselines"},
+                                                                           {"blanks", "rev_blanks"},
+                                                                           {"icfactors", "rev_icfactors"},
+                                                                           {"tags", "rev_tags"},
+                                                                           {"annotation", "rev_annotation"}}};
 
 }  // namespace
 
@@ -323,16 +328,17 @@ ReleaseTables build_tables(const TableInputs& in) {
     for (const char* c : {"age_ma", "age_err_analytical_ma", "age_err_with_j_ma"}) b.col(c, ColumnType::Double);
     b.col("age_note", ColumnType::String);
     b.col("record_sha256", ColumnType::String);
-    for (const auto& kc : kKindColumns) b.col(kc[1], ColumnType::String);
+    for (const auto& kc : kKindColumns) b.col(kc.second, ColumnType::String);
     b.geometry_columns();
 
-    const ReportView rep = analyses_report;
+    const ReportView& rep = analyses_report;
     const std::string age = rep.column_starting("age (");
     const std::string age_analytical = rep.column_matching(age + " ±(", " analytical");
     const std::string age_j = rep.column_matching(age + " ±(", " with J");
-    const char* iso_names[5] = {"40Ar", "39Ar", "38Ar", "37Ar", "36Ar"};
-    const char* iso_cols[5] = {"ar40_fa", "ar39_fa", "ar38_fa", "ar37_fa", "ar36_fa"};
-    const char* blank_cols[5] = {"ar40_blank_fa", "ar39_blank_fa", "ar38_blank_fa", "ar37_blank_fa", "ar36_blank_fa"};
+    constexpr std::array<const char*, 5> iso_names{"40Ar", "39Ar", "38Ar", "37Ar", "36Ar"};
+    constexpr std::array<const char*, 5> iso_cols{"ar40_fa", "ar39_fa", "ar38_fa", "ar37_fa", "ar36_fa"};
+    constexpr std::array<const char*, 5> blank_cols{"ar40_blank_fa", "ar39_blank_fa", "ar38_blank_fa",
+                                                    "ar37_blank_fa", "ar36_blank_fa"};
     for (const auto& m : members) {
       const auto& ra = *m.item->analysis;
       const auto& a = *ra.analysis;
@@ -372,7 +378,7 @@ ReleaseTables build_tables(const TableInputs& in) {
       if (m.report_row) {
         const std::size_t r = *m.report_row;
         b.set(row, "group_id", rep.get(r, "group"));
-        for (int i = 0; i < 5; ++i) {
+        for (std::size_t i = 0; i < 5; ++i) {
           const std::string iso = std::string(iso_names[i]) + " (fA)";
           const std::string blank = std::string(iso_names[i]) + " blank (fA)";
           b.set(row, iso_cols[i], rep.get(r, iso));
@@ -406,9 +412,9 @@ ReleaseTables build_tables(const TableInputs& in) {
       if (m.pins) {
         if (m.pins->record_sha256) b.set(row, "record_sha256", to_hex(*m.pins->record_sha256));
         for (const auto& kc : kKindColumns) {
-          const auto kind = ps::parse_kind(kc[0]);
+          const auto kind = ps::parse_kind(kc.first);
           if (!kind) continue;
-          if (auto it = m.pins->heads.find(*kind); it != m.pins->heads.end()) b.set(row, kc[1], it->second.str());
+          if (auto it = m.pins->heads.find(*kind); it != m.pins->heads.end()) b.set(row, kc.second, it->second.str());
         }
       }
       if (m.sample) set_geometry(b, row, point_of(m.sample->fields));

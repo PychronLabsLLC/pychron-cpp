@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string_view>
 
 #include "pychron/core/error.hpp"
 #include "pychron/publish/tables.hpp"
@@ -24,6 +25,6 @@ class IParquetWriter {
 
 std::unique_ptr<IParquetWriter> make_parquet_writer();
 // What the build was compiled with: "arrow <version>" or "" without Arrow.
-std::string parquet_writer_name();
+std::string_view parquet_writer_name();
 
 }  // namespace pychron::publish

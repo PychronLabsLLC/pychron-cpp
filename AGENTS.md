@@ -191,6 +191,13 @@ Inner loop (keep waits short):
   two files compile to stubs. OpenCV headers appear only in those two `.cpp`
   files. Only macOS `ui` CI job installs OpenCV (Homebrew's brings TBB, which
   crashes at exit under sanitizers).
+- `-DPYCHRON_PUBLISH=AUTO|ON|OFF` (default `AUTO`) controls optional Apache
+  Arrow (with Parquet) in `libs/publish`: the GeoParquet tables of a release.
+  Without it `make_parquet_writer()` is null and a build writes everything
+  but `data/*.parquet`. Arrow headers appear only in
+  `libs/publish/src/parquet_writer.cpp` (and the test that reads back). Only
+  macOS `ui` CI job installs it (`brew install apache-arrow`); the others run
+  the stub and the row-hash fixture test (`tests/publish/fixtures`).
 - `libs/persistence` (DVC store, TinyORM on QtSql) builds only when Qt6 Core
   and Sql are found; `-DPYCHRON_PERSISTENCE=OFF` skips it. On Ubuntu:
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
