@@ -7,6 +7,10 @@ list(FILTER PYCHRON_PROCESSING_TESTS EXCLUDE REGEX "test_(record_source|store_so
 add_executable(pychron_processing_tests ${PYCHRON_PROCESSING_TESTS})
 target_include_directories(pychron_processing_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(pychron_processing_tests PRIVATE pychron::processing GTest::gtest_main)
+# The committed SVG and PDF of a scene (fixtures/scene): a stored format, so the
+# bytes one compiler writes are checked under every other (root AGENTS.md).
+target_compile_definitions(pychron_processing_tests PRIVATE
+  PYCHRON_PROCESSING_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 pychron_set_warnings(pychron_processing_tests)
 gtest_discover_tests(pychron_processing_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 
