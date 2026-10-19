@@ -8,6 +8,7 @@
 #include <qcustomplot.h>
 
 #include "pychron/processing/scene.hpp"
+#include "pychron/processing/scene_draw.hpp"
 #include "scene_view.hpp"
 
 namespace pp = pychron::processing;
@@ -269,6 +270,101 @@ class TestSceneView : public QObject {
 
     view.reset_view();
     QCOMPARE(y->range().lower, 0.0);
+  }
+  // The view and a release's SVG and PDF (the draw list both serialize) show
+  // a scene over the same axis ranges and place the same points, step boxes,
+  // ellipses and corner texts.
+  void placesWhatTheDrawListPlaces() {
+    pp::Scene scene;
+    pp::Graph g;
+    pp::Panel top;
+    top.id = "p0";
+    pp::BandLayer band;
+    band.x = {0.0, 5.0, 10.0};
+    band.low = {1.0, 2.0, 3.0};
+    band.high = {2.0, 3.0, 4.5};
+    band.fill = {100, 100, 200, 60};
+    pp::LineLayer line;
+    line.x = {0.0, 10.0};
+    line.y = {1.5, 3.5};
+    pp::PointLayer pts;
+    pts.x = {1.0, 4.0, 8.0};
+    pts.y = {1.6, 2.4, 3.9};
+    pts.y_err = {0.3, 0.2, 0.4};
+    pts.x_err = {0.5, 0.5, 0.5};
+    pts.refs = {pp::PointRef{"a"}, pp::PointRef{"b"}, pp::PointRef{"c"}};
+    pts.excluded = {false, true, false};
+    pts.label = "FC-1";
+    pp::TextLayer stats;
+    stats.lines = {"Mean 28.2 ± 0.1 Ma", "MSWD 1.2"};
+    pp::TextLayer other;
+    other.corner = pp::Corner::BottomRight;
+    other.lines = {"n 3/3"};
+    top.layers = {band, line, pts, stats, other};
+    pp::Panel bottom;
+    bottom.id = "p1";
+    pp::StepLayer steps;
+    steps.x0 = {0.0, 2.0, 6.0};
+    steps.x1 = {2.0, 6.0, 9.5};
+    steps.y = {28.0, 28.3, 28.1};
+    steps.y_err = {0.4, 0.2, 0.3};
+    steps.labels = {"A", "B", "C"};
+    pp::SpanLayer span;
+    span.x0 = 2.0;
+    span.x1 = 9.5;
+    pp::EllipseLayer el;
+    el.x = {3.0, 7.0};
+    el.y = {28.0, 28.5};
+    el.sx = {0.5, 0.4};
+    el.sy = {0.2, 0.3};
+    el.rho = {0.3, -0.6};
+    el.scale = 2.4477;
+    bottom.layers = {steps, span, el};
+    g.panels = {top, bottom};
+    scene.graphs.push_back(g);
+
+    SceneView view;
+    view.resize(600, 500);
+    view.set_scene(std::make_shared<const pp::Scene>(scene));
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.plot()->replot();
+
+    const pp::DrawList list = pp::draw_scene(scene);
+    const auto count = [&](pp::DrawRole role, int clip) {
+      int n = 0;
+      for (const auto& item : list.items)
+        if (const auto* p = std::get_if<pp::DrawPath>(&item); p && p->role == role && p->clip == clip) ++n;
+      return n;
+    };
+    const auto annotations = [&](int clip) {
+      QStringList out;
+      for (const auto& item : list.items)
+        if (const auto* t = std::get_if<pp::DrawText>(&item); t && t->role == pp::TextRole::Annotation && t->clip == clip)
+          out << QString::fromStdString(t->text);
+      return out;
+    };
+    QCOMPARE(view.panel_count(), 2);
+    for (int i = 0; i < 2; ++i) {
+      const pp::Panel& panel = scene.graphs[0].panels[static_cast<std::size_t>(i)];
+      QCPAxisRect* rect = view.plot()->axisRect(i);
+      const QCPRange x = rect->axis(QCPAxis::atBottom)->range(), y = rect->axis(QCPAxis::atLeft)->range();
+      const pp::Range lx = pp::graph_x_range(scene.graphs[0]), ly = pp::panel_y_range(panel);
+      QCOMPARE(x.lower, lx.min);
+      QCOMPARE(x.upper, lx.max);
+      QCOMPARE(y.lower, ly.min);
+      QCOMPARE(y.upper, ly.max);
+
+      QCOMPARE(view.points_in(rect->rect()).size(), count(pp::DrawRole::Marker, i));
+      int boxes = 0, curves = 0;
+      for (int k = 0; k < view.plot()->itemCount(); ++k)
+        if (auto* r = qobject_cast<QCPItemRect*>(view.plot()->item(k)); r && r->clipAxisRect() == rect) ++boxes;
+      for (QCPAbstractPlottable* p : rect->plottables())
+        if (qobject_cast<QCPCurve*>(p)) ++curves;
+      QCOMPARE(boxes - static_cast<int>(view.span_rects(i).size()), count(pp::DrawRole::Step, i));
+      QCOMPARE(curves, count(pp::DrawRole::Ellipse, i));
+      QCOMPARE(view.texts(i), annotations(i));
+    }
   }
 };
 

@@ -249,10 +249,8 @@ void SceneView::rebuild() {
       info.rect = rect;
       info.graph = index - 1;
       info.panel_id = panel.id;
-      info.x_min = g.x.min;
-      info.x_max = g.x.max;
-      info.y_min = panel.y.min;
-      info.y_max = panel.y.max;
+      info.x_range = pp::graph_x_range(g);
+      info.y_range = pp::panel_y_range(panel);
       if (panel.y.pin_min && panel.y.min) {
         // The wheel and a drag move the top alone: whatever range is asked
         // for, its size is kept and laid from the pinned minimum.
@@ -262,7 +260,6 @@ void SceneView::rebuild() {
         });
       }
       if (panel.y.scale == pp::AxisScale::Log) {
-        info.log = true;
         y->setScaleType(QCPAxis::stLogarithmic);
         y->setTicker(QSharedPointer<QCPAxisTickerLog>(new QCPAxisTickerLog));
       }
@@ -460,38 +457,11 @@ void SceneView::rebuild() {
 }
 
 void SceneView::reset_view() {
+  // The ranges are the scene layout's (scene_layout.hpp), so the view and a
+  // release's SVG and PDF of the same scene show the same limits.
   for (auto& info : rects_) {
-    QCPAxis* x = info.rect->axis(QCPAxis::atBottom);
-    QCPAxis* y = info.rect->axis(QCPAxis::atLeft);
-    bool found = false;
-    QCPRange yr;
-    for (QCPAbstractPlottable* p : info.rect->plottables()) {
-      bool ok = false;
-      const QCPRange r = p->getValueRange(ok, QCP::sdBoth);
-      if (!ok) continue;
-      if (!found)
-        yr = r;
-      else
-        yr.expand(r);
-      found = true;
-    }
-    if (found) {
-      if (info.log) {
-        yr.lower = std::max(yr.lower, yr.upper * 1e-6);
-        yr = QCPRange(yr.lower / 1.2, yr.upper * 1.2);
-      } else {
-        double pad = yr.size() * 0.08;
-        if (pad == 0) pad = std::max(std::abs(yr.upper) * 0.05, 1e-12);
-        yr = QCPRange(yr.lower - pad, yr.upper + pad);
-      }
-    } else {
-      yr = info.log ? QCPRange(0.1, 10) : QCPRange(0, 1);
-    }
-    if (info.y_min) yr.lower = *info.y_min;
-    if (info.y_max) yr.upper = *info.y_max;
-    y->setRange(yr);
-    if (info.x_min && info.x_max) x->setRange(*info.x_min, *info.x_max);
-    else x->rescale(true);
+    info.rect->axis(QCPAxis::atLeft)->setRange(info.y_range.min, info.y_range.max);
+    info.rect->axis(QCPAxis::atBottom)->setRange(info.x_range.min, info.x_range.max);
   }
   plot_->replot();
 }

@@ -25,6 +25,7 @@
 #include <QWidget>
 
 #include "pychron/processing/scene.hpp"
+#include "pychron/processing/scene_layout.hpp"
 
 class QCustomPlot;
 class QCPAxisRect;
@@ -101,8 +102,7 @@ class SceneView : public QWidget {
     std::vector<HitBox> boxes;
     std::vector<QString> texts;
     std::vector<QCPItemRect*> spans;
-    std::optional<double> x_min, x_max, y_min, y_max;  // scene limits
-    bool log = false;
+    processing::Range x_range, y_range;  // the scene's, as its layout takes them
   };
 
   void rebuild();
