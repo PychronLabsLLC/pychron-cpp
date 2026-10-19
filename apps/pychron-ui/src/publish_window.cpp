@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include <QBrush>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateEdit>
@@ -31,6 +32,7 @@
 
 #include "entry_bridge.hpp"
 #include "release_dialog.hpp"
+#include "theme.hpp"
 
 // Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
 #pragma push_macro("signals")
@@ -424,7 +426,10 @@ void PublishWindow::set_embargo() {
   if (form->until)
     request.until = ps::UtcTime::parse(form->until->toString(Qt::ISODate).toStdString() + "T00:00:00Z");
   if (!form->reason.isEmpty()) request.reason = form->reason.toStdString();
-  change(tr("embargo set on %1").arg(form->name), [request](ps::IStore& store, const ps::Actor& actor) -> Result<void> {
+  const QString done = form->until ? tr("embargo set on %1 until %2").arg(form->name, form->until->toString(Qt::ISODate))
+                                   : tr("embargo set on %1 with no end date: it lasts until it is lifted by hand")
+                                         .arg(form->name);
+  change(done, [request](ps::IStore& store, const ps::Actor& actor) -> Result<void> {
     auto set = pb::set_embargo(store, actor, request);
     if (!set) return fail(set.error());
     return {};
@@ -626,9 +631,13 @@ void PublishWindow::refresh() {
         for (const auto& e : listing->embargoes) {
           QList<QStandardItem*> items;
           items << new QStandardItem(qs(e.scope_name))
-                << new QStandardItem(e.row.until ? qs(e.row.until->iso()).left(10) : tr("until lifted"))
+                << new QStandardItem(e.row.until ? qs(e.row.until->iso()).left(10) : tr("no end date"))
                 << new QStandardItem(qs(e.row.reason.value_or(""))) << new QStandardItem(qs(e.row.created.iso()).left(10));
           items[EmbargoScope]->setData(qs(e.row.uuid.str()), Qt::UserRole);
+          if (!e.row.until) {  // spec 4.2: the window warns about an embargo with no end
+            items[EmbargoUntil]->setToolTip(tr("No end date: in force until lifted by hand"));
+            items[EmbargoUntil]->setForeground(QBrush(theme().warning_text));
+          }
           embargo_model_->appendRow(items);
         }
         update_buttons();

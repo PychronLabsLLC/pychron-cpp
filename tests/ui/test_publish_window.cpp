@@ -404,6 +404,20 @@ class TestPublishWindow : public QObject {
     QCOMPARE(o.window->embargoes()->model()->rowCount(), 0);
   }
 
+  void anEmbargoWithNoEndIsWarnedAbout() {
+    Open o = open();
+    o.window->set_ask_embargo([]() -> std::optional<PublishWindow::EmbargoForm> {
+      return PublishWindow::EmbargoForm{ps::EmbargoScopeType::Sample, QStringLiteral("FC-2"), std::nullopt, QString()};
+    });
+    o.window->set_embargo();
+    QTRY_COMPARE_WITH_TIMEOUT(o.window->embargoes()->model()->rowCount(), 1, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
+    QVERIFY2(o.window->status()->text().contains(QStringLiteral("no end date")), qPrintable(o.window->status()->text()));
+    const QModelIndex until = o.window->embargoes()->model()->index(0, PublishWindow::EmbargoUntil);
+    QCOMPARE(until.data().toString(), QStringLiteral("no end date"));
+    QVERIFY(!until.data(Qt::ToolTipRole).toString().isEmpty());
+  }
+
   void anEmbargoSetInTheDockIsCountedByNewRelease() {
     QStringList chosen = {QString::fromStdString(seed_.analysis1.str()), QString::fromStdString(seed_.analysis2.str())};
     Open o = open([chosen] { return chosen; });
