@@ -281,6 +281,10 @@ bool Executor::wait(Duration d, const std::string& reason, const std::string& ru
   return !queue_token_.requested();
 }
 
+// A row whose plan holds the extraction line (a staged release) is not
+// stopped from overlapping here: check_queue refuses such a queue before it
+// starts (LabSession::start and every edit run it), and the executor has no
+// plan library to ask.
 bool Executor::overlaps(const ExperimentQueue& queue, std::size_t row) const {
   const auto& r = queue.runs()[row];
   if (!options_.allow_overlap || r.id.type != AnalysisType::Unknown || r.overlap.duration <= Duration::zero())

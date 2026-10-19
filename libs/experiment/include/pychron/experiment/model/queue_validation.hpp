@@ -20,9 +20,9 @@ class IPlanResolver {
   virtual std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& overrides,
                                                 bool advanced) const = 0;
   // The plan keeps the extraction line until its last gas (a gas has a
-  // prepare script, measurement plan v2 spec 11.4); false when unknown or
-  // the overrides do not load.
-  virtual bool holds_extraction_line(std::string_view name, const ParamOverrides& overrides) const = 0;
+  // prepare script, measurement plan v2 spec 11.4); nullopt when the plan is
+  // unknown or does not load with these overrides.
+  virtual std::optional<bool> holds_extraction_line(std::string_view name, const ParamOverrides& overrides) const = 0;
 };
 
 class IScriptResolver {

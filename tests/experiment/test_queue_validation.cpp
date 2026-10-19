@@ -10,14 +10,18 @@ namespace {
 const IdentifierRules kIds = IdentifierRules::defaults();
 
 struct Plans : IPlanResolver {
-  std::set<std::string> names{"argon", "staged"};
+  std::set<std::string> names{"argon", "staged", "broken"};
   bool has_plan(std::string_view name) const override { return names.contains(std::string(name)); }
   std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& o, bool) const override {
     if (!has_plan(name)) return std::nullopt;
     return Duration(o.contains("counts") ? 200 : 100);
   }
   // "staged" prepares its gases on the line (spec 11.4).
-  bool holds_extraction_line(std::string_view name, const ParamOverrides&) const override { return name == "staged"; }
+  // "broken" is a plan that does not load.
+  std::optional<bool> holds_extraction_line(std::string_view name, const ParamOverrides&) const override {
+    if (name == "broken") return std::nullopt;
+    return name == "staged";
+  }
 };
 
 struct Scripts : IScriptResolver {
@@ -197,4 +201,15 @@ TEST(QueueValidation, StagedPlanWithoutOverlapIsFine) {
 TEST(QueueValidation, NullPlanResolverSkipsTheCheck) {
   const auto r = check_queue(staged_queue("staged", "argon", true), kIds, QueueResolvers{});
   EXPECT_FALSE(has(r, 0, "overlap"));
+}
+
+// A plan that does not load cannot be said to allow the overlap: said.
+TEST(QueueValidation, OverlapWithAPlanThatDoesNotLoadIsReported) {
+  const auto r = check_queue(staged_queue("broken", "argon", true), kIds, kRes);
+  ASSERT_TRUE(has(r, 0, "overlap"));
+  for (const auto& d : r.diagnostics) {
+    if (d.field == "overlap") {
+      EXPECT_NE(d.message.find("does not load"), std::string::npos) << d.message;
+    }
+  }
 }

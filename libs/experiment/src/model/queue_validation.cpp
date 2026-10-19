@@ -87,7 +87,14 @@ QueueReport check_queue(const QueueSpec& q, const IdentifierRules& ids, const Qu
         !r.measurement.plan.empty()) {
       const bool later = std::any_of(q.runs.begin() + static_cast<std::ptrdiff_t>(n) + 1, q.runs.end(),
                                      [](const RunSpec& next) { return !next.skip; });
-      if (later && res.plans->holds_extraction_line(r.measurement.plan, r.measurement.overrides))
+      const auto holds = later ? res.plans->holds_extraction_line(r.measurement.plan, r.measurement.overrides)
+                               : std::optional<bool>(false);
+      // A known plan that does not load cannot be said to allow the overlap.
+      if (!holds && res.plans->has_plan(r.measurement.plan))
+        c.error(i, "overlap",
+                "row " + std::to_string(i) + ": plan '" + r.measurement.plan +
+                    "' does not load with this row's overrides; overlap cannot be checked");
+      else if (holds && *holds)
         c.error(i, "overlap",
                 "row " + std::to_string(i) + ": plan '" + r.measurement.plan +
                     "' holds the extraction line until its last gas; overlap is not possible");

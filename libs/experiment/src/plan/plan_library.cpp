@@ -49,10 +49,10 @@ std::optional<Duration> PlanLibrary::plan_duration(std::string_view name, const 
   return estimate_duration(loaded->plan, durations_);
 }
 
-bool PlanLibrary::holds_extraction_line(std::string_view name, const ParamOverrides& overrides) const {
+std::optional<bool> PlanLibrary::holds_extraction_line(std::string_view name, const ParamOverrides& overrides) const {
   // As advanced: a queue may set any key; what holds the line is the gases' prepare.
   auto loaded = load(name, overrides, LoadOptions{true});
-  if (!loaded) return false;
+  if (!loaded) return std::nullopt;
   const auto& gases = loaded->plan.gases;
   return std::any_of(gases.begin(), gases.end(), [](const Gas& g) { return g.prepare.has_value(); });
 }

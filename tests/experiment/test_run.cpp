@@ -515,9 +515,9 @@ TEST_F(RunTest, DuringExtractionNeedsAnExtractionScript) {
 
 // What queue validation asks of the library (spec 11.4).
 TEST_F(RunTest, TheLibrarySaysWhichPlansHoldTheExtractionLine) {
-  EXPECT_TRUE(plans_.holds_extraction_line("staged", {}));
-  EXPECT_FALSE(plans_.holds_extraction_line("mc", {}));
-  EXPECT_FALSE(plans_.holds_extraction_line("nope", {}));
+  EXPECT_EQ(plans_.holds_extraction_line("staged", {}), true);
+  EXPECT_EQ(plans_.holds_extraction_line("mc", {}), false);
+  EXPECT_EQ(plans_.holds_extraction_line("nope", {}), std::nullopt);
 }
 
 // The line a staged plan keeps goes back however the run ends: a run

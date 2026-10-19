@@ -40,7 +40,7 @@ class PlanLibrary : public IPlanResolver {
   // nullopt when the plan is unknown or the overrides do not load.
   std::optional<Duration> plan_duration(std::string_view name, const ParamOverrides& overrides,
                                         bool advanced = false) const override;
-  bool holds_extraction_line(std::string_view name, const ParamOverrides& overrides) const override;
+  std::optional<bool> holds_extraction_line(std::string_view name, const ParamOverrides& overrides) const override;
 
  private:
   using LoadKey = std::tuple<std::string, ParamOverrides, bool>;
