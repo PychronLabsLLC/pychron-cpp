@@ -1413,7 +1413,8 @@ TEST(PlanV2Gate, WorkedPlansNeedingUnbuiltFeatures) {
     const auto name = entry.path().filename().string();
     if (entry.path().extension() != ".toml" || !name.starts_with("v2_7")) continue;
     SCOPED_TRACE(name);
-    const bool runs = name == "v2_72_argus_hop_fifth.toml" || name == "v2_73_argus_ic_table.toml" ||
+    const bool runs = name == "v2_71_argus_syn_baseline.toml" || name == "v2_72_argus_hop_fifth.toml" ||
+                      name == "v2_73_argus_ic_table.toml" ||
                       name == "v2_74_helix_hydride_hcl.toml" || name == "v2_77_helix_xenon.toml";
     EXPECT_EQ(plan::detail::unbuilt_features(load_worked(name)).empty(), runs);
   }
@@ -1480,19 +1481,6 @@ counts = 1
 [[segment]]
 [[segment.positions]]
 collect = { Ar40 = "H1" }
-counts = 1
-)"},
-      {"segment[1].when: when = 'during_extraction' for a baseline segment", R"(
-[[segment]]
-[[segment.positions]]
-collect = { Ar40 = "H1" }
-counts = 1
-[[segment]]
-kind = "baseline"
-when = "during_extraction"
-[[segment.positions]]
-collect = { Ar40 = "H1" }
-at = { mass = 34.2, detector = "H1" }
 counts = 1
 )"},
       {"gas[1]: more than one gas", R"(

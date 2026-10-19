@@ -448,6 +448,69 @@ TEST_F(RunTest, ResourceHooksWrapPhasesAndCanCancel) {
   EXPECT_EQ(spec_.readings.load(), readings);
 }
 
+// A plan that measures during the extraction (spec 5.4) claims the
+// spectrometer before the extraction line and lets it go last.
+TEST_F(RunTest, DuringExtractionClaimsTheSpectrometerAtExtraction) {
+  std::vector<std::string> calls;
+  RunHooks hooks;
+  hooks.acquire_extraction = [&] {
+    calls.emplace_back("+extraction");
+    return true;
+  };
+  hooks.release_extraction = [&] { calls.emplace_back("-extraction"); };
+  hooks.acquire_spectrometer = [&] {
+    calls.emplace_back("+spectrometer");
+    return true;
+  };
+  hooks.release_spectrometer = [&] { calls.emplace_back("-spectrometer"); };
+  auto r = go(unknown_run("12345", "syn"), hooks);
+  ASSERT_EQ(r.state, RunState::Success) << (r.error ? r.error->what : "") << ::testing::PrintToString(r.messages);
+  EXPECT_EQ(calls, (std::vector<std::string>{"+spectrometer", "+extraction", "-extraction", "-spectrometer"}));
+  ASSERT_TRUE(r.record);
+  int during = 0;
+  for (const auto& b : r.record->results.baseline_positions) during += b.when == "during_extraction" ? 1 : 0;
+  EXPECT_EQ(during, 2);  // H1 and AX
+  // Its readings came before the inlet opened: before time zero.
+  for (const auto& s : r.record->data.series) {
+    if (s.kind == "baseline") {
+      EXPECT_LT(s.trace.t.back(), 0.f);
+    }
+  }
+}
+
+// A failed extraction stops the phase and lets the spectrometer go; the run
+// fails as an extraction failure does.
+TEST_F(RunTest, DuringExtractionAFailedExtractionReleasesTheSpectrometer) {
+  host_.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  std::vector<std::string> calls;
+  RunHooks hooks;
+  hooks.acquire_spectrometer = [&] {
+    calls.emplace_back("+spectrometer");
+    return true;
+  };
+  hooks.release_spectrometer = [&] { calls.emplace_back("-spectrometer"); };
+  auto r = go(unknown_run("12345", "syn"), hooks);
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_EQ(r.error->what, "laser link down");
+  EXPECT_EQ(calls, (std::vector<std::string>{"+spectrometer", "-spectrometer"}));
+  EXPECT_FALSE(spec_.acquiring.load());
+  ASSERT_TRUE(r.record);
+  EXPECT_EQ(r.record->provenance.status, record::RecordStatus::Failed);
+}
+
+// A run with no extraction script has no time for such a phase.
+TEST_F(RunTest, DuringExtractionNeedsAnExtractionScript) {
+  auto spec = unknown_run("12345", "syn");
+  spec.extraction.script.clear();
+  auto r = go(spec);
+  EXPECT_EQ(r.state, RunState::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("during_extraction"), std::string::npos) << r.error->what;
+}
+
 // --- the run's extraction device (laser system design, section 5) -----------
 
 class RunDeviceTest : public RunTest {

@@ -300,8 +300,17 @@ class MeasurementEngine {
   // it first; callers may call it early.
   Result<void> validate() const;
 
-  // Runs the block sequence once on the calling thread.
+  // Runs the block sequence once on the calling thread: every phase but
+  // during_extraction, which run_phase ran before it (if anyone did).
   MeasurementResult run(scripting::CancelToken& token);
+
+  // Runs one phase of the first gas on the calling thread, before run():
+  // the Run's during_extraction baselines, beside the extraction script
+  // (spec 5.4). Its readings are this measurement's (run() keeps them and
+  // the time base). A stop through `token` ends it early; what it turned on
+  // (acquisition, protection) is off when it returns.
+  Result<void> run_phase(plan::When when, scripting::CancelToken& token);
+  bool has_phase(plan::When when) const;  // of the first gas
 
   // Thread-safe controls for the running measurement.
   void truncate(bool quick = false);
@@ -320,6 +329,8 @@ class MeasurementEngine {
   // Block steps. A non-ok result is a Failed measurement; a Stop is read from
   // stop_ after each step.
   Result<void> run_blocks();
+  void begin();                           // a measurement's state, fresh, its time 0 now
+  void select_gas(std::size_t g);         // gas_, main_, time_zero_
   Result<void> run_gas();                 // the running gas, before_inlet to after_main
   Result<void> run_when(plan::When when);  // the running gas's segments of one phase
   // Publishes the block's start and end around `fn`.
@@ -406,6 +417,7 @@ class MeasurementEngine {
   collect::Collector collector_;
 
   scripting::CancelToken* token_ = nullptr;
+  bool begun_ = false;  // begin() ran (run_phase before run)
   std::unique_ptr<ConditionalEngine> conditionals_;
   MeasurementResult result_;
   const plan::Gas* gas_ = nullptr;           // the gas being run

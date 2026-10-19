@@ -268,6 +268,11 @@ Result<void> Run::prepare() {
   if (auto r = load(spec_.post_measurement, K::PostMeasurement, post_meas_, "post_meas"); !r) return r;
   if ((extraction_ || post_eq_ || post_meas_) && (s_.scripts == nullptr || !s_.scripts->available()))
     return fail(ErrorKind::Config, "the run names scripts but no script host is available");
+  // A plan that measures during the extraction needs one (spec 3.7: the run's
+  // own type, when the plan names none, is checked here).
+  if (has_extraction_phase() && !extraction_)
+    return fail(ErrorKind::Config, "plan '" + spec_.measurement.plan +
+                                       "' measures during_extraction but the run has no extraction script");
 
   if (s_.persister != nullptr) {
     RunIdentity id = spec_.id;
@@ -432,20 +437,115 @@ void Run::alarm(AlarmSeverity severity, std::string message) {
   if (s_.bus != nullptr) s_.bus->publish(Alarm{"safe state", severity, std::move(message), s_.clock->now()});
 }
 
+bool Run::has_extraction_phase() const {
+  return plan_ && !plan_->plan.gases.empty() &&
+         !plan::segments_at(plan_->plan.gases.front(), plan::When::DuringExtraction).empty();
+}
+
+void Run::build_engine(RunControl& control) {
+  measurement::EngineContext ctx{*s_.spectrometer,      *s_.clock, s_.valves, s_.peak_center, nullptr,
+                                 s_.bus,                s_.instrument_metrics};
+  ctx.timing = s_.detector_timing;
+  ctx.reference = s_.reference_detector;
+  measurement::MeasurementInputs in;
+  in.plan = plan_->plan;
+  in.conditionals = conditionals_;
+  in.run_id = run_id_;
+  in.analysis_type = std::string(to_string(spec_.id.type));
+  in.icfactors = s_.icfactors;
+  in.arar = s_.arar;
+
+  measurement::EngineOptions options = s_.engine;
+  // The post-equilibration script runs beside the measurement, on a thread
+  // that says when it is done (under post_eq_mutex_, through the clock).
+  options.on_inlet_closed = [&control, this] {
+    if (post_eq_ && !control.requested() && !post_eq_thread_.joinable()) {
+      // Time does not move on between the thread's start and its Participant.
+      auto hold = std::make_shared<Clock::Hold>(*s_.clock);
+      post_eq_thread_ = std::thread([&control, this, hold]() mutable {
+        Clock::Participant participant(*s_.clock, "run.post_eq");
+        hold.reset();
+        if (auto r = run_script(*post_eq_, scripting::ScriptKind::PostEquilibration, control); !r)
+          note("post-equilibration failed: " + r.error().what);
+        // Said while this thread is still a participant.
+        std::lock_guard lock(post_eq_mutex_);
+        post_eq_done_ = true;
+        s_.clock->notify_all(post_eq_cv_);
+      });
+    }
+    if (hooks_.on_overlap_ready) hooks_.on_overlap_ready();
+  };
+  // Told by the engine itself, not through the bus: the bus is for those who
+  // watch the run, and the run is measuring whether or not anyone does.
+  options.on_block_started = [this](measurement::Block b) {
+    if (b == measurement::Block::Main && sm_.state() == RunState::Equilibrating) advance(RunEvent::Equilibrated);
+  };
+  engine_ = std::make_unique<measurement::MeasurementEngine>(ctx, std::move(in), std::move(options));
+}
+
 Result<void> Run::extract(RunControl& control) {
   actuals_.value = spec_.extraction.value;
   actuals_.cleanup = seconds(spec_.extraction.cleanup);
   if (!extraction_) return {};
-  if (hooks_.acquire_extraction && !hooks_.acquire_extraction()) return {};  // cancelled while waiting
+  // A during_extraction phase (spec 5.4) claims the spectrometer with the
+  // extraction line, the spectrometer first, and measures beside the script.
+  const bool phase = has_extraction_phase();
+  if (phase) {
+    if (s_.spectrometer == nullptr) return fail(ErrorKind::Config, "no spectrometer for the during_extraction phase");
+    if (hooks_.acquire_spectrometer && !hooks_.acquire_spectrometer()) return {};  // cancelled while waiting
+    spectrometer_held_ = true;
+    build_engine(control);
+  }
+  const auto release_spectrometer = [this] {
+    if (!spectrometer_held_) return;
+    spectrometer_held_ = false;
+    if (hooks_.release_spectrometer) hooks_.release_spectrometer();
+  };
+  if (hooks_.acquire_extraction && !hooks_.acquire_extraction()) {  // cancelled while waiting
+    release_spectrometer();
+    return {};
+  }
   // The point of no return (spec 4.4): from the script's first line the
   // sample is spent.
   result_.past_no_return = true;
   const auto start = s_.clock->now();
+  std::optional<std::uint64_t> forward;
+  if (phase) {
+    // The run's stop is the phase's; a failed extraction stops the phase too.
+    forward = control.token().add_on_cancel([this, &control] {
+      if (control.token().mode() == scripting::CancelMode::Abort) phase_token_.abort();
+      else phase_token_.cancel();
+    });
+    auto hold = std::make_shared<Clock::Hold>(*s_.clock);  // no time passes before the thread takes part
+    phase_thread_ = std::thread([this, hold]() mutable {
+      Clock::Participant participant(*s_.clock, "run.during_extraction");
+      hold.reset();
+      auto r = engine_->run_phase(plan::When::DuringExtraction, phase_token_);
+      // Said while this thread is still a participant.
+      std::lock_guard lock(phase_mutex_);
+      if (!r) phase_error_ = r.error();
+      phase_done_ = true;
+      s_.clock->notify_all(phase_cv_);
+    });
+  }
   auto r = run_script(*extraction_, scripting::ScriptKind::Extraction, control);
   end_extraction();  // always: the device never stays on after this phase
   record_cryo();
   if (hooks_.release_extraction) hooks_.release_extraction();
   actuals_.duration = std::chrono::duration<double>(s_.clock->now() - start).count();
+  if (phase) {
+    if (!r) phase_token_.cancel();  // spec 5.4: the baseline phase ends with a failed extraction
+    {
+      // The phase may still have to wait in the clock: joined once it has said
+      // it is done. An extraction shorter than the phase waits for it.
+      std::unique_lock lock(phase_mutex_);
+      while (!phase_done_) s_.clock->wait(phase_cv_, lock);
+    }
+    phase_thread_.join();
+    control.token().remove_on_cancel(*forward);
+    if (r && phase_error_ && !control.requested()) r = fail(*phase_error_);
+    if (!r || control.requested()) release_spectrometer();
+  }
   if (r && s_.persister != nullptr) {
     record::AnalysisRecord partial;
     partial.identity.uuid = run_id_;
@@ -464,70 +564,33 @@ Result<void> Run::extract(RunControl& control) {
 Result<void> Run::measure(RunControl& control) {
   if (!plan_) return {};  // e.g. a degas: extraction only
   if (s_.spectrometer == nullptr) return fail(ErrorKind::Config, "no spectrometer for the measurement");
-  if (hooks_.acquire_spectrometer && !hooks_.acquire_spectrometer()) return {};  // cancelled while waiting
-
-  measurement::EngineContext ctx{*s_.spectrometer,      *s_.clock, s_.valves, s_.peak_center, nullptr,
-                                 s_.bus,                s_.instrument_metrics};
-  ctx.timing = s_.detector_timing;
-  ctx.reference = s_.reference_detector;
-  measurement::MeasurementInputs in;
-  in.plan = plan_->plan;
-  in.conditionals = conditionals_;
-  in.run_id = run_id_;
-  in.analysis_type = std::string(to_string(spec_.id.type));
-  in.icfactors = s_.icfactors;
-  in.arar = s_.arar;
-
-  // The post-equilibration script runs beside the measurement, on a thread
-  // that says when it is done (under post_eq_mutex, through the clock).
-  std::thread post_eq;
-  std::mutex post_eq_mutex;
-  std::condition_variable post_eq_cv;
-  bool post_eq_done = false;
-  measurement::EngineOptions options = s_.engine;
-  options.on_inlet_closed = [&, this] {
-    if (post_eq_ && !control.requested() && !post_eq.joinable()) {
-      // Time does not move on between the thread's start and its Participant.
-      auto hold = std::make_shared<Clock::Hold>(*s_.clock);
-      post_eq = std::thread([&, this, hold]() mutable {
-        Clock::Participant participant(*s_.clock, "run.post_eq");
-        hold.reset();
-        if (auto r = run_script(*post_eq_, scripting::ScriptKind::PostEquilibration, control); !r)
-          note("post-equilibration failed: " + r.error().what);
-        // Said while this thread is still a participant.
-        std::lock_guard lock(post_eq_mutex);
-        post_eq_done = true;
-        s_.clock->notify_all(post_eq_cv);
-      });
-    }
-    if (hooks_.on_overlap_ready) hooks_.on_overlap_ready();
-  };
-  // Told by the engine itself, not through the bus: the bus is for those who
-  // watch the run, and the run is measuring whether or not anyone does.
-  options.on_block_started = [this](measurement::Block b) {
-    if (b == measurement::Block::Main && sm_.state() == RunState::Equilibrating) advance(RunEvent::Equilibrated);
-  };
-  measurement::MeasurementEngine engine(ctx, std::move(in), std::move(options));
-  control.attach(&engine);
-  result_.measurement = engine.run(control.token());
+  // Claimed already when the plan measured during the extraction.
+  if (!spectrometer_held_) {
+    if (hooks_.acquire_spectrometer && !hooks_.acquire_spectrometer()) return {};  // cancelled while waiting
+    spectrometer_held_ = true;
+  }
+  if (!engine_) build_engine(control);
+  control.attach(engine_.get());
+  result_.measurement = engine_->run(control.token());
   // Each silence in the readings is said (the record has it as a gap event).
   if (s_.bus != nullptr)
     for (const auto& gap : result_.measurement.gaps)
       s_.bus->publish(RunNote{run_id_, row_, measurement::describe(gap), gap.at});
   if (result_.measurement.truncated_by_link) note("truncated: the spectrometer went silent and did not resume");
   control.attach(nullptr);
-  if (post_eq.joinable()) {
+  if (post_eq_thread_.joinable()) {
     {
       // The script may still have to wait in the clock: joined once it has said it is done.
-      std::unique_lock lock(post_eq_mutex);
-      while (!post_eq_done) s_.clock->wait(post_eq_cv, lock);
+      std::unique_lock lock(post_eq_mutex_);
+      while (!post_eq_done_) s_.clock->wait(post_eq_cv_, lock);
     }
-    post_eq.join();
+    post_eq_thread_.join();
   }
   // A measurement with no main block still moves on.
   if (sm_.state() == RunState::Equilibrating && !result_.measurement.data.series.empty() &&
       result_.measurement.outcome != measurement::MeasurementOutcome::Failed)
     advance(RunEvent::Equilibrated);
+  spectrometer_held_ = false;
   if (hooks_.release_spectrometer) hooks_.release_spectrometer();
   return {};
 }

@@ -1107,14 +1107,13 @@ namespace detail {
 
 namespace {
 
-// The placements the engine runs: every phase but during_extraction (Task
-// 20); a sniff only while the gas equilibrates, a whiff only as the inlet
-// opens.
+// The placements the engine runs: every phase; a sniff only while the gas
+// equilibrates, a whiff only as the inlet opens.
 bool v1_placement(const Segment& s) {
   switch (s.kind) {
     case SegmentKind::Whiff: return s.when == When::AfterInlet;            // taken as the inlet opens
     case SegmentKind::Sniff: return s.when == When::DuringEquilibration;   // read while it equilibrates
-    default: return s.when != When::DuringExtraction;                      // Task 20
+    default: return true;
   }
 }
 

@@ -354,8 +354,42 @@ inline std::string protecting_plan() {
   return text;
 }
 
+// A baseline while the sample is extracted (measurement plan v2 spec 5.4):
+// 60 readings at mass 34.2, then main.
+inline constexpr const char* kSynPlan = R"(
+[plan]
+name = "syn"
+instrument_family = "fake"
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 5
+inlet_delay_s = 1
+
+[[segment]]
+kind = "baseline"
+when = "during_extraction"
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX" }
+at = { mass = 34.2, detector = "H1" }
+counts = 60
+settle_s = 1
+
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1", Ar39 = "AX" }
+counts = 10
+settle_s = 1
+)";
+
 inline plan::PlanLibrary test_plans() {
   plan::PlanLibrary lib;
+  if (auto syn = plan::parse_plan_template(kSynPlan, "syn.toml")) lib.add(*syn);
   auto t = plan::parse_plan_template(kTestPlan, "mc.toml");
   if (t) lib.add(*t);
   auto p = plan::parse_plan_template(protecting_plan(), "mcp.toml");

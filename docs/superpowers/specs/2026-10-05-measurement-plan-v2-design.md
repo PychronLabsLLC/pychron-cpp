@@ -361,6 +361,16 @@ the previous run's measurement; the existing resource model expresses this
 once the claim point moves. The run record marks the phase so the reduction
 knows the baseline predates the gas.
 
+As built (Task 20): `Run::extract` claims spectrometer before extraction
+line, builds engine, runs `run_phase(during_extraction)` on a second thread
+beside script. Phase has own token: run's cancel or abort forwarded to it,
+and a failed extraction cancels it (run then fails as extraction failure,
+not cancelled). Spectrometer released in `extract` when extraction fails or
+run is stopped; otherwise `measure` uses that claim and releases it as
+today. A run whose plan has such a phase and no extraction script fails at
+prepare. `PlanResolvers::has_extraction` (lab's plan library): a type
+`rules_for` gives an extraction.
+
 ### 5.5 Hooks
 
 Hooks keep their three points and gain `peak_center`, `set_deflection`,

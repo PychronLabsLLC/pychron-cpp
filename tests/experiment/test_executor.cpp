@@ -1114,6 +1114,133 @@ TEST_F(ExecutorVirtual, OverlappedRunWaitsForTheResource) {
   EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
 }
 
+// ---- during_extraction (measurement plan v2 spec 5.4) --------------------------
+
+// When each block of run `id` started and finished, by the run's thread.
+struct BlockTimes {
+  explicit BlockTimes(World& w) : w_(w) {
+    subs_.push_back(w.bus.subscribe<measurement::BlockStarted>([this](const measurement::BlockStarted& e) {
+      std::lock_guard lock(mutex_);
+      started_.push_back({e.run_id, e.block, e.segment, w_.clock.now()});
+    }));
+    subs_.push_back(w.bus.subscribe<measurement::BlockFinished>([this](const measurement::BlockFinished& e) {
+      std::lock_guard lock(mutex_);
+      finished_.push_back({e.run_id, e.block, e.segment, w_.clock.now()});
+    }));
+  }
+  struct At {
+    std::string run;
+    measurement::Block block;
+    int segment;
+    TimePoint ts;
+  };
+  std::optional<TimePoint> started(const std::string& run, measurement::Block b, int segment = -2) {
+    return find(started_, run, b, segment);
+  }
+  std::optional<TimePoint> finished(const std::string& run, measurement::Block b, int segment = -2) {
+    return find(finished_, run, b, segment);
+  }
+
+ private:
+  std::optional<TimePoint> find(const std::vector<At>& in, const std::string& run, measurement::Block b, int segment) {
+    std::lock_guard lock(mutex_);
+    for (const auto& a : in)
+      if (a.run == run && a.block == b && (segment == -2 || a.segment == segment)) return a.ts;
+    return std::nullopt;
+  }
+  World& w_;
+  std::mutex mutex_;
+  std::vector<At> started_, finished_;
+  std::vector<SignalBus::Subscription> subs_;
+};
+
+// The baseline is read while the extraction runs; an extraction shorter
+// than it waits for it, and the inlet opens after it.
+TEST_F(ExecutorVirtual, DuringExtractionBaselineEndsBeforeBeforeInlet) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  BlockTimes blocks(w);
+  w.host.bodies["extract"] = takes(30s);
+  auto q = w.queue({unknown_run("12345", "syn")}, Seconds{0}, Seconds{0});
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success"}));
+  const auto id = w.run_id("12345");
+  const auto began = blocks.started(id, measurement::Block::Segment, 0);
+  const auto ended = blocks.finished(id, measurement::Block::Segment, 0);
+  const auto extracted = w.entered(id, run::RunState::Equilibrating);
+  const auto equilibrating = blocks.started(id, measurement::Block::Equilibrate);
+  ASSERT_TRUE(began && ended && extracted && equilibrating);
+  EXPECT_GE(*ended - *began, 60s);  // all 60 readings, past the 30 s extraction
+  EXPECT_GE(*extracted, *ended);    // the run waited for it
+  EXPECT_GE(*equilibrating, *ended);
+  EXPECT_EQ(w.spec.overlapping.load(), 0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
+// Review Focus 3: the script fails after 10 s; the phase stops, its thread
+// is joined, the spectrometer is let go and the run fails as an extraction
+// failure does, saved.
+TEST_F(ExecutorVirtual, DuringExtractionExtractionFailureStopsTheBaselinePhase) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  BlockTimes blocks(w);
+  w.host.bodies["extract"] = [](const scripting::ScriptEnvironment& env, scripting::CancelToken& token) -> Result<void> {
+    token.wait_until(*env.clock, env.clock->now() + 10s);
+    return fail(ErrorKind::Io, "laser link down");
+  };
+  auto q = w.queue({unknown_run("12345", "syn")}, Seconds{0}, Seconds{0});
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.runs.size(), 1u);
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:failed"}));
+  const auto id = w.run_id("12345");
+  const auto began = blocks.started(id, measurement::Block::Segment, 0);
+  const auto ended = blocks.finished(id, measurement::Block::Segment, 0);
+  ASSERT_TRUE(began && ended);
+  EXPECT_LT(*ended - *began, 15s);  // stopped with the extraction, not after its 60 readings
+  EXPECT_FALSE(blocks.started(id, measurement::Block::Equilibrate));
+  EXPECT_FALSE(w.spec.acquiring.load());
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+  // Saved, as a failed run is.
+  EXPECT_TRUE(std::filesystem::exists(w.lab.dir() / "records" / "12345" / "12345-1.json"));
+}
+
+// A run before one that measures during its extraction may overlap as ever:
+// the second's extraction waits for the spectrometer the first measures on.
+TEST_F(ExecutorVirtual, DuringExtractionPlansWithoutItStillOverlap) {
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  std::mutex mutex;
+  std::map<std::string, TimePoint> extraction_began;
+  w.host.bodies["extract"] = [&](const scripting::ScriptEnvironment& env, scripting::CancelToken& token) -> Result<void> {
+    {
+      std::lock_guard lock(mutex);
+      extraction_began[std::get<std::string>(env.context.globals.at("run_identifier"))] = env.clock->now();
+    }
+    token.wait_until(*env.clock, env.clock->now() + 30s);
+    return {};
+  };
+  RunSpec first = counted_run("12345", 600);
+  first.overlap.duration = Seconds{2};
+  auto q = w.queue({first, unknown_run("12346", "syn")}, Seconds{10}, Seconds{60});
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  EXPECT_EQ(states_of(r), (std::vector<std::string>{"12345:success", "12346:success"}));
+  const auto released = w.entered(w.run_id("12345"), run::RunState::PostMeasuring);
+  ASSERT_TRUE(released);
+  std::lock_guard lock(mutex);
+  ASSERT_EQ(extraction_began.size(), 2u);
+  const auto second = std::find_if(extraction_began.begin(), extraction_began.end(),
+                                   [](const auto& e) { return e.first.starts_with("12346"); });
+  ASSERT_NE(second, extraction_began.end());
+  EXPECT_GE(second->second, *released);
+  EXPECT_EQ(w.spec.overlapping.load(), 0);
+  EXPECT_EQ(w.stall_reports(), std::vector<std::string>{});
+}
+
 // The thread that cancels is outside the clock, and the queue is asleep in a
 // delay that is being paid for in real time.
 TEST_F(ExecutorVirtual, CancelFromOutsideEndsAPacedQueue) {

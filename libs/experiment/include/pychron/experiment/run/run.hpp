@@ -26,6 +26,7 @@
 // signals.
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
@@ -33,6 +34,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -218,6 +220,10 @@ class Run {
   Result<void> prepare();
   Result<void> extract(RunControl& control);
   Result<void> measure(RunControl& control);
+  // The measurement engine, built once: by extract() when the plan has a
+  // during_extraction phase, else by measure().
+  void build_engine(RunControl& control);
+  bool has_extraction_phase() const;
   Result<void> post_measure(RunControl& control);
   // The record as far as the run got. `failure`: the run failed after
   // extraction began, and this is why (status failed); otherwise complete,
@@ -257,6 +263,25 @@ class Run {
   std::string timestamp_;
   std::mutex messages_mutex_;
   std::vector<TimePoint> message_times_;  // one per result_.messages
+
+  // The measurement (build_engine).
+  std::unique_ptr<measurement::MeasurementEngine> engine_;
+  bool spectrometer_held_ = false;  // hooks_.acquire_spectrometer answered, not yet released
+  // The post-equilibration script beside the measurement: said done under
+  // post_eq_mutex_, through the clock.
+  std::thread post_eq_thread_;
+  std::mutex post_eq_mutex_;
+  std::condition_variable post_eq_cv_;
+  bool post_eq_done_ = false;
+  // The during_extraction phase beside the extraction script (spec 5.4), on
+  // its own token, cancelled with the run's or when the extraction fails;
+  // said done under phase_mutex_, through the clock.
+  std::thread phase_thread_;
+  std::mutex phase_mutex_;
+  std::condition_variable phase_cv_;
+  bool phase_done_ = false;
+  std::optional<Error> phase_error_;
+  scripting::CancelToken phase_token_;
 };
 
 }  // namespace pychron::experiment::run

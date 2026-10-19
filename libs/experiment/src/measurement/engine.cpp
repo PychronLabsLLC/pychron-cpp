@@ -264,8 +264,8 @@ void MeasurementEngine::rebuild_conditionals() {
   conditionals_ = std::make_unique<ConditionalEngine>(in_.conditionals, in_.analysis_type);
 }
 
-MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
-  token_ = &token;
+void MeasurementEngine::begin() {
+  begun_ = true;
   result_ = MeasurementResult{};
   gas_ = nullptr;
   main_ = 0;
@@ -305,6 +305,46 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   collector_.set_arar(in_.arar);
   rebuild_conditionals();
   for (const auto* c : conditionals_->installed()) result_.installed.push_back(*c);
+
+}
+
+bool MeasurementEngine::has_phase(plan::When when) const {
+  return !in_.plan.gases.empty() && !plan::segments_at(in_.plan.gases.front(), when).empty();
+}
+
+void MeasurementEngine::select_gas(std::size_t g) {
+  gas_ = &in_.plan.gases[g];
+  const auto& segs = gas_->segments;
+  main_ = static_cast<std::size_t>(plan::main_segment(*gas_) - segs.data());
+  const auto& main = segs[main_];
+  time_zero_ = main.time_zero ? *main.time_zero : gas_->time_zero.value_or(plan::TimeZero{});
+}
+
+Result<void> MeasurementEngine::run_phase(plan::When when, scripting::CancelToken& token) {
+  token_ = &token;
+  if (!begun_) begin();
+  if (auto v = validate(); !v) return v;
+  select_gas(0);
+  auto r = run_when(when);
+  // What a collection or a move left on goes off; deflections went back at
+  // each segment's end. The rest (a standing deflection, the run's tables)
+  // is the measurement's to undo.
+  if (acquiring_) {
+    ctx_.spectrometer.stop_acquisition();
+    acquiring_ = false;
+  }
+  for (const auto& d : std::set<std::string>(protected_)) {
+    if (auto u = ctx_.spectrometer.protect(d, false); u) protected_.erase(d);
+    else publish_log(LogLevel::Error, "could not unprotect " + d + ": " + u.error().what);
+  }
+  token_ = nullptr;
+  return r;
+}
+
+MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
+  token_ = &token;
+  if (!begun_) begin();
+  begun_ = false;  // a second run() starts afresh
 
   Result<void> r = validate();
   if (r) r = run_blocks();
@@ -377,12 +417,7 @@ const plan::Equilibration& MeasurementEngine::equilibration() const {
 
 Result<void> MeasurementEngine::run_blocks() {
   // One gas for now (Phase 6 of the v2 plan runs every gas).
-  gas_ = &in_.plan.gases.front();
-  const auto& segs = gas_->segments;
-  main_ = static_cast<std::size_t>(plan::main_segment(*gas_) - segs.data());
-  const auto& main = segs[main_];
-  time_zero_ = main.time_zero ? *main.time_zero : gas_->time_zero.value_or(plan::TimeZero{});
-
+  select_gas(0);
   if (auto r = run_gas(); !r) return r;
   // after_run once, after the last gas.
   return run_when(plan::When::AfterRun);

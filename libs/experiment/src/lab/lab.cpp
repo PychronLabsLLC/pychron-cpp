@@ -10,6 +10,8 @@
 #include <utility>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/experiment/model/identifiers.hpp"
+#include "pychron/experiment/model/rules.hpp"
 
 namespace pychron::experiment::lab {
 
@@ -119,7 +121,13 @@ Lab load_lab(const LabPaths& paths) {
   if (lab.spectrometer)
     lab.catalog = std::make_unique<measurement::SpectrometerCatalog>(
         lab.spectrometer->config, lab.spectrometer->weights, measurement::table_names(*lab.spectrometer));
-  lab.plans = std::make_unique<plan::PlanLibrary>(plan::PlanResolvers{lab.aliases.get(), lab.catalog.get()});
+  plan::PlanResolvers resolvers{lab.aliases.get(), lab.catalog.get()};
+  // spec 3.7: a during_extraction segment needs a type that extracts.
+  resolvers.has_extraction = [](std::string_view type) {
+    const auto t = parse_analysis_type(type);
+    return !t || rules_for(*t).extraction;
+  };
+  lab.plans = std::make_unique<plan::PlanLibrary>(std::move(resolvers));
   if (fs::is_directory(dir / "plans", ec)) {
     std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(dir / "plans", ec))
