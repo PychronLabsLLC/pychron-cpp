@@ -39,6 +39,11 @@ std::string v3_intercept_key(const Data& data, std::string_view v2_key);
 // label's signal is on several detectors. Any other key stays as it is.
 std::string v2_intercept_key(const Data& data, std::string_view v3_key);
 
+// What an analysis (and the store) calls the intercept a record keeps under
+// `result_key`: "Ar40@H1" -> "Ar40" when Ar40's signal is on one detector,
+// "H1:Ar40" when on several; a v2 key likewise. A key with no series stays.
+std::string analysis_name(const Data& data, std::string_view result_key);
+
 // The keys a complete record's results have an intercept under: one for each
 // isotope with a signal series, or, for an isotope whose signal is on several
 // detectors, one for each of those detectors. Sorted.
@@ -59,12 +64,17 @@ struct NamedSeries {
 // "<detector>:<isotope>" when that isotope's signal is on more than one
 // detector, or when the series' own kind has it on more than one.
 //
+// The series of one isotope and kind on one detector, read at several places
+// in the plan (v3), are one series, standing where the first of them stood,
+// their points in time order.
+//
 // The baseline series of one detector are one series, keyed by the detector
 // and standing where the first of them stood: their points one after the
-// other in the record's order, which is the order the acquisition fitted
-// them in (fit_results), so the stored baseline is the fit of the stored
-// series. When only some of them carry a sigma the others' points have a
-// sigma of NaN: none was measured.
+// other in the record's order. The stored baseline is the record's
+// Results::baselines entry for the detector (in a v3 record the baseline
+// chosen for its first signal, spec 6.2). When only
+// some of them carry a sigma the others' points have a sigma of NaN: none was
+// measured.
 std::vector<NamedSeries> named_series(const Data& data);
 
 struct InterceptName {

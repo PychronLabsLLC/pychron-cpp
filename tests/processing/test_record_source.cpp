@@ -315,3 +315,32 @@ end = "2026-01-01T10:00:00Z"
 }
 
 }  // namespace
+
+// A v3 record says which baseline each signal was corrected with: the
+// records path reads that, not the detector's one stored value.
+TEST(RecordSource, V3RecordReadsWithPerSeriesBaselines) {
+  auto r = record("u-v3", "66002", 1, "", "unknown", "2026-01-01T00:00:00Z");
+  r.provenance.schema_version = rec::kRecordSchemaVersion;
+  r.results.intercepts.clear();
+  r.data.series.clear();
+  auto add = [&](const char* iso, float v) {
+    r.data.series.push_back({iso, "H1", "signal", {{0.f, 1.f, 2.f}, {v, v, v}, {}}});
+    rec::InterceptResult ir;
+    ir.intercept.value = v;
+    r.results.intercepts[std::string(iso) + "@H1"] = ir;
+  };
+  add("Ar40", 3000.f);
+  add("Ar39", 100.f);
+  r.results.baseline_positions = {{"H1", "", 0, 0, "before_inlet", {}, {}, {0.01, 0.001, {}}},
+                                  {"H1", "", 2, 0, "after_main", {}, {}, {0.03, 0.003, {}}}};
+  r.results.baselines["H1"] = {0.02, 0.0016, {}};  // the store's: Ar39's, the detector's first signal
+  r.results.baseline_choices["Ar40@H1"] = {"nearest", {1}, 0.03, 0.003};
+  r.results.baseline_choices["Ar39@H1"] = {"bracketing_average", {0, 1}, 0.02, 0.0016};
+  const auto a = pp::analysis_from_record(r);
+  ASSERT_EQ(a.isotopes.size(), 2u);
+  for (const auto& iso : a.isotopes) {
+    EXPECT_EQ(iso.detector, "H1");
+    const double want = iso.isotope == "Ar40" ? 0.03 : 0.02;
+    EXPECT_DOUBLE_EQ(iso.baseline.value, want) << iso.isotope;
+  }
+}

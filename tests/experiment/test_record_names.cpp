@@ -119,3 +119,34 @@ TEST(RecordNames, AnInterceptWithNoSignalSeriesTakesTheLowestDetectorOfItsOthers
   d.series = {{"Ar37", "L1", "sniff", trace({0}, {1})}, {"Ar37", "H2", "whiff", trace({0}, {1})}};
   EXPECT_EQ(intercept_name(d, "Ar37"), (InterceptName{"Ar37", "Ar37", "H2"}));
 }
+
+// Record v3 keys intercepts "<label>@<detector>"; an analysis and the store
+// call them what they always did.
+TEST(RecordNames, QualifiedKeysMapToTodaysNames) {
+  Data d;
+  d.series = {{"Ar40", "H1", "signal", trace({0}, {1})},
+              {"Ar40", "AX", "signal", trace({0}, {1})},
+              {"Ar39", "CDD", "signal", trace({0}, {1})}};
+  EXPECT_EQ(analysis_name(d, "Ar40@H1"), "H1:Ar40");
+  EXPECT_EQ(analysis_name(d, "Ar40@AX"), "AX:Ar40");
+  EXPECT_EQ(analysis_name(d, "Ar39@CDD"), "Ar39");
+  EXPECT_EQ(analysis_name(d, "Ar39"), "Ar39");  // a v2 key too
+  EXPECT_EQ(intercept_name(d, "Ar40@AX"), (InterceptName{"AX:Ar40", "Ar40", "AX"}));
+  EXPECT_EQ(intercept_name(d, "Ar39@H1"), std::nullopt);  // no series of it there
+  EXPECT_EQ(v2_intercept_key(d, "Ar40@H1"), "Ar40:H1");
+  EXPECT_EQ(v2_intercept_key(d, "Ar39@CDD"), "Ar39");
+  EXPECT_EQ(v3_intercept_key(d, "Ar40:H1"), "Ar40@H1");
+  EXPECT_EQ(v3_intercept_key(d, "Ar39"), "Ar39@CDD");
+}
+
+// One label on one detector read at two positions (v3) is one series for an
+// analysis, its points in time order.
+TEST(RecordNames, PositionsOfOneLabelOnOneDetectorAreOneSeries) {
+  Data d;
+  d.series = {{"Ar40", "H1", "signal", trace({0, 2}, {1, 3}), "", 1, 0},
+              {"Ar40", "H1", "signal", trace({1, 3}, {2, 4}), "", 1, 1}};
+  const auto named = named_series(d);
+  ASSERT_EQ(named.size(), 1u);
+  EXPECT_EQ(named[0].key, "Ar40");
+  EXPECT_EQ(named[0].trace, trace({0, 1, 2, 3}, {1, 2, 3, 4}));
+}

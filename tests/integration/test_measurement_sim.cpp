@@ -56,6 +56,19 @@ using collect::merged_series;
 
 namespace {
 
+// The intercept of a label measured on one detector: the result keyed
+// "<label>@<detector>"; nullptr when there is none, or several.
+const record::InterceptResult* intercept_of(const FitOutput& fits, std::string_view label) {
+  const record::InterceptResult* found = nullptr;
+  const std::string prefix = std::string(label) + "@";
+  for (const auto& [key, ir] : fits.results.intercepts) {
+    if (!key.starts_with(prefix)) continue;
+    if (found != nullptr) return nullptr;
+    found = &ir;
+  }
+  return found;
+}
+
 const std::filesystem::path kDir(PYCHRON_EXAMPLE_CONFIGS_DIR);
 const std::filesystem::path kPlans(PYCHRON_PLAN_FIXTURES_DIR);
 
@@ -269,11 +282,11 @@ TEST_F(MeasurementSim, MeasuresThroughTheRealFacades) {
   EXPECT_EQ(r.data.counts.at("baseline.after"), 10);
 
   // Intercepts recover the BeamModel's gas (default argon abundances).
-  auto fits = fit_results(r.data, loaded->plan.fits);
+  auto fits = fit_results(r.data, loaded->plan);
   ASSERT_TRUE(fits.errors.empty()) << fits.errors.front();
-  const double ar40 = fits.results.intercepts.at("Ar40").intercept.value;
-  const double ar39 = fits.results.intercepts.at("Ar39").intercept.value;
-  const double ar36 = fits.results.intercepts.at("Ar36").intercept.value;
+  const double ar40 = intercept_of(fits, "Ar40")->intercept.value;
+  const double ar39 = intercept_of(fits, "Ar39")->intercept.value;
+  const double ar36 = intercept_of(fits, "Ar36")->intercept.value;
   EXPECT_NEAR(ar40, 1e6, 1e6 * 0.01);
   EXPECT_NEAR(ar39, 1e4, 1e4 * 0.01);
   EXPECT_NEAR(ar40 / ar39, 100.0, 1.5);
@@ -513,8 +526,8 @@ TEST_F(MeasurementSim, PeakCenterFindsAnOffsetPeakAndTheNextRunMeasuresOnIt) {
     EXPECT_TRUE(pc.table_updated);
     EXPECT_NEAR(*pc.center, table_before + 0.025, 0.004);
     // Measured on the peak: the full Ar40 signal.
-    auto fits = fit_results(r.data, loaded->plan.fits);
-    EXPECT_NEAR(fits.results.intercepts.at("Ar40").intercept.value, 1e6, 1e4);
+    auto fits = fit_results(r.data, loaded->plan);
+    EXPECT_NEAR(intercept_of(fits, "Ar40")->intercept.value, 1e6, 1e4);
   }
   ASSERT_TRUE(peak_center.last());
   EXPECT_FALSE(peak_center.last()->tries.empty());
@@ -941,12 +954,12 @@ TEST_F(MeasurementSimV2, WorkedPlan72) {
   EXPECT_EQ(merged_series(r.data, "Ar36", "CDD", collect::kSignal).value().v.size(), 20u * 15u);
   EXPECT_EQ(merged_series(r.data, "Ar39", "CDD", collect::kSignal).value().v.size(), 20u * 15u);
   EXPECT_EQ(merged_series(r.data, "mass35", "CDD", collect::kSignal).value().v.size(), 20u * 8u);
-  const auto fits = fit_results(r.data, plan.fits);
+  const auto fits = fit_results(r.data, plan);
   ASSERT_TRUE(fits.errors.empty()) << fits.errors.front();
   for (const char* key : {"Ar40", "Ar41", "Ar38", "Ar37", "Ar36", "Ar39", "mass35"})
-    EXPECT_TRUE(fits.results.intercepts.contains(key)) << key;
+    EXPECT_NE(intercept_of(fits, key), nullptr) << key;
   // Ar39 was hopped onto CDD: the beam model's Ar39 is there.
-  EXPECT_NEAR(fits.results.intercepts.at("Ar39").intercept.value, 1e4, 1e4 * 0.05);
+  EXPECT_NEAR(intercept_of(fits, "Ar39")->intercept.value, 1e4, 1e4 * 0.05);
 
   // The deflection did not outlive its segment; nothing is left protected.
   auto cdd = spec_->detector_state("CDD");

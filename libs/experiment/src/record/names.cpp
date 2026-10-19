@@ -5,6 +5,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 namespace pychron::experiment::record {
@@ -49,6 +50,22 @@ void append(Trace& to, const Trace& more) {
   }
 }
 
+// Puts a trace's points in time order (stable: points of one time keep
+// their order).
+void sort_by_time(Trace& tr) {
+  if (std::is_sorted(tr.t.begin(), tr.t.end())) return;
+  std::vector<std::size_t> idx(tr.t.size());
+  for (std::size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+  std::stable_sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) { return tr.t[a] < tr.t[b]; });
+  Trace out;
+  for (auto i : idx) {
+    out.t.push_back(tr.t[i]);
+    out.v.push_back(tr.v[i]);
+    if (!tr.sigma.empty()) out.sigma.push_back(tr.sigma[i]);
+  }
+  tr = std::move(out);
+}
+
 }  // namespace
 
 std::string detector_isotope_key(std::string_view detector, std::string_view isotope) {
@@ -87,6 +104,11 @@ std::string v2_intercept_key(const Data& data, std::string_view v3_key) {
   return std::string(label);
 }
 
+std::string analysis_name(const Data& data, std::string_view result_key) {
+  const auto named = intercept_name(data, result_key);
+  return named ? named->key : std::string(result_key);
+}
+
 std::vector<std::string> intercept_keys(const Data& data) {
   const Detectors detectors = detectors_of(data);
   std::set<std::string> keys;
@@ -106,20 +128,26 @@ std::vector<NamedSeries> named_series(const Data& data) {
   const Detectors detectors = detectors_of(data);
   std::vector<NamedSeries> out;
   out.reserve(data.series.size());
-  std::map<std::string, std::size_t, std::less<>> baseline_at;  // detector -> its series in `out`
+  // (kind, key, detector) -> its series in `out`: the series of one isotope
+  // on one detector read at several places in the plan (v3) are one.
+  std::map<std::tuple<std::string, std::string, std::string>, std::size_t> at_of;
   for (const auto& s : data.series) {
-    if (s.kind == kBaseline) {
-      const auto [at, first] = baseline_at.try_emplace(s.det, out.size());
-      if (first) {
-        out.push_back({s.kind, s.det, s.det, s.trace});
-      } else {
-        append(out[at->second].trace, s.trace);
-      }
-      continue;
+    std::string key = s.det;
+    if (s.kind != kBaseline) {
+      const bool qualified = on_several(detectors, kSignal, s.iso) || on_several(detectors, s.kind, s.iso);
+      key = qualified ? detector_isotope_key(s.det, s.iso) : s.iso;
     }
-    const bool qualified = on_several(detectors, kSignal, s.iso) || on_several(detectors, s.kind, s.iso);
-    out.push_back({s.kind, qualified ? detector_isotope_key(s.det, s.iso) : s.iso, s.det, s.trace});
+    const auto [at, first] = at_of.try_emplace({s.kind, key, s.det}, out.size());
+    if (first) {
+      out.push_back({s.kind, std::move(key), s.det, s.trace});
+    } else {
+      append(out[at->second].trace, s.trace);
+    }
   }
+  // A detector's baseline series stay in the record's order (the order they
+  // were fitted in, before v3); the others are put in time order.
+  for (auto& n : out)
+    if (n.kind != kBaseline) sort_by_time(n.trace);
   return out;
 }
 

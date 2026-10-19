@@ -858,3 +858,32 @@ TEST(RecordIngest, ATruncatedRecordIsStoredAsAnyRun) {
   EXPECT_EQ(after_item(describe(truncated)), after_item(describe(plain)));
   EXPECT_NE(describe(truncated), describe(plain));
 }
+
+// A detector read at several baseline positions (v3) keeps one stored value,
+// the record's; every position and each signal's choice go in the row's
+// extra. A detector with one position has none (the ordinary run's rows).
+TEST(RecordIngest, SeveralBaselinePositionsGoToExtra) {
+  auto rec = sample_record();
+  ASSERT_EQ(rec.results.baseline_positions.size(), 1u);  // the v2 record's one
+  EXPECT_FALSE(body_of(convert(rec)).roots.baselines_rows[0].extra_json);
+
+  rec.provenance.schema_version = record::kRecordSchemaVersion;
+  rec.results.baseline_positions = {{"H1", "", 0, 0, "before_inlet", 34.2, {}, {0.04, 0.004, {}}},
+                                    {"H1", "", 2, 0, "after_main", {}, 110.0, {0.05, 0.005, {}}}};
+  rec.results.baseline_choices["Ar40@H1"] = {"bracketing_average", {0, 1}, 0.045, 0.0032};
+  rec.results.baseline_choices["Ar36@CDD"] = {"nearest", {0}, 0.0, 0.0};  // another detector's
+  const auto out = convert(rec);
+  const auto& rows = body_of(out).roots.baselines_rows;
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0].value, 0.045);  // Results::baselines, unchanged
+  ASSERT_TRUE(rows[0].extra_json);
+  const auto extra = json::parse(*rows[0].extra_json);
+  ASSERT_EQ(extra.at("positions").size(), 2u);
+  EXPECT_EQ(extra.at("positions")[0].at("when"), "before_inlet");
+  EXPECT_EQ(extra.at("positions")[0].at("magnet"), 34.2);
+  EXPECT_EQ(extra.at("positions")[1].at("segment"), 2);
+  EXPECT_EQ(extra.at("positions")[1].at("deflection"), 110.0);
+  ASSERT_EQ(extra.at("choices").size(), 1u);
+  EXPECT_EQ(extra.at("choices").at("Ar40@H1").at("rule"), "bracketing_average");
+  EXPECT_EQ(extra.at("choices").at("Ar40@H1").at("baselines"), json::array({0, 1}));
+}

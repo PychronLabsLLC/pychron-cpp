@@ -602,13 +602,16 @@ Result<void> Run::save(const std::optional<Error>& failure) {
   b.set_spectrometer(spec);
 
   const auto& meas = result_.measurement;
-  const auto data = measurement::to_record_data(meas.data);
+  const auto data = measurement::to_record_data(meas.data, plan_->plan);
   for (const auto& series : data.series) b.add_series(series);
+  for (const auto& gas : data.gases) b.add_gas(gas);
   b.set_time_zero(data.time_zero);
   for (const auto& [k, n] : data.counts) b.set_count(k, n);
-  auto fits = measurement::fit_results(meas.data, plan_->plan.fits);
+  auto fits = measurement::fit_results(meas.data, plan_->plan, s_.reference_detector);
   for (const auto& [iso, ir] : fits.results.intercepts) b.set_intercept(iso, ir);
   for (const auto& [det, br] : fits.results.baselines) b.set_baseline(det, br);
+  for (const auto& pos : fits.results.baseline_positions) b.add_baseline_position(pos);
+  for (const auto& [key, c] : fits.results.baseline_choices) b.set_baseline_choice(key, c);
   for (const auto& [det, f] : s_.icfactors) b.set_icfactor(det, f);
   for (const auto& e : fits.errors) note("fit: " + e);
   if (meas.whiff) b.set_whiff(std::string(to_string(*meas.whiff)));

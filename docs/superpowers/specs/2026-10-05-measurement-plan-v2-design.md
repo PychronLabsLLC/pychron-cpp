@@ -384,7 +384,15 @@ keeps bytes and stored items it had before v3, as `instrument.simulated` and
   baselines bracket the signal and neither is decisive, their average
   (owner, 2026-10-15), errors propagated as a mean of two. The rule used
   (`at`, `nearest`, `bracketing_average`) is recorded on the baseline
-  value.
+  value. As built (`measurement::fit_results`): candidates are detector's
+  baseline positions in signal's gas (all of detector's when none there);
+  those whose `at` equals signal's first position's target if any, else
+  all; two candidates bracketing signal (latest ending before its first
+  point, earliest starting after its last) give average, error
+  `sqrt(e1² + e2²) / 2`, rule `bracketing_average`; else nearest by mean
+  time, rule `at` when candidates matched, else `nearest`. Store keeps
+  detector's choice for its first signal (by label); every position and
+  choice in row's `extra` when detector has more than one position.
 - `[interferences]` drives the `Ar40++` and `CO2` corrections for Ne and
   the hydride and `HCl` monitors for Ar as reduction metadata; the
   calculations themselves are a separate spec.

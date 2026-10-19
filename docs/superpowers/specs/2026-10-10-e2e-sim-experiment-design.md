@@ -308,7 +308,12 @@ notes, `conditionals.errors`, extraction actuals `value`, `duration`,
 `pid_params`, extraction `series`, `snapshot_refs`, `cryo_measured`,
 `manometer_pressure`, `data.counts`, `results.blanks_ref`, each
 intercept's `filtered_idx` and `residual_sd`, `spectrometer.state_hash`
-and `field_table_version`, hook reference, plan overrides.
+and `field_table_version`, hook reference, plan overrides; record v3
+(measurement plan v2 spec 6.1): `data.gases` (name, time zero, states,
+prepare, pump-out) and each series' gas, segment, position and state (one
+isotope's series on one detector are one stored series), the baseline
+positions and choices of a detector with one baseline position (with
+several, all go in the stored baseline's `extra`).
 
 ### 5.3 `StorePersister`
 

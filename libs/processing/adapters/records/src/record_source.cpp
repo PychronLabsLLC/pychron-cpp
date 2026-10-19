@@ -131,7 +131,15 @@ Analysis analysis_from_record(const rec::AnalysisRecord& r) {
     d.intercept = v(ir.intercept.value, ir.intercept.error);
     d.fit = ir.fit;
     d.n = static_cast<int>(ir.intercept.n_used);
-    if (auto b = r.results.baselines.find(d.detector); b != r.results.baselines.end()) {
+    // A v3 record says which baseline each signal was corrected with (spec
+    // 6.2); otherwise the detector's.
+    const auto choice = r.results.baseline_choices.find(rec::qualified_key(d.isotope, d.detector));
+    if (choice != r.results.baseline_choices.end()) {
+      d.baseline = v(choice->second.value, choice->second.error);
+      const auto& chosen = choice->second.baselines;
+      if (!chosen.empty() && chosen.front() < r.results.baseline_positions.size())
+        d.baseline_fit = r.results.baseline_positions[chosen.front()].result.fit;
+    } else if (auto b = r.results.baselines.find(d.detector); b != r.results.baselines.end()) {
       d.baseline = v(b->second.value, b->second.error);
       d.baseline_fit = b->second.fit;
     }

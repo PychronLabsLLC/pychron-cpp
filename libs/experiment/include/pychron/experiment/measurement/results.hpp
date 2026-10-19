@@ -4,6 +4,7 @@
 // the same pure reduction::fit used live in the UI and by conditionals.
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pychron/experiment/collect/collector.hpp"
@@ -14,21 +15,31 @@
 namespace pychron::experiment::measurement {
 
 // Series as float32 traces with t relative to time zero (the epoch when time
-// zero was never set); Data::time_zero is seconds since the epoch.
-record::Data to_record_data(const collect::RunData& data);
+// zero was never set); Data::time_zero is seconds since the epoch. One record
+// series per collector series (label, detector, kind, gas, segment, position),
+// ordered by label, detector, kind (signal, baseline, sniff, whiff, others by
+// name), gas, segment and position; one GasRec per gas measured, in plan
+// order.
+record::Data to_record_data(const collect::RunData& data, const plan::MeasurementPlan& plan);
 
 struct FitOutput {
   record::Results results;
   std::vector<std::string> errors;  // series that could not be fitted, with why
 };
 
-// Intercepts: one per signal series, fitted with plan.fits.signal on
-// x = t - time_zero, keyed by isotope ("Ar40"), or "Ar36:CDD" when the
-// isotope was measured on more than one detector. A series with fewer points
-// than the fit's parameters is averaged (the recorded fit is "average"). Baselines: one per
-// detector over every baseline point on it (block and baseline hops),
-// fitted with plan.fits.baseline; value and error are the intercept's.
-FitOutput fit_results(const collect::RunData& data, const plan::Fits& fits);
+// Intercepts: one per label and detector, keyed "<label>@<detector>", over
+// every position the label was read at on that detector (in time order),
+// fitted with the plan's signal fit on x = t - time_zero. A series with fewer
+// points than the fit's parameters is averaged (the recorded fit is
+// "average"). Baselines: one BaselineRec per baseline position per detector,
+// fitted with the plan's baseline fit; per signal a BaselineChoice by the
+// spec 6.2 rule (`at`, `bracketing_average`, `nearest`; see results.cpp);
+// Results::baselines by detector: the choice of the detector's first signal
+// (by label), or its first baseline position when it has no signal.
+// `spectrometer_reference` positions a plan that names no reference (as the
+// engine was given it).
+FitOutput fit_results(const collect::RunData& data, const plan::MeasurementPlan& plan,
+                      std::string_view spectrometer_reference = {});
 
 // Record provenance of the conditionals that applied, tripped and failed.
 record::InstalledConditional to_record(const Conditional& c);

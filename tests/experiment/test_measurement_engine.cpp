@@ -1088,19 +1088,19 @@ TEST_F(EngineTest, ResultsFitInterceptsAndBaselines) {
   p.baseline.after = true;
   auto r = run(p);
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed);
-  auto fits = fit_results(r.data, p.plan().fits);
+  auto fits = fit_results(r.data, p.plan());
   EXPECT_TRUE(fits.errors.empty());
   // v = a (1 + 0.01 t) with t absolute clock seconds: the intercept at time
   // zero is a (1 + 0.01 t_zero).
   const double tz = secs(r.data.timing.epoch - TimePoint{}) + *r.data.timing.time_zero;
-  ASSERT_TRUE(fits.results.intercepts.contains("Ar40"));
-  EXPECT_NEAR(fits.results.intercepts.at("Ar40").intercept.value, 1000 * (1 + 0.01 * tz), 1e-6);
-  EXPECT_NEAR(fits.results.intercepts.at("Ar39").intercept.value, 100 * (1 + 0.01 * tz), 1e-6);
-  EXPECT_EQ(fits.results.intercepts.at("Ar40").fit.kind, reduction::FitKind::Linear);
+  ASSERT_TRUE(fits.results.intercepts.contains("Ar40@H1"));
+  EXPECT_NEAR(fits.results.intercepts.at("Ar40@H1").intercept.value, 1000 * (1 + 0.01 * tz), 1e-6);
+  EXPECT_NEAR(fits.results.intercepts.at("Ar39@AX").intercept.value, 100 * (1 + 0.01 * tz), 1e-6);
+  EXPECT_EQ(fits.results.intercepts.at("Ar40@H1").fit.kind, reduction::FitKind::Linear);
   ASSERT_TRUE(fits.results.baselines.contains("H1"));
   EXPECT_DOUBLE_EQ(fits.results.baselines.at("H1").value, 0.0);  // magnet at mass 34.2: empty
 
-  auto data = to_record_data(r.data);
+  auto data = to_record_data(r.data, p.plan());
   EXPECT_EQ(data.time_zero, *r.data.timing.time_zero);
   EXPECT_EQ(data.counts.at("main"), 30);
   bool found = false;
@@ -1117,25 +1117,137 @@ TEST_F(EngineTest, ResultsFitInterceptsAndBaselines) {
   EXPECT_TRUE(found);
 }
 
-// Until the record has positions (v3), one label on one detector is one
-// record series and one intercept, its positions merged in time order.
-TEST_F(EngineTest, RecordMergesThePositionsOfOneLabelOnOneDetector) {
+// The record (v3) keeps a series per position; one label on one detector is
+// one intercept, its positions fitted as one series in time order.
+TEST_F(EngineTest, RecordKeepsPositionsAndFitsOneLabelOnOneDetectorAsOne) {
   collect::RunData d;
   d.series[skey("Ar40", "H1", collect::kSignal, 1, 0)] = collect::Series{{1, 3}, {10, 30}, {}, {false, false}};
   d.series[skey("Ar40", "H1", collect::kSignal, 1, 1)] = collect::Series{{2, 4}, {20, 40}, {}, {false, false}};
   d.series[skey("", "H1", collect::kBaseline, 0, 0)] = collect::Series{{0}, {1}, {}, {false}};
   d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{5}, {3}, {}, {false}};
-  const auto data = to_record_data(d);
-  ASSERT_EQ(data.series.size(), 2u);
-  // By label, as v2 records were: the baseline segment's (no label) first.
+  const auto data = to_record_data(d, plan::MeasurementPlan{});
+  ASSERT_EQ(data.series.size(), 4u);
+  // By label, as v2 records were: the baseline segment's (no label) first,
+  // then by segment and position.
   EXPECT_EQ(data.series[0].kind, "baseline");
-  EXPECT_EQ(data.series[0].trace.v, (std::vector<float>{1, 3}));
-  EXPECT_EQ(data.series[1].iso, "Ar40");
-  EXPECT_EQ(data.series[1].trace.v, (std::vector<float>{10, 20, 30, 40}));
-  const auto out = fit_results(d, plan::Fits{});
+  EXPECT_EQ(data.series[0].segment, 0);
+  EXPECT_EQ(data.series[1].segment, 2);
+  EXPECT_EQ(data.series[2].iso, "Ar40");
+  EXPECT_EQ(data.series[2].position, 0);
+  EXPECT_EQ(data.series[3].position, 1);
+  EXPECT_EQ(data.series[3].trace.v, (std::vector<float>{20, 40}));
+  ASSERT_EQ(data.gases.size(), 1u);
+  const auto out = fit_results(d, plan::MeasurementPlan{});
   EXPECT_EQ(out.results.intercepts.size(), 1u);
-  EXPECT_NEAR(out.results.intercepts.at("Ar40").intercept.value, 0, 1e-9);  // y = 10 t
+  EXPECT_NEAR(out.results.intercepts.at("Ar40@H1").intercept.value, 0, 1e-9);  // y = 10 t
+  ASSERT_EQ(out.results.baseline_positions.size(), 2u);
+  // The two baselines bracket the signal: their average.
   EXPECT_DOUBLE_EQ(out.results.baselines.at("H1").value, 2);
+  EXPECT_EQ(out.results.baseline_choices.at("Ar40@H1").rule, "bracketing_average");
+}
+
+// ---- the baseline rule (spec 6.2) ---------------------------------------------
+
+constexpr std::string_view kBaselineRulePlan = R"toml(
+[plan]
+name = "baseline_rule"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+
+[detectors]
+reference = "H1"
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[segment]]
+kind = "signal"
+when = "after_inlet"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+[[segment.positions]]
+kind = "baseline"
+collect = { Ar40 = "H1" }
+counts = 2
+
+[[segment]]
+kind = "baseline"
+when = "before_inlet"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 2
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 2
+)toml";
+
+collect::RunData baseline_rule_data() {
+  collect::RunData d;
+  d.series[skey("Ar40", "H1", collect::kSignal, 0, 0)] = collect::Series{{10, 11, 12}, {5, 5, 5}, {}, {}};
+  return d;
+}
+
+// A baseline position whose `at` is the signal position's target wins over
+// one nearer in time.
+TEST(FitResults, BaselineRuleAt) {
+  const auto plan = plan_from(kBaselineRulePlan);
+  auto d = baseline_rule_data();
+  d.series[skey("Ar40", "H1", collect::kBaseline, 0, 1)] = collect::Series{{20, 21}, {1, 1}, {}, {}};
+  d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{13, 14}, {3, 3}, {}, {}};
+  const auto out = fit_results(d, plan);
+  ASSERT_EQ(out.results.baseline_positions.size(), 2u);
+  const auto& c = out.results.baseline_choices.at("Ar40@H1");
+  EXPECT_EQ(c.rule, "at");
+  EXPECT_DOUBLE_EQ(c.value, 1);
+  ASSERT_EQ(c.baselines.size(), 1u);
+  EXPECT_EQ(out.results.baseline_positions[c.baselines[0]].segment, 0);
+  EXPECT_EQ(out.results.baseline_positions[c.baselines[0]].position, 1);
+  EXPECT_EQ(out.results.baseline_positions[c.baselines[0]].when, "after_inlet");
+  EXPECT_DOUBLE_EQ(out.results.baselines.at("H1").value, 1);
+}
+
+// No `at` matches and nothing brackets: the nearest by mean time.
+TEST(FitResults, BaselineRuleNearest) {
+  const auto plan = plan_from(kBaselineRulePlan);
+  auto d = baseline_rule_data();
+  d.series[skey("", "H1", collect::kBaseline, 1, 0)] = collect::Series{{30, 31}, {7, 7}, {}, {}};
+  d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{13, 14}, {3, 3}, {}, {}};
+  const auto out = fit_results(d, plan);
+  const auto& c = out.results.baseline_choices.at("Ar40@H1");
+  EXPECT_EQ(c.rule, "nearest");
+  EXPECT_DOUBLE_EQ(c.value, 3);
+  EXPECT_EQ(out.results.baseline_positions[c.baselines.at(0)].when, "after_main");
+}
+
+// One before the signal, one after, neither matching: their average, the
+// error a mean of two.
+TEST(FitResults, BaselineRuleBracketingAverage) {
+  const auto plan = plan_from(kBaselineRulePlan);
+  auto d = baseline_rule_data();
+  d.series[skey("", "H1", collect::kBaseline, 1, 0)] = collect::Series{{0, 1}, {1, 2}, {}, {}};
+  d.series[skey("", "H1", collect::kBaseline, 2, 0)] = collect::Series{{20, 21}, {3, 5}, {}, {}};
+  const auto out = fit_results(d, plan);
+  ASSERT_EQ(out.results.baseline_positions.size(), 2u);
+  const auto& b1 = out.results.baseline_positions[0].result;
+  const auto& b2 = out.results.baseline_positions[1].result;
+  EXPECT_DOUBLE_EQ(b1.value, 1.5);
+  EXPECT_DOUBLE_EQ(b2.value, 4);
+  EXPECT_GT(b1.error, 0);
+  const auto& c = out.results.baseline_choices.at("Ar40@H1");
+  EXPECT_EQ(c.rule, "bracketing_average");
+  EXPECT_EQ(c.baselines, (std::vector<std::size_t>{0, 1}));
+  EXPECT_DOUBLE_EQ(c.value, 2.75);
+  EXPECT_DOUBLE_EQ(c.error, std::sqrt(b1.error * b1.error + b2.error * b2.error) / 2);
+  EXPECT_DOUBLE_EQ(out.results.baselines.at("H1").value, 2.75);
 }
 
 TEST_F(EngineTest, IsotopeOnTwoDetectorsGetsDetectorQualifiedIntercepts) {
@@ -1145,17 +1257,17 @@ TEST_F(EngineTest, IsotopeOnTwoDetectorsGetsDetectorQualifiedIntercepts) {
   d.series[skey("Ar40", "H1", collect::kSignal)] = collect::Series{{1}, {5}, {}, {}};  // too few for linear
   d.series[skey("Ar39", "AX", collect::kSignal)] =
       collect::Series{{1, 2}, {1, std::numeric_limits<double>::quiet_NaN()}, {}, {}};
-  auto out = fit_results(d, plan::Fits{});
-  EXPECT_TRUE(out.results.intercepts.contains("Ar36:CDD"));
-  EXPECT_TRUE(out.results.intercepts.contains("Ar36:L2"));
+  auto out = fit_results(d, plan::MeasurementPlan{});
+  EXPECT_TRUE(out.results.intercepts.contains("Ar36@CDD"));
+  EXPECT_TRUE(out.results.intercepts.contains("Ar36@L2"));
   // One point: averaged, and the record says which fit was used.
-  ASSERT_TRUE(out.results.intercepts.contains("Ar40"));
-  EXPECT_EQ(out.results.intercepts.at("Ar40").fit.kind, reduction::FitKind::Average);
-  EXPECT_DOUBLE_EQ(out.results.intercepts.at("Ar40").intercept.value, 5);
+  ASSERT_TRUE(out.results.intercepts.contains("Ar40@H1"));
+  EXPECT_EQ(out.results.intercepts.at("Ar40@H1").fit.kind, reduction::FitKind::Average);
+  EXPECT_DOUBLE_EQ(out.results.intercepts.at("Ar40@H1").intercept.value, 5);
   // Non-finite data cannot be fitted.
-  EXPECT_FALSE(out.results.intercepts.contains("Ar39"));
+  EXPECT_FALSE(out.results.intercepts.contains("Ar39@AX"));
   ASSERT_EQ(out.errors.size(), 1u);
-  EXPECT_EQ(out.errors[0].substr(0, 5), "Ar39:");
+  EXPECT_EQ(out.errors[0].substr(0, 8), "Ar39@AX:");
 }
 
 }  // namespace
