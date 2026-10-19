@@ -273,6 +273,71 @@ TEST(MemorySource, AgeBoundsMatchTheCachedAge) {
   EXPECT_EQ(*types, (std::vector<std::string>{"unknown"}));
 }
 
+// A list of uuids narrows browse to those analyses: the Selected list of the
+// data browser asks for its members by uuid.
+TEST(MemorySource, BrowsesByUuid) {
+  auto src = std::make_unique<pp::MemorySource>();
+  std::vector<std::string> u;
+  for (int i = 0; i < 5; ++i) {
+    auto a = make_air(i, 295.0 + i);
+    a->timestamp = 1000.0 + i;
+    if (i == 3) a->tag = "invalid";
+    u.push_back(a->uuid);
+    src->add(a);
+  }
+  pp::BrowseQuery q;
+  q.uuids = {u[1], u[4], u[2]};
+  auto page = src->browse(q);
+  ASSERT_TRUE(page) << page.error().what;
+  ASSERT_EQ(page->rows.size(), 3u);
+  EXPECT_EQ(page->rows[0].uuid, u[4]);
+  EXPECT_EQ(page->rows[1].uuid, u[2]);
+  EXPECT_EQ(page->rows[2].uuid, u[1]);
+  EXPECT_EQ(page->total, 3u);
+
+  pp::BrowseQuery invalid;
+  invalid.uuids = {u[3]};
+  auto hidden = src->browse(invalid);
+  ASSERT_TRUE(hidden);
+  EXPECT_TRUE(hidden->rows.empty()) << "the default still hides invalid analyses";
+  invalid.exclude_tags = {};
+  auto shown = src->browse(invalid);
+  ASSERT_TRUE(shown);
+  ASSERT_EQ(shown->rows.size(), 1u);
+  EXPECT_EQ(shown->rows[0].uuid, u[3]);
+
+  pp::BrowseQuery none;
+  none.uuids = {"nope"};
+  auto empty = src->browse(none);
+  ASSERT_TRUE(empty);
+  EXPECT_TRUE(empty->rows.empty());
+  EXPECT_EQ(empty->total, 0u);
+}
+
+TEST(MemorySource, RemoveDropsTheAnalysisAndMovesTheGeneration) {
+  auto src = source();
+  auto all = src->browse(pp::BrowseQuery{});
+  ASSERT_TRUE(all);
+  const std::string gone = all->rows[2].uuid;
+  src->set_age(gone, 5.0, 0.1);
+  pp::RawData raw;
+  raw.series.emplace_back();
+  src->add(*src->load(gone), raw);
+  ASSERT_EQ(src->load_raw(gone)->series.size(), 1u);
+  const std::uint64_t before = src->generation();
+  src->remove(gone);
+  EXPECT_EQ(src->generation(), before + 1);
+  auto after = src->browse(pp::BrowseQuery{});
+  ASSERT_TRUE(after);
+  EXPECT_EQ(after->rows.size(), all->rows.size() - 1);
+  for (const auto& r : after->rows) EXPECT_NE(r.uuid, gone);
+  EXPECT_FALSE(src->load(gone));
+  EXPECT_TRUE(src->load_raw(gone)->series.empty());
+
+  src->remove("nope");
+  EXPECT_EQ(src->generation(), before + 1) << "an unknown uuid moves nothing";
+}
+
 TEST(Units, StatsHonourExclusions) {
   auto src = source();
   pp::Runner runner(reg(), src.get());

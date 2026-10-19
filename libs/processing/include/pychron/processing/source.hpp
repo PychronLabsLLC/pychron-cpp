@@ -33,6 +33,7 @@ struct BrowseQuery {
   std::vector<std::string> exclude_tags{"invalid"};
   // Cached age (Ma), inclusive. An analysis without one matches no bound.
   std::optional<double> age_min, age_max;
+  std::vector<std::string> uuids;  // non-empty: only these analyses
   int limit = 200;
   std::optional<BrowseCursor> after;
 };
@@ -131,6 +132,8 @@ class MemorySource : public IAnalysisSource {
   // Gives the analysis a cached age (Ma) for browse to show and filter by,
   // as a store's derived_value would (tests, previews).
   void set_age(const std::string& uuid, double age, double age_err);
+  // Drops the analysis with its raw data and age. An unknown uuid does nothing.
+  void remove(const std::string& uuid);
 
   std::string name() const override { return "memory"; }
   std::uint64_t generation() const override;

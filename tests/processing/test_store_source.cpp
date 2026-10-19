@@ -325,6 +325,33 @@ TEST_F(StoreSourceTest, BrowsePagesNewestFirstWithCatalogColumns) {
   EXPECT_FALSE(source().browse(q));
 }
 
+TEST_F(StoreSourceTest, BrowsesByUuid) {
+  BrowseQuery q;
+  q.uuids = {unknown_.str(), air_.str()};
+  q.exclude_tags = {};
+  auto page = source().browse(q);
+  ASSERT_TRUE(page) << to_string(page.error());
+  ASSERT_EQ(page->rows.size(), 2u);
+  EXPECT_EQ(page->rows[0].uuid, air_.str());
+  EXPECT_EQ(page->rows[1].uuid, unknown_.str());
+  EXPECT_EQ(page->total, 2u);
+
+  q.uuids = {unknown_.str()};
+  auto one = source().browse(q);
+  ASSERT_TRUE(one) << to_string(one.error());
+  ASSERT_EQ(one->rows.size(), 1u);
+  EXPECT_EQ(one->rows[0].uuid, unknown_.str());
+  auto types = source().facet(Facet::AnalysisType, q);
+  ASSERT_TRUE(types) << to_string(types.error());
+  EXPECT_EQ(*types, (std::vector<std::string>{"unknown"}));
+
+  q.uuids = {"not-a-uuid"};
+  auto bad = source().browse(q);
+  ASSERT_FALSE(bad);
+  EXPECT_EQ(bad.error().kind, ErrorKind::Config);
+  EXPECT_FALSE(source().facet(Facet::AnalysisType, q));
+}
+
 // What the experiment window's References dock asks after each saved run: the
 // newest blanks (of every kind), or airs, of the session's spectrometer since
 // a time.

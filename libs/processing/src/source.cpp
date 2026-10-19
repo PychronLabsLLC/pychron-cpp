@@ -106,6 +106,7 @@ bool matches(const BrowseQuery& q, const AnalysisSummary& s, double newest, std:
       !check(Facet::Load, q.loads) || !check(Facet::Irradiation, q.irradiations) || !check(Facet::Level, q.levels) ||
       !check(Facet::Repository, q.repositories))
     return false;
+  if (!q.uuids.empty() && !in(q.uuids, s.uuid)) return false;
   if (q.from && s.timestamp < *q.from) return false;
   if (q.to && s.timestamp > *q.to) return false;
   if (q.last_hours && s.timestamp < newest - *q.last_hours * 3600.0) return false;
@@ -202,6 +203,17 @@ void MemorySource::add(AnalysisPtr analysis, std::optional<RawData> raw) {
 void MemorySource::set_age(const std::string& uuid, double age, double age_err) {
   std::lock_guard lock(mutex_);
   ages_[uuid] = {age, age_err};
+  ++generation_;
+}
+
+void MemorySource::remove(const std::string& uuid) {
+  std::lock_guard lock(mutex_);
+  const auto same = std::find_if(analyses_.begin(), analyses_.end(),
+                                 [&](const AnalysisPtr& a) { return a->uuid == uuid; });
+  if (same == analyses_.end()) return;
+  analyses_.erase(same);
+  raw_.erase(uuid);
+  ages_.erase(uuid);
   ++generation_;
 }
 

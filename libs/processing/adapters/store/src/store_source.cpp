@@ -283,6 +283,17 @@ ps::BrowseFilter to_store_filter(const BrowseQuery& q) {
   return f;
 }
 
+Result<std::vector<ps::Uuid>> store_uuids(const BrowseQuery& q) {
+  std::vector<ps::Uuid> out;
+  out.reserve(q.uuids.size());
+  for (const auto& text : q.uuids) {
+    auto id = parse_uuid(text);
+    if (!id) return fail(ErrorKind::Config, "browse: not a uuid: " + text);
+    out.push_back(*id);
+  }
+  return out;
+}
+
 ps::BrowseFacet to_store_facet(Facet f) noexcept {
   switch (f) {
     case Facet::AnalysisType: return ps::BrowseFacet::AnalysisType;
@@ -850,6 +861,9 @@ Result<BrowsePage> StoreSource::browse(const BrowseQuery& query) {
   if (query.limit <= 0) return fail(ErrorKind::Config, "browse: limit must be positive");
   ps::BrowseRequest req;
   req.filter = to_store_filter(query);
+  auto uuids = store_uuids(query);
+  if (!uuids) return fail(uuids.error());
+  req.filter.uuids = std::move(*uuids);
   req.limit = query.limit;
   req.count_total = !query.after;  // the first page carries the total
   if (query.after) {
@@ -870,6 +884,9 @@ Result<BrowsePage> StoreSource::browse(const BrowseQuery& query) {
 Result<std::vector<std::string>> StoreSource::facet(Facet f, const BrowseQuery& query) {
   const auto facet = to_store_facet(f);
   auto filter = to_store_filter(query);
+  auto uuids = store_uuids(query);
+  if (!uuids) return fail(uuids.error());
+  filter.uuids = std::move(*uuids);
   return impl_->call<std::vector<std::string>>(
       [facet, filter = std::move(filter)](ps::IStore& s) { return s.facet(facet, filter); });
 }
