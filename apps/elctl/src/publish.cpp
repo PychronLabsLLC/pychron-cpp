@@ -49,8 +49,11 @@ constexpr const char* kUsageText =
     "          [--supersedes <name|name@vN|uuid>] [reduction and report options]\n"
     "                              pin the selection's heads and references as a new draft\n"
     "  build   --db <url> --release <r> --out <dir> [--private] [--with-figures] [--with-viewer]\n"
-    "                              write <dir>/<name>-v<N>; --private keeps embargoed rows\n"
+    "                              write <dir>/<name>-v<N>; --private keeps embargoed rows;\n"
+    "                              --with-figures adds figures/<sample>/ (ideogram, spectrum,\n"
+    "                              isochron as SVG and PDF)\n"
     "  verify  <dir> [--db <url>]  check every file against the manifest; with --db, against a rebuild\n"
+    "                              (with figures when the directory has them)\n"
     "  publish --db <url> --release <r> --manifest <dir>/manifest.json [--public]\n"
     "                              draft -> published, recording that build; private unless --public\n"
     "  withdraw --db <url> --release <r> --reason <text>\n"
@@ -359,6 +362,7 @@ int verify(const std::vector<std::string>& args, Io io) {
     pb::BuildOptions options;
     options.out = scratch;
     options.private_build = manifest->build.private_build;
+    options.with_figures = pb::has_figures(*manifest);  // rebuilt as it was built
     options.store_url = db;
     auto rebuilt = pb::build_release(*opened->store, **source, manifest->release.uuid, options, nullptr);
     if (!rebuilt) {

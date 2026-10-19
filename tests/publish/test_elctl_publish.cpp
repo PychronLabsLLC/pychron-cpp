@@ -123,6 +123,29 @@ TEST_P(ElctlPublishTest, VerifyFailsOnAChangedCell) {
   EXPECT_NE(v.err.find("tables/release.csv"), std::string::npos) << v.err;
 }
 
+TEST_P(ElctlPublishTest, BuildWithFiguresAndVerifyAgainstTheStore) {
+  ASSERT_EQ(run(create_args()).code, elctl::kOk);
+  const Outcome b = run({"build", "--db", db_->url(), "--release", "r", "--out", out_.string(), "--with-figures"});
+  EXPECT_EQ(b.code, elctl::kOk) << b.err;
+  EXPECT_EQ(b.err.find("ignored"), std::string::npos) << b.err;
+  EXPECT_TRUE(fs::exists(out_ / "r-v1" / "figures" / "FC-1" / "ideogram.svg")) << b.out << b.err;
+  const Outcome v = run({"verify", (out_ / "r-v1").string(), "--db", db_->url()});
+  EXPECT_EQ(v.code, elctl::kOk) << v.err << v.out;
+  EXPECT_NE(v.out.find("the rebuild agrees"), std::string::npos) << v.out;
+}
+
+TEST_P(ElctlPublishTest, VerifyNamesAChangedFigure) {
+  ASSERT_EQ(run(create_args()).code, elctl::kOk);
+  ASSERT_EQ(run({"build", "--db", db_->url(), "--release", "r", "--out", out_.string(), "--with-figures"}).code,
+            elctl::kOk);
+  const fs::path svg = out_ / "r-v1" / "figures" / "FC-1" / "ideogram.svg";
+  ASSERT_TRUE(fs::exists(svg));
+  std::ofstream(svg, std::ios::binary | std::ios::app) << ' ';
+  const Outcome v = run({"verify", (out_ / "r-v1").string()});
+  EXPECT_EQ(v.code, elctl::kFailed);
+  EXPECT_NE(v.err.find("changed figures/FC-1/ideogram.svg"), std::string::npos) << v.err;
+}
+
 TEST_P(ElctlPublishTest, PublishRequiresABuildOfTheSamePins) {
   ASSERT_EQ(run(create_args("a")).code, elctl::kOk);
   ASSERT_EQ(run(create_args("b")).code, elctl::kOk);
