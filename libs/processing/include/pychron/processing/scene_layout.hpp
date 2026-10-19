@@ -52,6 +52,14 @@ std::vector<Tick> axis_ticks(const Axis& axis, Range r, int target = 5);
 // ° 400, µ 556, σ 603 per 1000 em; any other code point 556.
 double text_width(std::string_view utf8, double size, bool bold = false);
 
+// The next code point of UTF-8 text from byte i, i moved past it; a
+// malformed byte is U+FFFD and one byte. Shared by the file writers.
+char32_t next_code_point(std::string_view utf8, std::size_t& i);
+
+// UTC time of unix seconds by a strftime subset (%Y %y %m %d %b %H %M %S %n
+// %%), the time axis's labels.
+std::string format_utc(double seconds, const std::string& format);
+
 struct Box {
   double x = 0, y = 0, w = 0, h = 0;
 };

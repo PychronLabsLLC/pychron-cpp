@@ -56,7 +56,7 @@ int glyph_width(char32_t c, bool bold) {
 }
 
 // Next code point of UTF-8 text; a malformed byte is one code point of its own.
-char32_t next_code_point(std::string_view s, std::size_t& i) {
+char32_t decode_utf8(std::string_view s, std::size_t& i) {
   const auto b = static_cast<unsigned char>(s[i]);
   const auto cont = [&](std::size_t k) -> std::optional<char32_t> {
     if (i + k >= s.size()) return std::nullopt;
@@ -254,7 +254,7 @@ void civil_from_days(std::int64_t z, int& y, int& m, int& d) {
 
 std::string two(int v) { return (v < 10 ? "0" : "") + std::to_string(v); }
 
-std::string format_time(double seconds, const std::string& format) {
+std::string utc_text(double seconds, const std::string& format) {
   const auto t = static_cast<std::int64_t>(std::floor(seconds));
   std::int64_t days = t / 86400, rem = t % 86400;
   if (rem < 0) {
@@ -310,7 +310,7 @@ std::vector<Tick> time_ticks(const Axis& axis, Range r, int target) {
   const auto count = static_cast<int>(k1 - k0) + 1;
   for (int i = 0; i < count; ++i) {
     const double v = (k0 + i) * step;
-    out.push_back({v, format_time(v, axis.time_format)});
+    out.push_back({v, utc_text(v, axis.time_format)});
   }
   return out;
 }
@@ -399,9 +399,13 @@ std::vector<Tick> axis_ticks(const Axis& axis, Range r, int target) {
   return axis.scale == AxisScale::Log ? log_ticks(r, target) : linear_ticks(r, target);
 }
 
+char32_t next_code_point(std::string_view utf8, std::size_t& i) { return decode_utf8(utf8, i); }
+
+std::string format_utc(double seconds, const std::string& format) { return utc_text(seconds, format); }
+
 double text_width(std::string_view utf8, double size, bool bold) {
   long total = 0;
-  for (std::size_t i = 0; i < utf8.size();) total += glyph_width(next_code_point(utf8, i), bold);
+  for (std::size_t i = 0; i < utf8.size();) total += glyph_width(decode_utf8(utf8, i), bold);
   return static_cast<double>(total) * size / 1000.0;
 }
 

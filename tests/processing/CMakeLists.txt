@@ -5,7 +5,7 @@ file(GLOB PYCHRON_PROCESSING_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR
 list(FILTER PYCHRON_PROCESSING_TESTS EXCLUDE REGEX "test_(record_source|store_source|flux_store|store_load_timing)\\.cpp$")
 
 add_executable(pychron_processing_tests ${PYCHRON_PROCESSING_TESTS})
-target_include_directories(pychron_processing_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(pychron_processing_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/support)
 target_link_libraries(pychron_processing_tests PRIVATE pychron::processing GTest::gtest_main)
 # The committed SVG and PDF of a scene (fixtures/scene): a stored format, so the
 # bytes one compiler writes are checked under every other (root AGENTS.md).
