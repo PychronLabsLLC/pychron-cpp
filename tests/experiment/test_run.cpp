@@ -641,6 +641,11 @@ TEST_F(RunTest, FailingPrepareSavesEarlierGases) {
   EXPECT_TRUE(r.record->results.intercepts.contains("He4@H1"));
   EXPECT_FALSE(r.record->results.intercepts.contains("Ne20@AX"));
   EXPECT_TRUE(std::filesystem::exists(lab_.files.analysis_path(*r.record)));
+  // Made safe: the device off, the gases' inlet and the pump-out valve closed.
+  EXPECT_FALSE(r.unsafe);
+  EXPECT_GE(device_.end_extracts.load(), 2);
+  const auto tail = std::vector<std::string>(valves_.log.end() - 2, valves_.log.end());
+  EXPECT_EQ(tail, (std::vector<std::string>{"close B", "close IP"}));
 }
 
 // What the host's static check refuses fails the gas with the host's words.

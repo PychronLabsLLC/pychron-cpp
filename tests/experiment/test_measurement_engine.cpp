@@ -213,6 +213,9 @@ class FakeValves final : public IValvePort {
  public:
   explicit FakeValves(ManualClock& clock) : clock_(clock) {}
   Result<void> open(const std::string& v) override {
+    if (open_fault) {
+      if (auto r = open_fault(v); !r) return r;
+    }
     log.push_back("open " + v + " @" + std::to_string(secs(clock_.now() - t0)));
     state[v] = true;
     return {};
@@ -229,6 +232,7 @@ class FakeValves final : public IValvePort {
   std::map<std::string, bool> state;
   TimePoint t0{};
   std::function<Result<void>(const std::string&)> close_fault;  // its error is the call's
+  std::function<Result<void>(const std::string&)> open_fault;   // likewise
 
  private:
   ManualClock& clock_;
@@ -1346,6 +1350,40 @@ TEST_F(StagedRelease, CancelDuringPrepareKeepsEarlierGases) {
     }
   }
   for (const auto& l : valves_.log) EXPECT_FALSE(l.starts_with("open Ne_in")) << l;
+}
+
+// A pump-out whose valve does not open fails the measurement, and the valve
+// is told to close all the same.
+TEST_F(StagedRelease, PumpOutThatDoesNotOpenFailsAndCloses) {
+  valves_.open_fault = [](const std::string& v) -> Result<void> {
+    if (v == "IP") return fail(ErrorKind::Io, "valve IP did not answer");
+    return {};
+  };
+  auto r = run(plan_from(kStaged));
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Failed);
+  ASSERT_TRUE(r.error);
+  EXPECT_NE(r.error->what.find("valve IP did not answer"), std::string::npos) << r.error->what;
+  EXPECT_NE(std::find_if(valves_.log.begin(), valves_.log.end(), [](const std::string& l) { return l.starts_with("close IP"); }),
+            valves_.log.end());
+  EXPECT_TRUE(fake_prepare_.requests.size() == 1u);  // Ne not prepared
+}
+
+// A stop in the pump-out's wait closes the valve; it is no pump-out done.
+TEST_F(StagedRelease, PumpOutStoppedMidWaitClosesTheValve) {
+  int opened = 0;
+  valves_.open_fault = [&](const std::string& v) -> Result<void> {
+    if (v == "IP") ++opened;
+    return {};
+  };
+  EngineOptions options;
+  options.sleep = [this, &opened](pychron::Duration d) {
+    clock_.advance(d);
+    if (opened > 0) token_.cancel();  // stopped while it pumps
+  };
+  auto r = run(plan_from(kStaged), {}, options);
+  EXPECT_EQ(r.outcome, MeasurementOutcome::Cancelled);
+  EXPECT_FALSE(valves_.state["IP"]);
+  for (const auto& g : r.gases) EXPECT_FALSE(g.pump_out) << g.name;
 }
 
 TEST_F(StagedRelease, ValidateNeedsThePorts) {

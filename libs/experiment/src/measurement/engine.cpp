@@ -536,10 +536,16 @@ Result<void> MeasurementEngine::prepare_gas() {
 Result<void> MeasurementEngine::pump_out_gas() {
   const auto& po = *gas_->pump_out;
   trace(-1, -1, "pump_out", gas_->name + " " + po.valve + " " + plain(po.time_s));
-  if (auto r = ctx_.valves->open(po.valve); !r) return r;
-  wait(po.time_s);
-  // Closed whatever the wait gave (a stop included), as the inlet is.
-  if (auto r = critical("close " + po.valve, [&] { return ctx_.valves->close(po.valve); }); !r) return r;
+  // Closed whatever happened (an open that failed, a stop in the wait), as
+  // the inlet is.
+  const auto close = [&] { return critical("close " + po.valve, [&] { return ctx_.valves->close(po.valve); }); };
+  if (auto r = ctx_.valves->open(po.valve); !r) {
+    (void)close();  // an open whose answer was lost may have opened it
+    return r;
+  }
+  const bool waited = wait(po.time_s);
+  if (auto r = close(); !r) return r;
+  if (!waited) return {};  // stopped: not a pump-out done, the outcome says why
   auto it = std::find_if(result_.gases.begin(), result_.gases.end(),
                          [&](const GasOutcome& o) { return o.name == gas_->name; });
   if (it == result_.gases.end()) it = result_.gases.insert(result_.gases.end(), GasOutcome{gas_->name, {}, {}});

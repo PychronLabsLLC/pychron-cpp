@@ -848,7 +848,10 @@ prepare = { script = "cryo:release", variables = { cryo_temp = 75, hold_s = 300 
 Optional `pump_out = { valve = "@valves.ion_pump", time_s = 120 }`: after
 the gas's last segment, open, wait, close, before the next gas's `prepare`.
 Absent: outlet handling as 3.4. Declarative because every multi-gas method
-needs it.
+needs it. As built: valve closed whatever happens (an open that fails is
+answered by a close too; a stop in the wait closes it and records no
+pump-out). A gas that fails is not pumped out: run fails, and safe state
+closes every gas's inlet and every pump-out valve (absolute targets, 4.7).
 
 ### 11.4 Run phases
 

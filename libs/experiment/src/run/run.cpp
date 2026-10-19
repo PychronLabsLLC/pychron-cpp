@@ -400,8 +400,18 @@ SafeStateResult Run::make_safe() {
   }
   if (plan_) {
     const auto& p = plan_->plan;
-    if (s_.valves != nullptr && !p.equilibration.inlet.empty())
-      step("close inlet " + p.equilibration.inlet, [&] { return s_.valves->close(p.equilibration.inlet); });
+    // Every gas's inlet, and a staged plan's pump-out valves (spec 11.3).
+    if (s_.valves != nullptr) {
+      std::set<std::string> inlets, pumps;
+      if (!p.equilibration.inlet.empty()) inlets.insert(p.equilibration.inlet);
+      for (const auto& gas : p.gases) {
+        if (!gas.equilibration.inlet.empty()) inlets.insert(gas.equilibration.inlet);
+        if (gas.pump_out && !gas.pump_out->valve.empty()) pumps.insert(gas.pump_out->valve);
+      }
+      for (const auto& v : inlets) step("close inlet " + v, [&] { return s_.valves->close(v); });
+      for (const auto& v : pumps)
+        if (!inlets.contains(v)) step("close pump-out " + v, [&] { return s_.valves->close(v); });
+    }
     if (s_.spectrometer != nullptr) {
       std::set<std::string> protected_detectors;
       for (const auto& gas : p.gases)
