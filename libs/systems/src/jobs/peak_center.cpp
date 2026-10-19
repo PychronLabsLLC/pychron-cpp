@@ -443,7 +443,9 @@ class Runner {
       r_.table_updated = true;
       // D2 (field table editor spec, section 6): persist the update. A failed
       // save keeps the in-memory table and the success.
-      if (auto saved = spec_.save_table(spec_.clock().wall_now()); !saved) {
+      if (!cfg_.save_table) {
+        // A run's own table: kept in memory only.
+      } else if (auto saved = spec_.save_table(spec_.clock().wall_now()); !saved) {
         const std::string note = "field table not saved: " + saved.error().what;
         Logger("peak_center", spec_.clock(), &spec_.bus()).warn(note);
         r_.notes.push_back(note);

@@ -533,6 +533,54 @@ TEST_F(MeasurementSim, PeakCenterFindsAnOffsetPeakAndTheNextRunMeasuresOnIt) {
   EXPECT_FALSE(peak_center.last()->tries.empty());
 }
 
+// A peak center step's write_table (plan Task 16): the center goes into the
+// run's own copy of the current table, which a later position selects; the
+// current table is untouched, and nothing is left behind after the run.
+TEST_F(MeasurementSim, WriteTableIsUsedByLaterPositions) {
+  sim::BeamDetector ax;
+  ax.name = "AX";
+  ax.offset = 0.02;
+  beam_->add_detector(ax);
+  jobs::PeakCenterConfig wide;
+  wide.name = "wide";
+  wide.window = 0.08;
+  wide.step = 0.002;
+  wide.integration = std::chrono::seconds(1);
+  SpectrometerPeakCenter peak_center(*spec_, {{"wide", wide}});
+  const auto current = spec_->field_table();
+  const std::string current_name = spec_->active_table();
+
+  PeakCenterRequest request;
+  request.isotope = "Ar40";
+  request.detector = "AX";
+  request.config = "wide";
+  request.write_table = "ic_run";
+  scripting::CancelToken token;
+  auto report = peak_center.peak_center(request, token);
+  ASSERT_TRUE(report) << report.error().what;
+  ASSERT_TRUE(report->ok) << report->message;
+  ASSERT_TRUE(report->table_value);
+  EXPECT_EQ(spec_->field_table(), current);  // the current table is as it was
+  EXPECT_EQ(spec_->active_table(), current_name);
+  ASSERT_TRUE(spec_->is_run_table("ic_run"));
+
+  // A later position on the run's table goes to the center found.
+  SpectrometerPort port(*spec_);
+  ASSERT_TRUE(port.with_table("ic_run"));
+  const auto table = spec_->field_table();
+  const auto row = std::find_if(table.points().begin(), table.points().end(),
+                                [](const spectrometer::ControlPoint& p) { return p.isotope == "Ar40"; });
+  ASSERT_NE(row, table.points().end());
+  EXPECT_DOUBLE_EQ(row->values.at("AX"), *report->table_value);
+  ASSERT_TRUE(port.position(plan::AtLabel{"Ar40", "AX"}));
+  EXPECT_NEAR(*spec_->magnet_native(), *report->center, 1e-6);
+  ASSERT_TRUE(port.with_table(""));
+
+  peak_center.drop_run_tables();
+  EXPECT_FALSE(spec_->is_run_table("ic_run"));
+  EXPECT_FALSE(spec_->with_table("ic_run"));
+}
+
 // ---- SpectrometerPeakCenter and the run's token ------------------------------
 
 // A peak center long enough to be cancelled part way: 80 steps of 1 s.

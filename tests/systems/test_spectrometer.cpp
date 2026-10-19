@@ -400,6 +400,41 @@ TEST(Spectrometer, WithTableScopesTheActiveTable) {
   EXPECT_FALSE(r.spec->with_table("missing").has_value());
 }
 
+// A run's own table (a peak center step's write_table): selected like any
+// other, never saved, not a name a loaded table has, gone when dropped.
+TEST(Spectrometer, ARunTableIsSelectableAndNeverSaved) {
+  Rig r;
+  FieldTable ic(FitKind::Discrete, TableAxis::Dac, {ControlPoint{"Ar40", 39.9623831237, {{"H1", 6.0}}}});
+  r.build({{"ic", ic}});
+  EXPECT_FALSE(r.spec->add_run_table("argon", r.spec->field_table()));  // loaded
+  EXPECT_FALSE(r.spec->add_run_table("ic", r.spec->field_table()));
+  ASSERT_TRUE(r.spec->add_run_table("ic_run", r.spec->field_table()));
+  EXPECT_FALSE(r.spec->add_run_table("ic_run", r.spec->field_table()));  // once
+  EXPECT_TRUE(r.spec->is_run_table("ic_run"));
+  {
+    auto scope = r.spec->with_table("ic_run");
+    ASSERT_TRUE(scope.has_value());
+    ASSERT_TRUE(r.spec->update_table("H1", "Ar40", 5.5, false));
+    auto saved = r.spec->save_table(std::chrono::system_clock::time_point{});
+    ASSERT_FALSE(saved);
+    EXPECT_NE(saved.error().what.find("not saved"), std::string::npos) << saved.error().what;
+    auto pos = r.spec->position(PositionTarget{Isotope{"Ar40"}, "H1"});
+    ASSERT_TRUE(pos.has_value());
+    EXPECT_NEAR(pos->native, 5.5, 1e-9);
+  }
+  auto pos = r.spec->position(PositionTarget{Isotope{"Ar40"}, "H1"});
+  ASSERT_TRUE(pos.has_value());
+  EXPECT_NEAR(pos->native, 5.001, 1e-9);  // the current table is untouched
+  auto scope = r.spec->with_table("ic_run");
+  ASSERT_TRUE(scope.has_value());
+  r.spec->drop_run_table("ic_run");
+  EXPECT_EQ(r.spec->active_table(), "argon");  // the dropped table was active
+  EXPECT_FALSE(r.spec->is_run_table("ic_run"));
+  EXPECT_FALSE(r.spec->with_table("ic_run").has_value());
+  r.spec->drop_run_table("argon");  // not a run table: nothing
+  EXPECT_TRUE(r.spec->with_table("argon").has_value());
+}
+
 TEST(Spectrometer, UpdateTableShiftsSubsequentPositions) {
   Rig r;
   r.build();

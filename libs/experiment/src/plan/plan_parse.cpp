@@ -1150,13 +1150,6 @@ void unbuilt_segment(const Segment& s, const std::string& at, std::vector<std::s
     case SegmentKind::Park:
     case SegmentKind::Delay:
     case SegmentKind::TimeZero: add(at, std::string(to_string(s.kind)) + " step"); break;
-    case SegmentKind::PeakCenter:
-      if (s.peak_center) {
-        if (s.peak_center->detectors.size() > 1) add(join(at, "peak_center"), "peak_center with several detectors");
-        if (!s.peak_center->extra_detectors.empty()) add(join(at, "peak_center"), "extra_detectors");
-        if (!s.peak_center->write_table.empty()) add(join(at, "peak_center"), "write_table");
-      }
-      break;
     default: break;
   }
   // The engine takes one sniff or whiff reading block, at one place.

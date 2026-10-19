@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -255,6 +256,16 @@ class Spectrometer {
   // check_field_table reports an error ("table_invalid").
   Result<void> restore_table_version(const std::string& name, const std::string& version);
 
+  // A table of one run (measurement plan v2: a peak center step's
+  // write_table): `table` kept in memory under `name`, selected with
+  // with_table like any other, never written (save_table refuses it).
+  // Config when `name` is a table loaded at startup or in the store, or a run
+  // table already. Dropped with drop_run_table; the configured table is
+  // active again when the dropped one was.
+  Result<void> add_run_table(const std::string& name, FieldTable table);
+  void drop_run_table(const std::string& name);
+  bool is_run_table(const std::string& name) const;
+
   // RAII: while any is out, the table may not be replaced or restored to
   // another version (a queue or a peak center is using it). Move-only; a
   // default-constructed or moved-from hold holds nothing. Must not outlive
@@ -369,6 +380,7 @@ class Spectrometer {
   // a clock mutex. Recursive: the locked operations call one another.
   mutable RecursiveClockMutex mutex_;
   std::map<std::string, FieldTable> tables_;
+  std::set<std::string> run_tables_;  // names in tables_ that are a run's own (add_run_table)
   std::string active_table_;
   std::optional<DetectorSet> detectors_;
   std::map<DetectorId, ChannelId> local_channel_;  // detector -> driver-local channel

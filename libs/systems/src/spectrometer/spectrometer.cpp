@@ -553,6 +553,8 @@ Result<std::string> Spectrometer::save_table(std::chrono::system_clock::time_poi
   FieldTableChanged event;
   {
     std::scoped_lock lock(mutex_);
+    if (run_tables_.contains(active_table_))
+      return config_error("table '" + active_table_ + "' is a run's own and is not saved");
     if (options_.data_root.empty()) return config_error("save_table needs a data directory");
     FieldTableStore store(options_.data_root / "tables", active_table_);
     auto saved = store.save(table_locked(), when);
@@ -563,6 +565,33 @@ Result<std::string> Spectrometer::save_table(std::chrono::system_clock::time_poi
   // a move another thread starts meanwhile.
   context_.bus.publish(event);
   return event.version;
+}
+
+Result<void> Spectrometer::add_run_table(const std::string& name, FieldTable table) {
+  std::scoped_lock lock(mutex_);
+  if (name.empty()) return config_error("a run table needs a name");
+  if (run_tables_.contains(name)) return config_error("table '" + name + "' is a run table already");
+  if (tables_.contains(name)) return config_error("table '" + name + "' is loaded: a run table needs a new name");
+  if (!options_.data_root.empty() && FieldTableStore(options_.data_root / "tables", name).current_version())
+    return config_error("table '" + name + "' is in the store: a run table needs a new name");
+  if (table.axis() != to_table_axis(axis_))
+    return config_error("table '" + name + "' is in " + std::string(to_string(table.axis())) +
+                        " units, positioner is " + std::string(to_string(axis_)));
+  tables_.emplace(name, std::move(table));
+  run_tables_.insert(name);
+  return {};
+}
+
+void Spectrometer::drop_run_table(const std::string& name) {
+  std::scoped_lock lock(mutex_);
+  if (run_tables_.erase(name) == 0) return;
+  tables_.erase(name);
+  if (active_table_ == name) active_table_ = config_.magnet.field_table;
+}
+
+bool Spectrometer::is_run_table(const std::string& name) const {
+  std::scoped_lock lock(mutex_);
+  return run_tables_.contains(name);
 }
 
 Result<std::string> Spectrometer::table_version(const std::string& name) const {

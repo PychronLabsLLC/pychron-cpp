@@ -97,6 +97,9 @@ struct PeakCenterConfig {
   double peak_shift_threshold = 0;        // 0: no limit
   bool update_table = true;
   bool propagate = true;                  // update the other detectors' columns (pychron update_others)
+  // Saves the updated table (D2). Not a file key: off for a run's own table
+  // (a peak center step's write_table), which is never written.
+  bool save_table = true;
 
   friend bool operator==(const PeakCenterConfig&, const PeakCenterConfig&) = default;
 };

@@ -245,8 +245,10 @@ class FakePeakCenter final : public IPeakCenterPort {
     else report.message = "no peak";
     return report;
   }
+  void drop_run_tables() override { ++dropped; }
   std::vector<PeakCenterRequest> requests;
   bool ok = true;
+  int dropped = 0;
 };
 
 class FakeHook final : public IMeasurementHook {
@@ -1057,6 +1059,87 @@ TEST_F(EngineTest, APeakCenterAfterIsSkippedWhenTheSignalIsBelowThePlansMinimum)
   EXPECT_EQ(r.blocks.back(), Block::PeakCenterAfter);
   const auto told = std::ranges::count_if(said, [](const std::string& m) { return m.find("skipped") != std::string::npos; });
   EXPECT_EQ(told, 1);
+}
+
+// ---- the peak_center step (plan Task 16) ------------------------------------------
+
+std::string ic_plan(std::string_view peak_center, std::string_view when = "before_inlet") {
+  const std::string table = when == "before_inlet" ? "table = \"ic_run\"\n" : "";
+  return std::string(R"toml(
+[plan]
+name = "ic"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = 10
+
+[[segment]]
+kind = "peak_center"
+when = ")toml") + std::string(when) + R"toml("
+peak_center = )toml" + std::string(peak_center) + R"toml(
+
+[[segment]]
+kind = "signal"
+cycles = 2
+)toml" + table + R"toml(
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+[[segment.positions]]
+collect = { Ar40 = "AX" }
+counts = 3
+)toml";
+}
+
+// Worked plan 7.3: the job runs once per detector, each into the run's table.
+TEST_F(EngineTest, PeakCenterStepOncePerDetector) {
+  auto r = run(plan_from(ic_plan(R"({ label = "Ar40", detectors = ["H1", "AX", "L2"], write_table = "ic_run" })")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(peak_.requests.size(), 3u);
+  const std::vector<std::string> dets{"H1", "AX", "L2"};
+  for (std::size_t i = 0; i < 3; ++i) {
+    EXPECT_EQ(peak_.requests[i].detector, dets[i]);
+    EXPECT_EQ(peak_.requests[i].isotope, "Ar40");
+    EXPECT_EQ(peak_.requests[i].write_table, "ic_run");
+  }
+  EXPECT_EQ(r.peak_centers.size(), 3u);
+  // The positions then run on the run's table.
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "table ic_run"), 1);
+  EXPECT_EQ(peak_.dropped, 1);  // the run's tables end with it
+}
+
+// Worked plan 7.1: extra detectors are fitted with the reference.
+TEST_F(EngineTest, PeakCenterStepExtraDetectorsPassed) {
+  auto r = run(plan_from(ic_plan(R"({ label = "Ar40", detector = "H1", extra_detectors = ["AX", "CDD"], write_table = "ic_run" })")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_EQ(peak_.requests.size(), 1u);
+  EXPECT_EQ(peak_.requests[0].extra_detectors, (std::vector<std::string>{"AX", "CDD"}));
+}
+
+// The v1 rule stays: an after_run peak center under min_signal is skipped.
+TEST_F(EngineTest, PeakCenterStepMinSignalSkipsAfterRun) {
+  auto r = run(plan_from(ic_plan(R"({ label = "Ar40", detector = "H1", min_signal = 1e12, write_table = "ic_run" })",
+                                 "after_run")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_TRUE(peak_.requests.empty());
+  ASSERT_EQ(r.peak_centers.size(), 1u);
+  EXPECT_TRUE(r.peak_centers[0].skipped);
+}
+
+// Review Focus 1: a failed write leaves the positions that name the table on
+// the current one; the run says so and goes on.
+TEST_F(EngineTest, PeakCenterStepFailedWriteTableFallsBackToCurrentTable) {
+  peak_.ok = false;
+  auto r = run(plan_from(ic_plan(R"({ label = "Ar40", detectors = ["H1", "AX"], write_table = "ic_run" })")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(peak_.requests.size(), 2u);
+  EXPECT_EQ(std::count(spec_.log.begin(), spec_.log.end(), "table ic_run"), 0);
+  const auto notes = std::count(r.notes.begin(), r.notes.end(), "table ic_run not written: no peak");
+  EXPECT_EQ(notes, 1);  // once, not once per detector
+  EXPECT_EQ(merged_series(r.data, "Ar40", "AX", collect::kSignal).value().v.size(), 6u);
 }
 
 // The signal compared is the mean of the last ten readings of the main block.

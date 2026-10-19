@@ -155,6 +155,7 @@ class SpectrometerPeakCenter final : public IPeakCenterPort {
       : spec_(spectrometer), configs_(std::move(configs)), runner_(runner), options_(std::move(options)) {}
 
   Result<PeakCenterReport> peak_center(const PeakCenterRequest& request, scripting::CancelToken& token) override;
+  void drop_run_tables() override;
 
   // Full result of the last peak center (points, shapes), for display.
   std::optional<jobs::PeakCenterResult> last() const;
@@ -168,6 +169,7 @@ class SpectrometerPeakCenter final : public IPeakCenterPort {
   jobs::PeakCenterOptions options_;
   mutable std::mutex mutex_;
   std::optional<jobs::PeakCenterResult> last_;
+  std::set<std::string> run_tables_;  // write_table names this adapter registered on the facade
 };
 
 // Instrument metrics for conditionals (conditionals spec section 5):

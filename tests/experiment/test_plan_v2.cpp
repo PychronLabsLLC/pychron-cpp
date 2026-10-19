@@ -1504,16 +1504,6 @@ collect = { Ar40 = "H1" }
 at = { mass = 34.2, detector = "H1" }
 counts = 1
 )"},
-      {"segment[1].peak_center: peak_center with several detectors", R"(
-[[segment]]
-[[segment.positions]]
-collect = { Ar40 = "H1" }
-counts = 1
-[[segment]]
-kind = "peak_center"
-when = "after_run"
-peak_center = { label = "Ar40", detectors = ["H1", "AX"] }
-)"},
       {"gas[1]: more than one gas", R"(
 [[gas]]
 name = "a"

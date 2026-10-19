@@ -1,5 +1,6 @@
 #include "pychron/experiment/measurement/adapters.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -207,6 +208,16 @@ Result<jobs::PeakCenterConfig> SpectrometerPeakCenter::config_for(const PeakCent
   }
   if (!request.isotope.empty()) cfg.isotope = request.isotope;
   if (!request.detector.empty()) cfg.detector = request.detector;
+  for (const auto& d : request.extra_detectors)
+    if (std::find(cfg.additional_detectors.begin(), cfg.additional_detectors.end(), d) == cfg.additional_detectors.end())
+      cfg.additional_detectors.push_back(d);
+  if (!request.write_table.empty()) {
+    // The run's own table: this detector's column only, never saved
+    // (legacy generate_ic_mftable).
+    cfg.update_table = true;
+    cfg.propagate = false;
+    cfg.save_table = false;
+  }
   return cfg;
 }
 
@@ -214,6 +225,24 @@ Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterReq
                                                             scripting::CancelToken& token) {
   auto cfg = config_for(request);
   if (!cfg) return fail(cfg.error());
+  // write_table: the job updates the run's own copy of the current table,
+  // selected for as long as it runs.
+  std::optional<spectrometer::Spectrometer::TableScope> run_table;
+  if (!request.write_table.empty()) {
+    bool fresh = false;
+    {
+      std::lock_guard lock(mutex_);
+      fresh = !run_tables_.contains(request.write_table);
+    }
+    if (fresh) {
+      if (auto added = spec_.add_run_table(request.write_table, spec_.field_table()); !added) return fail(added.error());
+      std::lock_guard lock(mutex_);
+      run_tables_.insert(request.write_table);
+    }
+    auto scope = spec_.with_table(request.write_table);
+    if (!scope) return fail(scope.error());
+    run_table.emplace(std::move(*scope));
+  }
 
   // Bridge the run's token to the job's: a cancel of the run is made on the
   // job by the thread that requests it, for as long as the job runs. Shared:
@@ -264,6 +293,15 @@ Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterReq
   report.table_updated = result->table_updated;
   if (result->shape) report.resolution = result->shape->resolution;
   return report;
+}
+
+void SpectrometerPeakCenter::drop_run_tables() {
+  std::set<std::string> names;
+  {
+    std::lock_guard lock(mutex_);
+    names.swap(run_tables_);
+  }
+  for (const auto& name : names) spec_.drop_run_table(name);
 }
 
 std::optional<jobs::PeakCenterResult> SpectrometerPeakCenter::last() const {

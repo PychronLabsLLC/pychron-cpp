@@ -70,6 +70,11 @@ struct PeakCenterRequest {
   std::string isotope;
   std::string detector;
   std::string config = "default";
+  std::vector<std::string> extra_detectors;  // fitted too, for display
+  // Non-empty: the center goes into this run's own table of that name (a
+  // copy of the current table made at its first peak center), not into the
+  // current table; never saved.
+  std::string write_table;
 };
 
 struct PeakCenterReport {
@@ -92,6 +97,8 @@ class IPeakCenterPort {
   virtual ~IPeakCenterPort() = default;
   virtual Result<PeakCenterReport> peak_center(const PeakCenterRequest& request,
                                                scripting::CancelToken& token) = 0;
+  // The run is over: its own tables (write_table) are forgotten.
+  virtual void drop_run_tables() {}
 };
 
 // Measurement hook (spec 4.3): Python called at named points. A hook that

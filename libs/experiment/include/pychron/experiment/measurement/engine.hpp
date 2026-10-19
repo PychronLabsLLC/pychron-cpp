@@ -324,6 +324,7 @@ class MeasurementEngine {
   Result<void> run_segment(std::size_t segment);
   Result<void> run_step(std::size_t segment);
   Result<void> peak_center(const plan::PeakCenterStep& step);
+  Result<void> peak_center_on(PeakCenterRequest request, double min_signal);  // one detector
   Result<void> equilibrate();
   Result<void> whiff(std::size_t segment);
   Result<void> call_hook(std::string_view entry, const scripting::ValueMap& args = {});
@@ -404,6 +405,7 @@ class MeasurementEngine {
   Block block_ = Block::Main;                // the block running
   std::optional<plan::At> position_;         // where the magnet is, when known
   std::string table_;                        // field table selected ("" the configured one)
+  std::set<std::string> unwritten_tables_;   // write_tables a failed peak center left unwritten
   std::string optics_;                       // optics preset applied ("" none yet)
   struct Deflected {
     double wanted = 0;    // what the plan asked for

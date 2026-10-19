@@ -228,6 +228,7 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   block_ = Block::Main;
   position_.reset();
   table_.clear();
+  unwritten_tables_.clear();
   optics_.clear();
   deflected_.clear();
   settle_due_ = false;
@@ -435,23 +436,38 @@ Result<void> MeasurementEngine::run_step(std::size_t segment) {
 
 Result<void> MeasurementEngine::peak_center(const plan::PeakCenterStep& step) {
   const auto& p = in_.plan;
-  PeakCenterRequest req{step.label, step.detectors.empty() ? p.detectors.reference : step.detectors.front(),
-                        step.config};
+  std::vector<std::string> detectors = step.detectors;
+  if (detectors.empty()) detectors.push_back(p.detectors.reference);
+  // With several detectors the job runs once on each, in order (worked plan 7.3).
+  for (const auto& det : detectors) {
+    if (stopping()) return {};
+    PeakCenterRequest req;
+    req.isotope = step.label;
+    req.detector = det;
+    req.config = step.config;
+    req.extra_detectors = step.extra_detectors;
+    req.write_table = step.write_table;
+    if (auto r = peak_center_on(std::move(req), step.min_signal); !r) return r;
+  }
+  return {};
+}
+
+Result<void> MeasurementEngine::peak_center_on(PeakCenterRequest req, double min_signal) {
   const Block block = block_;
   // A small peak (after a blank) still fits, and its centre would go into the
   // field table. Only signal readings say how much signal there is: with
   // none (before the gas is in) the step runs.
-  if (step.min_signal > 0) {
+  if (min_signal > 0) {
     const auto series = collector_.series_of(req.isotope + "@" + req.detector, collect::kSignal);
     if (series && !series->v.empty()) {
       const auto n = std::min(series->v.size(), plan::kPeakCenterSignalReadings);
       const double mean = std::accumulate(series->v.end() - static_cast<std::ptrdiff_t>(n), series->v.end(), 0.0) /
                           static_cast<double>(n);
-      if (mean < step.min_signal) {
+      if (mean < min_signal) {
         PeakCenterReport skipped;
         skipped.request = std::move(req);
         skipped.skipped = true;
-        skipped.message = "signal " + plain(mean) + " below min_signal " + plain(step.min_signal);
+        skipped.message = "signal " + plain(mean) + " below min_signal " + plain(min_signal);
         skipped.finished = ctx_.clock.now();
         publish_log(LogLevel::Info, std::string(to_string(block)) + " skipped: " + skipped.message);
         result_.peak_centers.push_back(std::move(skipped));
@@ -465,8 +481,13 @@ Result<void> MeasurementEngine::peak_center(const plan::PeakCenterStep& step) {
     if (token_->requested()) return {};
     return fail(rep.error());
   }
-  if (!rep->ok)
+  if (!rep->ok) {
     publish_log(LogLevel::Warn, std::string(to_string(block)) + " failed: " + rep->message + "; continuing");
+    // The IC data is still worth having (legacy generate_ic_mftable): what
+    // names the table runs on the current one, and the run says so.
+    if (!req.write_table.empty() && unwritten_tables_.insert(req.write_table).second)
+      result_.notes.push_back("table " + req.write_table + " not written: " + rep->message);
+  }
   rep->finished = ctx_.clock.now();
   result_.peak_centers.push_back(*rep);
   return {};
@@ -703,7 +724,9 @@ Result<collect::CollectStatus> MeasurementEngine::run_position(const plan::Gas& 
 Result<void> MeasurementEngine::enter_position(const plan::Segment& seg, const plan::Position& pos, int segment,
                                                int position) {
   const auto target = plan::position_target(in_.plan, pos, ctx_.reference);
-  const std::string& table = pos.table.empty() ? seg.table : pos.table;
+  const std::string& named = pos.table.empty() ? seg.table : pos.table;
+  // A table a failed peak center did not write: the current one.
+  const std::string table = unwritten_tables_.contains(named) ? std::string() : named;
   std::map<std::string, double> wanted;
   for (const auto& e : pos.collect)
     if (e.deflection) wanted[e.detector] = *e.deflection;
@@ -1210,6 +1233,14 @@ void MeasurementEngine::cleanup(bool abnormal) {
   }
   if (auto r = restore_deflections(nullptr, -1, -1); !r)
     publish_log(LogLevel::Error, "could not restore a deflection: " + r.error().what);
+  // The run's tables (a peak center's write_table) end with it, after the
+  // table they may be selected as is let go.
+  if (!table_.empty()) {
+    if (auto r = ctx_.spectrometer.with_table(""); !r)
+      publish_log(LogLevel::Error, "could not go back to the current table: " + r.error().what);
+    table_.clear();
+  }
+  if (ctx_.peak_center != nullptr) ctx_.peak_center->drop_run_tables();
   if (abnormal && inlet_open_ && ctx_.valves != nullptr) {
     const auto& inlet = equilibration().inlet;
     if (auto r = ctx_.valves->close(inlet); r) {
