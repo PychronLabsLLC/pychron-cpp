@@ -23,6 +23,7 @@
 #include "exp.hpp"
 #include "data_source.hpp"
 #include "db.hpp"
+#include "embargo.hpp"
 #include "export.hpp"
 #include "publish.hpp"
 #include "flux.hpp"
@@ -268,6 +269,7 @@ class Session {
     if (cmd == "entry") return entry_command(args, io_);
     if (cmd == "export") return export_command(args, io_);
     if (cmd == "publish") return publish_command(args, io_);
+    if (cmd == "embargo") return embargo_command(args, io_);
     if (cmd == "db") return db_command(args, io_);
     if (cmd == "flux") return flux_command(args, io_);
     if (cmd == "earthbank") return earthbank_command(args, io_);
