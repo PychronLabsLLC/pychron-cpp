@@ -917,14 +917,15 @@ TEST_F(SpectrometerPortSim, SettingsReachTheFacade) {
   EXPECT_FALSE(port.with_table("no_such_table"));
   EXPECT_EQ(spec_->active_table(), configured);
 
-  // No driver applies optics or switches the source output yet.
+  // The example config has no presets and no driver with the "optics" role.
   auto optics = port.apply_optics("zoom");
   ASSERT_FALSE(optics);
   EXPECT_EQ(optics.error().kind, ErrorKind::Config);
-  EXPECT_NE(optics.error().what.find("not supported by this spectrometer"), std::string::npos);
+  EXPECT_NE(optics.error().what.find("unknown optics 'zoom'"), std::string::npos) << optics.error().what;
   auto output = port.set_source_output(true);
   ASSERT_FALSE(output);
   EXPECT_EQ(output.error().kind, ErrorKind::Config);
+  EXPECT_NE(output.error().what.find("not supported by this spectrometer"), std::string::npos);
 }
 
 TEST_F(SpectrometerPortSim, TheTableScopeEndsWithThePort) {
