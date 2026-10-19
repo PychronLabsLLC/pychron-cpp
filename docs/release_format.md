@@ -24,6 +24,7 @@ this page is the reader's reference to what is in the directory.
   data/interpreted_ages.parquet   GeoParquet
   tables/release.csv, release.json          the Schaen report of every analysis of the release
   tables/<sample>/report.csv, report.json   the same report, per sample
+  figures/<sample>/<kind>.svg, <kind>.pdf   ideogram, spectrum, isochron; only with --with-figures
   constants.json                  the decay constants and ratios the ages used
   LICENSE.txt                     the licence text (CC-BY-4.0, CC-BY-SA-4.0 and CC0-1.0 ship with pychron)
   CITATION.cff                    how to cite the release
@@ -196,6 +197,32 @@ One row per interpreted age of the release, at its pinned revision.
 | `revision_uuid` | uuid | the pinned revision |
 | `doc` | JSON | the full interpreted-age document as stored |
 | `geometry`, `bbox` | WKB, struct | the sample's location |
+
+## Figures
+
+`elctl publish build --with-figures` adds, per sample:
+
+- `ideogram.svg` and `.pdf`: the ideogram of the sample's analyses.
+- `spectrum.svg` and `.pdf`: the age spectrum of a step-heated aliquot. A
+  sample with more than one has `spectrum-<identifier>-<aliquot>.svg` and
+  `.pdf` per aliquot (`spectrum-66012-01.svg`), the name made safe as
+  `<sample>` is.
+- `isochron.svg` and `.pdf`: the inverse isochron, when at least three of the
+  sample's analyses are included.
+
+A figure that cannot be drawn (a sample with no ages, say) is left out and
+the build says so. The figures use the figure editors' defaults, with the
+release's `sigma` for the error bars and its `plateau`, `plateau_steps` and
+`plateau_gas` for the spectrum.
+
+The SVG is text, sized in points, with fonts named (Helvetica, Arial,
+sans-serif) and not embedded. The PDF is one page of PDF 1.4, uncompressed,
+in the standard fonts (Helvetica; Symbol for Greek letters; a character
+neither has is `?`), with no document id and the release's `created_utc` as
+its creation date. Both are drawn from the same layout, so they show the same
+thing. The same release built twice gives the same bytes for every figure,
+so `verify` compares them like any other file; `verify --db` rebuilds with
+figures when the directory has them.
 
 ## `manifest.json`
 

@@ -453,26 +453,55 @@ Report metadata gains rows `release`, `release version`, `doi` (when any),
 
 ### 5.6 Figures
 
-Per sample: ideogram of its ages; spectrum per step-heated aliquot (file
-`spectrum-<aliquot>.{pdf,svg}` when more than one); inverse isochron of
-the sample. Built with `build_ideogram`, `build_spectrum`, `build_isochron`
-(`arar_figures.hpp`) from the same `Dataset` and `Options` as the report.
+Per sample (`libs/publish` `figures.hpp`, `sample_figures`): ideogram of its
+ages; spectrum per step-heated aliquot (items with increment >= 0, by
+identifier and aliquot), file `spectrum.{pdf,svg}` when one, else
+`spectrum-<identifier>-<aliquot two digits>.{pdf,svg}` made file-safe;
+inverse isochron only when >= 3 included analyses. Built with
+`build_ideogram`, `build_spectrum`, `build_isochron` (`arar_figures.hpp`)
+from same `Dataset` as report. Options: schema defaults, plus
+`error_bar_nsigma` = `release.options.sigma` and spectrum `plateau.method`,
+`plateau.nsteps`, `plateau.gas_fraction` from `plateau`, `plateau_steps`,
+`plateau_gas`; no per-release figure options yet. A figure whose builder
+fails is left out with warning `<sample>: no <kind>: <why>`; build goes on.
+Time series not a release figure (per instrument, not per sample).
 
-`Scene` is Qt-free; rendering today is `SceneView` (UI, Qt). Release needs
-Qt-free writers:
+`Scene` is Qt-free; rendering in UI is `SceneView` (Qt, QCustomPlot). Qt-free
+writers in `libs/processing`:
 
-- `libs/processing/scene_svg.hpp`: `std::string scene_svg(const Scene&,
-  const SceneStyle&)`. Text, deterministic, fonts named not embedded.
-- `libs/processing/scene_pdf.hpp`: `Result<void> save_scene_pdf(const Scene&,
-  const SceneStyle&, path)`. Minimal PDF 1.4 writer: one page, vector
-  paths, standard 14 fonts (Helvetica), `CreationDate` = release
-  `created_utc`, no `/ID` randomness, no compression (a figure is tens of
-  KB), xref table correct. Layers map as `SceneView` paints them; the two
-  renderers share layout code (`scene_layout.hpp`, the part of `SceneView`
-  that places axes, ticks and labels, moved down into `libs/processing`).
-  UI keeps `QPdfWriter` for interactive export; a test renders the same
-  Scene both ways and compares the placed primitives, not bytes.
-- Same Scene twice gives the same bytes: both are in the manifest with sha.
+- `scene_layout.hpp`: what `SceneView` computed itself, moved down: axis
+  ranges (`graph_x_range`, `panel_y_range`: data extent, 8% pad, log rule,
+  axis min/max per side), used by `SceneView::reset_view` too. Plus what
+  QCustomPlot did for view, writers only: ticks (linear 1-2-5, log decades,
+  time, category; powers of ten via `from_chars`, not libm), Helvetica and
+  Helvetica-Bold AFM widths, margins, panel geometry
+  (`layout_scene(const Scene&, const FigureSize&)`; cell 432 x 324 pt per
+  graph).
+- `scene_draw.hpp`: `DrawList draw_scene(const Scene&, const FigureSize&)`:
+  paths and texts in points, painting order as `SceneView`. Both writers
+  serialize it, so SVG and PDF place same primitives. Insets not drawn
+  (`SceneView` draws none). Non-finite values, values <= 0 on log axis left
+  out. Markers and ellipses Bezier/line paths using `sqrt` only.
+  `format_coord`: fixed, 2 decimals, `std::to_chars`.
+- `scene_svg.hpp`: `std::string scene_svg(const Scene&, const FigureSize& = {})`.
+  Text, deterministic, sized in pt, fonts named not embedded,
+  `xml:space="preserve"`.
+- `scene_pdf.hpp`: `std::string scene_pdf(const Scene&, const PdfInfo&,
+  const FigureSize& = {})` returns bytes; `Result<void> save_scene_pdf(scene,
+  info, path, size)` writes and marks user file. `PdfInfo{created_unix,
+  title}`. PDF 1.4: one page, vector paths, standard 14 fonts (Helvetica,
+  Helvetica-Bold WinAnsi; Symbol for Greek; other characters `?`), one
+  ExtGState per alpha, `CreationDate` = release `created_utc` (clamped
+  1970..9999), no `/ID`, no compression, xref table correct.
+  UI keeps `QPdfWriter` for interactive export.
+- Parity test (`tests/ui/test_scene_view.cpp`): same Scene in `SceneView` and
+  `draw_scene`: equal axis ranges, point, step box, ellipse counts and corner
+  texts. Not bytes, not ticks (QCustomPlot's own).
+- Same Scene twice gives same bytes: both in manifest with sha. Committed
+  fixtures `tests/processing/fixtures/scene/figure.{svg,pdf}` compared byte
+  for byte, so every CI compiler checks bytes one wrote (stored-format rule).
+- `verify --db` rebuilds with figures when manifest lists `figures/`
+  (`has_figures`). Records' `formats` gain `SVG`, `PDF` when figures present.
 
 ### 5.7 Manifest
 
@@ -557,7 +586,8 @@ include/pychron/publish/
   embargo.hpp        set / lift / list; is_embargoed(IStore&, scope, at)
   registrar.hpp      IRegistrar (DOI, IGSN) over IHttpClient (section 10)
   earthbank.hpp      release -> earthbank::Submission bridge (section 11)
-src/                 parquet_writer.cpp (Arrow only here), pdf, svg use processing's writers
+  figures.hpp        sample_figures: ideogram, spectra, isochron of a sample as SVG and PDF (5.6)
+src/                 parquet_writer.cpp (Arrow only here); figures use processing's writers
 ```
 
 Build reads the store with `load_analysis_at` (4.3), one statement per
@@ -1044,7 +1074,7 @@ release is the citable unit and EarthBank one more place it is listed.
 | Build | fixture store (tests/persistence five-rows fixture plus IR1010 import fixture) builds; every file in manifest with matching sha; `rows_sha256` stable across two builds; private build includes embargoed rows and says so; public build omits them |
 | Parquet | each table reads back with Arrow (test only) with the listed columns and types; `geo` metadata validates against the GeoParquet 1.1 JSON schema (vendored); built without Arrow: no `data/` and exit message |
 | Records | `catalog.json` and each record checked structurally (required fields of 20-004r1 present, values of the fixed ones exact); JSON-schema validation when a validator is a dependency; every `item` link resolves to a file in the directory |
-| Figures | SVG and PDF of one Scene: same primitives as `SceneView` places (layout test); byte-stable across two runs; PDF parses (xref offsets right, checked by a 50-line reader in the test) |
+| Figures | `SceneView` and `draw_scene` of one Scene: same ranges, points, steps, ellipses, corner texts (UI parity test); SVG and PDF byte-stable across two runs and equal to committed fixtures; PDF parses (xref offsets and stream lengths, checked by a small reader in the test); a release with figures verifies against a rebuild |
 | Verify | corrupt a cell -> names the table; delete a file -> names it; other `reduction_version` -> says so, compares nothing |
 | Viewer | Playwright smoke in `dev-ui` job (7) |
 | Sync | DVC fault-injection suite; `ChangeFeed` cursor; TSan on uploader |
@@ -1065,8 +1095,11 @@ Static tier first. Each phase ends merged on `develop` with its tests.
    `elctl embargo`. Build writes Schaen tables, records, constants,
    CITATION, README, manifest; Parquet behind `PYCHRON_PUBLISH` with Arrow
    (Homebrew, apt or the vcpkg `publish` feature); `docs/release_format.md`.
-2. **Figures.** `scene_layout.hpp` moved down, `scene_svg`, `scene_pdf`;
-   `--with-figures`.
+2. **Figures.** Done 2026-10-18 (plan
+   `docs/superpowers/plans/2026-10-18-data-publishing-phase-2.md`).
+   `scene_layout.hpp` (ranges shared with `SceneView`), `scene_draw.hpp`,
+   `scene_svg`, `scene_pdf`, `libs/publish` `figures.hpp`,
+   `--with-figures`, verify with figures.
 3. **Viewer.** `viewer/` in-repo, installer ships it, `--with-viewer`,
    Playwright smoke.
 4. **Publish page** in `pychron-ui` (6.3) with embargo dock.
