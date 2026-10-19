@@ -112,8 +112,8 @@ class EarthbankPublishTest : public QObject {
     QVERIFY(w.publish_action()->isEnabled());
     w.publish_action()->trigger();
     QCOMPARE(asked.count(), 1);
-    QCOMPARE(asked.first().first().toStringList(), w.selected_uuids());
-    QCOMPARE(w.selected_uuids().size(), 2);
+    QCOMPARE(asked.first().first().toStringList(), w.highlighted_uuids());
+    QCOMPARE(w.highlighted_uuids().size(), 2);
 
     w.select_rows({});
     QVERIFY(!w.publish_action()->isEnabled());
@@ -715,7 +715,7 @@ class EarthbankPublishTest : public QObject {
     QList<int> rows;
     for (int r = 0; r < 16; ++r) rows << r;
     browser->select_rows(rows);
-    QCOMPARE(browser->selected_uuids().size(), 16);
+    QCOMPARE(browser->highlighted_uuids().size(), 16);
     browser->publish_action()->trigger();
     QTRY_VERIFY(workspace.publish_dialog() != nullptr);
     EarthbankPublishDialog* d = workspace.publish_dialog();

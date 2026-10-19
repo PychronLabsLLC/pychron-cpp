@@ -9,8 +9,17 @@
 // and a separator row where a spectrometer ran nothing for longer than the
 // time-break preference.
 //
-//   double-click / Enter     recall_requested(uuid)
-//   Ctrl+N / Ctrl+B          select the next / previous row and recall it
+// Two lists: Filtered, what the query matches, and Selected, analyses kept
+// across queries (browser selection design, 2026-10-19). A Filtered row
+// already in Selected carries a check mark.
+//
+//   Add → / Enter (Filtered) the highlighted Filtered rows into Selected
+//   ← Remove / Delete, Backspace (Selected)
+//                            the highlighted Selected rows out
+//   Clear                    Selected emptied
+//   double-click / Space     recall_requested(uuid of the current row of that table)
+//   Ctrl+N / Ctrl+B          select the next / previous row of the table with
+//                            focus and recall it
 //   toolbar, a figure        figure_requested(kind, selected uuids or all shown);
 //                            kind: time_series, ideogram, spectrum, inverse_isochron,
 //                            spectrum_isochron, then the fit windows isotope_evolution_fit, blank_fit,
@@ -34,6 +43,7 @@
 #include "analysis_table_model.hpp"
 #include "facet_box.hpp"
 #include "preferences.hpp"
+#include "selection_list.hpp"
 #include "pychron/processing/source.hpp"
 
 class QComboBox;
@@ -86,9 +96,16 @@ class DataBrowserWindow : public QWidget {
   ColorBy color_by() const noexcept { return model_->color_by(); }
   processing::BrowseQuery query() const;
 
-  // For tests.
+  // For tests. model() and table() are Filtered's.
   AnalysisTableModel* model() const noexcept { return model_; }
   QTableView* table() const noexcept { return table_; }
+  AnalysisTableModel* selected_model() const noexcept { return selected_model_; }
+  QTableView* selected_table() const noexcept { return selected_table_; }
+  QPushButton* add_button() const noexcept { return add_; }
+  QPushButton* add_all_button() const noexcept { return add_all_; }
+  QPushButton* remove_button() const noexcept { return remove_; }
+  QPushButton* clear_button() const noexcept { return clear_; }
+  QLabel* selected_count() const noexcept { return selected_count_; }
   QLineEdit* search() const noexcept { return search_; }
   QComboBox* date_preset() const noexcept { return dates_; }
   QListWidget* facet_list(processing::Facet f) const;
@@ -120,15 +137,30 @@ class DataBrowserWindow : public QWidget {
   void show_message(const QString& text);
   // The file name Export asks for; tests replace the dialog. Empty: cancelled.
   std::function<QString(const QString& suggested)> ask_export_path;
-  QStringList selected_uuids() const;
+  // The highlighted rows of Filtered, in the table's order.
+  QStringList highlighted_uuids() const;
+  // Selected's uuids, sorted.
+  QStringList selection_uuids() const;
+  // Add →: the highlighted Filtered rows into Selected.
+  void add_highlighted();
+  // ← Remove: the highlighted Selected rows out of it.
+  void remove_highlighted();
+  // Clear: Selected emptied.
+  void clear_selected();
   // What Export, and a new release, take: the selected rows, else every row shown.
   QStringList export_uuids() const;
   // By index among the analyses (model()->rows()), not by row of the table.
   void select_rows(const QList<int>& rows);
+  // The same for Selected: by index among selected_model()->rows().
+  void select_selected_rows(const QList<int>& rows);
   void recall_step(int delta);  // Ctrl+N (+1) / Ctrl+B (-1)
 
  protected:
   void showEvent(QShowEvent* event) override;
+  // The keys of the two tables: Enter in Filtered, Delete and Backspace in
+  // Selected, Space in either. Caught before the view's own handling (Enter
+  // would otherwise emit activated, Space toggle the selection).
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
  signals:
   void recall_requested(const QString& uuid);
@@ -153,8 +185,17 @@ class DataBrowserWindow : public QWidget {
   void load_more();  // next page
   void update_facets();
   void show_count();
-  // Each separator row over the whole width, from display row `first` on.
-  void span_breaks(int first);
+  // Each separator row of `view` over the whole width, from display row `first` on.
+  void span_breaks(QTableView* view, int first);
+  // Sets up a table of one of the two lists.
+  void set_up_table(QTableView* view, AnalysisTableModel* model);
+  AnalysisTableModel* model_of(const QTableView* view) const;
+  // The table with focus: Selected's when it has it, else Filtered's.
+  QTableView* focused_table() const;
+  // By index among the analyses of `view`'s model.
+  void select_in(QTableView* view, const QList<int>& rows);
+  // Selected shown again after it changed: its table, the mark on Filtered, the count.
+  void sync_selected();
   void date_preset_changed();
   bool range_chosen() const;
   bool range_is_backwards() const;
@@ -162,13 +203,23 @@ class DataBrowserWindow : public QWidget {
   bool age_is_backwards() const;
   // Either range low above high: nothing can be asked.
   bool query_is_backwards() const { return range_is_backwards() || age_is_backwards(); }
-  void recall_current();
+  void recall_current();  // in focused_table()
+  void recall_in(const QTableView* view);
+  void recall_step_in(QTableView* view, int delta);
   void request_figure(const QString& kind);
   void request_export();
 
   processing::IAnalysisSource& source_;
   AnalysisTableModel* model_;
   QTableView* table_;
+  SelectionList selection_;
+  AnalysisTableModel* selected_model_;
+  QTableView* selected_table_;
+  QLabel* selected_count_;
+  QPushButton* add_;
+  QPushButton* add_all_;
+  QPushButton* remove_;
+  QPushButton* clear_;
   QLineEdit* search_;
   QComboBox* dates_;
   QWidget* range_;

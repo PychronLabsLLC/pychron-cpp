@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <QAbstractTableModel>
@@ -45,6 +46,11 @@ class AnalysisTableModel : public QAbstractTableModel {
   // The display rows that are separators, ascending.
   QList<int> break_rows() const;
 
+  // A check mark in the Run ID column of these analyses (the data browser's
+  // Filtered rows that are in Selected). Kept by the model, not by the rows:
+  // set_rows and append_rows leave it as it is.
+  void set_marked(std::unordered_set<std::string> uuids);
+
   void set_coloring(ColorBy by, const TypeColors& types);
   ColorBy color_by() const noexcept { return color_by_; }
   // Zero or less: no separators.
@@ -80,6 +86,7 @@ class AnalysisTableModel : public QAbstractTableModel {
   std::vector<processing::TimeBreak> breaks_;
   std::vector<Entry> display_;
   std::vector<std::string> keys_;
+  std::unordered_set<std::string> marked_;
   bool several_spectrometers_ = false;
   ColorBy color_by_ = ColorBy::AnalysisType;
   TypeColors type_colors_;

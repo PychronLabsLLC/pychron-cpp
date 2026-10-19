@@ -6,11 +6,14 @@
 #include <cmath>
 #include <set>
 #include <string_view>
+#include <utility>
 
+#include <QApplication>
 #include <QBrush>
 #include <QColor>
 #include <QDateTime>
 #include <QFont>
+#include <QStyle>
 #include <QTimeZone>
 
 namespace pychron::ui {
@@ -74,6 +77,11 @@ void AnalysisTableModel::append_rows(std::vector<processing::AnalysisSummary> ro
   endInsertRows();
   // A new key shifts the categories' colours; a second spectrometer names the separators.
   if (update_keys() && shown > 0) emit dataChanged(index(0, 0), index(shown - 1, ColumnCount - 1));
+}
+
+void AnalysisTableModel::set_marked(std::unordered_set<std::string> uuids) {
+  marked_ = std::move(uuids);
+  if (!display_.empty()) emit dataChanged(index(0, RunId), index(rowCount() - 1, RunId), {Qt::DecorationRole});
 }
 
 void AnalysisTableModel::set_coloring(ColorBy by, const TypeColors& types) {
@@ -148,6 +156,10 @@ QVariant AnalysisTableModel::data(const QModelIndex& index, int role) const {
     return c.isValid() ? QVariant(QBrush(c)) : QVariant();
   }
   if (role == Qt::UserRole) return qs(r.uuid);
+  if (role == Qt::DecorationRole) {
+    if (index.column() != RunId || !marked_.contains(r.uuid)) return {};
+    return QApplication::style()->standardIcon(QStyle::SP_DialogApplyButton);
+  }
   if (role != Qt::DisplayRole && role != Qt::ToolTipRole) return {};
   switch (index.column()) {
     case RunId:

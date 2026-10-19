@@ -814,7 +814,7 @@ class TestDataWindows : public QObject {
     bar->setValue(bar->maximum() / 2);
     const int place = bar->value();
     QVERIFY(place > 0);
-    const QStringList selected = w.selected_uuids();
+    const QStringList selected = w.highlighted_uuids();
     QCOMPARE(selected.size(), 2);
     const std::string current = w.model()->analysis_at(w.table()->currentIndex().row())->uuid;
 
@@ -823,14 +823,14 @@ class TestDataWindows : public QObject {
     src->add(newer, raw_for(*newer));
     w.refresh();
     QCOMPARE(w.model()->analysis_count(), 61);
-    QCOMPARE(w.selected_uuids(), selected);
+    QCOMPARE(w.highlighted_uuids(), selected);
     QCOMPARE(w.model()->analysis_at(w.table()->currentIndex().row())->uuid, current);
     QCOMPARE(bar->value(), place);
 
     // With nothing selected the table stays where it was too.
     w.table()->clearSelection();
     w.refresh();
-    QVERIFY(w.selected_uuids().isEmpty());
+    QVERIFY(w.highlighted_uuids().isEmpty());
     QCOMPARE(bar->value(), place);
 
     // A selection that is no longer listed is dropped.
@@ -840,7 +840,7 @@ class TestDataWindows : public QObject {
     w.search()->blockSignals(false);
     w.refresh();
     QCOMPARE(w.model()->analysis_count(), 0);
-    QVERIFY(w.selected_uuids().isEmpty());
+    QVERIFY(w.highlighted_uuids().isEmpty());
   }
 
   // What a run ending asks of the browser: nothing while nobody looks, and a
@@ -909,7 +909,7 @@ class TestDataWindows : public QObject {
     QCOMPARE(w.model()->analysis_count(), 6);
     QVERIFY(w.load_more_button()->isEnabled());  // two are left
     w.select_rows({5});  // the last of page two
-    const QStringList selected = w.selected_uuids();
+    const QStringList selected = w.highlighted_uuids();
     QCOMPARE(selected, QStringList{QStringLiteral("uuid-2")});
     w.table()->setColumnWidth(AnalysisTableModel::RunId, 333);
     QScrollBar* bar = w.table()->verticalScrollBar();
@@ -922,7 +922,7 @@ class TestDataWindows : public QObject {
     w.refresh_if_changed();
     QCOMPARE(w.model()->analysis_count(), 7);  // what was loaded, and the new one
     QCOMPARE(w.model()->rows().front().uuid, std::string("uuid-8"));
-    QCOMPARE(w.selected_uuids(), selected);
+    QCOMPARE(w.highlighted_uuids(), selected);
     QCOMPARE(w.model()->analysis_at(w.table()->currentIndex().row())->uuid, std::string("uuid-2"));
     QCOMPARE(bar->value(), place);
     QCOMPARE(w.table()->columnWidth(AnalysisTableModel::RunId), 333);
@@ -1004,13 +1004,13 @@ class TestDataWindows : public QObject {
       QVERIFY(find_item(types, QStringLiteral("unknown")));
       find_item(types, QStringLiteral("unknown"))->setCheckState(Qt::Checked);
       w.select_rows({0});  // ticking reloaded the table
-      QCOMPARE(w.selected_uuids(), QStringList{QString::fromStdString(first->str())});
+      QCOMPARE(w.highlighted_uuids(), QStringList{QString::fromStdString(first->str())});
       auto second = pp::testing::seed_ingest_monitor(**store, lab, "66574", 2, 10.0, "2026-10-02T13:00:00Z");
       QVERIFY2(second.has_value(), second ? "" : to_string(second.error()).c_str());
       w.refresh();
       QCOMPARE(w.model()->analysis_count(), 2);
       QCOMPARE(w.model()->rows().front().uuid, second->str());  // newest first
-      QCOMPARE(w.selected_uuids(), QStringList{QString::fromStdString(first->str())});
+      QCOMPARE(w.highlighted_uuids(), QStringList{QString::fromStdString(first->str())});
       QCOMPARE(w.model()->analysis_at(w.table()->currentIndex().row())->uuid, first->str());
       QCOMPARE(w.query().analysis_types, std::vector<std::string>{"unknown"});
       QCOMPARE(find_item(w.facet_list(pp::Facet::AnalysisType), QStringLiteral("unknown"))->checkState(), Qt::Checked);
@@ -1113,8 +1113,8 @@ class TestDataWindows : public QObject {
 
     // Everything selected is twenty analyses, and the separator is none of them.
     w.table()->selectAll();
-    QCOMPARE(w.selected_uuids().size(), 20);
-    QVERIFY(!w.selected_uuids().contains(QString()));
+    QCOMPARE(w.highlighted_uuids().size(), 20);
+    QVERIFY(!w.highlighted_uuids().contains(QString()));
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
     w.table()->clearSelection();
     w.plot_action(QStringLiteral("ideogram"))->trigger();  // nothing selected: all shown
@@ -1182,7 +1182,7 @@ class TestDataWindows : public QObject {
     w.recall_step(1);
     QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-8"));
     w.select_rows({0, 2});
-    QCOMPARE(w.selected_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
+    QCOMPARE(w.highlighted_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
     QVERIFY(w.plot_action(QStringLiteral("spectrum")));
     w.plot_action(QStringLiteral("spectrum"))->trigger();
     QCOMPARE(series.count(), 1);
@@ -1193,6 +1193,152 @@ class TestDataWindows : public QObject {
     w.recall_action()->trigger();
     QCOMPARE(recall.count(), 1);
     QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-9"));
+  }
+
+  void browser_add_and_remove() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.select_rows({0, 2});
+    QTest::mouseClick(w.add_button(), Qt::LeftButton);
+    QCOMPARE(w.selection_uuids(), (QStringList{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")}));
+    QVERIFY(w.selected_count()->text().contains(QStringLiteral("2 selected")));
+    QCOMPARE(w.selected_model()->analysis_count(), 2);
+    // A row already held is not added twice.
+    w.select_rows({0});
+    QTest::mouseClick(w.add_button(), Qt::LeftButton);
+    QCOMPARE(w.selection_uuids().size(), 2);
+    QVERIFY(w.status()->text().contains(QStringLiteral("already selected")));
+    // Remove takes what is highlighted in Selected (newest first: uuid-9).
+    w.select_selected_rows({0});
+    QTest::mouseClick(w.remove_button(), Qt::LeftButton);
+    QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-7")});
+    QTest::mouseClick(w.clear_button(), Qt::LeftButton);
+    QVERIFY(w.selection_uuids().isEmpty());
+    QVERIFY(w.selected_count()->text().contains(QStringLiteral("0 selected")));
+    QCOMPARE(w.selected_model()->rowCount(), 0);
+  }
+
+  void browser_selected_survives_a_filter_change() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.select_rows({0});
+    w.add_highlighted();
+    w.select_selected_rows({0});
+    w.search()->setText(QStringLiteral("no such run"));
+    QCOMPARE(w.model()->analysis_count(), 0);
+    QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
+    QCOMPARE(w.selected_table()->selectionModel()->selectedRows().size(), 1);
+  }
+
+  void browser_gathers_from_two_queries() {
+    // make_source: every fifth analysis (uuid-4, uuid-9) is a blank, "bu-NN";
+    // the rest are airs, "air-NN": the two searches share nothing.
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.search()->setText(QStringLiteral("bu"));
+    QCOMPARE(w.model()->analysis_count(), 2);
+    w.select_rows({0, 1});
+    w.add_highlighted();
+    w.search()->setText(QStringLiteral("air"));
+    QCOMPARE(w.model()->analysis_count(), 8);
+    w.select_rows({0, 1});  // uuid-8, uuid-7
+    w.add_highlighted();
+    QCOMPARE(w.selection_uuids(), (QStringList{QStringLiteral("uuid-4"), QStringLiteral("uuid-7"),
+                                              QStringLiteral("uuid-8"), QStringLiteral("uuid-9")}));
+    std::vector<std::string> order;
+    for (const auto& r : w.selected_model()->rows()) order.push_back(r.uuid);
+    QCOMPARE(order, (std::vector<std::string>{"uuid-9", "uuid-8", "uuid-7", "uuid-4"}));
+  }
+
+  void browser_marks_selected_rows_in_filtered() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.set_page_size(5);
+    auto* m = w.model();
+    const auto marked = [m](int row) {
+      return m->data(m->index(row, AnalysisTableModel::RunId), Qt::DecorationRole).isValid();
+    };
+    w.select_rows({0});
+    w.add_highlighted();
+    QVERIFY(marked(0));
+    QVERIFY(!marked(1));
+    // The mark stays through a page loaded and a search that keeps the row.
+    QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
+    QCOMPARE(m->analysis_count(), 10);
+    QVERIFY(marked(0));
+    QVERIFY(!marked(1));
+    w.search()->setText(QStringLiteral("bu"));
+    QCOMPARE(m->analysis_at(0)->uuid, std::string("uuid-9"));
+    QVERIFY(marked(0));
+    QVERIFY(!marked(1));
+    w.select_selected_rows({0});
+    w.remove_highlighted();
+    for (int r = 0; r < m->rowCount(); ++r) QVERIFY(!marked(r));
+    // Clear takes it off too.
+    w.select_rows({0});
+    w.add_highlighted();
+    QVERIFY(marked(0));
+    w.clear_selected();
+    QVERIFY(!marked(0));
+  }
+
+  void browser_enter_adds_and_delete_removes() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    QSignalSpy recall(&w, &DataBrowserWindow::recall_requested);
+    for (const auto key : {Qt::Key_Return, Qt::Key_Enter}) {
+      w.select_rows({0});
+      QTest::keyClick(w.table(), key);
+      QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
+      QCOMPARE(recall.count(), 0);
+      w.clear_selected();
+    }
+    for (const auto key : {Qt::Key_Delete, Qt::Key_Backspace}) {
+      w.select_rows({0});
+      w.add_highlighted();
+      QCOMPARE(w.selection_uuids().size(), 1);
+      w.select_selected_rows({0});
+      QTest::keyClick(w.selected_table(), key);
+      QVERIFY(w.selection_uuids().isEmpty());
+    }
+    // Delete in Filtered removes nothing, Return in Selected adds nothing.
+    w.select_rows({0});
+    w.add_highlighted();
+    w.select_rows({0});
+    QTest::keyClick(w.table(), Qt::Key_Delete);
+    QCOMPARE(w.selection_uuids().size(), 1);
+    w.select_selected_rows({0});
+    QTest::keyClick(w.selected_table(), Qt::Key_Return);
+    QCOMPARE(w.selection_uuids().size(), 1);
+    // Space recalls the current row of the table it is pressed in.
+    w.select_rows({2});
+    QTest::keyClick(w.table(), Qt::Key_Space);
+    QCOMPARE(recall.count(), 1);
+    QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-7"));
+    w.select_selected_rows({0});
+    QTest::keyClick(w.selected_table(), Qt::Key_Space);
+    QCOMPARE(recall.count(), 1);
+    QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-9"));
+  }
+
+  void browser_remove_skips_separators() {
+    auto src = make_sessions();
+    DataBrowserWindow w(*src);
+    w.set_gap_hours(6.0);
+    w.table()->selectAll();
+    w.add_highlighted();
+    auto* sel = w.selected_model();
+    QCOMPARE(sel->analysis_count(), 20);
+    QCOMPARE(sel->break_rows(), QList<int>{10});  // Selected draws the break as Filtered does
+    QCOMPARE(w.selected_table()->columnSpan(10, 0), static_cast<int>(ui::AnalysisTableModel::ColumnCount));
+    w.select_selected_rows({9, 10});  // uuid-10 above the separator, uuid-9 below it
+    QCOMPARE(w.selected_table()->selectionModel()->selectedRows().size(), 2);
+    w.remove_highlighted();
+    QCOMPARE(w.selection_uuids().size(), 18);
+    QVERIFY(!w.selection_uuids().contains(QStringLiteral("uuid-10")));
+    QVERIFY(!w.selection_uuids().contains(QStringLiteral("uuid-9")));
+    QVERIFY(w.selection_uuids().contains(QStringLiteral("uuid-11")));
+    QVERIFY(w.selection_uuids().contains(QStringLiteral("uuid-8")));
   }
 
   void browser_toolbar_offers_every_figure_recall_and_export() {

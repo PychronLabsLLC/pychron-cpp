@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -100,9 +101,10 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
     : QWidget(parent, Qt::Window),
       source_(source),
       model_(new AnalysisTableModel(this)),
+      selected_model_(new AnalysisTableModel(this)),
       type_colors_(default_type_colors(theme())) {
   setWindowTitle(tr("Data — %1").arg(qs(source.name())));
-  resize(1100, 650);
+  resize(1400, 650);
 
   auto* filters = new QWidget;
   auto* fl = new QVBoxLayout(filters);
@@ -166,26 +168,11 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   fl->addStretch();
 
   table_ = new QTableView;
-  table_->setModel(model_);
-  table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-  table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-  table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  table_->verticalHeader()->setVisible(false);
-  table_->horizontalHeader()->setStretchLastSection(true);
-  table_->setColumnHidden(AnalysisTableModel::Project, true);
-  table_->setColumnHidden(AnalysisTableModel::Uuid, true);
-  table_->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(table_->horizontalHeader(), &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
-    QMenu menu(this);
-    for (int c = 0; c < AnalysisTableModel::ColumnCount; ++c) {
-      QAction* a = menu.addAction(model_->headerData(c, Qt::Horizontal).toString());
-      a->setCheckable(true);
-      a->setChecked(!table_->isColumnHidden(c));
-      connect(a, &QAction::toggled, this, [this, c](bool on) { table_->setColumnHidden(c, !on); });
-    }
-    menu.exec(table_->horizontalHeader()->mapToGlobal(pos));
-  });
+  set_up_table(table_, model_);
+  selected_table_ = new QTableView;
+  set_up_table(selected_table_, selected_model_);
 
+  // Filtered: what the query matches.
   auto* right = new QWidget;
   auto* rl = new QVBoxLayout(right);
   rl->setContentsMargins(0, 0, 0, 0);
@@ -203,6 +190,37 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   bar->addWidget(status_, 1);
   bar->addWidget(more_);
   rl->addLayout(bar);
+
+  // Between the two lists, what moves analyses from one to the other.
+  auto* strip = new QWidget;
+  auto* sl = new QVBoxLayout(strip);
+  sl->setContentsMargins(0, 0, 0, 0);
+  add_ = new QPushButton(tr("Add →"));
+  add_->setToolTip(tr("Add the highlighted analyses to the selected ones (Enter)"));
+  add_all_ = new QPushButton(tr("Add all"));
+  add_all_->setToolTip(tr("Add every analysis the filters match, not only those loaded"));
+  remove_ = new QPushButton(tr("← Remove"));
+  remove_->setToolTip(tr("Take the highlighted analyses out of the selected ones (Delete)"));
+  clear_ = new QPushButton(tr("Clear"));
+  clear_->setToolTip(tr("Take every analysis out of the selected ones"));
+  for (QPushButton* b : {add_, add_all_, remove_, clear_}) sl->addWidget(b);
+  sl->addStretch();
+
+  // Selected: analyses kept across queries.
+  auto* chosen = new QWidget;
+  auto* cl = new QVBoxLayout(chosen);
+  cl->setContentsMargins(0, 0, 0, 0);
+  selected_count_ = new QLabel;
+  cl->addWidget(selected_count_);
+  cl->addWidget(selected_table_);
+
+  auto* lists = new QSplitter(Qt::Horizontal);
+  lists->addWidget(right);
+  lists->addWidget(strip);
+  lists->addWidget(chosen);
+  lists->setStretchFactor(0, 1);
+  lists->setStretchFactor(2, 1);
+  lists->setCollapsible(1, false);
 
   // What can be done with the selection (or with all that is shown).
   toolbar_ = new QToolBar(tr("Data"));
@@ -232,14 +250,14 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   export_->setToolTip(tr("Export: write the selected analyses (or all shown) as a 40Ar/39Ar data report after "
                          "Schaen et al. (2021), CSV or JSON"));
   publish_ = toolbar_->addAction(data_icon(QStringLiteral("publish")), tr("Publish"), this, [this] {
-    if (const QStringList ids = selected_uuids(); !ids.isEmpty()) emit publish_requested(ids);
+    if (const QStringList ids = highlighted_uuids(); !ids.isEmpty()) emit publish_requested(ids);
   });
   publish_->setToolTip(tr("Publish to EarthBank...: check, export as EarthBank's workbooks, or upload the selected "
                           "analyses"));
   publish_->setEnabled(false);
   connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
-          [this] { publish_->setEnabled(!selected_uuids().isEmpty()); });
-  connect(model_, &QAbstractItemModel::modelReset, this, [this] { publish_->setEnabled(!selected_uuids().isEmpty()); });
+          [this] { publish_->setEnabled(!highlighted_uuids().isEmpty()); });
+  connect(model_, &QAbstractItemModel::modelReset, this, [this] { publish_->setEnabled(!highlighted_uuids().isEmpty()); });
   ask_export_path = [this](const QString& suggested) {
     return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
                                         tr("CSV report (*.csv);;JSON report (*.json)"));
@@ -254,9 +272,9 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
 
   auto* split = new QSplitter;
   split->addWidget(filter_scroll);
-  split->addWidget(right);
+  split->addWidget(lists);
   split->setStretchFactor(1, 1);
-  split->setSizes({260, 840});
+  split->setSizes({260, 1140});
   auto* layout = new QVBoxLayout(this);
   layout->setMenuBar(toolbar_);  // above the margins, the width of the window
   layout->addWidget(split);
@@ -272,20 +290,83 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   connect(color_by_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
     set_color_by(color_by_from_text(color_by_->currentData().toString()));
   });
-  // The model lays its rows out again: the separators' spans go with them.
-  connect(model_, &QAbstractItemModel::modelReset, this, [this] { span_breaks(0); });
-  connect(model_, &QAbstractItemModel::rowsInserted, this,
-          [this](const QModelIndex&, int first, int) { span_breaks(first); });
   connect(exclude_invalid_, &QCheckBox::toggled, this, [this] { reload(); });
   connect(refresh_button, &QPushButton::clicked, this, &DataBrowserWindow::refresh);
   connect(more_, &QPushButton::clicked, this, &DataBrowserWindow::load_more);
-  connect(table_, &QTableView::activated, this, [this](const QModelIndex&) { recall_current(); });
+  connect(add_, &QPushButton::clicked, this, &DataBrowserWindow::add_highlighted);
+  connect(remove_, &QPushButton::clicked, this, &DataBrowserWindow::remove_highlighted);
+  connect(clear_, &QPushButton::clicked, this, &DataBrowserWindow::clear_selected);
+  // Not activated: that comes on Enter too, which adds.
+  for (QTableView* view : {table_, selected_table_}) {
+    connect(view, &QTableView::doubleClicked, this, [this, view](const QModelIndex&) { recall_in(view); });
+    view->installEventFilter(this);
+  }
   auto* next = new QShortcut(key(Shortcut::RecallNext), this);
   auto* prev = new QShortcut(key(Shortcut::RecallPrevious), this);
   connect(next, &QShortcut::activated, this, [this] { recall_step(1); });
   connect(prev, &QShortcut::activated, this, [this] { recall_step(-1); });
 
+  sync_selected();
   refresh();
+}
+
+void DataBrowserWindow::set_up_table(QTableView* view, AnalysisTableModel* model) {
+  view->setModel(model);
+  view->setSelectionBehavior(QAbstractItemView::SelectRows);
+  view->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  view->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  view->verticalHeader()->setVisible(false);
+  view->horizontalHeader()->setStretchLastSection(true);
+  view->setColumnHidden(AnalysisTableModel::Project, true);
+  view->setColumnHidden(AnalysisTableModel::Uuid, true);
+  view->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(view->horizontalHeader(), &QWidget::customContextMenuRequested, this, [this, view, model](const QPoint& pos) {
+    QMenu menu(this);
+    for (int c = 0; c < AnalysisTableModel::ColumnCount; ++c) {
+      QAction* a = menu.addAction(model->headerData(c, Qt::Horizontal).toString());
+      a->setCheckable(true);
+      a->setChecked(!view->isColumnHidden(c));
+      connect(a, &QAction::toggled, this, [view, c](bool on) { view->setColumnHidden(c, !on); });
+    }
+    menu.exec(view->horizontalHeader()->mapToGlobal(pos));
+  });
+  // The model lays its rows out again: the separators' spans go with them.
+  connect(model, &QAbstractItemModel::modelReset, this, [this, view] { span_breaks(view, 0); });
+  connect(model, &QAbstractItemModel::rowsInserted, this,
+          [this, view](const QModelIndex&, int first, int) { span_breaks(view, first); });
+}
+
+AnalysisTableModel* DataBrowserWindow::model_of(const QTableView* view) const {
+  return view == selected_table_ ? selected_model_ : model_;
+}
+
+QTableView* DataBrowserWindow::focused_table() const { return selected_table_->hasFocus() ? selected_table_ : table_; }
+
+bool DataBrowserWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (event->type() != QEvent::KeyPress || (watched != table_ && watched != selected_table_))
+    return QWidget::eventFilter(watched, event);
+  const auto* key = static_cast<QKeyEvent*>(event);
+  // Enter on the keypad comes with the keypad modifier; any other modifier is someone else's key.
+  if ((key->modifiers() & ~Qt::KeypadModifier) != Qt::NoModifier) return QWidget::eventFilter(watched, event);
+  auto* view = static_cast<QTableView*>(watched);
+  switch (key->key()) {
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+      if (view != table_) break;
+      add_highlighted();
+      return true;
+    case Qt::Key_Delete:
+    case Qt::Key_Backspace:
+      if (view != selected_table_) break;
+      remove_highlighted();
+      return true;
+    case Qt::Key_Space:
+      recall_in(view);
+      return true;
+    default:
+      break;
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 QListWidget* DataBrowserWindow::facet_list(pp::Facet f) const {
@@ -371,11 +452,13 @@ void DataBrowserWindow::date_preset_changed() {
   reload();
 }
 
-void DataBrowserWindow::set_gap_hours(double hours) { model_->set_gap_threshold(hours * 3600.0); }
+void DataBrowserWindow::set_gap_hours(double hours) {
+  for (AnalysisTableModel* m : {model_, selected_model_}) m->set_gap_threshold(hours * 3600.0);
+}
 
 void DataBrowserWindow::set_type_colors(const TypeColors& colors) {
   type_colors_ = colors;
-  model_->set_coloring(model_->color_by(), type_colors_);
+  for (AnalysisTableModel* m : {model_, selected_model_}) m->set_coloring(m->color_by(), type_colors_);
 }
 
 void DataBrowserWindow::set_color_by(ColorBy by) {
@@ -385,14 +468,14 @@ void DataBrowserWindow::set_color_by(ColorBy by) {
     return;
   }
   if (by == model_->color_by()) return;
-  model_->set_coloring(by, type_colors_);
+  for (AnalysisTableModel* m : {model_, selected_model_}) m->set_coloring(by, type_colors_);
   emit color_by_changed(by);
 }
 
-void DataBrowserWindow::span_breaks(int first) {
-  if (first == 0) table_->clearSpans();
-  for (const int row : model_->break_rows())
-    if (row >= first) table_->setSpan(row, 0, 1, AnalysisTableModel::ColumnCount);
+void DataBrowserWindow::span_breaks(QTableView* view, int first) {
+  if (first == 0) view->clearSpans();
+  for (const int row : model_of(view)->break_rows())
+    if (row >= first) view->setSpan(row, 0, 1, AnalysisTableModel::ColumnCount);
 }
 
 void DataBrowserWindow::show_count() {
@@ -414,7 +497,7 @@ void DataBrowserWindow::set_page_size(int rows) {
 
 DataBrowserWindow::Place DataBrowserWindow::place() const {
   const auto* current = model_->analysis_at(table_->currentIndex().row());
-  return {selected_uuids(), current != nullptr ? current->uuid : std::string{}, table_->verticalScrollBar()->value(),
+  return {highlighted_uuids(), current != nullptr ? current->uuid : std::string{}, table_->verticalScrollBar()->value(),
           model_->analysis_count()};
 }
 
@@ -553,7 +636,7 @@ void DataBrowserWindow::load_more() {
   show_count();
 }
 
-QStringList DataBrowserWindow::selected_uuids() const {
+QStringList DataBrowserWindow::highlighted_uuids() const {
   QStringList out;
   QList<int> rows;
   for (const auto& idx : table_->selectionModel()->selectedRows()) rows << idx.row();
@@ -563,16 +646,62 @@ QStringList DataBrowserWindow::selected_uuids() const {
   return out;
 }
 
-void DataBrowserWindow::select_rows(const QList<int>& rows) {
-  table_->clearSelection();
+QStringList DataBrowserWindow::selection_uuids() const {
+  QStringList out;
+  for (const auto& uuid : selection_.uuids()) out << qs(uuid);
+  return out;
+}
+
+void DataBrowserWindow::add_highlighted() {
+  std::vector<pp::AnalysisSummary> rows;
+  for (const auto& idx : table_->selectionModel()->selectedRows())
+    if (const auto* analysis = model_->analysis_at(idx.row())) rows.push_back(*analysis);
+  const std::size_t asked = rows.size();
+  const std::size_t added = selection_.add(std::move(rows));
+  sync_selected();
+  QString text = tr("Added %n", nullptr, static_cast<int>(added));
+  if (const std::size_t held = asked - added; held > 0) text += tr(" (%1 already selected)").arg(static_cast<qulonglong>(held));
+  status_->setText(text);
+}
+
+void DataBrowserWindow::remove_highlighted() {
+  std::vector<std::string> uuids;
+  for (const auto& idx : selected_table_->selectionModel()->selectedRows())
+    if (const auto* analysis = selected_model_->analysis_at(idx.row())) uuids.push_back(analysis->uuid);
+  if (selection_.remove(uuids) > 0) sync_selected();
+}
+
+void DataBrowserWindow::clear_selected() {
+  selection_.clear();
+  sync_selected();
+}
+
+void DataBrowserWindow::sync_selected() {
+  const bool was_empty = selected_model_->analysis_count() == 0;
+  selected_model_->set_rows(selection_.rows());
+  if (was_empty && !selection_.empty()) selected_table_->resizeColumnsToContents();
+  std::unordered_set<std::string> marked;
+  for (const auto& row : selection_.rows()) marked.insert(row.uuid);
+  model_->set_marked(std::move(marked));
+  selected_count_->setText(tr("%n selected", nullptr, static_cast<int>(selection_.size())));
+  // What acts on Selected (figure, export, publish) follows it here.
+}
+
+void DataBrowserWindow::select_in(QTableView* view, const QList<int>& rows) {
+  AnalysisTableModel* m = model_of(view);
+  view->clearSelection();
   QList<int> shown;
   for (int r : rows)
-    if (const int row = r < 0 ? -1 : model_->display_row_of(static_cast<std::size_t>(r)); row >= 0) shown << row;
+    if (const int row = r < 0 ? -1 : m->display_row_of(static_cast<std::size_t>(r)); row >= 0) shown << row;
   for (int row : shown)
-    table_->selectionModel()->select(model_->index(row, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    view->selectionModel()->select(m->index(row, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
   if (!shown.isEmpty())
-    table_->selectionModel()->setCurrentIndex(model_->index(shown.front(), 0), QItemSelectionModel::NoUpdate);
+    view->selectionModel()->setCurrentIndex(m->index(shown.front(), 0), QItemSelectionModel::NoUpdate);
 }
+
+void DataBrowserWindow::select_rows(const QList<int>& rows) { select_in(table_, rows); }
+
+void DataBrowserWindow::select_selected_rows(const QList<int>& rows) { select_in(selected_table_, rows); }
 
 QAction* DataBrowserWindow::plot_action(const QString& kind) const {
   for (QAction* a : toolbar_->actions())
@@ -580,23 +709,28 @@ QAction* DataBrowserWindow::plot_action(const QString& kind) const {
   return nullptr;
 }
 
-void DataBrowserWindow::recall_current() {
-  const auto* analysis = model_->analysis_at(table_->currentIndex().row());
+void DataBrowserWindow::recall_current() { recall_in(focused_table()); }
+
+void DataBrowserWindow::recall_in(const QTableView* view) {
+  const auto* analysis = model_of(view)->analysis_at(view->currentIndex().row());
   if (analysis != nullptr) emit recall_requested(qs(analysis->uuid));
 }
 
-void DataBrowserWindow::recall_step(int delta) {
-  const int count = model_->analysis_count();
+void DataBrowserWindow::recall_step(int delta) { recall_step_in(focused_table(), delta); }
+
+void DataBrowserWindow::recall_step_in(QTableView* view, int delta) {
+  const AnalysisTableModel* m = model_of(view);
+  const int count = m->analysis_count();
   if (count == 0) return;
   // Among the analyses: a separator is never the current row.
-  const auto* current = model_->analysis_at(table_->currentIndex().row());
-  const int cur = current != nullptr ? static_cast<int>(current - model_->rows().data()) : -1;
-  select_rows({std::clamp(cur + delta, 0, count - 1)});
-  recall_current();
+  const auto* current = m->analysis_at(view->currentIndex().row());
+  const int cur = current != nullptr ? static_cast<int>(current - m->rows().data()) : -1;
+  select_in(view, {std::clamp(cur + delta, 0, count - 1)});
+  recall_in(view);
 }
 
 void DataBrowserWindow::request_figure(const QString& kind) {
-  QStringList ids = selected_uuids();
+  QStringList ids = highlighted_uuids();
   if (ids.isEmpty())
     for (const auto& r : model_->rows()) ids << qs(r.uuid);
   if (!ids.isEmpty()) emit figure_requested(kind, ids);
@@ -605,7 +739,7 @@ void DataBrowserWindow::request_figure(const QString& kind) {
 void DataBrowserWindow::show_message(const QString& text) { status_->setText(text); }
 
 QStringList DataBrowserWindow::export_uuids() const {
-  QStringList ids = selected_uuids();
+  QStringList ids = highlighted_uuids();
   if (ids.isEmpty())
     for (const auto& r : model_->rows()) ids << qs(r.uuid);
   return ids;
