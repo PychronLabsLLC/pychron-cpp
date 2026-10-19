@@ -262,6 +262,10 @@ std::optional<At> position_target(const MeasurementPlan& plan, const Position& p
 // The entries a position collects: its active ones, in file order.
 std::vector<CollectEntry> collecting(const Position& position);
 
+// The gas's segments of one `when`, as indexes, in file order; for
+// after_inlet its whiff segments first (spec 5.1).
+std::vector<std::size_t> segments_at(const Gas& gas, When when);
+
 // The gas's first after_inlet signal segment (v1's [main]); nullptr when it
 // has none.
 const Segment* main_segment(const Gas& gas);

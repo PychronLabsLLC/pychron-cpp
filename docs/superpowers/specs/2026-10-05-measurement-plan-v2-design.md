@@ -282,6 +282,14 @@ Measure: before_inlet
 For a multi-gas plan the inlet block repeats per gas; `before_inlet`
 segments of gas N run after `after_main` of gas N-1.
 
+As built (Task 19): `during_equilibration` segments other than sniff run
+once inlet is open (after whiff), in file order; inlet closes on time,
+checked after each reading and before each position; segment then read to
+its end. Sniff starts after them when there are any. `before_main` hook
+after equilibration, `after_main` hook after `after_inlet` phase; first
+`after_inlet` signal segment is main, others (any kind but whiff) in file
+order around it.
+
 ### 5.2 Position execution
 
 Per position, in order: apply `table`; apply `optics`; set deflections and

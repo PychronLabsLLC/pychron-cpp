@@ -320,6 +320,12 @@ class MeasurementEngine {
   // Block steps. A non-ok result is a Failed measurement; a Stop is read from
   // stop_ after each step.
   Result<void> run_blocks();
+  Result<void> run_gas();                 // the running gas, before_inlet to after_main
+  Result<void> run_when(plan::When when);  // the running gas's segments of one phase
+  // Publishes the block's start and end around `fn`.
+  Result<void> block(Block b, int segment, const std::function<Result<void>()>& fn);
+  Result<void> finish_inlet(double now);  // close the inlet, OverlapReady, time zero on inlet close
+  Result<void> inlet_due();               // finish_inlet when a during_equilibration segment reached its time
   // A segment of the running gas: a step, or `cycles` x its positions.
   Result<void> run_segment(std::size_t segment);
   Result<void> run_step(std::size_t segment);
@@ -429,6 +435,8 @@ class MeasurementEngine {
   bool acquiring_ = false;
   bool inlet_open_ = false;
   bool close_inlet_now_ = false;
+  std::optional<double> close_inlet_at_;  // while during_equilibration segments run: when the inlet closes
+  bool inlet_done_ = false;               // the gas's inlet was closed (or its time came)
   int main_count_ = 0;
   Stop stop_ = Stop::None;
   bool main_truncated_ = false;

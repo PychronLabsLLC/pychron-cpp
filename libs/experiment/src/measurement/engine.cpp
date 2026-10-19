@@ -286,6 +286,8 @@ MeasurementResult MeasurementEngine::run(scripting::CancelToken& token) {
   last_channels_.clear();
   inlet_open_ = false;
   close_inlet_now_ = false;
+  close_inlet_at_.reset();
+  inlet_done_ = false;
   main_count_ = 0;
   stop_ = Stop::None;
   main_truncated_ = false;
@@ -374,55 +376,66 @@ const plan::Equilibration& MeasurementEngine::equilibration() const {
 }
 
 Result<void> MeasurementEngine::run_blocks() {
-  // One gas for now (Phase 5 of the v2 plan runs every gas and every `when`).
+  // One gas for now (Phase 6 of the v2 plan runs every gas).
   gas_ = &in_.plan.gases.front();
   const auto& segs = gas_->segments;
   main_ = static_cast<std::size_t>(plan::main_segment(*gas_) - segs.data());
   const auto& main = segs[main_];
   time_zero_ = main.time_zero ? *main.time_zero : gas_->time_zero.value_or(plan::TimeZero{});
 
-  auto step = [&](Block b, int segment, auto&& fn) -> Result<void> {
-    if (stopping()) return {};
-    block_ = b;
-    if (options_.on_block_started) options_.on_block_started(b);
-    if (ctx_.bus != nullptr) ctx_.bus->publish(BlockStarted{in_.run_id, b, gas_->name, segment});
-    result_.blocks.push_back(b);
-    Result<void> r = fn();
-    if (ctx_.bus != nullptr) ctx_.bus->publish(BlockFinished{in_.run_id, b, r.has_value(), gas_->name, segment});
-    return r;
-  };
-  auto run_when = [&](plan::When when) -> Result<void> {
-    for (std::size_t s = 0; s < segs.size(); ++s) {
-      if (segs[s].when != when) continue;
-      if (auto r = step(block_of(s), static_cast<int>(s), [&] { return run_segment(s); }); !r) return r;
-    }
-    return {};
-  };
+  if (auto r = run_gas(); !r) return r;
+  // after_run once, after the last gas.
+  return run_when(plan::When::AfterRun);
+}
 
+Result<void> MeasurementEngine::block(Block b, int segment, const std::function<Result<void>()>& fn) {
+  if (stopping()) return {};
+  block_ = b;
+  if (options_.on_block_started) options_.on_block_started(b);
+  if (ctx_.bus != nullptr) ctx_.bus->publish(BlockStarted{in_.run_id, b, gas_->name, segment});
+  result_.blocks.push_back(b);
+  Result<void> r = fn();
+  if (ctx_.bus != nullptr) ctx_.bus->publish(BlockFinished{in_.run_id, b, r.has_value(), gas_->name, segment});
+  return r;
+}
+
+Result<void> MeasurementEngine::run_when(plan::When when) {
+  for (const auto s : plan::segments_at(*gas_, when))
+    if (auto r = block(block_of(s), static_cast<int>(s), [&] { return run_segment(s); }); !r) return r;
+  return {};
+}
+
+// One gas, in the spec 5.1 order: before_inlet, inlet open,
+// during_equilibration, inlet close / time zero, after_inlet (the whiff
+// already taken at the inlet's opening), after_main.
+Result<void> MeasurementEngine::run_gas() {
+  const auto& segs = gas_->segments;
+  const auto& main = segs[main_];
   if (auto r = run_when(plan::When::BeforeInlet); !r) return r;
   const auto position_first = [&] {
     return enter_position(main, main.positions.front(), static_cast<int>(main_), 0);
   };
-  if (auto r = step(Block::PositionFirstHop, -1, position_first); !r) return r;
-  if (auto r = step(Block::Equilibrate, -1, [&] { return equilibrate(); }); !r) return r;
+  if (auto r = block(Block::PositionFirstHop, -1, position_first); !r) return r;
+  if (auto r = block(Block::Equilibrate, -1, [&] { return equilibrate(); }); !r) return r;
   if (!stopping()) {
     if (auto r = call_hook("before_main"); !r) return r;
   }
-  const auto run_main = [&] {
-    if (auto m = run_segment(main_); !m) return m;
-    return check_main_counts();
-  };
-  if (auto r = step(Block::Main, static_cast<int>(main_), run_main); !r) return r;
-  // The other after_inlet signal segments, in file order after main.
-  for (std::size_t s = main_ + 1; s < segs.size(); ++s) {
-    if (segs[s].kind != plan::SegmentKind::Signal || segs[s].when != plan::When::AfterInlet) continue;
-    if (auto r = step(block_of(s), static_cast<int>(s), [&] { return run_segment(s); }); !r) return r;
+  for (const auto s : plan::segments_at(*gas_, plan::When::AfterInlet)) {
+    if (is_whiff(segs[s])) continue;  // taken as the inlet opened
+    if (s == main_) {
+      const auto run_main = [&] {
+        if (auto m = run_segment(main_); !m) return m;
+        return check_main_counts();
+      };
+      if (auto r = block(Block::Main, static_cast<int>(main_), run_main); !r) return r;
+      continue;
+    }
+    if (auto r = block(block_of(s), static_cast<int>(s), [&] { return run_segment(s); }); !r) return r;
   }
   if (!stopping()) {
     if (auto r = call_hook("after_main"); !r) return r;
   }
-  if (auto r = run_when(plan::When::AfterMain); !r) return r;
-  return run_when(plan::When::AfterRun);
+  return run_when(plan::When::AfterMain);
 }
 
 Result<void> MeasurementEngine::run_segment(std::size_t segment) {
@@ -445,6 +458,7 @@ Result<void> MeasurementEngine::run_segment(std::size_t segment) {
     for (int cycle = 0; more(cycle); ++cycle) {
       for (std::size_t j = 0; j < seg.positions.size(); ++j) {
         if (stopping()) return {};
+        if (auto due = inlet_due(); !due) return due;
         const auto& pos = seg.positions[j];
         // Main collects as planned; what runs after it scales by a truncation.
         const int counts = is_main ? pos.counts : scaled(pos.counts);
@@ -640,6 +654,12 @@ Result<void> MeasurementEngine::equilibrate() {
   const auto sniff_at = std::find_if(segs.begin(), segs.end(), is_sniff);
   const plan::Segment* sniff = sniff_at == segs.end() ? nullptr : &*sniff_at;
   const auto whiff_at = std::find_if(segs.begin(), segs.end(), is_whiff);
+  // The phase's other segments (a baseline while the gas equilibrates),
+  // run once the inlet is open; the inlet closes on time between and during
+  // their readings.
+  std::vector<std::size_t> during;
+  for (const auto i : plan::segments_at(*gas_, plan::When::DuringEquilibration))
+    if (!is_sniff(segs[i])) during.push_back(i);
 
   if (!eq.outlet.empty()) {
     if (auto r = ctx_.valves->close(eq.outlet); !r) return r;
@@ -683,8 +703,9 @@ Result<void> MeasurementEngine::equilibrate() {
     sniffing = true;
     return {};
   };
-  // With a whiff, sniffing starts once the whiff has decided.
-  if (whiff_at == segs.end()) {
+  // With a whiff, sniffing starts once the whiff has decided; with other
+  // segments in the phase, once they are done.
+  if (whiff_at == segs.end() && during.empty()) {
     if (auto r = start_sniff(); !r) return r;
   }
 
@@ -705,30 +726,31 @@ Result<void> MeasurementEngine::equilibrate() {
       close_at = now + eq.time_s;
       if (time_zero_.kind == plan::TimeZeroKind::Offset && !time_zero_by_step_)
         collector_.set_time_zero(now + time_zero_.offset_s);
-      if (whiff_at != segs.end()) {
-        if (auto r = whiff(static_cast<std::size_t>(whiff_at - segs.begin())); !r) {
-          out = r;
-          break;
+      if (whiff_at != segs.end() || !during.empty()) {
+        if (whiff_at != segs.end()) {
+          if (auto r = whiff(static_cast<std::size_t>(whiff_at - segs.begin())); !r) {
+            out = r;
+            break;
+          }
+          if (stopping()) break;
         }
-        if (stopping()) break;
+        close_inlet_at_ = close_at;
+        for (const auto i : during) {
+          out = block(block_of(i), static_cast<int>(i), [&] { return run_segment(i); });
+          if (!out || stopping()) break;
+        }
+        block_ = Block::Equilibrate;
+        close_inlet_at_.reset();
+        if (!out || stopping() || inlet_done_) break;
         if (auto r = start_sniff(); !r) {
           out = r;
           break;
         }
-        continue;  // the whiff took time: re-read the clock
+        continue;  // that took time: re-read the clock
       }
     }
     if (close_at && (now >= *close_at || close_inlet_now_)) {
-      if (eq.close_inlet) {
-        if (auto r = close_inlet(); !r) {
-          out = r;
-          break;
-        }
-        collector_.set_inlet_close(now);
-        if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
-        if (options_.on_inlet_closed) options_.on_inlet_closed();
-      }
-      if (time_zero_.kind == plan::TimeZeroKind::OnInletClose && !time_zero_by_step_) collector_.set_time_zero(now);
+      out = finish_inlet(now);
       break;
     }
     if (sniffing) {
@@ -1100,6 +1122,10 @@ Result<collect::CollectStatus> MeasurementEngine::collect(Block block, collect::
     status = collector_.add(*reading);
     if (ctx_.bus != nullptr)
       ctx_.bus->publish(CountsProgress{in_.run_id, block, collector_.count(), collector_.target()});
+    if (auto due = inlet_due(); !due) {
+      error = due.error();
+      break;
+    }
     if (had_gap && status == collect::CollectStatus::Running && ctx_.clock.now() >= planned_end) {
       ended_by_gap = true;
       break;
@@ -1225,6 +1251,30 @@ Result<void> MeasurementEngine::critical(const std::string& what, const std::fun
                        options_.critical_window,
                        options_.critical_alarm_after};
   return keep_trying(how, what, op);
+}
+
+// The inlet's close (when the plan closes it), OverlapReady, and time zero
+// on inlet close: once a gas.
+Result<void> MeasurementEngine::finish_inlet(double now) {
+  close_inlet_at_.reset();
+  inlet_done_ = true;
+  if (equilibration().close_inlet) {
+    if (auto r = close_inlet(); !r) return r;
+    collector_.set_inlet_close(now);
+    if (ctx_.bus != nullptr) ctx_.bus->publish(OverlapReady{in_.run_id});
+    if (options_.on_inlet_closed) options_.on_inlet_closed();
+  }
+  if (time_zero_.kind == plan::TimeZeroKind::OnInletClose && !time_zero_by_step_) collector_.set_time_zero(now);
+  return {};
+}
+
+// Closes the inlet if a segment run during the equilibration has reached its
+// time (checked between positions and after each reading).
+Result<void> MeasurementEngine::inlet_due() {
+  if (!close_inlet_at_) return {};
+  const double now = collector_.seconds(ctx_.clock.now());
+  if (now < *close_inlet_at_ && !close_inlet_now_) return {};
+  return finish_inlet(now);
 }
 
 Result<void> MeasurementEngine::close_inlet() {

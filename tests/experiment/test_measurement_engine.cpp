@@ -795,6 +795,179 @@ time_zero = "now"
   EXPECT_DOUBLE_EQ(*r.data.timing.time_zero, secs(clock_.now() - r.data.timing.epoch));
 }
 
+// ---- phases (plan Task 19) ----------------------------------------------------
+
+std::string phases_plan(std::string_view segments, double eq_time = 10) {
+  return std::string(R"toml(
+[plan]
+name = "phases"
+instrument_family = "thermo_argus"
+analysis_types = ["unknown"]
+
+[equilibration]
+inlet = "B"
+outlet = "C"
+time_s = )toml") + num(eq_time) + "\n" + std::string(segments);
+}
+
+// Segment indexes of the trace's collections and steps, in the order run
+// (one entry per segment however often it collected).
+std::vector<int> run_order(const MeasurementResult& r) {
+  std::vector<int> out;
+  for (const auto& e : r.trace) {
+    if (e.what != "collect" && e.what != "step") continue;
+    if (out.empty() || out.back() != e.segment) out.push_back(e.segment);
+  }
+  return out;
+}
+
+// The time (s since the epoch) of the first trace entry of `segment`.
+double first_t(const MeasurementResult& r, int segment) {
+  for (const auto& e : r.trace)
+    if (e.segment == segment) return e.t;
+  return -1;
+}
+
+TEST_F(EngineTest, PhasesOrderAcrossWhens) {
+  auto r = run(plan_from(phases_plan(R"(
+[[segment]]
+kind = "delay"
+when = "after_run"
+delay = { seconds = 1 }
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 2
+
+[[segment]]
+kind = "signal"
+when = "after_inlet"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+
+[[segment]]
+kind = "baseline"
+when = "during_equilibration"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 35, detector = "H1" }
+counts = 2
+
+[[segment]]
+kind = "delay"
+when = "before_inlet"
+delay = { seconds = 1 }
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(run_order(r), (std::vector<int>{4, 3, 2, 1, 0}));
+  // during_equilibration runs once the inlet is open, after_inlet once it closed.
+  ASSERT_TRUE(r.data.timing.inlet_open && r.data.timing.inlet_close);
+  EXPECT_GE(first_t(r, 3), *r.data.timing.inlet_open);
+  EXPECT_GE(first_t(r, 2), *r.data.timing.inlet_close);
+  EXPECT_EQ(r.blocks, (std::vector<Block>{Block::Step, Block::PositionFirstHop, Block::Equilibrate, Block::Segment,
+                                          Block::Main, Block::BaselineAfter, Block::Step}));
+}
+
+TEST_F(EngineTest, PhasesSameWhenRunsInFileOrder) {
+  auto r = run(plan_from(phases_plan(R"(
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 35, detector = "H1" }
+counts = 2
+
+[[segment]]
+kind = "delay"
+when = "after_main"
+delay = { seconds = 2 }
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 34.2, detector = "H1" }
+counts = 2
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(run_order(r), (std::vector<int>{0, 1, 2, 3}));
+}
+
+// after_main comes after every after_inlet signal segment, wherever it is
+// written.
+TEST_F(EngineTest, PhasesAfterMainAfterLastSignalSegment) {
+  auto r = run(plan_from(phases_plan(R"(
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+
+[[segment]]
+kind = "baseline"
+when = "after_main"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 35, detector = "H1" }
+counts = 2
+
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar39 = "H1" }
+counts = 3
+)")));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  EXPECT_EQ(run_order(r), (std::vector<int>{0, 2, 1}));
+}
+
+// A baseline while the gas equilibrates: its positions are read while the
+// equilibration waits, and the inlet closes on time, at a reading.
+TEST_F(EngineTest, PhasesBaselineDuringEquilibration) {
+  auto r = run(plan_from(phases_plan(R"(
+[[segment]]
+kind = "baseline"
+when = "during_equilibration"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+at = { mass = 35, detector = "H1" }
+counts = 8
+settle_s = 1
+
+[[segment]]
+kind = "signal"
+[[segment.positions]]
+collect = { Ar40 = "H1" }
+counts = 3
+)", 4)));
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed) << (r.error ? r.error->what : "");
+  ASSERT_TRUE(r.data.timing.inlet_open && r.data.timing.inlet_close);
+  const double held = *r.data.timing.inlet_close - *r.data.timing.inlet_open;
+  EXPECT_GE(held, 4.0);
+  EXPECT_LE(held, 5.0);  // within a reading of its time
+  const auto& baseline = r.data.series.at(skey("", "H1", collect::kBaseline, 0, 0));
+  EXPECT_EQ(baseline.v.size(), 8u);  // read to its end, past the close
+  EXPECT_GT(baseline.t.back(), *r.data.timing.inlet_close);
+  EXPECT_LT(baseline.t.front(), *r.data.timing.inlet_close);
+  EXPECT_EQ(std::count_if(valves_.log.begin(), valves_.log.end(),
+                          [](const std::string& l) { return l.starts_with("close B"); }),
+            1);
+  EXPECT_DOUBLE_EQ(*r.data.timing.time_zero, *r.data.timing.inlet_close);
+}
+
 // ---- live edits (plan Task 15) -------------------------------------------------
 
 constexpr std::string_view kTwoSegmentPlan = R"toml(

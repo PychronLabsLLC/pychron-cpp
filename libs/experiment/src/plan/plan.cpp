@@ -104,6 +104,16 @@ std::vector<CollectEntry> collecting(const Position& position) {
   return out;
 }
 
+std::vector<std::size_t> segments_at(const Gas& gas, When when) {
+  std::vector<std::size_t> out;
+  for (std::size_t i = 0; i < gas.segments.size(); ++i)
+    if (gas.segments[i].when == when) out.push_back(i);
+  if (when == When::AfterInlet)
+    std::stable_partition(out.begin(), out.end(),
+                          [&](std::size_t i) { return gas.segments[i].kind == SegmentKind::Whiff; });
+  return out;
+}
+
 const Segment* main_segment(const Gas& gas) {
   const auto it = std::find_if(gas.segments.begin(), gas.segments.end(), [](const Segment& s) {
     return s.kind == SegmentKind::Signal && s.when == When::AfterInlet;

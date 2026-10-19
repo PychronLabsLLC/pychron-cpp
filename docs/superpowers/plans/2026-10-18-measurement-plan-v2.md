@@ -518,11 +518,13 @@ Done notes: Step 2 was observed failing as build failures (no such calls). The h
 - Produces:
   - `std::vector<std::size_t> segments_at(const Gas& gas, When when);` — file order within a `when`; for `AfterInlet` whiff segments first.
   - `Result<void> MeasurementEngine::run_phase(plan::When when, scripting::CancelToken& token);` (runs that phase of gas 0; used by `Run` for `DuringExtraction` only) and `MeasurementResult run(token)` runs every remaining phase of every gas in §5.1 order: `before_inlet`, inlet open, `during_equilibration`, inlet close / time zero, `after_inlet`, `after_main`, then `after_run` once after the last gas. `bool has_phase(plan::When) const;`
-- [ ] **Step 1: Write failing tests:** `Phases.OrderAcrossWhens` (one segment per `when` except during_extraction, declared in reverse file order → trace in §5.1 order); `Phases.SameWhenRunsInFileOrder`; `Phases.AfterMainAfterLastSignalSegment` (two `after_inlet` signal segments, `after_main` baseline runs after both); `Phases.BaselineDuringEquilibration` (positions collected while the equilibration waits run, valve timing at reading granularity as sniff today).
-- [ ] **Step 2: Run** `--gtest_filter='Phases.*'` → FAIL.
-- [ ] **Step 3: Implement**; drop the `when` gate except `during_extraction` (Task 20).
-- [ ] **Step 4: Run** the binary → PASS.
-- [ ] **Step 5: Commit** `feat(experiment): plan segments run by phase`.
+- [x] **Step 1: Write failing tests:** `Phases.OrderAcrossWhens` (one segment per `when` except during_extraction, declared in reverse file order → trace in §5.1 order); `Phases.SameWhenRunsInFileOrder`; `Phases.AfterMainAfterLastSignalSegment` (two `after_inlet` signal segments, `after_main` baseline runs after both); `Phases.BaselineDuringEquilibration` (positions collected while the equilibration waits run, valve timing at reading granularity as sniff today).
+- [x] **Step 2: Run** `--gtest_filter='Phases.*'` → FAIL.
+- [x] **Step 3: Implement**; drop the `when` gate except `during_extraction` (Task 20).
+- [x] **Step 4: Run** the binary → PASS.
+- [x] **Step 5: Commit** `feat(experiment): plan segments run by phase`.
+
+Done notes: Step 2 was not observed failing: the tests were written with the engine change (they would have failed at the gate before it). Built here: `plan::segments_at`, and the engine's phase walk (`run_gas`, `run_when`, `block`): before_inlet; the main segment's first position; the equilibration (the whiff as the inlet opens, then the gas's other during_equilibration segments in file order, then the sniff, which starts after them when there are any); the `before_main` hook; every after_inlet segment in file order but the whiff, the first signal one as `Main`; the `after_main` hook; after_main; after_run once after the gas. A segment run while the gas equilibrates closes the inlet on time, checked after each reading and before each position (`inlet_due`, `finish_inlet`: close, `OverlapReady`, time zero on close), and is read to its end. `run_phase` and `has_phase` are left to Task 20, their one user. Gate: `when` is refused only as `during_extraction` (Task 20), a sniff anywhere but during_equilibration and a whiff anywhere but after_inlet (read where the engine reads them); worked plan 7.3 now passes the gate. Tests are `EngineTest.Phases*`.
 
 ### Task 20: `during_extraction` in the run and executor
 

@@ -1107,17 +1107,14 @@ namespace detail {
 
 namespace {
 
-// Where a v1 file puts each kind of segment (desugar, spec 4.1): the only
-// placements the engine runs until the phases are built.
+// The placements the engine runs: every phase but during_extraction (Task
+// 20); a sniff only while the gas equilibrates, a whiff only as the inlet
+// opens.
 bool v1_placement(const Segment& s) {
   switch (s.kind) {
-    case SegmentKind::Signal:
-    case SegmentKind::Whiff: return s.when == When::AfterInlet;
-    case SegmentKind::Baseline: return s.when == When::BeforeInlet || s.when == When::AfterMain;
-    case SegmentKind::Sniff: return s.when == When::DuringEquilibration;
-    case SegmentKind::PeakCenter: return s.when == When::BeforeInlet || s.when == When::AfterRun;
-    default:  // the other steps: where the engine runs every segment of a when
-      return s.when == When::BeforeInlet || s.when == When::AfterMain || s.when == When::AfterRun;
+    case SegmentKind::Whiff: return s.when == When::AfterInlet;            // taken as the inlet opens
+    case SegmentKind::Sniff: return s.when == When::DuringEquilibration;   // read while it equilibrates
+    default: return s.when != When::DuringExtraction;                      // Task 20
   }
 }
 
