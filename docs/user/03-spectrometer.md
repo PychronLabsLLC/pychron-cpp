@@ -714,13 +714,11 @@ elctl init --reconfigure --install <name> --set simulation=no
 - No peak-centre, deflection, source or baseline controls in the spectrometer
   window (by design; see the spec). I did not find any code that offers them
   there.
-- **Plan features not yet supported.** The "measurement plan v2" design
-  (segments, positions with per-detector deflection, several gases, baselines
-  during extraction, `optics`, per-run field tables) is marked Draft. The plan
-  loader today accepts only the sections shown above (`plan`, `hook`,
-  `detectors`, `equilibration`, `sniff`, `peak_center`, `baseline`, `main`,
-  `fits`, `conditionals`, `whiff`, `parameters`); anything else, such as
-  `[[segment]]` or `[[gas]]`, is rejected as an unknown key.
+- **Measurement plans, version 2** (segments, positions, several gases,
+  optics presets, per-run field tables) are described in
+  [Experiments, section 10](04-experiments.md#10-measurement-plans-version-2),
+  with what is not run yet. No hardware driver applies an optics preset or
+  switches the source's output yet; the simulated drivers do.
 - Whether the spectrometer window and a running queue can both hold the
   acquirer: the scan service refuses to start when the acquisition engine is
   already running elsewhere; I did not verify what an operator sees. Close the

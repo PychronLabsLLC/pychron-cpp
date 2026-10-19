@@ -435,7 +435,7 @@ for serial kinds (and required for serial); `link` (required, only for kind
 |---|---|---|
 | `kind` | text, required | `thermo_qtegra`, `isotopx_ngx`, `dac_positioner`, `adc_bank`, `pulse_counter`, `serial_hv`, their `sim_*` twins, ... see `elctl list-drivers` |
 | `transport` | text, required | a `[transports.*]` name in this file |
-| `roles` | list, required, not empty | which of `positioner`, `source`, `acquirer`, `detector_control`, `beam_blank` it plays. An integrated vendor box plays several; a legacy split uses one driver per role |
+| `roles` | list, required, not empty | which of `positioner`, `source`, `acquirer`, `detector_control`, `beam_blank`, `optics` it plays. An integrated vendor box plays several; a legacy split uses one driver per role. `optics`: the driver applies `[optics.*]` presets and switches the source's output (the simulated drivers do; no hardware driver does yet) |
 | `channels` | list of text | an acquirer must list its channel names (`["H2", "H1", "AX"]`) |
 | anything else | | read by the driver (`limit_min`, `limit_max`, `sample_hz`, `link`, `user`, ...) |
 
@@ -495,6 +495,22 @@ any detector's `deflection.control` or `protection`.
 | `saturation` | number > 0 | none | |
 | `dead_time_ns` | number >= 0 | none | |
 | `cdd_voltage` | number | none | |
+| `large_beam_threshold` | number > 0 | none (never) | a reading above it puts the detector in its large-beam state |
+| `settle_after_large_beam_s` | seconds >= 0 | 0 | a measurement plan v2 position with a detector in that state settles at least this long |
+| `collector`, `mode` | text | the detector's own | logical detectors sharing one collector (`H2` and `H2(CDD)`, `collector = "H2"`, `mode = "CDD"`) |
+| `mode_switch_s` | seconds >= 0 | 0 | wait when a position changes the mode of this detector's collector |
+
+### [optics.\<name\>] (optional)
+
+Named presets a measurement plan v2 position names with `optics = "<name>"`.
+Each key and value (text, number or true/false) is handed to the driver of
+role `optics` as written, in file order; what they mean is the driver's. A
+plan may name presets only on a spectrometer that has such a driver.
+
+### [interferences] (optional)
+
+`"<monitor>" = "<what it corrects>"`, for example `"Ar40++" = "Ne20"`: stored
+with each run for reduction; nothing is corrected at measurement.
 
 ### Field tables
 
@@ -715,7 +731,9 @@ The plan's name is `[plan] name` (not the file name) and a queue says
 
 Top-level tables (others are errors): `plan`, `hook`, `detectors`,
 `equilibration`, `sniff`, `peak_center`, `baseline`, `main`, `fits`,
-`conditionals`, `whiff`, `parameters`.
+`conditionals`, `whiff`, `parameters`, and for a version 2 plan `segment`
+and `gas` ([Experiments, section 10](04-experiments.md#10-measurement-plans-version-2);
+the table below is the hop plan's).
 
 | Table | Key | Type | Default | Meaning |
 |---|---|---|---|---|
@@ -1056,9 +1074,9 @@ yours in the per-user `presets/<kind>/`. Format and every setting are in
   the framework (`kind`, `transport`, `channels`, `roles`) and the example
   laser driver only. A key set for a driver that does not declare it is an
   error, so `list-drivers` is the authority.
-- **Measurement plans, version 2.** A design for segments, positions and
-  gases exists (`docs/superpowers/specs/2026-10-05-measurement-plan-v2-design.md`);
-  the code in this release reads the hop-based plans documented above.
+- **Measurement plans, version 2.** Plans of segments, positions and gases
+  are read and run; they are described in
+  [Experiments, section 10](04-experiments.md#10-measurement-plans-version-2).
 - **Source ramping.** The example Qtegra config says source ramping is not
   implemented for that driver: HV and trap current change in one step.
   `[source] ramp` is read, and limits the rate on drivers that support it

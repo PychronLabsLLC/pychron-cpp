@@ -1249,7 +1249,168 @@ of air shots and blanks that shows it. A laser or furnace releases no gas in
 simulation. [The simulated lab](../simulator.md) has the details and the
 figures.
 
-## 10. Unverified / not yet implemented
+## 10. Measurement plans, version 2
+
+The hop-based plan of the [Configuration reference](07-configuration-reference.md)
+(`[main]`, `[[main.hops]]`, `[baseline] before/after`) still works and means
+what it always did. A version 2 plan writes the measurement out instead, as a
+list of **segments**, each a list of **positions**. Use it when the hop plan
+cannot say what you need: a baseline during the extraction, a baseline in the
+middle of a cycle, a per-run field table, an isotope on two detectors,
+per-cup deflections, optics presets, several gases in one run.
+
+A file is version 2 when it has `[[segment]]` or `[[gas]]` tables. It may not
+also have `[main]`, and `[baseline] before`/`after`, `[peak_center]
+before`/`after`, `[sniff] enabled` and `[whiff] enabled` are then refused:
+write the segment instead, so its place is the file's. `[plan]`, `hook`,
+`[detectors]`, `[equilibration]`, `[fits]`, `[conditionals]` and
+`[parameters]` are as in a hop plan.
+
+### 10.1 Segments
+
+```toml
+[[segment]]
+kind = "signal"           # signal (default), baseline, sniff, whiff, or a step
+when = "after_inlet"      # when it runs (below); after_inlet is the default
+cycles = 20               # repeats of its positions, default 1
+integration_s = 1         # default for its positions
+time_zero = "on_inlet_close"   # or "on_first_count", { offset_s = N }
+table = "argon"           # a field table for its positions
+[[segment.positions]]
+...
+```
+
+`when` places a segment in the run. Segments with the same `when` run in
+file order:
+
+| `when` | Runs |
+|---|---|
+| `during_extraction` | while the sample is extracted (the extraction script runs at the same time); only in plans of runs that extract, and no `signal` or `sniff` there |
+| `before_inlet` | after the extraction, before the inlet opens |
+| `during_equilibration` | while the gas equilibrates (a sniff) |
+| `after_inlet` | the measurement; the first `signal` segment is the main one, the one conditionals and `cycles` act on |
+| `after_main` | after the last `after_inlet` signal segment |
+| `after_run` | at the end of the run (with several gases: after the last) |
+
+A **step** is a segment of one action, written as a table named after its
+kind:
+
+| Step | Table |
+|---|---|
+| `peak_center` | `peak_center = { label, detector \| detectors = [...], extra_detectors = [...], config, write_table, min_signal }`; with `detectors` it centres on each in turn; `write_table = "ic_run"` keeps the centres in a field table of that name for this run only, which later positions can name as their `table` (never saved) |
+| `set` | `set = { deflection = { CDD = 2000 }, gain = { H1 = 1.0 }, hv = 4500, cdd_voltage = 1800, source = { ... }, integration_s = 2 }`; a `set` deflection stands until the run ends |
+| `blank_beam` | `blank_beam = true` or `false`; a blanked beam is unblanked when the run ends |
+| `park` | `park = { mass = 36.5, detector = "CDD" }` or `{ label, detector }` |
+| `delay` | `delay = { seconds = 30 }` |
+| `time_zero` | `time_zero = "now"` or `{ offset_s = N }`: sets the fits' time zero here |
+
+### 10.2 Positions
+
+| Key | Meaning |
+|---|---|
+| `collect` | `{ Ar40 = "H1", Ar36 = "CDD" }`, or a list `[ { label = "Ar40", detector = "H1" }, { label = "Ar36", detector = "CDD", deflection = 110 } ]` when an entry needs more. A list entry may have `deflection`, `protect = true` and `active = false` (kept deflected or protected, not read; it keeps its `label`). A detector at most once per position; the list form may read one label on several detectors |
+| `at` | where the magnet goes: `{ label, detector }`, `{ mass, detector }`, `{ dac }` or `{ hv, detector }`. Without it, the reference detector's entry positions it (`[detectors] reference`, else the spectrometer's `reference_detector`), else the first active entry |
+| `kind` | `signal` (default) or `baseline`: a baseline position inside a signal segment |
+| `counts` | readings per cycle; required |
+| `settle_s` | wait after the move; a detector that just read a large beam may make it longer (`large_beam_threshold`, `settle_after_large_beam_s` in `spectrometer.toml`), and so may a switch between the modes of one collector (`mode_switch_s`) |
+| `integration_s` | the segment's when not given |
+| `optics` | a preset of `spectrometer.toml` `[optics.<name>]`, applied by the driver; only on spectrometers whose driver applies presets |
+| `table` | a field table, the spectrometer's own or one a `peak_center` step wrote this run |
+
+Deflections given on a position are put back at the end of its segment. A
+label (`Ar40`, `HCl`, `Ar40H`, `mass35`) is an isotope or species of the
+spectrometer's mass table, or a name positioned by `at.mass`.
+
+Each series is kept under its label and detector: Ar40 read on H1 and on AX
+is two intercepts, `Ar40@H1` and `Ar40@AX`. Conditionals may name one
+(`Ar40@H1 > 1000`); a bare `Ar40` means what it did.
+
+### 10.3 Baselines
+
+A baseline segment, or a baseline position, reads each detector of its
+`collect` at its `at`. With several baselines per detector the intercept
+takes the one at the same position, else the nearest in time, else the
+average of the two that bracket it; the record says which it chose.
+`[baseline.modifier.<detector>]` (`variable`, `model`, `error`) models a
+detector's baseline on the run's own intercepts (`model` an expression in
+`x`, or a CSV of `x, baseline[, error]` in the plan's folder); it is stored
+with the run for reduction.
+
+### 10.4 Gases
+
+A plan without `[[gas]]` is one gas. `[[gas]]` tables (each with `name`,
+`inlet`, `outlet`, `equilibration`, `time_zero`, `fits`, `[[gas.segment]]`)
+are measured in file order in one run, each with its own inlet, time zero
+and segments; what a gas does not give comes from the top-level
+`[equilibration]` and `[fits]`. `source_dark_phase = true` keeps the source
+off while the gas is let in and switches it on at time zero (only on
+spectrometers that can). Two gases may not read the same label on the same
+detector as the same kind: the store keeps one such series a run.
+
+A gas may be released from a trap first and pumped away after:
+
+```toml
+[[gas]]
+name = "He"
+prepare = { script = "cryo:release", variables = { cryo_temp = 35, hold_s = 300 } }
+pump_out = { valve = "@valves.ion_pump", time_s = 120 }
+```
+
+`prepare` runs an extraction script (from `scripts/extraction`, with the
+run's variables and these on top) before the gas's inlet opens; `pump_out`
+opens the valve, waits and closes it after the gas's last segment. A plan
+with either holds the extraction line for the whole run, so such a run
+cannot overlap the next one's extraction (the queue check says so). If a
+`prepare` fails the run ends as a failed extraction does, and what earlier
+gases measured is saved.
+
+### 10.5 Examples
+
+The seven worked plans of the design notes are in
+`tests/experiment/fixtures/plans/valid/` and are run through the simulator by
+the tests:
+
+| File | What it shows |
+|---|---|
+| `v2_71_argus_syn_baseline.toml` | a baseline read during extraction, the main signal, a peak centre after the run, a CDD baseline modifier |
+| `v2_72_argus_hop_fifth.toml` | four isotopes static and a fifth hopped onto CDD, a Cl monitor at mass 35, a per-cup deflection, a baseline after the measurement |
+| `v2_73_argus_ic_table.toml` | detector intercalibration: a deflection step, a peak centre on three detectors written to a per-run table, Ar40 hopped onto every cup, a time zero step |
+| `v2_74_helix_hydride_hcl.toml` | hydride and HCl monitors on a Helix's CDD modes, an inactive protected cup, positions by `at` |
+| `v2_75_noblesse_optics.toml` | two optics presets alternating by position, with their own integration times |
+| `v2_76_helix_sft_he_ne_ar.toml` | helium, then neon, then argon in one run |
+| `v2_77_helix_xenon.toml` | three positions a cycle of xenon, a baseline before the inlet |
+
+### 10.6 Converting legacy scripts and hops
+
+`tools/pychron_measurement_import.py` turns a legacy measurement script (its
+`mx` docstring and the calls in `main()`), a hops file (Python tuples or
+YAML) and a `syn_extraction` YAML into a version 2 plan, and prints a report
+of every choice it made:
+
+```bash
+python3 tools/pychron_measurement_import.py unknown.py --syn-extraction syn_extraction/default.yaml -o plans/unknown.toml
+python3 tools/pychron_measurement_import.py jan_ic_peak_hop3.py --hops ic_hops.txt -o plans/ic.toml
+python3 tools/pychron_measurement_import.py argonH.yaml --reference H2 --cycles 10 --family thermo_helix -o plans/argonH.toml
+```
+
+A command it cannot map (a `gosub`, an `if` on a run value, a voltage
+change) goes into a measurement hook stub, `measurement_hooks/<plan>_hook.py`
+next to the output, with the original command in a comment, and the report
+names it (`line 17: gosub('warm_cdd'): hook stub`). The labels of a
+`multicollect` are worked out from the cup order (`--cups`, ARGUS by
+default): check them against your field table. Load the result with
+`elctl exp validate` before running it. The tool needs PyYAML.
+
+### 10.7 Not run yet
+
+A plan that uses one of these resolves only to be refused, with the path
+of the entry and `not run by this build yet`: segment `conditionals`; a
+sniff or whiff segment with several positions, `cycles`, an `at`, or
+per-position deflection, optics, table, integration or inactive entries; a
+second sniff or whiff in a gas; a whiff after the main segment; a gas with
+no `after_inlet` signal segment.
+
+## 11. Unverified / not yet implemented
 
 These points were found while reading the source. Test them on your system
 before relying on them.
@@ -1278,5 +1439,5 @@ before relying on them.
 * **Peak center and measurement plan details** are outside this chapter; see
   the [Spectrometer](03-spectrometer.md) and
   [Configuration reference](07-configuration-reference.md) chapters.
-* **Measurement plans, version 2** are described in the design notes as a
-  draft and are not covered here.
+* **Measurement plans, version 2**: section 10 lists what a plan may say
+  that is not run yet.
