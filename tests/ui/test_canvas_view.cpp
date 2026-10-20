@@ -971,9 +971,9 @@ class TestCanvasView : public QObject {
       QCOMPARE(view_->verticalScrollBar()->maximum(), view_->verticalScrollBar()->minimum());
       // Fills, not only fits: on one axis it reaches both edges (fitInView
       // leaves a couple of pixels).
-      const auto near = [](double a, double b) { return std::abs(a - b) <= 4; };
-      const bool across = near(shown.left(), port.left()) && near(shown.right(), port.right());
-      const bool down = near(shown.top(), port.top()) && near(shown.bottom(), port.bottom());
+      const auto within = [](double a, double b) { return std::abs(a - b) <= 4; };
+      const bool across = within(shown.left(), port.left()) && within(shown.right(), port.right());
+      const bool down = within(shown.top(), port.top()) && within(shown.bottom(), port.bottom());
       QVERIFY2(across || down, qPrintable(QStringLiteral("%1x%2").arg(size.width()).arg(size.height())));
     }
   }
@@ -1058,9 +1058,11 @@ class TestCanvasView : public QObject {
     // A resize: the canvas is fitted to the view again and the chip moves
     // from under the popup.
     QTest::mouseMove(view_->viewport(), off_gauge(*ig));
+    const int rests = rested.count();
     rest();
-    QTRY_COMPARE(rested.count(), 4);
+    QTRY_COMPARE(rested.count(), rests + 1);
     const int before = left.count();
+    QVERIFY(view_->size() != QSize(300, 200));  // else the resize is no change
     view_->resize(300, 200);
     QTRY_COMPARE(left.count(), before + 1);
   }
