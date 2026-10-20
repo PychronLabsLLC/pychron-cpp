@@ -76,6 +76,11 @@ class HostState {
   // ---- bound to `_h` --------------------------------------------------
   bool estimating() const noexcept { return mode_ == Mode::Estimate; }
   bool rehearsing() const noexcept { return mode_ == Mode::Rehearse; }
+  // Rehearse, for the prelude's own multi-step commands (ramp, waitfor,
+  // begin_heating_interval): one step; `seconds_held` is the time it stands
+  // for. Returns the step's value.
+  py::object rehearse_step(const std::string& command, const py::list& args, const py::dict& kwargs,
+                           double seconds_held);
   double now();
   void info(const std::string& message);
   void require(const std::string& capability);
@@ -169,6 +174,12 @@ class HostState {
   // Rehearse: hands the call to the rehearsal without the GIL, at the line
   // the trace last saw; its error is raised as the real call's would be.
   Value step(std::string command, std::vector<Value> args, ValueMap kwargs = {});
+  // Rehearse: a step of a call that answers nothing / a double / a string
+  // (guard() first). A double read accepts an integer; any other type is a
+  // Config error naming the command.
+  void rehearse_void(const std::string& command, std::vector<Value> args, ValueMap kwargs = {});
+  double rehearse_double(const std::string& command, std::vector<Value> args);
+  std::string rehearse_string(const std::string& command, std::vector<Value> args);
   // Rehearse: a read's answer as a bool; Config error for any other type.
   bool step_bool(const std::string& command, const std::string& name);
 

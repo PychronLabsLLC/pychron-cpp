@@ -42,6 +42,14 @@ py::object to_python(const Value& v) {
       v);
 }
 
+Value to_value(const py::handle& v) {
+  if (v.is_none()) return std::monostate{};
+  if (py::isinstance<py::bool_>(v)) return v.cast<bool>();
+  if (py::isinstance<py::int_>(v)) return v.cast<std::int64_t>();
+  if (py::isinstance<py::float_>(v)) return v.cast<double>();
+  return py::str(v).cast<std::string>();
+}
+
 const char* type_name(const Value& v) {
   return std::visit(
       [](const auto& x) -> const char* {
@@ -301,11 +309,14 @@ void HostState::add_estimate(Duration d, const std::string& command) {
 Value HostState::step(std::string command, std::vector<Value> args, ValueMap kwargs) {
   if (!rehearsal_) raise(Error{ErrorKind::Config, "rehearse: no rehearsal", {}});
   StepCall call{std::move(command), std::move(args), std::move(kwargs), current_script_, current_line_, {}};
-  if (script_stack_.size() > 1) call.gosubs.assign(script_stack_.begin() + 1, script_stack_.end());
+  // The scripts that called into this one, outermost first.
+  if (script_stack_.size() > 1) call.gosubs.assign(script_stack_.begin(), script_stack_.end() - 1);
   auto* rehearsal = rehearsal_;
+  const auto held_from = std::chrono::steady_clock::now();
   auto result = nogil([&] { return rehearsal->step(call); });
-  // max_wall_time counts Python's time, not the time a step was held.
-  started_ = std::chrono::steady_clock::now();
+  // max_wall_time counts Python's time, not the time a step was held: move
+  // its start on by the time spent in the step.
+  started_ += std::chrono::steady_clock::now() - held_from;
   if (!result && result.error().kind == ErrorKind::Cancelled) check_requested(call.command);
   return unwrap(std::move(result));
 }
@@ -315,6 +326,40 @@ bool HostState::step_bool(const std::string& command, const std::string& name) {
   auto v = step(command, {Value(name)});
   if (const auto* b = std::get_if<bool>(&v)) return *b;
   raise(Error{ErrorKind::Config, "rehearse: " + command + " answered with a " + type_name(v), {}});
+}
+
+void HostState::rehearse_void(const std::string& command, std::vector<Value> args, ValueMap kwargs) {
+  guard();
+  step(command, std::move(args), std::move(kwargs));
+}
+
+std::string HostState::rehearse_string(const std::string& command, std::vector<Value> args) {
+  guard();
+  auto v = step(command, std::move(args));
+  if (const auto* str = std::get_if<std::string>(&v)) return *str;
+  if (std::holds_alternative<std::monostate>(v)) return {};
+  raise(Error{ErrorKind::Config, "rehearse: " + command + " answered with a " + type_name(v), {}});
+}
+
+double HostState::rehearse_double(const std::string& command, std::vector<Value> args) {
+  guard();
+  auto v = step(command, std::move(args));
+  if (const auto* d = std::get_if<double>(&v)) return *d;
+  if (const auto* i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i);
+  raise(Error{ErrorKind::Config, "rehearse: " + command + " answered with a " + type_name(v), {}});
+}
+
+py::object HostState::rehearse_step(const std::string& command, const py::list& args, const py::dict& kwargs,
+                                    double seconds_held) {
+  std::vector<Value> a;
+  for (auto item : args) a.push_back(to_value(item));
+  ValueMap k;
+  for (auto item : kwargs) k[py::str(item.first).cast<std::string>()] = to_value(item.second);
+  guard();
+  check_requested(command);
+  auto v = step(command, std::move(a), std::move(k));
+  rehearsed_ += seconds(seconds_held);
+  return to_python(v);
 }
 
 // ---- vocabulary --------------------------------------------------------
@@ -339,13 +384,6 @@ void HostState::require(const std::string& capability) {
 
 // Resolve the service with the GIL held (a missing one raises), then call it
 // without.
-#define PYCHRON_STEP(command, name) \
-  if (rehearsing()) { \
-    guard(); \
-    step(command, {Value(name)}); \
-    return; \
-  }
-
 #define PYCHRON_HW(fallback, service, call) \
   if (estimating()) return fallback; \
   guard(); \
@@ -353,19 +391,19 @@ void HostState::require(const std::string& capability) {
   return unwrap(nogil([&] { return svc.call; }))
 
 void HostState::open(const std::string& n) {
-  PYCHRON_STEP("open", n);
+  if (rehearsing()) return rehearse_void("open", {Value(n)});
   PYCHRON_HW(, valves(), open(n));
 }
 void HostState::close(const std::string& n) {
-  PYCHRON_STEP("close", n);
+  if (rehearsing()) return rehearse_void("close", {Value(n)});
   PYCHRON_HW(, valves(), close(n));
 }
 void HostState::lock(const std::string& n) {
-  PYCHRON_STEP("lock", n);
+  if (rehearsing()) return rehearse_void("lock", {Value(n)});
   PYCHRON_HW(, valves(), lock(n));
 }
 void HostState::unlock(const std::string& n) {
-  PYCHRON_STEP("unlock", n);
+  if (rehearsing()) return rehearse_void("unlock", {Value(n)});
   PYCHRON_HW(, valves(), unlock(n));
 }
 bool HostState::is_open(const std::string& n) {
@@ -378,6 +416,7 @@ bool HostState::is_closed(const std::string& n) {
 }
 
 void HostState::extract(double value, const std::string& units) {
+  if (rehearsing()) return rehearse_void("extract", {Value(value), Value(units)});
   if (estimating()) return;
   guard();
   auto u = extraction::extract_units_from_string(units);
@@ -386,12 +425,25 @@ void HostState::extract(double value, const std::string& units) {
   unwrap(nogil([&] { return dev.extract(value, *u); }));
 }
 
-void HostState::end_extract() { PYCHRON_HW(, device(), end_extract()); }
-void HostState::enable() { PYCHRON_HW(, device(), enable()); }
-void HostState::disable() { PYCHRON_HW(, device(), disable()); }
-void HostState::prepare() { PYCHRON_HW(, device(), prepare()); }
+void HostState::end_extract() {
+  if (rehearsing()) return rehearse_void("end_extract", {});
+  PYCHRON_HW(, device(), end_extract());
+}
+void HostState::enable() {
+  if (rehearsing()) return rehearse_void("enable", {});
+  PYCHRON_HW(, device(), enable());
+}
+void HostState::disable() {
+  if (rehearsing()) return rehearse_void("disable", {});
+  PYCHRON_HW(, device(), disable());
+}
+void HostState::prepare() {
+  if (rehearsing()) return rehearse_void("prepare", {});
+  PYCHRON_HW(, device(), prepare());
+}
 
 void HostState::fire_laser() {
+  if (rehearsing()) return rehearse_void("fire_laser", {});
   if (estimating()) return;
   guard();
   auto* laser = device().laser();
@@ -400,6 +452,7 @@ void HostState::fire_laser() {
 }
 
 void HostState::warmup() {
+  if (rehearsing()) return rehearse_void("warmup", {});
   if (estimating()) return;
   guard();
   auto* laser = device().laser();
@@ -408,7 +461,8 @@ void HostState::warmup() {
 }
 
 DeviceHandle HostState::get_device(const std::string& name) {
-  if (!estimating() && !name.empty() && device().device_name() != name)
+
+  if (!estimating() && !rehearsing() && !name.empty() && device().device_name() != name)
     raise(Error{ErrorKind::Config, "no device '" + name + "' in this run", {}});
   return DeviceHandle{this};
 }
@@ -431,6 +485,8 @@ std::function<void()> HostState::stop_stage(extraction::IStage* stage) {
 }
 
 void HostState::move_to_position(const std::string& position, bool autocenter, bool block) {
+  if (rehearsing())
+    return rehearse_void("move_to_position", {Value(position)}, {{"autocenter", Value(autocenter)}, {"block", Value(block)}});
   if (estimating()) return;
   guard();
   check_requested("move_to_position");
@@ -453,6 +509,7 @@ void HostState::move_to_position(const std::string& position, bool autocenter, b
 }
 
 void HostState::set_axis(const std::string& axis, double value, bool block) {
+  if (rehearsing()) return rehearse_void("set_" + axis, {Value(value)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
   check_requested("set_" + axis);
@@ -464,6 +521,7 @@ void HostState::set_axis(const std::string& axis, double value, bool block) {
 }
 
 void HostState::set_xy(double x, double y, bool block) {
+  if (rehearsing()) return rehearse_void("set_xy", {Value(x), Value(y)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
   check_requested("set_xy");
@@ -473,6 +531,7 @@ void HostState::set_xy(double x, double y, bool block) {
 }
 
 void HostState::set_tray(const std::string& tray) {
+  if (rehearsing()) return rehearse_void("set_tray", {Value(tray)});
   if (estimating()) return;
   guard();
   auto* stage = feature(*this, &extraction::IExtractionDevice::stage, Capability::Stage);
@@ -480,6 +539,8 @@ void HostState::set_tray(const std::string& tray) {
 }
 
 void HostState::execute_pattern(const std::string& pattern, bool block, double duration_s) {
+  if (rehearsing())
+    return rehearse_void("execute_pattern", {Value(pattern)}, {{"block", Value(block)}, {"duration", Value(duration_s)}});
   if (estimating()) return;
   guard();
   check_requested("execute_pattern");
@@ -503,6 +564,7 @@ void HostState::execute_pattern(const std::string& pattern, bool block, double d
 }
 
 void HostState::dump_sample() {
+  if (rehearsing()) return rehearse_void("dump_sample", {});
   if (estimating()) return;
   guard();
   auto* f = feature(*this, &extraction::IExtractionDevice::furnace, Capability::Furnace);
@@ -510,6 +572,7 @@ void HostState::dump_sample() {
 }
 
 void HostState::drop_sample(const std::string& position) {
+  if (rehearsing()) return rehearse_void("drop_sample", {Value(position)});
   if (estimating()) return;
   guard();
   auto* f = feature(*this, &extraction::IExtractionDevice::furnace, Capability::Furnace);
@@ -517,6 +580,7 @@ void HostState::drop_sample(const std::string& position) {
 }
 
 void HostState::set_pid_parameters(double value) {
+  if (rehearsing()) return rehearse_void("set_pid_parameters", {Value(value)});
   if (estimating()) return;
   guard();
   auto* f = feature(*this, &extraction::IExtractionDevice::furnace, Capability::Furnace);
@@ -524,6 +588,7 @@ void HostState::set_pid_parameters(double value) {
 }
 
 void HostState::load_pipette(const std::string& name) {
+  if (rehearsing()) return rehearse_void("load_pipette", {Value(name)});
   if (estimating()) return;
   guard();
   auto* p = feature(*this, &extraction::IExtractionDevice::pipettes, Capability::Pipette);
@@ -531,6 +596,7 @@ void HostState::load_pipette(const std::string& name) {
 }
 
 void HostState::extract_pipette(const std::string& name) {
+  if (rehearsing()) return rehearse_void("extract_pipette", {Value(name)});
   if (estimating()) return;
   guard();
   auto* p = feature(*this, &extraction::IExtractionDevice::pipettes, Capability::Pipette);
@@ -538,6 +604,7 @@ void HostState::extract_pipette(const std::string& name) {
 }
 
 void HostState::set_motor(const std::string& name, double value, bool block) {
+  if (rehearsing()) return rehearse_void("set_motor", {Value(name), Value(value)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
   auto* m = feature(*this, &extraction::IExtractionDevice::motors, Capability::Motor);
@@ -546,6 +613,7 @@ void HostState::set_motor(const std::string& name, double value, bool block) {
 }
 
 double HostState::get_value(const std::string& name) {
+  if (rehearsing()) return rehearse_double("get_value", {Value(name)});
   if (estimating()) return 0.0;
   guard();
   auto* m = feature(*this, &extraction::IExtractionDevice::motors, Capability::Motor);
@@ -559,6 +627,7 @@ extraction::ICryo& HostState::cryo() {
 }
 
 void HostState::set_cryo(double value, bool block) {
+  if (rehearsing()) return rehearse_void("set_cryo", {Value(value)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
   auto& c = cryo();
@@ -567,6 +636,7 @@ void HostState::set_cryo(double value, bool block) {
 }
 
 void HostState::set_cryo_named(const std::string& name, bool block) {
+  if (rehearsing()) return rehearse_void("set_cryo", {Value(name)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
   auto& c = cryo();
@@ -575,6 +645,7 @@ void HostState::set_cryo_named(const std::string& name, bool block) {
 }
 
 double HostState::get_cryo_temp(int channel) {
+  if (rehearsing()) return rehearse_double("get_cryo_temp", {Value(std::int64_t{channel})});
   if (estimating()) return 0.0;
   guard();
   auto& c = cryo();
@@ -582,6 +653,7 @@ double HostState::get_cryo_temp(int channel) {
 }
 
 std::string HostState::snapshot(const std::string& name) {
+  if (rehearsing()) return rehearse_string("snapshot", {Value(name)});
   if (estimating()) return {};
   guard();
   auto* im = feature(*this, &extraction::IExtractionDevice::imaging, Capability::Imaging);
@@ -589,6 +661,7 @@ std::string HostState::snapshot(const std::string& name) {
 }
 
 void HostState::video_start(const std::string& name) {
+  if (rehearsing()) return rehearse_void("video_start", {Value(name)});
   if (estimating()) return;
   guard();
   auto* im = feature(*this, &extraction::IExtractionDevice::imaging, Capability::Imaging);
@@ -596,6 +669,7 @@ void HostState::video_start(const std::string& name) {
 }
 
 void HostState::video_stop() {
+  if (rehearsing()) return rehearse_void("video_stop", {});
   if (estimating()) return;
   guard();
   auto* im = feature(*this, &extraction::IExtractionDevice::imaging, Capability::Imaging);
@@ -603,15 +677,16 @@ void HostState::video_stop() {
 }
 
 double HostState::get_pressure(const std::string& controller, const std::string& gauge) {
+  if (rehearsing()) return rehearse_double("get_pressure", {Value(controller), Value(gauge)});
   PYCHRON_HW(0.0, pressure(), get_pressure(controller, gauge));
 }
 
 double HostState::get_manometer_pressure(const std::string& name) {
+  if (rehearsing()) return rehearse_double("get_manometer_pressure", {Value(name)});
   PYCHRON_HW(0.0, pressure(), get_manometer_pressure(name));
 }
 
 #undef PYCHRON_HW
-#undef PYCHRON_STEP
 
 void HostState::sleep(double s, const std::string& command) {
   if (rehearsing()) {
@@ -659,6 +734,7 @@ void HostState::estimate_wait(const std::string& command, double timeout) {
 }
 
 void HostState::acquire(const std::string& name) {
+  if (rehearsing()) return rehearse_void("acquire", {Value(name)});
   if (estimating()) return;
   guard();
   auto& res = resources();
@@ -666,6 +742,7 @@ void HostState::acquire(const std::string& name) {
 }
 
 void HostState::wait_resource(const std::string& name, double value) {
+  if (rehearsing()) return rehearse_void("wait", {Value(name), Value(value)});
   if (estimating()) return;
   guard();
   auto& res = resources();
@@ -674,18 +751,21 @@ void HostState::wait_resource(const std::string& name, double value) {
 }
 
 void HostState::release(const std::string& name) {
+  if (rehearsing()) return rehearse_void("release", {Value(name)});
   if (estimating()) return;
   guard();
   unwrap(resources().release(name));
 }
 
 void HostState::set_resource(const std::string& name, double value) {
+  if (rehearsing()) return rehearse_void("set_resource", {Value(name), Value(value)});
   if (estimating()) return;
   guard();
   unwrap(resources().set_value(name, value));
 }
 
 double HostState::get_resource_value(const std::string& name) {
+  if (rehearsing()) return rehearse_double("get_resource_value", {Value(name)});
   if (estimating()) return 0.0;
   guard();
   return unwrap(resources().get_value(name));
@@ -698,13 +778,7 @@ void HostState::gosub(const std::string& name, py::dict kwargs) {
   auto sub = unwrap(env_.resolver->resolve(name, kind_));
   ValueMap overrides;
   for (auto item : kwargs) {
-    auto key = py::str(item.first).cast<std::string>();
-    auto v = item.second;
-    if (v.is_none()) overrides[key] = std::monostate{};
-    else if (py::isinstance<py::bool_>(v)) overrides[key] = v.cast<bool>();
-    else if (py::isinstance<py::int_>(v)) overrides[key] = v.cast<std::int64_t>();
-    else if (py::isinstance<py::float_>(v)) overrides[key] = v.cast<double>();
-    else overrides[key] = py::str(v).cast<std::string>();
+    overrides[py::str(item.first).cast<std::string>()] = to_value(item.second);
   }
   ++gosub_depth_;
   try {
@@ -717,6 +791,7 @@ void HostState::gosub(const std::string& name, py::dict kwargs) {
 }
 
 double HostState::get_intensity(const std::string& key) {
+  if (rehearsing()) return rehearse_double("get_intensity", {Value(key)});
   if (estimating()) return 0.0;
   guard();
   if (!env_.intensity) raise(not_supported("get_intensity"));
@@ -724,6 +799,7 @@ double HostState::get_intensity(const std::string& key) {
 }
 
 void HostState::signal_pump_time_start() {
+  if (rehearsing()) return rehearse_void("signal_pump_time_start", {});
   if (estimating()) return;
   if (env_.on_pump_time_start) env_.on_pump_time_start();
 }

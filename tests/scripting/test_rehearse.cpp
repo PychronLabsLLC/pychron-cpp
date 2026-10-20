@@ -3,13 +3,18 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
 #include <fstream>
+#include <set>
+#include <thread>
 #include <sstream>
 
 #include "fakes.hpp"
 #include "pychron/devices/extraction/capability.hpp"
 #include "pychron/scripting/rehearsal.hpp"
 #include "pychron/scripting/script_host.hpp"
+#include "pychron/scripting/vocabulary.hpp"
 #include "rehearse_fakes.hpp"
 
 using namespace pychron;
@@ -179,6 +184,228 @@ TEST_F(Rehearse, AReadAnsweredWithTheWrongTypeIsAConfigError) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
   EXPECT_NE(r.error().what.find("rehearse: is_closed answered with a"), std::string::npos) << r.error().what;
+}
+
+namespace {
+
+struct HardwareScript {
+  std::string name;                   // the vocabulary command
+  std::string body;                   // the line(s) of main()
+  std::vector<std::string> expected;  // steps it makes (the command itself by default)
+};
+
+// One call of each command with arguments that pass the static check.
+std::vector<HardwareScript> hardware_scripts() {
+  return {
+      {"open", "open('A')", {}},
+      {"close", "close('A')", {}},
+      {"lock", "lock('A')", {}},
+      {"unlock", "unlock('A')", {}},
+      {"is_open", "is_open('A')", {}},
+      {"is_closed", "is_closed('A')", {}},
+      {"extract", "extract(5, 'percent')", {}},
+      {"end_extract", "end_extract()", {}},
+      {"ramp", "ramp(0, 10, 1, 10, 1)", {}},
+      {"enable", "enable()", {}},
+      {"disable", "disable()", {}},
+      {"prepare", "prepare()", {}},
+      {"fire_laser", "fire_laser()", {}},
+      {"warmup", "warmup()", {}},
+      {"move_to_position", "move_to_position('1')", {}},
+      {"set_x", "set_x(1.0)", {}},
+      {"set_y", "set_y(1.0)", {}},
+      {"set_z", "set_z(1.0)", {}},
+      {"set_xy", "set_xy(1.0, 2.0)", {}},
+      {"set_tray", "set_tray('t')", {}},
+      {"execute_pattern", "execute_pattern('circle')", {}},
+      {"dump_sample", "dump_sample()", {}},
+      {"drop_sample", "drop_sample('1')", {}},
+      {"set_pid_parameters", "set_pid_parameters(1.0)", {}},
+      {"begin_heating_interval", "begin_heating_interval(10)", {}},
+      {"load_pipette", "load_pipette('p')", {}},
+      {"extract_pipette", "extract_pipette('p')", {}},
+      {"set_motor", "set_motor('m', 1.0)", {}},
+      {"get_value", "get_value('m')", {}},
+      {"set_cryo", "set_cryo(10.0)", {}},
+      {"get_cryo_temp", "get_cryo_temp(1)", {}},
+      {"snapshot", "snapshot('s')", {}},
+      {"video_start", "video_start('v')", {}},
+      {"video_stop", "video_stop()", {}},
+      // A context manager: a start and a stop.
+      {"video_recording", "with video_recording('v'):\n        pass", {"video_start", "video_stop"}},
+      {"get_pressure", "get_pressure('ig', 'ion')", {}},
+      {"get_manometer_pressure", "get_manometer_pressure('m')", {}},
+      {"waitfor", "waitfor(lambda: False, 5)", {}},
+      {"pause", "pause(3)", {}},
+      {"sleep", "sleep(1)", {}},
+      {"delay", "delay(1)", {}},
+      {"acquire", "acquire('r')", {}},
+      {"wait", "wait('r', 1)", {}},
+      {"release", "release('r')", {}},
+      {"set_resource", "set_resource('r', 1)", {}},
+      {"get_resource_value", "get_resource_value('r')", {}},
+      {"get_intensity", "get_intensity('Ar40')", {}},
+      {"signal_pump_time_start", "signal_pump_time_start()", {}},
+  };
+}
+
+// Commands that need a service or a state of their own and make no step.
+const std::set<std::string> kNoStep = {"get_device", "wake", "begin_interval", "complete_interval",
+                                       "info", "gosub"};
+
+}  // namespace
+
+TEST_F(Rehearse, EveryHardwareCommandSteps) {
+  const auto scripts = hardware_scripts();
+  std::vector<std::string> failures;
+  for (const auto& cmd : vocabulary()) {
+    const std::string name(cmd.name);
+    if (kNoStep.contains(name)) continue;
+    auto it = std::find_if(scripts.begin(), scripts.end(), [&](const auto& s) { return s.name == name; });
+    if (it == scripts.end()) {
+      failures.push_back(name + " (no script in the test)");
+      continue;
+    }
+    RecordingRehearsal rec;
+    rec.answers = {{"is_open", true}, {"is_closed", true}, {"get_pressure", 1.0}, {"get_manometer_pressure", 1.0},
+                   {"get_intensity", 1.0}, {"get_value", 1.0}, {"get_cryo_temp", 1.0}, {"get_resource_value", 1.0},
+                   {"snapshot", std::string("x")}};
+    const bool post = cmd.post_measurement_only;
+    auto r = host->rehearse(
+        inline_script("def main():\n    " + it->body + "\n", post ? ScriptKind::PostMeasurement : ScriptKind::Extraction),
+        rehearse_environment(), rec, token);
+    std::vector<std::string> got;
+    got.reserve(rec.calls.size());
+    for (const auto& c : rec.calls) got.push_back(c.command);
+    const std::vector<std::string> want = it->expected.empty() ? std::vector<std::string>{name} : it->expected;
+    if (got != want || !r) failures.push_back(name + (r ? "" : " [" + to_string(r.error()) + "]"));
+  }
+  EXPECT_TRUE(failures.empty()) << "did not step as expected: " << [&] {
+    std::string out;
+    for (const auto& f : failures) out += "\n  " + f;
+    return out;
+  }();
+}
+
+TEST_F(Rehearse, SimPumpSteps) {
+  auto env = rehearse_environment();
+  env.context = make_context({{"run_identifier", std::string("12345-01")}});
+  auto r = host->rehearse(example("post_measurement/sim_pump.py", ScriptKind::PostMeasurement), env, rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  const std::vector<std::string> expected = {"signal_pump_time_start", "open C", "open B", "sleep 50", "close B"};
+  EXPECT_EQ(rehearsal.lines(), expected);
+}
+
+TEST_F(Rehearse, PressureReadAnswersTheScript) {
+  rehearsal.answers["get_pressure"] = 2.5e-9;
+  auto r = host->rehearse(inline_script("def main():\n    info(str(get_pressure('ig','ion')))\n"),
+                          rehearse_environment(), rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  ASSERT_EQ(r->messages.size(), 1U);
+  EXPECT_EQ(r->messages[0], "2.5e-09");
+  ASSERT_EQ(rehearsal.calls.size(), 1U);
+  EXPECT_EQ(rehearsal.calls[0].args, (std::vector<Value>{Value(std::string("ig")), Value(std::string("ion"))}));
+}
+
+TEST_F(Rehearse, AnIntegerAnswersADoubleRead) {
+  rehearsal.answers["get_value"] = std::int64_t{3};
+  auto r = host->rehearse(inline_script("def main():\n    info(str(get_value('m')))\n"), rehearse_environment(),
+                          rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_EQ(r->messages.at(0), "3.0");
+}
+
+TEST_F(Rehearse, WrongAnswerTypeIsConfig) {
+  rehearsal.answers["is_open"] = 1.0;
+  auto r = host->rehearse(inline_script("def main():\n    is_open('A')\n"), rehearse_environment(), rehearsal, token);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_NE(r.error().what.find("is_open"), std::string::npos) << r.error().what;
+}
+
+TEST_F(Rehearse, ADoubleReadAnsweredWithAStringIsConfig) {
+  rehearsal.answers["get_pressure"] = std::string("high");
+  auto r = host->rehearse(inline_script("def main():\n    get_pressure('ig', 'ion')\n"), rehearse_environment(),
+                          rehearsal, token);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Config);
+  EXPECT_NE(r.error().what.find("get_pressure"), std::string::npos) << r.error().what;
+}
+
+TEST_F(Rehearse, KeywordArgumentsAreCarried) {
+  auto r = host->rehearse(inline_script("def main():\n    move_to_position('3', autocenter=False, block=False)\n"),
+                          rehearse_environment(), rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  ASSERT_EQ(rehearsal.calls.size(), 1U);
+  EXPECT_EQ(rehearsal.calls[0].args, (std::vector<Value>{Value(std::string("3"))}));
+  EXPECT_EQ(rehearsal.calls[0].kwargs.at("autocenter"), Value(false));
+  EXPECT_EQ(rehearsal.calls[0].kwargs.at("block"), Value(false));
+}
+
+TEST_F(Rehearse, GosubCarriesStack) {
+  class Resolver final : public IScriptResolver {
+   public:
+    Result<Script> resolve(std::string_view name, ScriptKind kind) const override {
+      if (name != "lib/sub.py") return fail(ErrorKind::Config, "no such script");
+      return Script{"lib/sub.py", "def main():\n    open('A')\n", kind};
+    }
+  } resolver;
+  auto env = rehearse_environment();
+  env.resolver = &resolver;
+  auto r = host->rehearse(Script{"extraction/top.py", "def main():\n    gosub('lib/sub.py')\n", ScriptKind::Extraction},
+                          env, rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  ASSERT_EQ(rehearsal.calls.size(), 1U);
+  EXPECT_EQ(rehearsal.calls[0].script, "lib/sub.py");
+  EXPECT_EQ(rehearsal.calls[0].gosubs, (std::vector<std::string>{"extraction/top.py"}));
+}
+
+TEST_F(Rehearse, PauseStepsOnceWithOrWithoutADuration) {
+  for (const char* call : {"pause(3)", "pause()"}) {
+    SCOPED_TRACE(call);
+    RecordingRehearsal rec;
+    auto r = host->rehearse(inline_script(std::string("def main():\n    ") + call + "\n"), rehearse_environment(), rec,
+                            token);
+    ASSERT_TRUE(r) << to_string(r.error());
+    ASSERT_EQ(rec.calls.size(), 1U);
+    EXPECT_EQ(rec.calls[0].command, "pause");
+  }
+}
+
+TEST_F(Rehearse, LockAndUnlockStep) {
+  auto r = host->rehearse(inline_script("def main():\n    lock('A')\n    unlock('A')\n"), rehearse_environment(),
+                          rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  const std::vector<std::string> expected = {"lock A", "unlock A"};
+  EXPECT_EQ(rehearsal.lines(), expected);
+}
+
+TEST_F(Rehearse, ACancelledStepEndsTheScript) {
+  // (the recorder copies `respond` for each step: the count lives outside it)
+  int steps = 0;
+  rehearsal.respond = [&steps](const StepCall&) -> Result<Value> {
+    if (++steps == 2) return fail(ErrorKind::Cancelled, "cancelled");
+    return Value{};
+  };
+  auto r = host->rehearse(inline_script("def main():\n    open('A')\n    open('B')\n    open('C')\n"),
+                          rehearse_environment(), rehearsal, token);
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Cancelled);
+  EXPECT_EQ(rehearsal.calls.size(), 2U);
+}
+
+// max_wall_time is Python's time: a step held for longer than the limit does
+// not trip it (a long real hold, since the limit is tested at every 256th line).
+TEST_F(Rehearse, TimeHeldInAStepIsNotWallTime) {
+  rehearsal.respond = [](const StepCall&) -> Result<Value> {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    return Value{};
+  };
+  auto env = rehearse_environment();
+  env.limits.max_wall_time = std::chrono::milliseconds(100);
+  auto r = host->rehearse(inline_script("def main():\n    open('A')\n    for i in range(600):\n        pass\n"), env,
+                          rehearsal, token);
+  EXPECT_TRUE(r) << (r ? "" : to_string(r.error()));
 }
 
 TEST_F(Rehearse, MeasurementHookRefused) {

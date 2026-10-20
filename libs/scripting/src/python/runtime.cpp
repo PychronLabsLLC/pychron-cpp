@@ -18,6 +18,8 @@ Runtime* g_runtime = nullptr;
 void bind_classes(py::module_ scope) {
   py::class_<HostState>(scope, "_Host")
       .def_property_readonly("estimating", &HostState::estimating)
+      .def_property_readonly("rehearsing", &HostState::rehearsing)
+      .def("rehearse_step", &HostState::rehearse_step)
       .def("now", &HostState::now)
       .def("info", &HostState::info)
       .def("require", &HostState::require)
@@ -148,16 +150,16 @@ void bind_classes(py::module_ scope) {
   py::class_<DeviceHandle>(scope, "DeviceHandle")
       .def_property_readonly("name",
                              [](DeviceHandle& d) {
-                               if (d.state->estimating()) return std::string{};
+                               if (d.state->estimating() || d.state->rehearsing()) return std::string{};
                                return d.state->device().device_name();
                              })
       .def("output",
            [](DeviceHandle& d) {
-             if (d.state->estimating()) return 0.0;
+             if (d.state->estimating() || d.state->rehearsing()) return 0.0;
              return d.state->unwrap(d.state->device().output());
            })
       .def("is_enabled", [](DeviceHandle& d) {
-        if (d.state->estimating()) return false;
+        if (d.state->estimating() || d.state->rehearsing()) return false;
         return d.state->unwrap(d.state->device().is_enabled());
       });
 }

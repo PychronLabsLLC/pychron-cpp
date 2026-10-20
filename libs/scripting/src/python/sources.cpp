@@ -254,6 +254,10 @@ def end_extract():
 def ramp(start=0, end=0, rate=0, duration=0, period=1):
     if not duration and rate:
         duration = abs(end - start) / float(rate)
+    if _h.rehearsing:
+        _h.rehearse_step('ramp', [float(start), float(end), float(rate), float(duration), float(period)], {},
+                         float(duration or 0))
+        return
     steps = max(1, int(round(duration / period))) if duration and period > 0 else 1
     units = str(_context.get('extract_units', 'percent'))
     for i in range(1, steps + 1):
@@ -329,6 +333,8 @@ def set_pid_parameters(value):
 def begin_heating_interval(duration, min_rise_rate=None, check_time=60, check_delay=60,
                            check_period=1, temperature=None, timeout=300, name='interval'):
     _h.require('furnace')
+    if _h.rehearsing:
+        _h.rehearse_step('begin_heating_interval', [float(duration)], {'name': str(name)}, 0.0)
     begin_interval(duration, name)
 
 
@@ -396,6 +402,11 @@ def get_manometer_pressure(name='manometer'):
 def waitfor(func, timeout=0, check_period=1, start_message='', end_message=''):
     if _h.estimating:
         _h.estimate_wait('waitfor', float(timeout))
+        return
+    if _h.rehearsing:
+        # A wait on a condition is one step, which the operator ends: the
+        # condition is not evaluated, no hardware is read.
+        _h.rehearse_step('waitfor', [float(timeout), float(check_period)], {}, 0.0)
         return
     start = _h.now()
     while not func():
