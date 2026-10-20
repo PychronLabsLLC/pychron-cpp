@@ -78,6 +78,7 @@
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/types.hpp"
+#include "pychron/systems/switch_rules.hpp"
 
 namespace pychron::systems {
 
@@ -199,6 +200,10 @@ class SwitchManager {
   std::vector<SwitchInfo> list() const;              // config order
   std::map<std::string, ValveState> states() const;  // for Snapshot
   bool contains(std::string_view name) const;
+
+  // Each switch's interlock partners by name. Fixed when the manager is
+  // made, so it needs no lock.
+  std::map<std::string, InterlockSet, std::less<>> interlock_sets() const;
 
   // Replaces a switch's history with one kept from an earlier run. Unknown
   // names are ignored.

@@ -8,6 +8,7 @@
 
 #include "pychron/devices/link.hpp"
 #include "pychron/devices/types.hpp"
+#include "pychron/systems/switch_rules.hpp"
 
 namespace pychron::systems {
 
@@ -37,6 +38,7 @@ struct SwitchManager::Entry {
   std::string owner;
   SwitchStats stats;
 
+  SwitchView view() const { return {spec.name, state, locked, owner}; }
   SwitchInfo info() const { return {spec.name, spec.description, spec.kind, state, locked, owner, stats}; }
 };
 
@@ -260,33 +262,34 @@ Result<void> SwitchManager::command(std::string_view name, SwitchOp op, const st
 }
 
 Result<void> SwitchManager::check_access(const Entry& e, std::string_view actor) const {
-  if (e.locked) return fail(ErrorKind::Interlock, "'" + e.spec.name + "' is software locked", e.spec.name);
-  if (!e.owner.empty() && e.owner != actor) {
-    return fail(ErrorKind::Interlock,
-                "'" + e.spec.name + "' is owned by '" + e.owner + "', not '" + std::string(actor) + "'",
-                e.spec.name);
-  }
-  return {};
+  return check_switch_access(e.view(), actor);
 }
 
 Result<void> SwitchManager::check_interlocks(const Entry& e) const {
-  for (const Entry* o : e.exclusive) {
-    if (o->state != ValveState::Closed) {
-      return fail(ErrorKind::Interlock,
-                  "cannot open '" + e.spec.name + "': interlocked with '" + o->spec.name + "' which is " +
-                      std::string(pychron::to_string(o->state)),
-                  e.spec.name);
-    }
+  const SwitchView self = e.view();
+  std::vector<SwitchView> exclusive;
+  std::vector<SwitchView> positive;
+  exclusive.reserve(e.exclusive.size());
+  positive.reserve(e.positive.size());
+  for (const Entry* o : e.exclusive) exclusive.push_back(o->view());
+  for (const Entry* p : e.positive) positive.push_back(p->view());
+  std::vector<const SwitchView*> exclusive_ptrs;
+  std::vector<const SwitchView*> positive_ptrs;
+  exclusive_ptrs.reserve(exclusive.size());
+  positive_ptrs.reserve(positive.size());
+  for (const auto& v : exclusive) exclusive_ptrs.push_back(&v);
+  for (const auto& v : positive) positive_ptrs.push_back(&v);
+  return check_switch_interlocks(self, exclusive_ptrs, positive_ptrs);
+}
+
+std::map<std::string, InterlockSet, std::less<>> SwitchManager::interlock_sets() const {
+  std::map<std::string, InterlockSet, std::less<>> out;
+  for (const auto& e : entries_) {
+    InterlockSet& set = out[e->spec.name];
+    for (const Entry* o : e->exclusive) set.exclusive.push_back(o->spec.name);
+    for (const Entry* p : e->positive) set.positive.push_back(p->spec.name);
   }
-  for (const Entry* p : e.positive) {
-    if (p->state != ValveState::Open) {
-      return fail(ErrorKind::Interlock,
-                  "cannot open '" + e.spec.name + "': requires '" + p->spec.name + "' open, it is " +
-                      std::string(pychron::to_string(p->state)),
-                  e.spec.name);
-    }
-  }
-  return {};
+  return out;
 }
 
 Result<ValveState> SwitchManager::read_back(const Entry& e) const {

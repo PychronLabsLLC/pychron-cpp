@@ -116,20 +116,30 @@ virtual Result<ScriptResult> rehearse(const Script& script, const ScriptEnvironm
 
 ```cpp
 struct SwitchView {           // what the rule needs to know of one switch
-  ValveState state;
+  std::string name;
+  ValveState state = ValveState::Unknown;
   bool locked = false;
   std::string owner;          // empty: nobody's
 };
-using SwitchLookup = std::function<const SwitchView*(std::string_view name)>;
+struct InterlockSet {
+  std::vector<std::string> exclusive;  // negative interlocks, both directions, each once
+  std::vector<std::string> positive;
+};
 
-// Lock, owner, interlock checks of SwitchManager::command, in its order.
-// ErrorKind::Interlock with the manager's text on refusal. Closing is
-// never interlocked.
-Result<void> check_switch_command(const SwitchSpec& spec, SwitchOp op, std::string_view actor,
-                                  const SwitchLookup& lookup);
+// Lock, owner checks, then interlock checks of SwitchManager::command, in its
+// order. ErrorKind::Interlock with the manager's text on refusal. Closing is
+// never interlocked: caller applies interlocks to opens only.
+[[nodiscard]] Result<void> check_switch_access(const SwitchView& self, std::string_view actor);
+[[nodiscard]] Result<void> check_switch_interlocks(const SwitchView& self,
+                                                   const std::vector<const SwitchView*>& exclusive,
+                                                   const std::vector<const SwitchView*>& positive);
 ```
 
-- `SwitchManager::check_access` and `check_interlocks` become calls to it;
+`SwitchManager::interlock_sets()` (new):
+`std::map<std::string, InterlockSet, std::less<>>`, immutable topology, so
+rehearsal resolves partners by name from a copy of line state.
+
+- `SwitchManager::check_access` and `check_interlocks` become calls to the two functions;
   refusal text byte for byte as today (existing tests in `tests/systems`
   pin it; none edited).
 - Negative interlocks enforced both ways, as manager's header says; Unknown
@@ -157,7 +167,7 @@ config). Rehearsal never reads live line again.
 
 `Rehearsal : IRehearsal`. For each `StepCall`:
 
-- `open`/`close`: `check_switch_command` against rehearsal states, actor
+- `open`/`close`: `check_switch_access`, then for an open `check_switch_interlocks`, against rehearsal states, actor
   `"script"` (as `session.cpp`'s `script_valves`). Allowed: rehearsal state
   becomes Open/Closed, step outcome "would open". Refused: step outcome
   "would be refused: <text>", `step()` returns that Interlock error; script
@@ -278,7 +288,7 @@ check failure lists diagnostics as Problems do in editor.
   raised as `HardwareError` of that kind; Stop while blocked aborts;
   gosub carries stack; `EveryHardwareCommandSteps`; stub returns
   NotSupported.
-- `tests/systems`: `check_switch_command` cases (lock, owner, negative both
+- `tests/systems`: `SwitchRules` cases (lock, owner, negative both
   ways, positive, Unknown partner, close never refused); existing
   `SwitchManager` tests unchanged and passing.
 - `tests/experiment` (`test_rehearsal.cpp`, new): open refused when
