@@ -63,35 +63,41 @@ QColor CanvasView::source_color(canvas::SourceKind kind, int ordinal) {
   return isolated_color();
 }
 
-CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent) : QGraphicsView(parent), bridge_(bridge) {
+CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent)
+    : CanvasView(*new CoreBridgeCanvasState(bridge), &bridge, parent) {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): handed to own_state_ at once
+  own_state_.reset(&static_cast<CoreBridgeCanvasState&>(state_));
+}
+
+CanvasView::CanvasView(ICanvasState& state, CoreBridge* bridge, QWidget* parent)
+    : QGraphicsView(parent), state_(state), bridge_(bridge) {
   setScene(&scene_);
   setRenderHint(QPainter::Antialiasing);
   gauge_rest_timer_.setSingleShot(true);
   gauge_rest_timer_.setInterval(kGaugeRestMs);
   connect(&gauge_rest_timer_, &QTimer::timeout, this, &CanvasView::on_gauge_rest);
   viewport()->installEventFilter(this);
-  if (const canvas::Canvas* c = bridge_.canvas()) {
+  if (const canvas::Canvas* c = state_.canvas()) {
     build(*c);
     open_valve_color_ = c->canvas.open_valve_color;
   }
 
-  connect(&bridge_, &CoreBridge::snapshot, this, [this](const Snapshot&) { apply_state(); });
-  connect(&bridge_, &CoreBridge::valveChanged, this, [this](const ValveChanged&) { apply_state(); });
-  connect(&bridge_, &CoreBridge::lockChanged, this, [this](const QString&, bool) { apply_state(); });
-  connect(&bridge_, &CoreBridge::actuationFailed, this, [this](const ActuationFailed&) { apply_state(); });
+  connect(&state_, &ICanvasState::changed, this, [this] { apply_state(); });
   confirm_unlock_ = [this](const QString& name) {
     return QMessageBox::question(this, tr("Unlock valve"),
                                  tr("Unlock %1? It will accept open and close commands again.").arg(name),
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
   };
-  connect(&bridge_, &CoreBridge::pressureSample, this, &CanvasView::on_pressure);
-  connect(&bridge_, &CoreBridge::alarm, this, &CanvasView::on_alarm);
-  connect(&bridge_, &CoreBridge::actuationStarted, this, [this](const QString& name) {
-    if (ValveItem* v = valve(name.toStdString())) {
-      v->set_pending(true);
-    }
-  });
-  connect(&bridge_, &CoreBridge::actuationFinished, this, &CanvasView::on_finished);
+  if (bridge_) {
+    connect(bridge_, &CoreBridge::pressureSample, this, &CanvasView::on_pressure);
+    connect(bridge_, &CoreBridge::alarm, this, &CanvasView::on_alarm);
+    connect(bridge_, &CoreBridge::actuationStarted, this, [this](const QString& name) {
+      if (ValveItem* v = valve(name.toStdString())) {
+        v->set_pending(true);
+      }
+    });
+    connect(bridge_, &CoreBridge::actuationFinished, this, &CanvasView::on_finished);
+  }
   apply_state();
 }
 
@@ -156,7 +162,7 @@ void CanvasView::build(const canvas::Canvas& c) {
     item->set_on_click([this](const std::string& name) { on_click(name); });
     item->set_on_lock_request([this](const std::string& name, bool locked) { request_lock(name, locked); });
     item->set_on_hover([this, item, name = v.name] {
-      item->set_details(valve_details(bridge_.state(), name, bridge_.wall_now()));
+      item->set_details(valve_details(state_.state(), name, state_.wall_now()));
     });
     scene_.addItem(item);
     valves_[v.name] = item;
@@ -187,8 +193,11 @@ void CanvasView::build(const canvas::Canvas& c) {
   }
   for (const auto& g : c.gauges) {
     auto* item = new GaugeLabelItem(g.name);
-    const auto& defined = bridge_.config().gauges;
-    item->set_wired(std::any_of(defined.begin(), defined.end(), [&](const auto& d) { return d.name == g.name; }));
+    // A gauge is wired when the line defines it; a read-only view has no line.
+    if (bridge_) {
+      const auto& defined = bridge_->config().gauges;
+      item->set_wired(std::any_of(defined.begin(), defined.end(), [&](const auto& d) { return d.name == g.name; }));
+    }
     item->setPos(to_qpoint(g.pos));
     item->set_on_click([this](const std::string& name) { emit gauge_clicked(QString::fromStdString(name)); });
     item->set_on_hover([this, name = g.name](bool entered) { on_gauge_hover(name, entered); });
@@ -346,23 +355,23 @@ GaugeLabelItem* CanvasView::gauge(const std::string& name) const {
 
 void CanvasView::on_click(const std::string& name) {
   const ValveItem* item = valve(name);
-  if (!item || bridge_.pending(name)) {
+  if (read_only() || !item || state_.pending(name)) {
     return;
   }
   const auto op = item->state() == ValveState::Open ? systems::SwitchOp::Close : systems::SwitchOp::Open;
-  bridge_.actuate(QString::fromStdString(name), op);
+  bridge_->actuate(QString::fromStdString(name), op);
 }
 
 bool CanvasView::request_lock(const std::string& name, bool locked) {
   ValveItem* item = valve(name);
-  if (!item || item->kind() == canvas::ValveKind::Manual) {
+  if (read_only() || !item || item->kind() == canvas::ValveKind::Manual) {
     return false;
   }
   const QString qname = QString::fromStdString(name);
   if (!locked && !confirm_unlock_(qname)) {
     return false;
   }
-  if (auto result = bridge_.set_locked(qname, locked); !result) {
+  if (auto result = bridge_->set_locked(qname, locked); !result) {
     item->flash(QString::fromStdString(result.error().what));
     return false;
   }
@@ -424,7 +433,7 @@ QStringList CanvasView::valve_details(const CoreBridge::State& state, const std:
 }
 
 void CanvasView::apply_state() {
-  const auto& state = bridge_.state();
+  const auto& state = state_.state();
   for (auto& [name, item] : valves_) {
     if (auto it = state.valves.find(name); it != state.valves.end()) {
       item->set_state(it->second);
@@ -432,8 +441,8 @@ void CanvasView::apply_state() {
     if (auto it = state.switches.find(name); it != state.switches.end()) {
       item->set_locked(it->second.locked);
     }
-    item->set_pending(bridge_.pending(name));
-    item->set_details(valve_details(state, name, bridge_.wall_now()));
+    item->set_pending(state_.pending(name));
+    item->set_details(valve_details(state, name, state_.wall_now()));
   }
   for (auto& [name, item] : gauges_) {
     if (auto it = state.pressures.find(name); it != state.pressures.end()) {
@@ -450,14 +459,14 @@ void CanvasView::set_open_valve_color(canvas::OpenValveColor mode) {
 }
 
 void CanvasView::apply_regions() {
-  const systems::NetworkGraph* network = bridge_.network();
+  const systems::NetworkGraph* network = state_.network();
   if (!network) {
     for (auto& [name, item] : valves_) {
       item->set_inherited_color(std::nullopt);
     }
     return;
   }
-  const auto regions = network->connected_volumes(bridge_.state().valves);
+  const auto regions = network->connected_volumes(state_.state().valves);
   // A region takes the colour of the source connected to it with the highest
   // precedence (legacy pychron's rule): a pump over a tank, over a pipette or
   // a laser, over a spectrometer, over a getter. Each tank has a colour of
@@ -515,7 +524,8 @@ void CanvasView::on_pressure(const PressureSample& sample) {
     return;
   }
   // Clear the alarm colour once a reading is back inside the configured limits.
-  for (const auto& g : bridge_.config().gauges) {
+  if (!bridge_) return;
+  for (const auto& g : bridge_->config().gauges) {
     if (g.name == sample.gauge) {
       const bool high = g.alarm_high && sample.value > *g.alarm_high;
       const bool low = g.alarm_low && sample.value < *g.alarm_low;
@@ -535,7 +545,7 @@ void CanvasView::on_finished(const QString& name, const Result<void>& result) {
   if (!item) {
     return;
   }
-  item->set_pending(bridge_.pending(item->name()));
+  item->set_pending(state_.pending(item->name()));
   if (!result) {
     item->flash(QString::fromStdString(result.error().what));
   }

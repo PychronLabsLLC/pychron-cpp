@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@
 #include <QTimer>
 
 #include "canvas_items.hpp"
+#include "canvas_state.hpp"
 #include "core_bridge.hpp"
 
 namespace pychron::ui {
@@ -35,7 +37,14 @@ class CanvasView : public QGraphicsView {
   // a pointer passing over a chip opens nothing.
   static constexpr int kGaugeRestMs = 700;
 
+  // Over the bridge: its own adapter, owned by the view.
   explicit CanvasView(CoreBridge& bridge, QWidget* parent = nullptr);
+  // Paints from `state` (which must outlive the view). With a null `bridge`
+  // the view is read-only: clicks and lock requests do nothing, and nothing
+  // here has a path to an actuator.
+  CanvasView(ICanvasState& state, CoreBridge* bridge, QWidget* parent = nullptr);
+
+  [[nodiscard]] bool read_only() const noexcept { return bridge_ == nullptr; }
 
   void set_gauge_rest_ms(int ms);  // tests: 0
   [[nodiscard]] int gauge_rest_ms() const noexcept { return gauge_rest_timer_.interval(); }
@@ -105,7 +114,9 @@ class CanvasView : public QGraphicsView {
   void on_alarm(const Alarm& alarm);
   void on_finished(const QString& name, const Result<void>& result);
 
-  CoreBridge& bridge_;
+  std::unique_ptr<ICanvasState> own_state_;  // set when built over a bridge alone
+  ICanvasState& state_;
+  CoreBridge* bridge_;  // null: read-only
   std::function<bool(const QString&)> confirm_unlock_;
   canvas::OpenValveColor open_valve_color_ = canvas::OpenValveColor::Green;
   QGraphicsScene scene_;
