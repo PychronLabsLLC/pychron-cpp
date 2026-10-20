@@ -133,6 +133,17 @@ struct BoxEntry {
 };
 std::optional<BoxEntry> box_entry(const std::vector<QPointF>& points, const QRectF& box);
 
+// A name set to fit a room: `text` drawn with `font` and `flags` (alignment,
+// and Qt::TextWordWrap when it is on two lines) inside the room. Tried in
+// order: as it is, wrapped at a space, the font shrunk (to 0.3 of its size),
+// and only past that elided with an ellipsis.
+struct FittedLabel {
+  QFont font;
+  QString text;
+  int flags = 0;
+};
+FittedLabel fit_label(const QFont& font, const QString& text, const QSizeF& room);
+
 // A stage or pipette volume; filled with its network region colour.
 class StageItem : public QGraphicsItem {
  public:
@@ -149,8 +160,14 @@ class StageItem : public QGraphicsItem {
   void set_symbol(canvas::StageSymbol symbol);
   // Where paint() puts the glyph for a label this size; empty when it does not fit.
   QRectF symbol_rect(QSizeF label) const;
+  // Where the name goes: the box less its padding, or what the glyph leaves.
+  QRectF label_room(const QRectF& glyph) const;
 
   const std::string& name() const noexcept { return name_; }
+  const QString& label() const noexcept { return label_; }
+  // The name as paint() draws it with `font`: fitted to the box, or to the
+  // room beside the glyph when there is one.
+  FittedLabel fitted_label(const QFont& font) const;
   // The corner radius of a volume this size: scaled down with the smaller
   // side so thin volumes stay pill-like without swallowing the whole shape.
   static double corner_radius(QSizeF size);

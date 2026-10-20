@@ -633,6 +633,57 @@ class TestCanvasView : public QObject {
     std::filesystem::remove(options.state_file);
   }
 
+  // A name that does not fit its box is wrapped, then shrunk, and elided only
+  // as the last resort.
+  void aShortNameIsLeftAsItIs() {
+    const QFont font;
+    const QSizeF room(80, 40);
+    const ui::FittedLabel fitted = ui::fit_label(font, "Jan", room);
+    QCOMPARE(fitted.text, QString("Jan"));
+    QCOMPARE(fitted.font, font);
+    QVERIFY(!(fitted.flags & Qt::TextWordWrap));
+    QVERIFY(QRectF(QPointF(0, 0), room).contains(QFontMetricsF(fitted.font).boundingRect(QRectF(QPointF(0, 0), room), fitted.flags, fitted.text)));
+  }
+
+  void aNameWithASpaceWrapsInsteadOfBeingClipped() {
+    const QFont font;
+    const QSizeF room(42, 42);  // the example pipette box (50 x 50) less its padding
+    QVERIFY(QFontMetricsF(font).horizontalAdvance("Cocktail Pipette") > room.width());
+    const ui::FittedLabel fitted = ui::fit_label(font, "Cocktail Pipette", room);
+    QCOMPARE(fitted.text, QString("Cocktail Pipette"));
+    QVERIFY(fitted.flags & Qt::TextWordWrap);
+    const QRectF all(QPointF(0, 0), room);
+    QVERIFY(all.contains(QFontMetricsF(fitted.font).boundingRect(all, fitted.flags, fitted.text)));
+  }
+
+  void aLongSingleWordIsShrunkNotElided() {
+    const QFont font;
+    const QSizeF room(72, 32);  // the example tank box (80 x 40) less its padding
+    QVERIFY(QFontMetricsF(font).horizontalAdvance("cocktail_tank") > room.width());
+    const ui::FittedLabel fitted = ui::fit_label(font, "cocktail_tank", room);
+    QCOMPARE(fitted.text, QString("cocktail_tank"));
+    QVERIFY(fitted.font.pointSizeF() < font.pointSizeF());
+    const QRectF all(QPointF(0, 0), room);
+    QVERIFY(all.contains(QFontMetricsF(fitted.font).boundingRect(all, fitted.flags, fitted.text)));
+  }
+
+  void aNameNothingCanFitIsElidedLast() {
+    const ui::FittedLabel fitted = ui::fit_label(QFont(), "an_extremely_long_name_for_a_tiny_box", QSizeF(20, 12));
+    QVERIFY(fitted.text.endsWith(QChar(0x2026)));
+  }
+
+  void everyStageAndPipetteNameOfTheExampleIsDrawnWhole() {
+    int seen = 0;
+    for (QGraphicsItem* it : view_->scene()->items()) {
+      auto* stage = dynamic_cast<ui::StageItem*>(it);
+      if (stage == nullptr) continue;
+      ++seen;
+      const ui::FittedLabel fitted = stage->fitted_label(QFont());
+      QCOMPARE(fitted.text, stage->label());
+    }
+    QVERIFY(seen > 5);
+  }
+
   // A stage's symbol is a glyph inside its box, placed where it fits.
   void stageSymbolsFitInsideTheBox() {
     QCOMPARE(view_->stage("spec")->symbol(), canvas::StageSymbol::None);

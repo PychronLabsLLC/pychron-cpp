@@ -383,6 +383,42 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
 
 }  // namespace
 
+FittedLabel fit_label(const QFont& font, const QString& text, const QSizeF& room) {
+  constexpr int kOneLine = Qt::AlignCenter | Qt::TextSingleLine;
+  constexpr int kWrapped = Qt::AlignCenter | Qt::TextWordWrap;
+  constexpr double kSlack = 0.01;  // metrics are fractional
+  const QRectF box(QPointF(0, 0), room);
+  const bool has_space = text.contains(QLatin1Char(' '));
+  const auto fits = [&](const QFont& f, int flags) {
+    const QRectF used = QFontMetricsF(f).boundingRect(box, flags, text);
+    return used.width() <= room.width() + kSlack && used.height() <= room.height() + kSlack;
+  };
+  if (fits(font, kOneLine)) {
+    return {font, text, kOneLine};
+  }
+  if (has_space && fits(font, kWrapped)) {
+    return {font, text, kWrapped};
+  }
+  // Font sizes round, so step down until the name fits.
+  QFont shrunk = font;
+  constexpr double kFloor = 0.3;
+  for (int step = 1; std::pow(0.95, step) > kFloor; ++step) {
+    const double ratio = std::pow(0.95, step);
+    if (font.pointSizeF() > 0) {
+      shrunk.setPointSizeF(font.pointSizeF() * ratio);
+    } else {
+      shrunk.setPixelSize(std::max(1, static_cast<int>(font.pixelSize() * ratio)));
+    }
+    if (fits(shrunk, kOneLine)) {
+      return {shrunk, text, kOneLine};
+    }
+    if (has_space && fits(shrunk, kWrapped)) {
+      return {shrunk, text, kWrapped};
+    }
+  }
+  return {shrunk, QFontMetricsF(shrunk).elidedText(text, Qt::ElideRight, room.width()), kOneLine};
+}
+
 StageItem::StageItem(std::string name, QString label, canvas::Size size, QColor base, QGraphicsItem* parent)
     : QGraphicsItem(parent),
       name_(std::move(name)),
@@ -428,37 +464,38 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   painter->drawRoundedRect(rect_, radius, radius);
   const QSizeF label = painter->fontMetrics().size(Qt::TextSingleLine, label_);
   const QRectF glyph = symbol_rect(label);
+  const QRectF inner = rect_.adjusted(kSymbolPad, kSymbolPad, -kSymbolPad, -kSymbolPad);
   if (glyph.isEmpty()) {
-    painter->drawText(rect_, Qt::AlignCenter, label_);
+    const FittedLabel fitted = fit_label(painter->font(), label_, inner.size());
+    painter->save();
+    painter->setFont(fitted.font);
+    painter->drawText(inner, fitted.flags, fitted.text);
+    painter->restore();
     return;
   }
-  const QRectF inner = rect_.adjusted(kSymbolPad, kSymbolPad, -kSymbolPad, -kSymbolPad);
-  if (glyph.width() >= inner.width()) {  // above the name
-    painter->drawText(QRectF(inner.left(), glyph.bottom(), inner.width(), inner.bottom() - glyph.bottom()),
-                      Qt::AlignCenter, label_);
-  } else {  // beside it, the font shrunk if the name is wider than the room left
-    const double left = glyph.right() + kSymbolGap;
-    const QRectF room(left, inner.top(), inner.right() - left, inner.height());
-    painter->save();
-    QFont font = painter->font();
-    // Font sizes round, so step down until the name fits; elided past that.
-    // NOLINTNEXTLINE(bugprone-float-loop-counter): a ratio shrunk until the name fits, not a count
-    for (double shrink = room.width() / label.width(); shrink < 1 && shrink > 0.3; shrink *= 0.95) {
-      if (painter->font().pointSizeF() > 0) {
-        font.setPointSizeF(painter->font().pointSizeF() * shrink);
-      } else {
-        font.setPixelSize(std::max(1, static_cast<int>(painter->font().pixelSize() * shrink)));
-      }
-      if (QFontMetricsF(font).horizontalAdvance(label_) <= room.width()) {
-        break;
-      }
-    }
-    painter->setFont(font);
-    painter->drawText(room, Qt::AlignCenter,
-                      painter->fontMetrics().elidedText(label_, Qt::ElideRight, static_cast<int>(std::ceil(room.width()))));
-    painter->restore();
-  }
+  const FittedLabel fitted = fitted_label(painter->font());
+  painter->save();
+  painter->setFont(fitted.font);
+  painter->drawText(label_room(glyph), fitted.flags, fitted.text);
+  painter->restore();
   paint_symbol(*painter, symbol_, glyph, region_);
+}
+
+QRectF StageItem::label_room(const QRectF& glyph) const {
+  const QRectF inner = rect_.adjusted(kSymbolPad, kSymbolPad, -kSymbolPad, -kSymbolPad);
+  if (glyph.isEmpty()) {
+    return inner;
+  }
+  if (glyph.width() >= inner.width()) {  // above the name
+    return {inner.left(), glyph.bottom(), inner.width(), inner.bottom() - glyph.bottom()};
+  }
+  const double left = glyph.right() + kSymbolGap;  // beside it
+  return {left, inner.top(), inner.right() - left, inner.height()};
+}
+
+FittedLabel StageItem::fitted_label(const QFont& font) const {
+  const QSizeF label = QFontMetricsF(font).size(Qt::TextSingleLine, label_);
+  return fit_label(font, label_, label_room(symbol_rect(label)).size());
 }
 
 void StageItem::set_symbol(canvas::StageSymbol symbol) {
