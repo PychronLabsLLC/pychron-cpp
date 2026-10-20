@@ -223,9 +223,39 @@ in fact running.
 The browser loads one page at a time (200 analyses by default;
 **Preferences** sets 20 to 5000). The status line reads
 `<shown> of <total> analyses`, and **Load more** fetches the next page.
-Every figure, fit and export acts on the rows you have **selected**; with
-nothing selected it acts on **all rows shown (loaded)**, so press Load more
-first if you want the whole set.
+
+### Filtered and Selected
+
+The right side of the window holds two lists side by side. **Filtered** is
+the result of your query and filters, the table described above, with
+**Load more** under it. **Selected** is the set of analyses the figures,
+export and publishing work on, with a count (`12 selected`) under it. Between
+them are four buttons:
+
+| Button | Does |
+|---|---|
+| **Add →** | Adds the rows highlighted in Filtered to Selected. |
+| **Add all** | Adds every analysis the query matches, not only the rows loaded: it walks all pages. Above 1000 matches it asks first. |
+| **← Remove** | Takes the rows highlighted in Selected out of it. |
+| **Clear** | Empties Selected. |
+
+From the keyboard, **Enter** (or Return) in Filtered adds the highlighted
+rows, and **Delete** (or Backspace) in Selected removes them. A double-click
+on a row, or **Space**, recalls it in either list, and **Ctrl+N** and
+**Ctrl+B** step through whichever list has the focus. A row of Filtered that
+is already selected shows a check mark in the Run ID column.
+
+The figure buttons, **Export**, **Publish** and **View > Publish** (**New
+release**) use Selected only, and are disabled while it is empty: filtering
+alone no longer picks analyses for them, so add what you want first.
+Selected survives every change of filter, so you can build it up from
+several queries (one sample, then another). It lasts until the program quits
+and is not saved.
+
+When the store changes (a run lands, a tag changes) Selected is refreshed. A
+run tagged `invalid` stays in it, shown by its tag, so that nothing leaves a
+set you built without your seeing it. A run that is no longer in the store is
+dropped, and the status line says so.
 
 ### The toolbar
 
@@ -235,11 +265,11 @@ three groups:
 
 | Button | Opens |
 |---|---|
-| **Time series**, **Ideogram**, **Age spectrum**, **Inverse isochron**, **Spectrum + isochron** | A figure window of the selected analyses. |
+| **Time series**, **Ideogram**, **Age spectrum**, **Inverse isochron**, **Spectrum + isochron** | A figure window of the Selected analyses. |
 | **Isotope evolutions...** | The isotope-evolution refit window. |
 | **Blanks...**, **IC factors...** | The reference-fit window. |
-| **Recall** (or double-click, or Enter on a row) | The recall window for the current row. **Ctrl+N** and **Ctrl+B** (Cmd on macOS) step to the next and previous row and recall it. |
-| **Export** | A data report (CSV or JSON) of the selection. See [Exporting](#exporting). |
+| **Recall** (or double-click or Space on a row) | The recall window for the current row. **Ctrl+N** and **Ctrl+B** (Cmd on macOS) step to the next and previous row and recall it. |
+| **Export** | A data report (CSV or JSON) of the Selected analyses. See [Exporting](#exporting). |
 
 ## Recall: one analysis in detail
 
@@ -864,7 +894,7 @@ location columns in the export.
 Three ways to get numbers out, all producing the same report (see
 [export.md](../export.md) for what every column means):
 
-- **Export** in the data browser: the selected analyses (or all shown),
+- **Export** in the data browser: the analyses in the Selected list,
   grouped by aliquot if any is a heating step, otherwise by identifier;
   file name ends `.csv` or `.json`. It is named after the sample when the
   selection has only one.
@@ -895,7 +925,7 @@ withdrawn), visibility (private unless made public), the analyses it pins,
 DOI and date. Then, in order:
 
 1. **New release…**: made of what **Export** would take in the data browser
-   (the selected rows, else every row shown). The dialog says how many of
+   (the Selected list). The dialog says how many of
    them are under embargo now and asks for a name, title, description,
    authors (with ORCID), licence (CC-BY-4.0 unless you choose another),
    publisher, the tags kept, an embargo date and the release it supersedes.

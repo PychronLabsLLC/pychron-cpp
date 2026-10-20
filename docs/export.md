@@ -9,10 +9,10 @@ must carry, this page says what the export puts where.
 
 ## One click
 
-- **Data browser** (View > Data): filter or select analyses and press
-  **Export**. A file dialog asks where; the name ends in `.csv` or `.json`
-  and decides the format. The selected rows are exported, or every row shown
-  when nothing is selected. The analyses are reduced on the processing
+- **Data browser** (View > Data): add analyses to the Selected list and
+  press **Export**. A file dialog asks where; the name ends in `.csv` or `.json`
+  and decides the format. The analyses in Selected are exported (the button
+  is disabled while it is empty). The analyses are reduced on the processing
   thread and the status line says what was written.
 - **Figure window** (an ideogram, spectrum or isochron): **Export table...**
   on the toolbar writes the figure's analyses with the figure's grouping and

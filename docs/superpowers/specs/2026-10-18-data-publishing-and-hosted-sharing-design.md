@@ -669,8 +669,8 @@ As built in phase 4 (plan `docs/superpowers/plans/2026-10-19-data-publishing-pha
   created). Buttons: New release…, Build…, Verify…, Publish…, Withdraw…,
   Make public (`set_release_public`: private -> public only); enabled by
   state. Status line, progress bar.
-- New release: analyses = Data browser's `export_uuids()` (selection, else
-  rows shown; same as Export). Dialog (`release_dialog.*`): name, title,
+- New release: analyses = Data browser's Selected list (`selection_uuids()`;
+  same as Export). Dialog (`release_dialog.*`): name, title,
   description, authors (ORCID, affiliation), licence (combo, editable;
   preselected `kDefaultLicence`), publisher, kept tags, embargo date,
   supersedes; shows member count and count under embargo now. Options:
