@@ -9,13 +9,13 @@
 #                  |                  |    |     |
 #                  D                 P1   Q1     C --+-- turbo --+-- R1 -- M1 --+
 #                  |                  |    |         |           |              |
-#                  |                 air  cocktail  IG1         PG1   M2 --- rough
-#                  |                  |    |                           |        |
-#                  |                 P2   Q2                           |       CG1
-#                  |                  |    |                           |
-#                  |           air_tank  cocktail_tank                 |
-#                  |                                                   |
-#               turbo2 ---------------------------------- R2 ----------+
+#                  |                 air  cocktail  IG1         PG1       M2 -- rough
+#                  |                  |    |                              |     |
+#                  |                 P2   Q2                              |    CG1
+#                  |                  |    |                              |
+#                  |           air_tank  cocktail_tank                    |
+#                  |                                                      |
+#               turbo2 ------------------------------------ R2 -----------+
 #
 # Every valve starts closed, and the shipped queue's scripts move only B, C,
 # P1 and P2 (sim_cocktail.py, in no queue, moves Q1 and Q2): the getters, the
@@ -26,7 +26,7 @@
 
 [canvas]
 origin = [0, 0]
-size = [1450, 800]
+size = [1240, 630]
 connection_width = 6
 # open valves: "green" (default) or "inherit" the colour of the region they join
 # open_valve_color = "inherit"
@@ -52,7 +52,7 @@ pos = [780, 200]
 
 [[valve]]
 name = "I"
-pos = [1090, 200]
+pos = [1030, 200]
 
 # Cleanup, above the main row: two getters and a cryo trap.
 [[valve]]
@@ -78,7 +78,7 @@ pos = [540, 330]
 
 [[valve]]
 name = "P2"
-pos = [540, 510]
+pos = [540, 460]
 
 [[valve]]
 name = "Q1"
@@ -86,7 +86,7 @@ pos = [640, 330]
 
 [[valve]]
 name = "Q2"
-pos = [640, 510]
+pos = [640, 460]
 
 [[valve]]
 name = "C"
@@ -96,37 +96,37 @@ pos = [700, 300]
 # as [[valves]]) and the manual valves to the roughing pump.
 [[rough_valve]]
 name = "R1"
-pos = [1060, 300]
+pos = [1000, 300]
 
 [[rough_valve]]
 name = "R2"
-pos = [1000, 720]
+pos = [990, 590]
 
 [[manual_valve]]
 name = "M1"
-pos = [1180, 300]
+pos = [1070, 300]
 
 [[manual_valve]]
 name = "M2"
-pos = [1150, 420]
+pos = [1070, 400]
 
-# A gauge's chip runs from about 25 px left of its pos to 140 px right and
-# 20 px down: no valve is drawn under one.
+# A gauge's chip is centred on its pos, about 60 px either side once it shows
+# a reading and 10 px up and down: no valve is drawn under one.
 [[gauge]]
 name = "IG2"
-pos = [325, 130]
+pos = [370, 140]
 
 [[gauge]]
 name = "IG1"
-pos = [780, 380]
+pos = [770, 370]
 
 [[gauge]]
 name = "PG1"
-pos = [960, 380]
+pos = [940, 370]
 
 [[gauge]]
 name = "CG1"
-pos = [1300, 520]
+pos = [1160, 470]
 
 # A region of the line takes the colour of the source connected to it with
 # the highest precedence: a pump (120) over a tank (110), a pipette or a
@@ -162,7 +162,7 @@ display_name = "Prep"
 
 [[stage]]
 name = "spec"
-pos = [950, 200]
+pos = [920, 200]
 size = [120, 60]
 display_name = "Spectrometer"
 use_symbol = true
@@ -170,7 +170,7 @@ kind = "spectrometer"
 
 [[stage]]
 name = "ion"
-pos = [1200, 200]
+pos = [1110, 200]
 size = [60, 40]
 display_name = "Ion pump"
 use_symbol = true
@@ -201,7 +201,7 @@ display_name = "Cryo trap"
 
 [[stage]]
 name = "turbo2"
-pos = [330, 720]
+pos = [330, 590]
 size = [60, 40]
 kind = "pump"
 
@@ -213,30 +213,30 @@ kind = "pump"
 
 [[stage]]
 name = "rough"
-pos = [1300, 420]
+pos = [1150, 400]
 size = [60, 40]
 kind = "pump"
 
 [[stage]]
 name = "air_tank"
-pos = [540, 600]
+pos = [540, 525]
 size = [80, 40]
 kind = "tank"
 
 [[stage]]
 name = "cocktail_tank"
-pos = [640, 600]
+pos = [640, 525]
 size = [80, 40]
 kind = "tank"
 
 [[pipette]]
 name = "air"
-pos = [540, 420]
+pos = [540, 395]
 vlabel = "Air Pipette"
 
 [[pipette]]
 name = "cocktail"
-pos = [640, 420]
+pos = [640, 395]
 vlabel = "Cocktail Pipette"
 
 # Main row.
@@ -422,11 +422,11 @@ font = "Arial 12"
 
 [[label]]
 text = "Roughing"
-pos = [1200, 640]
+pos = [1100, 515]
 font = "Arial 12"
 
 [legend]
-pos = [20, 750]
+pos = [20, 630]
 
 [[switch]]
 name = "pump_power"

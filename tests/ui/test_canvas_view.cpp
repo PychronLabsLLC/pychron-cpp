@@ -486,7 +486,7 @@ class TestCanvasView : public QObject {
     QTemporaryDir tmp;
     const std::filesystem::path canvas = std::filesystem::path(tmp.path().toStdString()) / "canvas.toml";
     std::filesystem::copy_file(examples / "canvas.toml", canvas);
-    // B (780, 200), A (420, 200), turbo (850, 300), P1 (540, 330), P2 (540, 510).
+    // B (780, 200), A (420, 200), turbo (850, 300), P1 (540, 330), P2 (540, 460).
     std::ofstream(canvas, std::ios::app) << "\n[[elbow]]\nstart = \"B\"\nend = \"turbo\"\ncorner = \"ur\"\n"
                                          << "\n[[elbow]]\nstart = \"A\"\nend = \"turbo\"\ncorner = \"ul\"\n"
                                          << "\n[[elbow]]\nstart = \"P1\"\nend = \"P2\"\ncorner = \"ll\"\n";
@@ -505,7 +505,7 @@ class TestCanvasView : public QObject {
     };
     QCOMPARE(route("B", "turbo"), (std::vector<QPointF>{{780, 200}, {850, 200}, {850, 300}}));
     QCOMPARE(route("A", "turbo"), (std::vector<QPointF>{{420, 200}, {420, 300}, {850, 300}}));
-    QCOMPARE(route("P1", "P2"), (std::vector<QPointF>{{540, 330}, {540, 510}}));  // lined up
+    QCOMPARE(route("P1", "P2"), (std::vector<QPointF>{{540, 330}, {540, 460}}));  // lined up
     line->stop();
   }
 
