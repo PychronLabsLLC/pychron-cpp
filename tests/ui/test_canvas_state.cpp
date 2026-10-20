@@ -2,6 +2,7 @@
 // is read-only; the CoreBridge adapter re-announces the bridge's changes.
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include <QSignalSpy>
@@ -28,8 +29,10 @@ class FakeCanvasState final : public ICanvasState {
   [[nodiscard]] bool pending(const std::string& name) const override { return state_.pending.contains(name); }
   [[nodiscard]] QDateTime wall_now() const override { return QDateTime::fromSecsSinceEpoch(1'000'000); }
   [[nodiscard]] const canvas::Canvas* canvas() const override { return canvas_; }
+  [[nodiscard]] bool gauge_defined(const std::string& name) const override { return defined_.contains(name); }
 
   CoreBridge::State state_;
+  std::set<std::string> defined_;
 
  private:
   const canvas::Canvas* canvas_;
@@ -66,13 +69,41 @@ class TestCanvasState : public QObject {
   void PaintsFromState() {
     FakeCanvasState fake(line_->canvas());
     CanvasView view(fake, nullptr);
-    QVERIFY(view.valve("P2")->state() != ValveState::Open);
+    fake.state_.valves["P2"] = ValveState::Closed;
+    emit fake.changed();
+    QCOMPARE(view.valve("P2")->state(), ValveState::Closed);
     fake.state_.valves["P2"] = ValveState::Open;
     emit fake.changed();
     QCOMPARE(view.valve("P2")->state(), ValveState::Open);
     fake.state_.valves["P2"] = ValveState::Closed;
     emit fake.changed();
     QCOMPARE(view.valve("P2")->state(), ValveState::Closed);
+  }
+
+  void ReadOnlyGaugeShowsItsValueAndIsInert() {
+    FakeCanvasState fake(line_->canvas());
+    fake.defined_.insert("IG1");
+    CanvasView view(fake, nullptr);
+    view.resize(1100, 800);
+    view.set_gauge_rest_ms(0);
+    ui::GaugeLabelItem* ig = view.gauge("IG1");
+    QVERIFY(ig != nullptr);
+    fake.state_.pressures["IG1"] = 1.5e-8;
+    fake.state_.units["IG1"] = "torr";
+    emit fake.changed();
+    QVERIFY(ig->wired());
+    QVERIFY2(ig->text().contains(QStringLiteral("torr")), qPrintable(ig->text()));
+
+    QSignalSpy clicked(&view, &CanvasView::gauge_clicked);
+    QSignalSpy rested(&view, &CanvasView::gauge_rested);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    const QPoint at = view.mapFromScene(ig->mapToScene(ig->chip_rect().center()));
+    QTest::mouseClick(view.viewport(), Qt::LeftButton, {}, at);
+    QTest::mouseMove(view.viewport(), at);
+    QTest::qWait(50);
+    QCOMPARE(clicked.count(), 0);
+    QCOMPARE(rested.count(), 0);
   }
 
   void BridgeAdapterForwardsChanges() {
@@ -83,6 +114,8 @@ class TestCanvasState : public QObject {
     QTRY_VERIFY(spy.count() >= 1);  // start()'s Snapshot
     QCOMPARE(&adapter.state(), &bridge.state());
     QCOMPARE(adapter.canvas(), bridge.canvas());
+    QVERIFY(adapter.gauge_defined("IG1"));
+    QVERIFY(!adapter.gauge_defined("nonesuch"));
 
     const int before = spy.count();
     CanvasView view(adapter, &bridge);

@@ -26,6 +26,9 @@ class ICanvasState : public QObject {
   // The line's network, which colours regions; none and the view leaves
   // valves and pipes uncoloured.
   [[nodiscard]] virtual const systems::NetworkGraph* network() const { return nullptr; }
+  // Whether the line defines a gauge of this name. A defined gauge shows its
+  // value on the canvas; one that is not is drawn as its name only.
+  [[nodiscard]] virtual bool gauge_defined(const std::string& name) const = 0;
 
  signals:
   // Something the painting reads has changed.
@@ -44,6 +47,7 @@ class CoreBridgeCanvasState final : public ICanvasState {
   [[nodiscard]] QDateTime wall_now() const override { return bridge_.wall_now(); }
   [[nodiscard]] const canvas::Canvas* canvas() const override { return bridge_.canvas(); }
   [[nodiscard]] const systems::NetworkGraph* network() const override { return bridge_.network(); }
+  [[nodiscard]] bool gauge_defined(const std::string& name) const override;
 
  private:
   CoreBridge& bridge_;

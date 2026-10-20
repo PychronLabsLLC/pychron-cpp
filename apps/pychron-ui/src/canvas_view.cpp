@@ -65,6 +65,10 @@ QColor CanvasView::source_color(canvas::SourceKind kind, int ordinal) {
 
 CanvasView::CanvasView(CoreBridge& bridge, QWidget* parent)
     : CanvasView(*new CoreBridgeCanvasState(bridge), &bridge, parent) {
+  // The adapter is made before the delegated constructor runs, so it has no
+  // owner until here; if that constructor threw it would leak. Nothing in it
+  // throws (Qt calls and Result values), and a delegating constructor cannot
+  // hold the pointer any earlier.
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): handed to own_state_ at once
   own_state_.reset(&static_cast<CoreBridgeCanvasState&>(state_));
 }
@@ -193,14 +197,15 @@ void CanvasView::build(const canvas::Canvas& c) {
   }
   for (const auto& g : c.gauges) {
     auto* item = new GaugeLabelItem(g.name);
-    // A gauge is wired when the line defines it; a read-only view has no line.
-    if (bridge_) {
-      const auto& defined = bridge_->config().gauges;
-      item->set_wired(std::any_of(defined.begin(), defined.end(), [&](const auto& d) { return d.name == g.name; }));
-    }
+    // A gauge the line defines shows its value, read-only or not.
+    item->set_wired(state_.gauge_defined(g.name));
     item->setPos(to_qpoint(g.pos));
-    item->set_on_click([this](const std::string& name) { emit gauge_clicked(QString::fromStdString(name)); });
-    item->set_on_hover([this, name = g.name](bool entered) { on_gauge_hover(name, entered); });
+    // What follows a click or a rest on a gauge is the window's, and a
+    // read-only view has no such window: its gauges only show values.
+    if (!read_only()) {
+      item->set_on_click([this](const std::string& name) { emit gauge_clicked(QString::fromStdString(name)); });
+      item->set_on_hover([this, name = g.name](bool entered) { on_gauge_hover(name, entered); });
+    }
     scene_.addItem(item);
     gauges_[g.name] = item;
     positions_[g.name] = item->pos();

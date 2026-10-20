@@ -233,11 +233,15 @@ returns Cancelled, as does every step after.
 
 `apps/pychron-ui/src/canvas_state.hpp` (new): QObject interface, what
 `CanvasView::apply_state` reads now: valve states, switch locks, pending
-flag, pressures and units, valve details text, `changed()` signal.
+flag, pressures and units, valve details text, `changed()` signal; also
+`network()` (null → no region colouring) and `gauge_defined(name)` (true →
+gauge shows its value, wired or read-only; false → name only).
 `CoreBridgeCanvasState` adapts `CoreBridge` (its signals → `changed()`).
 `CanvasView` takes `ICanvasState&` plus optional `CoreBridge*`: with null
 bridge view is read-only (click, lock, unlock do nothing; no
-`actuate`/`request_lock` path exists). Main window passes both; behaviour
+`actuate`/`request_lock` path exists; gauges show values but click and
+hover do nothing). Main window keeps `CanvasView(CoreBridge&, QWidget*)`,
+which builds its own `CoreBridgeCanvasState` and passes the bridge; behaviour
 unchanged (existing `tests/ui` canvas tests pass unedited).
 
 ### 6.2 Rehearse Script window
