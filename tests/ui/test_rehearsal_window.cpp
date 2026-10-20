@@ -3,6 +3,7 @@
 // a script stepped against a copy of the example line, painted on a
 // read-only canvas, while the live line does not move.
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -303,6 +304,66 @@ class TestRehearsalWindow : public QObject {
     auto w = make_window();
     QCOMPARE(w->step_action()->shortcut(), pychron::ui::key(Shortcut::RehearseStep));
     QCOMPARE(w->run_to_end_action()->shortcut(), pychron::ui::key(Shortcut::RehearseRunToEnd));
+  }
+
+  // Spec 7: a rehearsal actuates nothing. Three of the example line's scripts
+  // run to their end; no switch moved, none counted a command, and the line's
+  // bus saw no ValveChanged or ActuationFailed.
+  void NothingIsActuated() {
+    const auto before = line_->switches().list();
+    QVERIFY(!before.empty());
+    std::atomic<int> changed{0};
+    std::atomic<int> failed{0};
+    auto changed_sub = line_->bus().subscribe<pychron::ValveChanged>(
+        [&](const pychron::ValveChanged&) { ++changed; });
+    auto failed_sub = line_->bus().subscribe<pychron::ActuationFailed>(
+        [&](const pychron::ActuationFailed&) { ++failed; });
+
+    struct Case {
+      ScriptKind kind;
+      const char* name;
+      fs::path path;
+    };
+    const Case cases[] = {
+        {ScriptKind::Extraction, "sim_extract.py", dir_ / "scripts" / "extraction" / "sim_extract.py"},
+        {ScriptKind::Extraction, "sim_air.py", dir_ / "scripts" / "extraction" / "sim_air.py"},
+        {ScriptKind::PostMeasurement, "sim_pump.py", dir_ / "scripts" / "post_measurement" / "sim_pump.py"},
+    };
+    for (const Case& c : cases) {
+      auto w = make_window();
+      w->set_script(c.kind, QString::fromUtf8(c.name), QString::fromStdString(read(c.path)));
+      w->start();
+      QTRY_VERIFY_WITH_TIMEOUT(w->log()->rowCount() > 0, 5000);
+      bool done = false;
+      for (int i = 0; i < 400 && !done; ++i) {
+        QTest::qWait(25);
+        const int last = w->log()->rowCount() - 1;
+        if (last < 0) continue;
+        if (outcome(*w->log(), last) == QStringLiteral("finished") || !w->running()) {
+          done = true;
+        } else if (auto* entry = qobject_cast<QLineEdit*>(w->log()->cellWidget(last, 3)); entry != nullptr) {
+          QTest::keyClicks(entry, QStringLiteral("1"));  // a value read waits for one
+          QTest::keyClick(entry, Qt::Key_Return);
+        } else if (w->step_enabled()) {
+          w->run_to_end();
+        }
+      }
+      QVERIFY2(done, c.name);
+      const int last = w->log()->rowCount() - 1;
+      QVERIFY2(!w->running(), c.name);
+      QVERIFY2(last >= 0 && outcome(*w->log(), last) == QStringLiteral("finished"),
+               qPrintable(QString::fromUtf8(c.name) + QLatin1Char(' ') + row_text(*w->log(), last)));
+    }
+
+    const auto after = line_->switches().list();
+    QCOMPARE(after.size(), before.size());
+    for (std::size_t i = 0; i < before.size(); ++i) {
+      QCOMPARE(QString::fromStdString(after[i].name), QString::fromStdString(before[i].name));
+      QVERIFY2(after[i].state == before[i].state, after[i].name.c_str());
+      QVERIFY2(after[i].stats == before[i].stats, after[i].name.c_str());
+    }
+    QCOMPARE(changed.load(), 0);
+    QCOMPARE(failed.load(), 0);
   }
 
   // The main window owns one rehearsal window, made on first use, over the
