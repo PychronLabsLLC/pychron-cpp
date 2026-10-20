@@ -83,6 +83,8 @@ std::optional<Corner> parse_corner(std::string_view text) noexcept;
 
 struct TextLayer {
   std::vector<std::string> lines;
+  // Empty, or one per line: a marker drawn before it (a group's, in its colour).
+  std::vector<MarkerStyle> markers;
   Corner corner = Corner::TopLeft;
   int stack = 0;  // order among texts in the same corner
   Color color;

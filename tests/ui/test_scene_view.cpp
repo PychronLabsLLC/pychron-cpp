@@ -1,5 +1,6 @@
 // SceneView draws what a scene says; here, the layers with nothing else to test them.
 
+#include <array>
 #include <cmath>
 #include <memory>
 
@@ -271,6 +272,63 @@ class TestSceneView : public QObject {
     view.reset_view();
     QCOMPARE(y->range().lower, 0.0);
   }
+  // A corner text whose lines have markers draws each marker before its
+  // line, inside the text's box; its lines are the view's texts as a plain
+  // corner text's are.
+  void cornerTextMarkersAreDrawnBeforeTheirLines() {
+    pp::Scene scene;
+    pp::Graph g;
+    pp::Panel panel;
+    pp::PointLayer pts;
+    pts.x = {1.0, 2.0};
+    pts.y = {1.0, 2.0};
+    pp::TextLayer stats;
+    stats.lines = {"a: wtd mean 28.2", "b: wtd mean 28.4"};
+    pp::MarkerStyle red;
+    red.color = {255, 0, 0, 255};
+    pp::MarkerStyle blue = red;
+    blue.color = {0, 0, 255, 255};
+    stats.markers = {red, blue};
+    panel.layers = {pts, stats};
+    g.panels = {panel};
+    scene.graphs.push_back(g);
+    scene.style.legend = false;
+
+    SceneView view;
+    view.resize(400, 300);
+    view.set_scene(std::make_shared<const pp::Scene>(scene));
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.plot()->replot();
+    QCOMPARE(view.texts(0), (QStringList{QStringLiteral("a: wtd mean 28.2"), QStringLiteral("b: wtd mean 28.4")}));
+    QCPItemText* text = nullptr;
+    for (int k = 0; k < view.plot()->itemCount(); ++k)
+      if (auto* t = qobject_cast<QCPItemText*>(view.plot()->item(k))) text = t;
+    QVERIFY(text);
+    QVERIFY(text->padding().left() > text->padding().right());  // room for the markers
+
+    // Red above blue, both at the box's left, left of the text.
+    const QImage image = view.plot()->toPixmap().toImage();
+    // The first pixel strongly of one channel (antialiased edges are not pure).
+    const auto find = [&image](int channel) {
+      for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x) {
+          const QColor c = image.pixelColor(x, y);
+          const std::array<int, 3> v{c.red(), c.green(), c.blue()};
+          const auto at = [&v](int i) { return v.at(static_cast<std::size_t>(i % 3)); };
+          if (at(channel) > 200 && at(channel + 1) < 80 && at(channel + 2) < 80) return QPoint(x, y);
+        }
+      return QPoint(-1, -1);
+    };
+    const QPoint r = find(0), b = find(2);
+    QVERIFY(r.x() >= 0 && b.x() >= 0);
+    QVERIFY(r.y() < b.y());
+    QVERIFY(std::abs(r.x() - b.x()) <= 1);
+    const QRectF box(text->topLeft->pixelPosition(), text->bottomRight->pixelPosition());
+    for (const QPoint& p : {r, b}) QVERIFY2(box.contains(p), qPrintable(QStringLiteral("%1,%2").arg(p.x()).arg(p.y())));
+    QVERIFY(r.x() < box.left() + text->padding().left());
+  }
+
   // The view and a release's SVG and PDF (the draw list both serialize) show
   // a scene over the same axis ranges and place the same points, step boxes,
   // ellipses and corner texts.

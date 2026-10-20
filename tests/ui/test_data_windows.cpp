@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -2308,6 +2309,46 @@ class TestDataWindows : public QObject {
     w.set_graph_key(QStringLiteral("none"));
     QVERIFY(wait_runs(w, bridge, ++runs));
     QCOMPARE(groups_on(), (QList<QList<int>>{{0, 1, 2, 3}}));
+  }
+
+  // The analyses dock shows each analysis's group in the colour the figure
+  // draws it in, and follows a colour set in the groups table.
+  void analyses_show_their_groups_colour() {
+    QTemporaryDir dir;
+    auto src = make_aliquots();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
+    FigureWindow w(bridge, presets, "ideogram", ids);
+    w.show();
+    QVERIFY(wait_runs(w, bridge, 1));
+    auto* table = w.analyses_table();
+    QCOMPARE(table->horizontalHeaderItem(3)->text(), QStringLiteral("Color"));
+    QCOMPARE(table->horizontalHeaderItem(4)->text(), QStringLiteral("Included"));
+    // group index -> the colour of its curve
+    std::map<int, QColor> curves;
+    for (const auto& p : w.view()->scene()->graphs[0].panels)
+      for (const auto& l : p.layers)
+        if (const auto* line = std::get_if<pp::LineLayer>(&l))
+          curves[line->group] = QColor(line->style.color.r, line->style.color.g, line->style.color.b);
+    QCOMPARE(curves.size(), std::size_t{4});
+    const auto colour = [&](int row) { return table->item(row, 3)->data(Qt::DecorationRole).value<QColor>(); };
+    int row = 0;
+    for (const auto& it : w.dataset()->items()) QCOMPARE(colour(row++), curves.at(it.path.group));
+
+    auto o = w.pipeline().find("figure")->options;
+    auto first = o.new_row("groups");
+    QVERIFY(first.set("color", std::string("#ff0000")).has_value());
+    QVERIFY(o.set_rows("groups", {first}).has_value());
+    w.set_figure_options(o);
+    QVERIFY(wait_runs(w, bridge, 2));
+    row = 0;
+    for (const auto& it : w.dataset()->items()) {
+      if (it.path.group == 0) QCOMPARE(colour(row), QColor(255, 0, 0));
+      else QCOMPARE(colour(row), curves.at(it.path.group));
+      ++row;
+    }
   }
 
   // The view is kept across a rerun (so that leaving a point out does not

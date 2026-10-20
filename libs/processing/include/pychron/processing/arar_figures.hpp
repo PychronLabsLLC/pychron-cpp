@@ -29,6 +29,13 @@ namespace pychron::processing {
 
 class Unit;
 
+// The colour a figure draws group `group` in: the figure's groups table row
+// for it when that sets one, else the palette's. Any figure whose options
+// have a groups table (these and the time series); otherwise the palette's.
+// A time series panel's own marker colour, which an only group takes there,
+// is the panel's, not the group's, and is not this.
+Color group_color(const Options& figure, int group);
+
 const SchemaPtr& ideogram_schema();  // "figure.ideogram"
 Result<Scene> build_ideogram(const Dataset& dataset, const Options& options);
 std::unique_ptr<Unit> make_ideogram_unit();

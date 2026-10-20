@@ -199,6 +199,33 @@ TEST(SceneDraw, CornerTextIsOneBoxPerCorner) {
   EXPECT_GT(t[3]->at.y, t[0]->at.y);
 }
 
+// A corner whose lines have markers draws each before its line, in the
+// space the lines are indented by; none of them is a data marker.
+TEST(SceneDraw, CornerTextMarkersGoBeforeTheirLines) {
+  TextLayer plain;
+  plain.lines = {"one"};
+  TextLayer marked;
+  marked.lines = {"one", "two"};
+  MarkerStyle red;
+  red.color = {255, 0, 0, 255};
+  MarkerStyle blue = red;
+  blue.color = {0, 0, 255, 255};
+  marked.markers = {red, blue};
+  const DrawList without = draw_scene(one_panel({plain}));
+  EXPECT_TRUE(paths(without, DrawRole::Legend).empty());
+  const DrawList with = draw_scene(one_panel({marked}));
+  const auto swatches = paths(with, DrawRole::Legend);
+  ASSERT_EQ(swatches.size(), 2u);
+  EXPECT_TRUE(paths(with, DrawRole::Marker).empty());
+  EXPECT_EQ(swatches[0]->fill, red.color);
+  EXPECT_EQ(swatches[1]->fill, blue.color);
+  const auto t = texts(with, TextRole::Annotation);
+  ASSERT_EQ(t.size(), 2u);
+  EXPECT_GT(t[0]->at.x, texts(without, TextRole::Annotation)[0]->at.x);  // indented
+  EXPECT_LT(swatches[0]->ops.front().p[0].y, swatches[1]->ops.front().p[0].y);  // one per line, in order
+  EXPECT_EQ(paths(with, DrawRole::TextBox).size(), 1u);
+}
+
 TEST(SceneDraw, LegendListsLabelledPointLayers) {
   PointLayer a;
   a.x = {1};

@@ -8,6 +8,7 @@
 #include <charconv>
 #include <cmath>
 #include <map>
+#include <optional>
 
 namespace pychron::processing {
 
@@ -314,14 +315,19 @@ Box corner_box(const Box& plot, Corner corner, double w, double h) {
 struct Line {
   std::string text;
   Color color;
+  std::optional<MarkerStyle> marker;
 };
 
+// A corner with any marker indents all its lines by one line height, the
+// marker centred in that space.
 void draw_corner_texts(Builder& b, const std::map<Corner, std::vector<Line>>& corners, const Box& plot, int clip) {
-  const double size = b.style.fonts.annotation;
+  const double size = b.style.fonts.annotation, row = size * kLineHeight;
   for (const auto& [corner, lines] : corners) {
     double w = 0;
     for (const auto& l : lines) w = std::max(w, text_width(l.text, size));
-    const Box box = corner_box(plot, corner, w + 8, static_cast<double>(lines.size()) * size * kLineHeight + 4);
+    const bool swatches = std::ranges::any_of(lines, [](const Line& l) { return l.marker.has_value(); });
+    const double indent = swatches ? row : 0.0;
+    const Box box = corner_box(plot, corner, w + indent + 8, static_cast<double>(lines.size()) * row + 4);
     DrawPath p;
     p.role = DrawRole::TextBox;
     p.clip = clip;
@@ -329,12 +335,18 @@ void draw_corner_texts(Builder& b, const std::map<Corner, std::vector<Line>>& co
     rect(p.ops, box.x, box.y, box.x + box.w, box.y + box.h);
     b.path(std::move(p));
     for (std::size_t k = 0; k < lines.size(); ++k) {
+      if (lines[k].marker) {
+        MarkerStyle m = *lines[k].marker;
+        m.size = std::min(m.size, size);
+        const double cy = box.y + 2 + row * (static_cast<double>(k) + 0.5);
+        b.path(marker_path(m, {box.x + 4 + row / 2, cy}, DrawRole::Legend, clip));
+      }
       DrawText t;
       t.role = TextRole::Annotation;
       t.clip = clip;
       t.size = size;
       t.color = lines[k].color;
-      t.at = {box.x + 4, box.y + 2 + size + static_cast<double>(k) * size * kLineHeight};
+      t.at = {box.x + 4 + indent, box.y + 2 + size + static_cast<double>(k) * row};
       t.text = lines[k].text;
       b.text(std::move(t));
     }
@@ -524,7 +536,10 @@ DrawList draw_scene(const Scene& scene, const FigureSize& size) {
         else if (const auto* guide = std::get_if<GuideLayer>(&layer)) draw_guide(b, *guide, pl, clip);
         else if (const auto* span = std::get_if<SpanLayer>(&layer)) draw_span(b, *span, pl, clip);
         else if (const auto* text = std::get_if<TextLayer>(&layer))
-          for (const auto& t : text->lines) corners[text->corner].push_back({t, text->color});
+          for (std::size_t k = 0; k < text->lines.size(); ++k)
+            corners[text->corner].push_back(
+                {text->lines[k], text->color,
+                 k < text->markers.size() ? std::optional<MarkerStyle>(text->markers[k]) : std::nullopt});
       }
       draw_corner_texts(b, corners, pl.plot, clip);
       if (pi == 0 && scene.style.legend) draw_legend(b, panel, pl.plot);

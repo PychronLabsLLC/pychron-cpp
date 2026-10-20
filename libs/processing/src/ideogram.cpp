@@ -168,6 +168,13 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
       double mean_error = 0;
     };
     std::vector<GroupData> groups;
+    // Before a group's mean text: its marker, filled, in its colour.
+    const auto swatch = [](const GroupData& gd) {
+      MarkerStyle m;
+      m.shape = gd.style.marker;
+      m.color = gd.style.color;
+      return m;
+    };
     std::size_t missing = 0;
     for (const auto& [group, items] : d.groups_of_graph(graph)) {
       GroupData gd;
@@ -274,6 +281,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
         double top = 0;
         std::vector<std::pair<const GroupData*, double>> peaks;
         std::vector<std::string> lines;
+        std::vector<MarkerStyle> markers;
         for (const auto& gd : groups) {
           if (gd.all.empty()) continue;
           const auto c = curve_of(gd.included, lo, hi);
@@ -312,6 +320,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
             const std::string prefix = (gd.style.label.empty() ? "" : gd.style.label + ": ") +
                                        (weighted ? "wtd mean " : "mean ");
             lines.push_back(mean_text(prefix, gd.mean->value, gd.mean_error, &*gd.mean, gd.all.size(), mt, q->units()));
+            markers.push_back(swatch(gd));
           }
         }
         // Mean indicators stacked above the curves.
@@ -341,6 +350,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
         if (!lines.empty()) {
           TextLayer t;
           t.lines = std::move(lines);
+          t.markers = std::move(markers);
           t.corner = stats_corner;
           t.font_size = scene.style.fonts.annotation;
           p.layers.emplace_back(std::move(t));
@@ -389,6 +399,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
             const std::string prefix = (gd.style.label.empty() ? "" : gd.style.label + ": ") +
                                        (weighted ? "wtd mean " : "mean ");
             t.lines.push_back(mean_text(prefix, gd.mean->value, gd.mean_error, &*gd.mean, gd.all.size(), mt, q->units()));
+            t.markers.push_back(swatch(gd));
           }
           t.corner = stats_corner;
           t.font_size = scene.style.fonts.annotation;

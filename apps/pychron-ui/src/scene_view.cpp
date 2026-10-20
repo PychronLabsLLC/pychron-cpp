@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <optional>
 
 #include <QApplication>
 #include <QClipboard>
@@ -119,6 +120,44 @@ Qt::Alignment corner_alignment(pp::Corner c) {
   }
   return Qt::AlignTop | Qt::AlignLeft;
 }
+
+// A corner text with a marker (a group's) before each of its lines that has
+// one. It is measured as it is drawn, as QCPItemText is: QCustomPlot paints
+// into a buffer whose DPI need not be the screen's (96 against 72 on macOS),
+// so a size taken beforehand from QFontMetrics comes out short.
+class SwatchText : public QCPItemText {
+ public:
+  SwatchText(QCustomPlot* plot, std::vector<std::optional<QCPScatterStyle>> markers)
+      : QCPItemText(plot), markers_(std::move(markers)) {}
+
+ protected:
+  void draw(QCPPainter* painter) override {
+    painter->setFont(mainFont());
+    const int line = painter->fontMetrics().height();
+    mPadding.setLeft(kPad + line);  // room for the markers, one line high
+    const QTransform plot_transform = painter->transform();
+    QCPItemText::draw(painter);  // leaves the painter moved to the text's position
+    painter->setTransform(plot_transform);
+    const QPointF pos(position->pixelPosition());
+    const int flags = static_cast<int>(Qt::TextDontClip | mTextAlignment);
+    const QRect text = painter->fontMetrics().boundingRect(0, 0, 0, 0, flags, mText);
+    const QRect box = text.adjusted(-mPadding.left(), -mPadding.top(), mPadding.right(), mPadding.bottom());
+    // rounded as QCPItemText rounds the box it draws
+    const QPointF top_left = pos + getTextDrawPoint(QPointF(0, 0), box, mPositionAlignment).toPoint();
+    const double row =
+        markers_.empty() ? 0.0 : static_cast<double>(text.height()) / static_cast<double>(markers_.size());
+    for (std::size_t k = 0; k < markers_.size(); ++k) {
+      if (!markers_[k]) continue;
+      markers_[k]->applyTo(painter, QPen());
+      markers_[k]->drawShape(painter, top_left.x() + kPad + line / 2.0,
+                             top_left.y() + mPadding.top() + row * (static_cast<double>(k) + 0.5));
+    }
+  }
+
+ private:
+  static constexpr int kPad = 4;
+  std::vector<std::optional<QCPScatterStyle>> markers_;
+};
 
 QPointF corner_ratio(pp::Corner c) {
   switch (c) {
@@ -272,6 +311,7 @@ void SceneView::rebuild() {
         legend->setLayer(QStringLiteral("legend"));
       }
       std::map<pp::Corner, QStringList> corner_text;
+      std::map<pp::Corner, std::vector<std::optional<pp::MarkerStyle>>> corner_markers;
 
       for (const auto& layer : panel.layers) {
         if (const auto* band = std::get_if<pp::BandLayer>(&layer)) {
@@ -383,7 +423,11 @@ void SceneView::rebuild() {
             if (el->filled && !ex) curve->setBrush(QBrush(qcolor(el->fill)));
           }
         } else if (const auto* text = std::get_if<pp::TextLayer>(&layer)) {
-          for (const auto& l : text->lines) corner_text[text->corner] << QString::fromStdString(l);
+          for (std::size_t k = 0; k < text->lines.size(); ++k) {
+            corner_text[text->corner] << QString::fromStdString(text->lines[k]);
+            corner_markers[text->corner].push_back(k < text->markers.size() ? std::optional(text->markers[k])
+                                                                            : std::nullopt);
+          }
         } else if (const auto* span = std::get_if<pp::SpanLayer>(&layer)) {
           // A bound that is not set is the edge of the panel, wherever the
           // axes are moved to.
@@ -431,7 +475,24 @@ void SceneView::rebuild() {
         }
       }
       for (const auto& [corner, lines] : corner_text) {
-        auto* t = new QCPItemText(plot_);
+        const auto& markers = corner_markers[corner];
+        QCPItemText* t = nullptr;
+        if (std::ranges::any_of(markers, [](const auto& m) { return m.has_value(); })) {
+          const double side = QFontMetricsF(scene_font(s.style, s.style.fonts.annotation)).height() * 0.8;
+          std::vector<std::optional<QCPScatterStyle>> styles;
+          for (const auto& m : markers) {
+            if (!m) {
+              styles.emplace_back();
+              continue;
+            }
+            pp::MarkerStyle style = *m;
+            style.size = std::min(style.size, side);
+            styles.emplace_back(scatter(style));
+          }
+          t = new SwatchText(plot_, std::move(styles));
+        } else {
+          t = new QCPItemText(plot_);
+        }
         t->setClipAxisRect(rect);
         t->position->setType(QCPItemPosition::ptAxisRectRatio);
         t->position->setAxisRect(rect);

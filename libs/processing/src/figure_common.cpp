@@ -5,6 +5,7 @@
 #include <ctime>
 #include <string_view>
 
+#include "pychron/processing/arar_figures.hpp"
 #include "schema_builder.hpp"
 
 namespace pychron::processing::detail {
@@ -120,14 +121,23 @@ ListSpec groups_list(bool fixed_steps) {
   return groups;
 }
 
+namespace {
+
+Color row_color(const Options* row, int group) {
+  if (row)
+    if (auto c = parse_color(row->get_string("color"))) return *c;
+  return palette_color(group);
+}
+
+}  // namespace
+
 GroupStyle group_style(const Dataset& d, int graph, int group, const std::vector<Options>& rows,
                        MarkerShape default_marker) {
   GroupStyle st;
-  st.color = palette_color(group);
   st.marker = default_marker;
   const Options* row = group >= 0 && static_cast<std::size_t>(group) < rows.size() ? &rows[group] : nullptr;
+  st.color = row_color(row, group);
   if (row) {
-    if (auto c = parse_color(row->get_string("color"))) st.color = *c;
     if (row->get_string("marker") != "auto") st.marker = parse_marker(row->get_string("marker")).value_or(default_marker);
     if (row->schema() && row->schema()->field("fill_alpha")) st.fill_alpha = static_cast<int>(row->get_int("fill_alpha"));
   }
@@ -156,3 +166,13 @@ std::string mean_text(const std::string& prefix, double value, double error, con
 }
 
 }  // namespace pychron::processing::detail
+
+namespace pychron::processing {
+
+Color group_color(const Options& figure, int group) {
+  if (!figure.schema() || !figure.schema()->list("groups")) return palette_color(group);
+  const auto rows = figure.rows("groups");
+  return detail::row_color(group >= 0 && static_cast<std::size_t>(group) < rows.size() ? &rows[group] : nullptr, group);
+}
+
+}  // namespace pychron::processing

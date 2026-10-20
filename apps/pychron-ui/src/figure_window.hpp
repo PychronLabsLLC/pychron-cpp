@@ -8,7 +8,8 @@
 //
 // run on the ProcessingBridge. The scene is drawn by SceneView; the options
 // dock is generated from the figure's schema and backed by named presets;
-// the analyses dock shows each analysis's group and whether it is included.
+// the analyses dock shows each analysis's group, the group's colour, and
+// whether it is included.
 // Clicking a point (or toggling it in the table) edits the `edits` unit's
 // options and reruns; only edits and the figure recompute.
 

@@ -22,6 +22,7 @@
 
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
+#include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/report.hpp"
 #include "scene_view.hpp"
@@ -45,6 +46,9 @@ constexpr const char* kEdits = "edits";
 constexpr const char* kGroup = "group";
 // A second group unit, at the graph level: it puts each analysis on a graph.
 constexpr const char* kGraph = "graph";
+
+// Columns of the analyses dock.
+enum Column : int { kRunIdCol, kTypeCol, kGroupCol, kColorCol, kIncludedCol, kColumnCount };
 
 }  // namespace
 
@@ -156,19 +160,19 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   // Analyses dock.
   auto* adock = new QDockWidget(tr("Analyses"), this);
   analyses_ = new QTableWidget;
-  analyses_->setColumnCount(4);
-  analyses_->setHorizontalHeaderLabels({tr("Run ID"), tr("Type"), tr("Group"), tr("Included")});
+  analyses_->setColumnCount(kColumnCount);
+  analyses_->setHorizontalHeaderLabels({tr("Run ID"), tr("Type"), tr("Group"), tr("Color"), tr("Included")});
   analyses_->verticalHeader()->setVisible(false);
   analyses_->horizontalHeader()->setStretchLastSection(true);
   adock->setWidget(analyses_);
   addDockWidget(Qt::BottomDockWidgetArea, adock);
   connect(analyses_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
-    if (filling_ || item->column() != 3) return;
+    if (filling_ || item->column() != kIncludedCol) return;
     const QString id = item->data(Qt::UserRole).toString();
     toggle_exclusion({id});
   });
   connect(analyses_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-    if (auto* item = analyses_->item(row, 3)) emit recall_requested(item->data(Qt::UserRole).toString());
+    if (auto* item = analyses_->item(row, kIncludedCol)) emit recall_requested(item->data(Qt::UserRole).toString());
   });
 
   status_ = new QLabel;
@@ -279,12 +283,20 @@ void FigureWindow::fill_analyses() {
   filling_ = true;
   analyses_->setRowCount(dataset_ ? static_cast<int>(dataset_->size()) : 0);
   if (dataset_) {
+    const pp::Options& fig = pipeline_.find(kFigure)->options;
     int row = 0;
     for (const auto& it : dataset_->items()) {
       const auto& a = *it.analysis->analysis;
-      analyses_->setItem(row, 0, new QTableWidgetItem(qs(a.runid)));
-      analyses_->setItem(row, 1, new QTableWidgetItem(qs(a.analysis_type)));
-      analyses_->setItem(row, 2, new QTableWidgetItem(qs(dataset_->group_name(it.path.group))));
+      analyses_->setItem(row, kRunIdCol, new QTableWidgetItem(qs(a.runid)));
+      analyses_->setItem(row, kTypeCol, new QTableWidgetItem(qs(a.analysis_type)));
+      analyses_->setItem(row, kGroupCol, new QTableWidgetItem(qs(dataset_->group_name(it.path.group))));
+      // The colour the figure draws the analysis's group in.
+      const pp::Color c = pp::group_color(fig, it.path.group);
+      auto* color = new QTableWidgetItem;
+      color->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+      color->setData(Qt::DecorationRole, QColor(c.r, c.g, c.b));
+      color->setToolTip(QColor(c.r, c.g, c.b).name());
+      analyses_->setItem(row, kColorCol, color);
       auto* inc = new QTableWidgetItem;
       inc->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       inc->setCheckState(it.exclusion.included() ? Qt::Checked : Qt::Unchecked);
@@ -294,7 +306,7 @@ void FigureWindow::fill_analyses() {
       else if (it.exclusion.filter) why = tr("filtered");
       else if (it.exclusion.tag) why = tr("tag: %1").arg(qs(a.tag));
       inc->setText(why);
-      analyses_->setItem(row, 3, inc);
+      analyses_->setItem(row, kIncludedCol, inc);
       ++row;
     }
   }

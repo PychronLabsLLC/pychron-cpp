@@ -250,6 +250,43 @@ TEST(Ideogram, AgesOnlyHasNoCurveAndKeepsTheMeanText) {
   EXPECT_EQ(all_text(two->graphs[0].panels[0]).find("wtd mean"), std::string::npos);
 }
 
+// Each group's mean text has the group's marker before it, in the colour the
+// figure draws the group in: the palette's, or its groups table row's.
+TEST(Ideogram, MeanTextHasEachGroupsMarker) {
+  auto d = steps();
+  pp::Options o(pp::ideogram_schema());
+  auto s = pp::build_ideogram(d, o);
+  ASSERT_TRUE(s) << s.error().what;
+  const auto texts = layers<pp::TextLayer>(s->graphs[0].panels[1]);
+  ASSERT_EQ(texts.size(), 1u);
+  ASSERT_EQ(texts[0]->markers.size(), texts[0]->lines.size());
+  EXPECT_EQ(texts[0]->markers[0].color, pp::palette_color(0));
+  EXPECT_EQ(texts[0]->markers[0].color, layers<pp::LineLayer>(s->graphs[0].panels[1])[0]->style.color);
+  EXPECT_EQ(pp::group_color(o, 0), pp::palette_color(0));
+
+  auto row = o.new_row("groups");
+  ASSERT_TRUE(row.set("color", std::string("#ff0000")));
+  ASSERT_TRUE(row.set("marker", std::string("square")));
+  ASSERT_TRUE(o.set_rows("groups", {row}));
+  s = pp::build_ideogram(d, o);
+  ASSERT_TRUE(s) << s.error().what;
+  const pp::Color red{255, 0, 0, 255};
+  const pp::MarkerStyle m = layers<pp::TextLayer>(s->graphs[0].panels[1])[0]->markers.at(0);
+  EXPECT_EQ(m.color, red);
+  EXPECT_EQ(m.shape, pp::MarkerShape::Square);
+  EXPECT_EQ(pp::group_color(o, 0), red);
+  EXPECT_EQ(pp::group_color(o, 1), pp::palette_color(1));  // no row: the palette's
+
+  // Ages alone: the text on the analysis-number panel has them too.
+  auto ages = pp::PresetStore("/nonexistent").factory(pp::ideogram_schema(), "Ages only");
+  ASSERT_TRUE(ages);
+  s = pp::build_ideogram(d, ages->options);
+  ASSERT_TRUE(s) << s.error().what;
+  const auto t = layers<pp::TextLayer>(s->graphs[0].panels[0]);
+  ASSERT_EQ(t.size(), 1u);
+  EXPECT_EQ(t[0]->markers.size(), t[0]->lines.size());
+}
+
 // A span with x bounds alone shades every panel top to bottom; one that
 // names a panel is drawn there only and may be bounded in y. Spans lie under
 // the data, and none is there unless asked for.
