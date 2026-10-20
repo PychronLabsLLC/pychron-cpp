@@ -409,6 +409,12 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
   kept across restarts, and the notifier's thread waits for the next one on
   real time (`system_clock`); tests call `deliver_due(now)` with times they
   choose instead;
+- the script rehearsal runner (`libs/experiment` `rehearsal/runner.cpp`,
+  script rehearsal spec 5.4): its thread runs `rehearse()` on a
+  `SteadyClock` of its own and waits on the operator between steps (plain
+  `std::mutex` and `std::condition_variable` in `Rehearsal::step`), on real
+  time; it is never a participant, even when the line runs on a
+  `VirtualClock`, and makes no device or clock call;
 - `CancelToken::remove_on_cancel` waiting for a callback that is running on
   another thread: callbacks are short and do not wait;
 - `elctl exp run` waiting for the queue to end and for an interrupt: a 50 ms

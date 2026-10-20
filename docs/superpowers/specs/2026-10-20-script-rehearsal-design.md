@@ -154,14 +154,15 @@ namespace `pychron::experiment::rehearsal`. Pure C++, no Qt.
 
 ```cpp
 struct LineSnapshot {
-  std::vector<SwitchSpec> switches;                 // from the line's config
-  std::map<std::string, SwitchView, std::less<>> states;
-  std::map<std::string, double, std::less<>> pressures;  // latest live readings
+  std::map<std::string, SwitchView, std::less<>> switches;
+  std::map<std::string, InterlockSet, std::less<>> interlocks;  // SwitchManager::interlock_sets()
+  std::map<std::string, double, std::less<>> pressures;  // latest live readings, by gauge name
 };
 ```
 
-Taken once at start from live line (UI: `CoreBridge::state()` plus line
-config). Rehearsal never reads live line again.
+Taken once at start from live line (UI: `CoreBridge::state()` plus
+`SwitchManager::interlock_sets()`). Partner named in `interlocks` but
+missing from `switches`: counts Unknown. Rehearsal never reads live line again.
 
 ### 5.2 Steps
 
@@ -172,12 +173,19 @@ config). Rehearsal never reads live line again.
   becomes Open/Closed, step outcome "would open". Refused: step outcome
   "would be refused: <text>", `step()` returns that Interlock error; script
   then fails as a real run would and rehearsal ends there.
-- `lock`/`unlock`: rehearsal lock flag.
+- `lock`/`unlock`: rehearsal lock flag. Close also checked by
+  `check_switch_access`, as manager does; refused close ends run as open does.
 - `is_open`/`is_closed`: from rehearsal state.
-- `get_pressure`/`get_manometer_pressure`/`get_intensity`: live reading
-  from snapshot when it has one for that gauge, else step waits for a value
-  typed by operator (`provide_value(double)`).
-- Unknown valve or gauge name: Config error, as live service gives.
+- `get_pressure` (gauge = args[1]) / `get_manometer_pressure` (args[0]):
+  live reading from snapshot when it has one for that gauge, else step waits
+  for value typed by operator (`provide_value(double)`). Unknown gauge: same
+  wait, not error (typed value covers it).
+- `get_intensity`, DeviceHandle `output`/`is_enabled`, `get_value`,
+  `get_cryo_temp`, `get_resource_value`: always wait for typed value (no
+  live source in snapshot). Bool read (`is_enabled`) answers `v != 0`.
+  Outcome "= <value>".
+- Unknown valve name: Config error `unknown switch '<name>'`, as
+  `SwitchManager` gives.
 - Waits: recorded with duration; nothing else.
 - Every other command: recorded, returns monostate.
 
@@ -196,7 +204,15 @@ std::function<void(const StepRecord&)> on_step;
 switch, whether waiting for operator and for what (step / value).
 
 Run to End still passes each call through same rules (refusal stops it);
-it does not block between them.
+it does not block between them. Limit `Rehearsal::kRunToEndLimit = 1000`
+steps: then mode falls back to Step, step 1001 blocks (`Waiting::Step`),
+its records' outcome begins "run to end paused after 1000 steps", so a
+script in loop does not run on for good. Read with no value still waits for
+one under Run to End. `advance(Step)` banks one go-ahead for next stop
+(ignored while read waits for value) and ends a Run to End. `step()` calls
+`on_step` twice: once waiting (skipped under Run to End while under limit),
+once with outcome; step woken by `stop()` reports outcome "stopped" and
+returns Cancelled, as does every step after.
 
 ### 5.4 Threads and time
 
