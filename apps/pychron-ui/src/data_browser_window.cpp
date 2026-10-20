@@ -519,6 +519,7 @@ void DataBrowserWindow::refresh() {
   if (auto ok = source_.refresh(); !ok) status_->setText(tr("Rescan failed: %1").arg(qs(ok.error().what)));
   reload();
   if (select_again(was)) table_->verticalScrollBar()->setValue(was.scroll);
+  refetch_selected();  // last: its status is the newer news
 }
 
 void DataBrowserWindow::refresh_if_changed() {
@@ -574,6 +575,44 @@ void DataBrowserWindow::refresh_changed() {
   if (!was.selected.isEmpty() || model_->analysis_count() >= was.analyses) {
     table_->verticalScrollBar()->setValue(was.scroll);
   }
+  refetch_selected();
+}
+
+void DataBrowserWindow::refetch_selected() {
+  if (selection_.empty()) return;
+  // Selected is what the user kept: looked up by uuid, whatever the filters say.
+  pp::BrowseQuery q;
+  q.uuids = selection_.uuids();
+  q.exclude_tags.clear();  // the default hides invalid runs; Selected keeps what it holds
+  q.limit = static_cast<int>(q.uuids.size());
+  auto page = source_.browse(q);
+  if (!page) {
+    status_->setText(tr("Error: %1").arg(qs(page.error().what)));
+    return;  // what was held stays
+  }
+  // sync_selected() resets the table: the highlight is found again by uuid.
+  QStringList highlighted;
+  for (const auto& idx : selected_table_->selectionModel()->selectedRows())
+    if (const auto* a = selected_model_->analysis_at(idx.row())) highlighted << qs(a->uuid);
+  const auto* current = selected_model_->analysis_at(selected_table_->currentIndex().row());
+  const std::string current_uuid = current != nullptr ? current->uuid : std::string{};
+  const int scroll = selected_table_->verticalScrollBar()->value();
+  const std::size_t dropped = selection_.replace_from(std::move(page->rows));
+  sync_selected();
+  QList<int> rows;
+  int current_row = -1;
+  const auto& listed = selected_model_->rows();
+  for (std::size_t i = 0; i < listed.size(); ++i) {
+    if (highlighted.contains(qs(listed[i].uuid))) rows << static_cast<int>(i);
+    if (!current_uuid.empty() && listed[i].uuid == current_uuid) current_row = static_cast<int>(i);
+  }
+  select_in(selected_table_, rows);
+  if (current_row >= 0)
+    selected_table_->selectionModel()->setCurrentIndex(
+        selected_model_->index(selected_model_->display_row_of(static_cast<std::size_t>(current_row)), 0),
+        QItemSelectionModel::NoUpdate);
+  selected_table_->verticalScrollBar()->setValue(scroll);
+  if (dropped > 0) status_->setText(tr("%n selected analyses no longer in store", nullptr, static_cast<int>(dropped)));
 }
 
 void DataBrowserWindow::set_unavailable(const QString& reason) {

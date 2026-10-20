@@ -176,6 +176,8 @@ class DataBrowserWindow : public QWidget {
   Place place() const;
   // Selects what of `was` is still listed; true when all of it is.
   bool select_again(const Place& was);
+  // Selected's rows fetched again by uuid, for a store that moved; never on a filter change.
+  void refetch_selected();
   void refresh_changed();  // refresh_if_changed() for a window that is visible
   void reload();     // first page for the current query
   void load_more();  // next page

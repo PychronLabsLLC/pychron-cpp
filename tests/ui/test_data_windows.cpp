@@ -178,6 +178,20 @@ struct CountingSource : pp::MemorySource {
   }
 };
 
+// A source that counts the browses made by uuid (the Selected refetch) and
+// can be told to fail them.
+struct UuidSource : pp::MemorySource {
+  int by_uuid = 0;
+  bool fail_by_uuid = false;
+  Result<pp::BrowsePage> browse(const pp::BrowseQuery& query) override {
+    if (!query.uuids.empty()) {
+      ++by_uuid;
+      if (fail_by_uuid) return fail(ErrorKind::Io, "store gone");
+    }
+    return pp::MemorySource::browse(query);
+  }
+};
+
 // A memory source with an age cache that records what it is given; its
 // analyses carry a fingerprint, as the store's do.
 struct SinkSource : pp::MemorySource, pp::IDerivedSink {
@@ -1230,6 +1244,92 @@ class TestDataWindows : public QObject {
     QCOMPARE(w.model()->analysis_count(), 0);
     QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
     QCOMPARE(w.selected_table()->selectionModel()->selectedRows().size(), 1);
+  }
+
+  void browser_selected_shows_a_new_tag() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.select_rows({0});
+    w.add_highlighted();
+    w.select_selected_rows({0});
+    auto changed = analysis(9);
+    changed->tag = "invalid";
+    src->add(changed);
+    w.refresh();
+    QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
+    QCOMPARE(w.selected_model()->rows().front().tag, std::string("invalid"));
+    QCOMPARE(w.selected_table()->selectionModel()->selectedRows().size(), 1);
+  }
+
+  void browser_selected_drops_a_removed_analysis() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.select_rows({0, 1});
+    w.add_highlighted();
+    src->remove("uuid-8");
+    w.refresh();
+    QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
+    QCOMPARE(w.selected_model()->analysis_count(), 1);
+    QVERIFY(w.status()->text().contains(QStringLiteral("1 selected analyses no longer in store")));
+  }
+
+  void browser_selected_drops_a_removed_analysis_when_shown() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.select_rows({0, 1});
+    w.add_highlighted();
+    src->remove("uuid-8");
+    w.refresh_if_changed();  // hidden: waits
+    QCOMPARE(w.selection_uuids().size(), 2);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
+    QVERIFY(w.status()->text().contains(QStringLiteral("1 selected analyses no longer in store")));
+  }
+
+  void browser_refetches_many_selected() {
+    auto src = make_source(600);
+    DataBrowserWindow w(*src);
+    while (w.load_more_button()->isEnabled()) QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
+    QCOMPARE(w.model()->analysis_count(), 600);
+    w.table()->selectAll();
+    w.add_highlighted();
+    QCOMPARE(w.selection_uuids().size(), 600);
+    src->add(analysis(600));
+    w.refresh();
+    QCOMPARE(w.selection_uuids().size(), 600);
+    QCOMPARE(w.selected_model()->rows().front().uuid, std::string("uuid-599"));
+    QCOMPARE(w.selected_model()->rows().back().uuid, std::string("uuid-0"));
+  }
+
+  void browser_selected_kept_when_refetch_fails() {
+    UuidSource src;
+    for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));
+    DataBrowserWindow w(src);
+    w.select_rows({0});
+    w.add_highlighted();
+    src.fail_by_uuid = true;
+    auto changed = analysis(9);
+    changed->tag = "invalid";
+    src.add(changed);
+    w.refresh();
+    QCOMPARE(w.selection_uuids(), QStringList{QStringLiteral("uuid-9")});
+    QCOMPARE(w.selected_model()->rows().front().tag, std::string("ok"));
+    QVERIFY(w.status()->text().startsWith(QStringLiteral("Error:")));
+  }
+
+  void browser_filter_change_does_not_refetch_selected() {
+    UuidSource src;
+    for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));
+    DataBrowserWindow w(src);
+    w.select_rows({0});
+    w.add_highlighted();
+    QCOMPARE(src.by_uuid, 0);
+    w.search()->setText(QStringLiteral("bu"));
+    w.search()->setText(QStringLiteral("no such run"));
+    QCOMPARE(src.by_uuid, 0);
+    w.refresh();
+    QCOMPARE(src.by_uuid, 1);
   }
 
   void browser_gathers_from_two_queries() {
