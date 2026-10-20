@@ -61,7 +61,7 @@ standard error and browses the records folder instead.
 While a queue runs, the data browser follows it. When a run ends, and when a
 queue starts, the browser asks its source whether anything has changed, and
 only then reloads. It keeps what you were doing: the rows already loaded (a
-page you reached with **Load more** stays loaded), the selection, the scroll
+page you reached with **Load more** stays loaded), the Selected list, the scroll
 position and the column widths. A browser that is hidden at the time catches
 up the next time it is shown. **Rescan** does the same on request, for a
 change made by someone else.
@@ -371,7 +371,7 @@ was loaded (`Not saved: ...`).
 
 Blanks and detector intercalibration (IC) factors are not measured on the
 unknown: they are fitted from **reference** analyses run near it in time.
-**Blanks...** and **IC factors...** in the toolbar do that for the selected
+**Blanks...** and **IC factors...** in the toolbar do that for the Selected
 unknowns.
 
 1. At the top, choose which reference types to look for, the window in
@@ -461,7 +461,7 @@ graph by aliquot) a group is drawn on each graph it has analyses on, with
 that part's own statistics. **Graphs per row** (Layout section of the
 options) arranges the graphs: 1 stacks them, 2 makes a grid two wide.
 
-Every figure window reduces the selected analyses with the default
+Every figure window reduces the Selected analyses with the default
 reduction settings: constants preset `default`, no decay-constant error.
 The window you work in is: **select** analyses, **reduce** them, **group**
 them, apply your **exclusions**, draw the figure. Changing an option redraws
@@ -476,8 +476,9 @@ still drawn (as ghosts, or hidden, per *Excluded analyses* in Appearance).
 Double-click a row in the Analyses dock to open that analysis in Recall. The dock says why a point is out: `excluded by
 you`, `included by you`, `filtered`, or `tag: omit` or `tag: outlier`.
 Analyses tagged `omit` or `outlier` start out excluded but you can put them
-back. Analyses you selected are used even if they are tagged `invalid`; the
-browser's **Hide invalid** filter is what keeps them out of a selection.
+back. Analyses in Selected are used even if they are tagged `invalid`; take them
+out with **← Remove**. The browser's **Hide invalid** filter only keeps them
+out of Filtered, so they are not added.
 
 > A figure's exclusions live in the window. They are not stored in the
 > database and are gone when the window closes. What is kept in a preset is
@@ -645,7 +646,7 @@ Wherever a setting asks for a *quantity* it takes a small expression:
 
 If an analysis lacks the quantity it is left out of that panel; a missing
 value is never drawn as zero. The Options dock offers the list of what the
-selected analyses can supply.
+Selected analyses can supply.
 
 ## Options and named presets
 

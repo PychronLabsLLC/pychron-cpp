@@ -173,8 +173,8 @@ See [data analysis](06-data-analysis.md) and the
 | No ages from a records folder | Needs `<data>/records/references.toml`. `Rescan failed: <file>: ...` means it is broken; `unknown production ratio key '...'` a bad key. | Fix the file. |
 | An analysis has no age | Recall's Summary gives the reason: no J, no production ratios or chronology, unknown intercept/baseline/blank/IC, zero 39Ar, or `1 + J F` not positive. | Fix that input. |
 | Date filter surprises | It is relative to the newest analysis in the source, not today. | |
-| Plot, Export or fits act on too many rows | With nothing selected they use all loaded rows (page of 200). | Select rows, or Load more first. |
-| Figure exclusions vanish | Not stored; lost when the window closes. Selected `invalid` analyses are still used unless "Hide invalid". | |
+| Export, Publish or a figure button is greyed out | Selected is empty. | Add analyses to Selected (**Add →**, **Add all**). |
+| Figure exclusions vanish | Not stored; lost when the window closes. `invalid` analyses in Selected are still used; **Hide invalid** only keeps them out of Filtered. | |
 | Export differs from `elctl export` | Figure windows and browser Export use constants preset `default`, no decay error. | Use `elctl export --constants` / `--decay-error`. |
 | Preset warning on the status line | A bad value is dropped; a wrong `schema` key is an error. Saving under a factory name shadows it; Delete restores it. | |
 | Config file fails to load | Loads are all or nothing and unknown keys are errors. A `*.local.toml` may override only transport host, port, baud and timeout (line file also data_bits, stop_bits, parity, and the `[logging]` and `[metrics]` tables; spectrometer file also driver credentials). | Remove other keys. |
