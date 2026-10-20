@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -14,6 +16,7 @@
 #include <QCloseEvent>
 #include <QDialog>
 #include <QIcon>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
@@ -24,6 +27,7 @@
 
 #include "experiment_bridge.hpp"
 #include "pychron/experiment/lab/lab.hpp"
+#include "pychron/experiment/lab/scripts.hpp"
 
 namespace pychron::ui {
 
@@ -254,6 +258,20 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
                    {line_window, spectrometer_action_, experiment_action_, data_action_, laser_action_},
                    MenuHub::Scope::App);
   menus.contribute(this, MenuHub::Menu::Spectrometer, {field_table_action_}, MenuHub::Scope::App);
+  // A script stepped against a copy of the line: from every window, greyed
+  // until there is a session's lab to pick from.
+  interlocks_ = line.switches().interlock_sets();
+  rehearse_action_ = new QAction(tr("Rehearse Script…"), this);
+  rehearse_action_->setEnabled(false);
+  rehearse_action_->setToolTip(tr("Step through a script against a copy of the line; nothing is actuated"));
+  connect(rehearse_action_, &QAction::triggered, this, [this] { rehearse_picked(); });
+  pick_rehearsal_ = [this](const QStringList& names) -> std::optional<QString> {
+    bool ok = false;
+    const QString name =
+        QInputDialog::getItem(preferences_parent(), tr("Rehearse Script"), tr("Script"), names, 0, false, &ok);
+    return ok ? std::optional<QString>(name) : std::nullopt;
+  };
+  menus.contribute(this, MenuHub::Menu::Scripts, {rehearse_action_}, MenuHub::Scope::App);
   MenuHub::instance().contribute(this, MenuHub::Menu::Help,
                                  {make_command_palette_action(this), make_shortcuts_action(this)}, MenuHub::Scope::App);
   about_action_ = brand::add_help_menu(this);
@@ -405,6 +423,8 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
     delete experiment_window_;  // it holds the old bridge
     experiment_window_ = nullptr;
   }
+  delete rehearsal_window_;  // it holds the old session's lab
+  rehearsal_window_ = nullptr;
   for (const auto& connection : experiment_refreshes_) disconnect(connection);  // the old bridge may be gone
   experiment_ = bridge;
   if (bridge != nullptr) {
@@ -435,6 +455,7 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
   experiment_settings_ = std::move(settings);
   experiment_action_->setEnabled(bridge != nullptr);
   for (QAction* entry : file_entries_) entry->setEnabled(bridge != nullptr);
+  rehearse_action_->setEnabled(bridge != nullptr);
 }
 
 // The experiment window, made on first use; nullptr without a session.
@@ -446,6 +467,8 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
     experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
     experiment_window_->factory()->set_identifier_source(identifier_source_);
     give_references();
+    connect(experiment_window_, &ExperimentWindow::rehearseRequested, this,
+            [this](scripting::ScriptKind kind, const QString& name, const QString& text) { rehearse(kind, name, text); });
     if (experiment_queue_) {
       QString error;
       // A name given at start is looked for in the lab's queues/, then the
@@ -459,6 +482,47 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
     }
   }
   return experiment_window_;
+}
+
+RehearsalWindow* MainWindow::rehearse(scripting::ScriptKind kind, const QString& name, const QString& text) {
+  if (experiment_ == nullptr) return nullptr;
+  if (rehearsal_window_ == nullptr) {
+    if (!rehearsal_host_) rehearsal_host_ = scripting::make_script_host();
+    rehearsal_window_ = new RehearsalWindow(*rehearsal_host_, bridge_, interlocks_, experiment_->lab(),
+                                            experiment_settings_ ? experiment_settings_() : nullptr, this);
+    rehearsal_window_->setWindowFlag(Qt::Window, true);
+    rehearsal_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+  }
+  // Run fields from make_context(): a queue row naming the script is not
+  // looked for (spec 6.2's queue defaults are not wired yet).
+  rehearsal_window_->set_script(kind, name, text);
+  rehearsal_window_->show();
+  rehearsal_window_->raise();
+  rehearsal_window_->activateWindow();
+  return rehearsal_window_;
+}
+
+bool MainWindow::rehearse_picked() {
+  if (experiment_ == nullptr) return false;
+  std::vector<experiment::lab::ScriptFile> files;
+  QStringList names;
+  for (auto& f : experiment::lab::lab_scripts(experiment_->lab())) {
+    // Hooks are refused by rehearse(); lib/ holds gosub targets, not scripts a run starts.
+    if (f.kind == scripting::ScriptKind::MeasurementHook || f.name.starts_with("lib:")) continue;
+    names << QString::fromStdString(std::string(scripting::to_string(f.kind)) + "/" + f.name);
+    files.push_back(std::move(f));
+  }
+  if (names.isEmpty()) return false;
+  const std::optional<QString> picked = pick_rehearsal_(names);
+  if (!picked) return false;
+  const auto at = names.indexOf(*picked);
+  if (at < 0) return false;
+  const auto& file = files[static_cast<std::size_t>(at)];
+  std::ifstream in(file.path, std::ios::binary);
+  if (!in) return false;
+  std::stringstream text;
+  text << in.rdbuf();
+  return rehearse(file.kind, QString::fromStdString(file.name), QString::fromStdString(text.str())) != nullptr;
 }
 
 void MainWindow::set_identifier_source(IdentifierSource* source) {
@@ -638,6 +702,9 @@ GaugeWindow* MainWindow::open_gauge_window(const QString& name) {
 }
 
 MainWindow::~MainWindow() {
+  // It reads the bridge and the host, which are members.
+  delete rehearsal_window_;
+  rehearsal_window_ = nullptr;
   // Qt would delete these children after the history they read is gone.
   delete gauge_popup_;
   gauge_popup_ = nullptr;

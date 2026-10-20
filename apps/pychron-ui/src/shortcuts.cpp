@@ -60,6 +60,10 @@ const std::vector<ShortcutEntry>& shortcut_catalog() {
 
       {S::FieldTableUndo, C::FieldTableEditor, QStringLiteral("Undo"), QKeySequence(QKeySequence::Undo)},
       {S::FieldTableRedo, C::FieldTableEditor, QStringLiteral("Redo"), keys(Qt::CTRL | Qt::SHIFT | Qt::Key_Z)},
+
+      {S::RehearseStep, C::RehearsalWindow, QStringLiteral("Step the rehearsal"), keys(Qt::Key_F10)},
+      {S::RehearseRunToEnd, C::RehearsalWindow, QStringLiteral("Run the rehearsal to its end"),
+       keys(Qt::SHIFT | Qt::Key_F10)},
   };
   return catalog;
 }
@@ -91,6 +95,8 @@ QString context_name(ShortcutContext context) {
       return QStringLiteral("Script editor");
     case ShortcutContext::FieldTableEditor:
       return QStringLiteral("Field table editor");
+    case ShortcutContext::RehearsalWindow:
+      return QStringLiteral("Rehearse Script window");
     case ShortcutContext::DataBrowser:
       break;
   }
@@ -121,7 +127,8 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent)
   const int line = fontMetrics().height();
   for (const ShortcutContext context : {ShortcutContext::Everywhere, ShortcutContext::FileMenu,
                                         ShortcutContext::ExperimentWindow, ShortcutContext::ScriptEditor,
-                                        ShortcutContext::DataBrowser, ShortcutContext::FieldTableEditor}) {
+                                        ShortcutContext::DataBrowser, ShortcutContext::FieldTableEditor,
+                                        ShortcutContext::RehearsalWindow}) {
     auto* group = new QTreeWidgetItem(tree_, {context_name(context)});
     group->setFirstColumnSpanned(true);
     group->setFont(0, heading);

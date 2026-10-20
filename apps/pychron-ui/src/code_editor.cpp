@@ -119,8 +119,28 @@ void CodeEditor::set_diagnostics(std::vector<EditorDiagnostic> diagnostics) {
   gutter_->update();
 }
 
+void CodeEditor::set_current_line(int line) {
+  current_line_ = std::max(0, line);
+  refresh_selections();
+  if (current_line_ == 0) return;
+  const QTextBlock block = document()->findBlockByNumber(current_line_ - 1);
+  if (!block.isValid()) return;
+  setTextCursor(QTextCursor(block));
+  ensureCursorVisible();
+}
+
 void CodeEditor::refresh_selections() {
   QList<QTextEdit::ExtraSelection> selections;
+  if (current_line_ > 0) {
+    const QTextBlock block = document()->findBlockByNumber(current_line_ - 1);
+    if (block.isValid()) {
+      QTextEdit::ExtraSelection s;
+      s.format.setBackground(theme().accent_wash);
+      s.format.setProperty(QTextFormat::FullWidthSelection, true);
+      s.cursor = QTextCursor(block);
+      selections.append(s);
+    }
+  }
   for (const auto& d : diagnostics_) {
     const QTextBlock block = document()->findBlockByNumber(d.line - 1);
     if (!block.isValid()) continue;

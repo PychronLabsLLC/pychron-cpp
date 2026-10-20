@@ -203,6 +203,11 @@ class ExperimentWindow : public QMainWindow {
   void set_pick_open_file(PickFile pick) { pick_open_file_ = std::move(pick); }
   void set_pick_save_file(PickFile pick) { pick_save_file_ = std::move(pick); }
 
+ signals:
+  // The script editor's Rehearse… (ScriptEditorWindow::rehearseRequested),
+  // passed on: the main window owns the rehearsal window.
+  void rehearseRequested(pychron::scripting::ScriptKind kind, const QString& name, const QString& text);
+
  protected:
   void closeEvent(QCloseEvent* event) override;
 

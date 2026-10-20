@@ -140,9 +140,11 @@ class TestShortcuts : public QObject {
     }
     for (const auto& e : shortcut_catalog()) {
       // New's and Open's are on the entry whose window is in front (test_menu_hub);
-      // the field table editor's are on its toolbar (test_field_table_editor).
+      // the field table editor's are on its toolbar (test_field_table_editor),
+      // and the rehearsal window's on its own (test_rehearsal_window).
       if (e.key.isEmpty() || e.context == ShortcutContext::DataBrowser ||
-          e.context == ShortcutContext::FieldTableEditor || e.id == Shortcut::AddRuns ||
+          e.context == ShortcutContext::FieldTableEditor || e.context == ShortcutContext::RehearsalWindow ||
+          e.id == Shortcut::AddRuns ||
           e.id == Shortcut::FileNew || e.id == Shortcut::FileOpen)
         continue;
       QVERIFY2(in_menus.count(e.key.toString()) == 1, qPrintable(e.command + QStringLiteral(" is in no menu")));

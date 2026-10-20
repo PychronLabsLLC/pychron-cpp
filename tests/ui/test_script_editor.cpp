@@ -6,6 +6,7 @@
 #include <memory>
 #include <sstream>
 
+#include <QSignalSpy>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -255,6 +256,30 @@ class TestScriptEditor : public QObject {
     QVERIFY(w->close());
     QVERIFY(read(dir_ / "scripts" / "post_measurement" / "sim_pump.py").find("# saved on close") != std::string::npos);
     std::ofstream(dir_ / "scripts" / "post_measurement" / "sim_pump.py") << before;
+  }
+
+  // Scripts > Rehearse… hands the current tab's text (unsaved edits too) and
+  // kind to whoever rehearses it; greyed without a tab and for a hook.
+  void rehearseHandsOverTheTabsText() {
+    ScriptEditorWindow w(*lab_, settings());
+    QVERIFY(w.rehearse_action() != nullptr);
+    QCOMPARE(w.rehearse_action()->text(), QStringLiteral("&Rehearse…"));
+    QSignalSpy spy(&w, &ScriptEditorWindow::rehearseRequested);
+    QVERIFY(!w.rehearse_current());
+    QVERIFY(w.open(ScriptKind::Extraction, QStringLiteral("sim_extract")));
+    w.current_editor()->moveCursor(QTextCursor::End);
+    w.current_editor()->insertPlainText(QStringLiteral("# unsaved\n"));
+    QVERIFY(w.rehearse_current());
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).value<ScriptKind>(), ScriptKind::Extraction);
+    QCOMPARE(spy.at(0).at(1).toString(), QStringLiteral("sim_extract"));
+    QVERIFY(spy.at(0).at(2).toString().endsWith(QStringLiteral("# unsaved\n")));
+
+    QString error;
+    QVERIFY(w.new_script(ScriptKind::MeasurementHook, QStringLiteral("rehearse_hook"), &error));
+    QVERIFY(!w.rehearse_current());  // rehearse() refuses hooks
+    QCOMPARE(spy.count(), 1);
+    fs::remove(dir_ / "scripts" / "measurement_hooks" / "rehearse_hook.py");
   }
 };
 

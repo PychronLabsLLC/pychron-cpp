@@ -688,6 +688,7 @@ ScriptEditorWindow* ExperimentWindow::open_script_editor() {
     script_editor_->setWindowFlag(Qt::Window);
     // A new or saved script may fix (or break) rows that name it.
     connect(script_editor_, &ScriptEditorWindow::scriptsChanged, this, [this] { model_.revalidate(); });
+    connect(script_editor_, &ScriptEditorWindow::rehearseRequested, this, &ExperimentWindow::rehearseRequested);
   }
   script_editor_->show();
   script_editor_->raise();

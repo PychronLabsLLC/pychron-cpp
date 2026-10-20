@@ -38,6 +38,10 @@ class CodeEditor : public QPlainTextEdit {
   void set_diagnostics(std::vector<EditorDiagnostic> diagnostics);
   const std::vector<EditorDiagnostic>& diagnostics() const noexcept { return diagnostics_; }
   void go_to_line(int line);  // 1-based
+  // The line a run stands at, shaded across the editor's width and kept in
+  // view (the rehearsal window's); 0 for none.
+  void set_current_line(int line);
+  int current_line() const noexcept { return current_line_; }
 
   // The gosub name at a position (1-based line, 0-based column), if the
   // position is on one. gosubActivated is emitted for it on Ctrl+click.
@@ -66,6 +70,7 @@ class CodeEditor : public QPlainTextEdit {
   QCompleter* completer_;
   QStringListModel* words_;
   std::vector<EditorDiagnostic> diagnostics_;
+  int current_line_ = 0;
 };
 
 }  // namespace pychron::ui

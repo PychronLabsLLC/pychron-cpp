@@ -45,6 +45,7 @@ add_library(pychron_ui_lib STATIC
   src/script_highlighter.cpp
   src/code_editor.cpp
   src/script_editor_window.cpp
+  src/rehearsal_window.cpp
   src/conditional_table_model.cpp
   src/conditional_form.cpp
   src/conditionals_editor_window.cpp
@@ -138,6 +139,7 @@ add_library(pychron_ui_lib STATIC
   src/measurement_panel.hpp
   src/script_highlighter.hpp
   src/code_editor.hpp
+  src/rehearsal_window.hpp
   src/script_editor_window.hpp
   src/conditional_table_model.hpp
   src/conditional_form.hpp

@@ -91,6 +91,12 @@ void ValveItem::set_pending(bool pending) {
   update();
 }
 
+void ValveItem::set_marked(bool marked) {
+  if (marked_ == marked) return;
+  marked_ = marked;
+  update();
+}
+
 void ValveItem::hoverEnterEvent(QGraphicsSceneHoverEvent* event) {
   if (on_hover_) on_hover_();
   QGraphicsObject::hoverEnterEvent(event);
@@ -186,6 +192,16 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     painter->setBrush(Qt::NoBrush);
     painter->setPen(QPen(theme().text, 2, Qt::DashLine));
     painter->drawRoundedRect(body.adjusted(-3, -3, 3, 3), kCornerRadius + 2, kCornerRadius + 2);
+  }
+  if (marked_) {
+    painter->setBrush(Qt::NoBrush);
+    painter->setPen(QPen(theme().accent, 2));  // inside the bounding rect, as the pending outline
+    const QRectF ring = body.adjusted(-3, -3, 3, 3);
+    if (kind_ == canvas::ValveKind::Switch) {
+      painter->drawEllipse(ring);
+    } else {
+      painter->drawRoundedRect(ring, kCornerRadius + 2, kCornerRadius + 2);
+    }
   }
   if (locked_) {
     painter->setBrush(Qt::NoBrush);

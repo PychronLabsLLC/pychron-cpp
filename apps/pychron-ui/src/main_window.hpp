@@ -47,6 +47,7 @@
 #include "pychron/core/log_hub.hpp"
 #include "processing_bridge.hpp"
 #include "reading_history.hpp"
+#include "rehearsal_window.hpp"
 #include "field_table_editor_window.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
@@ -118,6 +119,24 @@ class MainWindow : public QMainWindow {
   // File > New and File > Open, in menu order (New Queue, New Script…, New
   // Conditionals…, Open Queue…, Open Script…, Open Conditionals…).
   const QList<QAction*>& file_entries() const noexcept { return file_entries_; }
+
+  // Scripts > Rehearse Script…, from every window: the lab's scripts (all
+  // but measurement hooks and lib/) to pick one from, then rehearse().
+  // Greyed without a session (set_experiment).
+  QAction* rehearse_action() const noexcept { return rehearse_action_; }
+  // The one Rehearse Script window, made on first use over the session's
+  // lab, the line's interlocks and this window's bridge, given the script
+  // and brought forward (it asks before replacing a running rehearsal).
+  // Its fields start at make_context()'s defaults. Null without a session.
+  RehearsalWindow* rehearse(scripting::ScriptKind kind, const QString& name, const QString& text);
+  RehearsalWindow* rehearsal_window() const noexcept { return rehearsal_window_; }
+  // Rehearse Script…'s pick: which of `names` ("extraction/sim_extract");
+  // nullopt: cancelled. A list dialog by default.
+  using PickScript = std::function<std::optional<QString>(const QStringList& names)>;
+  void set_pick_rehearsal(PickScript pick) { pick_rehearsal_ = std::move(pick); }
+  // What the action does; false on cancel, without a session, or for a
+  // file that cannot be read.
+  bool rehearse_picked();
 
   // Enables View > Laser for `bridges`, one laser window each (a submenu when
   // there are several); none disables it and closes the laser windows and
@@ -244,6 +263,12 @@ class MainWindow : public QMainWindow {
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;
   ExperimentWindow* experiment_window_ = nullptr;
+  // The line's interlocks, read once (topology); the rehearsal window's host.
+  std::map<std::string, systems::InterlockSet, std::less<>> interlocks_;
+  std::unique_ptr<scripting::IScriptHost> rehearsal_host_;
+  RehearsalWindow* rehearsal_window_ = nullptr;  // reads bridge_ and the host: deleted before them
+  QAction* rehearse_action_ = nullptr;
+  PickScript pick_rehearsal_;
   processing::PresetStore* presets_ = nullptr;  // set_data's
   bool session_store_ = false;                  // set_data's: the experiment window gets References
   QPointer<IdentifierSource> identifier_source_;

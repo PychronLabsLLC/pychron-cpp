@@ -152,6 +152,8 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
     if (Document* d = current())
       if (auto name = d->editor->gosub_under_cursor()) follow_gosub(*name);
   });
+  rehearse_ = add(code, tr("&Rehearse…"), {}, [this] { rehearse_current(); });
+  rehearse_->setToolTip(tr("Step through the script against a copy of the line; nothing is actuated"));
   MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_, tr("Script"));
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, file, MenuHub::Scope::Window);
   MenuHub::instance().contribute(this, MenuHub::Menu::Scripts, code, MenuHub::Scope::Window);
@@ -403,6 +405,13 @@ bool ScriptEditorWindow::close_document(int index) {
   return true;
 }
 
+bool ScriptEditorWindow::rehearse_current() {
+  const Document* d = current();
+  if (d == nullptr || d->file.kind == ScriptKind::MeasurementHook) return false;
+  emit rehearseRequested(d->file.kind, q(d->file.name), d->editor->toPlainText());
+  return true;
+}
+
 bool ScriptEditorWindow::close_current() { return close_document(tabs_->currentIndex()); }
 
 bool ScriptEditorWindow::follow_gosub(const QString& name) {
@@ -435,6 +444,7 @@ void ScriptEditorWindow::show_check() {
   problems_dock_->setWindowTitle(tr("Problems"));
   Document* d = current();
   save_->setEnabled(d != nullptr);
+  rehearse_->setEnabled(d != nullptr && d->file.kind != ScriptKind::MeasurementHook);
   if (d == nullptr) {
     status_->setText(tr("Open a script from the list or with File > Open, or start one with File > New."));
     style::set_tone(status_, style::Tone::Normal);

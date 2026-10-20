@@ -10,7 +10,9 @@
 //
 // Ctrl+click (or F2) on gosub('name') opens the script it runs. Scripts are
 // checked as `elctl`/a run would, without hardware (lab::editor_environment).
-// Closing a tab or the window with unsaved edits asks first.
+// Closing a tab or the window with unsaved edits asks first. Scripts >
+// Rehearse… hands the current tab's text, unsaved edits included, to
+// whoever rehearses it (rehearseRequested).
 
 #include <functional>
 #include <optional>
@@ -80,9 +82,17 @@ class ScriptEditorWindow : public QMainWindow {
 
   void set_ask_unsaved(std::function<Unsaved(const QString& name)> ask) { ask_unsaved_ = std::move(ask); }
 
+  // Scripts > Rehearse…: rehearseRequested for the current tab. false (and
+  // nothing said) without a tab, or for a measurement hook, which rehearse()
+  // refuses; the action is greyed then.
+  bool rehearse_current();
+  QAction* rehearse_action() const noexcept { return rehearse_; }
+
  signals:
   // A script was created or saved (the lab's script lists may have changed).
   void scriptsChanged();
+  // Rehearse… on the current tab: its kind, queue name and text as it stands.
+  void rehearseRequested(pychron::scripting::ScriptKind kind, const QString& name, const QString& text);
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -116,6 +126,7 @@ class ScriptEditorWindow : public QMainWindow {
   QDockWidget* problems_dock_;
   QLabel* status_;
   QAction* save_ = nullptr;  // what File > Save does here; enabled while a tab is open
+  QAction* rehearse_ = nullptr;
   PickScript pick_script_;
   QTimer check_timer_;
   std::function<Unsaved(const QString&)> ask_unsaved_;

@@ -59,6 +59,10 @@ class ValveItem : public QGraphicsObject {
   ValveState state() const noexcept { return state_; }
   bool locked() const noexcept { return locked_; }
   bool is_pending() const noexcept { return pending_; }
+  // Outlined in the accent colour: the rehearsal window's mark for what its
+  // last step changed.
+  bool marked() const noexcept { return marked_; }
+  void set_marked(bool marked);
   bool is_flashing() const noexcept { return flash_ticks_ > 0; }
   QColor fill_color() const;
 
@@ -106,6 +110,7 @@ class ValveItem : public QGraphicsObject {
   bool locked_ = false;
   std::optional<QColor> inherited_;
   bool pending_ = false;
+  bool marked_ = false;
   void update_tip();
 
   std::function<void()> on_hover_;

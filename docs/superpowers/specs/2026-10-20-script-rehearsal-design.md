@@ -263,22 +263,32 @@ Layout:
 - Top: run fields form: every name of `default_context()`;
   `analysis_type`, `run_identifier`, `extract_value`, `extract_units`,
   `duration` first, rest under "More".
-  Defaults: first row of experiment window's open queue naming this script
-  in its matching script column, else `make_context()` defaults. Edits kept
-  until window closes.
+  Defaults: `make_context()` defaults (`set_script` takes overrides). Not
+  built yet: first row of experiment window's open queue naming this script
+  in its matching script column; `MainWindow::rehearse` passes none. Edits
+  kept until window closes (Restart keeps them).
 - Left: `CanvasView` over rehearsal state (`RehearsalCanvasState`), read
-  only. Valve changed by last step outlined. Title bar text "Rehearsal: no
-  valve is actuated".
-- Right: read-only `CodeEditor` with script source; current line
+  only, no alarm colours. Valve changed by last step outlined
+  (`ValveItem::set_marked`). Status bar text "Rehearsal: no valve is
+  actuated".
+- Right: read-only `CodeEditor` with script source; current line (line of
+  latest step reported: the one waiting, else the one just done)
   highlighted; gosub opens its source with call stack shown above.
 - Bottom: step log, one row per step: `#n  script:line  command(args)  →
   outcome`. Pending read: inline value field and Enter.
-- Toolbar: Start (form → run), Step (F10), Run to End, Stop, Restart
-  (new snapshot of live line, same form). Shortcuts registered in
-  `shortcuts.cpp`.
+- Toolbar: Start (form → check → run; check errors listed in log, nothing
+  started), Step (F10), Run to End (Shift+F10), Stop, Restart (new snapshot
+  of live line, same form). Shortcuts registered in `shortcuts.cpp`,
+  context `RehearsalWindow`. Step and Run to End sent only while latest
+  step record waits for go-ahead (`Waiting::Step`), a value only while it
+  waits for one (`Waiting::Value`): model banks a go-ahead sent while
+  nothing waits.
 
 `on_step` arrives on script thread; marshalled to UI with
-`QMetaObject::invokeMethod(..., Qt::QueuedConnection)`.
+`QMetaObject::invokeMethod(..., Qt::QueuedConnection)`, tagged with run
+number; report of a stopped run dropped. Runner destroyed only on UI
+thread. Script editor's Rehearse… reaches main window as
+`ScriptEditorWindow::rehearseRequested`, relayed by `ExperimentWindow`.
 
 ### 6.3 End
 
