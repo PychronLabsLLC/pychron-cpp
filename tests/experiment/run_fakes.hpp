@@ -284,6 +284,10 @@ class FakeScriptHost final : public scripting::IScriptHost {
                                             const scripting::ScriptEnvironment&, scripting::CancelToken&) override {
     return scripting::ScriptResult{};
   }
+  Result<scripting::ScriptResult> rehearse(const scripting::Script&, const scripting::ScriptEnvironment&,
+                                           scripting::IRehearsal&, scripting::CancelToken&) override {
+    return fail(extraction::not_supported("rehearse"));
+  }
 
   std::vector<std::string> ran_scripts() {
     std::lock_guard lock(mutex_);

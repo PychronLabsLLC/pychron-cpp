@@ -23,6 +23,9 @@ class StubScriptHost final : public IScriptHost {
                                  const ScriptEnvironment&, CancelToken&) override {
     return fail(disabled());
   }
+  Result<ScriptResult> rehearse(const Script&, const ScriptEnvironment&, IRehearsal&, CancelToken&) override {
+    return fail(extraction::not_supported("rehearse"));
+  }
 };
 
 }  // namespace

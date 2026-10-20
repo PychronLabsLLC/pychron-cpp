@@ -144,6 +144,17 @@ class PythonScriptHost final : public IScriptHost {
     return execute(script, env, token, [&](HostState& state) { state.run_main(script); });
   }
 
+  Result<ScriptResult> rehearse(const Script& script, const ScriptEnvironment& env, IRehearsal& rehearsal,
+                                CancelToken& token) override {
+    if (script.kind == ScriptKind::MeasurementHook)
+      return fail(ErrorKind::Config, "rehearse: measurement hooks are not rehearsed");
+    if (auto field = rehearsal_refusal(env))
+      return fail(ErrorKind::Config, "rehearse: environment carries live service '" + *field + "'");
+    return execute(
+        script, env, token, [&](HostState& state) { state.run_main(script); }, HostState::Mode::Rehearse,
+        &rehearsal);
+  }
+
   Result<ScriptResult> call_hook(const Script& script, std::string_view entry,
                                  const ValueMap& args, const ScriptEnvironment& env,
                                  CancelToken& token) override {
@@ -171,7 +182,8 @@ class PythonScriptHost final : public IScriptHost {
 
  private:
   Result<ScriptResult> execute(const Script& script, const ScriptEnvironment& env,
-                               CancelToken& token, const std::function<void(HostState&)>& body) {
+                               CancelToken& token, const std::function<void(HostState&)>& body,
+                               HostState::Mode mode = HostState::Mode::Run, IRehearsal* rehearsal = nullptr) {
     auto header = parse_header(script.text);
     if (!header) return fail(header.error());
     auto report = check(script, env);
@@ -182,7 +194,7 @@ class PythonScriptHost final : public IScriptHost {
     Result<void> r;
     {
       py::gil_scoped_acquire gil;
-      HostState state(env, token, HostState::Mode::Run, script.kind, nullptr);
+      HostState state(env, token, mode, script.kind, nullptr, rehearsal);
       r = state.guarded([&] { body(state); });
       out.messages = state.messages();
     }

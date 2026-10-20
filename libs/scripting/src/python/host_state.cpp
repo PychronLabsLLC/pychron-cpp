@@ -1,6 +1,7 @@
 // HostState: the vocabulary's C++ side for one execution. Every hardware call
 // checks for Abort, releases the GIL, and turns a failed Result into a Python
-// exception; estimate mode skips hardware and books time instead.
+// exception; estimate mode skips hardware and books time instead; rehearse
+// mode hands each such call to the IRehearsal as one step.
 
 
 #include "internal.hpp"
@@ -41,6 +42,19 @@ py::object to_python(const Value& v) {
       v);
 }
 
+const char* type_name(const Value& v) {
+  return std::visit(
+      [](const auto& x) -> const char* {
+        using T = std::decay_t<decltype(x)>;
+        if constexpr (std::is_same_v<T, std::monostate>) return "None";
+        else if constexpr (std::is_same_v<T, bool>) return "bool";
+        else if constexpr (std::is_same_v<T, std::int64_t>) return "int";
+        else if constexpr (std::is_same_v<T, double>) return "float";
+        else return "str";
+      },
+      v);
+}
+
 std::optional<ErrorKind> kind_from_string(std::string_view s) {
   for (auto k : {ErrorKind::Timeout, ErrorKind::Io, ErrorKind::Protocol, ErrorKind::Config,
                  ErrorKind::NotConnected, ErrorKind::Interlock, ErrorKind::Cancelled})
@@ -51,8 +65,8 @@ std::optional<ErrorKind> kind_from_string(std::string_view s) {
 }  // namespace
 
 HostState::HostState(const ScriptEnvironment& env, CancelToken& token, Mode mode, ScriptKind kind,
-                     DurationAccumulator* accumulator)
-    : env_(env), token_(token), mode_(mode), kind_(kind), accumulator_(accumulator) {
+                     DurationAccumulator* accumulator, IRehearsal* rehearsal)
+    : env_(env), token_(token), mode_(mode), kind_(kind), accumulator_(accumulator), rehearsal_(rehearsal) {
   line_budget_ = mode == Mode::Estimate ? env.limits.estimate_max_lines : env.limits.max_lines;
 }
 
@@ -284,10 +298,31 @@ void HostState::add_estimate(Duration d, const std::string& command) {
   if (accumulator_) accumulator_->add(d, command, current_script_, current_line_);
 }
 
+Value HostState::step(std::string command, std::vector<Value> args, ValueMap kwargs) {
+  if (!rehearsal_) raise(Error{ErrorKind::Config, "rehearse: no rehearsal", {}});
+  StepCall call{std::move(command), std::move(args), std::move(kwargs), current_script_, current_line_, {}};
+  if (script_stack_.size() > 1) call.gosubs.assign(script_stack_.begin() + 1, script_stack_.end());
+  auto* rehearsal = rehearsal_;
+  auto result = nogil([&] { return rehearsal->step(call); });
+  // max_wall_time counts Python's time, not the time a step was held.
+  started_ = std::chrono::steady_clock::now();
+  if (!result && result.error().kind == ErrorKind::Cancelled) check_requested(call.command);
+  return unwrap(std::move(result));
+}
+
+bool HostState::step_bool(const std::string& command, const std::string& name) {
+  guard();
+  auto v = step(command, {Value(name)});
+  if (const auto* b = std::get_if<bool>(&v)) return *b;
+  raise(Error{ErrorKind::Config, "rehearse: " + command + " answered with a " + type_name(v), {}});
+}
+
 // ---- vocabulary --------------------------------------------------------
 
 double HostState::now() {
-  auto t = estimating() && accumulator_ ? accumulator_->now() : clock().now();
+  auto t = rehearsing()                  ? TimePoint{} + rehearsed_
+           : estimating() && accumulator_ ? accumulator_->now()
+                                          : clock().now();
   return std::chrono::duration<double>(t.time_since_epoch()).count();
 }
 
@@ -304,18 +339,43 @@ void HostState::require(const std::string& capability) {
 
 // Resolve the service with the GIL held (a missing one raises), then call it
 // without.
+#define PYCHRON_STEP(command, name) \
+  if (rehearsing()) { \
+    guard(); \
+    step(command, {Value(name)}); \
+    return; \
+  }
+
 #define PYCHRON_HW(fallback, service, call) \
   if (estimating()) return fallback; \
   guard(); \
   auto& svc = service; \
   return unwrap(nogil([&] { return svc.call; }))
 
-void HostState::open(const std::string& n) { PYCHRON_HW(, valves(), open(n)); }
-void HostState::close(const std::string& n) { PYCHRON_HW(, valves(), close(n)); }
-void HostState::lock(const std::string& n) { PYCHRON_HW(, valves(), lock(n)); }
-void HostState::unlock(const std::string& n) { PYCHRON_HW(, valves(), unlock(n)); }
-bool HostState::is_open(const std::string& n) { PYCHRON_HW(false, valves(), is_open(n)); }
-bool HostState::is_closed(const std::string& n) { PYCHRON_HW(false, valves(), is_closed(n)); }
+void HostState::open(const std::string& n) {
+  PYCHRON_STEP("open", n);
+  PYCHRON_HW(, valves(), open(n));
+}
+void HostState::close(const std::string& n) {
+  PYCHRON_STEP("close", n);
+  PYCHRON_HW(, valves(), close(n));
+}
+void HostState::lock(const std::string& n) {
+  PYCHRON_STEP("lock", n);
+  PYCHRON_HW(, valves(), lock(n));
+}
+void HostState::unlock(const std::string& n) {
+  PYCHRON_STEP("unlock", n);
+  PYCHRON_HW(, valves(), unlock(n));
+}
+bool HostState::is_open(const std::string& n) {
+  if (rehearsing()) return step_bool("is_open", n);
+  PYCHRON_HW(false, valves(), is_open(n));
+}
+bool HostState::is_closed(const std::string& n) {
+  if (rehearsing()) return step_bool("is_closed", n);
+  PYCHRON_HW(false, valves(), is_closed(n));
+}
 
 void HostState::extract(double value, const std::string& units) {
   if (estimating()) return;
@@ -551,13 +611,28 @@ double HostState::get_manometer_pressure(const std::string& name) {
 }
 
 #undef PYCHRON_HW
+#undef PYCHRON_STEP
 
 void HostState::sleep(double s, const std::string& command) {
+  if (rehearsing()) {
+    // One step, however long: no clock wait.
+    check_requested(command);
+    step(command, {Value(s)});
+    rehearsed_ += seconds(s);
+    return;
+  }
   if (estimating()) return add_estimate(seconds(s), command);
   wait_period(seconds(s), command);
 }
 
 void HostState::pause(double s) {
+  if (rehearsing()) {
+    // With or without a duration: one step, which the operator ends.
+    check_requested("pause");
+    step("pause", {Value(s)});
+    rehearsed_ += seconds(s);
+    return;
+  }
   if (estimating()) {
     if (s > 0) return add_estimate(seconds(s), "pause");
     if (accumulator_) accumulator_->flag_unbounded("pause() without a duration");

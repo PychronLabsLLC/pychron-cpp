@@ -54,10 +54,11 @@ struct DeviceHandle {
 // `_h` in the prelude. Construct and use with the GIL held.
 class HostState {
  public:
-  enum class Mode { Run, Estimate };
+  // Rehearse: every hardware call and wait is a step of `rehearsal`.
+  enum class Mode { Run, Estimate, Rehearse };
 
   HostState(const ScriptEnvironment& env, CancelToken& token, Mode mode, ScriptKind kind,
-            DurationAccumulator* accumulator);
+            DurationAccumulator* accumulator, IRehearsal* rehearsal = nullptr);
   ~HostState();
   HostState(const HostState&) = delete;
   HostState& operator=(const HostState&) = delete;
@@ -74,6 +75,7 @@ class HostState {
 
   // ---- bound to `_h` --------------------------------------------------
   bool estimating() const noexcept { return mode_ == Mode::Estimate; }
+  bool rehearsing() const noexcept { return mode_ == Mode::Rehearse; }
   double now();
   void info(const std::string& message);
   void require(const std::string& capability);
@@ -164,12 +166,19 @@ class HostState {
                   const std::function<void()>& stop = {});
   Error convert(py::error_already_set& e);
   void add_estimate(Duration d, const std::string& command);
+  // Rehearse: hands the call to the rehearsal without the GIL, at the line
+  // the trace last saw; its error is raised as the real call's would be.
+  Value step(std::string command, std::vector<Value> args, ValueMap kwargs = {});
+  // Rehearse: a read's answer as a bool; Config error for any other type.
+  bool step_bool(const std::string& command, const std::string& name);
 
   const ScriptEnvironment& env_;
   CancelToken& token_;
   Mode mode_;
   ScriptKind kind_;
   DurationAccumulator* accumulator_;
+  IRehearsal* rehearsal_;
+  Duration rehearsed_{};  // Rehearse: stepped waits so far (what now() reports)
   SteadyClock steady_;
 
   std::vector<std::string> messages_;

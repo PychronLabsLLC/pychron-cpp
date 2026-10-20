@@ -19,6 +19,9 @@
 // run()       check(), then execute main(). Uncaught hardware errors come back
 //             with their original kind; cancel/abort as ErrorKind::Cancelled
 //             ("cancelled: ..." / "aborted: ..."); script bugs as Config.
+// rehearse() check(), then execute main() with every hardware call and wait
+//             handed to an IRehearsal instead (rehearsal.hpp). Refuses an
+//             environment carrying any live service, and measurement hooks.
 //
 // With PYCHRON_SCRIPTING off, make_script_host() returns a stub whose every
 // call is a "not supported: scripting" error.
@@ -35,6 +38,7 @@
 #include "pychron/devices/extraction/services.hpp"
 #include "pychron/scripting/cancel_token.hpp"
 #include "pychron/scripting/duration_accumulator.hpp"
+#include "pychron/scripting/rehearsal.hpp"
 #include "pychron/scripting/script.hpp"
 #include "pychron/scripting/services.hpp"
 
@@ -120,6 +124,11 @@ class IScriptHost {
   virtual Result<ScriptResult> call_hook(const Script& script, std::string_view entry,
                                          const ValueMap& args, const ScriptEnvironment& env,
                                          CancelToken& token) = 0;
+  // check(), then main() with every hardware call and wait made a step of
+  // `rehearsal`; no clock wait, no hardware. Config error, nothing executed,
+  // for a measurement hook or when rehearsal_refusal(env) names a service.
+  virtual Result<ScriptResult> rehearse(const Script& script, const ScriptEnvironment& env,
+                                        IRehearsal& rehearsal, CancelToken& token) = 0;
 };
 
 // Python host when built with PYCHRON_SCRIPTING, else the stub.
@@ -129,6 +138,12 @@ bool scripting_enabled() noexcept;
 // Command names the host actually binds (empty for the stub). Must equal the
 // names in vocabulary().
 std::vector<std::string> bound_commands();
+
+// The first live service `env` carries, by field name ("line.device",
+// "line.valves", "line.pressure", "line.cryo", "intensity", "measurement",
+// "resources", "on_pump_time_start"); nullopt when it carries none. A
+// rehearsal refuses such an environment.
+std::optional<std::string> rehearsal_refusal(const ScriptEnvironment& env);
 
 // capabilities(env.line) or the override.
 extraction::CapabilitySet effective_capabilities(const ScriptEnvironment& env);
