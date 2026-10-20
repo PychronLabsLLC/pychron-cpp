@@ -7,6 +7,7 @@
 
 #include "pychron/core/events.hpp"
 #include "pychron/experiment/executor/links.hpp"
+#include "pychron/experiment/lab/script_actor.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
 #include "pychron/experiment/persist/persister.hpp"
@@ -32,7 +33,7 @@ struct LabSession::Services {
   Services(const Lab& lab, const SessionHardware& hw, const fs::path& data, Lasers& lasers,
            persist::IAnalysisPersister* given)
       : host(scripting::make_script_host()),
-        script_valves(hw.line.switches(), "script"),
+        script_valves(hw.line.switches(), std::string(kScriptActor)),
         script_pressure(hw.line),
         script_cryo(hw.line),
         valves(hw.line, "measurement"),

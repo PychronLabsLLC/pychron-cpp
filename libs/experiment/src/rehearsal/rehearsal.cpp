@@ -6,12 +6,11 @@
 #include <string_view>
 #include <utility>
 
+#include "pychron/experiment/lab/script_actor.hpp"
+
 namespace pychron::experiment::rehearsal {
 
 namespace {
-
-// The actor a script's valve calls are made as (session.cpp's script_valves).
-constexpr std::string_view kScriptActor = "script";
 
 constexpr std::array<std::string_view, 6> kSwitchCommands{"open", "close", "lock", "unlock", "is_open", "is_closed"};
 
@@ -156,7 +155,9 @@ Rehearsal::Answer Rehearsal::execute(const scripting::StepCall& call, std::optio
     return a;
   }
   if (const auto s = wait_seconds(call)) {
-    a.record.outcome = *s > 0 ? call.command + " " + num(*s) + " s" : call.command;
+    // begin_heating_interval starts an interval; it does not wait out the time.
+    const std::string verb = call.command == "begin_heating_interval" ? "begin interval" : call.command;
+    a.record.outcome = *s > 0 ? verb + " " + num(*s) + " s" : verb;
     return a;
   }
   a.record.outcome = "recorded";
@@ -197,7 +198,7 @@ Rehearsal::Answer Rehearsal::switch_command(const scripting::StepCall& call) {
   }
 
   // open, close: the manager's rule, against the copy.
-  Result<void> allowed = systems::check_switch_access(self, kScriptActor);
+  Result<void> allowed = systems::check_switch_access(self, lab::kScriptActor);
   if (allowed && command == "open") {
     // A partner the copy does not hold is not known to be closed or open.
     std::vector<systems::SwitchView> absent;
