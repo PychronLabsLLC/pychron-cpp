@@ -178,6 +178,7 @@ class DataBrowserWindow : public QWidget {
   bool select_again(const Place& was);
   // Selected's rows fetched again by uuid, for a store that moved; never on a filter change.
   void refetch_selected();
+  void reload_changed();  // Filtered, everything loaded, fetched again for a store that moved
   void refresh_changed();  // refresh_if_changed() for a window that is visible
   void reload();     // first page for the current query
   void load_more();  // next page
@@ -246,7 +247,8 @@ class DataBrowserWindow : public QWidget {
   TypeColors type_colors_;
   std::optional<processing::BrowseCursor> next_;
   std::optional<std::size_t> total_;
-  std::uint64_t loaded_generation_ = 0;  // the source's generation at the last load
+  std::uint64_t loaded_generation_ = 0;    // the source's generation at the last load
+  std::uint64_t selected_generation_ = 0;  // ... and at the last fetch of Selected
   bool stale_ = false;                   // a refresh was asked for while the window was not visible
 };
 

@@ -537,7 +537,14 @@ void DataBrowserWindow::showEvent(QShowEvent* event) {
 
 void DataBrowserWindow::refresh_changed() {
   stale_ = false;
-  if (!source_.refresh() || source_.generation() == loaded_generation_ || query_is_backwards()) return;
+  if (!source_.refresh()) return;
+  if (source_.generation() != loaded_generation_ && !query_is_backwards()) reload_changed();
+  // Selected does not depend on the filters: it follows the store whatever
+  // became of Filtered (a backwards range, a failed browse).
+  if (source_.generation() != selected_generation_) refetch_selected();
+}
+
+void DataBrowserWindow::reload_changed() {
   const Place was = place();
   update_facets();
   // Everything that was loaded, in one query: "Load more" goes on from its end.
@@ -575,11 +582,14 @@ void DataBrowserWindow::refresh_changed() {
   if (!was.selected.isEmpty() || model_->analysis_count() >= was.analyses) {
     table_->verticalScrollBar()->setValue(was.scroll);
   }
-  refetch_selected();
 }
 
 void DataBrowserWindow::refetch_selected() {
-  if (selection_.empty()) return;
+  const auto generation = source_.generation();
+  if (selection_.empty()) {
+    selected_generation_ = generation;
+    return;
+  }
   // Selected is what the user kept: looked up by uuid, whatever the filters say.
   pp::BrowseQuery q;
   q.uuids = selection_.uuids();
@@ -597,6 +607,7 @@ void DataBrowserWindow::refetch_selected() {
   const auto* current = selected_model_->analysis_at(selected_table_->currentIndex().row());
   const std::string current_uuid = current != nullptr ? current->uuid : std::string{};
   const int scroll = selected_table_->verticalScrollBar()->value();
+  selected_generation_ = generation;
   const std::size_t dropped = selection_.replace_from(std::move(page->rows));
   sync_selected();
   QList<int> rows;

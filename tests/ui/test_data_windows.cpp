@@ -183,11 +183,13 @@ struct CountingSource : pp::MemorySource {
 struct UuidSource : pp::MemorySource {
   int by_uuid = 0;
   bool fail_by_uuid = false;
+  bool fail_plain = false;  // browses without uuids
   Result<pp::BrowsePage> browse(const pp::BrowseQuery& query) override {
     if (!query.uuids.empty()) {
       ++by_uuid;
       if (fail_by_uuid) return fail(ErrorKind::Io, "store gone");
     }
+    if (query.uuids.empty() && fail_plain) return fail(ErrorKind::Io, "filtered gone");
     return pp::MemorySource::browse(query);
   }
 };
@@ -1330,6 +1332,45 @@ class TestDataWindows : public QObject {
     QCOMPARE(src.by_uuid, 0);
     w.refresh();
     QCOMPARE(src.by_uuid, 1);
+  }
+
+  void browser_selected_follows_the_store_with_a_backwards_range() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.select_rows({0});
+    w.add_highlighted();
+    w.date_preset()->setCurrentIndex(w.date_preset()->count() - 1);  // Range...
+    w.from_edit()->setDateTime(utc_hour(20));
+    emit w.from_edit()->editingFinished();
+    QCOMPARE(w.status()->text(), QStringLiteral("From is after To"));
+    auto changed = analysis(9);
+    changed->tag = "invalid";
+    src->add(changed);
+    w.refresh_if_changed();
+    QCOMPARE(w.selected_model()->rows().front().tag, std::string("invalid"));
+  }
+
+  void browser_selected_follows_the_store_when_filtered_fails() {
+    UuidSource src;
+    for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));
+    DataBrowserWindow w(src);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.select_rows({0});
+    w.add_highlighted();
+    src.fail_plain = true;
+    auto changed = analysis(9);
+    changed->tag = "invalid";
+    src.add(changed);
+    w.refresh_if_changed();
+    QVERIFY(w.status()->text().startsWith(QStringLiteral("Error:")));
+    QCOMPARE(w.selected_model()->rows().front().tag, std::string("invalid"));
+    // Once per generation: nothing new, no second look.
+    const int looks = src.by_uuid;
+    w.refresh_if_changed();
+    QCOMPARE(src.by_uuid, looks);
   }
 
   void browser_gathers_from_two_queries() {
