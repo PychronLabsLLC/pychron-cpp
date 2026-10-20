@@ -20,15 +20,13 @@
 //   double-click / Space     recall_requested(uuid of the current row of that table)
 //   Ctrl+N / Ctrl+B          select the next / previous row of the table with
 //                            focus and recall it
-//   toolbar, a figure        figure_requested(kind, selected uuids or all shown);
+//   toolbar, a figure        figure_requested(kind, Selected's uuids);
 //                            kind: time_series, ideogram, spectrum, inverse_isochron,
 //                            spectrum_isochron, then the fit windows isotope_evolution_fit, blank_fit,
 //                            icfactor_fit
 //   toolbar, Recall          recall_requested(uuid of the current row)
-//   toolbar, Publish         publish_requested(selected uuids): Publish to EarthBank,
-//                            on what is selected and nothing else (it leaves the
-//                            lab, so "all shown" is not assumed)
-//   toolbar, Export          export_requested(path, selected uuids or all shown): one
+//   toolbar, Publish         publish_requested(Selected's uuids): Publish to EarthBank
+//   toolbar, Export          export_requested(path, Selected's uuids): one
 //                            click asks for a file name and the workspace writes the
 //                            Schaen et al. (2021) data report there (.csv or .json)
 
@@ -147,8 +145,6 @@ class DataBrowserWindow : public QWidget {
   void remove_highlighted();
   // Clear: Selected emptied.
   void clear_selected();
-  // What Export, and a new release, take: the selected rows, else every row shown.
-  QStringList export_uuids() const;
   // By index among the analyses (model()->rows()), not by row of the table.
   void select_rows(const QList<int>& rows);
   // The same for Selected: by index among selected_model()->rows().
@@ -196,6 +192,8 @@ class DataBrowserWindow : public QWidget {
   void select_in(QTableView* view, const QList<int>& rows);
   // Selected shown again after it changed: its table, the mark on Filtered, the count.
   void sync_selected();
+  // Figures, Export and Publish: on exactly while Selected holds something.
+  void set_actions_enabled(bool on);
   void date_preset_changed();
   bool range_chosen() const;
   bool range_is_backwards() const;

@@ -109,13 +109,15 @@ class EarthbankPublishTest : public QObject {
     QSignalSpy asked(&w, &DataBrowserWindow::publish_requested);
 
     w.select_rows({0, 1});
+    QVERIFY(!w.publish_action()->isEnabled());  // highlighted is not selected
+    w.add_highlighted();
     QVERIFY(w.publish_action()->isEnabled());
     w.publish_action()->trigger();
     QCOMPARE(asked.count(), 1);
-    QCOMPARE(asked.first().first().toStringList(), w.highlighted_uuids());
-    QCOMPARE(w.highlighted_uuids().size(), 2);
+    QCOMPARE(asked.first().first().toStringList(), w.selection_uuids());
+    QCOMPARE(w.selection_uuids().size(), 2);
 
-    w.select_rows({});
+    w.clear_selected();
     QVERIFY(!w.publish_action()->isEnabled());
   }
 
@@ -715,7 +717,8 @@ class EarthbankPublishTest : public QObject {
     QList<int> rows;
     for (int r = 0; r < 16; ++r) rows << r;
     browser->select_rows(rows);
-    QCOMPARE(browser->highlighted_uuids().size(), 16);
+    browser->add_highlighted();
+    QCOMPARE(browser->selection_uuids().size(), 16);
     browser->publish_action()->trigger();
     QTRY_VERIFY(workspace.publish_dialog() != nullptr);
     EarthbankPublishDialog* d = workspace.publish_dialog();
@@ -738,6 +741,7 @@ class EarthbankPublishTest : public QObject {
     QList<int> rows;
     for (int r = 0; r < 16; ++r) rows << r;
     browser->select_rows(rows);
+    browser->add_highlighted();
     browser->publish_action()->trigger();
     QTRY_VERIFY(workspace.publish_dialog() != nullptr);
     QPointer<EarthbankPublishDialog> d = workspace.publish_dialog();
@@ -749,7 +753,9 @@ class EarthbankPublishTest : public QObject {
     d->run_button()->click();
     QTRY_VERIFY_WITH_TIMEOUT(w.gate.waiting(), 20000);
 
+    browser->clear_selected();
     browser->select_rows({0, 1});
+    browser->add_highlighted();
     browser->publish_action()->trigger();
     QTRY_VERIFY2(browser->status()->text().contains(QStringLiteral("still running")), qPrintable(browser->status()->text()));
     QVERIFY(!d.isNull());

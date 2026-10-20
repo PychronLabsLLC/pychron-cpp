@@ -222,7 +222,7 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   lists->setStretchFactor(2, 1);
   lists->setCollapsible(1, false);
 
-  // What can be done with the selection (or with all that is shown).
+  // What can be done with Selected.
   toolbar_ = new QToolBar(tr("Data"));
   toolbar_->setObjectName(QStringLiteral("data_toolbar"));
   toolbar_->setIconSize(QSize(18, 18));
@@ -247,17 +247,14 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   recall_ = toolbar_->addAction(data_icon(QStringLiteral("recall")), tr("Recall"), this, &DataBrowserWindow::recall_current);
   recall_->setToolTip(tr("Recall: open the current analysis"));
   export_ = toolbar_->addAction(data_icon(QStringLiteral("export")), tr("Export"), this, &DataBrowserWindow::request_export);
-  export_->setToolTip(tr("Export: write the selected analyses (or all shown) as a 40Ar/39Ar data report after "
+  export_->setToolTip(tr("Export: write the selected analyses (right list) as a 40Ar/39Ar data report after "
                          "Schaen et al. (2021), CSV or JSON"));
   publish_ = toolbar_->addAction(data_icon(QStringLiteral("publish")), tr("Publish"), this, [this] {
-    if (const QStringList ids = highlighted_uuids(); !ids.isEmpty()) emit publish_requested(ids);
+    if (const QStringList ids = selection_uuids(); !ids.isEmpty()) emit publish_requested(ids);
   });
   publish_->setToolTip(tr("Publish to EarthBank...: check, export as EarthBank's workbooks, or upload the selected "
-                          "analyses"));
-  publish_->setEnabled(false);
-  connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
-          [this] { publish_->setEnabled(!highlighted_uuids().isEmpty()); });
-  connect(model_, &QAbstractItemModel::modelReset, this, [this] { publish_->setEnabled(!highlighted_uuids().isEmpty()); });
+                          "analyses (right list)"));
+  set_actions_enabled(false);
   ask_export_path = [this](const QString& suggested) {
     return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
                                         tr("CSV report (*.csv);;JSON report (*.json)"));
@@ -676,6 +673,13 @@ void DataBrowserWindow::clear_selected() {
   sync_selected();
 }
 
+void DataBrowserWindow::set_actions_enabled(bool on) {
+  for (QAction* a : toolbar_->actions())
+    if (!a->data().toString().isEmpty()) a->setEnabled(on);
+  export_->setEnabled(on);
+  publish_->setEnabled(on);
+}
+
 void DataBrowserWindow::sync_selected() {
   const bool was_empty = selected_model_->analysis_count() == 0;
   selected_model_->set_rows(selection_.rows());
@@ -684,7 +688,7 @@ void DataBrowserWindow::sync_selected() {
   for (const auto& row : selection_.rows()) marked.insert(row.uuid);
   model_->set_marked(std::move(marked));
   selected_count_->setText(tr("%n selected", nullptr, static_cast<int>(selection_.size())));
-  // What acts on Selected (figure, export, publish) follows it here.
+  set_actions_enabled(!selection_.empty());
 }
 
 void DataBrowserWindow::select_in(QTableView* view, const QList<int>& rows) {
@@ -730,36 +734,24 @@ void DataBrowserWindow::recall_step_in(QTableView* view, int delta) {
 }
 
 void DataBrowserWindow::request_figure(const QString& kind) {
-  QStringList ids = highlighted_uuids();
-  if (ids.isEmpty())
-    for (const auto& r : model_->rows()) ids << qs(r.uuid);
-  if (!ids.isEmpty()) emit figure_requested(kind, ids);
+  if (const QStringList ids = selection_uuids(); !ids.isEmpty()) emit figure_requested(kind, ids);
 }
 
 void DataBrowserWindow::show_message(const QString& text) { status_->setText(text); }
 
-QStringList DataBrowserWindow::export_uuids() const {
-  QStringList ids = highlighted_uuids();
-  if (ids.isEmpty())
-    for (const auto& r : model_->rows()) ids << qs(r.uuid);
-  return ids;
-}
-
 void DataBrowserWindow::request_export() {
-  const QStringList ids = export_uuids();
+  const QStringList ids = selection_uuids();
   if (ids.isEmpty()) {
     status_->setText(tr("Nothing to export"));
     return;
   }
-  // Named after the one sample shown, else "analyses".
+  // Named after the one sample selected, else "analyses".
   std::string sample;
   bool one_sample = true;
-  for (const auto& row : model_->rows()) {
+  for (const auto& row : selection_.rows()) {
     if (!one_sample) break;
-    if (ids.contains(qs(row.uuid))) {
-      if (sample.empty()) sample = row.sample;
-      one_sample = row.sample == sample;
-    }
+    if (sample.empty()) sample = row.sample;
+    one_sample = row.sample == sample;
   }
   const QString stem = one_sample && !sample.empty() ? qs(sample) : QStringLiteral("analyses");
   const QString path = ask_export_path ? ask_export_path(stem + QStringLiteral("-report.csv")) : QString();

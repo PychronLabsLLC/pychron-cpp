@@ -1116,8 +1116,8 @@ class TestDataWindows : public QObject {
     QCOMPARE(w.highlighted_uuids().size(), 20);
     QVERIFY(!w.highlighted_uuids().contains(QString()));
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
-    w.table()->clearSelection();
-    w.plot_action(QStringLiteral("ideogram"))->trigger();  // nothing selected: all shown
+    w.add_highlighted();
+    w.plot_action(QStringLiteral("ideogram"))->trigger();
     QCOMPARE(figure.takeFirst().at(1).toStringList().size(), 20);
 
     // Stepping passes over it.
@@ -1183,11 +1183,13 @@ class TestDataWindows : public QObject {
     QCOMPARE(recall.takeFirst().at(0).toString(), QStringLiteral("uuid-8"));
     w.select_rows({0, 2});
     QCOMPARE(w.highlighted_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
+    w.add_highlighted();
     QVERIFY(w.plot_action(QStringLiteral("spectrum")));
     w.plot_action(QStringLiteral("spectrum"))->trigger();
     QCOMPARE(series.count(), 1);
     const auto args = series.takeFirst();
     QCOMPARE(args.at(0).toString(), QStringLiteral("spectrum"));
+    QCOMPARE(args.at(1).toStringList(), w.selection_uuids());
     QCOMPARE(args.at(1).toStringList().size(), 2);
     // Recall, from the toolbar: the current row.
     w.recall_action()->trigger();
@@ -1358,6 +1360,8 @@ class TestDataWindows : public QObject {
     const auto actions = w.toolbar()->actions();
     QCOMPARE(actions.size(), expected.size() + 3);
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
+    w.select_rows({0, 1, 2, 3});
+    w.add_highlighted();
     for (int i = 0; i < expected.size(); ++i) {
       QCOMPARE(actions[i]->isSeparator(), expected[i].isEmpty());
       if (expected[i].isEmpty()) continue;
@@ -1365,7 +1369,7 @@ class TestDataWindows : public QObject {
       QCOMPARE(w.plot_action(expected[i]), actions[i]);
       QVERIFY2(!actions[i]->icon().isNull(), qPrintable(expected[i]));
       QVERIFY(!actions[i]->toolTip().isEmpty());
-      actions[i]->trigger();  // nothing selected: all that is shown
+      actions[i]->trigger();
       QCOMPARE(figure.count(), 1);
       const auto args = figure.takeFirst();
       QCOMPARE(args.at(0).toString(), expected[i]);
@@ -2363,13 +2367,47 @@ class TestDataWindows : public QObject {
     QVERIFY(e.section_button(spans)->isChecked());
   }
 
-  void export_uuids_are_the_selection_else_the_shown_rows() {
+  void browser_actions_take_the_selected_list() {
     auto src = make_source(10);
     DataBrowserWindow w(*src);
+    QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
+    QSignalSpy exported(&w, &DataBrowserWindow::export_requested);
+    w.ask_export_path = [](const QString&) { return QStringLiteral("/tmp/out.csv"); };
+    const auto all_enabled = [&w](bool on) {
+      for (const char* kind : {"time_series", "ideogram", "spectrum", "inverse_isochron", "spectrum_isochron",
+                               "isotope_evolution_fit", "blank_fit", "icfactor_fit"})
+        QCOMPARE(w.plot_action(QString::fromLatin1(kind))->isEnabled(), on);
+      QCOMPARE(w.export_action()->isEnabled(), on);
+      QCOMPARE(w.publish_action()->isEnabled(), on);
+    };
+    all_enabled(false);
+    // Highlighted in Filtered is not selected.
     w.select_rows({0, 2});
-    QCOMPARE(w.export_uuids(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
-    w.table()->clearSelection();
-    QCOMPARE(w.export_uuids().size(), 10);
+    all_enabled(false);
+    w.add_highlighted();
+    all_enabled(true);
+    const QStringList chosen{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")};
+    w.plot_action(QStringLiteral("spectrum"))->trigger();
+    QCOMPARE(figure.count(), 1);
+    QCOMPARE(figure.takeFirst().at(1).toStringList(), chosen);
+    w.export_action()->trigger();
+    QCOMPARE(exported.count(), 1);
+    QCOMPARE(exported.takeFirst().at(1).toStringList(), chosen);
+    // Other rows shown and highlighted: the actions still take Selected.
+    w.search()->setText(QStringLiteral("bu"));
+    w.select_rows({0});
+    QCOMPARE(w.highlighted_uuids(), QStringList{QStringLiteral("uuid-9")});
+    w.search()->setText(QStringLiteral("air"));
+    w.select_rows({1});
+    w.plot_action(QStringLiteral("spectrum"))->trigger();
+    QCOMPARE(figure.takeFirst().at(1).toStringList(), chosen);
+    // Emptied, they are off again, and a trigger sends nothing.
+    w.clear_selected();
+    all_enabled(false);
+    w.plot_action(QStringLiteral("spectrum"))->trigger();
+    w.export_action()->trigger();
+    QCOMPARE(figure.count(), 0);
+    QCOMPARE(exported.count(), 0);
   }
 
   void browser_export_button_asks_for_a_file_and_emits() {
@@ -2382,17 +2420,18 @@ class TestDataWindows : public QObject {
       return QStringLiteral("/tmp/out.csv");
     };
     w.select_rows({0, 2});
+    w.add_highlighted();
     w.export_action()->trigger();
     QCOMPARE(exported.count(), 1);
     auto args = exported.takeFirst();
     QCOMPARE(args.at(0).toString(), QStringLiteral("/tmp/out.csv"));
-    QCOMPARE(args.at(1).toStringList(), (QStringList{QStringLiteral("uuid-9"), QStringLiteral("uuid-7")}));
+    QCOMPARE(args.at(1).toStringList(), (QStringList{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")}));
     QVERIFY2(suggested.endsWith(QStringLiteral("-report.csv")), qPrintable(suggested));
-    // Nothing selected: everything shown. A cancelled dialog exports nothing.
-    w.table()->clearSelection();
-    w.export_action()->trigger();
-    QCOMPARE(exported.count(), 1);
-    QCOMPARE(exported.takeFirst().at(1).toStringList().size(), 10);
+    // Nothing selected: the action is disabled. A cancelled dialog exports nothing.
+    w.clear_selected();
+    QVERIFY(!w.export_action()->isEnabled());
+    w.select_rows({0});
+    w.add_highlighted();
     w.ask_export_path = [](const QString&) { return QString(); };
     w.export_action()->trigger();
     QCOMPARE(exported.count(), 0);
@@ -2424,6 +2463,8 @@ class TestDataWindows : public QObject {
     QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));  // the plateau of eight concordant steps, grouped by aliquot
     // The browser's Export button goes the same way.
     browser->ask_export_path = [&dir](const QString&) { return dir.path() + QStringLiteral("/again.json"); };
+    browser->select_rows({0});
+    browser->add_highlighted();
     browser->export_action()->trigger();
     QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
     QFile json(dir.path() + QStringLiteral("/again.json"));

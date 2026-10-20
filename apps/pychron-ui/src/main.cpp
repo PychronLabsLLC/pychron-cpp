@@ -265,7 +265,7 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
     // View > Publish…: releases of this database, made of the browser's selection.
     new pychron::ui::PublishActions(&window, url, [&window] {
       const auto* browser = window.workspace()->existing_browser();
-      return browser != nullptr ? browser->export_uuids() : QStringList();
+      return browser != nullptr ? browser->selection_uuids() : QStringList();
     });
   }
 #endif
@@ -650,7 +650,7 @@ int main(int argc, char** argv) {
       // View > Publish…: releases of this database, made of the Data browser's selection.
       new pychron::ui::PublishActions(&window, database, [&window] {
         const auto* browser = window.data_window();
-        return browser != nullptr ? browser->export_uuids() : QStringList();
+        return browser != nullptr ? browser->selection_uuids() : QStringList();
       });
     }
     if (database_error) {
