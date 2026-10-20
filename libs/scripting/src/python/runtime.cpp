@@ -153,15 +153,8 @@ void bind_classes(py::module_ scope) {
                                if (d.state->estimating() || d.state->rehearsing()) return std::string{};
                                return d.state->device().device_name();
                              })
-      .def("output",
-           [](DeviceHandle& d) {
-             if (d.state->estimating() || d.state->rehearsing()) return 0.0;
-             return d.state->unwrap(d.state->device().output());
-           })
-      .def("is_enabled", [](DeviceHandle& d) {
-        if (d.state->estimating() || d.state->rehearsing()) return false;
-        return d.state->unwrap(d.state->device().is_enabled());
-      });
+      .def("output", [](DeviceHandle& d) { return d.state->device_output(); })
+      .def("is_enabled", [](DeviceHandle& d) { return d.state->device_is_enabled(); });
 }
 
 void create_runtime() {

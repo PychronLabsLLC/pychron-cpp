@@ -188,6 +188,9 @@ TEST_F(Rehearse, AReadAnsweredWithTheWrongTypeIsAConfigError) {
 
 namespace {
 
+// About 40 ms of traced Python per million lines on a 2024 laptop.
+constexpr int kBusyLines = 5'000'000;
+
 struct HardwareScript {
   std::string name;                   // the vocabulary command
   std::string body;                   // the line(s) of main()
@@ -394,18 +397,58 @@ TEST_F(Rehearse, ACancelledStepEndsTheScript) {
   EXPECT_EQ(rehearsal.calls.size(), 2U);
 }
 
-// max_wall_time is Python's time: a step held for longer than the limit does
-// not trip it (a long real hold, since the limit is tested at every 256th line).
-TEST_F(Rehearse, TimeHeldInAStepIsNotWallTime) {
+// max_wall_time is Python's time: time held in a step does not count, and
+// Python time before the step still does. The limit is tested at every 256th
+// line, and a busy loop's time is a count of lines, so these bounds are wide.
+// Limit 250 ms; about 200 ms of Python before the step, a 400 ms hold, about
+// 200 ms after: a limit that forgets the earlier Python time does not trip.
+TEST_F(Rehearse, PythonTimeBeforeAStepStillCountsAgainstWallTime) {
   rehearsal.respond = [](const StepCall&) -> Result<Value> {
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
     return Value{};
   };
   auto env = rehearse_environment();
-  env.limits.max_wall_time = std::chrono::milliseconds(100);
-  auto r = host->rehearse(inline_script("def main():\n    open('A')\n    for i in range(600):\n        pass\n"), env,
-                          rehearsal, token);
+  env.limits.max_wall_time = std::chrono::milliseconds(250);
+  const std::string busy = "    for i in range(" + std::to_string(kBusyLines) + "):\n        pass\n";
+  auto r = host->rehearse(inline_script("def main():\n" + busy + "    open('A')\n" + busy), env, rehearsal, token);
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("wall-time limit"), std::string::npos) << r.error().what;
+}
+
+TEST_F(Rehearse, TimeHeldInAStepIsNotWallTime) {
+  rehearsal.respond = [](const StepCall&) -> Result<Value> {
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    return Value{};
+  };
+  auto env = rehearse_environment();
+  env.limits.max_wall_time = std::chrono::milliseconds(250);
+  const std::string busy = "    for i in range(" + std::to_string(kBusyLines / 4) + "):\n        pass\n";
+  auto r = host->rehearse(inline_script("def main():\n    open('A')\n" + busy), env, rehearsal, token);
   EXPECT_TRUE(r) << (r ? "" : to_string(r.error()));
+}
+
+TEST_F(Rehearse, ANegativeTimeNeverMovesRehearsedTimeBack) {
+  auto r = host->rehearse(
+      inline_script("def main():\n    begin_interval(5)\n    ramp(0, 10, 1, -5, 1)\n    complete_interval()\n"),
+      rehearse_environment(), rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  ASSERT_FALSE(rehearsal.calls.empty());
+  const auto& last = rehearsal.calls.back();
+  EXPECT_EQ(last.command, "complete_interval");
+  EXPECT_EQ(last.args, (std::vector<Value>{Value(5.0)}));
+}
+
+TEST_F(Rehearse, DeviceHandleReadsStepAndAnswer) {
+  rehearsal.answers["is_enabled"] = true;
+  rehearsal.answers["output"] = 4.5;
+  auto r = host->rehearse(
+      inline_script("def main():\n    d = get_device('x')\n    info(str(d.is_enabled()))\n    info(str(d.output()))\n"),
+      rehearse_environment(), rehearsal, token);
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_EQ(r->messages, (std::vector<std::string>{"True", "4.5"}));
+  ASSERT_EQ(rehearsal.calls.size(), 2U);
+  EXPECT_EQ(rehearsal.calls[0].command, "is_enabled");
+  EXPECT_EQ(rehearsal.calls[1].command, "output");
 }
 
 TEST_F(Rehearse, MeasurementHookRefused) {

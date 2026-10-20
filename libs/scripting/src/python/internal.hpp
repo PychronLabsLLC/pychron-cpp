@@ -100,6 +100,9 @@ class HostState {
   void fire_laser();
   void warmup();
   DeviceHandle get_device(const std::string& name);
+  // DeviceHandle reads; a step in Rehearse.
+  bool device_is_enabled();
+  double device_output();
 
   void move_to_position(const std::string& position, bool autocenter, bool block);
   void set_axis(const std::string& axis, double value, bool block);
@@ -179,6 +182,7 @@ class HostState {
   // Config error naming the command.
   void rehearse_void(const std::string& command, std::vector<Value> args, ValueMap kwargs = {});
   double rehearse_double(const std::string& command, std::vector<Value> args);
+  bool rehearse_bool(const std::string& command, std::vector<Value> args);
   std::string rehearse_string(const std::string& command, std::vector<Value> args);
   // Rehearse: a read's answer as a bool; Config error for any other type.
   bool step_bool(const std::string& command, const std::string& name);

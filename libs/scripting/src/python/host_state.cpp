@@ -333,6 +333,13 @@ void HostState::rehearse_void(const std::string& command, std::vector<Value> arg
   step(command, std::move(args), std::move(kwargs));
 }
 
+bool HostState::rehearse_bool(const std::string& command, std::vector<Value> args) {
+  guard();
+  auto v = step(command, std::move(args));
+  if (const auto* b = std::get_if<bool>(&v)) return *b;
+  raise(Error{ErrorKind::Config, "rehearse: " + command + " answered with a " + type_name(v), {}});
+}
+
 std::string HostState::rehearse_string(const std::string& command, std::vector<Value> args) {
   guard();
   auto v = step(command, std::move(args));
@@ -358,7 +365,7 @@ py::object HostState::rehearse_step(const std::string& command, const py::list& 
   guard();
   check_requested(command);
   auto v = step(command, std::move(a), std::move(k));
-  rehearsed_ += seconds(seconds_held);
+  rehearsed_ += seconds(seconds_held);  // seconds() clamps a negative time to zero
   return to_python(v);
 }
 
@@ -465,6 +472,18 @@ DeviceHandle HostState::get_device(const std::string& name) {
   if (!estimating() && !rehearsing() && !name.empty() && device().device_name() != name)
     raise(Error{ErrorKind::Config, "no device '" + name + "' in this run", {}});
   return DeviceHandle{this};
+}
+
+bool HostState::device_is_enabled() {
+  if (estimating()) return false;
+  if (rehearsing()) return rehearse_bool("is_enabled", {});
+  return unwrap(device().is_enabled());
+}
+
+double HostState::device_output() {
+  if (estimating()) return 0.0;
+  if (rehearsing()) return rehearse_double("output", {});
+  return unwrap(device().output());
 }
 
 namespace {
