@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
@@ -56,6 +57,8 @@ const std::pair<pp::Facet, const char*> kFacets[] = {
 
 // The date drop-down's entry for a range typed in, among hours counted back.
 constexpr double kRangeChoice = -1.0;
+// Add all asks first above this many analyses.
+constexpr std::size_t kAddAllConfirmAbove = 1000;
 
 QString color_by_label(ColorBy by) {
   switch (by) {
@@ -260,6 +263,12 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
                                         tr("CSV report (*.csv);;JSON report (*.json)"));
   };
 
+  confirm_add_all = [this](std::size_t count) {
+    return QMessageBox::question(this, tr("Add all"),
+                                 tr("Add all %n analyses to Selected?", nullptr, static_cast<int>(count))) ==
+           QMessageBox::Yes;
+  };
+
   // Six lists are taller than the window.
   auto* filter_scroll = new QScrollArea;
   filter_scroll->setWidget(filters);
@@ -291,6 +300,7 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   connect(refresh_button, &QPushButton::clicked, this, &DataBrowserWindow::refresh);
   connect(more_, &QPushButton::clicked, this, &DataBrowserWindow::load_more);
   connect(add_, &QPushButton::clicked, this, &DataBrowserWindow::add_highlighted);
+  connect(add_all_, &QPushButton::clicked, this, &DataBrowserWindow::add_all);
   connect(remove_, &QPushButton::clicked, this, &DataBrowserWindow::remove_highlighted);
   connect(clear_, &QPushButton::clicked, this, &DataBrowserWindow::clear_selected);
   // Not activated: that comes on Enter too, which adds.
@@ -703,12 +713,37 @@ void DataBrowserWindow::add_highlighted() {
   std::vector<pp::AnalysisSummary> rows;
   for (const auto& idx : table_->selectionModel()->selectedRows())
     if (const auto* analysis = model_->analysis_at(idx.row())) rows.push_back(*analysis);
+  add_to_selected(std::move(rows));
+}
+
+void DataBrowserWindow::add_to_selected(std::vector<pp::AnalysisSummary> rows) {
   const std::size_t asked = rows.size();
   const std::size_t added = selection_.add(std::move(rows));
   sync_selected();
   QString text = tr("Added %n", nullptr, static_cast<int>(added));
   if (const std::size_t held = asked - added; held > 0) text += tr(" (%1 already selected)").arg(static_cast<qulonglong>(held));
   status_->setText(text);
+}
+
+void DataBrowserWindow::add_all() {
+  // An unknown total (nullopt) is not asked about.
+  if (total_ && *total_ > kAddAllConfirmAbove && confirm_add_all && !confirm_add_all(*total_)) return;
+  pp::BrowseQuery q = query();
+  q.limit = page_size_;
+  std::vector<pp::AnalysisSummary> rows;
+  std::optional<QString> failure;
+  for (;;) {
+    auto page = source_.browse(q);
+    if (!page) {
+      failure = qs(page.error().what);
+      break;
+    }
+    rows.insert(rows.end(), page->rows.begin(), page->rows.end());
+    if (!page->next) break;
+    q.after = page->next;
+  }
+  add_to_selected(std::move(rows));
+  if (failure) status_->setText(tr("Error: %1").arg(*failure));
 }
 
 void DataBrowserWindow::remove_highlighted() {

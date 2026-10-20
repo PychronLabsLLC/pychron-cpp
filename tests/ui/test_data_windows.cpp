@@ -1289,6 +1289,62 @@ class TestDataWindows : public QObject {
     QVERIFY(w.status()->text().contains(QStringLiteral("1 selected analyses no longer in store")));
   }
 
+  void browser_add_all_walks_every_page() {
+    auto src = make_source(260);
+    DataBrowserWindow w(*src);
+    QCOMPARE(w.model()->analysis_count(), 200);
+    QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
+    QCOMPARE(w.selection_uuids().size(), 260);
+    QCOMPARE(w.model()->analysis_count(), 200);
+  }
+
+  void browser_add_all_asks_above_1000() {
+    {
+      auto src = make_source(1001);
+      DataBrowserWindow w(*src);
+      std::size_t asked = 0;
+      bool answer = false;
+      w.confirm_add_all = [&](std::size_t count) {
+        asked = count;
+        return answer;
+      };
+      QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
+      QCOMPARE(asked, std::size_t{1001});
+      QCOMPARE(w.selection_uuids().size(), 0);
+      answer = true;
+      QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
+      QCOMPARE(w.selection_uuids().size(), 1001);
+    }
+    auto src = make_source(1000);
+    DataBrowserWindow w(*src);
+    bool called = false;
+    w.confirm_add_all = [&](std::size_t) {
+      called = true;
+      return false;
+    };
+    QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
+    QVERIFY(!called);
+    QCOMPARE(w.selection_uuids().size(), 1000);
+  }
+
+  void browser_add_all_keeps_what_came_before_an_error() {
+    struct FailingPagesSource : pp::MemorySource {
+      Result<pp::BrowsePage> browse(const pp::BrowseQuery& query) override {
+        if (query.after) return fail(ErrorKind::Io, "store gone");
+        return pp::MemorySource::browse(query);
+      }
+    };
+    FailingPagesSource src;
+    for (int i = 0; i < 260; ++i) {
+      auto a = analysis(i);
+      src.add(a, raw_for(*a));
+    }
+    DataBrowserWindow w(src);
+    QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
+    QCOMPARE(w.selection_uuids().size(), 200);
+    QVERIFY(w.status()->text().startsWith(QStringLiteral("Error:")));
+  }
+
   void browser_refetches_many_selected() {
     auto src = make_source(600);
     DataBrowserWindow w(*src);

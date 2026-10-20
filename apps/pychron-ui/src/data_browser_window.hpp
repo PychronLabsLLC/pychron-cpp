@@ -135,12 +135,17 @@ class DataBrowserWindow : public QWidget {
   void show_message(const QString& text);
   // The file name Export asks for; tests replace the dialog. Empty: cancelled.
   std::function<QString(const QString& suggested)> ask_export_path;
+  // Asked before Add all adds more than 1000 analyses; tests replace the
+  // dialog. False: nothing is added.
+  std::function<bool(std::size_t count)> confirm_add_all;
   // The highlighted rows of Filtered, in the table's order.
   QStringList highlighted_uuids() const;
   // Selected's uuids, sorted.
   QStringList selection_uuids() const;
   // Add →: the highlighted Filtered rows into Selected.
   void add_highlighted();
+  // Add all: every analysis the current query matches, all pages.
+  void add_all();
   // ← Remove: the highlighted Selected rows out of it.
   void remove_highlighted();
   // Clear: Selected emptied.
@@ -195,6 +200,8 @@ class DataBrowserWindow : public QWidget {
   void select_in(QTableView* view, const QList<int>& rows);
   // Selected shown again after it changed: its table, the mark on Filtered, the count.
   void sync_selected();
+  // Adds rows to Selected and says how many were new.
+  void add_to_selected(std::vector<processing::AnalysisSummary> rows);
   // Figures, Export and Publish: on exactly while Selected holds something.
   void set_actions_enabled(bool on);
   void date_preset_changed();
