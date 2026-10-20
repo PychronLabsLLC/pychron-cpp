@@ -1408,6 +1408,42 @@ class TestDataWindows : public QObject {
     QCOMPARE(w.selected_model()->rows().front().tag, std::string("invalid"));
   }
 
+  void browser_selected_refetched_after_adding_stale_filtered_rows() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.select_rows({1});  // uuid-8
+    w.add_highlighted();
+    w.date_preset()->setCurrentIndex(w.date_preset()->count() - 1);  // Range...
+    w.from_edit()->setDateTime(utc_hour(20));
+    emit w.from_edit()->editingFinished();
+    QCOMPARE(w.status()->text(), QStringLiteral("From is after To"));
+    auto changed = analysis(9);
+    changed->tag = "invalid";
+    src->add(changed);
+    w.refresh_if_changed();  // Selected refetched; Filtered stays on the older load
+    QCOMPARE(w.model()->rows().front().uuid, std::string("uuid-9"));
+    QCOMPARE(w.model()->rows().front().tag, std::string("ok"));
+    w.select_rows({0});
+    w.add_highlighted();  // copies the older uuid-9
+    w.refresh_if_changed();
+    QCOMPARE(w.selected_model()->rows().size(), std::size_t{2});
+    for (const auto& row : w.selected_model()->rows())
+      if (row.uuid == "uuid-9") QCOMPARE(row.tag, std::string("invalid"));
+  }
+
+  void browser_add_all_with_a_backwards_range_says_so() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src);
+    w.date_preset()->setCurrentIndex(w.date_preset()->count() - 1);  // Range...
+    w.from_edit()->setDateTime(utc_hour(20));
+    emit w.from_edit()->editingFinished();
+    QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
+    QVERIFY(w.selection_uuids().isEmpty());
+    QCOMPARE(w.status()->text(), QStringLiteral("From is after To"));
+  }
+
   void browser_selected_follows_the_store_when_filtered_fails() {
     UuidSource src;
     for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));

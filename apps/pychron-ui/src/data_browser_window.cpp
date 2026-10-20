@@ -611,9 +611,9 @@ void DataBrowserWindow::refetch_selected() {
     return;  // what was held stays
   }
   // sync_selected() resets the table: the highlight is found again by uuid.
-  QStringList highlighted;
+  QSet<QString> highlighted;
   for (const auto& idx : selected_table_->selectionModel()->selectedRows())
-    if (const auto* a = selected_model_->analysis_at(idx.row())) highlighted << qs(a->uuid);
+    if (const auto* a = selected_model_->analysis_at(idx.row())) highlighted.insert(qs(a->uuid));
   const auto* current = selected_model_->analysis_at(selected_table_->currentIndex().row());
   const std::string current_uuid = current != nullptr ? current->uuid : std::string{};
   const int scroll = selected_table_->verticalScrollBar()->value();
@@ -714,6 +714,9 @@ void DataBrowserWindow::add_highlighted() {
   for (const auto& idx : table_->selectionModel()->selectedRows())
     if (const auto* analysis = model_->analysis_at(idx.row())) rows.push_back(*analysis);
   add_to_selected(std::move(rows));
+  // Filtered may be older than the store (a backwards range, a failed browse):
+  // what was copied is no newer than that load, so the next refresh looks again.
+  selected_generation_ = std::min(selected_generation_, loaded_generation_);
 }
 
 void DataBrowserWindow::add_to_selected(std::vector<pp::AnalysisSummary> rows) {
@@ -726,6 +729,15 @@ void DataBrowserWindow::add_to_selected(std::vector<pp::AnalysisSummary> rows) {
 }
 
 void DataBrowserWindow::add_all() {
+  // The rows come fresh from the source, so Selected's generation stays.
+  if (range_is_backwards()) {
+    status_->setText(tr("From is after To"));
+    return;
+  }
+  if (age_is_backwards()) {
+    status_->setText(tr("Age from is above to"));
+    return;
+  }
   // An unknown total (nullopt) is not asked about.
   if (total_ && *total_ > kAddAllConfirmAbove && confirm_add_all && !confirm_add_all(*total_)) return;
   pp::BrowseQuery q = query();
