@@ -16,6 +16,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "pychron/devices/extraction/capability.hpp"
@@ -114,13 +115,15 @@ class Rehearsal : public ::testing::Test {
     rehearsal = std::make_unique<rh::Rehearsal>(std::move(s), token);
     rehearsal->on_step = records.sink();
   }
-  // One step on a thread of its own.
+  // One step on a thread of its own. The thread is the fixture's, not the
+  // future's: a failed ASSERT_* leaves the body with the future still open,
+  // and a std::async future would then wait for a step that never returns.
   std::future<Result<Value>> step_async(StepCall c) {
-    return std::async(std::launch::async, [r = rehearsal.get(), c = std::move(c)] { return r->step(c); });
+    return spawn([r = rehearsal.get(), c = std::move(c)] { return r->step(c); });
   }
   // Steps one after the other on a thread of its own.
   std::future<Result<Value>> steps_async(std::vector<StepCall> calls) {
-    return std::async(std::launch::async, [r = rehearsal.get(), calls = std::move(calls)]() -> Result<Value> {
+    return spawn([r = rehearsal.get(), calls = std::move(calls)]() -> Result<Value> {
       Result<Value> last = Value{};
       for (const auto& c : calls) {
         last = r->step(c);
@@ -130,13 +133,24 @@ class Rehearsal : public ::testing::Test {
     });
   }
   void TearDown() override {
-    // A step left blocked by a failed assertion is woken before the
-    // rehearsal goes.
+    // A step left blocked by a failed assertion is woken, then its thread
+    // joined, before the rehearsal goes.
     if (rehearsal) rehearsal->stop();
+    for (auto& t : threads_)
+      if (t.joinable()) t.join();
   }
   CancelToken token;
   Records records;
   std::unique_ptr<rh::Rehearsal> rehearsal;
+
+ private:
+  std::future<Result<Value>> spawn(std::function<Result<Value>()> work) {
+    std::packaged_task<Result<Value>()> task(std::move(work));
+    auto future = task.get_future();
+    threads_.emplace_back(std::move(task));
+    return future;
+  }
+  std::vector<std::thread> threads_;
 };
 
 // As editor_environment sets it: every capability, the line's valve names,
@@ -346,6 +360,10 @@ TEST_F(Rehearsal, WaitsAreRecordedWithTheirDuration) {
   auto f = steps_async({call("sleep", {Value(2.0)})});
   ASSERT_TRUE(finish(f));
   EXPECT_EQ(records.last().outcome, "sleep 2 s");
+  // An interval begins; it is not waited out.
+  auto h = steps_async({call("begin_heating_interval", {Value(10.0)})});
+  ASSERT_TRUE(finish(h));
+  EXPECT_EQ(records.last().outcome, "begin interval 10 s");
   auto g = steps_async({call("extract", {Value(5.0), Value(std::string("percent"))})});
   ASSERT_TRUE(finish(g));
   EXPECT_EQ(records.last().outcome, "recorded");
