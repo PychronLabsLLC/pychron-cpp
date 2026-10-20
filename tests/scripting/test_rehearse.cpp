@@ -188,8 +188,12 @@ TEST_F(Rehearse, AReadAnsweredWithTheWrongTypeIsAConfigError) {
 
 namespace {
 
-// About 40 ms of traced Python per million lines on a 2024 laptop.
-constexpr int kBusyLines = 5'000'000;
+// Python that is busy for `seconds` of real time, whatever the machine's
+// speed (datetime is on the import allowlist; time is not).
+std::string spin(double seconds) {
+  return "    t0 = datetime.datetime.now()\n    while (datetime.datetime.now() - t0).total_seconds() < " +
+         std::to_string(seconds) + ":\n        pass\n";
+}
 
 struct HardwareScript {
   std::string name;                   // the vocabulary command
@@ -398,32 +402,35 @@ TEST_F(Rehearse, ACancelledStepEndsTheScript) {
 }
 
 // max_wall_time is Python's time: time held in a step does not count, and
-// Python time before the step still does. The limit is tested at every 256th
-// line, and a busy loop's time is a count of lines, so these bounds are wide.
-// Limit 250 ms; about 200 ms of Python before the step, a 400 ms hold, about
-// 200 ms after: a limit that forgets the earlier Python time does not trip.
+// Python time before the step still does. Limit 300 ms; 200 ms of Python
+// before the step, a 400 ms hold, 200 ms after: the Python time is 400 ms and
+// trips it, where a limit that forgot the earlier Python time (200 ms) or
+// counted the hold (600 ms) would not / always. Busy times are real-time
+// minimums, so a faster or slower machine changes nothing.
 TEST_F(Rehearse, PythonTimeBeforeAStepStillCountsAgainstWallTime) {
   rehearsal.respond = [](const StepCall&) -> Result<Value> {
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     return Value{};
   };
   auto env = rehearse_environment();
-  env.limits.max_wall_time = std::chrono::milliseconds(250);
-  const std::string busy = "    for i in range(" + std::to_string(kBusyLines) + "):\n        pass\n";
-  auto r = host->rehearse(inline_script("def main():\n" + busy + "    open('A')\n" + busy), env, rehearsal, token);
+  env.limits.max_wall_time = std::chrono::milliseconds(300);
+  auto r = host->rehearse(
+      inline_script("import datetime\n\ndef main():\n" + spin(0.2) + "    open('A')\n" + spin(0.2)), env, rehearsal,
+      token);
   ASSERT_FALSE(r);
   EXPECT_NE(r.error().what.find("wall-time limit"), std::string::npos) << r.error().what;
 }
 
+// The hold alone (400 ms) is over the limit; the Python around it is not.
 TEST_F(Rehearse, TimeHeldInAStepIsNotWallTime) {
   rehearsal.respond = [](const StepCall&) -> Result<Value> {
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     return Value{};
   };
   auto env = rehearse_environment();
-  env.limits.max_wall_time = std::chrono::milliseconds(250);
-  const std::string busy = "    for i in range(" + std::to_string(kBusyLines / 4) + "):\n        pass\n";
-  auto r = host->rehearse(inline_script("def main():\n    open('A')\n" + busy), env, rehearsal, token);
+  env.limits.max_wall_time = std::chrono::milliseconds(300);
+  auto r = host->rehearse(inline_script("import datetime\n\ndef main():\n    open('A')\n" + spin(0.05)), env,
+                          rehearsal, token);
   EXPECT_TRUE(r) << (r ? "" : to_string(r.error()));
 }
 
