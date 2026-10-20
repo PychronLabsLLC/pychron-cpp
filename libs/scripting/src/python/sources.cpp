@@ -335,6 +335,8 @@ def begin_heating_interval(duration, min_rise_rate=None, check_time=60, check_de
     _h.require('furnace')
     if _h.rehearsing:
         _h.rehearse_step('begin_heating_interval', [float(duration)], {'name': str(name)}, 0.0)
+    # Falling through to begin_interval is intended: in Rehearse it makes no
+    # step of its own, so the call is one step, not two.
     begin_interval(duration, name)
 
 

@@ -468,7 +468,6 @@ void HostState::warmup() {
 }
 
 DeviceHandle HostState::get_device(const std::string& name) {
-
   if (!estimating() && !rehearsing() && !name.empty() && device().device_name() != name)
     raise(Error{ErrorKind::Config, "no device '" + name + "' in this run", {}});
   return DeviceHandle{this};
