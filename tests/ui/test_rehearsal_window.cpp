@@ -3,6 +3,7 @@
 // a script stepped against a copy of the example line, painted on a
 // read-only canvas, while the live line does not move.
 
+#include <array>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -324,11 +325,11 @@ class TestRehearsalWindow : public QObject {
       const char* name;
       fs::path path;
     };
-    const Case cases[] = {
+    const std::array<Case, 3> cases{{
         {ScriptKind::Extraction, "sim_extract.py", dir_ / "scripts" / "extraction" / "sim_extract.py"},
         {ScriptKind::Extraction, "sim_air.py", dir_ / "scripts" / "extraction" / "sim_air.py"},
         {ScriptKind::PostMeasurement, "sim_pump.py", dir_ / "scripts" / "post_measurement" / "sim_pump.py"},
-    };
+    }};
     for (const Case& c : cases) {
       auto w = make_window();
       w->set_script(c.kind, QString::fromUtf8(c.name), QString::fromStdString(read(c.path)));
