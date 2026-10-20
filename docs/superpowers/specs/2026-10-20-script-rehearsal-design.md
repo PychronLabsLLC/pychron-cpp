@@ -1,7 +1,7 @@
 # Script rehearsal: step through a script on its own canvas, nothing actuated
 
 Status: design agreed with owner in session 2026-10-20 (step unit, window,
-inputs, approach, scope). Nothing built.
+inputs, approach, scope). Built on feat/script-rehearsal, 2026-10-20.
 
 ## 1. Problem
 
@@ -247,8 +247,10 @@ unchanged (existing `tests/ui` canvas tests pass unedited).
 ### 6.2 Rehearse Script window
 
 `apps/pychron-ui/src/rehearsal_window.{hpp,cpp}` (new). Top-level
-`QMainWindow`, registered with `MenuHub::add_window`, QSettings group
-`rehearsal_window`, key `geometry`.
+`QMainWindow`, registered with MenuHub automatically on Show (hub's event
+filter; no `add_window` call), QSettings group `rehearsal_window`, key
+`geometry`. Canvas scrolls to valve a step changed (`ensureVisible`, 40 px
+margin); main canvas unchanged.
 
 Opened from:
 - Script Editor: action "Rehearse…" (Scripts menu while editor active),
