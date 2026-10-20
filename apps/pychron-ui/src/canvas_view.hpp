@@ -6,6 +6,8 @@
 // defines, or resting the pointer on it, is said by a signal; what follows is
 // the window's. Stages and pipettes are
 // coloured by NetworkGraph region (volumes sharing gas share a colour).
+// The drawing never overflows the view: it is scaled, either way, to fit the
+// view whatever its size, with no scroll bars and nothing to pan.
 
 #include <functional>
 #include <map>
@@ -36,6 +38,8 @@ class CanvasView : public QGraphicsView {
   // tooltip wake-up delay (QStyle::SH_ToolTip_WakeUpDelay), long enough that
   // a pointer passing over a chip opens nothing.
   static constexpr int kGaugeRestMs = 700;
+  // Scene units left around the drawn items when the drawing is fitted to the view.
+  static constexpr double kContentMargin = 20;
 
   // Over the bridge: its own adapter, owned by the view.
   explicit CanvasView(CoreBridge& bridge, QWidget* parent = nullptr);
@@ -85,16 +89,24 @@ class CanvasView : public QGraphicsView {
   // The pointer stayed on the gauge for the delay; `global_chip` is its chip
   // on the screen.
   void gauge_rested(const QString& name, const QRect& global_chip);
-  // After a rest: the pointer moved off, the view scrolled, or a button went
-  // down or a wheel turned over the view.
+  // After a rest: the pointer moved off, the view scrolled or was fitted
+  // again (a resize), or a button went down or a wheel turned over the view.
   void gauge_left();
 
  protected:
   void scrollContentsBy(int dx, int dy) override;
+  void resizeEvent(QResizeEvent* event) override;
+  void showEvent(QShowEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
   void build(const canvas::Canvas& canvas);
+  // Scales the drawing to fill the view (while shown); ends a rest.
+  void fit();
+  // Widens the scene to the drawn items, plus the margin, when they have
+  // grown past it (a gauge's chip widens with its first reading); never
+  // narrows it, so the drawing does not jump as readings change.
+  void grow_content();
   void on_gauge_hover(const std::string& name, bool entered);
   void on_gauge_rest();
   // Stops a pending rest; after one that was said, says gauge_left.

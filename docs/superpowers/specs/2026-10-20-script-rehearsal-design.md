@@ -249,8 +249,8 @@ unchanged (existing `tests/ui` canvas tests pass unedited).
 `apps/pychron-ui/src/rehearsal_window.{hpp,cpp}` (new). Top-level
 `QMainWindow`, registered with MenuHub automatically on Show (hub's event
 filter; no `add_window` call), QSettings group `rehearsal_window`, key
-`geometry`. Canvas scrolls to valve a step changed (`ensureVisible`, 40 px
-margin); main canvas unchanged.
+`geometry`. Canvas always fits window (`CanvasView` scales drawing to view,
+no scroll bars), so valve a step changed always in view.
 
 Opened from:
 - Script Editor: action "Rehearse…" (Scripts menu while editor active),

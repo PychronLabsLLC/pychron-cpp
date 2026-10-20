@@ -288,8 +288,8 @@ class TestRehearsalWindow : public QObject {
     QVERIFY(!s.value(QStringLiteral("rehearsal_window/geometry")).toByteArray().isEmpty());
   }
 
-  // A step's change is in view: in a small window the canvas scrolls to the
-  // valve the step changed.
+  // A step's change is in view: even in a small window the canvas is fitted
+  // whole, the valve the step changed with it.
   void ChangedValveIsBroughtIntoView() {
     auto w = make_window();
     w->set_script(ScriptKind::Extraction, QStringLiteral("sim_extract.py"), sim_extract_);

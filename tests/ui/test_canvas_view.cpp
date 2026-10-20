@@ -949,6 +949,50 @@ class TestCanvasView : public QObject {
     QCOMPARE(view_->gauge_rest_ms(), 0);
   }
 
+  // The canvas never overflows its view: at any size the whole drawing is in
+  // the viewport, scaled to fill it on one axis, with no scroll bars.
+  void theCanvasFitsItsViewAtAnySize() {
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    const QRectF content = view_->scene()->sceneRect();
+    QVERIFY(content.contains(view_->scene()->itemsBoundingRect()));
+    for (const QSize size : {QSize(300, 200), QSize(1100, 800), QSize(2400, 1400)}) {
+      view_->resize(size);
+      QTRY_COMPARE(view_->size(), size);
+      QTest::qWait(0);
+      const QRectF port = QRectF(view_->viewport()->rect()).adjusted(-1, -1, 1, 1);
+      const QRectF shown = view_->mapFromScene(content).boundingRect();
+      QVERIFY2(port.contains(shown), qPrintable(QStringLiteral("%1x%2").arg(size.width()).arg(size.height())));
+      QCOMPARE(view_->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+      QCOMPARE(view_->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+      QVERIFY(!view_->horizontalScrollBar()->isVisible());
+      QVERIFY(!view_->verticalScrollBar()->isVisible());
+      QCOMPARE(view_->horizontalScrollBar()->maximum(), view_->horizontalScrollBar()->minimum());
+      QCOMPARE(view_->verticalScrollBar()->maximum(), view_->verticalScrollBar()->minimum());
+      // Fills, not only fits: on one axis it reaches both edges (fitInView
+      // leaves a couple of pixels).
+      const auto near = [](double a, double b) { return std::abs(a - b) <= 4; };
+      const bool across = near(shown.left(), port.left()) && near(shown.right(), port.right());
+      const bool down = near(shown.top(), port.top()) && near(shown.bottom(), port.bottom());
+      QVERIFY2(across || down, qPrintable(QStringLiteral("%1x%2").arg(size.width()).arg(size.height())));
+    }
+  }
+
+  // Nothing pans the drawing away: a wheel or an arrow key leaves it where it is.
+  void theWheelAndKeysDoNotPanTheCanvas() {
+    view_->resize(300, 200);
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    const QPoint middle = view_->viewport()->rect().center();
+    const QPointF before = view_->mapToScene(middle);
+    QWheelEvent wheel(QPointF(middle), QPointF(view_->viewport()->mapToGlobal(middle)), QPoint(), QPoint(0, -360),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(view_->viewport(), &wheel);
+    QCOMPARE(view_->mapToScene(middle), before);
+    for (const auto key : {Qt::Key_Down, Qt::Key_Right, Qt::Key_PageDown, Qt::Key_End}) QTest::keyClick(view_.get(), key);
+    QCOMPARE(view_->mapToScene(middle), before);
+  }
+
   void restingOnAGaugeSaysSoAfterTheDelay() {
     view_->set_gauge_rest_ms(0);
     view_->show();
@@ -1011,21 +1055,14 @@ class TestCanvasView : public QObject {
     QApplication::sendEvent(view_->viewport(), &wheel);
     QCOMPARE(left.count(), 3);
 
-    // A scroll bar moved, on a view small enough to scroll. Resizing and
-    // centring may themselves end or start a rest: counted from after them.
+    // A resize: the canvas is fitted to the view again and the chip moves
+    // from under the popup.
     QTest::mouseMove(view_->viewport(), off_gauge(*ig));
-    view_->resize(300, 200);
-    view_->centerOn(ig);
-    QTRY_VERIFY(view_->verticalScrollBar()->maximum() > 0);
-    QVERIFY(view_->viewport()->rect().contains(on_gauge(*ig)));
-    QTest::qWait(0);
-    const int rests = rested.count();
     rest();
-    QTRY_COMPARE(rested.count(), rests + 1);
+    QTRY_COMPARE(rested.count(), 4);
     const int before = left.count();
-    QScrollBar* bar = view_->verticalScrollBar();
-    bar->setValue(bar->value() == bar->minimum() ? bar->maximum() : bar->minimum());
-    QCOMPARE(left.count(), before + 1);
+    view_->resize(300, 200);
+    QTRY_COMPARE(left.count(), before + 1);
   }
 
   void restingOnADecorationGaugeSaysNothing() {

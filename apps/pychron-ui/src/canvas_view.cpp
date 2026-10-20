@@ -4,6 +4,8 @@
 #include <QDateTime>
 #include <QEvent>
 #include <QLocale>
+#include <QResizeEvent>
+#include <QShowEvent>
 
 #include <algorithm>
 #include <array>
@@ -77,6 +79,9 @@ CanvasView::CanvasView(ICanvasState& state, CoreBridge* bridge, QWidget* parent)
     : QGraphicsView(parent), state_(state), bridge_(bridge) {
   setScene(&scene_);
   setRenderHint(QPainter::Antialiasing);
+  // Always fitted to the view (fit()): nothing to scroll to.
+  setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   gauge_rest_timer_.setSingleShot(true);
   gauge_rest_timer_.setInterval(kGaugeRestMs);
   connect(&gauge_rest_timer_, &QTimer::timeout, this, &CanvasView::on_gauge_rest);
@@ -139,6 +144,35 @@ void CanvasView::scrollContentsBy(int dx, int dy) {
   end_gauge_rest();
 }
 
+void CanvasView::resizeEvent(QResizeEvent* event) {
+  QGraphicsView::resizeEvent(event);
+  fit();
+}
+
+void CanvasView::showEvent(QShowEvent* event) {
+  QGraphicsView::showEvent(event);
+  fit();
+}
+
+void CanvasView::fit() {
+  // Hidden, the viewport has no size of its own yet: fitted when shown.
+  if (!isVisible() || scene_.sceneRect().isEmpty()) return;
+  fitInView(scene_.sceneRect(), Qt::KeepAspectRatio);
+  // The chip a popup was placed against has moved.
+  end_gauge_rest();
+}
+
+void CanvasView::grow_content() {
+  const QRectF drawn =
+      scene_.itemsBoundingRect().adjusted(-kContentMargin, -kContentMargin, kContentMargin, kContentMargin);
+  const QRectF now = scene_.sceneRect();
+  const QRectF grown = now.isEmpty() ? drawn : now.united(drawn);
+  if (grown == now) return;
+  // The scene is exactly what is fitted, so the view has nothing beyond it to scroll to.
+  scene_.setSceneRect(grown);
+  fit();
+}
+
 // Sees the viewport's presses and wheels before the scene does; consumes nothing.
 bool CanvasView::eventFilter(QObject* watched, QEvent* event) {
   if (watched == viewport()) {
@@ -154,8 +188,8 @@ bool CanvasView::eventFilter(QObject* watched, QEvent* event) {
 
 void CanvasView::build(const canvas::Canvas& c) {
   sources_ = canvas::sources(c);
-  const QPointF origin = to_qpoint(c.canvas.origin);
-  scene_.setSceneRect(origin.x(), origin.y(), c.canvas.size.width, c.canvas.size.height);
+  // The scene is the drawing (grow_content(), at the end), not the file's
+  // declared size: what is fitted to the view is what is drawn.
   // Behind the drawing and around it: the view shows the scene's background wherever it is.
   if (const auto background = background_color(c)) scene_.setBackgroundBrush(*background);
 
@@ -271,6 +305,7 @@ void CanvasView::build(const canvas::Canvas& c) {
     add_path({x.left, x.right}, width);
     add_path({x.top, x.bottom}, width);
   }
+  grow_content();
 }
 
 std::vector<QPointF> CanvasView::oriented(QPointF a, const std::string& a_name, QPointF b, const std::string& b_name,
@@ -456,6 +491,7 @@ void CanvasView::apply_state() {
     }
   }
   apply_regions();
+  grow_content();
 }
 
 void CanvasView::set_open_valve_color(canvas::OpenValveColor mode) {
@@ -525,6 +561,7 @@ void CanvasView::on_pressure(const PressureSample& sample) {
     return;
   }
   item->set_value(sample.value, sample.units);
+  grow_content();
   if (!item->in_alarm()) {
     return;
   }
