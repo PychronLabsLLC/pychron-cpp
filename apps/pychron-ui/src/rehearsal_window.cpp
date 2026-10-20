@@ -474,6 +474,12 @@ void RehearsalWindow::on_record(unsigned run, const StepRecord& record) {
       if (ValveItem* item = canvas_->valve(valve))
         item->set_marked(std::find(record.changed.begin(), record.changed.end(), valve) != record.changed.end());
     }
+    // The valve a step changed may lie outside a small window's view.
+    for (const std::string& valve : record.changed)
+      if (const ValveItem* item = canvas_->valve(valve)) {
+        canvas_->ensureVisible(item->sceneBoundingRect(), 40, 40);
+        break;
+      }
   }
   log_->scrollToBottom();
   update_actions();

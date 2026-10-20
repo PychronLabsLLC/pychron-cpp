@@ -288,6 +288,30 @@ class TestRehearsalWindow : public QObject {
     QVERIFY(!s.value(QStringLiteral("rehearsal_window/geometry")).toByteArray().isEmpty());
   }
 
+  // A step's change is in view: in a small window the canvas scrolls to the
+  // valve the step changed.
+  void ChangedValveIsBroughtIntoView() {
+    auto w = make_window();
+    w->set_script(ScriptKind::Extraction, QStringLiteral("sim_extract.py"), sim_extract_);
+    w->resize(500, 360);
+    w->show();
+    QVERIFY(QTest::qWaitForWindowExposed(w.get()));
+    w->canvas()->resize(160, 120);
+    const auto in_view = [&](const char* valve) {
+      const QRectF view = w->canvas()->mapToScene(w->canvas()->viewport()->rect()).boundingRect();
+      return view.intersects(w->canvas()->valve(valve)->sceneBoundingRect());
+    };
+    w->start();
+    QTRY_VERIFY_WITH_TIMEOUT(waits_at(*w->log(), 0), 5000);
+    w->step();
+    QTRY_VERIFY_WITH_TIMEOUT(waits_at(*w->log(), 1), 5000);
+    w->step();
+    QTRY_VERIFY_WITH_TIMEOUT(waits_at(*w->log(), 2), 5000);
+    QVERIFY(w->canvas()->valve("P2")->marked());
+    QVERIFY(in_view("P2"));
+    w->stop();
+  }
+
   void ShortcutCatalogHasNoClash() {
     using pychron::ui::Shortcut;
     using pychron::ui::ShortcutContext;
@@ -352,6 +376,13 @@ class TestRehearsalWindow : public QObject {
       QVERIFY2(done, c.name);
       const int last = w->log()->rowCount() - 1;
       QVERIFY2(!w->running(), c.name);
+      // Not vacuous: the script did try to open or close valves.
+      int moves = 0;
+      for (int r = 0; r <= last; ++r) {
+        const QString o = outcome(*w->log(), r);
+        if (o.startsWith(QStringLiteral("would open")) || o.startsWith(QStringLiteral("would close"))) ++moves;
+      }
+      QVERIFY2(moves >= 1, c.name);
       QVERIFY2(last >= 0 && outcome(*w->log(), last) == QStringLiteral("finished"),
                qPrintable(QString::fromUtf8(c.name) + QLatin1Char(' ') + row_text(*w->log(), last)));
     }
