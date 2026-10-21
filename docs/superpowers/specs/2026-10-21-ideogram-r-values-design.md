@@ -1,7 +1,7 @@
 # Ideogram R-values: matrix of group F ratios
 
 Date: 2026-10-21
-Status: Design agreed in conversation 2026-10-21; written spec awaiting review. Nothing built.
+Status: Agreed 2026-10-21. Built on feat/ideogram-r-values (plan 2026-10-21-ideogram-r-values.md).
 Owner: Jake Ross
 Depends on: `2026-10-02-data-browsing-visualization-design.md` §7.5
 (`group_stats`), §8 (ideogram), §10 (quantities); legacy pychron
