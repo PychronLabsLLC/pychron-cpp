@@ -3,6 +3,7 @@
 #include <chrono>
 #include <mutex>
 #include <utility>
+#include <variant>
 
 #include <QMetaObject>
 #include <QPointer>
@@ -38,6 +39,13 @@ struct SpectrometerBridge::Gate {
   // that will deliver them is already posted.
   std::vector<IntensityReading> readings;
   bool flush_posted = false;
+  // Set on the main thread before a run's thread starts, cleared when its
+  // result is delivered: only events published meanwhile are relayed. They
+  // wait here in the order published, as readings do.
+  bool peak_center_active = false;
+  using PeakCenterEvent = std::variant<jobs::PeakCenterTryStarted, jobs::PeakCenterPoint>;
+  std::vector<PeakCenterEvent> peak_center_events;
+  bool peak_center_flush_posted = false;
 };
 
 template <class E>
@@ -70,6 +78,27 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
   relay<DetectorState>(&SpectrometerBridge::on_detector);
   relay<ScanStatus>(&SpectrometerBridge::on_scan);
   relay<FieldTableChanged>(&SpectrometerBridge::on_table_changed);
+  // A try's start and its points go through one queue, so they arrive in
+  // the order the run published them.
+  const auto queue_run_event = [](const std::shared_ptr<Gate>& gate) {
+    return [gate](const auto& event) {
+      std::lock_guard lock(gate->mutex);
+      SpectrometerBridge* self = gate->target;
+      if (self == nullptr || !gate->peak_center_active) {
+        return;
+      }
+      gate->peak_center_events.emplace_back(event);
+      if (!gate->peak_center_flush_posted) {
+        gate->peak_center_flush_posted = true;
+        QMetaObject::invokeMethod(self, [self] { self->flush_peak_center_events(); }, Qt::QueuedConnection);
+      }
+    };
+  };
+  subscriptions_.push_back(bus_.subscribe<jobs::PeakCenterTryStarted>(queue_run_event(gate_)));
+  subscriptions_.push_back(bus_.subscribe<jobs::PeakCenterPoint>(queue_run_event(gate_)));
+  qRegisterMetaType<jobs::PeakCenterTryStarted>();
+  qRegisterMetaType<jobs::PeakCenterPoint>();
+  qRegisterMetaType<Result<jobs::PeakCenterResult>>();
 
   // Seeded after subscribing: anything published meanwhile is queued and
   // applied on top once the event loop runs.
@@ -89,6 +118,10 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
 }
 
 SpectrometerBridge::~SpectrometerBridge() {
+  // A run still going is cancelled and its thread waited for; its result,
+  // posted to a bridge about to go, is dropped with it.
+  cancel_peak_center();
+  join_peak_center();
   {
     std::lock_guard lock(gate_->mutex);
     gate_->target = nullptr;
@@ -282,6 +315,103 @@ void SpectrometerBridge::restore_table_version(const QString& name, const QStrin
        [name, version](SpectrometerBridge& self, const Result<void>& result) {
          emit self.tableRestored(name, version, result);
        });
+}
+
+void SpectrometerBridge::peak_center(jobs::PeakCenterConfig config) {
+  if (peak_center_running_) {
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+          const Result<jobs::PeakCenterResult> refused =
+              fail(ErrorKind::Config, "a peak center is running", "peak_center");
+          emit peakCenterFinished(refused);
+        },
+        Qt::QueuedConnection);
+    return;
+  }
+  config.update_table = false;  // the window applies a result only when the operator asks
+  peak_center_running_ = true;
+  {
+    // Before the thread starts, so that nothing it publishes is missed.
+    std::lock_guard lock(gate_->mutex);
+    gate_->peak_center_active = true;
+    gate_->peak_center_events.clear();
+  }
+  peak_center_run_ = std::make_unique<PeakCenterRun>();
+  // Time does not jump between the start and the thread's Participant.
+  auto hold = std::make_shared<Clock::Hold>(spec_.clock());
+  peak_center_thread_ = std::thread([state = peak_center_run_.get(), spec = &spec_, bus = &bus_, gate = gate_,
+                                     config = std::move(config), hold]() mutable {
+    Clock::Participant participant(spec->clock(), "spectrometer.peak_center");
+    hold.reset();
+    jobs::Progress progress;  // the bus events carry the progress
+    jobs::PeakCenterOptions options;
+    options.bus = bus;
+    auto result = jobs::run_peak_center(*spec, config, progress, state->cancel, options);
+    {
+      std::lock_guard lock(gate->mutex);
+      if (SpectrometerBridge* self = gate->target) {
+        QMetaObject::invokeMethod(
+            self, [self, result = std::move(result)] { self->on_peak_center_finished(result); },
+            Qt::QueuedConnection);
+      }
+    }
+    // Last act, still a participant.
+    std::lock_guard lock(state->mutex);
+    state->done = true;
+    spec->clock().notify_all(state->cv);
+  });
+  hold.reset();
+}
+
+void SpectrometerBridge::cancel_peak_center() {
+  if (peak_center_run_) {
+    peak_center_run_->cancel.cancel();
+  }
+}
+
+void SpectrometerBridge::join_peak_center() {
+  if (!peak_center_thread_.joinable()) {
+    return;
+  }
+  {
+    std::unique_lock lock(peak_center_run_->mutex);
+    while (!peak_center_run_->done) {
+      spec_.clock().wait(peak_center_run_->cv, lock);
+    }
+  }
+  peak_center_thread_.join();
+  peak_center_run_.reset();
+}
+
+void SpectrometerBridge::flush_peak_center_events() {
+  std::vector<Gate::PeakCenterEvent> batch;
+  {
+    std::lock_guard lock(gate_->mutex);
+    batch.swap(gate_->peak_center_events);
+    gate_->peak_center_flush_posted = false;
+  }
+  for (const auto& event : batch) {
+    if (const auto* started = std::get_if<jobs::PeakCenterTryStarted>(&event)) {
+      emit peakCenterTryStarted(*started);
+    } else {
+      emit peakCenterPoint(std::get<jobs::PeakCenterPoint>(event));
+    }
+  }
+}
+
+// Posted by the run's thread after everything it published, so its last
+// points are delivered here first.
+void SpectrometerBridge::on_peak_center_finished(const Result<jobs::PeakCenterResult>& result) {
+  flush_peak_center_events();
+  {
+    std::lock_guard lock(gate_->mutex);
+    gate_->peak_center_active = false;
+    gate_->peak_center_events.clear();  // anything since is not the run's
+  }
+  join_peak_center();
+  peak_center_running_ = false;
+  emit peakCenterFinished(result);
 }
 
 void SpectrometerBridge::flush_readings() {

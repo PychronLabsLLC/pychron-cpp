@@ -24,14 +24,27 @@
 // core's table lock can be held across a settling move, then emits
 // fieldTableChanged with the copy already current.
 //
+// Peak center (peak center from the spectrometer window, section 4): a run
+// goes on a thread of its own, not the executor, so stop_scan and the rest
+// stay free meanwhile. The thread takes part in the spectrometer's clock and
+// is started and joined by the rules of AGENTS.md "Time". Its
+// PeakCenterTryStarted and PeakCenterPoint events are relayed only while the
+// bridge's own run is going (a plan's are not), in one ordered queue under
+// the gate, delivered by one pending queued call as readings are; the result
+// comes back as peakCenterFinished after the last of them. The destructor
+// cancels a run and waits for its thread.
+//
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.
 
+#include <condition_variable>
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <QObject>
@@ -41,6 +54,8 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/core/signal_bus.hpp"
+#include "pychron/systems/jobs/cancel.hpp"
+#include "pychron/systems/jobs/peak_center.hpp"
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
 #include "strip_chart_model.hpp"
@@ -120,6 +135,17 @@ class SpectrometerBridge : public QObject {
   // through tableRestored.
   void restore_table_version(const QString& name, const QString& version);
 
+  // ---- peak center (peak center from the spectrometer window, section 4) ----
+  // Non-blocking: runs jobs::run_peak_center on a thread of its own, with
+  // update_table forced off (the window applies a result only when asked),
+  // and reports once through peakCenterFinished. Refused, with Config "a
+  // peak center is running" through peakCenterFinished, while one is.
+  void peak_center(jobs::PeakCenterConfig config);
+  // No-op when none is running; the run then reports Cancelled.
+  void cancel_peak_center();
+  // From the start until its peakCenterFinished has been delivered.
+  bool peak_center_running() const noexcept { return peak_center_running_; }
+
  signals:
   void readings(const std::vector<pychron::spectrometer::IntensityReading>& batch);
   void magnetMoved(const pychron::spectrometer::MagnetMoved& event);
@@ -132,9 +158,23 @@ class SpectrometerBridge : public QObject {
   void fieldTableChanged(const QString& name, const QString& version);
   void tableSaved(const QString& name, const pychron::Result<std::string>& result);  // the new version
   void tableRestored(const QString& name, const QString& version, const pychron::Result<void>& result);
+  // Relayed from the bus while the bridge's own run is going, in the order
+  // published: a try's start before its points.
+  void peakCenterTryStarted(const pychron::jobs::PeakCenterTryStarted& event);
+  void peakCenterPoint(const pychron::jobs::PeakCenterPoint& point);
+  // The run's result, after its last point; also a refused start.
+  void peakCenterFinished(const pychron::Result<pychron::jobs::PeakCenterResult>& result);
 
  private:
   struct Gate;
+  // What the bridge and a run's thread share. The thread's last act, while
+  // still a participant, is to set `done` and notify through the clock.
+  struct PeakCenterRun {
+    std::mutex mutex;
+    std::condition_variable cv;  // waited on and notified through the spectrometer's clock
+    bool done = false;
+    jobs::CancelToken cancel;
+  };
 
   template <class E>
   void relay(void (SpectrometerBridge::*apply)(const E&));
@@ -152,6 +192,11 @@ class SpectrometerBridge : public QObject {
   void on_detector(const spectrometer::DetectorState& e);
   void on_scan(const spectrometer::ScanStatus& e);
   void on_table_changed(const spectrometer::FieldTableChanged& e);
+  void flush_peak_center_events();
+  void on_peak_center_finished(const Result<jobs::PeakCenterResult>& result);
+  // Waits through the clock for the run's thread to say it is done, then
+  // joins it. Nothing when there is none.
+  void join_peak_center();
 
   spectrometer::Spectrometer& spec_;
   spectrometer::ScanService& scan_;
@@ -164,6 +209,9 @@ class SpectrometerBridge : public QObject {
   QThread executor_;
   QObject* worker_ = nullptr;  // lives on executor_
   bool stop_requested_ = false;  // stop_scan since the last start_scan (main thread)
+  std::unique_ptr<PeakCenterRun> peak_center_run_;  // until the run's thread is joined
+  std::thread peak_center_thread_;
+  bool peak_center_running_ = false;  // main thread
 };
 
 }  // namespace pychron::ui

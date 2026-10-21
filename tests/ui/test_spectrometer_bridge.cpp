@@ -2,12 +2,20 @@
 // events reach the main thread and the state mirror, readings are batched, and
 // the blocking commands run off the main thread and report through
 // commandFinished. Integration is 0.1 s (the sim's quantum) to keep it quick.
+//
+// The peak center cases run the spectrometer on a VirtualClock at full speed:
+// the Qt thread does not take part in its time and waits in real time for
+// what it expects. A case that has to act while a run is still going stops
+// time from the run's own thread at its first point (set_speed(0), from a bus
+// handler, which runs before the run goes on), so the run cannot end first.
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -17,6 +25,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include "pychron/core/virtual_clock.hpp"
+#include "pychron/systems/jobs/peak_center.hpp"
 #include "spectrometer_bridge.hpp"
 #include "spectrometer_fixture.hpp"
 
@@ -55,6 +65,32 @@ struct Changed {
 
 // The version the example `argon` table ships as current.
 const QString kShippedArgon = QStringLiteral("2026-09-30T000000");
+
+// Ar40 on the reference detector at the sim's integration quantum. The
+// sim's peaks are wide (flat top +-0.02, edges to +-0.03), so the window and
+// step are the example lab's: some 60 points a try.
+jobs::PeakCenterConfig ar40_config() {
+  jobs::PeakCenterConfig config;
+  config.isotope = "Ar40";
+  config.window = 0.06;
+  config.step = 0.002;
+  config.integration = 100ms;
+  return config;
+}
+
+// A run long enough (some 240 points a try) that it is still going when a
+// case acts on it.
+jobs::PeakCenterConfig long_config() {
+  auto config = ar40_config();
+  config.step = 0.0005;
+  return config;
+}
+
+// One relayed event, in the order the bridge emitted them.
+struct PeakCenterEvent {
+  bool try_started = false;
+  int try_index = 0;
+};
 
 }  // namespace
 
@@ -113,6 +149,14 @@ class TestSpectrometerBridge : public QObject {
       changed_.push_back({name, v});
       changed_had_copy_.push_back(bridge_->table_copy(name));
     });
+    connect(bridge_.get(), &SpectrometerBridge::peakCenterTryStarted, this,
+            [this](const jobs::PeakCenterTryStarted& e) { pc_events_.push_back({true, e.try_index}); });
+    connect(bridge_.get(), &SpectrometerBridge::peakCenterPoint, this, [this](const jobs::PeakCenterPoint& p) {
+      pc_events_.push_back({false, p.try_index});
+      pc_points_.push_back(p);
+    });
+    connect(bridge_.get(), &SpectrometerBridge::peakCenterFinished, this,
+            [this](const Result<jobs::PeakCenterResult>& r) { pc_results_.push_back(r); });
   }
 
   // The active table with an Ar38 row between Ar39 and Ar36, its values
@@ -133,7 +177,26 @@ class TestSpectrometerBridge : public QObject {
     return table;
   }
 
+  // Rebuilds the fixture on a VirtualClock at full speed.
+  void use_virtual_clock() {
+    bridge_.reset();
+    sim_.reset();
+    clock_ = std::make_unique<VirtualClock>();
+    sim_ = ui::test::make_sim_spectrometer({}, clock_.get());
+    make_bridge();
+  }
+
+  // Stops time at the run's first point, from the run's own thread.
+  [[nodiscard]] SignalBus::Subscription stop_time_at_first_point() {
+    return sim_->bus.subscribe<jobs::PeakCenterPoint>([this](const jobs::PeakCenterPoint&) {
+      if (!time_stopped_.exchange(true)) clock_->set_speed(0);
+    });
+  }
+  void restart_time() { clock_->set_speed(std::numeric_limits<double>::infinity()); }
+
   std::unique_ptr<QTemporaryDir> tables_dir_;
+  std::unique_ptr<VirtualClock> clock_;  // outlives sim_ when set
+  std::atomic<bool> time_stopped_{false};
   std::unique_ptr<ui::test::SimSpectrometer> sim_;
   std::unique_ptr<SpectrometerBridge> bridge_;
   std::vector<Finished> finished_;
@@ -143,6 +206,9 @@ class TestSpectrometerBridge : public QObject {
   std::vector<Restored> restored_;
   std::vector<Changed> changed_;
   std::vector<spectrometer::FieldTable> changed_had_copy_;
+  std::vector<PeakCenterEvent> pc_events_;
+  std::vector<jobs::PeakCenterPoint> pc_points_;
+  std::vector<Result<jobs::PeakCenterResult>> pc_results_;
 
  private slots:
   void init() {
@@ -153,7 +219,12 @@ class TestSpectrometerBridge : public QObject {
   void cleanup() {
     bridge_.reset();
     sim_.reset();
+    clock_.reset();
+    time_stopped_ = false;
     tables_dir_.reset();
+    pc_events_.clear();
+    pc_points_.clear();
+    pc_results_.clear();
     finished_.clear();
     readings_.clear();
     batches_.clear();
@@ -525,6 +596,132 @@ class TestSpectrometerBridge : public QObject {
     QCoreApplication::processEvents();
     QCOMPARE(count("integration"), 0);
     QTest::qWait(300);  // the scan (owned by the fixture) keeps publishing; nothing listens
+  }
+
+  // ---- peak center (peak center from the spectrometer window, section 4) ----
+
+  void peakCenterRunsAndRelaysItsEvents() {
+    use_virtual_clock();
+    const auto table_before = sim_->spec->field_table();
+    const auto version_before = sim_->spec->table_version("argon");
+    QVERIFY(version_before.has_value());
+    QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
+    QVERIFY(!bridge_->peak_center_running());
+
+    auto config = ar40_config();
+    config.update_table = true;  // the bridge never lets the runner write the table
+    bridge_->peak_center(config);
+    QVERIFY(bridge_->peak_center_running());
+    QVERIFY(finished.wait(kWaitMs));
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(!bridge_->peak_center_running());
+
+    QCOMPARE(pc_results_.size(), std::size_t{1});
+    const auto& result = pc_results_[0];
+    if (!result) QFAIL(result.error().what.c_str());
+    QVERIFY2(result->ok, result->message.c_str());
+    QVERIFY(result->center.has_value());
+    QVERIFY(result->table_value.has_value());
+    QVERIFY(!result->table_updated);
+    QVERIFY(!result->config.update_table);
+    QVERIFY(sim_->spec->field_table() == table_before);
+    QCOMPARE(*sim_->spec->table_version("argon"), *version_before);
+
+    // Every event of the run, in order: a try's start before its points,
+    // the points of a try after it.
+    QVERIFY(!pc_events_.empty());
+    QVERIFY(pc_events_.front().try_started);
+    QCOMPARE(pc_events_.front().try_index, 0);
+    int tries = 0;
+    int current = -1;
+    for (const auto& e : pc_events_) {
+      if (e.try_started) {
+        ++tries;
+        QVERIFY(e.try_index > current);
+        current = e.try_index;
+      } else {
+        QCOMPARE(e.try_index, current);
+      }
+    }
+    QVERIFY(tries >= 1);
+    QVERIFY(!pc_points_.empty());
+    std::size_t kept = 0;
+    for (const auto& t : result->tries) kept += t.points.size();
+    QCOMPARE(pc_points_.size(), kept);
+    QCOMPARE(pc_points_.back().point, result->tries.back().points.back());
+
+    // Once it has finished, another run's events (a plan's) are not relayed.
+    const std::size_t before = pc_events_.size();
+    sim_->bus.publish(jobs::PeakCenterTryStarted{});
+    sim_->bus.publish(jobs::PeakCenterPoint{});
+    QCoreApplication::processEvents();
+    QCOMPARE(pc_events_.size(), before);
+  }
+
+  void peakCenterCancel() {
+    use_virtual_clock();
+    std::atomic<int> done{0};
+    auto sub = sim_->bus.subscribe<jobs::PeakCenterDone>([&done](const jobs::PeakCenterDone&) { ++done; });
+    auto stop = stop_time_at_first_point();
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    QVERIFY(bridge_->peak_center_running());
+    bridge_->cancel_peak_center();
+    restart_time();
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(!pc_results_[0].has_value());
+    QCOMPARE(pc_results_[0].error().kind, ErrorKind::Cancelled);
+    QVERIFY(!bridge_->peak_center_running());
+    QCOMPARE(done.load(), 0);  // a cancelled run publishes no outcome
+    bridge_->cancel_peak_center();  // none running: nothing happens
+    QCoreApplication::processEvents();
+    QCOMPARE(pc_results_.size(), std::size_t{1});
+  }
+
+  void secondPeakCenterRefused() {
+    use_virtual_clock();
+    bridge_->peak_center(ar40_config());
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{2}, kWaitMs);
+    QVERIFY(!pc_results_[0].has_value());
+    QCOMPARE(pc_results_[0].error().kind, ErrorKind::Config);
+    QCOMPARE(pc_results_[0].error().what, std::string("a peak center is running"));
+    if (!pc_results_[1]) QFAIL(pc_results_[1].error().what.c_str());
+    QVERIFY2(pc_results_[1]->ok, pc_results_[1]->message.c_str());
+    QVERIFY(!bridge_->peak_center_running());
+
+    // Free again: a third one runs.
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{3}, kWaitMs);
+    QVERIFY(pc_results_[2].has_value());
+  }
+
+  void destroyDuringPeakCenterReturns() {
+    use_virtual_clock();
+    std::atomic<int> done{0};
+    auto sub = sim_->bus.subscribe<jobs::PeakCenterDone>([&done](const jobs::PeakCenterDone&) { ++done; });
+    auto stop = stop_time_at_first_point();
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    restart_time();
+    const auto real_start = std::chrono::steady_clock::now();
+    bridge_.reset();  // cancels the run and waits for its thread
+    QVERIFY(std::chrono::steady_clock::now() - real_start < 5s);
+    QCOMPARE(done.load(), 0);  // cancelled, not run to its end
+    QCoreApplication::processEvents();
+    QVERIFY(pc_results_.empty());  // the result went nowhere
+  }
+
+  void planPeakCenterNotRelayed() {
+    // No run of the window's going: what a plan's run publishes is not drawn.
+    std::thread plan([this] {
+      sim_->bus.publish(jobs::PeakCenterTryStarted{});
+      sim_->bus.publish(jobs::PeakCenterPoint{});
+    });
+    plan.join();
+    QCoreApplication::processEvents();
+    QVERIFY(pc_events_.empty());
+    QVERIFY(pc_results_.empty());
   }
 };
 
