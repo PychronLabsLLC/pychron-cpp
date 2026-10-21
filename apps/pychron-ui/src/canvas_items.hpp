@@ -183,9 +183,25 @@ class StageItem : public QGraphicsItem {
 
  private:
   std::string name_;
+  struct Layout {
+    QRectF glyph;
+    QRectF room;
+    FittedLabel fitted;
+  };
+  struct Cached {
+    QFont font;
+    QSizeF room;
+    FittedLabel fitted;
+  };
+  // The one place the glyph, the room and the fitted name are worked out:
+  // paint() and fitted_label() both take it. The fit is kept until the font
+  // or the room changes.
+  Layout layout_for(const QFont& font) const;
+
   QString label_;
   QRectF rect_;
   QColor region_;
+  mutable std::optional<Cached> cache_;
   canvas::StageSymbol symbol_ = canvas::StageSymbol::None;
 };
 

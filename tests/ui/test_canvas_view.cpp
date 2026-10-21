@@ -56,6 +56,12 @@ bool hasLockBorder(ui::ValveItem* item) {
 
 }  // namespace
 
+// The text's bounding rect inside the room, to the tolerance fit_label uses.
+bool fitsWithin(const ui::FittedLabel& fitted, const QSizeF& room) {
+  const QRectF used = QFontMetricsF(fitted.font).boundingRect(QRectF(QPointF(0, 0), room), fitted.flags, fitted.text);
+  return used.width() <= room.width() + 0.01 && used.height() <= room.height() + 0.01;
+}
+
 class TestCanvasView : public QObject {
   Q_OBJECT
 
@@ -642,7 +648,7 @@ class TestCanvasView : public QObject {
     QCOMPARE(fitted.text, QString("Jan"));
     QCOMPARE(fitted.font, font);
     QVERIFY(!(fitted.flags & Qt::TextWordWrap));
-    QVERIFY(QRectF(QPointF(0, 0), room).contains(QFontMetricsF(fitted.font).boundingRect(QRectF(QPointF(0, 0), room), fitted.flags, fitted.text)));
+    QVERIFY(fitsWithin(fitted, room));
   }
 
   void aNameWithASpaceWrapsInsteadOfBeingClipped() {
@@ -652,8 +658,7 @@ class TestCanvasView : public QObject {
     const ui::FittedLabel fitted = ui::fit_label(font, "Cocktail Pipette", room);
     QCOMPARE(fitted.text, QString("Cocktail Pipette"));
     QVERIFY(fitted.flags & Qt::TextWordWrap);
-    const QRectF all(QPointF(0, 0), room);
-    QVERIFY(all.contains(QFontMetricsF(fitted.font).boundingRect(all, fitted.flags, fitted.text)));
+    QVERIFY(fitsWithin(fitted, room));
   }
 
   void aLongSingleWordIsShrunkNotElided() {
@@ -663,8 +668,7 @@ class TestCanvasView : public QObject {
     const ui::FittedLabel fitted = ui::fit_label(font, "cocktail_tank", room);
     QCOMPARE(fitted.text, QString("cocktail_tank"));
     QVERIFY(fitted.font.pointSizeF() < font.pointSizeF());
-    const QRectF all(QPointF(0, 0), room);
-    QVERIFY(all.contains(QFontMetricsF(fitted.font).boundingRect(all, fitted.flags, fitted.text)));
+    QVERIFY(fitsWithin(fitted, room));
   }
 
   void aNameNothingCanFitIsElidedLast() {
@@ -678,7 +682,7 @@ class TestCanvasView : public QObject {
       auto* stage = dynamic_cast<ui::StageItem*>(it);
       if (stage == nullptr) continue;
       ++seen;
-      const ui::FittedLabel fitted = stage->fitted_label(QFont());
+      const ui::FittedLabel fitted = stage->fitted_label(view_->scene()->font());
       QCOMPARE(fitted.text, stage->label());
     }
     QVERIFY(seen > 5);

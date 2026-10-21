@@ -388,7 +388,6 @@ FittedLabel fit_label(const QFont& font, const QString& text, const QSizeF& room
   constexpr int kWrapped = Qt::AlignCenter | Qt::TextWordWrap;
   constexpr double kSlack = 0.01;  // metrics are fractional
   const QRectF box(QPointF(0, 0), room);
-  const bool has_space = text.contains(QLatin1Char(' '));
   const auto fits = [&](const QFont& f, int flags) {
     const QRectF used = QFontMetricsF(f).boundingRect(box, flags, text);
     return used.width() <= room.width() + kSlack && used.height() <= room.height() + kSlack;
@@ -396,14 +395,19 @@ FittedLabel fit_label(const QFont& font, const QString& text, const QSizeF& room
   if (fits(font, kOneLine)) {
     return {font, text, kOneLine};
   }
-  if (has_space && fits(font, kWrapped)) {
+  if (fits(font, kWrapped)) {
     return {font, text, kWrapped};
   }
   // Font sizes round, so step down until the name fits.
   QFont shrunk = font;
   constexpr double kFloor = 0.3;
-  for (int step = 1; std::pow(0.95, step) > kFloor; ++step) {
-    const double ratio = std::pow(0.95, step);
+  // Start where the name on one line would just fit; a name that can wrap
+  // may fit larger than that, so it starts at the first step below full size.
+  const double natural = QFontMetricsF(font).horizontalAdvance(text);
+  const bool can_wrap = text.contains(QLatin1Char(' ')) || text.contains(QLatin1Char('-'));
+  const double start = can_wrap || natural <= 0 ? 0.95 : std::min(0.95, room.width() / natural);
+  for (int step = 0; start * std::pow(0.95, step) > kFloor; ++step) {
+    const double ratio = start * std::pow(0.95, step);
     if (font.pointSizeF() > 0) {
       shrunk.setPointSizeF(font.pointSizeF() * ratio);
     } else {
@@ -412,7 +416,7 @@ FittedLabel fit_label(const QFont& font, const QString& text, const QSizeF& room
     if (fits(shrunk, kOneLine)) {
       return {shrunk, text, kOneLine};
     }
-    if (has_space && fits(shrunk, kWrapped)) {
+    if (fits(shrunk, kWrapped)) {
       return {shrunk, text, kWrapped};
     }
   }
@@ -462,23 +466,15 @@ void StageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   painter->setPen(QPen(theme().text, 1));
   painter->setBrush(region_);
   painter->drawRoundedRect(rect_, radius, radius);
-  const QSizeF label = painter->fontMetrics().size(Qt::TextSingleLine, label_);
-  const QRectF glyph = symbol_rect(label);
-  const QRectF inner = rect_.adjusted(kSymbolPad, kSymbolPad, -kSymbolPad, -kSymbolPad);
-  if (glyph.isEmpty()) {
-    const FittedLabel fitted = fit_label(painter->font(), label_, inner.size());
-    painter->save();
-    painter->setFont(fitted.font);
-    painter->drawText(inner, fitted.flags, fitted.text);
-    painter->restore();
+  const Layout layout = layout_for(painter->font());
+  painter->save();
+  painter->setFont(layout.fitted.font);
+  painter->drawText(layout.room, layout.fitted.flags, layout.fitted.text);
+  painter->restore();
+  if (layout.glyph.isEmpty()) {
     return;
   }
-  const FittedLabel fitted = fitted_label(painter->font());
-  painter->save();
-  painter->setFont(fitted.font);
-  painter->drawText(label_room(glyph), fitted.flags, fitted.text);
-  painter->restore();
-  paint_symbol(*painter, symbol_, glyph, region_);
+  paint_symbol(*painter, symbol_, layout.glyph, region_);
 }
 
 QRectF StageItem::label_room(const QRectF& glyph) const {
@@ -493,10 +489,17 @@ QRectF StageItem::label_room(const QRectF& glyph) const {
   return {left, inner.top(), inner.right() - left, inner.height()};
 }
 
-FittedLabel StageItem::fitted_label(const QFont& font) const {
+StageItem::Layout StageItem::layout_for(const QFont& font) const {
   const QSizeF label = QFontMetricsF(font).size(Qt::TextSingleLine, label_);
-  return fit_label(font, label_, label_room(symbol_rect(label)).size());
+  const QRectF glyph = symbol_rect(label);
+  const QRectF room = label_room(glyph);
+  if (!cache_ || cache_->font != font || cache_->room != room.size()) {
+    cache_ = Cached{font, room.size(), fit_label(font, label_, room.size())};
+  }
+  return {glyph, room, cache_->fitted};
 }
+
+FittedLabel StageItem::fitted_label(const QFont& font) const { return layout_for(font).fitted; }
 
 void StageItem::set_symbol(canvas::StageSymbol symbol) {
   if (symbol != symbol_) {
