@@ -127,6 +127,7 @@ class FigureWindow : public QMainWindow {
   QLabel* status_;
   QDockWidget* r_values_dock_ = nullptr;
   RValuesPanel* r_values_ = nullptr;
+  bool r_values_shown_ = false;  // had tables last run: a dock the user closed stays closed
   QTimer debounce_;
   int runs_ = 0;
   std::optional<QString> shown_limits_;  // of the scene in the view; nullopt before the first

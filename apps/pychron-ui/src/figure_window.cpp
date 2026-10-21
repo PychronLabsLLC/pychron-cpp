@@ -249,6 +249,7 @@ void FigureWindow::on_result(const PipelineResult& r) {
     status_->setText(tr("Error: %1").arg(what));
     view_->set_scene(nullptr);
     if (r_values_dock_) r_values_dock_->hide();
+    r_values_shown_ = false;
     emit figure_updated();
     return;
   }
@@ -272,17 +273,19 @@ void FigureWindow::on_result(const PipelineResult& r) {
 void FigureWindow::update_r_values() {
   if (!r_values_) return;
   const auto& options = pipeline_.find(kFigure)->options;
-  if (!dataset_ || !options.get_bool("show_rvalues")) {
-    r_values_dock_->hide();
-    return;
+  bool tables = false;
+  if (dataset_ && options.get_bool("show_rvalues")) {
+    if (auto matrices = pp::r_value_matrices(*dataset_, options)) {
+      r_values_->set_matrices(std::move(*matrices), options);
+      tables = r_values_->has_tables();
+    }
   }
-  auto matrices = pp::r_value_matrices(*dataset_, options);
-  if (!matrices) {
+  // Opened when there come to be tables; after that, left as the user has it.
+  if (!tables)
     r_values_dock_->hide();
-    return;
-  }
-  r_values_->set_matrices(std::move(*matrices), options);
-  r_values_dock_->setVisible(r_values_->has_tables());
+  else if (!r_values_shown_)
+    r_values_dock_->show();
+  r_values_shown_ = tables;
 }
 
 // "<plot type> — <sample> (<identifier>)", and how many more identifiers

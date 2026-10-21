@@ -2412,6 +2412,21 @@ class TestDataWindows : public QObject {
       QCOMPARE(t->columnCount(), 2);
     }
 
+    // Closed by the user, the dock stays closed across reruns; turning the
+    // option off and on again brings it back.
+    w.r_values_dock()->close();
+    w.set_graph_key(QStringLiteral("none"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(!w.r_values_dock()->isVisible());
+    QVERIFY(o.set("show_rvalues", false).has_value());
+    w.set_figure_options(o);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(!w.r_values_dock()->isVisible());
+    QVERIFY(o.set("show_rvalues", true).has_value());
+    w.set_figure_options(o);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(w.r_values_dock()->isVisible());
+
     FigureWindow series(bridge, presets, ids);
     QVERIFY(!series.r_values_dock());
     QVERIFY(!series.r_values_panel());
