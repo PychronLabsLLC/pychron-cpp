@@ -195,6 +195,7 @@ class SpectrometerBridge : public QObject {
   void on_detector(const spectrometer::DetectorState& e);
   void on_scan(const spectrometer::ScanStatus& e);
   void on_table_changed(const spectrometer::FieldTableChanged& e);
+  void start_peak_center_thread(jobs::PeakCenterConfig config);
   void flush_peak_center_events();
   void on_peak_center_finished(const Result<jobs::PeakCenterResult>& result);
   // Waits through the clock for the run's thread to say it is done, then
@@ -215,6 +216,8 @@ class SpectrometerBridge : public QObject {
   std::unique_ptr<PeakCenterRun> peak_center_run_;  // until the run's thread is joined
   std::thread peak_center_thread_;
   bool peak_center_running_ = false;  // main thread
+  // Integration (s) of the scan the run stopped; set while it must be restarted.
+  std::optional<double> resume_integration_s_;
 };
 
 }  // namespace pychron::ui

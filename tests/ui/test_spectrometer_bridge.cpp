@@ -715,6 +715,90 @@ class TestSpectrometerBridge : public QObject {
     QVERIFY(pc_results_.empty());  // the result went nowhere
   }
 
+  // ---- live scan paused around the run (section 4.3) ----
+
+  // Starts the scan at 0.5 s and waits until it is running.
+  void start_scan_on_virtual_clock() {
+    bridge_->start_scan(0.5);
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    QCOMPARE(bridge_->state().scan.integration, Duration(500ms));
+  }
+
+  void peakCenterPausesAndResumesScan() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
+    auto stop = stop_time_at_first_point();
+    auto config = long_config();
+    config.integration = 1s;  // for the run only
+    bridge_->peak_center(config);
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    QVERIFY(bridge_->peak_center_running());
+    QVERIFY(!sim_->scan->status().running);
+    QTRY_VERIFY_WITH_TIMEOUT(!bridge_->state().scan.running, kWaitMs);
+
+    bridge_->cancel_peak_center();  // ends the run early; the scan must come back all the same
+    restart_time();
+    QVERIFY(finished.count() == 1 || finished.wait(kWaitMs));
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    QCOMPARE(bridge_->state().scan.integration, Duration(500ms));
+  }
+
+  void completedPeakCenterResumesScan() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    auto config = ar40_config();
+    config.integration = 1s;
+    bridge_->peak_center(config);
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(pc_results_[0].has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    QCOMPARE(bridge_->state().scan.integration, Duration(500ms));
+  }
+
+  void cancelResumesScan() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    const auto table_before = bridge_->table_copy(bridge_->active_table());
+    auto stop = stop_time_at_first_point();
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    QVERIFY(!sim_->scan->status().running);
+    bridge_->cancel_peak_center();
+    restart_time();
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    QCOMPARE(pc_results_[0].error().kind, ErrorKind::Cancelled);
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    QCOMPARE(bridge_->state().scan.integration, Duration(500ms));
+    QVERIFY(bridge_->table_copy(bridge_->active_table()) == table_before);
+  }
+
+  void stopDuringPeakCenterKeepsScanStopped() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    auto stop = stop_time_at_first_point();
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    bridge_->stop_scan();
+    bridge_->cancel_peak_center();
+    restart_time();
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QVERIFY(!bridge_->state().scan.running);
+    QVERIFY(!sim_->scan->status().running);
+  }
+
+  void peakCenterWithoutScanStartsNoScan() {
+    use_virtual_clock();
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QVERIFY(!bridge_->state().scan.running);
+    QVERIFY(!sim_->scan->status().running);
+  }
+
   void planPeakCenterNotRelayed() {
     // No run of the window's going: what a plan's run publishes is not drawn.
     std::thread plan([this] {

@@ -338,6 +338,26 @@ void SpectrometerBridge::peak_center(jobs::PeakCenterConfig config) {
     gate_->peak_center_events.clear();
   }
   peak_center_run_ = std::make_unique<PeakCenterRun>();
+  resume_integration_s_.reset();
+  if (!state_.scan.running) {
+    start_peak_center_thread(std::move(config));
+    return;
+  }
+  // The scan is stopped on the executor first, and the thread (which moves the
+  // magnet) starts only once that has completed. A cancel meanwhile is seen by
+  // the run as soon as it starts.
+  resume_integration_s_ = std::chrono::duration<double>(state_.scan.integration).count();
+  post(
+      [scan = &scan_]() -> Result<void> {
+        scan->stop();
+        return Result<void>{};
+      },
+      [config = std::move(config)](SpectrometerBridge& self, const Result<void>&) mutable {
+        self.start_peak_center_thread(std::move(config));
+      });
+}
+
+void SpectrometerBridge::start_peak_center_thread(jobs::PeakCenterConfig config) {
   // Time does not jump between the start and the thread's Participant.
   auto hold = std::make_shared<Clock::Hold>(spec_.clock());
   peak_center_thread_ = std::thread([state = peak_center_run_.get(), spec = &spec_, bus = &bus_, gate = gate_,
@@ -411,6 +431,12 @@ void SpectrometerBridge::on_peak_center_finished(const Result<jobs::PeakCenterRe
   }
   join_peak_center();
   peak_center_running_ = false;
+  // Whatever the outcome, the scan the run stopped goes on, unless the operator
+  // pressed Stop scan meanwhile.
+  const auto resume = std::exchange(resume_integration_s_, std::nullopt);
+  if (resume && !stop_requested_) {
+    start_scan(*resume);
+  }
   emit peakCenterFinished(result);
 }
 
