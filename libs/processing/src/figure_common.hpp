@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -69,5 +70,12 @@ Result<Scene> build_isochron_scene(const Dataset& dataset, const Options& option
 
 std::string mean_text(const std::string& prefix, double value, double error, const reduction::Mean* stats,
                       std::size_t n_total, const MeanTextOptions& t, const std::string& units = {});
+
+// The mean of one group as the ideogram shows it: "mean" (weighted or
+// arithmetic) and "error_kind" (msem when unreadable) of the figure options.
+// The ideogram and the R-value matrix (r_values.hpp) both use it, so the two
+// cannot disagree.
+Result<reduction::Mean> group_mean(std::span<const double> values, std::span<const double> errors,
+                                   const Options& figure_options);
 
 }  // namespace pychron::processing::detail

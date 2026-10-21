@@ -18,6 +18,14 @@ const std::vector<std::string> kCorners{"top_left", "top_right", "bottom_left", 
 
 const std::vector<std::string>& corner_choices() { return kCorners; }
 
+Result<reduction::Mean> group_mean(std::span<const double> values, std::span<const double> errors,
+                                   const Options& figure_options) {
+  const auto kind =
+      reduction::parse_mean_error_kind(figure_options.get_string("error_kind")).value_or(reduction::MeanErrorKind::Msem);
+  return figure_options.get_string("mean") == "weighted" ? reduction::weighted_mean(values, errors, kind)
+                                                          : reduction::arithmetic_mean(values, errors, kind);
+}
+
 std::string format_sig(double v, int sig) {
   char buf[64];
   std::snprintf(buf, sizeof buf, "%.*g", std::max(1, sig), v);

@@ -131,7 +131,6 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
   apply_common_style(o, scene);
   const int nsigma = std::max<int>(1, static_cast<int>(o.get_int("error_bar_nsigma")));
   const bool hide_excluded = o.get_string("excluded_style") == "hidden";
-  const auto ek = r::parse_mean_error_kind(o.get_string("error_kind")).value_or(r::MeanErrorKind::Msem);
   const bool weighted = o.get_string("mean") == "weighted";
   const Corner stats_corner = parse_corner(o.get_string("statistics_location")).value_or(Corner::TopLeft);
   MeanTextOptions mt;
@@ -195,7 +194,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
         vs.push_back(x.v);
         es.push_back(x.e);
       }
-      auto m = weighted ? r::weighted_mean(vs, es, ek) : r::arithmetic_mean(vs, es, ek);
+      auto m = group_mean(vs, es, o);
       if (m) {
         gd.mean = *m;
         gd.mean_error = m->error;
