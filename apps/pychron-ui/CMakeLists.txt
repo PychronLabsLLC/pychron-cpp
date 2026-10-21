@@ -73,6 +73,7 @@ add_library(pychron_ui_lib STATIC
   src/rise_rate.cpp
   src/rise_rate_panel.cpp
   src/figure_window.cpp
+  src/r_values_panel.cpp
   src/reference_fit_window.cpp
   src/reference_series.cpp
   src/reference_series_dock.cpp
@@ -168,6 +169,7 @@ add_library(pychron_ui_lib STATIC
   src/rise_rate.hpp
   src/rise_rate_panel.hpp
   src/figure_window.hpp
+  src/r_values_panel.hpp
   src/reference_fit_window.hpp
   src/reference_series.hpp
   src/reference_series_dock.hpp

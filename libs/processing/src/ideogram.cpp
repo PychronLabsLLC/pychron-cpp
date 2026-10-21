@@ -78,6 +78,8 @@ SchemaPtr build_schema() {
       boolean("show_n", "n", "Display", true),
       boolean("show_original_curve", "Curve with excluded analyses (dashed)", "Display", true),
       boolean("fill_curve", "Fill curve", "Display", false),
+      boolean("show_rvalues", "R-values table", "Display", false,
+              "Ratio of every group's mean F to every other group's, under the figure"),
   };
   for (auto& f : common_figure_fields()) s->fields.push_back(std::move(f));
   ListSpec panels;

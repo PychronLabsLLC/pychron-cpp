@@ -44,6 +44,8 @@
 #include "theme.hpp"
 #include "data_workspace.hpp"
 #include "figure_window.hpp"
+#include "pychron/processing/r_values.hpp"
+#include "r_values_panel.hpp"
 #include "main_window.hpp"
 #include "options_editor.hpp"
 #include "processing_bridge.hpp"
@@ -2349,6 +2351,70 @@ class TestDataWindows : public QObject {
       else QCOMPARE(colour(row), curves.at(it.path.group));
       ++row;
     }
+  }
+
+  // R-values: off by default; on, one table per graph with two groups or
+  // more, the note under them, and a CSV export. Only ideograms have them.
+  void ideogram_r_values_panel() {
+    QTemporaryDir dir;
+    auto src = make_aliquots();
+    ProcessingBridge bridge(*src);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
+    FigureWindow w(bridge, presets, "ideogram", ids);
+    w.resize(1200, 900);
+    w.show();
+    int runs = 0;
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(w.r_values_dock());
+    QVERIFY(w.r_values_panel());
+    QVERIFY(!w.r_values_dock()->isVisible());
+
+    auto o = w.pipeline().find("figure")->options;
+    QVERIFY(o.set("show_rvalues", true).has_value());
+    w.set_figure_options(o);
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(w.r_values_dock()->isVisible());
+    auto tables = w.r_values_panel()->tables();
+    QCOMPARE(tables.size(), 1);
+    QCOMPARE(tables[0]->rowCount(), 4);
+    QCOMPARE(tables[0]->columnCount(), 4);
+    QVERIFY(tables[0]->item(0, 1)->text().contains(QStringLiteral(" \u00b1 ")));
+    QVERIFY(!tables[0]->item(0, 0) || tables[0]->item(0, 0)->text().isEmpty());
+    QCOMPARE(w.r_values_panel()->note_text(), QString::fromUtf8(pp::kRValueNote.data(),
+                                                                static_cast<qsizetype>(pp::kRValueNote.size())));
+
+    const QString csv = dir.path() + QStringLiteral("/r.csv");
+    QVERIFY(w.r_values_panel()->export_csv(csv));
+    QFile f(csv);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QStringList lines = QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(lines.size(), 2 + 12);
+    QVERIFY(lines[0].startsWith(QStringLiteral("# Uncertainties")));
+    QCOMPARE(lines[1], QStringLiteral("graph,numerator,denominator,f_num,f_num_err,f_den,f_den_err,r,r_err,mean,error_kind"));
+
+    // A graph per group: no graph has two groups, nothing to show.
+    w.set_graph_key(FigureWindow::same_as_group());
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(!w.r_values_dock()->isVisible());
+
+    // The aliquots of a sample on one graph: four tables of two groups.
+    w.set_group_key(QStringLiteral("aliquot"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    w.set_graph_key(QStringLiteral("sample"));
+    QVERIFY(wait_runs(w, bridge, ++runs));
+    QVERIFY(w.r_values_dock()->isVisible());
+    tables = w.r_values_panel()->tables();
+    QCOMPARE(tables.size(), 4);
+    for (auto* t : tables) {
+      QCOMPARE(t->rowCount(), 2);
+      QCOMPARE(t->columnCount(), 2);
+    }
+
+    FigureWindow series(bridge, presets, ids);
+    QVERIFY(!series.r_values_dock());
+    QVERIFY(!series.r_values_panel());
   }
 
   // The view is kept across a rerun (so that leaving a point out does not

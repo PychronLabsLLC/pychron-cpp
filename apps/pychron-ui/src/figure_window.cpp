@@ -22,8 +22,10 @@
 
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
+#include "r_values_panel.hpp"
 #include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/quantity.hpp"
+#include "pychron/processing/r_values.hpp"
 #include "pychron/processing/report.hpp"
 #include "scene_view.hpp"
 
@@ -178,6 +180,16 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   status_ = new QLabel;
   statusBar()->addWidget(status_, 1);
 
+  if (kind_ == "ideogram") {
+    r_values_dock_ = new QDockWidget(tr("R-values"), this);
+    r_values_dock_->setObjectName(QStringLiteral("r_values"));
+    r_values_ = new RValuesPanel;
+    r_values_dock_->setWidget(r_values_);
+    addDockWidget(Qt::BottomDockWidgetArea, r_values_dock_);
+    splitDockWidget(adock, r_values_dock_, Qt::Horizontal);  // beside the analyses, not a tab
+    r_values_dock_->hide();
+  }
+
   debounce_.setSingleShot(true);
   debounce_.setInterval(150);
   connect(&debounce_, &QTimer::timeout, this, &FigureWindow::run);
@@ -236,6 +248,7 @@ void FigureWindow::on_result(const PipelineResult& r) {
     const QString what = r.outputs.empty() ? tr("nothing computed") : qs(to_string(r.outputs[0].error()));
     status_->setText(tr("Error: %1").arg(what));
     view_->set_scene(nullptr);
+    if (r_values_dock_) r_values_dock_->hide();
     emit figure_updated();
     return;
   }
@@ -252,7 +265,24 @@ void FigureWindow::on_result(const PipelineResult& r) {
   status_->setText(tr("%1 analyses · %2 s").arg(n).arg(r.seconds, 0, 'f', 2) +
                    (warnings.isEmpty() ? QString() : tr(" · %n warning(s)", nullptr, static_cast<int>(warnings.size()))));
   status_->setToolTip(warnings.join(QLatin1Char('\n')));
+  update_r_values();
   emit figure_updated();
+}
+
+void FigureWindow::update_r_values() {
+  if (!r_values_) return;
+  const auto& options = pipeline_.find(kFigure)->options;
+  if (!dataset_ || !options.get_bool("show_rvalues")) {
+    r_values_dock_->hide();
+    return;
+  }
+  auto matrices = pp::r_value_matrices(*dataset_, options);
+  if (!matrices) {
+    r_values_dock_->hide();
+    return;
+  }
+  r_values_->set_matrices(std::move(*matrices), options);
+  r_values_dock_->setVisible(r_values_->has_tables());
 }
 
 // "<plot type> — <sample> (<identifier>)", and how many more identifiers

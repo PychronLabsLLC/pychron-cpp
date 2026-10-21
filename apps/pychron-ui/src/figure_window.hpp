@@ -27,6 +27,7 @@
 #include "scene_view.hpp"
 
 class QComboBox;
+class QDockWidget;
 class QLabel;
 class QTableWidget;
 
@@ -34,6 +35,7 @@ namespace pychron::ui {
 
 class OptionsEditor;
 class PresetBar;
+class RValuesPanel;
 
 class FigureWindow : public QMainWindow {
   Q_OBJECT
@@ -87,6 +89,10 @@ class FigureWindow : public QMainWindow {
   QComboBox* group_combo() const noexcept { return group_; }
   QComboBox* graph_combo() const noexcept { return graph_; }
   QTableWidget* analyses_table() const noexcept { return analyses_; }
+  // The R-values of an ideogram (null for other kinds): the dock shows when
+  // the "show_rvalues" option is set and some graph has two groups or more.
+  QDockWidget* r_values_dock() const noexcept { return r_values_dock_; }
+  RValuesPanel* r_values_panel() const noexcept { return r_values_; }
   QLabel* status_label() const noexcept { return status_; }
   int runs_completed() const noexcept { return runs_; }
   const processing::DatasetPtr& dataset() const noexcept { return dataset_; }
@@ -101,6 +107,7 @@ class FigureWindow : public QMainWindow {
   void on_result(const PipelineResult& r);
   void fill_analyses();
   void update_title();
+  void update_r_values();
   void apply_graph_key();  // the graph unit's key from the two combos
   static QString limits_of(const processing::Options& options);
 
@@ -118,6 +125,8 @@ class FigureWindow : public QMainWindow {
   QComboBox* graph_;
   QTableWidget* analyses_;
   QLabel* status_;
+  QDockWidget* r_values_dock_ = nullptr;
+  RValuesPanel* r_values_ = nullptr;
   QTimer debounce_;
   int runs_ = 0;
   std::optional<QString> shown_limits_;  // of the scene in the view; nullopt before the first
