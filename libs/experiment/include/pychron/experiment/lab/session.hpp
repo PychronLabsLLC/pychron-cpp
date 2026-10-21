@@ -159,6 +159,9 @@ class LabSession {
   Result<void> check_saves(const QueueSpec& will_run);
 
   const Lab& lab_;
+  // The lab's named peak-center configs as of the last queue start (the file
+  // can change between queues); under mutex_.
+  std::map<std::string, jobs::PeakCenterConfig> peak_centers_;
   SessionHardware hardware_;
   SessionOptions options_;
   std::unique_ptr<Lasers> own_lasers_;  // when none were given

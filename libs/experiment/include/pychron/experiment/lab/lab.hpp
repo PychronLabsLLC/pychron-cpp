@@ -155,7 +155,15 @@ struct LabCheck {
 // could not load, a camera table that did not load, a tray that is not
 // calibrated for the device (field "extraction"; an unknown tray is
 // queue-level, field "tray").
-LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue);
+//
+// `peak_centers` stands in for lab.peak_centers when given: a session that
+// reads peak_center.toml again when a queue starts checks against what it read.
+LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue,
+                         const std::map<std::string, jobs::PeakCenterConfig>* peak_centers = nullptr);
+
+// The named peak-center configs of one file. A missing file is an empty map; a
+// file that does not parse is the parser's error, which names the file.
+Result<std::map<std::string, jobs::PeakCenterConfig>> read_peak_center_file(const std::filesystem::path& file);
 
 // "runs[3].plan: unknown plan 'x'", "queue.delays: ...", "lab: ...".
 std::string describe(const Diagnostic& d);

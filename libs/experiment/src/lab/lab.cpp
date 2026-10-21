@@ -145,11 +145,8 @@ Lab load_lab(const LabPaths& paths) {
   lab.conditionals = std::make_unique<ConditionalLibrary>(*lab.condition_source);
   lab.condition_files = std::make_unique<ConditionalFiles>(dir / "conditionals");
   lab.condition_names = std::make_unique<LabConditionals>(*lab.condition_source);
-  if (fs::exists(dir / "peak_center.toml", ec)) {
-    auto pc = jobs::parse_peak_center_configs(read_text(dir / "peak_center.toml"), (dir / "peak_center.toml").string());
-    if (pc) lab.peak_centers = std::move(*pc);
-    else lab.problems.push_back(pc.error().what);
-  }
+  if (auto pc = read_peak_center_file(dir / "peak_center.toml")) lab.peak_centers = std::move(*pc);
+  else lab.problems.push_back(pc.error().what);
   if (fs::exists(dir / "defaults.toml", ec)) {
     auto d = DefaultsTable::load((dir / "defaults.toml").string());
     if (d) lab.defaults = std::move(*d);
@@ -304,7 +301,15 @@ void check_extraction(const Lab& lab, const QueueSpec& queue, std::vector<Diagno
 
 }  // namespace
 
-LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
+Result<std::map<std::string, jobs::PeakCenterConfig>> read_peak_center_file(const fs::path& file) {
+  std::error_code ec;
+  if (!fs::exists(file, ec)) return std::map<std::string, jobs::PeakCenterConfig>{};
+  return jobs::parse_peak_center_configs(read_text(file), file.string());
+}
+
+LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue,
+                         const std::map<std::string, jobs::PeakCenterConfig>* peak_centers) {
+  const auto& sets = peak_centers != nullptr ? *peak_centers : lab.peak_centers;
   LabCheck out;
   for (const auto& p : lab.problems) out.extra.push_back({Severity::Error, -1, "lab", p});
   out.report = check_queue(queue, lab.ids, lab.resolvers());
@@ -327,7 +332,7 @@ LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue) {
       for (const auto& seg : gas.segments) {
         if (!seg.peak_center) continue;
         const auto& config = seg.peak_center->config;
-        if (config == "default" || lab.peak_centers.contains(config)) continue;
+        if (config == "default" || sets.contains(config)) continue;
         if (reported.insert("peak_center:" + config).second) {
           out.extra.push_back({Severity::Error, row, "peak_center",
                                "plan " + r.measurement.plan + " uses peak center config '" + config +

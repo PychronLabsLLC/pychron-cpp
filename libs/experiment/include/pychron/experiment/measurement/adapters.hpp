@@ -161,6 +161,10 @@ class SpectrometerPeakCenter final : public IPeakCenterPort {
   Result<PeakCenterReport> peak_center(const PeakCenterRequest& request, scripting::CancelToken& token) override;
   void drop_run_tables() override;
 
+  // Replaces the named configs; a peak center already running keeps the one
+  // it started with.
+  void set_configs(std::map<std::string, jobs::PeakCenterConfig> configs);
+
   // Full result of the last peak center (points, shapes), for display.
   std::optional<jobs::PeakCenterResult> last() const;
 
@@ -168,7 +172,7 @@ class SpectrometerPeakCenter final : public IPeakCenterPort {
   Result<jobs::PeakCenterConfig> config_for(const PeakCenterRequest& request) const;
 
   spectrometer::Spectrometer& spec_;
-  std::map<std::string, jobs::PeakCenterConfig> configs_;
+  std::map<std::string, jobs::PeakCenterConfig> configs_;  // under mutex_
   jobs::JobRunner* runner_;
   jobs::PeakCenterOptions options_;
   mutable std::mutex mutex_;

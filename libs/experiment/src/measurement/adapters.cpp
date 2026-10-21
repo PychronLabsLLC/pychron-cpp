@@ -204,10 +204,13 @@ std::vector<std::string> table_names(const spectrometer::cfg::SpectrometerData& 
 Result<jobs::PeakCenterConfig> SpectrometerPeakCenter::config_for(const PeakCenterRequest& request) const {
   const std::string name = request.config.empty() ? "default" : request.config;
   jobs::PeakCenterConfig cfg;
-  if (auto it = configs_.find(name); it != configs_.end()) {
-    cfg = it->second;
-  } else if (name != "default") {
-    return fail(ErrorKind::Config, "unknown peak center config '" + name + "'");
+  {
+    std::lock_guard lock(mutex_);
+    if (auto it = configs_.find(name); it != configs_.end()) {
+      cfg = it->second;
+    } else if (name != "default") {
+      return fail(ErrorKind::Config, "unknown peak center config '" + name + "'");
+    }
   }
   if (!request.isotope.empty()) cfg.isotope = request.isotope;
   if (!request.detector.empty()) cfg.detector = request.detector;
@@ -296,6 +299,11 @@ Result<PeakCenterReport> SpectrometerPeakCenter::peak_center(const PeakCenterReq
   report.table_updated = result->table_updated;
   if (result->shape) report.resolution = result->shape->resolution;
   return report;
+}
+
+void SpectrometerPeakCenter::set_configs(std::map<std::string, jobs::PeakCenterConfig> configs) {
+  std::lock_guard lock(mutex_);
+  configs_ = std::move(configs);
 }
 
 void SpectrometerPeakCenter::drop_run_tables() {

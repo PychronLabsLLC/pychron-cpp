@@ -127,7 +127,7 @@ struct LabSession::Services {
 };
 
 LabSession::LabSession(const Lab& lab, SessionHardware hardware, SessionOptions options)
-    : lab_(lab), hardware_(hardware), options_(std::move(options)) {
+    : lab_(lab), peak_centers_(lab.peak_centers), hardware_(std::move(hardware)), options_(std::move(options)) {
   if (options_.executor.state_file.empty()) options_.executor.state_file = options_.data / "executor_state.json";
   {
     // executor.toml [hold] (spec 4.10).
@@ -173,6 +173,15 @@ bool LabSession::has_spectrometer() const noexcept { return hardware_.spectromet
 
 Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   if (running()) return fail(ErrorKind::Config, "a queue is already running", "experiment");
+  // A set saved since the last queue (the spectrometer window's) is seen by
+  // this one; a file that does not parse refuses the start.
+  {
+    auto sets = read_peak_center_file(lab_.paths.dir / "peak_center.toml");
+    if (!sets) return fail(ErrorKind::Config, sets.error().what, "experiment");
+    if (services_->peak_center) services_->peak_center->set_configs(*sets);
+    std::lock_guard lock(mutex_);
+    peak_centers_ = std::move(*sets);
+  }
   if (auto ok = check(queue); !ok) return ok;
   // Of what will run: the rows before `from_row` are not, and what the
   // persister already holds of them is no reason to refuse the rest.
@@ -237,7 +246,12 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
 }
 
 Result<void> LabSession::check(const QueueSpec& queue) const {
-  const auto c = check_lab_queue(lab_, queue);
+  std::map<std::string, jobs::PeakCenterConfig> sets;
+  {
+    std::lock_guard lock(mutex_);
+    sets = peak_centers_;
+  }
+  const auto c = check_lab_queue(lab_, queue, &sets);
   if (c.ok()) return {};
   int errors = 0;
   std::string first;

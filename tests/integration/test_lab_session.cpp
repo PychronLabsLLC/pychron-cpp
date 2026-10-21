@@ -1155,6 +1155,60 @@ TEST_F(LabSessionTest, ADragonflyRunFollowsTheGrainAndLeavesTheLaserOff) {
   EXPECT_DOUBLE_EQ(sim.output(), 0);
 }
 
+// A plan that names a peak center config the lab file lacks at load time. The
+// session reads peak_center.toml again when a queue starts, so a set saved
+// meanwhile (the spectrometer window's) is the one the plan gets.
+class NamedPeakCenterSessionTest : public LabSessionTest {
+ protected:
+  void prepare_lab() override {
+    const fs::path plan = dir_ / "plans" / "sim_multicollect.toml";
+    std::ifstream in(plan);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::string s = text.str();
+    const auto at = s.find("config = \"default\"");
+    ASSERT_NE(at, std::string::npos);
+    s.replace(at, std::string_view("config = \"default\"").size(), "config = \"tuned\"");
+    std::ofstream(plan, std::ios::trunc) << s;
+  }
+  void write_peak_centers(std::string_view text) {
+    std::ofstream(dir_ / "peak_center.toml", std::ios::app) << text;
+  }
+};
+
+TEST_F(NamedPeakCenterSessionTest, ASetAddedAfterLoadIsUsedAtTheNextStart) {
+  write_peak_centers("\n[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
+                     "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n");
+  std::mutex m;
+  std::vector<jobs::PeakCenterConfig> used;
+  auto sub = line_->bus().subscribe<jobs::PeakCenterDone>([&](const jobs::PeakCenterDone& d) {
+    std::lock_guard lock(m);
+    used.push_back(d.result.config);
+  });
+  const auto started = session_->start(queue_);
+  ASSERT_TRUE(started) << started.error().what;
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  std::lock_guard lock(m);
+  ASSERT_FALSE(used.empty());
+  for (const auto& c : used) {
+    EXPECT_EQ(c.name, "tuned");
+    EXPECT_DOUBLE_EQ(c.window, 0.07);
+  }
+}
+
+TEST_F(NamedPeakCenterSessionTest, ABadPeakCenterFileRefusesTheStart) {
+  write_peak_centers("\n[x]\nwindow = -1\n");
+  const auto started = session_->start(queue_);
+  ASSERT_FALSE(started);
+  EXPECT_EQ(started.error().kind, ErrorKind::Config);
+  EXPECT_NE(started.error().what.find("peak_center.toml"), std::string::npos) << started.error().what;
+  // The file's own error, not the plan's missing set.
+  EXPECT_EQ(started.error().what.find("uses peak center config"), std::string::npos) << started.error().what;
+  EXPECT_FALSE(session_->running());
+}
+
 // A dragonfly that cannot run (here: a look of less than a pixel) is refused
 // when the script starts it, with the beam already on: the run fails and the
 // laser does not stay on.
