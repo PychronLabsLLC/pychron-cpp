@@ -74,14 +74,19 @@ spec.update_table(detector, isotope, table_value, propagate);
 spec.save_table(spec.clock().wall_now());
 ```
 
-Same calls, so table after Apply equals table after `update_table = true` run
-with same fit. Save failure: in-memory table kept, failure reported (same as
+One helper does both, used by runner's `update_table` branch and by Apply:
+`Result<std::vector<std::string>> write_peak_center_to_table(Spectrometer&,
+const DetectorId&, const std::string& isotope, double table_value, bool
+propagate, bool save)` (returns notes). Same calls, so table after Apply
+equals table after `update_table = true` run with same fit. Save failure: in-memory table kept, failure reported (same as
 runner's note "field table not saved: <why>"). No `position` afterwards:
 magnet already at fitted centre.
 
 ### 3.4 Sets re-read at queue start
 
-`LabSession::start` reads `lab.dir / "peak_center.toml"` before `check(queue)`:
+`LabSession::start` reads `lab.paths.dir / "peak_center.toml"` (through new
+`lab::read_peak_center_file`, also used by `load_lab`) before `check(queue)`;
+`check_lab_queue` takes optional map, null = `lab.peak_centers`:
 
 - File absent: empty map (plans fall back to `default`, as today).
 - Parse or validate error: `start` fails, `ErrorKind::Config`, message names
@@ -117,6 +122,9 @@ void peakCenterPoint(const pychron::jobs::PeakCenterPoint& e);            // rel
 void peakCenterFinished(const pychron::Result<pychron::jobs::PeakCenterResult>& result);
 void peakCenterApplied(const pychron::Result<void>& result);
 void peakCenterSetSaved(const QString& name, const pychron::Result<void>& result);
+void peakCenterNote(const QString& note);  // e.g. "field table not saved: <why>" after Apply
+
+bool valid_set_name(const QString& name);  // free function: [A-Za-z0-9_-]+
 ```
 
 `PeakCenterDone` on bus not relayed separately: `peakCenterFinished` carries
@@ -170,7 +178,9 @@ Existing name overwritten only after window asked (5.2).
 
 ### 5.1 Docks
 
-- "Peak center" dock, tabbed with Controls dock. Contents 5.2.
+- "Peak center" dock, tabbed with Controls dock, holding new
+  `PeakCenterPanel` widget (`apps/pychron-ui/src/peak_center_panel.{hpp,cpp}`,
+  keeps `spectrometer_window.cpp` from growing). Contents 5.2.
 - "Peak center plot" dock: `PeakCenterView` (`peak_center_view.hpp`), placed
   beside strip chart, both visible. Cleared at each Start; tries drawn as
   today (faint earlier tries); last result stays until next Start.
