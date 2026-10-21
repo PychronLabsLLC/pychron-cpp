@@ -72,6 +72,13 @@ struct RValueMatrix {
 // cannot read; a group without F is a GroupF::error, not a failure.
 Result<std::vector<RValueMatrix>> r_value_matrices(const Dataset& dataset, const Options& ideogram_options);
 
+// "1.234568 ± 0.002000": value, nsigma * error, 6 decimals each (cells, headers).
+std::string r_value_text(double value, double error_1s, int nsigma);
+// Clipboard text of §5 "Copy".
+std::string r_values_tsv(const std::vector<RValueMatrix>& matrices, int nsigma);
+// File text of §5 "Export CSV...".
+std::string r_values_csv(const std::vector<RValueMatrix>& matrices, const Options& ideogram_options);
+
 inline constexpr std::string_view kRValueNote =
     "Uncertainties treat groups as independent; correlated errors (shared irradiation "
     "corrections, blanks, ...) are not accounted for.";
@@ -122,9 +129,11 @@ Rules:
   Errors 1σ. Numbers written shortest round-trip (`std::to_chars`), so file
   identical on every compiler. Fields with comma or quote quoted per RFC
   4180. After write: `pychron::mark_as_user_file(path)`.
-- Writer is pure function in `libs/processing`
-  (`std::string r_values_csv(const std::vector<RValueMatrix>&, const Options&)`),
-  tested without Qt; window only picks path and writes bytes.
+- Cell text, TSV and CSV are pure functions in `libs/processing`
+  (`r_value_text`, `r_values_tsv`, `r_values_csv`, §3), tested without Qt;
+  window only picks path, writes bytes, sets clipboard.
+- σ_R computed as √((σ_j/F̄_i)² + (F̄_j σ_i/F̄_i²)²): same value as §2
+  formula, finite when F̄_j = 0.
 
 ## 6. Tests
 

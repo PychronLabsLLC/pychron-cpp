@@ -1,9 +1,12 @@
 #include "pychron/processing/r_values.hpp"
 
+#include <array>
+#include <charconv>
 #include <cmath>
 
 #include "figure_common.hpp"
 #include "pychron/processing/quantity.hpp"
+#include "pychron/processing/report.hpp"
 
 namespace pychron::processing {
 
@@ -42,7 +45,65 @@ std::optional<RCell> ratio(const GroupF& den, const GroupF& num) {
   return RCell{fj / fi, std::hypot(sj / fi, fj * si / (fi * fi))};
 }
 
+std::string fixed6(double v) {
+  std::array<char, 64> buf{};
+  const auto r = std::to_chars(buf.data(), buf.data() + buf.size(), v, std::chars_format::fixed, 6);
+  return {buf.data(), r.ptr};
+}
+
+std::string shortest(double v) {
+  std::array<char, 64> buf{};
+  const auto r = std::to_chars(buf.data(), buf.data() + buf.size(), v);
+  return {buf.data(), r.ptr};
+}
+
+std::string group_label(const GroupF& g, int nsigma) {
+  return g.f ? g.name + " (" + r_value_text(g.f->value, g.f->error, nsigma) + ")" : g.name;
+}
+
 }  // namespace
+
+std::string r_value_text(double value, double error_1s, int nsigma) {
+  return fixed6(value) + " \xc2\xb1 " + fixed6(nsigma * error_1s);
+}
+
+std::string r_values_tsv(const std::vector<RValueMatrix>& matrices, int nsigma) {
+  std::string out = "# " + std::string(kRValueNote) + "\n";
+  bool first = true;
+  for (const auto& m : matrices) {
+    if (m.groups.size() < 2) continue;
+    if (!first) out += '\n';
+    first = false;
+    out += m.graph_name + "\n";
+    for (const auto& g : m.groups) out += "\t" + group_label(g, nsigma);
+    out += '\n';
+    for (std::size_t i = 0; i < m.groups.size(); ++i) {
+      out += group_label(m.groups[i], nsigma);
+      for (const auto& c : m.cells[i]) out += "\t" + (c ? r_value_text(c->r, c->r_err, nsigma) : std::string());
+      out += '\n';
+    }
+  }
+  return out;
+}
+
+std::string r_values_csv(const std::vector<RValueMatrix>& matrices, const Options& ideogram_options) {
+  std::string out = "# " + std::string(kRValueNote) + "\n";
+  out += "graph,numerator,denominator,f_num,f_num_err,f_den,f_den_err,r,r_err,mean,error_kind\n";
+  const std::string tail =
+      "," + csv_quote(ideogram_options.get_string("mean")) + "," + csv_quote(ideogram_options.get_string("error_kind"));
+  for (const auto& m : matrices)
+    for (std::size_t i = 0; i < m.groups.size(); ++i)
+      for (std::size_t j = 0; j < m.groups.size(); ++j) {
+        const auto& c = m.cells[i][j];
+        if (!c) continue;
+        const auto& num = m.groups[j];
+        const auto& den = m.groups[i];
+        out += csv_quote(m.graph_name) + "," + csv_quote(num.name) + "," + csv_quote(den.name) + "," +
+               shortest(num.f->value) + "," + shortest(num.f->error) + "," + shortest(den.f->value) + "," +
+               shortest(den.f->error) + "," + shortest(c->r) + "," + shortest(c->r_err) + tail + "\n";
+      }
+  return out;
+}
 
 Result<std::vector<RValueMatrix>> r_value_matrices(const Dataset& dataset, const Options& ideogram_options) {
   auto f = Quantity::parse("F");
