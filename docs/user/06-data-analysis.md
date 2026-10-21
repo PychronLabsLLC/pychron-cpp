@@ -519,7 +519,7 @@ points below it. Default grouping: identifier.
 | `j_error_in_mean` | add the J uncertainty of the group in quadrature to the mean's | on |
 | `probability` | `cumulative` (sum of each analysis's normal curve) or `kernel` (kernel density of the values; errors ignored) | cumulative |
 | `x.limits` | `auto`, `asymptotic` (stop where the curve falls to `x.asymptotic_percent` of its peak, default 10) or `centered` (`x.centered_range` either side of the mean); plus `x.min`, `x.max`, `x.padding_percent`, `x.title` | auto |
-| Display | `show_mean_indicator`, `show_mean_text`, `show_percent_error`, `show_mswd`, `show_probability`, `show_n`, `show_original_curve` (a dashed curve including excluded analyses), `fill_curve` | all on except probability and fill |
+| Display | `show_mean_indicator`, `show_mean_text`, `show_percent_error`, `show_mswd`, `show_probability`, `show_n`, `show_original_curve` (a dashed curve including excluded analyses), `fill_curve`, `show_rvalues` (R-values table, below) | all on except probability, fill and R-values |
 
 Panels (up to 8, top to bottom): `probability` (the curve),
 `analysis_number` (points ordered by age, with error bars),
@@ -530,6 +530,30 @@ one named panel.
 
 Factory presets: **Default**, **Probability only**, **Ages only**,
 **With K/Ca**, **Presentation** (large fonts, 2-sigma bars, filled curve).
+
+#### R-values
+
+With **R-values table** (`show_rvalues`) on, a dock beside the analyses
+shows, for each graph with two groups or more, the ratio of every group's
+mean F (40Ar\*/39ArK) to every other group's: the value used to
+intercalibrate standards or to recalculate ages against a monitor.
+
+- F̄ of a group is the mean of F over its included analyses, whatever the
+  ideogram plots, with the ideogram's `mean` and `error_kind` (msem expands
+  the error by √MSWD when MSWD > 1). J does not enter: F has none.
+- The cell in row *i*, column *j* is R = F̄*j* / F̄*i*, so the row of a
+  standard reads every other group against it; the lower triangle holds the
+  reciprocals. Its error is σR = \|R\| √((σ*i*/F̄*i*)² + (σ*j*/F̄*j*)²).
+- Cells and headers show `value ± error` at the figure's `error_bar_nsigma`,
+  six decimals; the tooltip of a cell gives R and its 1σ error in full.
+- Errors treat the groups as independent. Correlated errors, such as
+  interference corrections or blanks two groups share, are not accounted
+  for; the table says so under it.
+
+**Copy** puts the tables on the clipboard as shown, tab-separated.
+**Export CSV...** writes one row per ordered pair of groups:
+`graph,numerator,denominator,f_num,f_num_err,f_den,f_den_err,r,r_err,mean,error_kind`,
+errors at 1σ, numbers in full, after a `#` line with the note.
 
 ### Age spectrum
 
