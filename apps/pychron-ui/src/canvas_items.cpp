@@ -8,6 +8,7 @@
 #include <QCursor>
 #include <QFontMetricsF>
 #include <QAction>
+#include <QGraphicsScene>
 #include <QGraphicsSceneContextMenuEvent>
 #include <QGraphicsSceneHoverEvent>
 #include <QGraphicsSceneMouseEvent>
@@ -124,13 +125,51 @@ void ValveItem::flash(const QString& what) {
 }
 
 void ValveItem::set_label(QString label) {
+  prepareGeometryChange();  // a caption changes the rectangle
   label_ = std::move(label);
+  cache_.reset();
   update();
 }
 
-QString ValveItem::shown_name(const QFontMetricsF& metrics) const {
-  return metrics.elidedText(label_, Qt::ElideRight, kSize - 4);
+QFont ValveItem::item_font() const { return scene() != nullptr ? scene()->font() : QFont(); }
+
+const ValveItem::Cached& ValveItem::cached(const QFont& font) const {
+  if (cache_ && cache_->font == font && cache_->label == label_) {
+    return *cache_;
+  }
+  constexpr double kFloor = 0.7;   // the face's font is never shrunk below this
+  constexpr double kStep = 0.95;
+  constexpr double kCaptionGap = 5.0;  // from the body, clear of the outlines
+  constexpr double kCaptionPad = 2.0;
+  const double room = kSize - 4;
+  Cached made{font, label_, {font, label_, false}, {}};
+  QFont shrunk = font;
+  bool fits = QFontMetricsF(font).horizontalAdvance(label_) <= room;
+  for (int step = 1; !fits && std::pow(kStep, step) >= kFloor; ++step) {
+    const double ratio = std::pow(kStep, step);
+    if (font.pointSizeF() > 0) {
+      shrunk.setPointSizeF(font.pointSizeF() * ratio);
+    } else {
+      shrunk.setPixelSize(std::max(1, static_cast<int>(font.pixelSize() * ratio)));
+    }
+    fits = QFontMetricsF(shrunk).horizontalAdvance(label_) <= room;
+    if (fits) {
+      made.layout.font = shrunk;
+    }
+  }
+  if (!fits) {
+    const QFontMetricsF metrics(font);
+    const double width = metrics.horizontalAdvance(label_) + 2 * kCaptionPad;
+    made.layout.caption = true;
+    made.caption = QRectF(-width / 2, kSize / 2 + kCaptionGap, width, metrics.height());
+  }
+  cache_ = std::move(made);
+  return *cache_;
 }
+
+ValveItem::NameLayout ValveItem::name_layout(const QFont& font) const { return cached(font).layout; }
+
+QRectF ValveItem::caption_rect() const { return cached(item_font()).caption; }
 
 QRectF ValveItem::wheel_rect() const {
   if (kind_ != canvas::ValveKind::Manual) {
@@ -144,9 +183,17 @@ QRectF ValveItem::wheel_rect() const {
   return {c.x() - r, c.y() - r, 2 * r, 2 * r};
 }
 
-QRectF ValveItem::boundingRect() const {
+QRectF ValveItem::body_box() {
   const double half = kSize / 2 + 4;  // room for the pending outline and the lock border
   return {-half, -half, 2 * half, 2 * half};
+}
+
+QRectF ValveItem::boundingRect() const { return body_box().united(caption_rect()); }
+
+QPainterPath ValveItem::shape() const {
+  QPainterPath path;
+  path.addRect(body_box());
+  return path;
 }
 
 void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) {
@@ -184,9 +231,16 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
   }
   // A labelled manual valve keeps its label clear of the wheel in the corner.
   const bool under_wheel = kind_ == canvas::ValveKind::Manual && !label_.isEmpty();
-  // NOLINTNEXTLINE(bugprone-narrowing-conversions): Qt's alignment flags, which drawText takes as an int
-  painter->drawText(body.adjusted(0, 0, 0, -1), under_wheel ? Qt::AlignHCenter | Qt::AlignBottom : Qt::AlignCenter,
-                    shown_name(QFontMetricsF(painter->font())));
+  const QFont font = item_font();
+  const NameLayout& name = cached(font).layout;
+  painter->save();
+  painter->setFont(name.font);
+  if (!name.caption) {
+    // NOLINTNEXTLINE(bugprone-narrowing-conversions): Qt's alignment flags, which drawText takes as an int
+    painter->drawText(body.adjusted(0, 0, 0, -1), under_wheel ? Qt::AlignHCenter | Qt::AlignBottom : Qt::AlignCenter,
+                      name.text);
+  }
+  painter->restore();
 
   if (pending_) {
     painter->setBrush(Qt::NoBrush);
@@ -211,6 +265,12 @@ void ValveItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidge
     } else {
       painter->drawRoundedRect(body, kCornerRadius, kCornerRadius);
     }
+  }
+  if (name.caption) {
+    painter->setFont(font);
+    painter->setPen(theme().text);
+    // NOLINTNEXTLINE(bugprone-narrowing-conversions): Qt's alignment flags, which drawText takes as an int
+    painter->drawText(cached(font).caption, Qt::AlignCenter | Qt::TextSingleLine, name.text);
   }
 }
 

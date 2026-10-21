@@ -36,7 +36,9 @@ QColor valve_color(ValveState state);
 // is the name, then what CanvasView knows of it (set_details), then the last
 // rejection's Error.what. A manual valve wears a handwheel on its face
 // (nothing sticks out of the body, so pipes can join any side); a label too
-// long for the body is cut short (the tooltip has the name whole).
+// long for the body, even with its font shrunk to 70%, is drawn whole as a
+// caption under the item, and boundingRect() takes it in. Clicks, and so the
+// tooltip, are on the body only (shape()).
 class ValveItem : public QGraphicsObject {
   Q_OBJECT
 
@@ -88,13 +90,25 @@ class ValveItem : public QGraphicsObject {
   // What is written on the face: the name unless set otherwise; may be empty.
   const QString& label() const noexcept { return label_; }
   void set_label(QString label);
-  // The label as drawn: whole, or cut short with an ellipsis to fit the body.
-  QString shown_name(const QFontMetricsF& metrics) const;
+  // How the label is drawn with `font` as the scene's: on the face, in `font`
+  // or smaller (at least 70% of it), or, when it does not fit there, whole
+  // under the body (`caption`, `font` unchanged). Kept until the font or the
+  // label changes.
+  struct NameLayout {
+    QFont font;
+    QString text;
+    bool caption = false;
+  };
+  NameLayout name_layout(const QFont& font) const;
+  // The caption's rectangle in item coordinates; empty when the name is on
+  // the face.
+  QRectF caption_rect() const;
   // Where a manual valve's handwheel is drawn, in item coordinates; empty
   // for other kinds.
   QRectF wheel_rect() const;
 
   QRectF boundingRect() const override;
+  QPainterPath shape() const override;
   void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
 
  protected:
@@ -112,6 +126,18 @@ class ValveItem : public QGraphicsObject {
   bool pending_ = false;
   bool marked_ = false;
   void update_tip();
+  // The body with its outlines: what a click hits and the item is at least.
+  static QRectF body_box();
+  QFont item_font() const;
+
+  struct Cached {
+    QFont font;
+    QString label;
+    NameLayout layout;
+    QRectF caption;
+  };
+  const Cached& cached(const QFont& font) const;
+  mutable std::optional<Cached> cache_;
 
   std::function<void()> on_hover_;
 

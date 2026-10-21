@@ -819,22 +819,14 @@ class TestCanvasView : public QObject {
   }
 
   // A manual valve wears a handwheel on its face: nothing sticks out of the
-  // body, so pipes can join any side. Any valve cuts a label too long for
-  // the body short; the tooltip keeps the name whole.
-  void manualValvesWearAHandwheelAndLongLabelsAreCutShort() {
+  // body, so pipes can join any side. A name too long for the body is drawn
+  // under it (see the caption tests below); the tooltip keeps it whole.
+  void manualValvesWearAHandwheel() {
     ui::ValveItem manual("MiniBoneGP5Manual", canvas::ValveKind::Manual);
     ui::ValveItem valve("A", canvas::ValveKind::Valve);
-    QCOMPARE(manual.boundingRect(), valve.boundingRect());
     QVERIFY(valve.wheel_rect().isEmpty());
     const QRectF body(-ui::ValveItem::kSize / 2, -ui::ValveItem::kSize / 2, ui::ValveItem::kSize, ui::ValveItem::kSize);
-
-    const QFontMetricsF metrics{QFont()};
-    const QString shown = manual.shown_name(metrics);
-    QVERIFY(shown != QStringLiteral("MiniBoneGP5Manual"));
-    QVERIFY(shown.endsWith(QChar(0x2026)));  // an ellipsis
-    QVERIFY(metrics.horizontalAdvance(shown) <= ui::ValveItem::kSize - 4);
     QCOMPARE(manual.toolTip(), QStringLiteral("MiniBoneGP5Manual"));
-    QCOMPARE(valve.shown_name(metrics), QStringLiteral("A"));
 
     // labelled: a small wheel in the top-right corner, clear of the label
     const QRectF corner = manual.wheel_rect();
@@ -864,6 +856,84 @@ class TestCanvasView : public QObject {
     QCOMPARE(view_->valve("M1")->label(), QString());
     QVERIFY(view_->valve("M1")->toolTip().contains(QStringLiteral(">M1<")));
     QCOMPARE(view_->valve("A")->label(), QStringLiteral("A"));
+  }
+
+  // A name that fits the body (its font shrunk by at most 30%) stays on the
+  // face and adds nothing to the item's rectangle.
+  void aShortValveNameStaysInsideTheBody() {
+    const QRectF plain(-ui::ValveItem::kSize / 2 - 4, -ui::ValveItem::kSize / 2 - 4, ui::ValveItem::kSize + 8,
+                       ui::ValveItem::kSize + 8);
+    for (const char* name : {"A", "P1"}) {
+      for (const auto kind : {canvas::ValveKind::Valve, canvas::ValveKind::Switch, canvas::ValveKind::Manual}) {
+        ui::ValveItem item(name, kind);
+        const auto layout = item.name_layout(QFont());
+        QVERIFY2(!layout.caption, name);
+        QCOMPARE(layout.text, QString::fromLatin1(name));
+        QVERIFY(item.caption_rect().isEmpty());
+        QCOMPARE(item.boundingRect(), plain);
+      }
+    }
+  }
+
+  // The example's switch pump_power cannot fit a 30-unit circle: it is drawn
+  // whole under the body, and the item's rectangle takes it in.
+  void aLongNameIsACaptionUnderTheBody() {
+    ui::ValveItem* item = view_->valve("pump_power");
+    QVERIFY(item != nullptr);
+    const QFont font = view_->scene()->font();
+    const auto layout = item->name_layout(font);
+    QVERIFY(layout.caption);
+    QCOMPARE(layout.text, QStringLiteral("pump_power"));
+    QVERIFY(!layout.text.contains(QChar(0x2026)));
+    QCOMPARE(layout.font, font);
+    const QRectF caption = item->caption_rect();
+    QVERIFY(!caption.isEmpty());
+    QVERIFY(caption.top() > ui::ValveItem::kSize / 2 + 4);  // below the body and its outlines
+    QVERIFY(caption.width() >= QFontMetricsF(font).horizontalAdvance(layout.text));
+    QCOMPARE(caption.center().x(), 0.0);
+    QVERIFY(item->boundingRect().contains(caption));
+
+    // the body still has its rectangle: the pending outline is not cut
+    const QRectF body_box(-ui::ValveItem::kSize / 2 - 4, -ui::ValveItem::kSize / 2 - 4, ui::ValveItem::kSize + 8,
+                          ui::ValveItem::kSize + 8);
+    QVERIFY(item->boundingRect().contains(body_box));
+
+    // a new label can make a caption, and take it away
+    item->set_label(QStringLiteral("x"));
+    QVERIFY(item->caption_rect().isEmpty());
+    QCOMPARE(item->boundingRect(), body_box);
+    item->set_label(QStringLiteral("pump_power"));
+    QVERIFY(item->boundingRect().contains(item->caption_rect()));
+  }
+
+  void noValveOrSwitchOfTheExampleIsDrawnWithAnEllipsis() {
+    int seen = 0;
+    int captions = 0;
+    for (QGraphicsItem* it : view_->scene()->items()) {
+      auto* valve = dynamic_cast<ui::ValveItem*>(it);
+      if (valve == nullptr) continue;
+      ++seen;
+      const auto layout = valve->name_layout(view_->scene()->font());
+      QVERIFY2(!layout.text.contains(QChar(0x2026)), valve->name().c_str());
+      QCOMPARE(layout.text, valve->label());
+      captions += layout.caption ? 1 : 0;
+    }
+    QVERIFY(seen > 5);
+    QVERIFY(captions >= 1);
+  }
+
+  // The caption is no part of the valve: a click on it does not actuate.
+  void clickingTheCaptionDoesNotActuate() {
+    ui::ValveItem* item = view_->valve("pump_power");
+    view_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(view_.get()));
+    QVERIFY(item->shape().contains(QPointF(0, 0)));
+    QVERIFY(!item->shape().contains(item->caption_rect().center()));
+    const QPoint at = view_->mapFromScene(item->mapToScene(item->caption_rect().center()));
+    QTest::mouseClick(view_->viewport(), Qt::LeftButton, {}, at);
+    QVERIFY(!item->is_pending());
+    QTest::mouseClick(view_->viewport(), Qt::LeftButton, {}, view_->mapFromScene(item->scenePos()));
+    QVERIFY(item->is_pending());
   }
 
   // The lock border is blue and thick enough to read at a glance.
