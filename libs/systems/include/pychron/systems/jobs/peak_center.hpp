@@ -125,6 +125,16 @@ Result<void> validate_peak_center_config(const PeakCenterConfig& config);
 // written only when set.
 std::string format_peak_center_config(const PeakCenterConfig& config);
 
+// Writes a peak center into the spectrometer's active field table:
+// Spectrometer::update_table, then, when `save`, save_table stamped from the
+// spectrometer's clock. A failed save is not an error: the in-memory table
+// stays, the failure is logged, and the returned notes hold
+// "field table not saved: <why>". The runner and the spectrometer window
+// share this.
+Result<std::vector<std::string>> write_peak_center_to_table(Spectrometer& spectrometer, const DetectorId& detector,
+                                                            const std::string& isotope, double table_value,
+                                                            bool propagate, bool save);
+
 struct DetectorPeak {
   DetectorId detector;
   std::optional<PeakShape> shape;

@@ -468,17 +468,11 @@ class Runner {
     if (!table_value) return fail(table_value.error());
     r_.table_value = *table_value;
     if (cfg_.update_table && !cfg_.isotope.empty()) {
-      if (auto u = spec_.update_table(r_.detector, cfg_.isotope, *table_value, cfg_.propagate); !u) return u;
+      auto notes = write_peak_center_to_table(spec_, r_.detector, cfg_.isotope, *table_value, cfg_.propagate,
+                                              cfg_.save_table);
+      if (!notes) return fail(notes.error());
       r_.table_updated = true;
-      // D2 (field table editor spec, section 6): persist the update. A failed
-      // save keeps the in-memory table and the success.
-      if (!cfg_.save_table) {
-        // A run's own table: kept in memory only.
-      } else if (auto saved = spec_.save_table(spec_.clock().wall_now()); !saved) {
-        const std::string note = "field table not saved: " + saved.error().what;
-        Logger("peak_center", spec_.clock(), &spec_.bus()).warn(note);
-        r_.notes.push_back(note);
-      }
+      r_.notes.insert(r_.notes.end(), notes->begin(), notes->end());
       auto p = spec_.position(spectrometer::PositionTarget{spectrometer::Isotope{cfg_.isotope}, r_.detector});
       if (!p) return fail(p.error());
       return {};
@@ -499,6 +493,23 @@ class Runner {
 };
 
 }  // namespace
+
+Result<std::vector<std::string>> write_peak_center_to_table(Spectrometer& spectrometer, const DetectorId& detector,
+                                                            const std::string& isotope, double table_value,
+                                                            bool propagate, bool save) {
+  if (auto u = spectrometer.update_table(detector, isotope, table_value, propagate); !u) return fail(u.error());
+  std::vector<std::string> notes;
+  // D2 (field table editor spec, section 6): persist the update. A failed
+  // save keeps the in-memory table and the success.
+  if (save) {
+    if (auto saved = spectrometer.save_table(spectrometer.clock().wall_now()); !saved) {
+      std::string note = "field table not saved: " + saved.error().what;
+      Logger("peak_center", spectrometer.clock(), &spectrometer.bus()).warn(note);
+      notes.push_back(std::move(note));
+    }
+  }
+  return notes;
+}
 
 Result<PeakCenterResult> run_peak_center(Spectrometer& spectrometer, const PeakCenterConfig& config,
                                          Progress& progress, CancelToken& cancel, const PeakCenterOptions& options) {

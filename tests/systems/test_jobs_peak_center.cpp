@@ -176,21 +176,30 @@ class PeakCenterRun : public ::testing::Test {
     ASSERT_TRUE(initial);
     initial_ = *initial;
     true_center_ = initial_ + 0.004;
-    rig_.acquirer.signal = [this](const spectrometer::ChannelId& ch) {
+    wire(rig_);
+  }
+
+  // The simulated beam: a trapezoid peak at true_center_ on H1 (AX shifted).
+  void wire(JobRig& rig) {
+    rig.acquirer.signal = [this, &rig](const spectrometer::ChannelId& ch) {
       double c = true_center_;
       if (ch == "AX") c += ax_shift_;
       else if (ch != "H1") return 0.0;
-      const double d = std::fabs(rig_.positioner.value - c);
+      const double d = std::fabs(rig.positioner.value - c);
       if (d <= 0.002) return height_;
       if (d <= 0.0035) return height_ * (1 - (d - 0.002) / 0.0015);
       return 0.0;
     };
   }
 
-  Result<PeakCenterResult> run(PeakCenterConfig cfg, PeakCenterOptions options = {}) {
-    if (!options.sweep.sleep) options.sweep.sleep = rig_.sweep_sleep();
-    auto fut = std::async(std::launch::async, [&] { return run_peak_center(*rig_.spec, cfg, progress_, cancel_, options); });
-    return rig_.drive(fut);
+  Result<PeakCenterResult> run(const PeakCenterConfig& cfg, PeakCenterOptions options = {}) {
+    return run_on(rig_, cfg, std::move(options));
+  }
+
+  Result<PeakCenterResult> run_on(JobRig& rig, const PeakCenterConfig& cfg, PeakCenterOptions options = {}) {
+    if (!options.sweep.sleep) options.sweep.sleep = rig.sweep_sleep();
+    auto fut = std::async(std::launch::async, [&] { return run_peak_center(*rig.spec, cfg, progress_, cancel_, options); });
+    return rig.drive(fut);
   }
 
   PeakCenterConfig config() {
@@ -203,6 +212,7 @@ class PeakCenterRun : public ::testing::Test {
 
   std::filesystem::path root_ = pychron::testing::unique_temp_path("pychron_peak_center_");
   JobRig rig_{root_};
+  JobRig other_{root_ / "other"};  // a second, identical spectrometer
   Progress progress_;
   CancelToken cancel_;
   double initial_ = 0, true_center_ = 0, ax_shift_ = 0.001, height_ = 1000;
@@ -225,6 +235,23 @@ TEST_F(PeakCenterRun, WaitsOnTheSpectrometersClockByDefault) {
   ASSERT_FALSE(r->tries.empty());
   EXPECT_GE(rig_.clock.now() - before, 30s * static_cast<int>(r->tries.front().points.size()));
   EXPECT_TRUE(rig_.sleeps.empty());
+}
+
+TEST_F(PeakCenterRun, ApplyAfterwardsGivesTheSameTableAsUpdateTable) {
+  wire(other_);
+  auto with = config();  // update_table = true, propagate = true
+  auto a = run(with);
+  ASSERT_TRUE(a && a->ok && a->table_updated);
+  const auto table_a = rig_.spec->field_table();
+
+  auto without = config();
+  without.update_table = false;
+  auto b = run_on(other_, without);
+  ASSERT_TRUE(b && b->ok && !b->table_updated && b->table_value);
+  auto w = write_peak_center_to_table(*other_.spec, b->detector, without.isotope, *b->table_value, true, true);
+  ASSERT_TRUE(w) << w.error().what;
+  EXPECT_TRUE(w->empty());
+  EXPECT_EQ(other_.spec->field_table(), table_a);
 }
 
 TEST_F(PeakCenterRun, CentersUpdatesTheTableAndRepositions) {
