@@ -119,6 +119,9 @@ struct Lab {
   // queue's or a run's extract_device may name. Empty: the name is free text.
   std::vector<std::string> extract_devices;
   std::vector<std::string> problems;  // files that did not load
+  // The entry of `problems` that is peak_center.toml's parse error, if it is
+  // there: a check that is given freshly read sets leaves it out.
+  std::optional<std::string> peak_center_problem;
 
   QueueResolvers resolvers() const { return {plans.get(), scripts.get(), condition_names.get()}; }
   // Gauges, detectors and isotopes the conditionals may name.

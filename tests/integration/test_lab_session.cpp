@@ -167,7 +167,9 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
     scan_ = std::make_unique<spectrometer::ScanService>(*spec_, line_->bus(), clock_);
 
     lab_ = load_lab({dir_, dir_ / "extraction_line.toml", dir_ / "spectrometer.sim-integrated.toml"});
-    ASSERT_TRUE(lab_.problems.empty()) << lab_.problems.front();
+    if (lab_loads_clean()) {
+      ASSERT_TRUE(lab_.problems.empty()) << lab_.problems.front();
+    }
     auto q = load_queue_file((dir_ / "queues" / "experiment.toml").string(), lab_.ids);
     ASSERT_TRUE(q) << q.error().what;
     queue_ = *q;
@@ -188,6 +190,8 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
 
   // Changes to the scratch lab before anything is loaded from it.
   virtual void prepare_lab() {}
+  // False for a test that loads the lab with a file it means to be bad.
+  virtual bool lab_loads_clean() { return true; }
   virtual SessionHardware hardware() { return SessionHardware{*line_, spec_.get(), scan_.get(), {}}; }
 
   QueueSpec laser_queue() {
@@ -1171,8 +1175,9 @@ class NamedPeakCenterSessionTest : public LabSessionTest {
     s.replace(at, std::string_view("config = \"default\"").size(), "config = \"tuned\"");
     std::ofstream(plan, std::ios::trunc) << s;
   }
-  void write_peak_centers(std::string_view text) {
-    std::ofstream(dir_ / "peak_center.toml", std::ios::app) << text;
+  // Added to the lab's file, or in its place.
+  void write_peak_centers(std::string_view text, bool replace = false) {
+    std::ofstream(dir_ / "peak_center.toml", replace ? std::ios::trunc : std::ios::app) << text;
   }
 };
 
@@ -1207,6 +1212,48 @@ TEST_F(NamedPeakCenterSessionTest, ABadPeakCenterFileRefusesTheStart) {
   // The file's own error, not the plan's missing set.
   EXPECT_EQ(started.error().what.find("uses peak center config"), std::string::npos) << started.error().what;
   EXPECT_FALSE(session_->running());
+
+  // Put right, the file starts the queue; nothing of the bad one is kept.
+  write_peak_centers("\n[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
+                     "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n", true);
+  const auto again = session_->start(queue_);
+  ASSERT_TRUE(again) << again.error().what;
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+}
+
+// A lab loaded while peak_center.toml was bad carries its error in
+// Lab::problems; the file read at the start decides, so a fixed file starts
+// the queue without a new load.
+class BadPeakCenterAtLoadSessionTest : public NamedPeakCenterSessionTest {
+ protected:
+  void prepare_lab() override {
+    NamedPeakCenterSessionTest::prepare_lab();
+    write_peak_centers("\n[tuned]\nwindow = -1\n");
+  }
+  bool lab_loads_clean() override { return false; }
+};
+
+TEST_F(BadPeakCenterAtLoadSessionTest, AFixedFileStartsWithoutANewLoad) {
+  ASSERT_FALSE(lab_.problems.empty());
+  EXPECT_FALSE(session_->start(queue_));
+  write_peak_centers("[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
+                     "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n", true);
+  std::mutex m;
+  std::vector<double> windows;
+  auto sub = line_->bus().subscribe<jobs::PeakCenterDone>([&](const jobs::PeakCenterDone& d) {
+    std::lock_guard lock(m);
+    windows.push_back(d.result.config.window);
+  });
+  const auto started = session_->start(queue_);
+  ASSERT_TRUE(started) << started.error().what;
+  const auto result = session_->wait();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
+  std::lock_guard lock(m);
+  ASSERT_FALSE(windows.empty());
+  for (const double w : windows) EXPECT_DOUBLE_EQ(w, 0.07);
 }
 
 // A dragonfly that cannot run (here: a look of less than a pixel) is refused

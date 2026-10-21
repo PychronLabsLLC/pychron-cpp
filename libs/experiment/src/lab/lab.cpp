@@ -146,7 +146,10 @@ Lab load_lab(const LabPaths& paths) {
   lab.condition_files = std::make_unique<ConditionalFiles>(dir / "conditionals");
   lab.condition_names = std::make_unique<LabConditionals>(*lab.condition_source);
   if (auto pc = read_peak_center_file(dir / "peak_center.toml")) lab.peak_centers = std::move(*pc);
-  else lab.problems.push_back(pc.error().what);
+  else {
+    lab.problems.push_back(pc.error().what);
+    lab.peak_center_problem = pc.error().what;
+  }
   if (fs::exists(dir / "defaults.toml", ec)) {
     auto d = DefaultsTable::load((dir / "defaults.toml").string());
     if (d) lab.defaults = std::move(*d);
@@ -311,7 +314,11 @@ LabCheck check_lab_queue(const Lab& lab, const QueueSpec& queue,
                          const std::map<std::string, jobs::PeakCenterConfig>* peak_centers) {
   const auto& sets = peak_centers != nullptr ? *peak_centers : lab.peak_centers;
   LabCheck out;
-  for (const auto& p : lab.problems) out.extra.push_back({Severity::Error, -1, "lab", p});
+  for (const auto& p : lab.problems) {
+    // The file was read again for this check: its load-time error is stale.
+    if (peak_centers != nullptr && lab.peak_center_problem && p == *lab.peak_center_problem) continue;
+    out.extra.push_back({Severity::Error, -1, "lab", p});
+  }
   out.report = check_queue(queue, lab.ids, lab.resolvers());
   check_extraction(lab, queue, out.extra);
 
