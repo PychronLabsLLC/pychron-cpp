@@ -109,6 +109,9 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
     state_.isotopes[d.name] = current ? current->isotope : d.isotope;
   }
   state_.scan = scan_.status();
+  if (state_.scan.running) {
+    scan_intent_ = std::chrono::duration<double>(state_.scan.integration).count();
+  }
 
   executor_.setObjectName(QStringLiteral("pychron-spectrometer-executor"));
   worker_ = new QObject;
@@ -227,6 +230,7 @@ void SpectrometerBridge::run(const char* what, Command command) {
 
 void SpectrometerBridge::start_scan(double integration_s) {
   stop_requested_ = false;
+  scan_intent_ = integration_s;
   QPointer<SpectrometerBridge> self(this);
   run("start", [self, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)] {
     // Posted before the command's own result, so the state is seeded by the
@@ -251,6 +255,7 @@ void SpectrometerBridge::start_scan(double integration_s) {
 
 void SpectrometerBridge::stop_scan() {
   stop_requested_ = true;
+  scan_intent_.reset();
   run("stop", [scan = &scan_] {
     scan->stop();
     return Result<void>{};
@@ -258,6 +263,9 @@ void SpectrometerBridge::stop_scan() {
 }
 
 void SpectrometerBridge::set_integration(double seconds) {
+  if (scan_intent_) {
+    scan_intent_ = seconds;
+  }
   run("integration",
       [scan = &scan_, integration = to_duration(seconds)] { return scan->set_integration(integration); });
 }
@@ -339,14 +347,16 @@ void SpectrometerBridge::peak_center(jobs::PeakCenterConfig config) {
   }
   peak_center_run_ = std::make_unique<PeakCenterRun>();
   resume_integration_s_.reset();
-  if (!state_.scan.running) {
+  // What the operator asked for, not what the executor has got to: a start_scan
+  // just issued has not reported yet, and its queued stop below follows it.
+  if (!scan_intent_) {
     start_peak_center_thread(std::move(config));
     return;
   }
   // The scan is stopped on the executor first, and the thread (which moves the
   // magnet) starts only once that has completed. A cancel meanwhile is seen by
   // the run as soon as it starts.
-  resume_integration_s_ = std::chrono::duration<double>(state_.scan.integration).count();
+  resume_integration_s_ = *scan_intent_;
   post(
       [scan = &scan_]() -> Result<void> {
         scan->stop();
@@ -435,7 +445,7 @@ void SpectrometerBridge::on_peak_center_finished(const Result<jobs::PeakCenterRe
   // pressed Stop scan meanwhile.
   const auto resume = std::exchange(resume_integration_s_, std::nullopt);
   if (resume && !stop_requested_) {
-    start_scan(*resume);
+    start_scan(scan_intent_.value_or(*resume));  // an integration changed meanwhile wins
   }
   emit peakCenterFinished(result);
 }

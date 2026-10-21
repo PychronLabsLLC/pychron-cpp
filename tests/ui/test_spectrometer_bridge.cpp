@@ -789,6 +789,34 @@ class TestSpectrometerBridge : public QObject {
     QVERIFY(!sim_->scan->status().running);
   }
 
+  void peakCenterRightAfterStartScanNeverRunsBesideIt() {
+    use_virtual_clock();
+    bool seen_running_during_sweep = false;
+    connect(bridge_.get(), &SpectrometerBridge::peakCenterPoint, this, [&](const jobs::PeakCenterPoint&) {
+      if (sim_->scan->status().running) seen_running_during_sweep = true;
+    });
+    bridge_->start_scan(0.5);  // no wait: its status has not come back yet
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(pc_results_[0].has_value());
+    QVERIFY(!seen_running_during_sweep);
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    QCOMPARE(bridge_->state().scan.integration, Duration(500ms));
+  }
+
+  void cancelRightAfterPeakCenterFinishesCancelled() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    bridge_->peak_center(long_config());
+    bridge_->cancel_peak_center();  // before the run's thread has started
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(!pc_results_[0].has_value());
+    QCOMPARE(pc_results_[0].error().kind, ErrorKind::Cancelled);
+    QVERIFY(!bridge_->peak_center_running());
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    QCOMPARE(bridge_->state().scan.integration, Duration(500ms));
+  }
+
   void peakCenterWithoutScanStartsNoScan() {
     use_virtual_clock();
     bridge_->peak_center(ar40_config());

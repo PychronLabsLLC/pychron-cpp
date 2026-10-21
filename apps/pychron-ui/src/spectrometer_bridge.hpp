@@ -103,7 +103,8 @@ class SpectrometerBridge : public QObject {
   // Non-blocking; each reports once through commandFinished as "start",
   // "stop", "integration" or "position". start_scan also reads the magnet
   // position to seed State (announced through magnetRead); a failed read
-  // leaves it unset and does not fail the start.
+  // leaves it unset and does not fail the start. The restart after a peak
+  // center is reported as an internal "start" too.
   void start_scan(double integration_s);
   void stop_scan();
   void set_integration(double seconds);
@@ -218,6 +219,8 @@ class SpectrometerBridge : public QObject {
   bool peak_center_running_ = false;  // main thread
   // Integration (s) of the scan the run stopped; set while it must be restarted.
   std::optional<double> resume_integration_s_;
+  // Scan the operator asked for (start_scan, set_integration), unset after stop_scan; main thread.
+  std::optional<double> scan_intent_;
 };
 
 }  // namespace pychron::ui
