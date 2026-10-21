@@ -540,3 +540,37 @@ TEST_F(PeakCenterRun, HoldsTheTableWhileRunning) {
   for (const auto& held : seen) EXPECT_EQ(held, std::optional<std::string>("peak_center"));
   EXPECT_EQ(rig_.spec->table_held(), std::nullopt);
 }
+
+TEST(PeakCenterConfig, FormatRoundTripsEveryKey) {
+  PeakCenterConfig c;
+  c.name = "tuned"; c.detector = "H1"; c.isotope = "Ar39";
+  c.additional_detectors = {"AX", "L1"}; c.center = 5.25;
+  c.window = 0.02; c.step = 0.0007; c.percent = 75; c.min_peak_height = 2.5;
+  c.test_peak_flat = false; c.n_tries = 3; c.increase = false;
+  c.integration = std::chrono::milliseconds(1500); c.settle = std::chrono::milliseconds(250);
+  c.baseline_timeout = std::chrono::seconds(7); c.dac_offset = -0.0003;
+  c.peak_shift_threshold = 0.01; c.update_table = false; c.propagate = false;
+  auto parsed = parse_peak_center_configs("[tuned]\n" + format_peak_center_config(c));
+  ASSERT_TRUE(parsed) << parsed.error().what;
+  auto back = parsed->at("tuned");
+  back.save_table = c.save_table;
+  EXPECT_EQ(back, c);
+}
+
+TEST(PeakCenterConfig, FormatOfDefaultsRoundTripsAndOmitsCenter) {
+  PeakCenterConfig c;
+  const auto body = format_peak_center_config(c);
+  EXPECT_EQ(body.find("center ="), std::string::npos);
+  auto parsed = parse_peak_center_configs("[default]\n" + body);
+  ASSERT_TRUE(parsed);
+  EXPECT_EQ(parsed->at("default"), c);
+  EXPECT_FALSE(parsed->at("default").center.has_value());
+}
+
+TEST(PeakCenterConfig, ValidateIsPublic) {
+  PeakCenterConfig c;
+  c.step = c.window;
+  auto v = validate_peak_center_config(c);
+  ASSERT_FALSE(v);
+  EXPECT_NE(v.error().what.find("step must be positive and smaller than window"), std::string::npos);
+}

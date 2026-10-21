@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <set>
+#include <sstream>
 #include <thread>
 
 #include <toml++/toml.hpp>
@@ -149,7 +150,13 @@ Result<PeakShape> find_peak_center(std::vector<std::pair<double, double>> points
 
 namespace {
 
-Result<void> validate(const PeakCenterConfig& c) {
+Duration seconds(double s) {
+  return std::chrono::duration_cast<Duration>(std::chrono::duration<double>(s));
+}
+
+}  // namespace
+
+Result<void> validate_peak_center_config(const PeakCenterConfig& c) {
   auto bad = [&](const std::string& m) { return fail(ErrorKind::Config, "peak center '" + c.name + "': " + m); };
   if (!(c.window > 0)) return bad("window must be positive");
   if (!(c.step > 0) || c.step >= c.window) return bad("step must be positive and smaller than window");
@@ -160,11 +167,33 @@ Result<void> validate(const PeakCenterConfig& c) {
   return {};
 }
 
-Duration seconds(double s) {
-  return std::chrono::duration_cast<Duration>(std::chrono::duration<double>(s));
+std::string format_peak_center_config(const PeakCenterConfig& c) {
+  const auto secs = [](Duration d) { return std::chrono::duration<double>(d).count(); };
+  toml::table t;
+  t.insert_or_assign("detector", c.detector);
+  t.insert_or_assign("isotope", c.isotope);
+  toml::array extra;
+  for (const auto& d : c.additional_detectors) extra.push_back(d);
+  t.insert_or_assign("additional_detectors", std::move(extra));
+  if (c.center) t.insert_or_assign("center", *c.center);
+  t.insert_or_assign("window", c.window);
+  t.insert_or_assign("step", c.step);
+  t.insert_or_assign("percent", c.percent);
+  t.insert_or_assign("min_peak_height", c.min_peak_height);
+  t.insert_or_assign("test_peak_flat", c.test_peak_flat);
+  t.insert_or_assign("n_tries", static_cast<std::int64_t>(c.n_tries));
+  t.insert_or_assign("direction", c.increase ? "increase" : "decrease");
+  t.insert_or_assign("integration_s", secs(c.integration));
+  t.insert_or_assign("settle_s", secs(c.settle));
+  t.insert_or_assign("baseline_timeout_s", secs(c.baseline_timeout));
+  t.insert_or_assign("dac_offset", c.dac_offset);
+  t.insert_or_assign("peak_shift_threshold", c.peak_shift_threshold);
+  t.insert_or_assign("update_table", c.update_table);
+  t.insert_or_assign("propagate", c.propagate);
+  std::ostringstream out;
+  out << toml::toml_formatter{t};
+  return out.str();
 }
-
-}  // namespace
 
 Result<std::map<std::string, PeakCenterConfig>> parse_peak_center_configs(std::string_view text,
                                                                          std::string_view file) {
@@ -247,7 +276,7 @@ Result<std::map<std::string, PeakCenterConfig>> parse_peak_center_configs(std::s
     bool_key("update_table", c.update_table);
     bool_key("propagate", c.propagate);
     if (!error.empty()) return fail(ErrorKind::Config, where + ": " + error);
-    if (auto v = validate(c); !v) return fail(ErrorKind::Config, where + ": " + v.error().what);
+    if (auto v = validate_peak_center_config(c); !v) return fail(ErrorKind::Config, where + ": " + v.error().what);
     out.emplace(name, std::move(c));
   }
   return out;
@@ -264,7 +293,7 @@ class Runner {
       : spec_(spec), cfg_(cfg), progress_(progress), cancel_(cancel), options_(options) {}
 
   Result<PeakCenterResult> run() {
-    if (auto v = validate(cfg_); !v) return fail(v.error());
+    if (auto v = validate_peak_center_config(cfg_); !v) return fail(v.error());
     const auto hold = spec_.hold_table("peak_center");  // released when the run returns
     r_.config = cfg_;
     r_.isotope = cfg_.isotope;

@@ -110,9 +110,20 @@ struct PeakCenterConfig {
 //   window = 0.015
 //   step = 0.0005
 //   integration_s = 1.0
-// Unknown keys are errors.
+// Keys: detector, isotope, additional_detectors, center, window, step,
+// percent, min_peak_height, test_peak_flat, n_tries, direction ("increase" or
+// "decrease"), integration_s, settle_s, baseline_timeout_s, dac_offset,
+// peak_shift_threshold, update_table, propagate. Unknown keys are errors.
 Result<std::map<std::string, PeakCenterConfig>> parse_peak_center_configs(std::string_view toml_text,
                                                                          std::string_view file = "peak_center.toml");
+
+// The rules a config must meet (also checked by the parser and the runner).
+Result<void> validate_peak_center_config(const PeakCenterConfig& config);
+
+// The table body of one config, keys only (no header), in the form
+// parse_peak_center_configs reads. save_table is not a file key. center is
+// written only when set.
+std::string format_peak_center_config(const PeakCenterConfig& config);
 
 struct DetectorPeak {
   DetectorId detector;
