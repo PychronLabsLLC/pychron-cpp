@@ -141,7 +141,10 @@ class SpectrometerBridge : public QObject {
   // and reports once through peakCenterFinished. Refused, with Config "a
   // peak center is running" through peakCenterFinished, while one is.
   void peak_center(jobs::PeakCenterConfig config);
-  // No-op when none is running; the run then reports Cancelled.
+  // No-op when none is running; the run then reports Cancelled. It is not
+  // stopped at once: the runner checks between steps (an acquisition under
+  // way is ended through the token's hook), and a settle or other clock wait
+  // runs to its end first.
   void cancel_peak_center();
   // From the start until its peakCenterFinished has been delivered.
   bool peak_center_running() const noexcept { return peak_center_running_; }

@@ -217,6 +217,9 @@ class TestSpectrometerBridge : public QObject {
   }
 
   void cleanup() {
+    // A slot that failed while time was stopped would leave the run's thread
+    // waiting in the clock, and the bridge's destructor waiting for it.
+    if (clock_) restart_time();
     bridge_.reset();
     sim_.reset();
     clock_.reset();
