@@ -68,6 +68,7 @@ add_library(pychron_ui_lib STATIC
   src/gauge_popup.cpp
   src/gauge_window.cpp
   src/reading_history.cpp
+  src/peak_center_panel.cpp
   src/peak_center_scale.cpp
   src/peak_center_view.cpp
   src/rise_rate.cpp
@@ -164,6 +165,7 @@ add_library(pychron_ui_lib STATIC
   src/gauge_popup.hpp
   src/gauge_window.hpp
   src/reading_history.hpp
+  src/peak_center_panel.hpp
   src/peak_center_scale.hpp
   src/peak_center_view.hpp
   src/rise_rate.hpp
