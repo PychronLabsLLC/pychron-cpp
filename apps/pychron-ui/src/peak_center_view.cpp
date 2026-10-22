@@ -26,6 +26,9 @@ constexpr double kAdditionalWidth = 1.5;
 constexpr double kFaintWidth = 1.0;
 constexpr int kFaintAlpha = 70;
 constexpr double kTooltipPixels = 12.0;
+constexpr double kYPadding = 0.05;  // of the values' span, each side
+constexpr double kDefaultYLower = 0.0;  // y before any value
+constexpr double kDefaultYUpper = 1.0;
 
 // One detector's points in a try: the steps that have a value for it.
 struct Column {
@@ -94,7 +97,7 @@ void PeakCenterView::on_try_started(const jobs::PeakCenterTryStarted& e) {
   isotope_ = e.isotope;
   additional_ = e.additional;
   n_tries_ = e.n_tries;
-  tries_.push_back(Try{e.try_index, e.initial_center, {}});
+  tries_.push_back(Try{e.try_index, e.initial_center, e.start, e.end, {}});
   redraw();
   emit tryStarted();
 }
@@ -125,7 +128,7 @@ void PeakCenterView::display(const jobs::PeakCenterResult& r) {
   additional_ = r.config.additional_detectors;
   n_tries_ = r.config.n_tries;
   for (std::size_t i = 0; i < r.tries.size(); ++i)
-    tries_.push_back(Try{static_cast<int>(i), r.initial_center, r.tries[i].points});
+    tries_.push_back(Try{static_cast<int>(i), r.initial_center, r.tries[i].start, r.tries[i].end, r.tries[i].points});
   done_ = r;
   redraw();
 }
@@ -152,6 +155,10 @@ int PeakCenterView::kept() const { return static_cast<int>(kept_.size()); }
 QString PeakCenterView::title() const { return title_->text(); }
 
 QCustomPlot* PeakCenterView::plot() const { return plot_; }
+
+QCPRange PeakCenterView::x_range() const { return plot_->xAxis->range(); }
+
+QCPRange PeakCenterView::y_range() const { return plot_->yAxis->range(); }
 
 QColor PeakCenterView::color_of(const std::string& detector, std::size_t index) const {
   auto it = colors_.find(detector);
@@ -277,9 +284,44 @@ void PeakCenterView::redraw() {
     rule->setPen(QPen(theme().muted_text, 1, Qt::DashLine));
   }
 
-  plot_->rescaleAxes();
+  set_axes();
   plot_->replot();
   title_->setText(heading());
+}
+
+void PeakCenterView::set_axes() {
+  // x: the whole sweep from its start, so the trace grows across a fixed
+  // axis. A try whose ends are unknown (both 0) counts for nothing.
+  double lo = std::numeric_limits<double>::infinity();
+  double hi = -std::numeric_limits<double>::infinity();
+  for (const auto& t : tries_) {
+    if (t.start == t.end) continue;
+    lo = std::min({lo, t.start, t.end});
+    hi = std::max({hi, t.start, t.end});
+  }
+  if (lo < hi) {
+    plot_->xAxis->setRange(lo, hi);
+  } else {
+    plot_->xAxis->rescale();  // no sweep known: what is drawn
+  }
+
+  // y: every drawn value (markers too), padded.
+  double ylo = std::numeric_limits<double>::infinity();
+  double yhi = -std::numeric_limits<double>::infinity();
+  for (int i = 0; i < plot_->graphCount(); ++i) {
+    bool found = false;
+    const QCPRange r = plot_->graph(i)->getValueRange(found);
+    if (!found) continue;
+    ylo = std::min(ylo, r.lower);
+    yhi = std::max(yhi, r.upper);
+  }
+  if (!std::isfinite(ylo) || !std::isfinite(yhi)) {
+    plot_->yAxis->setRange(kDefaultYLower, kDefaultYUpper);
+    return;
+  }
+  double pad = (yhi - ylo) * kYPadding;
+  if (pad <= 0) pad = std::abs(yhi) > 0 ? std::abs(yhi) * kYPadding : kDefaultYUpper * kYPadding;
+  plot_->yAxis->setRange(ylo - pad, yhi + pad);
 }
 
 void PeakCenterView::on_mouse_move(QMouseEvent* event) {

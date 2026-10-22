@@ -389,6 +389,94 @@ class TestPeakCenterView : public QObject {
     QCOMPARE(view.series()[0].x.size(), 2);
     QCOMPARE(view.kept(), 0);
   }
+
+  // ---- the axes: x the sweep's whole width, y the data's -------------------
+
+  void xSpansTheTryFromItsStart() {
+    PeakCenterView view;
+    view.on_try_started(try_started(0, 2));
+    QCOMPARE(view.x_range().lower, 4.9);
+    QCOMPARE(view.x_range().upper, 5.1);
+    view.on_point(point(0, sweep_point(4.95, {{"H1", 1}})));
+    view.on_point(point(0, sweep_point(4.96, {{"H1", 3}})));
+    view.on_point(point(0, sweep_point(4.97, {{"H1", 2}})));
+    QCOMPARE(view.x_range().lower, 4.9);
+    QCOMPARE(view.x_range().upper, 5.1);
+  }
+
+  void aDescendingSweepSpansTheSameWidth() {
+    PeakCenterView view;
+    auto e = try_started(0, 1);
+    std::swap(e.start, e.end);
+    view.on_try_started(e);
+    QCOMPARE(view.x_range().lower, 4.9);
+    QCOMPARE(view.x_range().upper, 5.1);
+  }
+
+  void aWiderTryWidensTheAxisOnce() {
+    PeakCenterView view;
+    view.on_try_started(try_started(0, 2));
+    view.on_point(point(0, sweep_point(5.0, {{"H1", 1}})));
+    auto wider = try_started(1, 2);
+    wider.start = 4.8;
+    wider.end = 5.05;
+    view.on_try_started(wider);
+    QCOMPARE(view.x_range().lower, 4.8);
+    QCOMPARE(view.x_range().upper, 5.1);  // the union, the first try's end kept
+    view.on_point(point(1, sweep_point(4.85, {{"H1", 2}})));
+    QCOMPARE(view.x_range().lower, 4.8);
+    QCOMPARE(view.x_range().upper, 5.1);
+  }
+
+  void aNewPeakCenterForgetsTheOldWidth() {
+    PeakCenterView view;
+    auto wide = try_started(0, 1);
+    wide.start = 4.0;
+    wide.end = 6.0;
+    view.on_try_started(wide);
+    view.on_try_started(try_started(0, 1));  // try 0 again: a new peak center
+    QCOMPARE(view.x_range().lower, 4.9);
+    QCOMPARE(view.x_range().upper, 5.1);
+  }
+
+  void yHasASaneRangeBeforeAnyPoint() {
+    PeakCenterView view;
+    view.on_try_started(try_started(0, 2));
+    QVERIFY(view.y_range().upper > view.y_range().lower);
+  }
+
+  void yCoversThePointsWithRoom() {
+    PeakCenterView view;
+    view.on_try_started(try_started(0, 1, {}));
+    view.on_point(point(0, sweep_point(4.95, {{"H1", 10}})));
+    view.on_point(point(0, sweep_point(4.96, {{"H1", 30}})));
+    QVERIFY(view.y_range().lower < 10);
+    QVERIFY(view.y_range().upper > 30);
+    QVERIFY(view.y_range().lower > 8);  // some 5 % of the 20 span, not a jump to zero
+    QVERIFY(view.y_range().upper < 32);
+    view.on_point(point(0, sweep_point(4.97, {{"H1", 100}})));
+    QVERIFY(view.y_range().upper > 100);
+    QVERIFY(view.y_range().upper < 106);
+  }
+
+  void aShownResultSpansItsTries() {
+    PeakCenterView view;
+    auto r = result();
+    r.tries[0].start = 4.95;
+    r.tries[0].end = 5.25;
+    r.tries[1].start = 4.85;
+    r.tries[1].end = 5.15;
+    view.on_done(jobs::PeakCenterDone{r});
+    QCOMPARE(view.x_range().lower, 4.85);
+    QCOMPARE(view.x_range().upper, 5.25);
+    QVERIFY(view.y_range().upper > 101);  // the maximum marker, inside
+    view.on_try_started(try_started(0, 1));  // a new one: its own width
+    QCOMPARE(view.x_range().lower, 4.9);
+    QCOMPARE(view.x_range().upper, 5.1);
+    view.show_result(0);  // the kept one: its tries' again
+    QCOMPARE(view.x_range().lower, 4.85);
+    QCOMPARE(view.x_range().upper, 5.25);
+  }
 };
 
 QTEST_MAIN(TestPeakCenterView)

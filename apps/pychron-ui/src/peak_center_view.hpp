@@ -26,6 +26,7 @@
 
 #include "pychron/systems/jobs/peak_center.hpp"
 
+class QCPRange;
 class QCustomPlot;
 class QLabel;
 class QMouseEvent;
@@ -55,6 +56,11 @@ class PeakCenterView : public QWidget {
   [[nodiscard]] int kept() const;
   [[nodiscard]] QString title() const;
   [[nodiscard]] QCustomPlot* plot() const;
+  // The axes as drawn. x is the sweep's whole width from a try's start: the
+  // union of the tries in hand (their start and end), never grown by a point.
+  // y follows every drawn value, padded 5 % each side (0..1 with none).
+  [[nodiscard]] QCPRange x_range() const;
+  [[nodiscard]] QCPRange y_range() const;
 
   // What is drawn, for tests: one entry per series, the current try's first.
   struct Series {
@@ -76,6 +82,7 @@ class PeakCenterView : public QWidget {
   struct Try {
     int index = 0;
     double initial_center = 0;
+    double start = 0, end = 0;  // the sweep's ends, native, in either order
     std::vector<jobs::SweepPoint> points;
   };
   // A series before it is drawn: the detector it is of, and its colour.
@@ -88,6 +95,7 @@ class PeakCenterView : public QWidget {
   void start_fresh();
   void display(const jobs::PeakCenterResult& r);
   void redraw();
+  void set_axes();  // x the tries' width, y the drawn values'
   void on_mouse_move(QMouseEvent* event);
   [[nodiscard]] std::vector<Drawn> build() const;
   [[nodiscard]] QColor color_of(const std::string& detector, std::size_t index) const;
