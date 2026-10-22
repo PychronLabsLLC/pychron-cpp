@@ -1,6 +1,7 @@
 # Peak center from the spectrometer window
 
-Status: agreed 2026-10-21 (developer's answers, section 9). Related:
+Status: agreed 2026-10-21 (developer's answers, section 9); built 2026-10-21
+on branch `feat/spectrometer-peak-center`. Related:
 `2026-10-01-spectrometer-window-design.md` (peak center left out there, line
 42), `2026-10-12-peak-center-plot-design.md` (section 6 lists "peak center
 from spectrometer window" as not built), `2026-09-29-spectrometer-control-design.md`
@@ -96,6 +97,10 @@ magnet already at fitted centre.
   session's map); `SpectrometerPeakCenter` gets it through new
   `set_configs(std::map<std::string, PeakCenterConfig>)`, under its mutex.
 
+Load-time parse error of `peak_center.toml` (`Lab::peak_center_problem`) is
+not counted by `check_lab_queue` when `start` supplies fresh map: file was
+read again, load-time error stale.
+
 `Lab::peak_centers` loaded at `load_lab` unchanged (problems list, elctl).
 Map swapped only in `start`, never while queue runs: a run never changes
 settings partway.
@@ -146,14 +151,18 @@ Run on own `std::thread`, not command executor (executor stays free for
 - Last act of thread, still participant: sets done flag under bridge mutex,
   `clock.notify_all(cv)`. Joiner waits flag with `clock.wait`, then `join()`.
   Never `Clock::Detached` around it.
-- Cancel: `jobs::CancelToken` on spectrometer's clock (one clock per token).
+- Cancel: `jobs::CancelToken` has no clock; plain token used, runner's hook
+  ends an acquisition. Cancel takes effect at next step boundary: a settle
+  or other clock wait runs to its end.
 - Result posted to main thread through `Gate`, as other commands.
 
 Destructor: cancels, waits as above, then existing teardown.
 
 ### 4.3 Live scan
 
-If scan running at start: `ScanService` stopped first (on executor, in order),
+Scan pause decided from scan operator last asked for (main-thread intent,
+`scan_intent_`), not last reported status: a `start_scan` just issued has not
+reported yet. If scan wanted at start: `ScanService` stopped first (on executor, in order),
 then run. After run (any outcome): scan restarted with integration it had,
 unless operator pressed Stop scan meanwhile (existing `stop_requested_` rule).
 Runner's `integration` override (non-zero) changes integration for run only;
@@ -185,7 +194,7 @@ Existing name overwritten only after window asked (5.2).
   `PeakCenterPanel` widget (`apps/pychron-ui/src/peak_center_panel.{hpp,cpp}`,
   keeps `spectrometer_window.cpp` from growing). Contents 5.2.
 - "Peak center plot" dock: `PeakCenterView` (`peak_center_view.hpp`), placed
-  beside strip chart, both visible. Cleared at each Start; tries drawn as
+  in bottom dock area, below strip chart, both visible. Cleared at each Start; tries drawn as
   today (faint earlier tries); last result stays until next Start.
 - Both closable, movable, in View menu; positions saved with window state like
   existing docks.
@@ -238,6 +247,9 @@ Closing window with run going: asks "Cancel peak center?"; yes cancels, waits
   message "peak center running in the spectrometer window".
   `ExperimentWindow` given `std::function<bool()> peak_center_running`;
   `MainWindow` wires both.
+- `MainWindow::set_spectrometer` and quit cancel a window run and wait, no
+  prompt (run cannot outlive window or bridge). Queue start invalidates
+  panel's last result: Apply stays disabled for it even after queue ends.
 - While queue runs: Apply disabled (queue's runs own table), tooltip "a
   queue is running". Save allowed: file read only at next queue start (3.4).
 
