@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include <QCoreApplication>
@@ -240,8 +241,23 @@ class TestUpdateChecker : public QObject {
     checker->check_now();
     QVERIFY(up_to_date.wait(kWaitMs));
     QCOMPARE(up_to_date.at(0).at(0).toBool(), false);
+    QVERIFY(up_to_date.at(0).at(1).value<std::optional<upd::Version>>() == (upd::Version{0, 4, 0}));
     QCOMPARE(available.count(), 0);
     QVERIFY(policy().last_check == kNow);
+  }
+
+  // A build newer than any release (a developer's): up to date, and the
+  // latest release is said beside it.
+  void manualRunningNewerThanLatest() {
+    fake_->answer(200, release_json("v0.3.9"));
+    auto checker = make();
+    QSignalSpy up_to_date(checker.get(), &UpdateChecker::up_to_date);
+    QSignalSpy available(checker.get(), &UpdateChecker::available);
+    checker->check_now();
+    QVERIFY(up_to_date.wait(kWaitMs));
+    QCOMPARE(up_to_date.at(0).at(0).toBool(), false);
+    QVERIFY(up_to_date.at(0).at(1).value<std::optional<upd::Version>>() == (upd::Version{0, 3, 9}));
+    QCOMPARE(available.count(), 0);
   }
 
   void manualNoRelease() {
@@ -251,6 +267,7 @@ class TestUpdateChecker : public QObject {
     checker->check_now();
     QVERIFY(up_to_date.wait(kWaitMs));
     QCOMPARE(up_to_date.at(0).at(0).toBool(), true);
+    QVERIFY(!up_to_date.at(0).at(1).value<std::optional<upd::Version>>().has_value());
     QVERIFY(policy().last_check == kNow);
   }
 

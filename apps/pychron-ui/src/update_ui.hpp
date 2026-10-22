@@ -5,6 +5,8 @@
 // showing, the update dialog it opens, and Help > Check for Updates…, whose
 // answer is always a dialog. An automatic check never opens one by itself.
 
+#include <optional>
+
 #include <QDialog>
 #include <QString>
 #include <QToolButton>
@@ -28,7 +30,9 @@ class UpdateDialog : public QDialog {
  public:
   // Deleted when closed.
   static UpdateDialog* release(const update::Release& release, QWidget* parent);
-  static UpdateDialog* up_to_date(update::Version running, bool no_release, QWidget* parent);
+  // `latest`: the repository's latest release; none when it has none. Said
+  // beside the running version when it is older (a developer's build).
+  static UpdateDialog* up_to_date(update::Version running, std::optional<update::Version> latest, QWidget* parent);
   static UpdateDialog* failure(const QString& reason, QWidget* parent);
 
   // The line at the top.

@@ -133,7 +133,7 @@ void UpdateChecker::finish(bool manual, const Result<update::Fetched>& result) {
   save_update_policy(settings_, policy);
 
   if (result->outcome == update::FetchOutcome::NoRelease || !result->release) {
-    if (manual) emit up_to_date(true);
+    if (manual) emit up_to_date(true, std::nullopt);
     return;
   }
   const update::Release& release = *result->release;
@@ -141,7 +141,7 @@ void UpdateChecker::finish(bool manual, const Result<update::Fetched>& result) {
     if (release.version > running_) {
       emit available(release, true);
     } else {
-      emit up_to_date(false);
+      emit up_to_date(false, release.version);
     }
     return;
   }

@@ -77,9 +77,14 @@ UpdateDialog* UpdateDialog::release(const update::Release& release, QWidget* par
   return dialog;
 }
 
-UpdateDialog* UpdateDialog::up_to_date(update::Version running, bool no_release, QWidget* parent) {
-  const QString message = no_release ? tr("No release has been published yet")
-                                     : tr("pychron %1 is up to date").arg(version_text(running));
+UpdateDialog* UpdateDialog::up_to_date(update::Version running, std::optional<update::Version> latest,
+                                       QWidget* parent) {
+  QString message = tr("No release has been published yet");
+  if (latest && *latest < running) {
+    message = tr("pychron %1 is up to date (latest release: %2)").arg(version_text(running), version_text(*latest));
+  } else if (latest) {
+    message = tr("pychron %1 is up to date").arg(version_text(running));
+  }
   auto* dialog = new UpdateDialog(tr("Check for Updates"), message, parent);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
   connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
@@ -134,9 +139,11 @@ void install_update_check(QMainWindow* window, UpdateChecker& checker) {
                      UpdateDialog* dialog = show_release_dialog(window, release, checker);
                      QObject::connect(dialog, &UpdateDialog::skipped, indicator, &QWidget::hide);
                    });
-  QObject::connect(&checker, &UpdateChecker::up_to_date, window, [window, &checker](bool no_release) {
-    show_over(window, UpdateDialog::up_to_date(checker.running(), no_release, window));
-  });
+  QObject::connect(&checker, &UpdateChecker::up_to_date, window,
+                   [window, &checker](bool no_release, const std::optional<update::Version>& latest) {
+                     show_over(window, UpdateDialog::up_to_date(checker.running(),
+                                                                no_release ? std::nullopt : latest, window));
+                   });
   QObject::connect(&checker, &UpdateChecker::failed, window, [window](const QString& reason, bool manual) {
     if (manual) show_over(window, UpdateDialog::failure(reason, window));
   });

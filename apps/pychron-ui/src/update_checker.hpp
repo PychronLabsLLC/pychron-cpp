@@ -16,6 +16,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include <QObject>
@@ -75,8 +76,10 @@ class UpdateChecker : public QObject {
   // Automatic: only a release worth showing (newer, not skipped). Manual:
   // any release newer than the running one.
   void available(const pychron::update::Release& release, bool manual);
-  // Manual only: nothing newer; `no_release` when the repository has none.
-  void up_to_date(bool no_release);
+  // Manual only: nothing newer; `no_release` when the repository has none,
+  // else `latest` is its latest release (older than the running build for a
+  // developer's build).
+  void up_to_date(bool no_release, const std::optional<pychron::update::Version>& latest);
   // `reason` is said to the operator: "Could not reach GitHub (...)" for the
   // network, "GitHub answered <status>", "Unexpected answer from GitHub (...)"
   // for an answer that does not read.
