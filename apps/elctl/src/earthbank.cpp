@@ -450,7 +450,7 @@ Result<std::unique_ptr<ps::IStore>> open_read_store(const std::string& db) {
 
 // The members of the release `source` names, at the revisions it pins and in
 // member order, not reduced.
-Result<std::vector<pp::AnalysisPtr>> load_release(const Source& source, std::vector<std::string>& /*warnings*/) {
+Result<std::vector<pp::AnalysisPtr>> load_release(const Source& source) {
   auto reader = open_source(source.db);  // a mistyped SQLite path is an error
   if (!reader) return fail(reader.error());
   auto store = open_read_store(source.db);
@@ -491,7 +491,7 @@ Built build(const Source& source, Io io) {
 
   std::vector<std::string> warnings;
   const auto analyses = source.release.empty() ? load_selection(source.selection, source.db, warnings)
-                                               : load_release(source, warnings);
+                                               : load_release(source);
   if (!analyses) return {fatal(io, analyses.error()), {}};
   for (const auto& w : warnings) io.err << "warning: " << w << '\n';
   if (analyses->empty()) {
