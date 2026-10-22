@@ -760,6 +760,12 @@ class TestSpectrometerWindow : public QObject {
       asked << q;
       return answer;
     });
+    // Every command from the show on: the show's own start may be reported at
+    // any point before the close's stop (the executor is serial, and a slow
+    // build reports it late), so the starts are counted, not placed.
+    QStringList commands;
+    connect(bridge_.get(), &SpectrometerBridge::commandFinished, this,
+            [&commands](const QString& what, const Result<void>&) { commands << what; });
     window_->show();
     QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
     QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
@@ -771,9 +777,6 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(window_->isVisible());
     QVERIFY(window_->peak_center_running());
 
-    QStringList commands;
-    connect(bridge_.get(), &SpectrometerBridge::commandFinished, this,
-            [&commands](const QString& what, const Result<void>&) { commands << what; });
     answer = true;
     window_->close();  // yes: cancel, close when it has finished
     QCOMPARE(asked.size(), 2);
@@ -781,7 +784,8 @@ class TestSpectrometerWindow : public QObject {
     QCOMPARE(finished.count(), 1);
     bridge_->drain();
     QCoreApplication::processEvents();
-    QVERIFY2(!commands.contains(QStringLiteral("start")), qPrintable(commands.join(u',')));  // no scan put back to be stopped
+    // The show's start only: no scan put back by the run's end to be stopped.
+    QVERIFY2(commands.count(QStringLiteral("start")) == 1, qPrintable(commands.join(u',')));
     QVERIFY(!sim_->scan->status().running);
     QVERIFY(!window_->peak_center_running());
     QVERIFY(!finished.at(0).at(0).value<Result<jobs::PeakCenterResult>>().has_value());  // Cancelled
