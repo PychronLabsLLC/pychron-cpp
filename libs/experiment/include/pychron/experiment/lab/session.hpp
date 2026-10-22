@@ -120,6 +120,15 @@ class LabSession {
   // Queue-level fields are not editable while running and are ignored.
   Result<std::uint64_t> edit(std::uint64_t base, const QueueSpec& queue);
 
+  // check_lab_queue against the named peak-center sets start() or edit()
+  // would check `queue` against: while a queue runs, those it started with;
+  // otherwise peak_center.toml read again for this call (a small file; a set
+  // saved since the lab was loaded counts, its load-time error does not). A
+  // file that does not parse is an error (field "lab") with the text start()
+  // refuses with, first among the lab's; plan references are then checked
+  // against the sets of the last start. For what a window shows before Start.
+  LabCheck check_queue(const QueueSpec& queue) const;
+
   bool running() const;
   executor::ExecutorState state() const;
   // Joins the queue thread; the last queue's result, nullopt if none ran.

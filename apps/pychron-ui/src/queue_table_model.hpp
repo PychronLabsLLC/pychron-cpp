@@ -70,6 +70,11 @@ class QueueTableModel : public QAbstractTableModel {
   const experiment::QueueSpec& queue() const { return queue_.spec(); }
   void revalidate();
   const experiment::lab::LabCheck& check() const { return check_; }
+  // Another queue through the same checker (the run factory's new runs);
+  // nothing without one.
+  experiment::lab::LabCheck check_queue(const experiment::QueueSpec& spec) const {
+    return checker_ ? checker_(spec) : experiment::lab::LabCheck{};
+  }
   // Valid, and with a row the executor has not reached yet.
   bool runnable() const;
   // Queue-level diagnostics (run -1), one line each.

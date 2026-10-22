@@ -12,7 +12,8 @@
 //
 // Commands in: start/stop/cancel/abort/truncate/resume/skip forward to the session, which
 // never blocks (the executor has its own thread). check() validates a queue
-// against the lab on the calling thread; it touches no hardware.
+// against the lab on the calling thread (LabSession::check_queue: the
+// peak_center.toml start() would read); it touches no hardware.
 //
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.

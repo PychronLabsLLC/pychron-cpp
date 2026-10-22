@@ -80,7 +80,7 @@ ExperimentBridge::~ExperimentBridge() {
 }
 
 experiment::lab::LabCheck ExperimentBridge::check(const experiment::QueueSpec& queue) const {
-  return experiment::lab::check_lab_queue(session_.lab(), queue);
+  return session_.check_queue(queue);
 }
 
 Result<void> ExperimentBridge::start(const experiment::QueueSpec& queue, std::size_t from_row) {

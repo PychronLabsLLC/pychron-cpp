@@ -1223,6 +1223,51 @@ TEST_F(NamedPeakCenterSessionTest, ABadPeakCenterFileRefusesTheStart) {
   EXPECT_EQ(result->end, executor::QueueEnd::Completed) << result->reason;
 }
 
+// The check a window shows before Start (LabSession::check_queue) reads the
+// file as start() will: a set saved after the lab was loaded makes the queue
+// good without a restart.
+TEST_F(NamedPeakCenterSessionTest, TheCheckReadsTheFileAsItIsNow) {
+  const auto before = session_->check_queue(queue_);
+  ASSERT_FALSE(before.ok());
+  bool missing = false;
+  for (const auto& d : before.all()) missing = missing || d.message.find("uses peak center config 'tuned'") != std::string::npos;
+  EXPECT_TRUE(missing);
+
+  write_peak_centers("\n[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
+                     "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n");
+  const auto after = session_->check_queue(queue_);
+  EXPECT_TRUE(after.ok()) << (after.all().empty() ? std::string() : describe(after.all().front()));
+}
+
+// While a queue runs its sets stay those it started with, so the check agrees
+// with what edit() will take: a set dropped from the file meanwhile is still
+// there for it.
+TEST_F(NamedPeakCenterSessionTest, WhileAQueueRunsTheCheckIsTheRunningQueues) {
+  write_peak_centers("\n[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
+                     "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n");
+  ASSERT_TRUE(session_->start(queue_));
+  write_peak_centers("", true);
+  EXPECT_TRUE(session_->check_queue(queue_).ok());
+  session_->abort();
+  ASSERT_TRUE(session_->wait().has_value());
+  EXPECT_FALSE(session_->check_queue(queue_).ok());  // ended: the file as it is now
+}
+
+// A file that does not parse when the check is made is an error naming the
+// file, with the text start() refuses with.
+TEST_F(NamedPeakCenterSessionTest, TheCheckNamesABadFile) {
+  write_peak_centers("\n[x]\nwindow = -1\n");
+  const auto started = session_->start(queue_);
+  ASSERT_FALSE(started);
+  const auto c = session_->check_queue(queue_);
+  ASSERT_FALSE(c.ok());
+  bool named = false;
+  for (const auto& d : c.all()) {
+    if (d.severity == Severity::Error && d.field == "lab" && d.message == started.error().what) named = true;
+  }
+  EXPECT_TRUE(named) << started.error().what;
+}
+
 // A lab loaded while peak_center.toml was bad carries its error in
 // Lab::problems; the file read at the start decides, so a fixed file starts
 // the queue without a new load.
@@ -1238,8 +1283,11 @@ class BadPeakCenterAtLoadSessionTest : public NamedPeakCenterSessionTest {
 TEST_F(BadPeakCenterAtLoadSessionTest, AFixedFileStartsWithoutANewLoad) {
   ASSERT_FALSE(lab_.problems.empty());
   EXPECT_FALSE(session_->start(queue_));
+  EXPECT_FALSE(session_->check_queue(queue_).ok());
   write_peak_centers("[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
                      "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n", true);
+  // The load-time error is stale once the file is read again.
+  EXPECT_TRUE(session_->check_queue(queue_).ok());
   std::mutex m;
   std::vector<double> windows;
   auto sub = line_->bus().subscribe<jobs::PeakCenterDone>([&](const jobs::PeakCenterDone& d) {

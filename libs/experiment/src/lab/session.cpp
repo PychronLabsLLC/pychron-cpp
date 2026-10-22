@@ -245,6 +245,26 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   return {};
 }
 
+LabCheck LabSession::check_queue(const QueueSpec& queue) const {
+  std::map<std::string, jobs::PeakCenterConfig> sets;
+  {
+    std::lock_guard lock(mutex_);
+    sets = peak_centers_;
+  }
+  std::optional<std::string> unreadable;
+  if (!running()) {
+    auto fresh = read_peak_center_file(lab_.paths.dir / "peak_center.toml");
+    if (fresh) {
+      sets = std::move(*fresh);
+    } else {
+      unreadable = fresh.error().what;
+    }
+  }
+  auto out = check_lab_queue(lab_, queue, &sets);
+  if (unreadable) out.extra.insert(out.extra.begin(), Diagnostic{Severity::Error, -1, "lab", *unreadable});
+  return out;
+}
+
 Result<void> LabSession::check(const QueueSpec& queue) const {
   std::map<std::string, jobs::PeakCenterConfig> sets;
   {

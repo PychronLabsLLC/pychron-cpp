@@ -186,6 +186,23 @@ class TestRunFactoryPanel : public QObject {
     QVERIFY(panel_->preview_text().contains(QStringLiteral("no_such_script")));
   }
 
+  // The new runs are checked by the model's checker (the session's in the
+  // app, which reads peak_center.toml as it is now), not the lab as loaded.
+  void runsAreCheckedByTheModelsChecker() {
+    panel_.reset();
+    model_ = std::make_unique<QueueTableModel>(lab_->ids, [this](const auto& q) {
+      auto c = lab::check_lab_queue(*lab_, q);
+      for (std::size_t i = 0; i < q.runs.size(); ++i)
+        c.extra.push_back({pychron::experiment::Severity::Error, static_cast<int>(i), "peak_center", "checked afresh"});
+      return c;
+    });
+    model_->set_queue(pychron::ui::test::example_queue(dir_, lab_->ids));
+    panel_ = std::make_unique<RunFactoryPanel>(*lab_, *model_, [this] { return selection_; });
+    panel_->set_form(with_identifier("20001", "1"));
+    QVERIFY(!panel_->add_enabled());
+    QVERIFY(panel_->preview_text().contains(QStringLiteral("checked afresh")));
+  }
+
   void fieldsFollowTheTypeAndATypeChangeAppliesDefaults() {
     panel_->set_form(with_identifier("20001", "1"));
     QVERIFY(panel_->field_enabled("value"));

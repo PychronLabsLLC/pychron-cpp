@@ -1403,6 +1403,42 @@ class TestExperimentWindow : public QObject {
     QVERIFY(window.queue_diagnostics_text().contains(QStringLiteral("queue.queue_conditionals: unknown queue conditionals")));
   }
 
+  // A plan naming a peak center set the lab did not have when it was loaded:
+  // once the set is saved to peak_center.toml (the spectrometer window's Save
+  // to set), a revalidation makes the queue startable without a restart.
+  void aSetSavedAfterLoadMakesTheQueueRunnable() {
+    namespace lab = pychron::experiment::lab;
+    pychron::ui::test::SimLab sim;
+    sim.session.reset();
+    {
+      const fs::path plan = sim.dir / "plans" / "sim_multicollect.toml";
+      std::ifstream in(plan);
+      std::stringstream text;
+      text << in.rdbuf();
+      std::string s = text.str();
+      const auto at = s.find("config = \"default\"");
+      QVERIFY(at != std::string::npos);
+      s.replace(at, std::string_view("config = \"default\"").size(), "config = \"tuned\"");
+      std::ofstream(plan, std::ios::trunc) << s;
+    }
+    sim.lab = lab::load_lab(pychron::ui::test::lab_paths(sim.dir));
+    sim.session = std::make_unique<lab::LabSession>(
+        sim.lab, lab::SessionHardware{*sim.line, sim.spec.get(), sim.scan.get(), {}},
+        lab::SessionOptions{sim.dir / "data", {}, {}, nullptr});
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QVERIFY(window.load_queue(queue_file(sim)));
+    QVERIFY(!window.model().runnable());
+    QVERIFY(!window.executor()->start_enabled());
+
+    std::ofstream(sim.dir / "peak_center.toml", std::ios::app)
+        << "\n[tuned]\nisotope = \"Ar40\"\ndetector = \"H1\"\nwindow = 0.07\nstep = 0.002\n"
+           "integration_s = 1.0\nn_tries = 1\nupdate_table = false\n";
+    window.model().revalidate();
+    QVERIFY(window.model().runnable());
+    QVERIFY(window.executor()->start_enabled());
+  }
+
   void savingRoundTripsAndUnsavedEditsAsk() {
     pychron::ui::test::SimLab sim;
     ExperimentBridge bridge(*sim.session, sim.line->bus());

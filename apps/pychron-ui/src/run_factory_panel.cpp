@@ -415,12 +415,13 @@ void RunFactoryPanel::refresh() {
   if (!ok) {
     text = QString::fromStdString(runs.error().what);
   } else {
-    // The new runs checked against the lab on their own (row numbers are theirs).
+    // The new runs checked on their own (row numbers are theirs), by the
+    // model's checker: what the queue itself is checked with.
     experiment::QueueSpec probe = model_.queue();
     probe.runs = *runs;
     probe.queue_conditionals.clear();
     QStringList problems;
-    for (const auto& d : experiment::lab::check_lab_queue(lab_, probe).all()) {
+    for (const auto& d : model_.check_queue(probe).all()) {
       if (d.run < 0 || d.severity != experiment::Severity::Error) continue;
       problems.append(QString::fromStdString(d.field + ": " + d.message));
     }

@@ -214,7 +214,7 @@ void QueueTableModel::set_executed(std::size_t rows) {
 }
 
 void QueueTableModel::revalidate() {
-  check_ = checker_ ? checker_(queue_.spec()) : experiment::lab::LabCheck{};
+  check_ = check_queue(queue_.spec());
   by_row_.clear();
   for (const auto& d : check_.all())
     if (d.run >= 0) by_row_[d.run].push_back(d);

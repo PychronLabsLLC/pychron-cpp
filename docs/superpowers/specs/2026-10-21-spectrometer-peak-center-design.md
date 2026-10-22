@@ -101,6 +101,18 @@ Load-time parse error of `peak_center.toml` (`Lab::peak_center_problem`) is
 not counted by `check_lab_queue` when `start` supplies fresh map: file was
 read again, load-time error stale.
 
+UI check before Start same file: `LabCheck LabSession::check_queue(const
+QueueSpec&) const`. No queue running: `peak_center.toml` read again each
+call (small file; no mtime cache), map passed to `check_lab_queue`, so
+load-time problem skipped as in `start`. Bad file: `Error` diagnostic, field
+`lab`, text `start` refuses with, first of `extra`; plan refs then checked
+against session's map (last start, else load). Queue running: session's map
+(what `edit` checks against), file not read. `ExperimentBridge::check`
+(queue table's checker, gates Start) calls it; run factory's probe goes
+through `QueueTableModel::check_queue` (same checker), no reader of its own.
+Set saved after load: Revalidate (or any edit) makes row runnable, no
+restart.
+
 `Lab::peak_centers` loaded at `load_lab` unchanged (problems list, elctl).
 Map swapped only in `start`, never while queue runs: a run never changes
 settings partway.
@@ -260,7 +272,12 @@ Closing window with run going: asks "Cancel peak center?"; yes cancels, waits
   give same table as `update_table = true` run on same sim sweep.
 - `tests/experiment/test_lab.cpp` (or session test): edited file picked up at
   `start`; bad file refuses start naming file; plan ref to set added in file
-  after load accepted; map not swapped while running.
+  after load accepted; map not swapped while running. `check_queue`: set
+  added after load counts; bad file named with `start`'s text; running
+  queue's map while running (`tests/integration/test_lab_session.cpp`).
+- `tests/ui/test_experiment_window.cpp`: set added to file after load,
+  Revalidate, queue runnable, Start enabled. `test_run_factory_panel.cpp`:
+  probe checked by model's checker.
 - `tests/core/test_local_file.cpp` `set_local_table`: comment kept, position
   kept, CRLF kept, header with trailing comment, subtable replaced with it,
   new table appended, comment-only file, missing file made. Bridge case on a
