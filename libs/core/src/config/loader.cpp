@@ -469,7 +469,7 @@ class ConfigBuilder {
   void parse_logging(const toml::table& t, LoggingConfig& l) {
     p_.begin(l, t, "logging");
     const auto get = lookup_in(t);
-    p_.reject_unknown(t, l, Keys{"dir", "max_size_mb", "max_files", "default_level", "levels", "echo_stderr"});
+    p_.reject_unknown(t, l, Keys{"dir", "max_size_mb", "max_files", "default_level", "dock_level", "levels", "echo_stderr"});
     std::string dir;
     // Only when the key is there: read over a table the local file gave, a
     // missing `dir` must leave the shared file's alone.
@@ -477,6 +477,7 @@ class ConfigBuilder {
     p_.read(get, l, "max_size_mb", l.max_size_mb, false, 1);
     p_.read(get, l, "max_files", l.max_files, false, 1);
     p_.read_enum(get, l, "default_level", l.default_level, false, kLevels);
+    p_.read_enum(get, l, "dock_level", l.dock_level, false, kLevels);
     p_.read(get, l, "echo_stderr", l.echo_stderr);
 
     const auto* n = p_.find(get, l, "levels", false);

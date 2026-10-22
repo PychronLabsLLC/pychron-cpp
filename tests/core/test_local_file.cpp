@@ -75,6 +75,14 @@ TEST(LocalOverrideText, OnlyTheKeysThatDiffer) {
   EXPECT_EQ(metrics_override_toml(m, MetricsConfig{}), "[metrics]\nenabled = true\nport = 9500\n");
 }
 
+TEST(LocalOverrideText, LoggingOverrideWritesDockLevel) {
+  LoggingConfig main_cfg;
+  main_cfg.dock_level = LogLevel::Info;
+  LoggingConfig wanted = main_cfg;
+  wanted.dock_level = LogLevel::Warn;
+  EXPECT_EQ(logging_override_toml(wanted, main_cfg), "[logging]\ndock_level = \"warn\"\n");
+}
+
 TEST(LocalOverrideText, LevelsAreWrittenWholeAndInOrder) {
   LoggingConfig wanted;
   wanted.levels = {{"scheduler", LogLevel::Debug}, {"*.wire", LogLevel::Trace}};
@@ -107,12 +115,15 @@ TEST(LocalOverrideText, PathsAndPatternsAreQuotedSafely) {
 TEST(LocalOverrideText, ClearingTheSharedFoldersIsAnEmptyDir) {
   LoggingConfig main_cfg;
   main_cfg.dir = "/var/log/pychron";
-  const std::string text = logging_override_toml(LoggingConfig{}, main_cfg);
+  LoggingConfig wanted;
+  wanted.dir = fs::path{};
+  const std::string text = logging_override_toml(wanted, main_cfg);
   EXPECT_EQ(text, "[logging]\ndir = \"\"\n");
   const auto r = load_report_from_string("[system]\nname = \"x\"\n[logging]\ndir = \"/var/log/pychron\"\n", "main.toml", text,
                                          "main.local.toml");
   ASSERT_TRUE(r.ok());
-  EXPECT_TRUE(r.config->logging.dir.empty());
+  ASSERT_TRUE(r.config->logging.dir.has_value());
+  EXPECT_TRUE(r.config->logging.dir->empty());
 }
 
 // ---- writing it -------------------------------------------------------------

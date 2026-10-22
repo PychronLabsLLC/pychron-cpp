@@ -269,6 +269,19 @@ TEST(LogHub, AThrowingLogHandlerDoesNotLoop) {
   EXPECT_EQ(bus.handler_failures(), 2u);
 }
 
+TEST(LogHub, FileNameIsUsed) {
+  TempDir tmp;
+  SteadyClock clock;
+  auto cfg = config_for(tmp.path());
+  cfg.file_name = "elctl.log";
+  auto hub = make_hub(cfg, clock);
+  ASSERT_TRUE(hub);
+  hub->write(LogLevel::Warn, "core", "x");
+  hub->flush();
+  EXPECT_TRUE(fs::exists(tmp.path() / "elctl.log"));
+  EXPECT_FALSE(fs::exists(tmp.path() / "pychron.log"));
+}
+
 TEST(LogHub, EmptyDirMeansNoFileSink) {
   SteadyClock clock;
   SignalBus bus;

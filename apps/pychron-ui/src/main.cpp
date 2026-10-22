@@ -662,8 +662,8 @@ int main(int argc, char** argv) {
           });
       hub->flush();  // records from load() are on disk before history is read
     }
-    if (const auto& dir = (*line)->config().logging.dir; !dir.empty()) {
-      window.log_dock()->load_history(dir / "pychron.log");
+    if (const auto& dir = (*line)->config().logging.dir; dir && !dir->empty()) {
+      window.log_dock()->load_history(*dir / (*line)->config().logging.file_name);
     }
     // The experiment window shows the recent references only when what the
     // data window reads is where the session saves its runs: the store, with

@@ -576,11 +576,13 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   impl->default_level = config.default_level;
   for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
 
-  if (!config.dir.empty()) {
+  if (config.dir && !config.dir->empty()) {
+    const std::filesystem::path& dir = *config.dir;
+    const std::filesystem::path file = dir / config.file_name;
     std::error_code ec;
-    std::filesystem::create_directories(config.dir, ec);
+    std::filesystem::create_directories(dir, ec);
     if (ec) {
-      impl->report_startup_error("cannot create log directory " + config.dir.string() + ": " +
+      impl->report_startup_error("cannot create log directory " + dir.string() + ": " +
                                  ec.message() + "; file logging disabled");
     } else {
       // Total files kept = max_files: spdlog counts rotated files only.
@@ -588,13 +590,13 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
       const auto size_mb = static_cast<std::size_t>(std::max<std::int64_t>(config.max_size_mb, 1));
       try {
         impl->file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-            (config.dir / "pychron.log").string(), size_mb * 1024 * 1024,
+            file.string(), size_mb * 1024 * 1024,
             std::min(files - 1, kSpdlogMaxRotated));
         impl->file_sink->set_formatter(make_file_formatter());
-        impl->file_path = config.dir / "pychron.log";
+        impl->file_path = file;
       } catch (const std::exception& e) {
         impl->file_sink.reset();
-        impl->report_startup_error("cannot open log file in " + config.dir.string() + ": " +
+        impl->report_startup_error("cannot open log file in " + dir.string() + ": " +
                                    e.what() + "; file logging disabled");
       }
     }

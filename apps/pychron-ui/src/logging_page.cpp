@@ -126,7 +126,7 @@ void LoggingPage::set(const config::LoggingConfig& logging) {
   // By name, so the table reads the same however the file listed them.
   const std::map<std::string, LogLevel> sorted(logging.levels.begin(), logging.levels.end());
   for (const auto& [pattern, level] : sorted) add_row(QString::fromStdString(pattern), level);
-  folder_->setText(QString::fromStdString(logging.dir.string()));
+  folder_->setText(QString::fromStdString(logging.dir.value_or(std::filesystem::path{}).string()));
   max_size_->setValue(static_cast<int>(logging.max_size_mb));
   max_files_->setValue(static_cast<int>(logging.max_files));
   echo_->setChecked(logging.echo_stderr);

@@ -144,11 +144,15 @@ Unexpected<Error> failed(ErrorKind kind, const fs::path& file, const std::string
 
 std::string logging_override_toml(const LoggingConfig& wanted, const LoggingConfig& main) {
   std::string keys;
-  if (wanted.dir != main.dir) keys += "dir = " + toml_string(wanted.dir.string()) + "\n";
+  // An unset dir (the app's default) has no spelling in TOML: it is left out.
+  if (wanted.dir && wanted.dir != main.dir) keys += "dir = " + toml_string(wanted.dir->string()) + "\n";
   if (wanted.max_size_mb != main.max_size_mb) keys += "max_size_mb = " + std::to_string(wanted.max_size_mb) + "\n";
   if (wanted.max_files != main.max_files) keys += "max_files = " + std::to_string(wanted.max_files) + "\n";
   if (wanted.default_level != main.default_level) {
     keys += std::string("default_level = \"") + level_name(wanted.default_level) + "\"\n";
+  }
+  if (wanted.dock_level != main.dock_level) {
+    keys += std::string("dock_level = \"") + level_name(wanted.dock_level) + "\"\n";
   }
   if (wanted.echo_stderr != main.echo_stderr) {
     keys += std::string("echo_stderr = ") + (wanted.echo_stderr ? "true" : "false") + "\n";

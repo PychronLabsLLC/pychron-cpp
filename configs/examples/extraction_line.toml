@@ -6,12 +6,14 @@
 name = "example"
 scan_interval_ms = 1000
 
-# Optional. With no `dir` there is no file sink. Levels: trace|debug|info|warn|error.
+# Optional. The library writes no file unless `dir` is set (dir = "" means none);
+# the apps pick a default folder. Levels: trace|debug|info|warn|error.
 [logging]
 # dir = "~/pychron-logs"
-# max_size_mb = 10
-# max_files = 5
-default_level = "info"
+# max_size_mb = 50
+# max_files = 10
+# default_level = "debug"
+# dock_level = "info"   # what the log dock shows
 # echo_stderr = false
 
 # Per-logger overrides, by name glob. Each transport logs its bytes at trace

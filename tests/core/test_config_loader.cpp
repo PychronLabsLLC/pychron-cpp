@@ -375,12 +375,47 @@ TEST(Logging, ExpandsHomeInDir) {
 TEST(Logging, AbsentTableGivesDefaults) {
   auto r = load_system_config_from_string(std::string(test::kPreamble), "f.toml");
   ASSERT_TRUE(r) << r.error().what;
-  EXPECT_EQ(r->logging.max_size_mb, 10);
-  EXPECT_EQ(r->logging.max_files, 5);
-  EXPECT_EQ(r->logging.default_level, LogLevel::Info);
-  EXPECT_TRUE(r->logging.dir.empty());
+  EXPECT_EQ(r->logging.max_size_mb, 50);
+  EXPECT_EQ(r->logging.max_files, 10);
+  EXPECT_EQ(r->logging.default_level, LogLevel::Debug);
+  EXPECT_EQ(r->logging.dock_level, LogLevel::Info);
+  EXPECT_EQ(r->logging.file_name, "pychron.log");
+  EXPECT_EQ(r->logging.dir, std::nullopt);
   EXPECT_TRUE(r->logging.levels.empty());
   EXPECT_FALSE(r->logging.echo_stderr);
+}
+
+TEST(Logging, LoggingDefaults) {
+  auto r = load_system_config_from_string(test::kPreamble, "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(r->logging.dir, std::nullopt);
+  EXPECT_EQ(r->logging.max_size_mb, 50);
+  EXPECT_EQ(r->logging.max_files, 10);
+  EXPECT_EQ(r->logging.default_level, LogLevel::Debug);
+  EXPECT_EQ(r->logging.dock_level, LogLevel::Info);
+  EXPECT_EQ(r->logging.file_name, "pychron.log");
+}
+
+TEST(Logging, LoggingEmptyDirMeansOff) {
+  auto r = load_system_config_from_string(std::string(test::kPreamble) + "[logging]\ndir = \"\"\n", "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  ASSERT_TRUE(r->logging.dir.has_value());
+  EXPECT_TRUE(r->logging.dir->empty());
+}
+
+TEST(Logging, LoggingDockLevelRead) {
+  auto r = load_system_config_from_string(std::string(test::kPreamble) + "[logging]\ndock_level = \"warn\"\n", "f.toml");
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(r->logging.dock_level, LogLevel::Warn);
+  auto bad = load_system_config_from_string(std::string(test::kPreamble) + "[logging]\ndock_level = \"loud\"\n", "f.toml");
+  ASSERT_FALSE(bad);
+  EXPECT_NE(bad.error().what.find("logging.dock_level"), std::string::npos) << bad.error().what;
+}
+
+TEST(Logging, LoggingFileNameIsNotAKey) {
+  auto r = load_system_config_from_string(std::string(test::kPreamble) + "[logging]\nfile_name = \"x.log\"\n", "f.toml");
+  ASSERT_FALSE(r);
+  EXPECT_NE(r.error().what.find("file_name"), std::string::npos) << r.error().what;
 }
 
 TEST(Logging, BadLevelIsDiagnosticWithLine) {
