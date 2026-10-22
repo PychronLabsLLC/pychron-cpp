@@ -135,13 +135,14 @@ void PeakCenterPanel::build() {
   row("additional_detectors", tr("Additional detectors"), additional_,
       tr("Other detectors read during the sweep and fitted for display. They do not change the result."));
 
-  center_enabled_ = new QCheckBox(tr("Set center"));
-  center_enabled_->setObjectName(QStringLiteral("pc_center_enabled"));
-  center_enabled_->setToolTip(tr("Start the sweep at Center instead of at the isotope's field table position."));
+  center_enabled_ = new QCheckBox;
+  row("center_enabled", tr("Set center"), center_enabled_,
+      tr("Start the sweep at Center instead of at the isotope's field table position."));
   center_ = spin(-1e6, 1e6, 9, 0.001);
   row("center", tr("Center"), center_,
       tr("Where the sweep starts, in the magnet's native units. Used only when Set center is checked."));
-  form->addRow(QString(), center_enabled_);
+  center_->setEnabled(false);  // follows Set center, which starts unchecked
+  connect(center_enabled_, &QCheckBox::toggled, center_, &QWidget::setEnabled);
 
   window_ = spin(0, 1e6, 9, 0.001);
   row("window", tr("Window"), window_,
@@ -541,7 +542,8 @@ void PeakCenterPanel::refresh() {
   mark("detector", now.detector != base_.detector);
   mark("isotope", now.isotope != base_.isotope);
   mark("additional_detectors", now.additional_detectors != base_.additional_detectors);
-  mark("center", now.center != base_.center);
+  mark("center_enabled", now.center.has_value() != base_.center.has_value());
+  mark("center", now.center && base_.center && *now.center != *base_.center);
   mark("window", now.window != base_.window);
   mark("step", now.step != base_.step);
   mark("percent", now.percent != base_.percent);

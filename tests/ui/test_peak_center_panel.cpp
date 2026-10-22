@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -135,6 +136,57 @@ class TestPeakCenterPanel : public QObject {
     QVERIFY(!panel_->edited());
     QVERIFY(!label->font().bold());
     QCOMPARE(child<QDoubleSpinBox>(*panel_, "pc_window")->value(), 0.02);
+  }
+
+  void setCenterIsALabelledRowAboveCenter() {
+    auto* box = child<QCheckBox>(*panel_, "pc_center_enabled");
+    auto* center = child<QDoubleSpinBox>(*panel_, "pc_center");
+    QFormLayout* form = nullptr;
+    for (auto* f : panel_->findChildren<QFormLayout*>()) {
+      if (f->indexOf(center) >= 0) form = f;
+    }
+    QVERIFY(form != nullptr);
+    int box_row = -1, center_row = -1;
+    QFormLayout::ItemRole role{};
+    form->getWidgetPosition(box, &box_row, &role);
+    QCOMPARE(role, QFormLayout::FieldRole);
+    form->getWidgetPosition(center, &center_row, &role);
+    QCOMPARE(center_row, box_row + 1);
+    // Like Test peak flat and Propagate: the text is the row's label, not the box's.
+    QVERIFY(box->text().isEmpty());
+    QCOMPARE(child<QLabel>(*panel_, "pc_center_enabled_label")->text(), QStringLiteral("Set center"));
+    QCOMPARE(qobject_cast<QLabel*>(form->itemAt(box_row, QFormLayout::LabelRole)->widget()),
+             child<QLabel>(*panel_, "pc_center_enabled_label"));
+  }
+
+  void centerIsEnabledOnlyWhileSetCenterIsChecked() {
+    panel_->set_file(write(QStringLiteral("[plain]\nwindow = 0.02\n\n[given]\nwindow = 0.02\ncenter = 5.25\n")));
+    auto* box = child<QCheckBox>(*panel_, "pc_center_enabled");
+    auto* center = child<QDoubleSpinBox>(*panel_, "pc_center");
+    panel_->select_set(QStringLiteral("plain"));
+    QVERIFY(!box->isChecked());
+    QVERIFY(!center->isEnabled());
+    box->setChecked(true);
+    QVERIFY(center->isEnabled());
+    box->setChecked(false);
+    QVERIFY(!center->isEnabled());
+    panel_->select_set(QStringLiteral("given"));
+    QVERIFY(box->isChecked());
+    QVERIFY(center->isEnabled());
+    panel_->select_set(QStringLiteral("plain"));
+    QVERIFY(!center->isEnabled());
+  }
+
+  void setCenterIsMarkedWhenToggled() {
+    panel_->set_file(write(QStringLiteral("[plain]\nwindow = 0.02\n")));
+    panel_->select_set(QStringLiteral("plain"));
+    auto* label = child<QLabel>(*panel_, "pc_center_enabled_label");
+    QVERIFY(!label->font().bold());
+    child<QCheckBox>(*panel_, "pc_center_enabled")->setChecked(true);
+    QVERIFY(label->font().bold());
+    QVERIFY(panel_->edited());
+    panel_->revert();
+    QVERIFY(!label->font().bold());
   }
 
   void invalidFormDisablesStartAndSave() {
