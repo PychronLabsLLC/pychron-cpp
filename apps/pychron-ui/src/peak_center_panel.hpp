@@ -50,7 +50,6 @@ class PeakCenterPanel : public QWidget {
   void set_file(const std::filesystem::path& file);
   const std::filesystem::path& file() const noexcept { return file_; }
 
-  
   // The form as a config. A field the operator has not edited keeps the picked
   // set's exact value from the file (the spin boxes round); only an edited
   // field takes the widget's value.
