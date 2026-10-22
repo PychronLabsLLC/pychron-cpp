@@ -1,7 +1,9 @@
 # Peak center from the spectrometer window
 
 Status: agreed 2026-10-21 (developer's answers, section 9); built 2026-10-21
-on branch `feat/spectrometer-peak-center`. Related:
+on branch `feat/spectrometer-peak-center`; moved to own Peak Center window,
+plot axes fixed to sweep width, 2026-10-21 on branch
+`feat/peak-center-window`. Related:
 `2026-10-01-spectrometer-window-design.md` (peak center left out there, line
 42), `2026-10-12-peak-center-plot-design.md` (section 6 lists "peak center
 from spectrometer window" as not built), `2026-09-29-spectrometer-control-design.md`
@@ -219,29 +221,55 @@ Existing name overwritten only after window asked (5.2).
 
 ## 5. UI
 
-### 5.1 Docks
+### 5.1 Peak Center window
 
-- "Peak center" dock, tabbed with Controls dock, holding new
-  `PeakCenterPanel` widget (`apps/pychron-ui/src/peak_center_panel.{hpp,cpp}`,
-  keeps `spectrometer_window.cpp` from growing). Contents 5.2.
-- "Peak center plot" dock: `PeakCenterView` (`peak_center_view.hpp`), placed
-  in bottom dock area, below strip chart, both visible. Cleared at each
-  Start; tries drawn as today (faint earlier tries); last result stays until
-  next Start.
-- Controls dock during window run (Start pressed until `peakCenterFinished`):
-  magnet Apply, banner's Restart, rise rate Start disabled; `apply_position`,
-  `restart_scan` do nothing; rise rate run going ended without result
-  ("a peak center was started while it ran"); window shown meanwhile starts
-  no scan. Graph, detectors, integration unchanged. Bridge refuses too (4.1).
-- Both closable, movable, in View menu; positions saved with window state like
-  existing docks.
+- Own top-level window `PeakCenterWindow`
+  (`apps/pychron-ui/src/peak_center_window.{hpp,cpp}`, `QMainWindow`), title
+  "Peak Center" ("Peak Center (Simulation)" in simulation). Central widget:
+  horizontal `QSplitter` `peakCenterSplitter`; left `PeakCenterPanel`
+  (`peak_center_panel.{hpp,cpp}`, contents 5.2) inside a `QScrollArea`
+  (form taller than a laptop screen; window not held up by it), right
+  `PeakCenterView` (`peak_center_view.hpp`). Replaces the "Peak center" and
+  "Peak center plot" docks the spectrometer window had (`peakCenterDock`,
+  `peakCenterPlotDock`; gone, with their View-menu entries and default
+  layout). Saved spectrometer dock state naming them still restores:
+  `restoreState` skips unknown objects.
+- Wiring: panel's `startRequested` clears plot; bridge's
+  `peakCenterTryStarted`/`peakCenterPoint` feed it; `peakCenterFinished` with
+  a result (ok or failed fit) → `on_done`, an error → nothing.
+- Interface: `set_peak_center_file(path)`, `set_queue_running(fn)`,
+  `queue_state_changed()`, `peak_center_running()`,
+  `cancel_peak_center_and_wait()` (MainWindow teardown, `ScanAfter::Stopped`),
+  `set_ask(fn)` (close question, 5.3), `peak_center_panel()`,
+  `peak_center_view()`.
+- Settings: `peak_center_window/<spectrometer name>/geometry` and
+  `.../splitter`, written at close, restored at construction; a value Qt
+  refuses leaves defaults.
+- Plot axes: x fixed from a try's start to the union of the tries in hand
+  (`PeakCenterTryStarted::start/end`; for a displayed result its
+  `PeakCenterTry::start/end`), either order; a wider later try widens it once,
+  at its start, never per point; no try with start ≠ end → x from what is
+  drawn. y rescaled each redraw over every drawn graph (markers too), 5 %
+  padding each side; 0..1 with no value. Accessors `x_range()`, `y_range()`
+  (`QCPRange`). Same view in experiment window's Evolutions → Peak center
+  tab: same axes there.
+- Spectrometer window during a run (bridge's `peakCenterStarted` until
+  `peakCenterFinished`, whichever window started it): magnet Apply, banner's
+  Restart, rise rate Start disabled; `apply_position`, `restart_scan` do
+  nothing; rise rate run going ended without result ("a peak center was
+  started while it ran"); window shown meanwhile starts no scan. Graph,
+  detectors, integration unchanged. Bridge refuses too (4.1).
+  `peakCenterStarted()`: bridge signal, emitted on main thread from inside
+  `peak_center()` when it accepts a run, never for a refused start; unlock on
+  `peakCenterFinished` via `lock_for_peak_center(peak_center_running())`
+  (refused second start keeps lock).
 
-### 5.2 Peak center dock
+### 5.2 Peak center panel
 
 - Set: combo of names in `peak_center.toml` (file read at window open and
   after each save); built-in `PeakCenterConfig{}` named `default` when file
   absent or has no `default`. File given by
-  `SpectrometerWindow::set_peak_center_file(path)` (`<lab>/peak_center.toml`),
+  `PeakCenterWindow::set_peak_center_file(path)` (`<lab>/peak_center.toml`),
   set by `MainWindow` like `set_rise_rate_file`.
   Unparseable file: banner names error, combo holds built-in `default` only,
   Save disabled (would overwrite what operator must fix by hand).
@@ -272,22 +300,34 @@ Existing name overwritten only after window asked (5.2).
 
 ### 5.3 Close
 
-Closing window with run going: asks "Cancel peak center?"; yes cancels
-(`ScanAfter::Stopped`: no scan put back to be stopped), waits for finish
-(bridge 4.2), closes; no keeps window open.
+- Peak Center window closed with run going: asks exactly `Cancel peak
+  center?`. Yes → `cancel_peak_center(ScanAfter::Resume)` (scan belongs to
+  spectrometer window, which stays open: goes back as it was); this close
+  ignored, window closes when `peakCenterFinished` arrives. No → stays open,
+  run goes on. Second close while waiting ignored, not asked again.
+- Spectrometer window close asks nothing. Its `stop_scan` makes a run going
+  end with scan left stopped (`stop_requested_` rule, 4.3).
 
 ### 5.4 Exclusion with queue
 
-- Window: Start refused while queue running; `SpectrometerWindow` given
+- Window: Start refused while queue running; `PeakCenterWindow` given
   `std::function<bool()> queue_running` (pattern of `DataSourcePage`,
   `main_window.cpp:749`). Start disabled with tooltip "a queue is running";
   state re-checked on Start.
 - Experiment window: `start()` refused while window's peak center runs,
   message "peak center running in the spectrometer window".
-  `ExperimentWindow` given `std::function<bool()> peak_center_running`;
-  `MainWindow` wires both.
-- `MainWindow::set_spectrometer` and quit cancel a window run and wait, no
-  prompt (run cannot outlive window or bridge). Queue start invalidates
+  `ExperimentWindow` given `std::function<bool()> peak_center_running`
+  (reads `peak_center_window_`); `MainWindow` wires both.
+- `MainWindow`: action "Peak Center…" contributed to `MenuHub::Menu::Spectrometer`
+  after "Field Table…" (`peak_center_action()`); enabled only with a
+  spectrometer bridge, tooltip "no spectrometer configured" otherwise; opens
+  one window (`peak_center_window()`, `WA_DeleteOnClose` false), raised when
+  opened again. Gives it `peak_center_file_` and queue-running lambda;
+  forwards `queueStarted`/`queueEnded` as `queue_state_changed()`.
+- `MainWindow::set_spectrometer` and quit cancel a window run and wait
+  (`cancel_peak_center_and_wait`), no prompt (run cannot outlive window or
+  bridge); `set_spectrometer` then closes and deletes Peak Center window
+  before spectrometer window (both hold old bridge). Queue start invalidates
   panel's last result: Apply stays disabled for it even after queue ends.
 - While queue runs: Apply disabled (queue's runs own table), tooltip "a
   queue is running". Save allowed: file read only at next queue start (3.4).
@@ -317,17 +357,36 @@ Closing window with run going: asks "Cancel peak center?"; yes cancels
   returns; `start_scan`/`position` refused during run; failed start or scan
   stopped behind bridge not put back; `ScanAfter::Stopped` and
   `cancel_peak_center_and_wait` leave scan stopped.
-- `tests/ui/test_spectrometer_window.cpp`: set loads form; edit marks; revert;
+- `tests/ui/test_peak_center_panel.cpp`: set loads form; edit marks; revert;
   invalid disables Start/Save; Apply enable states (ok, failed, table changed,
-  queue running); Save round-trip through file; queue running disables Start;
-  experiment window refuses start while peak center runs; Controls dock
-  locked during run, unlocked after; close after "yes" starts no scan.
+  queue running); Save round-trip through file; queue running disables Start.
+  `test_experiment_window.cpp`: refuses start while peak center runs.
+- `tests/ui/test_peak_center_window.cpp`: panel and plot in splitter; run
+  drawn as it goes; finished run kept; close during run asks, no keeps open,
+  yes cancels and closes after finish (second close not asked), yes puts scan
+  back; no run → no question; `cancel_peak_center_and_wait` asks nothing;
+  splitter and geometry restored; corrupt saved state ignored.
+- `tests/ui/test_peak_center_view.cpp`: x = first try's [min, max] at its
+  start, unchanged by points; descending sweep same; wider try widens to
+  union; new peak center forgets old width; y sane with no point, covers
+  points padded, follows larger point; shown result spans its tries' union.
+- `tests/ui/test_spectrometer_window.cpp`: no peak center docks or panel;
+  layout saved with them still restores; Controls dock locked from bridge
+  start (`peakCenterStarted`), refused second start keeps lock, unlocked
+  after; close during run asks nothing, scan left stopped.
+- `tests/ui/test_spectrometer_bridge.cpp`: `peakCenterStarted` once per
+  accepted start, not for refused.
+- `tests/ui/test_docks.cpp`: Peak Center… disabled without spectrometer;
+  beside Field Table…; one window, raised again, gone with spectrometer;
+  gets peak center file; set_spectrometer and quit cancel run without
+  asking.
 - New thread: suites above run under `-DPYCHRON_SANITIZE=thread` before land.
 
 ## 7. Docs
 
-`docs/user/03-spectrometer.md`, "Peak centring": running from window, Apply,
-Save to set, when plans see saved set.
+`docs/user/03-spectrometer.md`, "Peak centring": opened from Spectrometer →
+Peak Center…, layout, plot axes, running, Apply, Save to set, when plans see
+saved set, close questions.
 
 ## 8. Out of scope
 
@@ -344,6 +403,8 @@ Save to set, when plans see saved set.
 2. Field table never written automatically from window; Apply button after
    old/new/shift shown (B).
 3. Own dock for controls plus own plot dock beside strip chart (B).
+   Superseded 2026-10-21: own Peak Center window, panel and plot side by
+   side (5.1).
 4. Saved set reaches plans at next queue start; bad file refuses start (A).
 
 ## Open questions

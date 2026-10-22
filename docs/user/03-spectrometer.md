@@ -429,13 +429,19 @@ center still succeeds and moves to the new value, but its result carries the
 note `field table not saved: <why>` and a warning is logged: the update then
 lasts only until pychron is restarted.
 
-#### From the spectrometer window
+#### From the Peak Center window
 
-The window has a **Peak center** dock, tabbed with the Controls dock, and a
-**Peak center plot** dock in the bottom dock area below the strip chart; both
-can be closed, moved and brought back from the View menu. The dock starts from
-the settings of the lab's `peak_center.toml` (described above): pick a set from
-the list, and its values fill the form. Change any field (isotope, detector,
+**Spectrometer > Peak Center...** opens the Peak Center window (from any
+window's menu bar; it is greyed out, with the tooltip "no spectrometer
+configured", when there is no spectrometer). Choosing it again brings the same
+window to the front. The settings form is on the left (it scrolls when the
+window is shorter than it) and the plot on the right; drag the divider between
+them to share the width differently. The window's size, place and divider are
+remembered per spectrometer and per user. The spectrometer window does not
+need to be open, but its scan is the one a run stops and puts back.
+
+The form starts from the settings of the lab's `peak_center.toml` (described
+above): pick a set from the list, and its values fill the form. Change any field (isotope, detector,
 window, step and the rest) and it is marked as an override of the set; the
 override is used for this run only and does not touch the file. **Revert to
 set** puts the set's own values back.
@@ -444,11 +450,17 @@ set** puts the set's own values back.
 stopped first and started again, with its integration time, when the run ends,
 unless you pressed Stop scan meanwhile or closed the window. A cancel takes
 effect at the next step: a settle or other wait in progress runs to its end.
-The plot dock is cleared at each Start and draws each try (earlier tries
-faint); the last result stays there, and in the dock, until the next Start.
+The plot is cleared at each Start and draws each try (earlier tries faint); the
+last result stays there, and in the form's result area, until the next Start.
+The plot's horizontal axis is the sweep's whole width from the moment a try
+starts, so the trace grows across it rather than the axis growing with the
+trace; a later try that sweeps wider widens it once, when it starts. The
+vertical axis follows the values drawn, with a little room above and below.
+The Evolutions pane's Peak center tab in the experiment window draws a plan's
+peak centers the same way.
 
 While the run goes nothing else may move the magnet or scan under the sweep: in
-the Controls dock the magnet's **Apply**, the banner's **Restart** and the rise
+the spectrometer window's Controls dock the magnet's **Apply**, the banner's **Restart** and the rise
 rate's **Start** are disabled from Start until the run has ended, and a rise
 rate measurement in progress is ended without a result. The other controls
 (graph, detectors, integration time) stay as they are.
@@ -474,9 +486,12 @@ refused with it.
 A queue and a peak center from the window never run together: Start and Apply
 are disabled, with the tooltip "a queue is running", while a queue runs (Save
 is still allowed), and starting a queue is refused with "peak center running in
-the spectrometer window" while a window run goes. Closing the window during a
-run asks whether to cancel it; closing the program or switching spectrometer
-cancels it without asking.
+the spectrometer window" while a window run goes. Closing the Peak Center
+window during a run asks "Cancel peak center?": **Yes** cancels the run, puts
+the scan back as it was and closes the window when the run has ended; **No**
+keeps the window open and the run going. Closing the spectrometer window asks
+nothing: its scan stops, and a run going on ends with the scan left stopped.
+Closing the program or switching spectrometer cancels a run without asking.
 
 ## Field table editor
 
