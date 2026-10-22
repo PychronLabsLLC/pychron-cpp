@@ -186,7 +186,7 @@ class EarthbankWorker : public QObject {
   // waits for the service, and is deleted when it has ended. For tests.
   QThread* worker_thread() const noexcept { return thread_; }
 
- signals:
+ Q_SIGNALS:
   // `note`: empty, or why the password that signed in was not kept.
   void tested(const QString& profile, const QString& name, const QString& login, const QString& note);
   void packages_listed(const QString& profile, const std::vector<pychron::earthbank::DataPackage>& packages);
@@ -208,7 +208,7 @@ class EarthbankWorker : public QObject {
   // After every answer, with what is still outstanding.
   void outstanding_changed(int outstanding);
 
- private slots:
+ private Q_SLOTS:
   // Runs, on this object's thread, one answer the worker's thread has left.
   void deliver();
 

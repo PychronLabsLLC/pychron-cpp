@@ -139,7 +139,7 @@ class EarthbankPublishPanel : public QWidget {
   QProgressBar* progress_bar() const noexcept { return progress_; }
   QPlainTextEdit* result_pane() const noexcept { return result_; }
 
- signals:
+ Q_SIGNALS:
   // How far the run is; the survey is not one.
   void progress(int done, int total);
   // A start is over: ok is false when it failed, was stopped, was refused or

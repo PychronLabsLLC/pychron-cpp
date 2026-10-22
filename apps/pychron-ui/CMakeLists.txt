@@ -274,12 +274,15 @@ if(TARGET pychron_processing_store)
     src/samples_window.hpp)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::entry)
   # Releases of the store's data (data publishing spec, section 6.3): the
-  # Publish window, over libs/publish.
+  # Publish window and the Publish dialog (publication workflow design), over
+  # libs/publish.
   target_sources(pychron_ui_lib PRIVATE
     src/publish_actions.cpp
+    src/publish_dialog.cpp
     src/publish_window.cpp
     src/release_dialog.cpp
     src/publish_actions.hpp
+    src/publish_dialog.hpp
     src/publish_window.hpp
     src/release_dialog.hpp)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::publish)
