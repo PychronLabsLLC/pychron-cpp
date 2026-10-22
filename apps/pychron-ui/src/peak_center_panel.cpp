@@ -12,8 +12,11 @@
 #include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -26,6 +29,9 @@ namespace {
 
 double seconds(Duration d) { return std::chrono::duration<double>(d).count(); }
 Duration duration_of(double s) { return std::chrono::duration_cast<Duration>(std::chrono::duration<double>(s)); }
+
+// Native units, as the result area and the confirmation show them.
+QString native(double v) { return QString::number(v, 'f', 6); }
 
 QDoubleSpinBox* spin(double min, double max, int decimals, double step, const QString& suffix = {}) {
   auto* box = new QDoubleSpinBox;
@@ -42,6 +48,37 @@ QDoubleSpinBox* spin(double min, double max, int decimals, double step, const QS
 PeakCenterPanel::PeakCenterPanel(SpectrometerBridge& bridge, QWidget* parent) : QWidget(parent), bridge_(bridge) {
   build();
   set_file({});
+  connect(&bridge_, &SpectrometerBridge::peakCenterFinished, this,
+          [this](const Result<jobs::PeakCenterResult>& r) { on_finished(r); });
+  connect(&bridge_, &SpectrometerBridge::peakCenterNote, this, [this](const QString& note) {
+    notes_.append(note);
+    show_result();
+  });
+  connect(&bridge_, &SpectrometerBridge::peakCenterApplied, this, [this](const Result<void>& r) {
+    if (r) {
+      status_ = tr("Written to field table %1").arg(bridge_.active_table());
+    } else {
+      applied_ = false;  // nothing was written: Apply may be tried again
+      status_ = QString::fromStdString(r.error().what);
+    }
+    show_result();
+    refresh();
+  });
+  connect(&bridge_, &SpectrometerBridge::fieldTableChanged, this, [this] {
+    if (result_) table_changed_ = true;  // the value was measured against another table
+    refresh();
+  });
+  connect(&bridge_, &SpectrometerBridge::peakCenterSetSaved, this, [this](const QString& name, const Result<void>& r) {
+    if (!r) {
+      status_ = QString::fromStdString(r.error().what);
+      show_result();
+      return;
+    }
+    set_file(file_);
+    select_set(name);  // load() again: the form is no longer marked edited
+    status_ = tr("Saved set %1").arg(name);
+    show_result();
+  });
 }
 
 void PeakCenterPanel::build() {
@@ -131,6 +168,23 @@ void PeakCenterPanel::build() {
   reason_->setWordWrap(true);
   outer->addWidget(reason_);
 
+  auto* results = new QFormLayout;
+  const auto result_row = [&](const char* name, const QString& caption, QLabel*& label) {
+    label = new QLabel;
+    label->setObjectName(QStringLiteral("peakCenterResult%1").arg(QLatin1String(name)));
+    label->setWordWrap(true);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    results->addRow(caption, label);
+  };
+  result_row("Status", tr("Status"), res_status_);
+  result_row("Initial", tr("Initial center"), res_initial_);
+  result_row("Center", tr("Fitted center"), res_center_);
+  result_row("Shift", tr("Shift"), res_shift_);
+  result_row("TableValue", tr("Table value"), res_table_);
+  result_row("Additional", tr("Additional detectors"), res_additional_);
+  result_row("Notes", tr("Notes"), res_notes_);
+  outer->addLayout(results);
+
   start_ = new QPushButton(tr("Start"));
   start_->setObjectName(QStringLiteral("peakCenterStart"));
   cancel_ = new QPushButton(tr("Cancel"));
@@ -165,7 +219,122 @@ void PeakCenterPanel::build() {
     if (!loading_ && it != sets_.end()) load(it->second);
   });
   connect(revert_, &QPushButton::clicked, this, [this] { revert(); });
-  connect(start_, &QPushButton::clicked, this, [this] { emit startRequested(config()); });
+  connect(start_, &QPushButton::clicked, this, [this] { start(); });
+  connect(cancel_, &QPushButton::clicked, this, [this] { bridge_.cancel_peak_center(); });
+  connect(apply_, &QPushButton::clicked, this, [this] { apply(); });
+  connect(save_, &QPushButton::clicked, this, [this] { save(); });
+  show_result();
+}
+
+void PeakCenterPanel::set_queue_running(std::function<bool()> queue_running) {
+  queue_running_ = std::move(queue_running);
+  refresh();
+}
+
+bool PeakCenterPanel::confirm(const QString& question) {
+  if (ask_) return ask_(question);
+  return QMessageBox::question(this, tr("Peak center"), question, QMessageBox::Yes | QMessageBox::No,
+                               QMessageBox::No) == QMessageBox::Yes;
+}
+
+void PeakCenterPanel::start() {
+  if (bridge_.peak_center_running() || queue_is_running()) {
+    refresh();
+    return;
+  }
+  const auto cfg = config();
+  if (!jobs::validate_peak_center_config(cfg)) return;
+  clear_result();
+  emit startRequested(cfg);
+  bridge_.peak_center(cfg);
+  refresh();
+}
+
+void PeakCenterPanel::clear_result() {
+  result_.reset();
+  status_.clear();
+  notes_.clear();
+  table_changed_ = false;
+  applied_ = false;
+  show_result();
+}
+
+void PeakCenterPanel::on_finished(const Result<jobs::PeakCenterResult>& result) {
+  notes_.clear();
+  table_changed_ = false;
+  applied_ = false;
+  if (result) {
+    result_ = *result;
+    status_ = QString::fromStdString(result->message);
+    if (status_.isEmpty()) status_ = result->ok ? tr("Peak center done") : tr("Peak center failed");
+    for (const auto& n : result->notes) notes_.append(QString::fromStdString(n));
+  } else {
+    result_.reset();
+    status_ = QString::fromStdString(result.error().what);
+  }
+  show_result();
+  refresh();
+}
+
+void PeakCenterPanel::show_result() {
+  const auto number = [](const std::optional<double>& v) { return v ? native(*v) : QString(); };
+  res_status_->setText(status_);
+  res_initial_->setText(result_ ? native(result_->initial_center) : QString());
+  res_center_->setText(result_ ? number(result_->center) : QString());
+  res_shift_->setText(result_ && result_->center ? native(*result_->center - result_->initial_center) : QString());
+  res_table_->setText(result_ ? number(result_->table_value) : QString());
+  QStringList additional;
+  if (result_) {
+    for (const auto& a : result_->additional) {
+      const QString value = a.shape ? native(a.shape->center_x) : QString::fromStdString(a.error);
+      additional.append(QStringLiteral("%1: %2").arg(QString::fromStdString(a.detector), value));
+    }
+  }
+  res_additional_->setText(additional.join(QLatin1Char('\n')));
+  res_notes_->setText(notes_.join(QLatin1Char('\n')));
+}
+
+bool PeakCenterPanel::apply_enabled() const {
+  return result_ && result_->ok && result_->table_value && !result_->isotope.empty() && !table_changed_ && !applied_ &&
+         !bridge_.peak_center_running() && !queue_is_running();
+}
+
+void PeakCenterPanel::apply() {
+  if (!apply_enabled()) return;
+  const QString isotope = QString::fromStdString(result_->isotope);
+  const QString detector = QString::fromStdString(result_->detector);
+  const bool propagate = result_->config.propagate;
+  const double value = *result_->table_value;
+  const QString question = tr("Write %1 for %2 on %3 to %4? Propagate: %5.")
+                               .arg(native(value), isotope, detector, bridge_.active_table(),
+                                    propagate ? tr("yes") : tr("no"));
+  if (!confirm(question)) return;
+  applied_ = true;  // until its answer: a second click must not write twice
+  refresh();
+  bridge_.apply_peak_center(detector, isotope, value, propagate);
+}
+
+void PeakCenterPanel::save() {
+  if (!file_ok() || file_.empty()) return;
+  const QString suggestion = set_name();
+  std::optional<QString> asked;
+  if (ask_name_) {
+    asked = ask_name_(suggestion);
+  } else {
+    bool ok = false;
+    const QString text = QInputDialog::getText(this, tr("Save to set"), tr("Set name"), QLineEdit::Normal, suggestion, &ok);
+    if (ok) asked = text;
+  }
+  if (!asked) return;
+  const QString name = asked->trimmed();
+  if (!valid_set_name(name)) {
+    reason_->setText(tr("A set name is letters, digits, “_” and “-”."));
+    return;
+  }
+  if (sets_.contains(name.toStdString()) && !confirm(tr("Overwrite set %1?").arg(name))) return;
+  auto cfg = config();
+  cfg.name = name.toStdString();
+  bridge_.save_peak_center_set(file_, name, cfg);
 }
 
 void PeakCenterPanel::set_file(const std::filesystem::path& file) {
@@ -323,7 +492,7 @@ jobs::PeakCenterConfig PeakCenterPanel::form_config() const {
   c.baseline_timeout = duration_of(baseline_timeout_->value());
   c.dac_offset = dac_offset_->value();
   c.peak_shift_threshold = peak_shift_threshold_->value();
-    c.propagate = propagate_->isChecked();
+  c.propagate = propagate_->isChecked();
   return c;
 }
 
@@ -370,7 +539,13 @@ void PeakCenterPanel::refresh() {
   banner_->setVisible(!banner_error_.isEmpty());
   const auto valid = jobs::validate_peak_center_config(config());
   reason_->setText(valid ? QString() : QString::fromStdString(valid.error().what));
-  start_->setEnabled(static_cast<bool>(valid));
+  const bool running = bridge_.peak_center_running();
+  const bool queue = queue_is_running();
+  start_->setEnabled(valid && !running && !queue);
+  start_->setToolTip(queue ? tr("a queue is running") : QString());
+  cancel_->setEnabled(running);
+  apply_->setEnabled(apply_enabled());
+  apply_->setToolTip(queue ? tr("a queue is running") : QString());
   save_->setEnabled(valid && file_ok());
   revert_->setEnabled(edited());
 }

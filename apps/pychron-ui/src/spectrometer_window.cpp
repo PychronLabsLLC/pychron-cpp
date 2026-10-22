@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <string>
 #include <optional>
 
 #include <QCheckBox>
@@ -23,6 +25,7 @@
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTableView>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace pychron::ui {
@@ -121,6 +124,42 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   connect(table, &QTableView::doubleClicked, this, [this](const QModelIndex& cell) {
     if (cell.isValid()) show_detector(cell.row(), !intensities_->shown(cell.row()));
   });
+
+  // The peak center docks: the panel runs and reports through the bridge by
+  // itself; the window feeds the plot.
+  std::map<std::string, QColor> colors;
+  std::map<std::string, std::size_t> palette_slots;
+  {
+    const auto detectors = bridge_.detectors();
+    for (std::size_t i = 0; i < detectors.size(); ++i) {
+      if (detectors[i].palette_slot) {
+        palette_slots[detectors[i].name] = *detectors[i].palette_slot;
+      } else if (detectors[i].color.isValid()) {
+        colors[detectors[i].name] = detectors[i].color;
+      } else {
+        palette_slots[detectors[i].name] = i;
+      }
+    }
+  }
+  peak_panel_ = new PeakCenterPanel(bridge_);
+  peak_dock_ = new QDockWidget(tr("Peak center"), this);
+  peak_dock_->setObjectName(QStringLiteral("peakCenterDock"));
+  peak_dock_->setWidget(peak_panel_);
+  peak_view_ = new PeakCenterView(std::move(colors), std::move(palette_slots));
+  peak_plot_dock_ = new QDockWidget(tr("Peak center plot"), this);
+  peak_plot_dock_->setObjectName(QStringLiteral("peakCenterPlotDock"));
+  peak_plot_dock_->setWidget(peak_view_);
+  connect(peak_panel_, &PeakCenterPanel::startRequested, this, [this] { peak_view_->clear(); });
+  connect(&bridge_, &SpectrometerBridge::peakCenterTryStarted, peak_view_, &PeakCenterView::on_try_started);
+  connect(&bridge_, &SpectrometerBridge::peakCenterPoint, peak_view_, &PeakCenterView::on_point);
+  connect(&bridge_, &SpectrometerBridge::peakCenterFinished, this, [this](const Result<jobs::PeakCenterResult>& r) {
+    if (r) peak_view_->on_done(jobs::PeakCenterDone{*r});  // a failed fit too; an error has no result
+    if (closing_after_peak_center_) {
+      closing_after_peak_center_ = false;
+      QTimer::singleShot(0, this, [this] { close(); });
+    }
+  });
+
   default_layout();
   layouts_ = new DockLayouts(this, [this] { default_layout(); }, settings_.get(),
                              QStringLiteral("spectrometer_window/%1").arg(bridge_.name()),
@@ -309,10 +348,14 @@ void SpectrometerWindow::fill_isotopes() {
 // The panels as installed. Run again by Reset Layout, so it undoes whatever
 // was done to them.
 void SpectrometerWindow::default_layout() {
-  for (QDockWidget* dock : {controls_dock_, intensities_dock_}) dock->setFloating(false);
+  for (QDockWidget* dock : {controls_dock_, intensities_dock_, peak_dock_, peak_plot_dock_}) dock->setFloating(false);
   addDockWidget(Qt::LeftDockWidgetArea, controls_dock_);
+  addDockWidget(Qt::LeftDockWidgetArea, peak_dock_);
+  tabifyDockWidget(controls_dock_, peak_dock_);
   addDockWidget(Qt::RightDockWidgetArea, intensities_dock_);
-  for (QDockWidget* dock : {controls_dock_, intensities_dock_}) dock->show();
+  addDockWidget(Qt::BottomDockWidgetArea, peak_plot_dock_);
+  for (QDockWidget* dock : {controls_dock_, intensities_dock_, peak_dock_, peak_plot_dock_}) dock->show();
+  controls_dock_->raise();
   // And the widths they ask for, not the ones they were dragged to.
   resizeDocks({controls_dock_, intensities_dock_},
               {controls_dock_->sizeHint().width(), intensities_dock_->sizeHint().width()}, Qt::Horizontal);
@@ -399,10 +442,32 @@ void SpectrometerWindow::showEvent(QShowEvent* event) {
 }
 
 void SpectrometerWindow::closeEvent(QCloseEvent* event) {
+  if (bridge_.peak_center_running()) {
+    // The run ends through its own finish: close again when it has.
+    if (!closing_after_peak_center_) {
+      const QString question = tr("Cancel peak center?");
+      const bool yes = ask_ ? ask_(question)
+                            : QMessageBox::question(this, tr("Peak center"), question,
+                                                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) ==
+                                  QMessageBox::Yes;
+      if (yes) {
+        closing_after_peak_center_ = true;
+        bridge_.cancel_peak_center();
+      }
+    }
+    event->ignore();
+    return;
+  }
   rise_->abandon(tr("the window was closed while it ran"));
   bridge_.stop_scan();
   save_settings();
   QMainWindow::closeEvent(event);
+}
+
+void SpectrometerWindow::set_peak_center_file(const std::filesystem::path& file) { peak_panel_->set_file(file); }
+
+void SpectrometerWindow::set_queue_running(std::function<bool()> queue_running) {
+  peak_panel_->set_queue_running(std::move(queue_running));
 }
 
 void SpectrometerWindow::set_confirm_move(std::function<bool(double delta_amu)> confirm) {

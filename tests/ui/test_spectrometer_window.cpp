@@ -6,6 +6,8 @@
 // confirmation is always a callback, so no modal dialog opens.
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -16,6 +18,8 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QGroupBox>
+#include <QPushButton>
+#include <QSignalSpy>
 #include <QTableView>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -239,7 +243,10 @@ class TestSpectrometerWindow : public QObject {
   // ring keeps) must not change until the edit is committed.
   void typedScanWidthAppliesOnCommitOnly() {
     open();
-    auto* spin = window_->findChild<QDoubleSpinBox*>();
+    // The Controls dock's: the Peak center dock has spin boxes of its own.
+    auto* controls = window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerControlsDock"));
+    QVERIFY(controls != nullptr);
+    auto* spin = controls->findChild<QDoubleSpinBox*>();
     QVERIFY(spin != nullptr);
     QCOMPARE(window_->chart_model().scan_width(), 60.0);
     spin->selectAll();
@@ -676,7 +683,87 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(window_->dock_layouts() != nullptr);
     QStringList panels;
     for (const QAction* action : window_->dock_layouts()->panel_actions()) panels.append(action->text());
-    QCOMPARE(panels, QStringList{QStringLiteral("Intensities")});
+    QCOMPARE(panels, (QStringList{QStringLiteral("Intensities"), QStringLiteral("Peak center"),
+                                  QStringLiteral("Peak center plot")}));
+  }
+
+  // ---- the peak center docks ----------------------------------------------------
+
+  void peakCenterDocksPresent() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    auto* dock = window_->findChild<QDockWidget*>(QStringLiteral("peakCenterDock"));
+    auto* plot = window_->findChild<QDockWidget*>(QStringLiteral("peakCenterPlotDock"));
+    QVERIFY(dock != nullptr && plot != nullptr);
+    QCOMPARE(dock->widget(), window_->peak_center_panel());
+    QCOMPARE(plot->widget(), window_->peak_center_view());
+    QVERIFY(window_->tabifiedDockWidgets(window_->findChild<QDockWidget*>(QStringLiteral("SpectrometerControlsDock")))
+                .contains(dock));
+    QVERIFY(plot->isVisible());
+    QVERIFY(!window_->tabifiedDockWidgets(plot).contains(dock));
+    const auto actions = window_->dock_layouts()->panel_actions();
+    QVERIFY(actions.contains(dock->toggleViewAction()));
+    QVERIFY(actions.contains(plot->toggleViewAction()));
+    QVERIFY(!window_->peak_center_running());
+  }
+
+  void peakCenterDockStateIsSaved() {
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    window_->findChild<QDockWidget*>(QStringLiteral("peakCenterPlotDock"))->close();
+    window_->close();
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QVERIFY(!window_->findChild<QDockWidget*>(QStringLiteral("peakCenterPlotDock"))->isVisible());
+  }
+
+  void closeDuringRunAsks() {
+    open();
+    const auto file = std::filesystem::path(dir_.filePath(QStringLiteral("pc.toml")).toStdString());
+    std::ofstream(file) << "[default]\nisotope = \"Ar40\"\nwindow = 0.06\nstep = 0.0005\nintegration_s = 0.1\n"
+                           "settle_s = 0.1\n";
+    window_->set_peak_center_file(file);
+    QStringList asked;
+    bool answer = false;
+    window_->set_ask([&](const QString& q) {
+      asked << q;
+      return answer;
+    });
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
+    QTest::mouseClick(window_->findChild<QPushButton*>(QStringLiteral("peakCenterStart")), Qt::LeftButton);
+    QVERIFY(window_->peak_center_running());
+
+    QVERIFY(!window_->close());  // no: the window stays, the run goes on
+    QCOMPARE(asked, QStringList{QStringLiteral("Cancel peak center?")});
+    QVERIFY(window_->isVisible());
+    QVERIFY(window_->peak_center_running());
+
+    answer = true;
+    window_->close();  // yes: cancel, close when it has finished
+    QCOMPARE(asked.size(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!window_->isVisible(), kWaitMs);
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(!window_->peak_center_running());
+    QVERIFY(!finished.at(0).at(0).value<Result<jobs::PeakCenterResult>>().has_value());  // Cancelled
+  }
+
+  void closeWithoutRunDoesNotAsk() {
+    open();
+    bool asked = false;
+    window_->set_ask([&](const QString&) {
+      asked = true;
+      return false;
+    });
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    window_->close();
+    QVERIFY(!asked);
+    QVERIFY(!window_->isVisible());
   }
 
   void anArrangementIsKeptUnderTheSpectrometersName() {

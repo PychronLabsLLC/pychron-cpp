@@ -3,6 +3,8 @@
 // SpectrometerWindow (spectrometer-window design sections 5.4, 5.6, 6): the
 // live strip chart with a "Controls" dock (integration, graph, detectors,
 // magnet), an "Intensities" dock and a banner for scan and command errors.
+// A "Peak center" dock (tabbed with Controls) runs peak centers and a
+// "Peak center plot" dock draws them (spectrometer peak center design 5).
 //
 // The window talks only to SpectrometerBridge: readings and state arrive as
 // signals on the GUI thread, and every command is non-blocking. Showing the
@@ -25,6 +27,8 @@
 #include <QTimer>
 
 #include "intensities_model.hpp"
+#include "peak_center_panel.hpp"
+#include "peak_center_view.hpp"
 #include "rise_rate_panel.hpp"
 #include "spectrometer_bridge.hpp"
 #include "strip_chart_model.hpp"
@@ -66,6 +70,18 @@ class SpectrometerWindow : public QMainWindow {
   void set_wall_clock(std::function<QDateTime()> now);
   // The CSV file each rise rate result is appended to (empty: none).
   void set_rise_rate_file(const std::filesystem::path& path);
+
+  // The peak_center.toml the Peak center dock reads its sets from and saves
+  // to (empty: the built-in default only; read at once and after each save).
+  void set_peak_center_file(const std::filesystem::path& file);
+  // Whether a queue is running: the dock's Start and Apply are then disabled.
+  void set_queue_running(std::function<bool()> queue_running);
+  bool peak_center_running() const { return bridge_.peak_center_running(); }
+  PeakCenterPanel* peak_center_panel() const noexcept { return peak_panel_; }
+  PeakCenterView* peak_center_view() const noexcept { return peak_view_; }
+  // The question asked when the window is closed during a peak center
+  // ("Cancel peak center?"). Default: a Yes/No QMessageBox, default No.
+  void set_ask(std::function<bool(QString)> ask) { ask_ = std::move(ask); }
 
   // Asked before a large move with the mass change on the reference detector
   // (NaN when the current mass is unknown). Default: Yes/No dialog, default No.
@@ -131,6 +147,12 @@ class SpectrometerWindow : public QMainWindow {
   DockLayouts* layouts_ = nullptr;
   QDockWidget* controls_dock_ = nullptr;
   QDockWidget* intensities_dock_ = nullptr;
+  QDockWidget* peak_dock_ = nullptr;
+  QDockWidget* peak_plot_dock_ = nullptr;
+  PeakCenterPanel* peak_panel_ = nullptr;
+  PeakCenterView* peak_view_ = nullptr;
+  std::function<bool(QString)> ask_;
+  bool closing_after_peak_center_ = false;  // closeEvent asked to cancel; close when the run has finished
   StripChartModel model_;
   StripChartView* view_;
   IntensitiesModel* intensities_;
