@@ -1,0 +1,17 @@
+{
+  "tag_name": "v0.4.0",
+  "name": "v0.4.0",
+  "html_url": "https://github.com/PychronLabsLLC/pychron-cpp/releases/tag/v0.4.0",
+  "draft": false,
+  "prerelease": false,
+  "body": "## [0.4.0](https://github.com/PychronLabsLLC/pychron-cpp/compare/v0.3.0...v0.4.0) (2026-10-13)\n\n\n### \u26a0 BREAKING CHANGES\n\n* **persistence:** a store made before this must be migrated once before pychron-ui, export, flux or entry will open it:\n\n### Features\n\n* **canvas:** the canvas file can name the colour behind the drawing ([c336269](https://github.com/PychronLabsLLC/pychron-cpp/commit/c336269de83763cf0bd189c03cf2d446ad2c1bd7))\n* **configs:** the example lab runs simulated air shots and blanks ([a544105](https://github.com/PychronLabsLLC/pychron-cpp/commit/a5441055baf8fc8989b5e74f5c0cb4b9f66e10cb))\n",
+  "published_at": "2026-10-13T07:00:47Z",
+  "assets": [
+    {
+      "name": "pychron-0.4.0-Linux.tar.gz",
+      "content_type": "application/gzip",
+      "size": 33731733,
+      "browser_download_url": "https://github.com/PychronLabsLLC/pychron-cpp/releases/download/v0.4.0/pychron-0.4.0-Linux.tar.gz"
+    }
+  ]
+}
