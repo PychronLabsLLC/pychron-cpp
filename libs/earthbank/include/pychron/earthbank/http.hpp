@@ -22,65 +22,25 @@
 #include <vector>
 
 #include "pychron/core/error.hpp"
+#include "pychron/core/http.hpp"
 
 namespace pychron::earthbank {
 
-// One request: the method in capitals (`GET`, `POST`, `DELETE`), the whole
-// URL with its query already encoded (with_query), the headers as they go on
-// the wire, and the body as bytes. `timeout` is for the whole exchange.
-struct HttpRequest {
-  std::string method, url;
-  std::vector<std::pair<std::string, std::string>> headers;
-  std::string body;
-  std::chrono::milliseconds timeout{30000};
-};
+using http::HttpRequest;
+using http::HttpResponse;
+using http::IHttpClient;
+using http::kHttpNotSent;
 
-// What the server said. Any status is an answer, 401 and 500 included.
-struct HttpResponse {
-  int status = 0;
-  std::string body;
-};
-
-// Blocking: `send` returns when the answer is in, or when it is known that
-// none will be. It is called from one thread at a time.
-//
-// One call is one request on the wire, at most. An implementation never
-// sends a request a second time on its own: not after a timeout, and not
-// when a connection it had kept open turns out to be closed (a client
-// library that retries then must have that turned off). The service has no
-// way to ask whether a record exists, so a POST sent twice may be a record
-// made twice, and whether to try again is the caller's to decide. Nor does
-// it follow a redirect: a 3xx is returned as the answer it is.
-//
-// An answer of any status is a value, 301, 401 and 500 included. An error
-// means no answer:
-//   - `ErrorKind::Timeout`: nothing came back within `timeout`;
-//   - `ErrorKind::Io`: the server was not reached or the connection was lost
-//     (no route, a name that does not resolve, TLS, a reset);
-//   - `ErrorKind::Config`: the request was never formed (a URL that is not
-//     one, a scheme the client does not speak). Nothing was sent.
-// With a `Timeout` or an `Io`, the error's `code` is kHttpNotSent when the
-// client knows that nothing of the request left this machine: the connection
-// was refused, the name did not resolve, the handshake failed, or the time
-// ran out before there was a connection. When it is not sure, the code is
-// not set. The difference matters for a write: a POST whose answer never
-// came is in doubt, not failed (request_may_have_arrived). An implementation
-// puts no header value and nothing of a body into an error's `what`.
-class IHttpClient {
- public:
-  virtual ~IHttpClient() = default;
-  virtual Result<HttpResponse> send(const HttpRequest& request) = 0;
-};
+// The interface and its contract are in `pychron/core/http.hpp`. One thing
+// is this service's: it has no way to ask whether a record exists, so a POST
+// sent twice may be a record made twice, and an implementation never sends a
+// request a second time on its own.
 
 // The client a program talks to the service through: the one over HTTPS of
 // `libs/earthbank_qt` when this build has it, else null (a program says so and
 // does not go on). Defined by that library, or, where it is not built, by the
 // program itself (elctl's earthbank_no_network.cpp).
 std::unique_ptr<IHttpClient> make_http_client();
-
-// The `code` of a `Timeout` or `Io` error from `send` when the request never
-// left. What such a request asked for was not done.
-inline constexpr std::string_view kHttpNotSent = "http_not_sent";
 
 // Whether the server may have acted on a request that `send` failed with
 // `error`: false when the client said it was never sent (kHttpNotSent) or

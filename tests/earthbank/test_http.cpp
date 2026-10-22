@@ -2,16 +2,22 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 
 #include "pychron/core/error.hpp"
+#include "pychron/core/http.hpp"
 #include "pychron/earthbank/http.hpp"
 
 namespace pychron::earthbank {
 namespace {
 
 using namespace std::string_view_literals;
+
+static_assert(std::is_same_v<IHttpClient, pychron::http::IHttpClient>);
+static_assert(std::is_same_v<HttpRequest, pychron::http::HttpRequest>);
+static_assert(std::is_same_v<HttpResponse, pychron::http::HttpResponse>);
 
 TEST(Http, UrlEncode) {
   EXPECT_EQ(url_encode(""), "");

@@ -22,6 +22,7 @@ add_executable(pychron_core_tests
   test_config_validate.cpp
   test_config_override.cpp
   test_local_file.cpp
+  test_http.cpp
 )
 
 target_link_libraries(pychron_core_tests PRIVATE pychron::core GTest::gtest_main)

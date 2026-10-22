@@ -88,8 +88,12 @@
 
 #include "cli.hpp"
 
-namespace pychron::earthbank {
+namespace pychron::http {
 class IHttpClient;
+}  // namespace pychron::http
+
+namespace pychron::earthbank {
+using http::IHttpClient;
 class ISecretStore;
 }  // namespace pychron::earthbank
 
