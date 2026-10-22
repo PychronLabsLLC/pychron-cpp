@@ -32,7 +32,7 @@
 
 ---
 
-### Task 1: `release_dataset`, members at their pins, reduced as the build reduces
+### Task 1: `release_dataset`, members at their pins, unreduced
 
 **Files:**
 - Create: `libs/publish/include/pychron/publish/earthbank_source.hpp`, `libs/publish/src/earthbank_source.cpp`
@@ -53,7 +53,7 @@
   - `ReleaseDatasetTest.UnknownReleaseIsConfig`: random uuid → error kind `Config`.
 - [ ] **Step 2: Run, verify they fail** — `cmake --build --preset dev --target pychron_publish_tests && build/dev/tests/publish/pychron_publish_tests --gtest_filter='*ReleaseDatasetTest*'`; expect compile failure (no header).
 - [ ] **Step 3: Extract `release_members` and `reduce_loaded`** from `build_release` (members = `bookmark_heads` subjects whose kind is neither `RefValue` nor `InterpretedAge`; reduction = the `select` → `reduce` pipeline with `constants`, `include_decay_error`). `build_release` calls both; no behaviour change.
-- [ ] **Step 4: Implement `release_dataset`**: `store.release` (Config "no release <uuid>" when absent), `parse_release_options`, `release_members`, `source.load_at(member, bookmark)` each, `reduce_loaded`, return the dataset's analyses in member order.
+- [ ] **Step 4: Implement `release_dataset`**: `store.release` (Config "no release <uuid>" when absent), `release_members`, `source.load_at(member, bookmark)` each, return them in member order, unreduced (the EarthBank panel reduces what it publishes).
 - [ ] **Step 5: Run** the filter above and `--gtest_filter='*BuildTest*'`; all pass (build output unchanged: `TwoBuildsGiveEqualRowHashesAndEqualNonParquetBytes` and the fixture-hash test stay green).
 - [ ] **Step 6: Amend spec §5.1**: replace the `IStore::release_embargoed_members` paragraph with "Embargoed members found with existing `embargoed_analyses(members, at)` and `embargoed_samples(release_samples, at)`: one statement each, no new store query." Also §9: drop the `tests/persistence/test_publish.cpp` line.
 - [ ] **Step 7: Commit** — `feat(publish): load a release's members at their pins for EarthBank`

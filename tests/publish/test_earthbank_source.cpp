@@ -97,6 +97,17 @@ TEST_P(ReleaseDatasetTest, KeepsPinnedRevisionAfterLaterEdit) {
   EXPECT_EQ(intercept_of(*head_now, isotope), pinned + 1000.0);
 }
 
+TEST_P(ReleaseDatasetTest, ReturnsMembersInMemberOrder) {
+  const Uuid release = create();
+  std::vector<std::string> expected{analysis1_.str(), analysis2_.str(), analysis3_.str()};
+  std::sort(expected.begin(), expected.end());
+  auto loaded = release_dataset(*store_, *source_, release);
+  ASSERT_TRUE(loaded) << to_string(loaded.error());
+  std::vector<std::string> got;
+  for (const auto& a : *loaded) got.push_back(a->uuid);
+  EXPECT_EQ(got, expected);
+}
+
 TEST_P(ReleaseDatasetTest, KeepsEmbargoedMembers) {
   ASSERT_TRUE(store_->add_embargo(reducer(), {{ps::EmbargoScopeType::Sample, sample1_}, std::nullopt, "paper"}));
   auto loaded = release_dataset(*store_, *source_, create());

@@ -134,9 +134,8 @@ bool depends_on_failed(const PublicationPlan& plan, Destination next, const std:
 
 `release_dataset(persistence::IStore&, processing::StoreSource&, Uuid release)
 -> Result<std::vector<processing::AnalysisPtr>>`: release's members loaded at
-their pins (`load_analysis_at(analysis, release.bookmark)`), reduced with the
-release's `options_json` (`parse_release_options`), same as build reduces
-them. Name kept from publishing spec §11; returns what
+their pins (`load_analysis_at(analysis, release.bookmark)`), unreduced: the
+EarthBank panel reduces what it publishes, as it does today. Name kept from publishing spec §11; returns what
 `EarthbankPublishDialog` takes today (vector of `AnalysisPtr`), not a
 `Dataset`.
 

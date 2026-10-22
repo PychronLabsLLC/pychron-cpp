@@ -18,10 +18,11 @@
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
 #include "pychron/publish/figures.hpp"
-#include "members.hpp"
 #include "pychron/publish/parquet.hpp"
 #include "pychron/publish/records.hpp"
 #include "pychron/reduction/arar_types.hpp"
+
+#include "members.hpp"
 
 namespace pychron::publish {
 
