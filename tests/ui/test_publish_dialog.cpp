@@ -209,7 +209,9 @@ class TestPublishDialog : public QObject {
     Open o = open();
     o.dialog->open_existing(r);
     o.dialog->show();
-    QVERIFY(!o.dialog->run_button()->isEnabled());  // nothing ticked
+    // An existing release with nothing ticked: a run would do nothing.
+    QTest::qWait(400);  // past the check's delay: it is not the pending check that keeps Run off
+    QVERIFY(!o.dialog->run_button()->isEnabled());
     o.dialog->folder_dir()->setText(dir_.filePath(QStringLiteral("out")));
     o.dialog->destination(Destination::Folder)->setChecked(true);
     QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
@@ -257,6 +259,26 @@ class TestPublishDialog : public QObject {
     QCOMPARE(fresh->spec.name, std::string("fresh"));
     QCOMPARE(fresh->spec.analyses.size(), std::size_t{3});
     QVERIFY(!fresh->spec.options_json.empty());
+  }
+
+  // Spec 6.2: a new release and no destination ticked: the run only makes the release.
+  void NewReleaseWithNoDestinationEnablesRun() {
+    Open o = open();
+    o.dialog->set_ask_release([](const QStringList&, std::size_t) -> std::optional<pb::ReleaseSpec> {
+      pb::ReleaseSpec s;
+      s.name = "fresh";
+      s.title = "Fresh";
+      return s;
+    });
+    o.dialog->open_new(analyses());
+    o.dialog->show();
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->details_button()->isEnabled(), kWaitMs);
+    o.dialog->details_button()->click();
+    for (Destination d : {Destination::Folder, Destination::Store, Destination::EarthBank, Destination::Doi,
+                          Destination::Hosted})
+      QVERIFY(!o.dialog->destination(d)->isChecked());
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    QVERIFY2(o.dialog->refusals()->text().isEmpty(), qPrintable(o.dialog->refusals()->text()));
   }
 
   void NewReleaseEarthBankTabIsReadOnly() {

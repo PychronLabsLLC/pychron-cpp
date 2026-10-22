@@ -202,8 +202,7 @@ reopens on it.
 
 - Store work (create, check, build, publish) on `EntryBridge` worker of
   `PublishActions` (role `publisher`), as `PublishWindow` today.
-- `release_dataset` on processing thread, as `DataWorkspace::open_publish`
-  loads today.
+- `release_dataset` on the `EntryBridge` worker: it reads the store, whose connection that worker owns.
 - EarthBank on `EarthbankWorker` thread, as today, real time (network;
   unchanged).
 - Results queued to GUI thread; none reaches a closed dialog (`QPointer`,

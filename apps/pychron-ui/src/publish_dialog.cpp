@@ -517,9 +517,12 @@ void PublishDialog::show_refusals() {
 void PublishDialog::update_run() {
   bool any = false;
   for (pb::Destination d : kDestinations) any = any || destination(d)->isChecked();
+  // A new release with nothing ticked is a run that only makes the release
+  // (spec 6.2); an existing one with nothing ticked would do nothing.
+  const bool something = any || new_radio_->isChecked();
   const bool earthbank_ready = !destination(pb::Destination::EarthBank)->isChecked() || new_radio_->isChecked() ||
                                (panel_ != nullptr && panel_->can_run());
-  run_->setEnabled(!busy() && any && checked_ && check_error_.isEmpty() && refusals_list_.empty() &&
+  run_->setEnabled(!busy() && something && checked_ && check_error_.isEmpty() && refusals_list_.empty() &&
                    local_refusals().empty() && plan().has_value() && earthbank_ready);
 }
 
