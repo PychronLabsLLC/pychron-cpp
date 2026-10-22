@@ -1353,4 +1353,29 @@ TEST(ExtractionLine, TheExampleLabLoadsWithItsSimToml) { expect_the_example_lab(
 // The roles are the canvas's, not the file's.
 TEST(ExtractionLine, TheExampleLabIsTheSameLabWithNoSimToml) { expect_the_example_lab(false); }
 
+TEST(ExtractionLine, GivenHubGetsTheLinesBus) {
+  ManualClock clock;
+  config::LoggingConfig lc;  // no dir: no file, the bus is what is observed
+  lc.dock_level = LogLevel::Info;
+  auto hub = LogHub::create(lc, clock);  // created without a bus
+  ASSERT_TRUE(hub);
+  auto opts = manual(clock);
+  opts.log_hub = *hub;
+
+  std::vector<Log> seen;
+  {
+    auto line = ExtractionLine::create(system_config(), canvas_model(), opts);
+    ASSERT_TRUE(line) << line.error().what;
+    EXPECT_EQ((*hub)->bus(), &(*line)->bus());
+    auto sub = (*line)->bus().subscribe<Log>([&](const Log& e) { seen.push_back(e); });
+    (*hub)->logger("extraction_line").info("from the line's logger");
+    EXPECT_FALSE(seen.empty());
+  }
+  // The line is gone; the hub goes on writing.
+  EXPECT_EQ((*hub)->bus(), nullptr);
+  (*hub)->logger("extraction_line").error("after the line");
+  (*hub)->flush();
+}
+
+
 }  // namespace

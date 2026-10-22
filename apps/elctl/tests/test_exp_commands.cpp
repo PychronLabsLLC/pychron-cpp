@@ -16,7 +16,10 @@
 
 #include "elctl_fixture.hpp"
 #include "exp.hpp"
+#include "pychron/core/clock.hpp"
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_hub.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/measurement/engine.hpp"
 #include "pychron/scripting/script_host.hpp"
@@ -117,6 +120,29 @@ conditionals = ["broken"]
   EXPECT_TRUE(contains(o.err, "no_such_plan")) << o.err;
   EXPECT_TRUE(contains(o.err, "no_such_script")) << o.err;
   EXPECT_TRUE(contains(o.err, "unknown detector 'IC9'")) << o.err;
+}
+
+TEST_F(ElctlExpTest, RunLogsToTheProcessHub) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  pychron::SteadyClock clock;
+  pychron::config::LoggingConfig lc;
+  lc.dir = dir_ / "plogs";
+  lc.file_name = "elctl.log";
+  auto made = pychron::LogHub::create(lc, clock);
+  ASSERT_TRUE(made);
+  std::string text;
+  {
+    const pychron::ProcessLogScope scope(*made);
+    auto o = exp({"run", lab("queues/experiment.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+                  "--data", (dir_ / "out").string(), "--sim-speed", "max"},
+                 true);
+    ASSERT_EQ(o.code, 0) << o.out << o.err;
+    (*made)->flush();
+    std::ifstream in(dir_ / "plogs" / "elctl.log");
+    text.assign(std::istreambuf_iterator<char>(in), {});
+  }
+  EXPECT_TRUE(contains(text, "clock virtual max")) << text.substr(0, 3000);
+  EXPECT_TRUE(contains(text, "] extraction_line")) << text.substr(0, 3000);
 }
 
 TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {

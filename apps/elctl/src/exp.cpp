@@ -320,12 +320,19 @@ class Exp {
       };
       sim_clock = std::make_unique<VirtualClock>(std::move(clock_options));
       // The process log stamps its lines with the simulated time for as long as the clock lives.
-      if (const auto hub = process_log_hub()) clock_attachment.emplace(hub->attach_clock(*sim_clock));
+      if (const auto hub = process_log_hub()) {
+        clock_attachment.emplace(hub->attach_clock(*sim_clock));
+        std::ostringstream said;
+        if (std::isinf(a_.sim_speed)) said << "clock virtual max";
+        else said << "clock virtual x" << a_.sim_speed;
+        hub->logger("pychron").info(said.str());
+      }
     }
 
     systems::ExtractionLine::Options line_options;
     line_options.clock = sim_clock.get();
     line_options.force_sim = g_.sim;
+    line_options.log_hub = process_log_hub();  // null without one: the line builds its own
     line_options.link_defaults = lab_.executor.link_defaults();  // executor.toml [links]
     std::optional<fs::path> canvas;
     if (!a_.canvas.empty()) canvas = a_.canvas;

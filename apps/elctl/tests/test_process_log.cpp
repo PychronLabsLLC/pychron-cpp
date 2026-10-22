@@ -8,7 +8,10 @@
 
 #include "elctl_fixture.hpp"
 #include "pychron/core/clock.hpp"
+#include "line.hpp"
+#include "pychron/core/config/loader.hpp"
 #include "pychron/core/log_dir.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/setup/site.hpp"
 #include "process_log.hpp"
 
@@ -50,6 +53,17 @@ class ProcessLog : public ElctlTest {
   }
 
   pychron::SteadyClock clock_;
+  std::shared_ptr<pychron::LogHub> hub_;
+
+  // A hub writing <scratch>/plogs/elctl.log, as main() would make.
+  void config_hub() {
+    pychron::config::LoggingConfig lc;
+    lc.dir = path("plogs");
+    lc.file_name = "elctl.log";
+    auto made = pychron::LogHub::create(lc, clock_);
+    ASSERT_TRUE(made);
+    hub_ = *made;
+  }
 };
 
 TEST_F(ProcessLog, NoInstallWritesToOsFolder) {
@@ -107,6 +121,32 @@ TEST_F(ProcessLog, AnUnknownInstallFallsBackToTheOsFolder) {
   auto hub = open_process_log({"--install", "nope", "version"}, clock_, pychron::HostOs::Mac, home_env(), err);
   ASSERT_NE(hub, nullptr) << err.str();
   EXPECT_EQ(hub->file_path(), path("home") / "Library" / "Logs" / "pychron" / "elctl.log");
+}
+
+TEST_F(ProcessLog, GlobalOptionsAreSeenInAnyOrder) {
+  const auto root = make_install();
+  std::ostringstream err;
+  for (const std::vector<std::string>& args :
+       {std::vector<std::string>{"--sim", "--install", "lab", "version"},
+        std::vector<std::string>{"-c", config(), "--install", "lab", "version"},
+        std::vector<std::string>{"--install", "lab", "--sim", "-c", config(), "version"}}) {
+    auto hub = open_process_log(args, clock_, pychron::HostOs::Mac, home_env(), err);
+    ASSERT_NE(hub, nullptr) << err.str();
+    EXPECT_EQ(hub->file_path(), root / "logs" / "elctl.log");
+  }
+}
+
+TEST_F(ProcessLog, LineBuildUsesTheProcessHub) {
+  config_hub();
+  auto cfg = pychron::config::load_system_config(config());
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  const pychron::ProcessLogScope scope(hub_);
+  auto line = Line::build(std::move(*cfg), LineOptions{});
+  ASSERT_TRUE(line) << line.error().what;
+  EXPECT_EQ(hub_->bus(), &(*line)->bus());
+  hub_->logger("probe").warn("a line record");
+  hub_->flush();
+  EXPECT_TRUE(contains(slurp(path("plogs") / "elctl.log"), "a line record"));
 }
 
 }  // namespace

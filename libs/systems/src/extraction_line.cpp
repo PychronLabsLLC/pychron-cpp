@@ -181,6 +181,9 @@ Result<void> ExtractionLine::build() {
   }
 
   log_hub_ = options_.log_hub;
+  // A hub given without a bus (the process hub) publishes on this line's bus
+  // while the line lives; one that already has a bus keeps it.
+  if (log_hub_ && log_hub_->bus() == nullptr) bus_attachment_.emplace(log_hub_->attach_bus(bus_));
   if (!log_hub_) {
     // Logging must never stop the line: warn and carry on without a hub.
     if (auto hub = LogHub::create(config_.logging, *clock_, &bus_)) {

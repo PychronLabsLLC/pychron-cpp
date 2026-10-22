@@ -245,6 +245,9 @@ class ExtractionLine {
   SignalBus bus_;
   // After the bus, before the transports: destroyed after them.
   std::shared_ptr<LogHub> log_hub_;
+  // A given hub that publishes nowhere is attached to bus_ for the line's
+  // life; declared after bus_, so it goes first.
+  std::optional<LogHub::BusAttachment> bus_attachment_;
   // "extraction_line" on log_hub_; null without a hub, when log() publishes
   // straight on bus_.
   std::optional<Logger> logger_;
