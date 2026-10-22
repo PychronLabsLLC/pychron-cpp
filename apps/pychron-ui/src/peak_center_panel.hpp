@@ -44,7 +44,7 @@ class PeakCenterPanel : public QWidget {
   void set_file(const std::filesystem::path& file);
   const std::filesystem::path& file() const noexcept { return file_; }
 
-  // The form as a config, named for the picked set. update_table is the set's.
+  
   jobs::PeakCenterConfig config() const;
   QString set_name() const;
   // Whether any field differs from the picked set.
@@ -65,6 +65,7 @@ class PeakCenterPanel : public QWidget {
   void load(const jobs::PeakCenterConfig& config);
   void fill_isotopes(const QString& keep);
   void refresh();
+  jobs::PeakCenterConfig form_config() const;  // the widgets' values, rounded as they show
   bool file_ok() const noexcept { return banner_error_.isEmpty(); }
 
   SpectrometerBridge& bridge_;
@@ -74,7 +75,7 @@ class PeakCenterPanel : public QWidget {
   QString banner_error_;
   bool loading_ = false;
   jobs::PeakCenterConfig base_;  // the form as the picked set left it (rounded by the fields)
-  bool update_table_ = true;     // the picked set's, kept for config()
+  jobs::PeakCenterConfig exact_;  // the picked set as the file has it; config() keeps its unedited fields
 
   QComboBox* set_ = nullptr;
   QLabel* banner_ = nullptr;

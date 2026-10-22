@@ -138,6 +138,31 @@ class TestPeakCenterPanel : public QObject {
     QCOMPARE(QString::fromStdString(panel_->config().detector), QStringLiteral("H1"));
   }
 
+  void exactValuesSurviveUntilEdited() {
+    const QString text = QStringLiteral("[p]\nwindow = 0.02\nstep = 1.234567891e-4\ndac_offset = 2.5e-7\n");
+    const auto path = write(text);
+    panel_->set_file(path);
+    panel_->select_set(QStringLiteral("p"));
+    std::ifstream in(path);
+    const std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto parsed = jobs::parse_peak_center_configs(body);
+    QVERIFY(parsed.has_value());
+    QCOMPARE(panel_->config(), parsed->at("p"));
+    QVERIFY(!panel_->edited());
+    child<QDoubleSpinBox>(*panel_, "pc_window")->setValue(0.03);
+    QCOMPARE(panel_->config().window, 0.03);
+    QCOMPARE(panel_->config().dac_offset, 2.5e-7);
+    QCOMPARE(panel_->config().step, parsed->at("p").step);
+  }
+
+  void unknownAdditionalDetectorsKept() {
+    panel_->set_file(write(QStringLiteral("[p]\nadditional_detectors = [\"H1\", \"ZZ9\"]\n")));
+    panel_->select_set(QStringLiteral("p"));
+    const std::vector<std::string> want{"H1", "ZZ9"};
+    QCOMPARE(panel_->config().additional_detectors, want);
+    QVERIFY(!panel_->edited());
+  }
+
   void configRoundTrip() {
     const QString text = QStringLiteral(
         "[a]\ndetector = \"H1\"\nisotope = \"Ar40\"\nadditional_detectors = [\"AX\"]\ncenter = 5.5\n"

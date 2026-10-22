@@ -1,5 +1,6 @@
 #include "peak_center_panel.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <iterator>
@@ -91,13 +92,13 @@ void PeakCenterPanel::build() {
 
   center_enabled_ = new QCheckBox(tr("Set center"));
   center_enabled_->setObjectName(QStringLiteral("pc_center_enabled"));
-  center_ = spin(-1e6, 1e6, 6, 0.001);
+  center_ = spin(-1e6, 1e6, 9, 0.001);
   row("center", tr("Center"), center_);
   form->addRow(QString(), center_enabled_);
 
-  window_ = spin(0, 1e6, 6, 0.001);
+  window_ = spin(0, 1e6, 9, 0.001);
   row("window", tr("Window"), window_);
-  step_ = spin(0, 1e6, 6, 0.0001);
+  step_ = spin(0, 1e6, 9, 0.0001);
   row("step", tr("Step"), step_);
   percent_ = spin(0, 100, 2, 1);
   row("percent", tr("Percent"), percent_);
@@ -117,9 +118,9 @@ void PeakCenterPanel::build() {
   row("settle_s", tr("Settle"), settle_);
   baseline_timeout_ = spin(0, 1e5, 3, 1, tr(" s"));
   row("baseline_timeout_s", tr("Baseline timeout"), baseline_timeout_);
-  dac_offset_ = spin(-1e6, 1e6, 6, 0.001);
+  dac_offset_ = spin(-1e6, 1e6, 9, 0.001);
   row("dac_offset", tr("DAC offset"), dac_offset_);
-  peak_shift_threshold_ = spin(0, 1e6, 6, 0.001);
+  peak_shift_threshold_ = spin(0, 1e6, 9, 0.001);
   row("peak_shift_threshold", tr("Peak shift threshold"), peak_shift_threshold_);
   propagate_ = new QCheckBox;
   row("propagate", tr("Propagate"), propagate_);
@@ -197,7 +198,9 @@ void PeakCenterPanel::set_file(const std::filesystem::path& file) {
   loading_ = false;
 
   const int at = set_->findText(keep);
+  loading_ = true;  // load() below is the one load
   set_->setCurrentIndex(at >= 0 ? at : std::max(0, set_->findText(QStringLiteral("default"))));
+  loading_ = false;
   load(sets_.at(set_->currentText().toStdString()));
 }
 
@@ -239,6 +242,13 @@ void PeakCenterPanel::load(const jobs::PeakCenterConfig& c) {
   }
   detector_->setCurrentIndex(at);
   fill_isotopes(QString::fromStdString(c.isotope));
+  for (const auto& name : c.additional_detectors) {
+    const QString text = QString::fromStdString(name);
+    if (additional_->findItems(text, Qt::MatchExactly).isEmpty()) {
+      auto* item = new QListWidgetItem(text, additional_);
+      item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    }
+  }
   for (int i = 0; i < additional_->count(); ++i) {
     auto* item = additional_->item(i);
     const bool on = std::ranges::find(c.additional_detectors, item->text().toStdString()) != c.additional_detectors.end();
@@ -259,13 +269,40 @@ void PeakCenterPanel::load(const jobs::PeakCenterConfig& c) {
   dac_offset_->setValue(c.dac_offset);
   peak_shift_threshold_->setValue(c.peak_shift_threshold);
   propagate_->setChecked(c.propagate);
-  update_table_ = c.update_table;
+  exact_ = c;
   loading_ = false;
-  base_ = config();
+  base_ = form_config();
   refresh();
 }
 
 jobs::PeakCenterConfig PeakCenterPanel::config() const {
+  const auto form = form_config();
+  auto c = exact_;  // a field the operator has not edited keeps the set's exact value
+  c.name = form.name;
+#define PC_TAKE(f) \
+  if (form.f != base_.f) c.f = form.f
+  PC_TAKE(detector);
+  PC_TAKE(isotope);
+  PC_TAKE(additional_detectors);
+  PC_TAKE(center);
+  PC_TAKE(window);
+  PC_TAKE(step);
+  PC_TAKE(percent);
+  PC_TAKE(min_peak_height);
+  PC_TAKE(test_peak_flat);
+  PC_TAKE(n_tries);
+  PC_TAKE(increase);
+  PC_TAKE(integration);
+  PC_TAKE(settle);
+  PC_TAKE(baseline_timeout);
+  PC_TAKE(dac_offset);
+  PC_TAKE(peak_shift_threshold);
+  PC_TAKE(propagate);
+#undef PC_TAKE
+  return c;
+}
+
+jobs::PeakCenterConfig PeakCenterPanel::form_config() const {
   jobs::PeakCenterConfig c;
   c.name = set_name().toStdString();
   c.detector = detector_->currentData().toString().toStdString();
@@ -286,13 +323,12 @@ jobs::PeakCenterConfig PeakCenterPanel::config() const {
   c.baseline_timeout = duration_of(baseline_timeout_->value());
   c.dac_offset = dac_offset_->value();
   c.peak_shift_threshold = peak_shift_threshold_->value();
-  c.update_table = update_table_;
-  c.propagate = propagate_->isChecked();
+    c.propagate = propagate_->isChecked();
   return c;
 }
 
 bool PeakCenterPanel::edited() const {
-  const auto now = config();
+  const auto now = form_config();
   return now.detector != base_.detector || now.isotope != base_.isotope ||
          now.additional_detectors != base_.additional_detectors || now.center != base_.center ||
          now.window != base_.window || now.step != base_.step || now.percent != base_.percent ||
@@ -305,7 +341,7 @@ bool PeakCenterPanel::edited() const {
 
 void PeakCenterPanel::refresh() {
   if (loading_) return;
-  const auto now = config();
+  const auto now = form_config();
   const auto mark = [this](const char* key, bool differs) {
     QLabel* label = labels_.at(key);
     QFont f = label->font();
@@ -332,7 +368,7 @@ void PeakCenterPanel::refresh() {
 
   banner_->setText(banner_error_);
   banner_->setVisible(!banner_error_.isEmpty());
-  const auto valid = jobs::validate_peak_center_config(now);
+  const auto valid = jobs::validate_peak_center_config(config());
   reason_->setText(valid ? QString() : QString::fromStdString(valid.error().what));
   start_->setEnabled(static_cast<bool>(valid));
   save_->setEnabled(valid && file_ok());
