@@ -76,6 +76,11 @@ class SpectrometerWindow : public QMainWindow {
   void set_peak_center_file(const std::filesystem::path& file);
   // Whether a queue is running: the dock's Start and Apply are then disabled.
   void set_queue_running(std::function<bool()> queue_running);
+  // A queue started or ended: the dock reads the state again.
+  void queue_state_changed() { peak_panel_->queue_state_changed(); }
+  // For code about to close and delete the window (a new spectrometer, quit):
+  // cancels a peak center and waits for it, without the question closeEvent asks.
+  void cancel_peak_center_and_wait() { bridge_.cancel_peak_center_and_wait(); }
   bool peak_center_running() const { return bridge_.peak_center_running(); }
   PeakCenterPanel* peak_center_panel() const noexcept { return peak_panel_; }
   PeakCenterView* peak_center_view() const noexcept { return peak_view_; }

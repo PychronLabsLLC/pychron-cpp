@@ -265,6 +265,27 @@ class TestPeakCenterPanel : public QObject {
     panel_->set_queue_running({});
   }
 
+  void queueStartInvalidatesTheResult() {
+    virtual_sim();
+    bool queue = false;
+    panel_->set_file(write(QString::fromLatin1(kAr40)));
+    panel_->select_set(QStringLiteral("p"));
+    panel_->set_queue_running([&queue] { return queue; });
+    QVERIFY(run_and_wait());
+    QVERIFY(enabled("peakCenterApply"));
+    const QString shown = text("peakCenterResultCenter");
+    QVERIFY(!shown.isEmpty());
+    queue = true;  // a plan run switches the table scope without a FieldTableChanged
+    panel_->queue_state_changed();
+    QVERIFY(!enabled("peakCenterApply"));
+    QCOMPARE(text("peakCenterResultCenter"), shown);  // the text stays
+    queue = false;
+    panel_->queue_state_changed();
+    QVERIFY(!enabled("peakCenterApply"));
+    QCOMPARE(text("peakCenterResultCenter"), shown);
+    panel_->set_queue_running({});
+  }
+
   void applyEnabledOnlyAfterOk() {
     virtual_sim();
     panel_->set_file(write(QString::fromLatin1(kAr40)));

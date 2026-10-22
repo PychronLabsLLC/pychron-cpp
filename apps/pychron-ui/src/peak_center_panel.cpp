@@ -541,6 +541,7 @@ void PeakCenterPanel::refresh() {
   reason_->setText(valid ? QString() : QString::fromStdString(valid.error().what));
   const bool running = bridge_.peak_center_running();
   const bool queue = queue_is_running();
+  if (queue && result_) table_changed_ = true;
   start_->setEnabled(valid && !running && !queue);
   start_->setToolTip(queue ? tr("a queue is running") : QString());
   cancel_->setEnabled(running);

@@ -310,6 +310,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
       spectrometer_window_->setAttribute(Qt::WA_DeleteOnClose, false);
       spectrometer_window_->set_wall_clock([this] { return bridge_.wall_now(); });
       spectrometer_window_->set_rise_rate_file(rise_rate_file_);
+      spectrometer_window_->set_peak_center_file(peak_center_file_);
+      spectrometer_window_->set_queue_running([this] { return experiment_ != nullptr && experiment_->running(); });
     }
     spectrometer_window_->show();
     spectrometer_window_->raise();
@@ -394,7 +396,8 @@ std::unique_ptr<QSettings> MainWindow::spectrometer_settings() const {
 void MainWindow::set_spectrometer(SpectrometerBridge* bridge, bool simulation,
                                   std::function<std::unique_ptr<QSettings>()> settings) {
   if (spectrometer_window_ != nullptr) {
-    spectrometer_window_->close();  // saves settings and queues the scan stop
+    spectrometer_window_->cancel_peak_center_and_wait();  // a run cannot outlive its window; no question
+    spectrometer_window_->close();                        // saves settings and queues the scan stop
     delete spectrometer_window_;    // it holds the old bridge
     spectrometer_window_ = nullptr;
   }
@@ -448,6 +451,14 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
                                        });
     experiment_refreshes_[4] = connect(bridge, &ExperimentBridge::queueEnded, health_,
                                        [this](const experiment::lab::QueueEnded&) { health_->clear_hold(); });
+    // The spectrometer window's Peak center dock follows the queue: Start and
+    // Apply are off while it runs, and a result seen then is stale.
+    experiment_refreshes_[5] = connect(bridge, &ExperimentBridge::queueStarted, this, [this] {
+      if (spectrometer_window_ != nullptr) spectrometer_window_->queue_state_changed();
+    });
+    experiment_refreshes_[6] = connect(bridge, &ExperimentBridge::queueEnded, this, [this] {
+      if (spectrometer_window_ != nullptr) spectrometer_window_->queue_state_changed();
+    });
   }
   health_->clear_hold();  // a hold of the old bridge's queue
   experiment_simulation_ = simulation;
@@ -466,6 +477,8 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
                                               experiment_settings_ ? experiment_settings_() : nullptr, this);
     experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
     experiment_window_->factory()->set_identifier_source(identifier_source_);
+    experiment_window_->set_peak_center_running(
+        [this] { return spectrometer_window_ != nullptr && spectrometer_window_->peak_center_running(); });
     give_references();
     connect(experiment_window_, &ExperimentWindow::rehearseRequested, this,
             [this](scripting::ScriptKind kind, const QString& name, const QString& text) { rehearse(kind, name, text); });
@@ -841,6 +854,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     return;
   }
   if (spectrometer_window_ != nullptr) {
+    spectrometer_window_->cancel_peak_center_and_wait();  // quitting: no question
     spectrometer_window_->close();
   }
   for (auto& [device, window] : laser_windows_) window->close();

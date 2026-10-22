@@ -74,6 +74,10 @@ class PeakCenterPanel : public QWidget {
 
   // Whether the last result can be applied now (the button's state).
   bool apply_enabled() const;
+  // The queue started or ended (or its state is to be read again): Start and
+  // Apply follow it. A result seen while a queue runs is stale for good: a plan
+  // run switches the table scope without a FieldTableChanged.
+  void queue_state_changed() { refresh(); }
 
  signals:
   // Emitted just before the bridge call of a Start, so a plot can clear.

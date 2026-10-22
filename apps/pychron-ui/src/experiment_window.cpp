@@ -972,6 +972,10 @@ void ExperimentWindow::save_as_dialog() {
 
 void ExperimentWindow::start() {
   if (bridge_.running()) return;
+  if (peak_center_running_ && peak_center_running_()) {
+    pane_->show_error(tr("peak center running in the spectrometer window"));
+    return;
+  }
   // The first row of the Queue table (queue-tables design 3): the executed
   // rows keep their statuses.
   const std::size_t from = model_.executed_rows();

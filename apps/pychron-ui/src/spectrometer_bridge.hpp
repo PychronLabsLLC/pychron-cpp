@@ -150,6 +150,10 @@ class SpectrometerBridge : public QObject {
   // way is ended through the token's hook), and a settle or other clock wait
   // runs to its end first.
   void cancel_peak_center();
+  // Cancels a run and waits for its thread, then delivers its finish (and the
+  // scan resume) at once, so peak_center_running() is false on return. For a
+  // caller about to delete what shows the run; asks nothing. No-op when none.
+  void cancel_peak_center_and_wait();
   // From the start until its peakCenterFinished has been delivered.
   bool peak_center_running() const noexcept { return peak_center_running_; }
   // Non-blocking, on the executor: jobs::write_peak_center_to_table into the

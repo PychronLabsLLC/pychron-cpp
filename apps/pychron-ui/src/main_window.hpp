@@ -96,6 +96,9 @@ class MainWindow : public QMainWindow {
   // Where the spectrometer window appends its rise rate results (empty:
   // nowhere). Set before the window is first opened.
   void set_rise_rate_file(std::filesystem::path path) { rise_rate_file_ = std::move(path); }
+  // The peak_center.toml the spectrometer window's Peak center dock reads and
+  // saves (empty: the built-in default only). Set before the window is first opened.
+  void set_peak_center_file(std::filesystem::path path) { peak_center_file_ = std::move(path); }
   // Null until the action is first triggered.
   SpectrometerWindow* spectrometer_window() const noexcept { return spectrometer_window_; }
   // Spectrometer > Field Table…, in every window's bar: opens the one field
@@ -255,10 +258,11 @@ class MainWindow : public QMainWindow {
   QAction* field_table_action_;
   FieldTableEditorWindow* field_table_window_ = nullptr;
   std::filesystem::path rise_rate_file_;
+  std::filesystem::path peak_center_file_;
   QAction* experiment_action_;
   ExperimentBridge* experiment_ = nullptr;
   // The bridge's signals to refresh_data() and to the health bar's hold chip.
-  std::array<QMetaObject::Connection, 5> experiment_refreshes_;
+  std::array<QMetaObject::Connection, 7> experiment_refreshes_;
   bool experiment_simulation_ = false;
   std::optional<std::filesystem::path> experiment_queue_;
   std::function<std::unique_ptr<QSettings>()> experiment_settings_;

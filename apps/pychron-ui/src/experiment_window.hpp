@@ -155,6 +155,9 @@ class ExperimentWindow : public QMainWindow {
   // Starts at the first row not executed (model().executed_rows()); the
   // selection is not read.
   void start();
+  // Whether a peak center runs in the spectrometer window; start() is refused
+  // while it does.
+  void set_peak_center_running(std::function<bool()> running) { peak_center_running_ = std::move(running); }
   // Selects source row `row` in the Queue table, if it is there (an executed
   // row is not).
   void select_row(int row);
@@ -284,6 +287,7 @@ class ExperimentWindow : public QMainWindow {
   std::optional<std::filesystem::path> path_;
   bool modified_ = false;
   std::function<Unsaved()> ask_unsaved_;
+  std::function<bool()> peak_center_running_;
   std::function<bool()> ask_stop_;
   std::function<bool(int)> ask_clear_executed_;
   std::function<bool(const ResumeOffer&)> ask_resume_;

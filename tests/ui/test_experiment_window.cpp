@@ -817,6 +817,19 @@ class TestExperimentWindow : public QObject {
 
   // A queue the database will not take does not start, and every line of the
   // reason is on show.
+  void experimentStartRefusedWhilePeakCenterRuns() {
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    ExperimentWindow window(bridge, true, settings());
+    QString error;
+    QVERIFY2(window.load_queue(queue_file(sim), &error), qPrintable(error));
+    bool peak_center = true;
+    window.set_peak_center_running([&peak_center] { return peak_center; });
+    window.start();
+    QVERIFY(!bridge.running());
+    QCOMPARE(window.executor()->error_text(), QStringLiteral("peak center running in the spectrometer window"));
+  }
+
   void aQueueThatCannotBeSavedSaysWhyInFull() {
     RefusingPersister persister;
     pychron::ui::test::SimLab sim({}, {}, {}, &persister);

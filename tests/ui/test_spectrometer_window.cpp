@@ -720,6 +720,27 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(!window_->findChild<QDockWidget*>(QStringLiteral("peakCenterPlotDock"))->isVisible());
   }
 
+  void cancelAndWaitEndsTheRunWithoutAsking() {
+    open();
+    const auto file = std::filesystem::path(dir_.filePath(QStringLiteral("pc.toml")).toStdString());
+    std::ofstream(file) << "[default]\nisotope = \"Ar40\"\nwindow = 0.06\nstep = 0.0005\nintegration_s = 0.1\n"
+                           "settle_s = 0.1\n";
+    window_->set_peak_center_file(file);
+    int asked = 0;
+    window_->set_ask([&](const QString&) {
+      ++asked;
+      return true;
+    });
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QTest::mouseClick(window_->findChild<QPushButton*>(QStringLiteral("peakCenterStart")), Qt::LeftButton);
+    QVERIFY(window_->peak_center_running());
+    window_->cancel_peak_center_and_wait();
+    QVERIFY(!window_->peak_center_running());
+    QVERIFY(window_->close());
+    QCOMPARE(asked, 0);
+  }
+
   void closeDuringRunAsks() {
     open();
     const auto file = std::filesystem::path(dir_.filePath(QStringLiteral("pc.toml")).toStdString());

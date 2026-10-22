@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -28,7 +30,9 @@
 #include "field_table_editor_window.hpp"
 #include "main_window.hpp"
 #include "menu_hub.hpp"
+#include "peak_center_panel.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "spectrometer_window.hpp"
 #include "spectrometer_fixture.hpp"
 #include "settings_guard.hpp"
 #include "ui_fixture.hpp"
@@ -666,6 +670,54 @@ class TestDocks : public QObject {
       window.spectrometer_action()->trigger();
       QCOMPARE(window.spectrometer_window(), first);
       QVERIFY(first->isVisible());
+    }
+  }
+
+  void spectrometerWindowGetsThePeakCenterFile() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    const std::filesystem::path file = std::filesystem::path(dir.path().toStdString()) / "peak_center.toml";
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_peak_center_file(file);
+      window.set_spectrometer(&bridge, true,
+                              [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); });
+      window.spectrometer_action()->trigger();
+      QVERIFY(window.spectrometer_window() != nullptr);
+      QCOMPARE(window.spectrometer_window()->peak_center_panel()->file(), file);
+    }
+  }
+
+  void replacingTheSpectrometerCancelsAPeakCenterWithoutAsking() {
+    auto line = pychron::ui::test::make_example_line();
+    auto sim = pychron::ui::test::make_sim_spectrometer();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("settings.ini"));
+    const std::filesystem::path file = std::filesystem::path(dir.path().toStdString()) / "peak_center.toml";
+    std::ofstream(file) << "[default]\nisotope = \"Ar40\"\nwindow = 0.06\nstep = 0.0005\nintegration_s = 0.1\n"
+                           "settle_s = 0.1\n";
+    {
+      pychron::ui::SpectrometerBridge bridge(*sim->spec, *sim->scan, sim->bus);
+      pychron::ui::MainWindow window(*line);
+      window.set_peak_center_file(file);
+      window.set_spectrometer(&bridge, true,
+                              [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); });
+      window.spectrometer_action()->trigger();
+      int asked = 0;
+      window.spectrometer_window()->set_ask([&](const QString&) {
+        ++asked;
+        return false;
+      });
+      QTest::mouseClick(window.spectrometer_window()->findChild<QPushButton*>(QStringLiteral("peakCenterStart")),
+                        Qt::LeftButton);
+      QVERIFY(bridge.peak_center_running());
+      window.set_spectrometer(nullptr, false);
+      QVERIFY(window.spectrometer_window() == nullptr);
+      QVERIFY(!bridge.peak_center_running());
+      QCOMPARE(asked, 0);
     }
   }
 

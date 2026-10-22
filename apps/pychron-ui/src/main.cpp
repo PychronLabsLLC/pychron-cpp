@@ -723,6 +723,7 @@ int main(int argc, char** argv) {
     if (spectrometer_bridge) {
       if (started) {
         window.set_rise_rate_file(data_dir / "rise_rates.csv");
+        window.set_peak_center_file(lab_dir / "peak_center.toml");
         window.set_spectrometer(spectrometer_bridge.get(), simulation);
       } else {
         window.log_dock()->append_line(QStringLiteral(

@@ -10,6 +10,8 @@
 #include <variant>
 #include <vector>
 
+#include <QCoreApplication>
+#include <QEvent>
 #include <QMetaObject>
 #include <QPointer>
 #include <QSemaphore>
@@ -466,6 +468,23 @@ void SpectrometerBridge::start_peak_center_thread(jobs::PeakCenterConfig config)
 void SpectrometerBridge::cancel_peak_center() {
   if (peak_center_run_) {
     peak_center_run_->cancel.cancel();
+  }
+}
+
+void SpectrometerBridge::cancel_peak_center_and_wait() {
+  if (!peak_center_running_) {
+    return;
+  }
+  cancel_peak_center();
+  // The run's thread may not have started: it starts when the executor has
+  // stopped the scan, and sees the cancel at once. Each round lets the
+  // executor finish, delivers what it posted (the thread's start, or the run's
+  // finish, which the thread posted before it said it was done) and joins.
+  for (int round = 0; round < 100 && peak_center_running_; ++round) {
+    drain();
+    QCoreApplication::sendPostedEvents(this, QEvent::MetaCall);
+    join_peak_center();
+    QCoreApplication::sendPostedEvents(this, QEvent::MetaCall);
   }
 }
 
