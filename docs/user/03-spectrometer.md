@@ -185,7 +185,7 @@ spectrometer's transport appears there as a chip too) and the log.
 
 ### What the window does not do
 
-The window is deliberately small. It has **no** controls for peak centering,
+The window is deliberately small. It has **no** controls for
 detector deflection, source (HV, trap current), baselines, saving a scan to a
 file, event markers or magnet DAC sliders. Those are done by measurement plans
 and scripts in the [experiment window](04-experiments.md) (see "Peak centering"
@@ -349,10 +349,10 @@ the starter `detector_ic` plan hops only Faradays for exactly that reason.
 
 Peak centring finds the magnet setting that puts an isotope's peak in the
 middle of a detector, and (by default) writes the correction into the field
-table so later moves use it. There is no button for it in the spectrometer
-window; it runs from a plan (`[peak_center] before/after = true`) or a
-script. The result appears in the **Evolutions** dock of the experiment
-window under **Peak centers** as `Ar40 on H1: center 5.001234, table
+table so later moves use it. It runs from a plan (`[peak_center]
+before/after = true`), from a script, or by hand from the spectrometer window
+("From the spectrometer window", below). The result of a plan's centring
+appears in the **Evolutions** dock of the experiment window under **Peak centers** as `Ar40 on H1: center 5.001234, table
 updated`, or `failed: <reason>`. A failed centring is reported and the run
 continues; it is not an error.
 
@@ -429,6 +429,46 @@ cannot be written (no data directory, a folder that is not writable), the
 peak center still succeeds and moves to the new value, but its result
 carries the note `field table not saved: <why>` and a warning is logged:
 the update then lasts only until pychron is restarted.
+
+#### From the spectrometer window
+
+The window has a **Peak center** dock, tabbed with the Controls dock, and a
+**Peak center plot** dock in the bottom dock area below the strip chart; both
+can be closed, moved and brought back from the View menu. The dock starts from
+the settings of the lab's `peak_center.toml` (described above): pick a set from the
+list, and its values fill the form. Change any field (isotope, detector,
+window, step and the rest) and it is marked as an override of the set; the
+override is used for this run only and does not touch the file. **Revert to
+set** puts the set's own values back.
+
+**Start** begins the run and **Cancel** ends it. If the scan is running it is
+stopped first and started again, with its integration time, when the run ends,
+unless you pressed Stop scan meanwhile. A cancel takes effect at the next step:
+a settle or other wait in progress runs to its end. The plot dock is cleared at
+each Start and draws each try (earlier tries faint); the last result stays
+there, and in the dock, until the next Start.
+
+After a successful run, **Apply to field table** writes the centre into the
+detector's row for the isotope in the active field table, after asking you to
+confirm. With **Propagate** on, the other detectors' columns move with it. The
+change is saved as a new version of the table, as any edit in the field table
+editor is. Apply is off if the table was changed or a queue has run since the
+result, and it can be used once per result.
+
+**Save to set...** writes the form's values to a named set in the lab's
+`peak_center.toml`: an existing name is replaced in place, a new name is added,
+and the comments and order of the rest of the file are kept. The file is read
+again when a queue starts, so a plan sees a saved set at its next start, not
+partway through a queue. If the file cannot be read (a syntax error, an
+unknown key, an invalid value), that queue start is refused with a message
+naming the file.
+
+A queue and a peak center from the window never run together: Start and Apply
+are disabled, with the tooltip "a queue is running", while a queue runs (Save
+is still allowed), and starting a queue is refused with "peak center running
+in the spectrometer window" while a window run goes. Closing the window during
+a run asks whether to cancel it; closing the program or switching spectrometer
+cancels it without asking.
 
 ## Field table editor
 
