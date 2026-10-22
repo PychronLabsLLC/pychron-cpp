@@ -798,6 +798,126 @@ TEST(LogHub, LockReleasedOnDestruction) {
   EXPECT_EQ(again->file_path(), tmp.path() / "pychron.log");
 }
 
+// A lock that cannot be taken for a reason other than another holder (here
+// the lock path is a directory) keeps the main name and says so at warn.
+TEST(LogHub, UnlockableFileIsAWarning) {
+  TempDir tmp;
+  fs::create_directories(tmp.path() / "pychron.log.lock");
+  SteadyClock clock;
+  auto hub = make_hub(config_for(tmp.path()), clock);
+  ASSERT_TRUE(hub);
+  EXPECT_EQ(hub->file_path(), tmp.path() / "pychron.log");
+  hub->flush();
+  const auto lines = read_lines(tmp.path() / "pychron.log");
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_NE(lines[0].find("[warn] logging: cannot lock "), std::string::npos) << lines[0];
+}
+
+// Attachments made, replaced and dropped while other threads write: every
+// record reaches the file, no bus hears a record after its attachment's
+// destructor has returned, and every stamp comes from one of the clocks.
+TEST(LogHub, AttachAndDropUnderConcurrentWrites) {
+  using namespace std::chrono_literals;
+  TempDir tmp;
+  SteadyClock base;
+  const ManualClock c1(TimePoint{}, utc(2001, 1, 1, 0, 0, 0));
+  const ManualClock c2(TimePoint{}, utc(2002, 1, 1, 0, 0, 0));
+  auto hub = make_hub(config_for(tmp.path()), base);
+  ASSERT_TRUE(hub);
+  Logger relay = hub->logger("relay");
+
+  // A bus is "live" from before its attach until its attachment's
+  // destructor has returned; an event outside that is a violation.
+  struct Watched {
+    SignalBus bus;
+    std::atomic<bool> live{false};
+    std::atomic<int> seen{0};
+    std::atomic<int> late{0};
+    SignalBus::Subscription sub;
+  };
+  Watched b1;
+  Watched b2;
+  for (Watched* w : {&b1, &b2}) {
+    w->sub = w->bus.subscribe<Log>([w, &relay](const Log& e) {
+      if (!w->live.load()) w->late.fetch_add(1);
+      w->seen.fetch_add(1);
+      if (e.logger != "relay") relay.info("saw " + e.logger);  // logs back
+    });
+  }
+
+  constexpr int kWriters = 4;
+  constexpr int kPerWriter = 1000;
+  constexpr int kMinRounds = 50;
+  std::atomic<int> writers_left{kWriters};
+  std::atomic<int> bus_rounds{0};
+  std::atomic<int> clock_rounds{0};
+  std::promise<void> all_done;
+  std::vector<std::thread> threads;
+  threads.reserve(kWriters + 2);
+
+  for (int t = 0; t < kWriters; ++t) {
+    threads.emplace_back([&, t] {
+      Logger log = hub->logger("w" + std::to_string(t));
+      for (int i = 0; i < kPerWriter; ++i) log.info(std::to_string(i));
+      writers_left.fetch_sub(1);
+    });
+  }
+  threads.emplace_back([&] {
+    while (writers_left.load() > 0 || bus_rounds.load() < kMinRounds) {
+      b1.live.store(true);
+      std::optional<LogHub::BusAttachment> a1(hub->attach_bus(b1.bus));
+      b2.live.store(true);
+      std::optional<LogHub::BusAttachment> a2(hub->attach_bus(b2.bus));  // replaces b1
+      a2.reset();
+      b2.live.store(false);
+      a1.reset();
+      b1.live.store(false);
+      bus_rounds.fetch_add(1);
+    }
+  });
+  threads.emplace_back([&] {
+    while (writers_left.load() > 0 || clock_rounds.load() < kMinRounds) {
+      std::optional<LogHub::ClockAttachment> k1(hub->attach_clock(c1));
+      std::optional<LogHub::ClockAttachment> k2(hub->attach_clock(c2));
+      k1.reset();  // replaced already: changes nothing
+      k2.reset();
+      clock_rounds.fetch_add(1);
+    }
+  });
+  std::thread joiner([&] {
+    for (auto& th : threads) th.join();
+    all_done.set_value();
+  });
+  if (all_done.get_future().wait_for(30s) != std::future_status::ready) {
+    ADD_FAILURE() << "attach/drop under writes did not finish in 30 s";
+    std::abort();
+  }
+  joiner.join();
+  hub->flush();
+
+  EXPECT_EQ(b1.late.load(), 0);
+  EXPECT_EQ(b2.late.load(), 0);
+  EXPECT_GT(b1.seen.load() + b2.seen.load(), 0);
+  EXPECT_EQ(hub->bus(), nullptr);
+
+  std::vector<int> per_writer(kWriters, 0);
+  const std::regex stamp(R"(^(\d{4})-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \[)");
+  const int this_year = [] {
+    const auto days = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
+    return static_cast<int>(std::chrono::year_month_day(days).year());
+  }();
+  for (const auto& line : read_lines(tmp.path() / "pychron.log")) {
+    std::smatch m;
+    ASSERT_TRUE(std::regex_search(line, m, stamp)) << line;
+    const int year = std::stoi(m[1].str());
+    EXPECT_TRUE(year == 2001 || year == 2002 || year == this_year || year == this_year - 1) << line;
+    for (int t = 0; t < kWriters; ++t) {
+      if (line.find("[info] w" + std::to_string(t) + ": ") != std::string::npos) ++per_writer[t];
+    }
+  }
+  for (int t = 0; t < kWriters; ++t) EXPECT_EQ(per_writer[t], kPerWriter) << "writer " << t;
+}
+
 TEST(LogHub, NoFileMeansEmptyFilePath) {
   SteadyClock clock;
   auto hub = make_hub(config::LoggingConfig{}, clock);

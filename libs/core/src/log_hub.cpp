@@ -464,7 +464,10 @@ struct LogHub::Impl {
     try {
       std::string payload = "pychron: ";
       payload.append(text);
-      logger->log(base_clock->wall_now(), spdlog::source_loc{}, spdlog::level::err,
+      // System time, not the hub's clock: a clock's wall_now() may take a
+      // mutex (VirtualClock does), and terminate can be raised by the thread
+      // that holds it.
+      logger->log(std::chrono::system_clock::now(), spdlog::source_loc{}, spdlog::level::err,
                   spdlog::string_view_t(payload.data(), payload.size()));
       if (echo_stderr) {
         std::lock_guard lock(echo_mutex);
@@ -763,6 +766,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
 
   std::string lock_notice;  // written once the back end runs
+  LogLevel lock_notice_level = LogLevel::Info;
   if (config.dir && !config.dir->empty()) {
     const std::filesystem::path& dir = *config.dir;
     std::filesystem::path file = dir / config.file_name;
@@ -781,6 +785,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
           break;
         }
         case FileLock::Outcome::Failed:
+          lock_notice_level = LogLevel::Warn;
           lock_notice = "cannot lock " + lock_path.string() + "; logging to " + file.string() +
                         " without a lock";
           break;
@@ -840,7 +845,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
     state.current = impl;
     if (state.installed) retarget_crash_output(*impl);
   }
-  if (!lock_notice.empty()) impl->write(LogLevel::Info, "logging", lock_notice);
+  if (!lock_notice.empty()) impl->write(lock_notice_level, "logging", lock_notice);
   return std::shared_ptr<LogHub>(new LogHub(std::move(impl)));
 }
 
