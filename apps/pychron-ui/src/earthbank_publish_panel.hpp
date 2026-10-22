@@ -28,7 +28,9 @@
 //
 // The panel has no Run button: its host calls start(); PublishDialog
 // (publish_dialog.hpp) hosts it as its EarthBank tab. finished() says
-// how each start ended; progress() how far it is.
+// how each start ended; progress() how far it is. The in-doubt answer is
+// the host's to run too: the buttons emit resume_requested and the host
+// calls resume() once it has judged the upload again.
 
 #include <cstdint>
 #include <functional>
@@ -89,6 +91,12 @@ class EarthbankPublishPanel : public QWidget {
   // folder, no sample to publish: the hint) nothing runs and it is
   // finished(false, the reason) at once.
   void start(Action action);
+  // Finishes the upload a record of which is in doubt, with the user's answer
+  // (`resolve`: "written:<id>" or "not-written", as resume_requested gave
+  // it), without asking again: it was agreed to. finished() follows, once, as
+  // for start(); when the panel is running, not ready or not on Upload, or
+  // the fields keep it from running, nothing is sent.
+  void resume(const std::string& resolve);
   // Stops an upload after the record that is out, as the Cancel button does.
   void cancel();
   // The per-sample cells and the options cannot be edited; the result pane
@@ -152,6 +160,10 @@ class EarthbankPublishPanel : public QWidget {
   void finished(bool ok, const QString& message);
   // What can_run(), the hint or the buttons say may have changed.
   void controls_changed();
+  // The user answered the in-doubt question ("written:<id>" or
+  // "not-written"). The panel sends nothing on it: its host judges the
+  // upload again (the release may have changed since) and calls resume().
+  void resume_requested(const std::string& resolve);
 
  private:
   struct Row {

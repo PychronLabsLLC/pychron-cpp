@@ -187,6 +187,31 @@ class TestPublishDialog : public QObject {
     return o;
   }
 
+  // A published public release uploaded through the dialog, the first record
+  // of it lost on the way: the run ends with that record in doubt and the
+  // EarthBank tab's in-doubt buttons shown.
+  ps::Uuid upload_leaving_in_doubt(pychron::ui::test::EarthbankWorld& w, Open& o) {
+    const ps::Uuid r = published("r", true);
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    if (panel == nullptr) qFatal("no EarthBank panel");
+    panel->ask_confirm = [](const QString&) { return true; };
+    set_action(*panel, Action::Upload);
+    panel->allow_unresolved()->setChecked(true);
+    if (!QTest::qWaitFor([&] { return panel->table()->rowCount() == 3; }, kWaitMs)) qFatal("rows");
+    if (!QTest::qWaitFor([&] { return o.dialog->run_button()->isEnabled(); }, kWaitMs)) qFatal("run off");
+    w.bank.lose_next("POST", "/api/arar/ArArAliquot");  // never saved, and no answer
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    if (!QTest::qWaitFor([&] { return got->count == 1; }, kWaitMs)) qFatal("run did not finish");
+    if (!QTest::qWaitFor([&] { return panel->ready(); }, kWaitMs)) qFatal("panel not ready");
+    if (!panel->not_there_button()->isVisibleTo(panel) || !panel->not_there_button()->isEnabled())
+      qFatal("no record in doubt: %s", qPrintable(panel->result_pane()->toPlainText()));
+    return r;
+  }
+
  private Q_SLOTS:
   void init() {
     QVERIFY(dir_.isValid());
@@ -834,6 +859,61 @@ class TestPublishDialog : public QObject {
     const ps::ReleaseRow row = release_row("r");
     QCOMPARE(row.state, ps::ReleaseState::Published);
     QCOMPARE(row.visibility, ps::Visibility::Public);
+  }
+  // Finding: the in-doubt answer resends records. It is a run of the dialog's
+  // own, through the upload gate: a release no longer public sends nothing.
+  void InDoubtResumeRefusedWhenReleaseNoLongerPublic() {
+    pychron::ui::test::EarthbankWorld w;
+    w.signed_up();
+    Open o = open(w.setup());
+    const ps::Uuid r = upload_leaving_in_doubt(w, o);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    auto ok = pb::withdraw_release(*store_, seed_.reducer(), r, "superseded");
+    QVERIFY2(ok.has_value(), ok ? "" : pychron::to_string(ok.error()).c_str());
+
+    const std::size_t requests = w.bank.requests().size();
+    const std::size_t posts = record_posts(w.bank);
+    auto got = watch(*o.dialog);
+    panel->not_there_button()->click();
+    QVERIFY(o.dialog->busy());
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{1});
+    QVERIFY(got->results[0].destination == Destination::EarthBank);
+    QVERIFY2(got->results[0].state == StepState::Failed, got->results[0].message.c_str());
+    QVERIFY2(got->results[0].message.find("withdrawn") != std::string::npos, got->results[0].message.c_str());
+    QCOMPARE(o.dialog->results()->rowCount(), 1);
+    QCOMPARE(state_text(*o.dialog, 0), QStringLiteral("Failed"));
+    QVERIFY(!o.dialog->busy());
+    QTest::qWait(200);  // nothing goes out late either
+    QCOMPARE(w.bank.requests().size(), requests);
+    QCOMPARE(record_posts(w.bank), posts);
+    QCOMPARE(got->count, 1);
+  }
+
+  void InDoubtResumeRunsThroughTheDialog() {
+    pychron::ui::test::EarthbankWorld w;
+    w.signed_up();
+    Open o = open(w.setup());
+    upload_leaving_in_doubt(w, o);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    const std::size_t aliquots = w.bank.store().aliquots.size();
+    auto got = watch(*o.dialog);
+    panel->not_there_button()->click();
+    QVERIFY(o.dialog->busy());
+    QVERIFY(!o.dialog->run_button()->isEnabled());
+    QVERIFY(!o.dialog->destination(Destination::EarthBank)->isEnabled());  // the destinations are locked
+    QVERIFY(!o.dialog->release_combo()->isEnabled());                       // and so is the release section
+    QVERIFY(panel->locked());
+    QCOMPARE(o.dialog->results()->rowCount(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{1});
+    QVERIFY(got->results[0].destination == Destination::EarthBank);
+    QVERIFY2(got->results[0].state == StepState::Ok,
+             qPrintable(QString::fromStdString(got->results[0].message) + QLatin1Char('\n') +
+                        panel->result_pane()->toPlainText()));
+    QVERIFY(got->release_ok);
+    QVERIFY(w.bank.store().aliquots.size() > aliquots);  // the record not there was sent again
+    QVERIFY(!o.dialog->busy());
   }
 };
 

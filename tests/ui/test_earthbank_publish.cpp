@@ -96,6 +96,21 @@ class EarthbankPublishTest : public QObject {
   static std::size_t record_posts(const eb::testing::FakeEarthBank& bank) {
     return bank.count("POST", "/api/arar/") + bank.count("POST", "/api/core/");
   }
+  // An in-doubt button only asks the host to resume (the host runs the upload
+  // gate first): it sends nothing itself. Then the host's resume, with what
+  // the button asked for.
+  static void answer_in_doubt(EarthbankPublishPanel& d, const eb::testing::FakeEarthBank& bank, QPushButton* button,
+                              const std::string& expected) {
+    QSignalSpy asked(&d, &EarthbankPublishPanel::resume_requested);
+    const std::size_t posts = record_posts(bank);
+    button->click();
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.first().first().value<std::string>(), expected);
+    QVERIFY(d.ready());
+    QCOMPARE(record_posts(bank), posts);
+    d.resume(expected);
+    QTRY_VERIFY_WITH_TIMEOUT(d.ready(), 20000);
+  }
 
   ui::test::ApplicationSettingsGuard app_settings_;
 
@@ -413,10 +428,10 @@ class EarthbankPublishTest : public QObject {
       asked_again = true;
       return true;
     };
-    d->in_doubt_id()->setText(QString::number(w.bank.store().aliquots[0].id));
+    const auto id = w.bank.store().aliquots[0].id;
+    d->in_doubt_id()->setText(QString::number(id));
     QVERIFY(d->there_button()->isEnabled());
-    d->there_button()->click();
-    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    answer_in_doubt(*d, w.bank, d->there_button(), "written:" + std::to_string(id));
     QVERIFY(!asked_again);  // it finishes the upload that was agreed to
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{7});  // the one in doubt was not sent again
     QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
@@ -434,8 +449,7 @@ class EarthbankPublishTest : public QObject {
     QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: in doubt")));
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{1});  // the other sample's
 
-    d->not_there_button()->click();
-    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    answer_in_doubt(*d, w.bank, d->not_there_button(), "not-written");
     QCOMPARE(w.bank.store().aliquots.size(), std::size_t{7});
     QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
   }
@@ -487,8 +501,7 @@ class EarthbankPublishTest : public QObject {
     }
     // Untouched since, the answer finishes it without another question.
     QVERIFY(d->not_there_button()->isVisibleTo(d.get()));
-    d->not_there_button()->click();
-    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    answer_in_doubt(*d, w.bank, d->not_there_button(), "not-written");
     QCOMPARE(asked, 1 + static_cast<int>(changes.size()));
     QVERIFY(d->result_pane()->toPlainText().contains(QStringLiteral("S-FUS: complete")));
   }

@@ -17,6 +17,11 @@
 // upload stops after the record that is out) and marks the rest Cancelled.
 // Nothing is undone.
 //
+// The EarthBank tab's in-doubt answer (a record whose answer never came) is a
+// run of its own: busy, the release section and destinations locked, one
+// result row "EarthBank", the upload gate (earthbank_upload_refusal) judged
+// again on the worker before the panel's resume() sends anything.
+//
 // Every store call runs on the bridge's worker; its result comes back queued
 // to the GUI thread and never reaches a dialog that is gone (EntryBridge::run
 // checks a QPointer to it). A result that was overtaken by a later change is
@@ -172,6 +177,7 @@ class PublishDialog : public QDialog {
     EarthBank earthbank = EarthBank::Idle;
     bool panel_locked = false;     // the EarthBank tab is locked by this run
     bool panel_read_only = false;  // what it was before
+    std::optional<std::string> resume;  // the in-doubt answer this run finishes the upload with
   };
 
   bool current(int run) const noexcept { return running_ != nullptr && running_->id == run; }
@@ -187,6 +193,8 @@ class PublishDialog : public QDialog {
   void run_earthbank();
   void earthbank_poll();   // the EarthBank step waits for the panel's rows
   void start_panel();
+  // The EarthBank tab's in-doubt answer, run as a run of its own (see above).
+  void resume_earthbank(const std::string& resolve);
   void panel_finished(bool ok, const QString& message);
   void build_stage(int run, const QString& stage);
   void finish();

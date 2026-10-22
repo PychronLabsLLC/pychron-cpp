@@ -501,6 +501,8 @@ void PublishDialog::ensure_panel() {
     progress_->setValue(std::min(done, std::max(total, 1)));
   });
   connect(panel_->action(), &QComboBox::currentIndexChanged, this, [this] { schedule_check(); });
+  connect(panel_, &EarthbankPublishPanel::resume_requested, this,
+          [this](const std::string& resolve) { resume_earthbank(resolve); });
   lock_panel(true);  // made by a run's EarthBank step
   load_dataset();
   schedule_check();  // the plan's mode is the panel's now
@@ -683,6 +685,31 @@ void PublishDialog::run() {
         }
         next_step();
       });
+}
+
+void PublishDialog::resume_earthbank(const std::string& resolve) {
+  if (busy() || panel_ == nullptr) return;
+  auto started = std::make_unique<Run>();
+  started->id = ++runs_;
+  started->plan.release = pb::ExistingRelease{dataset_for_.toStdString()};
+  started->plan.earthbank = pb::EarthBankStep{pb::EarthBankMode::Upload};
+  started->order = {pb::Destination::EarthBank};
+  started->results.push_back({pb::Destination::EarthBank, pb::StepState::Pending, {}});
+  started->release = dataset_for_;
+  started->resume = resolve;
+  running_ = std::move(started);
+  close_when_done_ = false;
+  check_timer_->stop();
+
+  results_->setRowCount(1);
+  set_row(0, name_of(pb::Destination::EarthBank), pb::StepState::Pending, {});
+  set_running(true);
+  if (running_->release.isEmpty()) {
+    settle(pb::StepState::Failed, "The EarthBank tab holds no release of the store.");
+    finish();
+    return;
+  }
+  next_step();  // the EarthBank step: the panel's rows, the upload gate, then resume()
 }
 
 void PublishDialog::cancel() {
@@ -948,7 +975,12 @@ void PublishDialog::start_panel() {
   Run& r = *running_;
   r.earthbank = Run::EarthBank::Running;
   progress_->setRange(0, 0);
-  panel_->start(action_of(r.plan.earthbank->mode));  // may say finished at once (a hint): Failed
+  // Either may say finished at once (a hint): Failed.
+  if (r.resume) {
+    panel_->resume(*r.resume);
+  } else {
+    panel_->start(action_of(r.plan.earthbank->mode));
+  }
 }
 
 void PublishDialog::panel_finished(bool ok, const QString& message) {

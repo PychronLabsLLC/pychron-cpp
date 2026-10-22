@@ -292,9 +292,10 @@ EarthbankPublishPanel::EarthbankPublishPanel(std::vector<processing::AnalysisPtr
     dialog->open();
   });
   connect(cancel_, &QPushButton::clicked, this, [this] { cancel(); });
+  // The answer resends records: the host judges the upload again first (D3).
   connect(there_, &QPushButton::clicked, this,
-          [this] { begin("written:" + in_doubt_id_->text().trimmed().toStdString()); });
-  connect(not_there_, &QPushButton::clicked, this, [this] { begin(std::string("not-written")); });
+          [this] { emit resume_requested("written:" + in_doubt_id_->text().trimmed().toStdString()); });
+  connect(not_there_, &QPushButton::clicked, this, [this] { emit resume_requested(std::string("not-written")); });
 
   connect(worker_, &EarthbankWorker::progress, this, [this](int done, int total, const QString& what) {
     progress_->setRange(0, std::max(total, 1));
@@ -427,6 +428,23 @@ void EarthbankPublishPanel::start(Action action) {
     return;
   }
   begin();
+}
+
+void EarthbankPublishPanel::resume(const std::string& resolve) {
+  if (running_) {
+    emit finished(false, tr("Already running."));
+    return;
+  }
+  if (!surveyed_ || current_action() != Action::Upload) {
+    emit finished(false, tr("Not ready."));
+    return;
+  }
+  if (!can_run()) {
+    const QString why = hint_text();
+    emit finished(false, why.isEmpty() ? tr("Not ready.") : why);
+    return;
+  }
+  begin(resolve);
 }
 
 EarthbankPublishPanel::~EarthbankPublishPanel() = default;
