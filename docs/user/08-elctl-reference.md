@@ -1025,7 +1025,7 @@ is sent for a sample and what each message means, is
 [Publishing to EarthBank](../earthbank.md).
 
 ```bash
-elctl earthbank export-xlsx --db <url> --out <dir> [selection] [options]
+elctl earthbank export-xlsx --db <url> --out <dir> [selection | --release <name|uuid>] [options]
 ```
 
 The command contacts nothing: it fills copies of the service's two template
@@ -1043,6 +1043,15 @@ overwritten). The time in a file name is UTC:
 **Selection** is that of [`export`](#publication-data): `--sample`,
 `--identifier`, `--project`, `--irradiation`, `--type`, `--uuid`, `--from`,
 `--to`, `--include-invalid`, `--limit`.
+
+**A release** can stand in for a selection on `export-xlsx`, `preflight` and
+`upload`: `--release <name|uuid>` (`name`, `name@v2` or its uuid) takes the
+release's members at the revisions it pins, in the release's order. Giving it
+together with any selection flag is a usage error (exit 2). The workbooks and
+the pre-flight accept a draft release. `upload --release` follows the rule of
+the Publish dialog: the release must be published and public and under no
+embargo (no member under a live embargo). Otherwise it prints why on stderr,
+sends nothing, not even a sign-in, and exits 1.
 
 **Ages** are made as `export` makes them, by the same flags: `--constants`,
 `--decay-error`, `--plateau`, `--plateau-steps`, `--plateau-gas`. A workbook is
@@ -1152,8 +1161,8 @@ ends, and `login` says so).
 | `earthbank account [--profile NAME]` | Signs in with the kept password (or `$EARTHBANK_PASSWORD`) and prints the profile and who the account is. |
 | `earthbank packages [--institution ID] [--profile NAME]` | Lists the data packages, of one institution when given or when the profile has one. `*` marks the one the profile uploads to. |
 | `earthbank packages --create NAME [--institution ID]` | Makes a private data package in progress and sets the profile's data package to it. |
-| `earthbank preflight --db URL [selection] [ages] [--overrides FILE] [--base-url URL]` | Builds what an upload would send for the selected analyses and asks EarthBank whether it knows every controlled term in it. Writes nothing to the service. Without a login it asks what needs none and lists the rest as not asked. |
-| `earthbank upload --db URL [selection] [ages] [--overrides FILE] --yes [--package ID] [--allow-unresolved] [--new-datapoint] [--in-doubt written:ID\|not-written] [--journal DIR]` | Sends the selected analyses to a data package: for each sample the sample itself (if the package has none of that name), a data point, its aliquots and measurements, the age calculation and the age summary. See [Uploading](#uploading) below. |
+| `earthbank preflight --db URL [selection \| --release R] [ages] [--overrides FILE] [--base-url URL]` | Builds what an upload would send for the selected analyses and asks EarthBank whether it knows every controlled term in it. Writes nothing to the service. Without a login it asks what needs none and lists the rest as not asked. |
+| `earthbank upload --db URL [selection \| --release R] [ages] [--overrides FILE] --yes [--package ID] [--allow-unresolved] [--new-datapoint] [--in-doubt written:ID\|not-written] [--journal DIR]` | Sends the selected analyses to a data package: for each sample the sample itself (if the package has none of that name), a data point, its aliquots and measurements, the age calculation and the age summary. See [Uploading](#uploading) below. |
 | `earthbank import-profiles FILE` | Takes the profiles of a legacy Pychron preferences file into the profiles file, without passwords (sign in once per profile with `login`). A profile whose name is already there is left alone. |
 
 `preflight` prints, for each sample, the terms EarthBank does not know (or

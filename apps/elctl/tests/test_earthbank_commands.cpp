@@ -56,6 +56,9 @@ TEST(ElctlEarthbank, TheNetworkCommandsWithoutPersistence) {
 #include "ooxml.hpp"
 #include "pychron/earthbank/profiles.hpp"
 #include "pychron/earthbank/secret_store.hpp"
+#include "pychron/publish/build.hpp"
+#include "pychron/publish/publication.hpp"
+#include "pychron/publish/release.hpp"
 #include "session_support.hpp"
 #include "store_fixture.hpp"
 
@@ -85,6 +88,28 @@ std::vector<fs::path> named(const std::vector<fs::path>& files, const std::strin
   for (const auto& f : files)
     if (f.filename().string().starts_with(start)) found.push_back(f);
   return found;
+}
+
+// A release of `analyses`, as `elctl publish create` leaves it: a private
+// draft; or, with `published`, published and public.
+pychron::Result<ps::Uuid> make_release(ps::IStore& store, const ps::Actor& actor, const std::vector<ps::Uuid>& analyses,
+                                       bool published) {
+  namespace pb = pychron::publish;
+  pb::ReleaseSpec spec;
+  spec.name = "rel";
+  spec.title = "Release rel";
+  spec.authors = {{"J. Ross", std::nullopt, "NMT"}};
+  for (const auto& a : analyses) spec.analyses.push_back(a.str());
+  spec.options_json = pb::release_options_json(pb::ReleaseOptions{});
+  spec.reduction_version = "arar-1";
+  spec.software_version = "test";
+  auto created = pb::create_release(store, actor, spec);
+  if (!created) return pychron::fail(created.error());
+  if (published) {
+    auto done = pb::publish_release(store, actor, created->release, pychron::sha256(std::string_view{"manifest"}), true);
+    if (!done) return pychron::fail(done.error());
+  }
+  return created->release;
 }
 
 // The data rows of a sheet of a written workbook: row 4 names the columns,
@@ -254,6 +279,35 @@ TEST_F(ElctlEarthbank, ExportXlsxWritesBothWorkbooks) {
   const Outcome again = to_out();
   EXPECT_EQ(again.code, elctl::kOk) << again.err;
   EXPECT_EQ(files_in(out_).size(), 4u);
+}
+
+TEST_F(ElctlEarthbank, ExportXlsxFromDraftRelease) {
+  // Only the three of FC-2 and S-FUS that are in the release: a draft may be
+  // exported, and the one unknown left out is not in the workbook.
+  const std::vector<ps::Uuid> members(unknowns_.begin() + 1, unknowns_.end());
+  const auto release = make_release(*store_, ps::Actor{reducer_, red_}, members, false);
+  ASSERT_TRUE(release) << to_string(release.error());
+  const Outcome o = to_out({"--release", "rel"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(o.err, "");
+  const auto arar = named(files_in(out_), "ArArDataPoint_");
+  ASSERT_EQ(arar.size(), 1u) << o.out;
+  const auto measurements = rows_of(arar[0], "ArArMeasurement");
+  EXPECT_EQ(measurements.size(), 3u);
+  EXPECT_TRUE(contains(o.out, "S-FUS: 2 analyses")) << o.out;
+  EXPECT_TRUE(contains(o.out, "FC-2: 1 analysis")) << o.out;
+}
+
+TEST_F(ElctlEarthbank, ReleaseWithSelectionIsUsageError) {
+  const auto release = make_release(*store_, ps::Actor{reducer_, red_}, unknowns_, false);
+  ASSERT_TRUE(release) << to_string(release.error());
+  for (const char* flag : {"--sample", "--identifier", "--project", "--irradiation", "--type", "--uuid"}) {
+    const Outcome o = to_out({"--release", "rel", flag, "x"});
+    EXPECT_EQ(o.code, elctl::kUsage) << flag;
+    EXPECT_TRUE(contains(o.err, "--release")) << o.err;
+    EXPECT_EQ(o.out, "");
+  }
+  EXPECT_EQ(to_out({"--release", "nobody"}).code, elctl::kUsage);  // no such release: fatal, as any other
 }
 
 TEST_F(ElctlEarthbank, PerSampleAndNoSamples) {
@@ -1365,6 +1419,48 @@ TEST_F(ElctlEarthbankUpload, UsageAndSelectionErrors) {
   EXPECT_EQ(bank_.requests().size(), requests);
   // Nothing matched: as for the workbooks.
   EXPECT_EQ(upload({"--sample", "nobody", "--yes"}).code, elctl::kFailed);
+  EXPECT_EQ(posts(), 0u);
+}
+
+// The brief's EarthBank upload from a release: the rule is the Publish
+// dialog's (publication.hpp), applied before any request is made.
+class ElctlEarthbankUploadRelease : public ElctlEarthbankUpload {
+ protected:
+  ps::Uuid release(bool published) {
+    auto made = make_release(*store_, ps::Actor{reducer_, red_}, unknowns_, published);
+    EXPECT_TRUE(made) << (made ? "" : to_string(made.error()));
+    return made ? *made : ps::Uuid{};
+  }
+};
+
+TEST_F(ElctlEarthbankUploadRelease, UploadRefusedOnPrivateRelease) {
+  const ps::Uuid id = release(false);
+  const auto expected = pychron::publish::earthbank_upload_refusal(*store_, id, false, ps::UtcTime::now());
+  ASSERT_TRUE(expected && *expected) << "a draft release is refused";
+  const std::size_t requests = bank_.requests().size();
+  const Outcome o = upload({"--release", "rel", "--yes"});
+  EXPECT_NE(o.code, elctl::kOk);
+  EXPECT_EQ(o.err, **expected + "\n");
+  EXPECT_EQ(o.out, "");
+  EXPECT_EQ(bank_.requests().size(), requests);
+  EXPECT_EQ(posts(), 0u);
+  EXPECT_EQ(journals(), 0u);
+}
+
+TEST_F(ElctlEarthbankUploadRelease, UploadFromPublicReleaseSends) {
+  release(true);
+  const Outcome o = upload({"--release", "rel", "--yes"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err << o.out;
+  EXPECT_GT(posts(), 0u);
+  EXPECT_TRUE(contains(o.out, "FC-2: complete")) << o.out;
+  EXPECT_TRUE(contains(o.out, "S-FUS: complete")) << o.out;
+}
+
+TEST_F(ElctlEarthbankUploadRelease, PreflightReadsTheRelease) {
+  release(false);  // preflight asks the service nothing that needs the rule
+  const Outcome o = with_profiles({"preflight", "--db", db_, "--release", "rel"});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err << o.out;
+  EXPECT_TRUE(contains(o.out, "every term the upload would send is known")) << o.out;
   EXPECT_EQ(posts(), 0u);
 }
 

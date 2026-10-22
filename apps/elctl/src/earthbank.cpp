@@ -35,7 +35,11 @@
 #include "pychron/earthbank/uploader.hpp"
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/earthbank/xlsx.hpp"
+#include "pychron/persistence/store.hpp"
 #include "pychron/processing/model.hpp"
+#include "pychron/publish/earthbank_source.hpp"
+#include "pychron/publish/publication.hpp"
+#include "pychron/publish/release.hpp"
 #include "selection.hpp"
 
 namespace elctl {
@@ -43,6 +47,8 @@ namespace elctl {
 namespace fs = std::filesystem;
 namespace eb = pychron::earthbank;
 namespace pp = pychron::processing;
+namespace ps = pychron::persistence;
+namespace pb = pychron::publish;
 using pychron::ErrorKind;
 using pychron::fail;
 using pychron::Result;
@@ -51,7 +57,8 @@ using earthbank_cli::fatal;
 namespace {
 
 constexpr const char* kShortUsage =
-    "usage: elctl earthbank export-xlsx --db <url> --out <dir> [--sample S]... [--identifier I]...\n"
+    "usage: elctl earthbank export-xlsx --db <url> --out <dir> [--release <name|uuid>]\n"
+    "                    [--sample S]... [--identifier I]...\n"
     "                    [--project P]... [--irradiation R]... [--type T]... [--uuid U]...\n"
     "                    [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--include-invalid] [--limit N]\n"
     "                    [--per-sample] [--no-samples] [--check] [--templates DIR]\n"
@@ -59,7 +66,7 @@ constexpr const char* kShortUsage =
     "                    [--decay-error] [--plateau fleck|mahon] [--plateau-steps N] [--plateau-gas PCT]\n";
 
 constexpr const char* kUsageText =
-    "usage: elctl earthbank export-xlsx --db <url> --out <dir> [selection] [options]\n"
+    "usage: elctl earthbank export-xlsx --db <url> --out <dir> [selection|--release <r>] [options]\n"
     "\n"
     "Writes the 40Ar/39Ar results of the selected analyses, one data point per\n"
     "sample, into EarthBank's own import workbooks (AuScope's AusGeochem data\n"
@@ -75,6 +82,14 @@ constexpr const char* kUsageText =
     "  --from <YYYY-MM-DD>        --to <YYYY-MM-DD>     UTC, inclusive\n"
     "  --include-invalid          keep analyses tagged invalid\n"
     "  --limit <n>                at most n analyses (default 5000)\n"
+    "\n"
+    "Or, instead of a selection, a release of the store:\n"
+    "  --release <name|uuid>      the release's members, at the revisions it pins\n"
+    "                             (\"name\", \"name@v2\" or its uuid); with any selection\n"
+    "                             flag above it is a usage error. On preflight, export-xlsx\n"
+    "                             and upload alike. Upload sends a release only when it\n"
+    "                             is published, public, and under no embargo; otherwise it\n"
+    "                             says why on stderr, sends nothing and exits 1.\n"
     "\n"
     "Ages, as export: a sample's age and its uncertainty are those of\n"
     "`elctl export --group-by sample --sigma 1` with the same selection and flags\n"
@@ -136,12 +151,12 @@ constexpr const char* kUsageText =
     "      Lists the data packages (those of the institution when one is given or\n"
     "      the profile has one), or makes a private one and sets the profile's\n"
     "      data package to it.\n"
-    "  elctl earthbank preflight --db <url> [selection] [ages] [--overrides <file>]\n"
+    "  elctl earthbank preflight --db <url> [selection|--release <r>] [ages] [--overrides <file>]\n"
     "      Asks the service whether it knows every controlled term the selected\n"
     "      analyses would send, and writes nothing. Without a login it asks what\n"
     "      needs none and says which it could not ask. Misses are grouped by\n"
     "      sample. Exit 0: nothing unknown or unasked; 1: some; 2: could not run.\n"
-    "  elctl earthbank upload --db <url> [selection] [ages] [--overrides <file>] --yes\n"
+    "  elctl earthbank upload --db <url> [selection|--release <r>] [ages] [--overrides <file>] --yes\n"
     "                         [--package <id>] [--allow-unresolved] [--new-datapoint]\n"
     "                         [--in-doubt written:<id>|not-written] [--journal <dir>]\n"
     "      Sends the selected analyses to the data package (--package, else the\n"
@@ -172,6 +187,7 @@ constexpr const char* kUsageText =
 // what the lab adds. Every subcommand that builds submissions has these.
 struct Source {
   std::string db, overrides;
+  std::string release;  // --release: a release's members instead of a selection
   Selection selection;
   AgeFlags ages;
 };
@@ -183,6 +199,24 @@ struct Args {
   bool samples = true;
   bool check = false;
 };
+
+// What only the whole source can say: a release and a selection are two ways
+// to name the analyses, and --release takes no part of the other.
+bool has_selection(const Selection& s) {
+  const Selection none;
+  return !(s.samples.empty() && s.identifiers.empty() && s.projects.empty() && s.irradiations.empty() &&
+           s.types.empty() && s.uuids.empty() && !s.from && !s.to && s.include_invalid == none.include_invalid &&
+           s.limit == none.limit);
+}
+
+Result<void> check_source(const Source& source) {
+  if (!source.release.empty() && has_selection(source.selection)) {
+    return fail(ErrorKind::Config,
+                "--release names the analyses itself: it cannot be given with --sample, --identifier, --project, "
+                "--irradiation, --type, --uuid, --from, --to, --include-invalid or --limit");
+  }
+  return check_selection(source.selection);
+}
 
 int usage(Io io, const std::string& message) {
   io.err << "elctl earthbank: " << message << '\n' << kShortUsage;
@@ -215,6 +249,9 @@ Result<Args> parse(const std::vector<std::string>& args) {
     const std::string& value = args[++i];
     if (flag == "--db") {
       a.source.db = value;
+    } else if (flag == "--release") {
+      if (value.empty()) return fail(ErrorKind::Config, "--release needs a release name or uuid");
+      a.source.release = value;
     } else if (flag == "--out") {
       a.out = value;
     } else if (flag == "--templates") {
@@ -229,7 +266,7 @@ Result<Args> parse(const std::vector<std::string>& args) {
   }
   if (a.source.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
   if (a.out.empty() && !a.check) return fail(ErrorKind::Config, "--out <dir> is required");
-  if (auto ok = check_selection(a.source.selection); !ok) return fail(ok.error());
+  if (auto ok = check_source(a.source); !ok) return fail(ok.error());
   return a;
 }
 
@@ -404,6 +441,43 @@ struct Built {
   std::vector<eb::Submission> submissions;
 };
 
+// The store at `db`, for reading, as `open_source` opens it.
+Result<std::unique_ptr<ps::IStore>> open_read_store(const std::string& db) {
+  auto store = ps::open_store(ps::StoreConfig{db, false});
+  if (!store) return fail(store.error());
+  return std::move(*store);
+}
+
+// The members of the release `source` names, at the revisions it pins and in
+// member order, not reduced.
+Result<std::vector<pp::AnalysisPtr>> load_release(const Source& source, std::vector<std::string>& /*warnings*/) {
+  auto reader = open_source(source.db);  // a mistyped SQLite path is an error
+  if (!reader) return fail(reader.error());
+  auto store = open_read_store(source.db);
+  if (!store) return fail(store.error());
+  auto row = pb::find_release(**store, source.release);
+  if (!row) return fail(row.error());
+  return pb::release_dataset(**store, **reader, row->uuid);
+}
+
+// Empty: `source`'s release may go to EarthBank. Else the code to exit with,
+// the reason (or the error) having been said on io.err. Asked before the
+// upload signs in to anything: a refused release sends no request at all.
+int check_release_upload(const Source& source, Io io) {
+  if (source.release.empty()) return kOk;
+  auto reader = open_source(source.db);
+  if (!reader) return fatal(io, reader.error());
+  auto store = open_read_store(source.db);
+  if (!store) return fatal(io, store.error());
+  auto row = pb::find_release(**store, source.release);
+  if (!row) return fatal(io, row.error());
+  auto refusal = pb::earthbank_upload_refusal(**store, row->uuid, false, ps::UtcTime::now());
+  if (!refusal) return fatal(io, refusal.error());
+  if (!*refusal) return kOk;
+  io.err << **refusal << '\n';
+  return kFailed;
+}
+
 Built build(const Source& source, Io io) {
   eb::PublishOptions options;
   options.reduction = source.ages.reduction();
@@ -416,7 +490,8 @@ Built build(const Source& source, Io io) {
   }
 
   std::vector<std::string> warnings;
-  const auto analyses = load_selection(source.selection, source.db, warnings);
+  const auto analyses = source.release.empty() ? load_selection(source.selection, source.db, warnings)
+                                               : load_release(source, warnings);
   if (!analyses) return {fatal(io, analyses.error()), {}};
   for (const auto& w : warnings) io.err << "warning: " << w << '\n';
   if (analyses->empty()) {
@@ -478,6 +553,9 @@ Result<PreflightArgs> parse_preflight(const std::vector<std::string>& args) {
     const std::string& value = args[++i];
     if (flag == "--db") {
       a.source.db = value;
+    } else if (flag == "--release") {
+      if (value.empty()) return fail(ErrorKind::Config, "--release needs a release name or uuid");
+      a.source.release = value;
     } else if (flag == "--overrides") {
       if (value.empty()) return fail(ErrorKind::Config, "--overrides needs a file");
       a.source.overrides = value;
@@ -486,7 +564,7 @@ Result<PreflightArgs> parse_preflight(const std::vector<std::string>& args) {
     }
   }
   if (a.source.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
-  if (auto ok = check_selection(a.source.selection); !ok) return fail(ok.error());
+  if (auto ok = check_source(a.source); !ok) return fail(ok.error());
   return a;
 }
 
@@ -618,6 +696,9 @@ Result<UploadArgs> parse_upload(const std::vector<std::string>& args) {
     const std::string& value = args[++i];
     if (flag == "--db") {
       a.source.db = value;
+    } else if (flag == "--release") {
+      if (value.empty()) return fail(ErrorKind::Config, "--release needs a release name or uuid");
+      a.source.release = value;
     } else if (flag == "--overrides") {
       if (value.empty()) return fail(ErrorKind::Config, "--overrides needs a file");
       a.source.overrides = value;
@@ -639,7 +720,7 @@ Result<UploadArgs> parse_upload(const std::vector<std::string>& args) {
     }
   }
   if (a.source.db.empty()) return fail(ErrorKind::Config, "--db <url> is required");
-  if (auto ok = check_selection(a.source.selection); !ok) return fail(ok.error());
+  if (auto ok = check_source(a.source); !ok) return fail(ok.error());
   return a;
 }
 
@@ -727,6 +808,7 @@ int sign_in_for_upload(const UploadArgs& a, Io io, const EarthbankDeps& deps, ea
 }
 
 int upload(const UploadArgs& a, const std::vector<std::string>& args, Io io, const EarthbankDeps& deps) {
+  if (const int code = check_release_upload(a.source, io); code != kOk) return code;
   earthbank_cli::Online online;
   if (const int code = sign_in_for_upload(a, io, deps, online); code != kOk) return code;
   eb::Session& session = *online.session;

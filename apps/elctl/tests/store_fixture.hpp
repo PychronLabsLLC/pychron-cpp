@@ -11,6 +11,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -170,9 +171,11 @@ class StoreTest : public ElctlTest {
     const ps::Uuid id = a.analysis;
     auto ok = store_->ingest(ps::IngestItem{id, pychron::sha256(std::string_view{"payload-" + id.str()}), acq_, std::move(a)});
     ASSERT_TRUE(ok) << (ok ? "" : to_string(ok.error()));
+    if (type == "unknown") unknowns_.push_back(id);
   }
 
   std::string db_;
+  std::vector<ps::Uuid> unknowns_;  // the unknowns `ingest` stored, in order
   std::unique_ptr<ps::IStore> store_;
   ps::Uuid acq_, red_, reducer_, ms_, irr_, level_, position_, project_, material_, sample_;
 };
