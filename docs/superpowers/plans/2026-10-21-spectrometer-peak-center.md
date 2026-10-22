@@ -16,7 +16,7 @@
 - A thread on a simulated path follows AGENTS.md "Time": `Clock::Hold` before `std::thread`, `Clock::Participant` first on the thread, a done flag set under the mutex and notified through the clock as its last act, and the joiner waits through `clock.wait` before `join()`. Never `Clock::Detached` around that join.
 - A `jobs::CancelToken` is on the spectrometer's clock.
 - Window runs always pass `update_table = false`; the window never writes the table except through Apply.
-- Save goes through `config::replace_local_table`; comments and other sets stay byte for byte.
+- Save goes through `config::set_local_table` (in place); comments and other sets stay byte for byte.
 - A set name is a TOML bare key, `[A-Za-z0-9_-]+`.
 - Exact UI strings: tooltip `a queue is running`; experiment refusal `peak center running in the spectrometer window`; close prompt `Cancel peak center?`; Apply confirmation `Write <table value> for <isotope> on <detector> to <table>? Propagate: yes/no.`
 - Qt on Ubuntu 24.04 is 6.4: newer APIs go behind `QT_VERSION_CHECK`.
@@ -288,7 +288,7 @@ void stopDuringPeakCenterKeepsScanStopped();
 - Test: `tests/ui/test_spectrometer_bridge.cpp`
 
 **Interfaces:**
-- Consumes: `jobs::write_peak_center_to_table` (Task 2), `jobs::format_peak_center_config` (Task 1), `config::replace_local_table`, `jobs::parse_peak_center_configs`.
+- Consumes: `jobs::write_peak_center_to_table` (Task 2), `jobs::format_peak_center_config` (Task 1), `config::set_local_table` (new, `libs/core`), `jobs::parse_peak_center_configs`.
 - Produces:
   - Apply, on the executor:
     - `void apply_peak_center(QString detector, QString isotope, double table_value, bool propagate)`

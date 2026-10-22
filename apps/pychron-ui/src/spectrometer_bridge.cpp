@@ -30,38 +30,6 @@ bool valid_set_name(const QString& name) {
 
 namespace {
 
-// The comment lines directly above `[name]` in `text`, each with its line
-// ending. replace_local_table drops them with the table; a set's comment
-// belongs to the set's place in the file, so the bridge writes them back.
-std::string comments_above_set(const std::string& text, const std::string& name) {
-  std::vector<std::string> lines;
-  std::istringstream in(text);
-  for (std::string line; std::getline(in, line);) {
-    lines.push_back(std::move(line));
-  }
-  const auto trim = [](const std::string& line) {
-    const auto first = line.find_first_not_of(" \t\r");
-    const auto last = line.find_last_not_of(" \t\r");
-    return first == std::string::npos ? std::string() : line.substr(first, last - first + 1);
-  };
-  const std::string header = "[" + name + "]";
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (trim(lines[i]) != header) {
-      continue;
-    }
-    std::size_t first = i;
-    while (first > 0 && trim(lines[first - 1]).starts_with('#')) {
-      --first;
-    }
-    std::string out;
-    for (std::size_t k = first; k < i; ++k) {
-      out += lines[k] + "\n";
-    }
-    return out;
-  }
-  return {};
-}
-
 using spectrometer::DetectorState;
 using spectrometer::FieldTable;
 using spectrometer::FieldTableChanged;
@@ -407,18 +375,14 @@ void SpectrometerBridge::save_peak_center_set(std::filesystem::path file, const 
         if (auto ok = jobs::validate_peak_center_config(config); !ok) {
           return fail(ok.error());
         }
-        std::string previous;
-        if (std::ifstream old(file, std::ios::binary); old) {
-          std::ostringstream text;
-          text << old.rdbuf();
-          previous = text.str();
-        }
-        const std::string body =
-            comments_above_set(previous, name) + "[" + name + "]\n" + jobs::format_peak_center_config(config);
-        if (auto written = config::replace_local_table(file, name, body); !written) {
+        const std::string body = "[" + name + "]\n" + jobs::format_peak_center_config(config);
+        if (auto written = config::set_local_table(file, name, body); !written) {
           return fail(written.error());
         }
         std::ifstream in(file, std::ios::binary);
+        if (!in) {
+          return fail(ErrorKind::Io, "saved, but " + file.string() + " cannot be read again", "peak_center");
+        }
         std::ostringstream text;
         text << in.rdbuf();
         if (auto parsed = jobs::parse_peak_center_configs(text.str(), file.string()); !parsed) {

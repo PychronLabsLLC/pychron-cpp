@@ -15,11 +15,11 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -897,6 +897,16 @@ class TestSpectrometerBridge : public QObject {
     const std::string text = read_text(file);
     QVERIFY(text.find("# keep me\n") != std::string::npos);
     QVERIFY(text.find(other) != std::string::npos);  // comment and block, byte for byte
+    const auto count = [&text](const std::string& what) {
+      std::size_t n = 0;
+      for (auto at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+      return n;
+    };
+    QCOMPARE(count("# keep me"), std::size_t{1});
+    QCOMPARE(count("# other"), std::size_t{1});
+    QCOMPARE(count("[default]"), std::size_t{1});
+    QVERIFY(text.find("[default]") < text.find("[other]"));  // the set kept its place
+    QVERIFY(text.find("# keep me") < text.find("[default]"));
     auto parsed = jobs::parse_peak_center_configs(text);
     QVERIFY(parsed.has_value());
     QCOMPARE(parsed->at("default").window, 0.02);
@@ -923,6 +933,21 @@ class TestSpectrometerBridge : public QObject {
     QVERIFY(parsed->contains("default"));
     QVERIFY(parsed->contains("fine-2"));
     QCOMPARE(parsed->at("fine-2").window, 0.06);
+  }
+
+  void saveToAFileThatIsNotThereMakesIt() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path file = std::filesystem::path(dir.path().toStdString()) / "peak_center.toml";
+    QSignalSpy saved(bridge_.get(), &SpectrometerBridge::peakCenterSetSaved);
+    bridge_->save_peak_center_set(file, QStringLiteral("default"), ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, kWaitMs);
+    const auto outcome = saved.at(0).at(1).value<Result<void>>();
+    if (!outcome) QFAIL(outcome.error().what.c_str());
+    QVERIFY(std::filesystem::exists(file));
+    auto parsed = jobs::parse_peak_center_configs(read_text(file));
+    QVERIFY(parsed.has_value());
+    QCOMPARE(parsed->at("default").window, 0.06);
   }
 
   void saveRefusesBadName() {

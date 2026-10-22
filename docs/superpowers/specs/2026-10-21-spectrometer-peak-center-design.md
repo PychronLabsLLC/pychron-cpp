@@ -164,10 +164,13 @@ restart puts old one back.
 `save_peak_center_set` on executor:
 
 1. `format_peak_center_config(config)`.
-2. `config::replace_local_table(file, name, "[" + name + "]\n" + body)`
-   (`libs/core` `config/local_file.hpp`): replaces that table only; comments
-   and every other set left byte for byte; all or nothing; file made when
-   absent.
+2. `config::set_local_table(file, name, "[" + name + "]\n" + body)`
+   (`libs/core` `config/local_file.hpp`): replaces that table (and
+   `[name.*]`) in place; comments above it, its position, file's line ending
+   (LF or CRLF), comments and every other set left byte for byte; table
+   absent → appended after blank line; all or nothing; file made when
+   absent. (`replace_local_table` drops comments above table and appends:
+   not used here.)
 3. Re-parse whole file with `parse_peak_center_configs`; error → reported
    (file already written; message says so).
 
@@ -246,9 +249,11 @@ Closing window with run going: asks "Cancel peak center?"; yes cancels, waits
 - `tests/experiment/test_lab.cpp` (or session test): edited file picked up at
   `start`; bad file refuses start naming file; plan ref to set added in file
   after load accepted; map not swapped while running.
-- `tests/core` `replace_local_table` already covered; one case on a
+- `tests/core/test_local_file.cpp` `set_local_table`: comment kept, position
+  kept, CRLF kept, header with trailing comment, subtable replaced with it,
+  new table appended, comment-only file, missing file made. Bridge case on a
   `peak_center.toml` with comments and two sets: other set and comments
-  unchanged.
+  unchanged, saved set keeps its place.
 - `tests/ui/test_spectrometer_bridge.cpp` (`VirtualTimeTest`, sim
   spectrometer): run completes, events relayed in order, result posted;
   cancel → Cancelled; second start refused; scan paused and resumed at old
