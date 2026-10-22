@@ -6,8 +6,9 @@ Single developer. Two long-lived branches:
 
 - `develop`: integration branch. All work lands here first.
 - `main`: released or about to be. No pushes: changes only by pull request.
-  GitHub does not enforce yet (branch protection needs paid plan for private
-  repository), so rule kept by hand.
+  GitHub does not enforce yet (repository public, so branch protection free;
+  not switched on), so rule kept by hand. Repository stays public: update
+  check (`2026-10-21-update-check-design.md`) reads releases without token.
 
 Day to day:
 
