@@ -438,6 +438,7 @@ beside the one in front. Pick a window from the list to bring it forward.
 | **Command Palette…** | Opens the command palette (next section). |
 | **Keyboard Shortcuts** | Opens a searchable list of every shortcut. |
 | **About pychron** | The about box (version and credits). |
+| **Check for Updates…** | Asks GitHub now whether a newer release exists and always answers in a dialog. Greyed while a check is out. See [Updates](#updates). |
 
 ## 7. The command palette
 
@@ -533,6 +534,7 @@ pages (below).
 | Plots | **Series colors** | 12 colors; default the figures' 12 group colors | Color of series 1 to 12 in the live plots, and of the projects in the sample holder view (a 13th series takes color 1 again). A detector given a color in the spectrometer's config keeps that color. Open plots change at once on OK or Apply. |
 | Plots | **Reset colors** | | Puts the background and the 12 series colors back to their defaults in the dialog; OK or Apply keeps it. |
 | Spectrometer | **Ask before moving the magnet more than** | 0 to 300 amu, steps of 0.5; 0 shows "Never ask" | A magnet move bigger than this change of mass on the reference detector asks for confirmation. A move from an unknown position always asks. Kept separately for each spectrometer. The page appears only when a spectrometer is loaded. |
+| Updates | **Check for updates at startup** | On by default | Once a day, at startup, asks api.github.com for the latest pychron release. See [Updates](#updates). |
 
 The Plots page does not change figures (ideogram, spectrum, isochron and the
 others): a figure keeps its own colors in its options and in the presets
@@ -600,6 +602,34 @@ the page says so and still changes the install's own.
 A saved value that is missing, unreadable or out of range silently reads as its
 default. The interface is always shown in the light theme; there is no dark
 mode setting.
+
+### Updates
+
+pychron-ui tells you when a newer release of pychron has been published. It
+only tells you: nothing is downloaded or installed, and a running queue is
+never touched.
+
+- **When.** At startup, at most once a day, while **Check for updates at
+  startup** (Preferences, Updates page) is on. It is on by default; turn it
+  off there to stop the check. `elctl` never checks on its own
+  (`elctl version --check` asks when you run it).
+- **What is asked, and of whom.** One request to `api.github.com` for the
+  latest release of `PychronLabsLLC/pychron-cpp`. It carries only the
+  program's version (as `User-Agent: pychron-cpp/<version>`): no lab, user,
+  computer name, path or configuration.
+- **What you see.** When the latest release is newer than the one running,
+  the status bar shows **Update available: v*x.y.z***. Click it for the
+  release notes and three buttons: **Download** opens the release's page in
+  your browser, **Skip this version** stops telling you about that release
+  (a later one is shown again), **Close**. A check that fails (no network,
+  for instance) shows nothing; the line window's log notes it.
+- **Help > Check for Updates…** asks at any time, whether or not a check is
+  due and even for a skipped version, and always answers in a dialog: up to
+  date, a newer release, or why it could not check ("Could not reach
+  GitHub" when the network is the trouble).
+
+What is kept, with your other settings: whether to check, when the last
+check was answered, and the version you skipped.
 
 ## 10. The setup wizard and the Installations dialog
 

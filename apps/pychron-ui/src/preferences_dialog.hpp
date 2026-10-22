@@ -149,6 +149,7 @@ class PreferencesDialog : public QDialog {
   LoggingPage* logging_page() const noexcept { return logging_; }          // null without a line
   MetricsPage* metrics_page() const noexcept { return metrics_; }          // null without a line
   EarthbankPreferencesPage* earthbank_page() const noexcept { return earthbank_; }
+  QCheckBox* check_for_updates() const noexcept { return check_for_updates_; }  // the Updates page
   DataSourcePage* data_source_page() const noexcept { return data_source_; }  // null when not added
   QPushButton* save_without_checking() const noexcept { return save_without_checking_; }  // shown after a failed check
   QLabel* problem() const noexcept { return problem_; }                    // why OK or Apply did nothing
@@ -185,6 +186,7 @@ class PreferencesDialog : public QDialog {
   LoggingPage* logging_ = nullptr;
   MetricsPage* metrics_ = nullptr;
   EarthbankPreferencesPage* earthbank_ = nullptr;
+  QCheckBox* check_for_updates_;
   DataSourcePage* data_source_ = nullptr;
   Reopen reopen_;
   bool source_written_ = false;  // written by an OK/Apply that went on to fail: still to ask about

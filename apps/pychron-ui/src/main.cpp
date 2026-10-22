@@ -120,6 +120,11 @@
 #include "pychron/systems/spectrometer/scan_service.hpp"
 #include "spectrometer_bridge.hpp"
 #include "theme.hpp"
+#include "update_checker.hpp"
+#include "update_ui.hpp"
+#include "pychron/core/clock.hpp"
+#include "pychron/earthbank/http.hpp"
+#include "pychron/update/update.hpp"
 
 namespace {
 
@@ -130,6 +135,31 @@ int fatal(const std::string& what) {
   std::fprintf(stderr, "pychron-ui: %s\n", what.c_str());
   QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QString::fromStdString(what));
   return 1;
+}
+
+// The update check of `window` (update check spec 2.3): its indicator and
+// Help > Check for Updates…, then the automatic check if one is due. `now`
+// is the window's wall clock; failed automatic checks go to `log`, if any.
+// Null when this program's version is not one (nothing is checked).
+std::unique_ptr<pychron::ui::UpdateChecker> start_update_check(QMainWindow& window, QSettings& settings,
+                                                               pychron::ui::UpdateChecker::Now now,
+                                                               const std::function<void(const QString&)>& log) {
+  const auto running = pychron::update::parse_version(PYCHRON_VERSION);
+  if (!running) {
+    const QString why = QStringLiteral("no update check: ") + QString::fromStdString(running.error().what);
+    if (log) {
+      log(QStringLiteral("WARN [update] ") + why);
+    } else {
+      std::fprintf(stderr, "pychron-ui: %s\n", why.toUtf8().constData());
+    }
+    return nullptr;
+  }
+  auto checker = std::make_unique<pychron::ui::UpdateChecker>(settings, *running, std::move(now),
+                                                              [] { return pychron::earthbank::make_http_client(); });
+  checker->set_log(log);
+  pychron::ui::install_update_check(&window, *checker);
+  checker->check_on_startup();
+  return checker;
 }
 
 // Which install to open: the one named, else the default, else the wizard
@@ -272,6 +302,11 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   window.apply_preferences(pychron::ui::load_preferences(QSettings()));
   window.resize(1200, 800);
   window.show();
+  // No line here, so no line clock: the computer's. Made after the window,
+  // so the checker goes first; a failed automatic check is not shown.
+  QSettings update_settings;
+  const pychron::SteadyClock wall;
+  const auto updates = start_update_check(window, update_settings, [&wall] { return wall.wall_now(); }, {});
   return QApplication::exec();
 }
 
@@ -677,6 +712,16 @@ int main(int argc, char** argv) {
       window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
                                      QString::fromStdString(*spectrometer_error));
     }
+    // After the window, so the checker goes first. The line's wall clock, so
+    // a simulated session's last check is in simulated time.
+    QSettings update_settings;
+    const auto updates = start_update_check(
+        window, update_settings,
+        [&window] {
+          return std::chrono::system_clock::time_point(
+              std::chrono::milliseconds(window.bridge().wall_now().toMSecsSinceEpoch()));
+        },
+        [&window](const QString& text) { window.log_dock()->append_line(text); });
 #ifdef PYCHRON_EXPERIMENT_HAS_METRICS
     metrics = pychron::experiment::metrics::MetricsService::start(
         (*line)->config().metrics, (*line)->bus(), (*line)->scheduler(), (*line)->clock(), (*line)->log_hub(),

@@ -24,6 +24,8 @@ const QString kGapHours = QStringLiteral("preferences/browser_gap_hours");
 const QString kTypeColors = QStringLiteral("preferences/browser_type_colors");
 const QString kPlotBackground = QStringLiteral("preferences/plot_background");
 const QString kPlotSeries = QStringLiteral("preferences/plot_series");
+// Not under preferences/: the update check's own key (update_checker.hpp).
+const QString kCheckForUpdates = QStringLiteral("updates/check_on_startup");
 
 QString plot_series_key(int slot) { return kPlotSeries + QLatin1Char('/') + QString::number(slot); }
 
@@ -72,6 +74,7 @@ Preferences load_preferences(const QSettings& settings) {
     std::string text = read_plot_color(settings, plot_series_key(slot));
     if (!text.empty()) p.plot_series_colors[slot] = std::move(text);
   }
+  p.check_for_updates = settings.value(kCheckForUpdates, true).toBool();
   return p;
 }
 
@@ -90,6 +93,7 @@ void save_preferences(QSettings& settings, const Preferences& preferences) {
     settings.setValue(kPlotBackground, QString::fromStdString(preferences.plot_background));
   for (const auto& [slot, text] : preferences.plot_series_colors)
     settings.setValue(plot_series_key(slot), QString::fromStdString(text));
+  settings.setValue(kCheckForUpdates, preferences.check_for_updates);
   settings.sync();
 }
 

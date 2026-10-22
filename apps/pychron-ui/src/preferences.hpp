@@ -4,6 +4,9 @@
 // application's QSettings under "preferences/". Saved values are untrusted:
 // one that is missing, does not parse or is out of range reads as its default.
 //
+// One exception: check_for_updates is kept as "updates/check_on_startup",
+// where the update check reads it (update_checker.hpp).
+//
 // Per-window state (geometry, the spectrometer's chart and target, the last
 // queue) stays with its window. The spectrometer's large-move threshold is
 // edited here too but kept with its spectrometer (SpectrometerWindow).
@@ -39,6 +42,8 @@ struct Preferences {
   static constexpr int kPlotSeriesSlots = 12;
   std::string plot_background;
   std::map<int, std::string> plot_series_colors;  // 1..12 -> "#rrggbb"
+  // Ask GitHub once a day, at startup, whether a newer release exists.
+  bool check_for_updates = true;
 
   bool operator==(const Preferences&) const = default;
 };

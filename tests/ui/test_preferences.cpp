@@ -5,7 +5,8 @@
 // threshold goes to its window when one is open, else to its saved settings.
 // Settings live in temp ini files.
 //
-// The EarthBank page is always there, last (test_earthbank_preferences.cpp).
+// The Updates page and the EarthBank page are always there, last
+// (test_earthbank_preferences.cpp).
 //
 // With a line, two more pages: Logging and Metrics. Theirs are not QSettings
 // but the line's local override file (extraction_line.local.toml), written
@@ -52,6 +53,7 @@
 #include "spectrometer_fixture.hpp"
 #include "spectrometer_window.hpp"
 #include "theme.hpp"
+#include "update_checker.hpp"
 #include "settings_guard.hpp"
 #include "ui_fixture.hpp"
 
@@ -169,6 +171,35 @@ class TestPreferences : public QObject {
     QCOMPARE(ui::load_preferences(*settings()), p);
   }
 
+  // The update check's switch is kept where the check reads it
+  // (update_checker.hpp), not under preferences/.
+  void check_for_updates_round_trips_through_its_own_key() {
+    QCOMPARE(ui::load_preferences(*settings()).check_for_updates, true);  // missing: on
+    Preferences p;
+    p.check_for_updates = false;
+    ui::save_preferences(*settings(), p);
+    QCOMPARE(settings()->value(QStringLiteral("updates/check_on_startup")).toBool(), false);
+    QVERIFY(!settings()->contains(QStringLiteral("preferences/check_for_updates")));
+    QCOMPARE(ui::load_preferences(*settings()), p);
+    QCOMPARE(ui::load_update_policy(*settings()).enabled, false);
+    p.check_for_updates = true;
+    ui::save_preferences(*settings(), p);
+    QCOMPARE(ui::load_update_policy(*settings()).enabled, true);
+  }
+
+  void the_dialog_shows_check_for_updates() {
+    Preferences p;
+    p.check_for_updates = false;
+    PreferencesDialog d({p, std::nullopt}, {});
+    QVERIFY(d.check_for_updates() != nullptr);
+    QVERIFY(!d.check_for_updates()->isChecked());
+    QVERIFY(d.check_for_updates()->toolTip().contains(QStringLiteral("api.github.com")));
+    d.check_for_updates()->setChecked(true);
+    QCOMPARE(d.values().preferences.check_for_updates, true);
+    d.restore_defaults();
+    QVERIFY(d.check_for_updates()->isChecked());
+  }
+
   void invalid_saved_values_read_as_their_defaults() {
     {
       auto s = settings();
@@ -241,7 +272,7 @@ class TestPreferences : public QObject {
     p.font_pt = 13;
     p.browser_page_size = 300;
     PreferencesDialog d({p, std::nullopt}, {});
-    QCOMPARE(d.pages()->count(), 4);  // no spectrometer page without one
+    QCOMPARE(d.pages()->count(), 5);  // no spectrometer page without one
     QVERIFY(d.confirm_move() == nullptr);
     QCOMPARE(d.font_size()->value(), 13);
     QCOMPARE(d.code_font_size()->text(), QStringLiteral("Default"));
@@ -287,7 +318,7 @@ class TestPreferences : public QObject {
   void plots_page_comes_after_the_data_page() {
     PreferencesDialog d({Preferences{}, std::nullopt}, {});
     QCOMPARE(d.pages()->item(2)->text(), QStringLiteral("Plots"));
-    QCOMPARE(d.pages()->count(), 4);
+    QCOMPARE(d.pages()->count(), 5);
     bool noted = false;
     for (const auto* l : d.stack()->widget(2)->findChildren<QLabel*>())
       noted = noted || l->text() == QStringLiteral("Used by the live plots (scan, evolutions, cryostat, heaters). "
@@ -352,7 +383,7 @@ class TestPreferences : public QObject {
 
   void spectrometer_page_holds_the_move_threshold() {
     PreferencesDialog d({Preferences{}, 2.5}, {});
-    QCOMPARE(d.pages()->count(), 5);
+    QCOMPARE(d.pages()->count(), 6);
     QCOMPARE(d.pages()->item(3)->text(), QStringLiteral("Spectrometer"));
     QVERIFY(d.confirm_move() != nullptr);
     QCOMPARE(d.confirm_move()->value(), 2.5);
@@ -442,7 +473,7 @@ class TestPreferences : public QObject {
     PreferencesDialog* d = window.open_preferences();  // the open one again
     QVERIFY(d != nullptr);
     QCOMPARE(window.findChildren<PreferencesDialog*>().size(), 1);
-    QCOMPARE(d->pages()->count(), 4);  // no spectrometer
+    QCOMPARE(d->pages()->count(), 5);  // no spectrometer
     d->page_size()->setValue(120);
     click(d->buttons(), QDialogButtonBox::Ok);
 
@@ -462,7 +493,7 @@ class TestPreferences : public QObject {
 
       // No spectrometer window yet: straight to its saved settings.
       PreferencesDialog* d = window.open_preferences();
-      QCOMPARE(d->pages()->count(), 5);
+      QCOMPARE(d->pages()->count(), 6);
       QCOMPARE(d->confirm_move()->value(), SpectrometerWindow::kDefaultConfirmMoveAmu);
       d->confirm_move()->setValue(2.5);
       click(d->buttons(), QDialogButtonBox::Ok);
@@ -507,7 +538,7 @@ class TestPreferences : public QObject {
     QVERIFY(window.preferences_action()->isVisible());
     QCOMPARE(window.browser()->model()->rowCount(), Preferences::kDefaultPageSize);
     PreferencesDialog* d = window.open_preferences();
-    QCOMPARE(d->pages()->count(), 4);
+    QCOMPARE(d->pages()->count(), 5);
     d->page_size()->setValue(60);
     click(d->buttons(), QDialogButtonBox::Ok);
     QCOMPARE(ui::load_preferences(*settings()).browser_page_size, 60);
@@ -571,12 +602,12 @@ class TestPreferences : public QObject {
 
   void line_pages_are_there_only_with_a_line() {
     PreferencesDialog without({Preferences{}, std::nullopt, std::nullopt}, {});
-    QCOMPARE(without.pages()->count(), 4);
+    QCOMPARE(without.pages()->count(), 5);
     QVERIFY(without.logging_page() == nullptr);
     QVERIFY(without.metrics_page() == nullptr);
 
     PreferencesDialog with({Preferences{}, std::nullopt, line_settings()}, {});
-    QCOMPARE(with.pages()->count(), 6);
+    QCOMPARE(with.pages()->count(), 7);
     QCOMPARE(with.pages()->item(3)->text(), QStringLiteral("Logging"));
     QCOMPARE(with.pages()->item(4)->text(), QStringLiteral("Metrics"));
     QVERIFY(with.logging_page() != nullptr);
@@ -853,7 +884,7 @@ class TestPreferences : public QObject {
     ui::MainWindow window(*line);
     window.set_preferences_settings(factory());
     PreferencesDialog* d = window.open_preferences();
-    QCOMPARE(d->pages()->count(), 4);
+    QCOMPARE(d->pages()->count(), 5);
     d->close();
   }
 
@@ -870,7 +901,7 @@ class TestPreferences : public QObject {
     window.set_line_config_file(main_file_);
     window.set_metrics_status(QStringLiteral("Off"));
     PreferencesDialog* d = window.open_preferences();
-    QCOMPARE(d->pages()->count(), 6);
+    QCOMPARE(d->pages()->count(), 7);
     QVERIFY(d->metrics_page()->status()->text().contains(QStringLiteral("Off")));
 
     d->logging_page()->default_level()->setCurrentText(QStringLiteral("debug"));

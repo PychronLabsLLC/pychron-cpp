@@ -266,6 +266,39 @@ class TestUpdateChecker : public QObject {
     QVERIFY(lines.isEmpty());
   }
 
+  // What a failed check is said as (spec section 4): the network, a status,
+  // or an answer that does not read.
+  void failureReasonsNameWhatWentWrong() {
+    const auto reason_for = [this](auto&& queue) {
+      queue();
+      auto checker = make();
+      QSignalSpy failed(checker.get(), &UpdateChecker::failed);
+      checker->check_now();
+      if (!failed.wait(kWaitMs)) return QString();
+      return failed.at(0).at(0).toString();
+    };
+    QVERIFY(reason_for([this] { fake_->fail(ErrorKind::Io); }).startsWith(QStringLiteral("Could not reach GitHub")));
+    QVERIFY(
+        reason_for([this] { fake_->fail(ErrorKind::Timeout); }).startsWith(QStringLiteral("Could not reach GitHub")));
+    QCOMPARE(reason_for([this] { fake_->answer(503, ""); }), QStringLiteral("GitHub answered 503"));
+    QVERIFY(reason_for([this] { fake_->answer(200, "{not json"); })
+                .startsWith(QStringLiteral("Unexpected answer from GitHub")));
+  }
+
+  void busyChangedAroundACheck() {
+    fake_->answer(200, release_json("v0.4.0"));
+    auto checker = make();
+    QSignalSpy busy(checker.get(), &UpdateChecker::busy_changed);
+    QSignalSpy up_to_date(checker.get(), &UpdateChecker::up_to_date);
+    checker->check_now();
+    QCOMPARE(busy.count(), 1);
+    QCOMPARE(busy.at(0).at(0).toBool(), true);
+    QVERIFY(up_to_date.wait(kWaitMs));
+    QCOMPARE(busy.count(), 2);
+    QCOMPARE(busy.at(1).at(0).toBool(), false);
+    QVERIFY(checker->running() == kRunning);
+  }
+
   void skipIsStored() {
     auto checker = make(false);
     checker->skip(upd::Version{2, 0, 1});

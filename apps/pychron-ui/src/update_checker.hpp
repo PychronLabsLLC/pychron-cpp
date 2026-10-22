@@ -65,6 +65,8 @@ class UpdateChecker : public QObject {
   void check_now();
   // A check is out. Another asked for meanwhile is not made.
   [[nodiscard]] bool busy() const { return busy_; }
+  // The version this program is.
+  [[nodiscard]] update::Version running() const { return running_; }
 
   // The operator does not want to hear of `version` again.
   void skip(update::Version version);
@@ -75,11 +77,17 @@ class UpdateChecker : public QObject {
   void available(const pychron::update::Release& release, bool manual);
   // Manual only: nothing newer; `no_release` when the repository has none.
   void up_to_date(bool no_release);
+  // `reason` is said to the operator: "Could not reach GitHub (...)" for the
+  // network, "GitHub answered <status>", "Unexpected answer from GitHub (...)"
+  // for an answer that does not read.
   void failed(const QString& reason, bool manual);
+  // busy() changed: a check went out, or its answer came back.
+  void busy_changed(bool busy);
 
  private:
   void start(bool manual, std::unique_ptr<http::IHttpClient> client);
   void finish(bool manual, const Result<update::Fetched>& result);
+  void set_busy(bool busy);
 
   QSettings& settings_;
   update::Version running_;

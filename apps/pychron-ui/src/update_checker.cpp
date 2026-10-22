@@ -20,6 +20,16 @@ bool is_warning(const Error& error) {
   return error.kind == ErrorKind::Protocol && !error.what.starts_with("GitHub answered ");
 }
 
+// What the operator is told (spec section 4).
+QString failure_text(const Error& error) {
+  QString what = QString::fromStdString(error.what);
+  if (error.kind == ErrorKind::Io || error.kind == ErrorKind::Timeout) {
+    return QStringLiteral("Could not reach GitHub (%1)").arg(what);
+  }
+  if (is_warning(error)) return QStringLiteral("Unexpected answer from GitHub (%1)").arg(what);
+  return what;
+}
+
 }  // namespace
 
 update::CheckPolicy load_update_policy(const QSettings& settings) {
@@ -92,7 +102,7 @@ void UpdateChecker::skip(update::Version version) {
 
 void UpdateChecker::start(bool manual, std::unique_ptr<http::IHttpClient> client) {
   if (worker_.joinable()) worker_.join();  // the last one has posted its answer and is ending
-  busy_ = true;
+  set_busy(true);
   worker_ = std::thread([this, manual, client = std::move(client)] {
     auto result = update::fetch_latest(*client);
     QMetaObject::invokeMethod(
@@ -100,16 +110,21 @@ void UpdateChecker::start(bool manual, std::unique_ptr<http::IHttpClient> client
   });
 }
 
+void UpdateChecker::set_busy(bool busy) {
+  if (busy_ == busy) return;
+  busy_ = busy;
+  emit busy_changed(busy);
+}
+
 void UpdateChecker::finish(bool manual, const Result<update::Fetched>& result) {
-  busy_ = false;
+  set_busy(false);
   if (!result) {
     const Error& error = result.error();
-    const QString reason = QString::fromStdString(error.what);
     if (!manual && log_) {
       log_((is_warning(error) ? QStringLiteral("WARN [update] ") : QStringLiteral("INFO [update] ")) +
-           QStringLiteral("could not check for a newer release: ") + reason);
+           QStringLiteral("could not check for a newer release: ") + QString::fromStdString(error.what));
     }
-    emit failed(reason, manual);
+    emit failed(failure_text(error), manual);
     return;
   }
 

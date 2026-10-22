@@ -111,6 +111,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
       reset_colors_(new QPushButton(tr("Reset colors"))),
       plot_background_(new ColorField),
       reset_plot_colors_(new QPushButton(tr("Reset colors"))),
+      check_for_updates_(new QCheckBox(tr("Check for updates at startup"))),
       problem_(new QLabel),
       save_without_checking_(new QPushButton(tr("Save without checking"))),
       buttons_(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply |
@@ -185,6 +186,16 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
     metrics_ = new MetricsPage;
     add_page(tr("Metrics"), metrics_);
   }
+  const QString updates_what =
+      tr("Once a day, asks api.github.com for the latest pychron release. Sends only the program's version.");
+  check_for_updates_->setToolTip(updates_what);
+  auto* updates = new QWidget;
+  auto* updates_form = new QFormLayout(updates);
+  updates_form->addRow(check_for_updates_);
+  updates_form->addRow(preferences_note(updates_what + QLatin1Char(' ') +
+                                        tr("Nothing is downloaded: a newer release is shown in the status bar. "
+                                           "Help > Check for Updates… asks at any time.")));
+  add_page(tr("Updates"), updates);
   // Nothing of it is read until the page is shown (the profiles file, the
   // password store), so a dialog opened for something else touches neither.
   earthbank_ = new EarthbankPreferencesPage(EarthbankSetup::system());
@@ -377,6 +388,7 @@ PreferencesDialog::Values PreferencesDialog::values() const {
   plots.plot_background = plot_background_->color();
   for (const ColorField* field : plot_series_) plots.series.push_back(field->color());
   store_plot_style(plots, v.preferences);
+  v.preferences.check_for_updates = check_for_updates_->isChecked();
   if (confirm_move_ != nullptr) v.confirm_move_amu = confirm_move_->value();
   if (line_ && logging_ != nullptr && metrics_ != nullptr) {
     v.line = line_;
@@ -394,6 +406,7 @@ void PreferencesDialog::set_values(const Values& values) {
   const TypeColors colors = ui::type_colors(values.preferences.browser_type_colors, theme());
   for (const auto& [type_class, field] : type_colors_) field->set_color(*colors.find(type_class));
   show_plot_style(plot_style_from(values.preferences));
+  check_for_updates_->setChecked(values.preferences.check_for_updates);
   if (confirm_move_ != nullptr && values.confirm_move_amu) confirm_move_->setValue(*values.confirm_move_amu);
   if (values.line && logging_ != nullptr && metrics_ != nullptr) {
     line_ = values.line;
