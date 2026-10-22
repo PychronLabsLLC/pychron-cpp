@@ -334,9 +334,11 @@ void LogDock::level_with_dialog() {
 }
 
 int LogDock::load_history(const std::filesystem::path& log_file, int max_lines) {
-  // `2026-10-01T14:03:22.481Z [warn] transport.serial.ig1: msg`
+  // `2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: msg`, or
+  // the older `2026-10-01T14:03:22.481Z [warn] transport.serial.ig1: msg`. Thread
+  // and run are skipped here: the model has no columns for them yet.
   static const QRegularExpression re(QStringLiteral(
-      R"(^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[(trace|debug|info|warn|error)\] (\S+): (.*)$)"));
+      R"(^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[(trace|debug|info|warn|error)\] (?:\[[^\]]*\] )?(?:run=\S+ )?(\S+): (.*)$)"));
   const auto lines = read_tail_lines(log_file, std::min(max_lines, LogModel::kCapacity),
                                      static_cast<std::size_t>(kMaxHistoryLineBytes));
   if (lines.empty()) return 0;

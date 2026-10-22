@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <sstream>
+#include <thread>
 #include <vector>
 
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/logger.hpp"
 #include "pychron/core/signal_bus.hpp"
 
@@ -27,6 +29,30 @@ TEST(Logger, PublishesLogEventsAtOrAboveLevel) {
   EXPECT_EQ(got[0].message, "valve A opened");
   EXPECT_EQ(got[0].ts, clock.now());
   EXPECT_EQ(got[1].level, LogLevel::Error);
+}
+
+TEST(Logger, LegacyEventCarriesThreadAndRun) {
+  ManualClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  Logger log("switches", clock, &bus, {LogLevel::Info, nullptr});
+
+  {
+    const LogContext::Thread t{"executor"};
+    const LogContext::Run r{"12345-01A"};
+    log.info("in a run");
+  }
+  std::thread worker([&log] { log.info("untagged"); });
+  worker.join();
+
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].thread, "executor");
+  EXPECT_EQ(got[0].run, "12345-01A");
+  ASSERT_GE(got[1].thread.size(), 2u);
+  EXPECT_EQ(got[1].thread.front(), 't');
+  EXPECT_EQ(got[1].thread.find_first_not_of("0123456789", 1), std::string::npos) << got[1].thread;
+  EXPECT_EQ(got[1].run, "");
 }
 
 TEST(Logger, EchoesToStreamAndSupportsLevelChanges) {

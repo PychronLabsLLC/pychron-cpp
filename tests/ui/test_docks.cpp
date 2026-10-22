@@ -276,10 +276,12 @@ class TestDocks : public QObject {
       f.write("2026-10-01T14:03:22.481Z [error] a.b: first\n");
       f.write("garbage without format\r\n");
       f.write("2026-10-01T14:03:22.482Z [debug] long: " + long_msg + "\n");
-      f.write("2026-10-01T14:03:22.483Z [info] tail: no trailing newline");
+      f.write("2026-10-01T14:03:22.483Z [warn] [executor] run=12345-01A experiment.run: tagged\n");
+      f.write("2026-10-01T14:03:22.484Z [debug] [t3] untagged.thread: numbered\n");
+      f.write("2026-10-01T14:03:22.485Z [info] tail: no trailing newline");
     }
     LogDock dock;
-    QCOMPARE(dock.load_history(path.toStdString()), 4);
+    QCOMPARE(dock.load_history(path.toStdString()), 6);
     const LogModel* m = dock.model();
     QCOMPARE(m->record(0).level, LogLevel::Error);
     QCOMPARE(m->record(0).message, QStringLiteral("first"));
@@ -289,8 +291,14 @@ class TestDocks : public QObject {
     QVERIFY(m->record(1).history);
     QVERIFY(m->record(2).message.size() < 4096);
     QVERIFY(m->record(2).message.startsWith(QStringLiteral("xxxx")));
-    QCOMPARE(m->record(3).logger, QStringLiteral("tail"));
-    QCOMPARE(m->record(3).message, QStringLiteral("no trailing newline"));
+    QCOMPARE(m->record(3).level, LogLevel::Warn);
+    QCOMPARE(m->record(3).logger, QStringLiteral("experiment.run"));
+    QCOMPARE(m->record(3).message, QStringLiteral("tagged"));
+    QCOMPARE(m->record(4).level, LogLevel::Debug);
+    QCOMPARE(m->record(4).logger, QStringLiteral("untagged.thread"));
+    QCOMPARE(m->record(4).message, QStringLiteral("numbered"));
+    QCOMPARE(m->record(5).logger, QStringLiteral("tail"));
+    QCOMPARE(m->record(5).message, QStringLiteral("no trailing newline"));
 
     // A single line longer than the whole scan budget: bounded, not loaded.
     const QString huge = dir.filePath(QStringLiteral("huge.log"));

@@ -43,6 +43,7 @@
 #endif
 
 #include "log_hub_internal.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/log_match.hpp"
 #include "pychron/core/logger.hpp"
 #include "pychron/core/signal_bus.hpp"
@@ -410,9 +411,21 @@ struct LogHub::Impl {
     }
     const Clock& clock = *route.clock;
 
+    // Read here, on the calling thread: the writer thread has its own.
+    std::string thread;
+    std::string run;
     try {
+      thread = detail::thread_label();
+      run = std::string(LogContext::run_id());
+    } catch (...) {  // NOLINT(bugprone-empty-catch): out of memory; the record goes on without its context
+    }
+
+    try {
+      // `[executor] run=12345-01A experiment.run: msg`; no `run=` outside a run.
       std::string payload;
-      payload.reserve(name.size() + 2 + message.size());
+      payload.reserve(thread.size() + run.size() + name.size() + message.size() + 12);
+      payload.append("[").append(thread).append("] ");
+      if (!run.empty()) payload.append("run=").append(run).append(" ");
       payload.append(name).append(": ").append(message);
       // Raw string_view overload: the message is never a format string.
       logger->log(clock.wall_now(), spdlog::source_loc{}, to_spdlog(level),
@@ -433,7 +446,8 @@ struct LogHub::Impl {
 
     if (route.bus != nullptr && level >= dock_level) {
       try {
-        route.bus->publish(Log{level, std::string(name), std::string(message), clock.now()});
+        route.bus->publish(Log{level, std::string(name), std::string(message), clock.now(),
+                               std::move(thread), std::move(run)});
       } catch (...) {  // NOLINT(bugprone-empty-catch): a subscriber's failure is not the logger's
       }
     }
@@ -462,7 +476,8 @@ struct LogHub::Impl {
     if (!alive.load() || t_is_log_writer) return;
 
     try {
-      std::string payload = "pychron: ";
+      // Same line shape as write(): a thread field, then logger and message.
+      std::string payload = "[" + detail::thread_label() + "] pychron: ";
       payload.append(text);
       // System time, not the hub's clock: a clock's wall_now() may take a
       // mutex (VirtualClock does), and terminate can be raised by the thread
@@ -980,6 +995,12 @@ ResolvedLevel hub_resolve_level(const LogHub::Impl& hub, std::string_view name) 
     // Locking failed (system_error); fall back without caching a new epoch.
     return {LogLevel::Error, 0};
   }
+}
+
+std::string thread_label() {
+  const std::string_view tag = LogContext::thread_tag();
+  if (!tag.empty()) return std::string(tag);
+  return "t" + std::to_string(LogContext::thread_number());
 }
 
 void hub_write(LogHub::Impl& hub, LogLevel level, std::string_view logger,

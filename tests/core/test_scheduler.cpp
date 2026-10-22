@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <regex>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -318,11 +319,14 @@ std::filesystem::path unique_log_dir(const char* tag) {
   return std::filesystem::temp_directory_path() / (std::string(tag) + std::to_string(std::mt19937_64(rd())()));
 }
 
+// Lines of `p` holding `needle`, read without their thread field and run id
+// (`[warn] [t3] run=X core: m` is matched as `[warn] core: m`).
 std::size_t lines_containing(const std::filesystem::path& p, const std::string& needle) {
+  static const std::regex context(R"((\[(?:trace|debug|info|warn|error)\]) \[[^\]]*\] (?:run=\S+ )?)");
   std::ifstream in(p);
   std::size_t n = 0;
   for (std::string line; std::getline(in, line);)
-    if (line.find(needle) != std::string::npos) ++n;
+    if (std::regex_replace(line, context, "$1 ").find(needle) != std::string::npos) ++n;
   return n;
 }
 

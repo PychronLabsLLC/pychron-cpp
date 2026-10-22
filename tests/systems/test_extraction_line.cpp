@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <set>
 #include <string>
 #include <vector>
@@ -490,11 +491,14 @@ channel = 1
 units = "torr"
 )";
 
+// Lines of `p` holding `needle`, read without their thread field and run id
+// (`[warn] [t3] run=X core: m` is matched as `[warn] core: m`).
 std::size_t lines_containing(const std::filesystem::path& p, const std::string& needle) {
+  static const std::regex context(R"((\[(?:trace|debug|info|warn|error)\]) \[[^\]]*\] (?:run=\S+ )?)");
   std::ifstream in(p);
   std::size_t n = 0;
   for (std::string line; std::getline(in, line);)
-    if (line.find(needle) != std::string::npos) ++n;
+    if (std::regex_replace(line, context, "$1 ").find(needle) != std::string::npos) ++n;
   return n;
 }
 

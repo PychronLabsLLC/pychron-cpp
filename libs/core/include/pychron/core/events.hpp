@@ -89,6 +89,10 @@ struct Log {
   std::string logger;
   std::string message;
   TimePoint ts{};
+  // Thread tag of the writer (`executor`, or `t<n>` for an untagged thread)
+  // and its run id (empty outside a run scope): pychron::LogContext.
+  std::string thread{};
+  std::string run{};
 };
 
 // A valve or switch was software-locked or unlocked.

@@ -3,6 +3,7 @@
 #include <ostream>
 
 #include "log_hub_internal.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/signal_bus.hpp"
 
 namespace pychron {
@@ -86,7 +87,8 @@ void Logger::log(LogLevel level, std::string_view message) const {
     detail::hub_write(*hub_, level, name_, message);
     return;
   }
-  Log event{level, name_, std::string(message), clock_->now()};
+  Log event{level, name_, std::string(message), clock_->now(), detail::thread_label(),
+            std::string(LogContext::run_id())};
   if (echo_ != nullptr) {
     std::lock_guard lock(*echo_mutex_);
     *echo_ << '[' << to_string(level) << "] " << name_ << ": " << message << '\n';

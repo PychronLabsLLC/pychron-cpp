@@ -7,6 +7,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -30,6 +31,7 @@
 
 #include "pychron/core/config/logging_config.hpp"
 #include "pychron/core/env.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/log_match.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/logger.hpp"
@@ -113,6 +115,21 @@ std::vector<std::string> read_lines(const fs::path& p) {
   return lines;
 }
 
+// A file line without its thread field and run id, the shape these tests
+// were written against: `... [info] [t3] run=X core: m` -> `... [info] core: m`.
+std::string bare(const std::string& text) {
+  static const std::regex context(R"((\[(?:trace|debug|info|warn|error)\]) \[[^\]\n]*\] (?:run=\S+ )?)");
+  return std::regex_replace(text, context, "$1 ");
+}
+
+std::string read_bare_file(const fs::path& p) { return bare(read_file(p)); }
+
+std::vector<std::string> read_bare_lines(const fs::path& p) {
+  auto lines = read_lines(p);
+  for (auto& line : lines) line = bare(line);
+  return lines;
+}
+
 std::shared_ptr<LogHub> make_hub(const config::LoggingConfig& cfg, const Clock& clock,
                                  SignalBus* bus = nullptr) {
   auto hub = LogHub::create(cfg, clock, bus);
@@ -133,7 +150,7 @@ TEST(LogHub, WritesFormattedLineToFile) {
 
   const auto lines = read_lines(tmp.path() / "pychron.log");
   ASSERT_EQ(lines.size(), 1u);
-  const std::regex re(R"(^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \[warn\] transport\.x: hello$)");
+  const std::regex re(R"(^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \[warn\] \[t\d+\] transport\.x: hello$)");
   EXPECT_TRUE(std::regex_match(lines[0], re)) << lines[0];
 }
 
@@ -152,11 +169,66 @@ TEST(LogHub, LevelNamesInFile) {
 
   const auto lines = read_lines(tmp.path() / "pychron.log");
   ASSERT_EQ(lines.size(), 5u);
-  EXPECT_NE(lines[0].find(" [trace] a: t"), std::string::npos) << lines[0];
-  EXPECT_NE(lines[1].find(" [debug] a: d"), std::string::npos) << lines[1];
-  EXPECT_NE(lines[2].find(" [info] a: i"), std::string::npos) << lines[2];
-  EXPECT_NE(lines[3].find(" [warn] a: w"), std::string::npos) << lines[3];
-  EXPECT_NE(lines[4].find(" [error] a: e"), std::string::npos) << lines[4];
+  const std::array<std::string, 5> names{"trace", "debug", "info", "warn", "error"};
+  const std::array<std::string, 5> messages{"t", "d", "i", "w", "e"};
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    const std::regex re(R"(Z \[)" + names.at(i) + R"(\] \[t\d+\] a: )" + messages.at(i) + "$");
+    EXPECT_TRUE(std::regex_search(lines[i], re)) << lines[i];
+  }
+}
+
+TEST(LogHub, LineCarriesThreadAndRun) {
+  TempDir tmp;
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto cfg = config_for(tmp.path());
+  cfg.dock_level = LogLevel::Debug;
+  auto hub = make_hub(cfg, clock, &bus);
+  ASSERT_TRUE(hub);
+
+  {
+    const LogContext::Thread t{"executor"};
+    const LogContext::Run r{"12345-01A"};
+    hub->write(LogLevel::Debug, "experiment.run", "msg");
+  }
+  hub->flush();
+
+  const auto lines = read_lines(tmp.path() / "pychron.log");
+  ASSERT_EQ(lines.size(), 1u);
+  const std::regex re(R"(^\S+Z \[debug\] \[executor\] run=12345-01A experiment\.run: msg$)");
+  EXPECT_TRUE(std::regex_match(lines[0], re)) << lines[0];
+  ASSERT_EQ(got.size(), 1u);
+  EXPECT_EQ(got[0].thread, "executor");
+  EXPECT_EQ(got[0].run, "12345-01A");
+  EXPECT_EQ(got[0].logger, "experiment.run");
+  EXPECT_EQ(got[0].message, "msg");
+}
+
+TEST(LogHub, UntaggedThreadHasNumberNoRun) {
+  TempDir tmp;
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto hub = make_hub(config_for(tmp.path()), clock, &bus);
+  ASSERT_TRUE(hub);
+
+  std::thread worker([&hub] { hub->write(LogLevel::Info, "logger", "msg"); });
+  worker.join();
+  hub->flush();
+
+  const auto lines = read_lines(tmp.path() / "pychron.log");
+  ASSERT_EQ(lines.size(), 1u);
+  const std::regex re(R"(\[t\d+\] logger: msg$)");
+  EXPECT_TRUE(std::regex_search(lines[0], re)) << lines[0];
+  EXPECT_EQ(lines[0].find("run="), std::string::npos) << lines[0];
+  ASSERT_EQ(got.size(), 1u);
+  ASSERT_FALSE(got[0].thread.empty());
+  EXPECT_EQ(got[0].thread.front(), 't');
+  EXPECT_EQ(got[0].thread.find_first_not_of("0123456789", 1), std::string::npos) << got[0].thread;
+  EXPECT_EQ(got[0].run, "");
 }
 
 TEST(LogHub, ErrorIsOnDiskWithoutFlush) {
@@ -167,7 +239,7 @@ TEST(LogHub, ErrorIsOnDiskWithoutFlush) {
 
   hub->write(LogLevel::Error, "core", "disk on fire");
 
-  EXPECT_NE(read_file(tmp.path() / "pychron.log").find("[error] core: disk on fire"),
+  EXPECT_NE(read_bare_file(tmp.path() / "pychron.log").find("[error] core: disk on fire"),
             std::string::npos);
 }
 
@@ -497,7 +569,7 @@ TEST(LogHub, LoggerWritesToFile) {
   log.debug("hidden");
   log.warn("shown");
   hub->flush();
-  const auto lines = read_lines(tmp.path() / "pychron.log");
+  const auto lines = read_bare_lines(tmp.path() / "pychron.log");
   ASSERT_EQ(lines.size(), 1u);
   EXPECT_NE(lines[0].find(" [warn] core: shown"), std::string::npos) << lines[0];
 }
@@ -540,7 +612,7 @@ TEST(LogHub, SubscriberMayLogBack) {
   });
   hub->logger("core").error("boom");
   EXPECT_EQ(seen, 2);
-  EXPECT_NE(read_file(tmp.path() / "pychron.log").find("[error] relay: saw boom"),
+  EXPECT_NE(read_bare_file(tmp.path() / "pychron.log").find("[error] relay: saw boom"),
             std::string::npos);
 }
 
@@ -601,7 +673,7 @@ TEST(LogHub, ConcurrentWriteAndSetLevel) {
 
   EXPECT_EQ(bus_errors.load(), kThreads * kPerThread);
   int file_errors = 0;
-  for (const auto& line : read_lines(tmp.path() / "pychron.log")) {
+  for (const auto& line : read_bare_lines(tmp.path() / "pychron.log")) {
     if (line.find("[error] core.w") != std::string::npos) ++file_errors;
   }
   EXPECT_EQ(file_errors, kThreads * kPerThread);
@@ -645,7 +717,7 @@ TEST(LogHub, DockLevelFiltersBusNotFile) {
 
   ASSERT_EQ(got.size(), 1u);
   EXPECT_EQ(got[0].message, "loud");
-  const auto text = read_file(tmp.path() / "pychron.log");
+  const auto text = read_bare_file(tmp.path() / "pychron.log");
   EXPECT_NE(text.find("[debug] core: quiet"), std::string::npos) << text;
   EXPECT_NE(text.find("[info] core: loud"), std::string::npos) << text;
 }
@@ -759,7 +831,7 @@ TEST(LogHub, ClockDetachFallsBackToHubClock) {
   ASSERT_EQ(got.size(), 2u);
   EXPECT_EQ(got[0].ts, b.now());
   EXPECT_EQ(got[1].ts, a.now());
-  const auto lines = read_lines(tmp.path() / "pychron.log");
+  const auto lines = read_bare_lines(tmp.path() / "pychron.log");
   ASSERT_EQ(lines.size(), 2u);
   EXPECT_EQ(lines[0], "2026-10-22T14:03:22.000Z [info] core: on b");
   EXPECT_EQ(lines[1], "2020-01-01T00:00:00.000Z [info] core: on a");
@@ -778,7 +850,7 @@ TEST(LogHub, SecondProcessGetsPidFile) {
   EXPECT_EQ(second->file_path(), pid_file);
   second->flush();
 
-  const auto lines = read_lines(pid_file);
+  const auto lines = read_bare_lines(pid_file);
   ASSERT_EQ(lines.size(), 1u);
   EXPECT_NE(lines[0].find("[info] logging: "), std::string::npos) << lines[0];
   EXPECT_NE(lines[0].find("in use"), std::string::npos) << lines[0];
@@ -808,7 +880,7 @@ TEST(LogHub, UnlockableFileIsAWarning) {
   ASSERT_TRUE(hub);
   EXPECT_EQ(hub->file_path(), tmp.path() / "pychron.log");
   hub->flush();
-  const auto lines = read_lines(tmp.path() / "pychron.log");
+  const auto lines = read_bare_lines(tmp.path() / "pychron.log");
   ASSERT_EQ(lines.size(), 1u);
   EXPECT_NE(lines[0].find("[warn] logging: cannot lock "), std::string::npos) << lines[0];
 }
@@ -906,7 +978,7 @@ TEST(LogHub, AttachAndDropUnderConcurrentWrites) {
     const auto days = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
     return static_cast<int>(std::chrono::year_month_day(days).year());
   }();
-  for (const auto& line : read_lines(tmp.path() / "pychron.log")) {
+  for (const auto& line : read_bare_lines(tmp.path() / "pychron.log")) {
     std::smatch m;
     ASSERT_TRUE(std::regex_search(line, m, stamp)) << line;
     const int year = std::stoi(m[1].str());
@@ -934,7 +1006,7 @@ TEST(LogHub, NoFileMeansEmptyFilePath) {
 namespace {
 
 std::size_t count_lines_containing(const fs::path& p, const std::string& needle) {
-  const auto lines = read_lines(p);
+  const auto lines = read_bare_lines(p);
   return static_cast<std::size_t>(std::count_if(
       lines.begin(), lines.end(), [&](const std::string& l) { return l.find(needle) != std::string::npos; }));
 }

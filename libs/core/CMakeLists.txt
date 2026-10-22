@@ -8,6 +8,7 @@ add_library(pychron_core
   src/time_series_ring.cpp
   src/signal_bus.cpp
   src/logger.cpp
+  src/log_context.cpp
   src/log_match.cpp
   src/log_hub.cpp
   src/scheduler.cpp

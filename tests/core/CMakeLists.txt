@@ -9,6 +9,7 @@ add_executable(pychron_core_tests
   test_logger.cpp
   test_log_match.cpp
   test_log_hub.cpp
+  test_log_context.cpp
   test_scheduler.cpp
   test_host_name.cpp
   test_process.cpp
