@@ -502,6 +502,9 @@ void SpectrometerBridge::peak_center(jobs::PeakCenterConfig config) {
   }
   peak_center_run_ = std::make_unique<PeakCenterRun>();
   resume_integration_s_.reset();
+  // Before the run can finish: the thread's finish is delivered on this
+  // thread, after this call has returned.
+  emit peakCenterStarted();
   // What the operator asked for, not what the executor has got to: a start_scan
   // just issued has not reported yet, and its queued stop below follows it.
   if (!scan_intent_) {

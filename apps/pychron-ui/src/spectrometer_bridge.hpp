@@ -147,7 +147,8 @@ class SpectrometerBridge : public QObject {
   // Non-blocking: runs jobs::run_peak_center on a thread of its own, with
   // update_table forced off (the window applies a result only when asked),
   // and reports once through peakCenterFinished. Refused, with Config "a
-  // peak center is running" through peakCenterFinished, while one is.
+  // peak center is running" through peakCenterFinished, while one is; an
+  // accepted start says so through peakCenterStarted before it returns.
   void peak_center(jobs::PeakCenterConfig config);
   // What a cancelled run does with the scan it stopped: puts it back, as any
   // run's end does, or leaves it stopped (for a window that is closing,
@@ -188,6 +189,9 @@ class SpectrometerBridge : public QObject {
   void fieldTableChanged(const QString& name, const QString& version);
   void tableSaved(const QString& name, const pychron::Result<std::string>& result);  // the new version
   void tableRestored(const QString& name, const QString& version, const pychron::Result<void>& result);
+  // peak_center() accepted a run (not a refused start): emitted from inside
+  // that call, on the main thread, with peak_center_running() already true.
+  void peakCenterStarted();
   // Relayed from the bus while the bridge's own run is going, in the order
   // published: a try's start before its points.
   void peakCenterTryStarted(const pychron::jobs::PeakCenterTryStarted& event);

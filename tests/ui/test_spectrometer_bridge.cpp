@@ -697,8 +697,11 @@ class TestSpectrometerBridge : public QObject {
 
   void secondPeakCenterRefused() {
     use_virtual_clock();
+    QSignalSpy started(bridge_.get(), &SpectrometerBridge::peakCenterStarted);
     bridge_->peak_center(ar40_config());
+    QCOMPARE(started.count(), 1);  // at once, on this thread
     bridge_->peak_center(ar40_config());
+    QCOMPARE(started.count(), 1);  // a refused start is no start
     QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{2}, kWaitMs);
     QVERIFY(!pc_results_[0].has_value());
     QCOMPARE(pc_results_[0].error().kind, ErrorKind::Config);
@@ -709,8 +712,10 @@ class TestSpectrometerBridge : public QObject {
 
     // Free again: a third one runs.
     bridge_->peak_center(ar40_config());
+    QCOMPARE(started.count(), 2);
     QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{3}, kWaitMs);
     QVERIFY(pc_results_[2].has_value());
+    QCOMPARE(started.count(), 2);
   }
 
   void destroyDuringPeakCenterReturns() {
