@@ -57,8 +57,10 @@ class PeakCenterView : public QWidget {
   [[nodiscard]] QString title() const;
   [[nodiscard]] QCustomPlot* plot() const;
   // The axes as drawn. x is the sweep's whole width from a try's start: the
-  // union of the tries in hand (their start and end), never grown by a point.
-  // y follows every drawn value, padded 5 % each side (0..1 with none).
+  // union of the tries in hand (their start and end), never grown by a point;
+  // with no sweep known, around what is drawn and the rules (0..1 with
+  // neither). y follows every drawn value, padded 5 % each side (0..1 with
+  // none).
   [[nodiscard]] QCPRange x_range() const;
   [[nodiscard]] QCPRange y_range() const;
 

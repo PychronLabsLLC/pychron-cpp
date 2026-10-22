@@ -24,15 +24,15 @@
 // core's table lock can be held across a settling move, then emits
 // fieldTableChanged with the copy already current.
 //
-// Peak center (peak center from the spectrometer window, section 4): a run
-// goes on a thread of its own, not the executor, so stop_scan and the rest
-// stay free meanwhile. The thread takes part in the spectrometer's clock and
-// is started and joined by the rules of AGENTS.md "Time". Its
-// PeakCenterTryStarted and PeakCenterPoint events are relayed only while the
-// bridge's own run is going (a plan's are not), in one ordered queue under
-// the gate, delivered by one pending queued call as readings are; the result
-// comes back as peakCenterFinished after the last of them. The destructor
-// cancels a run and waits for its thread.
+// Peak center (spectrometer peak center design, section 4; run from the Peak
+// Center window): a run goes on a thread of its own, not the executor, so
+// stop_scan and the rest stay free meanwhile. The thread takes part in the
+// spectrometer's clock and is started and joined by the rules of AGENTS.md
+// "Time". Its PeakCenterTryStarted and PeakCenterPoint events are relayed
+// only while the bridge's own run is going (a plan's are not), in one
+// ordered queue under the gate, delivered by one pending queued call as
+// readings are; the result comes back as peakCenterFinished after the last
+// of them. The destructor cancels a run and waits for its thread.
 //
 // No core object ever holds a QObject*: the bus handlers reach the bridge only
 // through a shared Gate the destructor closes before the bridge goes away.
@@ -143,7 +143,7 @@ class SpectrometerBridge : public QObject {
   // through tableRestored.
   void restore_table_version(const QString& name, const QString& version);
 
-  // ---- peak center (peak center from the spectrometer window, section 4) ----
+  // ---- peak center (spectrometer peak center design, section 4) ----
   // Non-blocking: runs jobs::run_peak_center on a thread of its own, with
   // update_table forced off (the window applies a result only when asked),
   // and reports once through peakCenterFinished. Refused, with Config "a

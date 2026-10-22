@@ -315,7 +315,7 @@ Existing name overwritten only after window asked (5.2).
   `main_window.cpp:749`). Start disabled with tooltip "a queue is running";
   state re-checked on Start.
 - Experiment window: `start()` refused while window's peak center runs,
-  message "peak center running in the spectrometer window".
+  message "peak center running in the Peak Center window".
   `ExperimentWindow` given `std::function<bool()> peak_center_running`
   (reads `peak_center_window_`); `MainWindow` wires both.
 - `MainWindow`: action "Peak Center…" contributed to `MenuHub::Menu::Spectrometer`

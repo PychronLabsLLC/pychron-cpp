@@ -459,6 +459,31 @@ class TestPeakCenterView : public QObject {
     QVERIFY(view.y_range().upper < 106);
   }
 
+  void xIsZeroToOneWithNoSweep() {
+    PeakCenterView view;
+    QCOMPARE(view.x_range().lower, 0.0);
+    QCOMPARE(view.x_range().upper, 1.0);
+    view.on_try_started(try_started(0, 1));
+    view.on_point(point(0, sweep_point(5.0, {{"H1", 1}})));
+    view.clear();  // the old sweep's width does not stay
+    QCOMPARE(view.x_range().lower, 0.0);
+    QCOMPARE(view.x_range().upper, 1.0);
+    QCOMPARE(view.y_range().lower, 0.0);
+    QCOMPARE(view.y_range().upper, 1.0);
+  }
+
+  // No try, so no sweep: x is around the rules, which stay in sight.
+  void aResultWithoutATryKeepsItsRulesInSight() {
+    PeakCenterView view;
+    auto r = result();
+    r.tries.clear();
+    view.on_done(jobs::PeakCenterDone{r});
+    for (const double x : view.rule_x()) {
+      QVERIFY(view.x_range().lower < x);
+      QVERIFY(view.x_range().upper > x);
+    }
+  }
+
   void aShownResultSpansItsTries() {
     PeakCenterView view;
     auto r = result();

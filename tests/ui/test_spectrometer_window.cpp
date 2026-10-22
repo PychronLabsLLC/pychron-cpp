@@ -793,10 +793,12 @@ class TestSpectrometerWindow : public QObject {
 
   // The window asks nothing: its close stops the scan, and the run goes on
   // to its end with the scan left stopped.
+  // (A question would be a modal box here, and the test would hang on it.)
   void closeDuringRunDoesNotAsk() {
     open();
     window_->show();
     QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QTRY_VERIFY_WITH_TIMEOUT(sim_->scan->status().running, kWaitMs);  // a scan for the run to put back
     QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
     bridge_->peak_center(long_peak_center());
     QVERIFY(window_->close());
@@ -807,6 +809,30 @@ class TestSpectrometerWindow : public QObject {
     bridge_->drain();
     QCoreApplication::processEvents();
     QVERIFY(!sim_->scan->status().running);
+  }
+
+  // A window opened while a run goes (started from the Peak Center window
+  // before this one was) starts locked and starts no scan.
+  void aWindowOpenedDuringARunStartsLocked() {
+    QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
+    bridge_->peak_center(long_peak_center());
+    QVERIFY(bridge_->peak_center_running());
+    open();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    auto* restart = window_->findChild<QPushButton*>(QStringLiteral("scanRestart"));
+    QVERIFY(!window_->apply_enabled());
+    QVERIFY(!restart->isEnabled());
+    QVERIFY(!window_->rise_rate()->toggle_button()->isEnabled());
+
+    bridge_->cancel_peak_center();
+    QVERIFY(finished.wait(kWaitMs));
+    QVERIFY(window_->apply_enabled());
+    QVERIFY(restart->isEnabled());
+    QVERIFY(window_->rise_rate()->toggle_button()->isEnabled());
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QVERIFY(!sim_->scan->status().running);  // no scan before the run: none put back
   }
 
   void closeWithoutRunStopsTheScan() {

@@ -615,7 +615,7 @@ class TestSpectrometerBridge : public QObject {
     QTest::qWait(300);  // the scan (owned by the fixture) keeps publishing; nothing listens
   }
 
-  // ---- peak center (peak center from the spectrometer window, section 4) ----
+  // ---- peak center (spectrometer peak center design, section 4) ----
 
   void peakCenterRunsAndRelaysItsEvents() {
     use_virtual_clock();

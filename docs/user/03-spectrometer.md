@@ -350,8 +350,8 @@ the starter `detector_ic` plan hops only Faradays for exactly that reason.
 Peak centring finds the magnet setting that puts an isotope's peak in the
 middle of a detector, and (by default) writes the correction into the field
 table so later moves use it. It runs from a plan (`[peak_center] before/after =
-true`), from a script, or by hand from the spectrometer window ("From the
-spectrometer window", below). The result of a plan's centring appears in the
+true`), from a script, or by hand from the Peak Center window ("From the
+Peak Center window", below). The result of a plan's centring appears in the
 **Evolutions** dock of the experiment window under **Peak centers** as `Ar40 on
 H1: center 5.001234, table updated`, or `failed: <reason>`. A failed centring
 is reported and the run continues; it is not an error.
@@ -486,7 +486,7 @@ refused with it.
 A queue and a peak center from the window never run together: Start and Apply
 are disabled, with the tooltip "a queue is running", while a queue runs (Save
 is still allowed), and starting a queue is refused with "peak center running in
-the spectrometer window" while a window run goes. Closing the Peak Center
+the Peak Center window" while a window run goes. Closing the Peak Center
 window during a run asks "Cancel peak center?": **Yes** cancels the run, puts
 the scan back as it was and closes the window when the run has ended; **No**
 keeps the window open and the run going. Closing the spectrometer window asks

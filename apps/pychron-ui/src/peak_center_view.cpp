@@ -26,9 +26,9 @@ constexpr double kAdditionalWidth = 1.5;
 constexpr double kFaintWidth = 1.0;
 constexpr int kFaintAlpha = 70;
 constexpr double kTooltipPixels = 12.0;
-constexpr double kYPadding = 0.05;  // of the values' span, each side
-constexpr double kDefaultYLower = 0.0;  // y before any value
-constexpr double kDefaultYUpper = 1.0;
+constexpr double kPadding = 0.05;      // of the values' span, each side
+constexpr double kDefaultLower = 0.0;  // an axis with nothing to span
+constexpr double kDefaultUpper = 1.0;
 
 // One detector's points in a try: the steps that have a value for it.
 struct Column {
@@ -82,6 +82,7 @@ PeakCenterView::PeakCenterView(std::map<std::string, QColor> colors,
     redraw();  // the pens, from plot_style()
   });
   title_->setText(tr("No peak center"));
+  set_axes();  // the defaults, not QCustomPlot's
 }
 
 void PeakCenterView::start_fresh() {
@@ -302,7 +303,25 @@ void PeakCenterView::set_axes() {
   if (lo < hi) {
     plot_->xAxis->setRange(lo, hi);
   } else {
-    plot_->xAxis->rescale();  // no sweep known: what is drawn
+    // No sweep known (none yet, cleared, a result without a try): around
+    // what is drawn and the rules, else the default.
+    for (int i = 0; i < plot_->graphCount(); ++i) {
+      bool found = false;
+      const QCPRange r = plot_->graph(i)->getKeyRange(found);
+      if (!found) continue;
+      lo = std::min(lo, r.lower);
+      hi = std::max(hi, r.upper);
+    }
+    for (const double x : rule_x()) {
+      lo = std::min(lo, x);
+      hi = std::max(hi, x);
+    }
+    if (!std::isfinite(lo) || !std::isfinite(hi)) {
+      plot_->xAxis->setRange(kDefaultLower, kDefaultUpper);
+    } else {
+      const double pad = hi > lo ? (hi - lo) * kPadding : kDefaultUpper * kPadding;
+      plot_->xAxis->setRange(lo - pad, hi + pad);
+    }
   }
 
   // y: every drawn value (markers too), padded.
@@ -316,11 +335,11 @@ void PeakCenterView::set_axes() {
     yhi = std::max(yhi, r.upper);
   }
   if (!std::isfinite(ylo) || !std::isfinite(yhi)) {
-    plot_->yAxis->setRange(kDefaultYLower, kDefaultYUpper);
+    plot_->yAxis->setRange(kDefaultLower, kDefaultUpper);
     return;
   }
-  double pad = (yhi - ylo) * kYPadding;
-  if (pad <= 0) pad = std::abs(yhi) > 0 ? std::abs(yhi) * kYPadding : kDefaultYUpper * kYPadding;
+  double pad = (yhi - ylo) * kPadding;
+  if (pad <= 0) pad = std::abs(yhi) > 0 ? std::abs(yhi) * kPadding : kDefaultUpper * kPadding;
   plot_->yAxis->setRange(ylo - pad, yhi + pad);
 }
 

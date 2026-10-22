@@ -827,7 +827,7 @@ class TestExperimentWindow : public QObject {
     window.set_peak_center_running([&peak_center] { return peak_center; });
     window.start();
     QVERIFY(!bridge.running());
-    QCOMPARE(window.executor()->error_text(), QStringLiteral("peak center running in the spectrometer window"));
+    QCOMPARE(window.executor()->error_text(), QStringLiteral("peak center running in the Peak Center window"));
   }
 
   void aQueueThatCannotBeSavedSaysWhyInFull() {
