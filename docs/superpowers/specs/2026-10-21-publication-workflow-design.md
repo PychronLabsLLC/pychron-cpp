@@ -124,10 +124,8 @@ bool depends_on_failed(const PublicationPlan& plan, Destination next, const std:
   `embargo_until` null or `<= now`. Check recomputed at run time, just before
   EarthBank step (§6.3), with `now` then: a run that took long or an embargo
   set meanwhile is caught.
-- Embargoed members counted by a new store query (one statement, same
-  visibility text as `libs/persistence/src/sql/publish.hpp`, through
-  `Dialect`; `libs/persistence/AGENTS.md` rules apply):
-  `IStore::release_embargoed_members(Uuid release, UtcTime at) -> Result<std::size_t>`.
+- Embargoed members found with existing `embargoed_analyses(members, at)` and
+  `embargoed_samples(release_samples, at)`: one statement each, no new store query.
   No migration.
 - Running Folder and Store stays in existing functions (`build_release`,
   `publish_built`); `publication.hpp` adds no second path to them.
@@ -251,8 +249,6 @@ reopens on it.
   allowed, Store on published release refused, Store without dir refused,
   Doi/Hosted always refused); `depends_on_failed` (Folder fail skips Store
   and upload, not pre-flight/xlsx).
-- `tests/persistence/test_publish.cpp`: `release_embargoed_members` on
-  SQLite and PostgreSQL (project, sample, analysis scopes; lifted; ended).
 - `tests/publish/test_earthbank_source.cpp`: `release_dataset` returns
   pinned revisions after a later edit of a member.
 - `tests/ui/test_publish_dialog.cpp`: Data button opens dialog "new" with

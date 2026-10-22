@@ -18,6 +18,7 @@
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
 #include "pychron/publish/figures.hpp"
+#include "members.hpp"
 #include "pychron/publish/parquet.hpp"
 #include "pychron/publish/records.hpp"
 #include "pychron/reduction/arar_types.hpp"
@@ -254,6 +255,59 @@ class Writer {
 
 }  // namespace
 
+namespace detail {
+
+Result<std::vector<Uuid>> release_members(ps::IStore& store, const ps::ReleaseRow& release) {
+  auto pins = store.bookmark_heads(release.bookmark);
+  if (!pins) return fail(pins.error());
+  std::set<Uuid> member_set;
+  for (const auto& p : *pins)
+    if (p.kind != ps::Kind::RefValue && p.kind != ps::Kind::InterpretedAge) member_set.insert(p.subject);
+  return std::vector<Uuid>(member_set.begin(), member_set.end());
+}
+
+Result<pp::DatasetPtr> reduce_loaded(const std::vector<pp::AnalysisPtr>& loaded, const ReleaseOptions& opts, bool group,
+                                     std::vector<std::string>* diagnostics) {
+  std::vector<std::string> uuids;
+  uuids.reserve(loaded.size());
+  for (const auto& a : loaded) uuids.push_back(a->uuid);
+  pp::MemorySource memory(loaded);
+  const auto& reg = pp::UnitRegistry::builtin();
+  pp::Pipeline pipeline;
+  pipeline.name = "release";
+  auto& select = pipeline.add(reg, "select", "select");
+  std::optional<Error> bad;
+  const auto set = [&](pp::NodeSpec& node, std::string_view key, pp::OptionValue value) {
+    auto ok = node.options.set(key, std::move(value));
+    if (!ok && !bad) bad = ok.error();
+  };
+  set(select, "uuids", uuids);
+  set(select, "remove_tags", std::vector<std::string>{});
+  set(select, "limit", static_cast<std::int64_t>(uuids.size()));
+  auto& reduce = pipeline.add(reg, "reduce", "reduce", {"select"});
+  set(reduce, "constants", opts.constants);
+  set(reduce, "include_decay_error", opts.decay_error);
+  if (bad) return fail(*bad);
+  pp::Runner runner(reg, &memory);
+  auto reduced = runner.run(pipeline, "reduce");
+  if (!reduced) return fail(reduced.error());
+  pp::DatasetPtr dataset = std::get<pp::DatasetPtr>(reduced->at(0));
+  if (group) {
+    std::string key = opts.group_by;
+    if (key == "auto") key = any_step(*dataset) ? "aliquot" : "identifier";
+    auto& node = pipeline.add(reg, "group", "group", {"reduce"});
+    if (auto ok = node.options.set("key", key); !ok) return fail(ok.error());
+    auto grouped = runner.run(pipeline, "group");
+    if (!grouped) return fail(grouped.error());
+    dataset = std::get<pp::DatasetPtr>(grouped->at(0));
+  }
+  if (diagnostics)
+    for (const auto& d : runner.diagnostics()) diagnostics->push_back(d);
+  return dataset;
+}
+
+}  // namespace detail
+
 Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uuid release_uuid,
                                   const BuildOptions& options, IProgress* progress) {
   const Progress stage{progress};
@@ -273,12 +327,9 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
     return fail(ErrorKind::Io, "cannot create " + dir.string() + ": " + ec.message());
 
   // The members and what the bookmark pins.
-  auto pins = store.bookmark_heads(release.bookmark);
-  if (!pins) return fail(pins.error());
-  std::set<Uuid> member_set;
-  for (const auto& p : *pins)
-    if (p.kind != ps::Kind::RefValue && p.kind != ps::Kind::InterpretedAge) member_set.insert(p.subject);
-  std::vector<Uuid> members(member_set.begin(), member_set.end());
+  auto member_list = detail::release_members(store, release);
+  if (!member_list) return fail(member_list.error());
+  const std::vector<Uuid>& members = *member_list;
   auto sample_uuids = store.release_samples(release_uuid);
   if (!sample_uuids) return fail(sample_uuids.error());
   auto ia_pins = store.release_interpreted_ages(release_uuid);
@@ -387,35 +438,9 @@ Result<BuildResult> build_release(ps::IStore& store, pp::StoreSource& source, Uu
 
   // Reduce and group as `elctl export` does, over the loaded analyses.
   stage("reduce");
-  pp::MemorySource memory(loaded);
-  const auto& reg = pp::UnitRegistry::builtin();
-  pp::Pipeline pipeline;
-  pipeline.name = "release";
-  auto& select = pipeline.add(reg, "select", "select");
-  std::optional<Error> bad;
-  const auto set = [&](pp::NodeSpec& node, std::string_view key, pp::OptionValue value) {
-    auto ok = node.options.set(key, std::move(value));
-    if (!ok && !bad) bad = ok.error();
-  };
-  set(select, "uuids", uuids);
-  set(select, "remove_tags", std::vector<std::string>{});
-  set(select, "limit", static_cast<std::int64_t>(uuids.size()));
-  auto& reduce = pipeline.add(reg, "reduce", "reduce", {"select"});
-  set(reduce, "constants", opts->constants);
-  set(reduce, "include_decay_error", opts->decay_error);
-  if (bad) return fail(*bad);
-  pp::Runner runner(reg, &memory);
-  auto reduced = runner.run(pipeline, "reduce");
-  if (!reduced) return fail(reduced.error());
-  const auto& before_grouping = std::get<pp::DatasetPtr>(reduced->at(0));
-  std::string key = opts->group_by;
-  if (key == "auto") key = any_step(*before_grouping) ? "aliquot" : "identifier";
-  auto& group = pipeline.add(reg, "group", "group", {"reduce"});
-  if (auto ok = group.options.set("key", key); !ok) return fail(ok.error());
-  auto grouped = runner.run(pipeline, "group");
+  auto grouped = detail::reduce_loaded(loaded, *opts, true, &result.warnings);
   if (!grouped) return fail(grouped.error());
-  const pp::DatasetPtr dataset = std::get<pp::DatasetPtr>(grouped->at(0));
-  for (const auto& d : runner.diagnostics()) result.warnings.push_back(d);
+  const pp::DatasetPtr& dataset = *grouped;
 
   pp::ReportOptions report_options;
   report_options.nsigma = opts->sigma;
