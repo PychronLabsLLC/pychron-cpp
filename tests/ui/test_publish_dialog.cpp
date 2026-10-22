@@ -66,12 +66,14 @@ bool has_tab(const PublishDialog& d, const QString& title) {
 struct Finished {
   int count = 0;
   std::vector<pb::StepResult> results;
+  bool release_ok = false;
 };
 std::shared_ptr<Finished> watch(PublishDialog& d) {
   auto got = std::make_shared<Finished>();
-  QObject::connect(&d, &PublishDialog::run_finished, &d, [got](const std::vector<pb::StepResult>& results) {
+  QObject::connect(&d, &PublishDialog::run_finished, &d, [got](const std::vector<pb::StepResult>& results, bool release_ok) {
     ++got->count;
     got->results = results;
+    got->release_ok = release_ok;
   });
   return got;
 }
@@ -89,6 +91,17 @@ PublishDialog::AskRelease named(const std::string& name) {
     pb::ReleaseSpec s;
     s.name = name;
     s.title = "Release " + name;
+    return s;
+  };
+}
+
+// A spec create_release refuses (no licence), which check_plan does not judge.
+PublishDialog::AskRelease unmakeable(const std::string& name) {
+  return [name](const QStringList&, std::size_t) -> std::optional<pb::ReleaseSpec> {
+    pb::ReleaseSpec s;
+    s.name = name;
+    s.title = "Release " + name;
+    s.licence.clear();
     return s;
   };
 }
@@ -465,6 +478,7 @@ class TestPublishDialog : public QObject {
     o.dialog->run_button()->click();
     QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
     QVERIFY(got->results.empty());
+    QVERIFY(got->release_ok);
     QCOMPARE(o.dialog->results()->rowCount(), 1);
     QCOMPARE(o.dialog->results()->item(0, 0)->text(), QStringLiteral("Release"));
     QCOMPARE(state_text(*o.dialog, 0), QStringLiteral("Ok"));
@@ -713,6 +727,113 @@ class TestPublishDialog : public QObject {
     QCOMPARE(filled_read_only, 1);
     QCOMPARE(panel->table()->rowCount(), 3);
     QVERIFY(!QDir(folder).entryList({QStringLiteral("*.xlsx")}, QDir::Files).isEmpty());
+  }
+  void NewReleaseCreationFailureSkipsDestinations() {
+    Open o = open();
+    o.dialog->set_ask_release(unmakeable("broken"));
+    o.dialog->open_new(analyses());
+    o.dialog->show();
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->details_button()->isEnabled(), kWaitMs);
+    o.dialog->details_button()->click();
+    o.dialog->folder_dir()->setText(dir_.filePath(QStringLiteral("broken-out")));
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::Store)->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QVERIFY(!got->release_ok);
+    QCOMPARE(got->results.size(), std::size_t{2});
+    for (const pb::StepResult& step : got->results) {
+      QVERIFY(step.state == StepState::Skipped);
+      QVERIFY2(step.message.starts_with("skipped: release could not be made:"), step.message.c_str());
+    }
+    QVERIFY(o.dialog->new_radio()->isChecked());  // nothing was made to switch to
+    auto releases = store_->releases({});
+    QVERIFY(releases.has_value());
+    QVERIFY(releases->empty());
+  }
+
+  // While a run is under way the EarthBank tab cannot change what runs.
+  void EarthBankPageLockedDuringRun() {
+    pychron::ui::test::EarthbankWorld w;
+    const ps::Uuid r = create("r");
+    Open o = open(w.setup());
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->folder_dir()->setText(dir_.filePath(QStringLiteral("locked-out")));
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    set_action(*panel, Action::ExportXlsx);
+    panel->folder()->setText(dir_.filePath(QStringLiteral("locked-workbooks")));
+    QTRY_COMPARE_WITH_TIMEOUT(panel->table()->rowCount(), 3, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    QVERIFY(panel->action()->isEnabled());
+    // A sample whose kind of age can be chosen.
+    int usable = -1;
+    for (int row = 0; row < panel->table()->rowCount() && usable < 0; ++row)
+      if (panel->preferred_age(row) != nullptr && panel->preferred_age(row)->isEnabled()) usable = row;
+    QVERIFY(usable >= 0);
+    QVERIFY(panel->table()->editTriggers() != QAbstractItemView::NoEditTriggers);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    // The release folder is building: EarthBank waits, and its page is locked.
+    QVERIFY(o.dialog->busy());
+    QVERIFY(!panel->action()->isEnabled());
+    QVERIFY(!panel->preferred_age(usable)->isEnabled());
+    QVERIFY(panel->table()->editTriggers() == QAbstractItemView::NoEditTriggers);
+    QVERIFY(!panel->folder()->isEnabled());
+    QVERIFY(!panel->cancel_button()->isEnabled());
+    QVERIFY(!panel->not_there_button()->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{2});
+    QVERIFY2(got->results[1].state == StepState::Ok, got->results[1].message.c_str());
+    QVERIFY(!panel->read_only());
+    QVERIFY(panel->action()->isEnabled());
+    QVERIFY(panel->preferred_age(usable)->isEnabled());
+    QVERIFY(panel->table()->editTriggers() != QAbstractItemView::NoEditTriggers);
+  }
+
+  // Store makes the release public in the same run; the upload's recheck counts it.
+  void StorePublicThenUploadInOneRun() {
+    pychron::ui::test::EarthbankWorld w;
+    w.signed_up();
+    const ps::Uuid r = create("r");  // a draft
+    Open o = open(w.setup());
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->folder_dir()->setText(dir_.filePath(QStringLiteral("upload-out")));
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::Store)->setChecked(true);
+    o.dialog->store_public()->setChecked(true);
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    bool asked = false;
+    panel->ask_confirm = [&asked](const QString&) {
+      asked = true;
+      return true;
+    };
+    set_action(*panel, Action::Upload);
+    panel->allow_unresolved()->setChecked(true);
+    QTRY_COMPARE_WITH_TIMEOUT(panel->table()->rowCount(), 3, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{3});
+    QVERIFY2(got->results[0].state == StepState::Ok, got->results[0].message.c_str());
+    QVERIFY2(got->results[1].state == StepState::Ok, got->results[1].message.c_str());
+    QVERIFY2(got->results[2].state == StepState::Ok,
+             qPrintable(QString::fromStdString(got->results[2].message) + QLatin1Char('\n') +
+                        panel->result_pane()->toPlainText()));
+    QVERIFY(asked);
+    QVERIFY(record_posts(w.bank) > 0);
+    const ps::ReleaseRow row = release_row("r");
+    QCOMPARE(row.state, ps::ReleaseState::Published);
+    QCOMPARE(row.visibility, ps::Visibility::Public);
   }
 };
 

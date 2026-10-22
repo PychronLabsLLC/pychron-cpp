@@ -358,7 +358,7 @@ EarthbankPublishPanel::EarthbankPublishPanel(std::vector<processing::AnalysisPtr
         return;
       }
     }
-    cancel_->setEnabled(true);
+    cancel_->setEnabled(!locked_);
     worker_->upload();
   });
   connect(worker_, &EarthbankWorker::uploaded, this, [this](const eb::UploadReport& report) {
@@ -395,6 +395,11 @@ void EarthbankPublishPanel::cancel() {
   worker_->cancel();
   cancel_->setEnabled(false);
   say(tr("Stopping after the record that is being sent…"));
+}
+
+void EarthbankPublishPanel::set_locked(bool locked) {
+  locked_ = locked;
+  update_controls();
 }
 
 void EarthbankPublishPanel::set_read_only(bool read_only) {
@@ -734,8 +739,8 @@ void EarthbankPublishPanel::update_controls() {
 
   // Not while any request is out, a package list among them: one thing at a time.
   const bool quiet = worker_->outstanding() == 0;
-  if (!running_) cancel_->setEnabled(false);
-  action_->setEnabled(!running_);
+  if (!running_ || locked_) cancel_->setEnabled(false);
+  action_->setEnabled(!running_ && !locked_);
   table_->setEnabled(idle);
   table_->setEditTriggers(read_only_ ? QAbstractItemView::NoEditTriggers
                                   : QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed |
@@ -754,15 +759,16 @@ void EarthbankPublishPanel::update_controls() {
   }
   export_box_->setVisible(action == Action::ExportXlsx);
   upload_box_->setVisible(action == Action::Upload);
-  profile_->setEnabled(network && idle);
-  package_->setEnabled(action == Action::Upload && idle);
-  package_button_->setEnabled(network && idle && current_profile().has_value());
-  password_->setEnabled(network && idle);
+  profile_->setEnabled(network && idle && !locked_);
+  package_->setEnabled(action == Action::Upload && idle && !locked_);
+  package_button_->setEnabled(network && idle && !locked_ && current_profile().has_value());
+  password_->setEnabled(network && idle && !locked_);
   show_folder_->setEnabled(!last_folder_.isEmpty());
   bool id_ok = false;
   const qlonglong id = in_doubt_id_->text().trimmed().toLongLong(&id_ok);
-  there_->setEnabled(idle && quiet && id_ok && id > 0);
-  not_there_->setEnabled(idle && quiet);
+  in_doubt_id_->setEnabled(!locked_);
+  there_->setEnabled(idle && quiet && !locked_ && id_ok && id > 0);
+  not_there_->setEnabled(idle && quiet && !locked_);
   emit controls_changed();
 }
 

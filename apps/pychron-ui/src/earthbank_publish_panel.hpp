@@ -95,6 +95,11 @@ class EarthbankPublishPanel : public QWidget {
   // and the buttons that only read are unchanged.
   void set_read_only(bool read_only);
   bool read_only() const noexcept { return read_only_; }
+  // The host's run drives the panel: the action, the account fields, the
+  // panel's own Cancel and the in-doubt answer cannot be used (the host
+  // cancels through cancel()). Read-only is set apart, with set_read_only.
+  void set_locked(bool locked);
+  bool locked() const noexcept { return locked_; }
 
   // Whether a start would run now: the rows are in, nothing is running or out,
   // and nothing in the fields keeps the action from running (hint() empty).
@@ -188,6 +193,7 @@ class EarthbankPublishPanel : public QWidget {
   bool surveyed_ = false;
   bool running_ = false;
   bool read_only_ = false;
+  bool locked_ = false;
   bool agreed_ = false;       // this run finishes an upload already agreed to
   QString last_folder_;       // of the last export that wrote something
   QString last_line_;         // the last line the result pane was given

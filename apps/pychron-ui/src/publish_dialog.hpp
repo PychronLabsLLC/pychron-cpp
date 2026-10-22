@@ -143,9 +143,10 @@ class PublishDialog : public QDialog {
   QProgressBar* progress() const noexcept { return progress_; }
 
  Q_SIGNALS:
-  // A run is over: the result of each ticked destination, in run order
-  // (empty for a run that only made a new release).
-  void run_finished(const std::vector<publish::StepResult>& results);
+  // A run is over: `steps`, the result of each ticked destination in run
+  // order (empty when none was ticked); `release_ok`, false only when the run
+  // was to make a new release and could not (every step is then Skipped).
+  void run_finished(const std::vector<publish::StepResult>& steps, bool release_ok);
 
  protected:
   void showEvent(QShowEvent* event) override;
@@ -169,10 +170,15 @@ class PublishDialog : public QDialog {
     bool made_public = false;                  // Store ran Ok with make_public
     bool cancelled = false;
     EarthBank earthbank = EarthBank::Idle;
+    bool panel_locked = false;     // the EarthBank tab is locked by this run
+    bool panel_read_only = false;  // what it was before
   };
 
   bool current(int run) const noexcept { return running_ != nullptr && running_->id == run; }
   void set_running(bool on);
+  // While a run is under way the EarthBank tab cannot change what runs:
+  // read-only and locked; afterwards as it was.
+  void lock_panel(bool on);
   void set_row(int row, const QString& name, publish::StepState state, const QString& message);
   void settle(publish::StepState state, const std::string& message);  // the step at next; next moves on
   void next_step();

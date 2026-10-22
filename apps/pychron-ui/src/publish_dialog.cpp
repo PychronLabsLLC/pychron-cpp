@@ -466,7 +466,7 @@ void PublishDialog::update_tabs() {
   earthbank_note_->setVisible(fresh);
   if (destination(pb::Destination::EarthBank)->isChecked() && isVisible()) ensure_panel();
   if (panel_ != nullptr) {
-    panel_->set_read_only(fresh);
+    if (!busy()) panel_->set_read_only(fresh);  // a run holds it read-only (lock_panel)
     if (fresh && !dataset_for_.isEmpty() && !busy()) {
       // The panel is filled with the new release when the run makes it.
       dataset_for_.clear();
@@ -501,6 +501,7 @@ void PublishDialog::ensure_panel() {
     progress_->setValue(std::min(done, std::max(total, 1)));
   });
   connect(panel_->action(), &QComboBox::currentIndexChanged, this, [this] { schedule_check(); });
+  lock_panel(true);  // made by a run's EarthBank step
   load_dataset();
   schedule_check();  // the plan's mode is the panel's now
 }
@@ -539,6 +540,7 @@ void PublishDialog::load_dataset() {
 }
 
 void PublishDialog::schedule_check() {
+  if (busy()) return;  // the run is of the plan as checked; finish() checks again
   ++generation_;
   checked_ = false;
   update_run();
@@ -546,6 +548,7 @@ void PublishDialog::schedule_check() {
 }
 
 void PublishDialog::check() {
+  if (busy()) return;
   const int generation = generation_;
   auto p = plan();
   if (!p) {
@@ -631,6 +634,7 @@ void PublishDialog::run() {
   for (pb::Destination d : started->order) started->results.push_back({d, pb::StepState::Pending, {}});
   running_ = std::move(started);
   close_when_done_ = false;
+  check_timer_->stop();
 
   results_->setRowCount(0);
   const auto* fresh = std::get_if<pb::NewRelease>(&running_->plan.release);
@@ -698,11 +702,25 @@ void PublishDialog::set_running(bool on) {
   destination_box_->setEnabled(!on);
   folder_page_->setEnabled(!on);
   store_page_->setEnabled(!on);
+  lock_panel(on);
   cancel_->setText(on ? tr("Cancel") : tr("Close"));
   cancel_->setEnabled(true);
   results_->show();
   progress_->setVisible(on);
   update_run();
+}
+
+void PublishDialog::lock_panel(bool on) {
+  if (panel_ == nullptr || running_ == nullptr || running_->panel_locked == on) return;
+  if (on) {
+    running_->panel_read_only = panel_->read_only();
+    panel_->set_read_only(true);  // for a new release, the remembered choices (spec 6.2)
+    panel_->set_locked(true);
+  } else {
+    panel_->set_locked(false);
+    panel_->set_read_only(running_->panel_read_only);
+  }
+  running_->panel_locked = on;
 }
 
 void PublishDialog::set_row(int row, const QString& name, pb::StepState state, const QString& message) {
@@ -836,7 +854,6 @@ void PublishDialog::run_store() {
 void PublishDialog::run_earthbank() {
   Run& r = *running_;
   ensure_panel();
-  if (r.created) panel_->set_read_only(true);  // per-sample choices are the remembered ones (spec 6.2)
   progress_->setRange(0, 0);
   // The panel holds this release's analyses, or they are on their way.
   if (!r.created && dataset_for_ == r.release && dataset_loading_) {
@@ -948,6 +965,7 @@ void PublishDialog::panel_finished(bool ok, const QString& message) {
 }
 
 void PublishDialog::finish() {
+  lock_panel(false);
   std::unique_ptr<Run> done = std::move(running_);
   const QPointer<PublishDialog> alive(this);
   set_running(false);
@@ -957,7 +975,8 @@ void PublishDialog::finish() {
   } else {
     schedule_check();  // what the run changed (a published release) is judged again
   }
-  Q_EMIT run_finished(done->results);
+  const bool release_ok = std::holds_alternative<pb::ExistingRelease>(done->plan.release) || done->created;
+  Q_EMIT run_finished(done->results, release_ok);
   if (!alive) return;
   if (close_when_done_) {
     close_when_done_ = false;
