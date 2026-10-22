@@ -407,7 +407,14 @@ bool EarthbankPublishPanel::can_run() const {
 }
 
 void EarthbankPublishPanel::start(Action action) {
-  if (!surveyed_ || running_) return;
+  if (running_) {
+    emit finished(false, tr("Already running."));
+    return;
+  }
+  if (!surveyed_) {
+    emit finished(false, tr("Not ready."));
+    return;
+  }
   action_->setCurrentIndex(action_->findData(static_cast<int>(action)));
   if (!can_run()) {
     const QString why = hint_text();

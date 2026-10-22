@@ -703,6 +703,134 @@ class EarthbankPublishTest : public QObject {
     QVERIFY(clock.elapsed() < 5000);
   }
 
+  void panel_finished_signal_carries_the_result() {
+    World w;
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    QTemporaryDir out;
+    QVERIFY(out.isValid());
+    d->folder()->setText(out.path());
+    QSignalSpy done(d.get(), &EarthbankPublishPanel::finished);
+    d->start(Action::ExportXlsx);
+    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    QTest::qWait(50);
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(done.first().at(0).toBool(), true);
+    QCOMPARE(done.first().at(1).toString(), d->result_pane()->toPlainText().section(QLatin1Char('\n'), -1, -1));
+    QVERIFY(done.first().at(1).toString().contains(QStringLiteral("workbook")));
+    QCOMPARE(d->action()->currentData().toInt(), static_cast<int>(Action::ExportXlsx));
+  }
+
+  void panel_finished_once_on_a_failed_run() {
+    World w;
+    w.signed_up();
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    d->password()->setText(QStringLiteral("not-the-password"));
+    QSignalSpy done(d.get(), &EarthbankPublishPanel::finished);
+    d->start(Action::Upload);
+    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    QTest::qWait(50);
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(done.first().at(0).toBool(), false);
+  }
+
+  void panel_finished_once_on_a_declined_upload() {
+    World w;
+    w.signed_up();
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    d->ask_confirm = [](const QString&) { return false; };
+    QSignalSpy done(d.get(), &EarthbankPublishPanel::finished);
+    d->start(Action::Upload);
+    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    QTest::qWait(50);
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(done.first().at(0).toBool(), false);
+    QCOMPARE(done.first().at(1).toString(), QStringLiteral("Nothing was sent."));
+  }
+
+  void panel_finished_once_on_cancel_and_start_while_running_is_refused() {
+    World w;
+    w.signed_up();
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    QSignalSpy done(d.get(), &EarthbankPublishPanel::finished);
+    w.gate.hold_at("POST", "/api/arar/ArArMeasurement");
+    d->start(Action::Upload);
+    QTRY_VERIFY_WITH_TIMEOUT(w.gate.waiting(), 20000);
+    d->start(Action::Preflight);  // while the upload is out
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(done.first().at(0).toBool(), false);
+    QCOMPARE(done.first().at(1).toString(), QStringLiteral("Already running."));
+    QVERIFY(d->busy());
+    d->cancel();
+    w.gate.release();
+    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
+    QTest::qWait(50);
+    QCOMPARE(done.count(), 2);
+    QCOMPARE(done.last().at(0).toBool(), false);
+  }
+
+  void panel_start_that_cannot_run_finishes_false_and_runs_nothing() {
+    World w;
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    d->folder()->clear();
+    QSignalSpy done(d.get(), &EarthbankPublishPanel::finished);
+    d->start(Action::ExportXlsx);
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(done.first().at(0).toBool(), false);
+    QCOMPARE(done.first().at(1).toString(), QStringLiteral("Name the folder the workbooks go in."));
+    QVERIFY(!d->busy());
+    QVERIFY(d->result_pane()->toPlainText().isEmpty());
+  }
+
+  void panel_start_before_the_rows_are_in_finishes_false() {
+    World w;
+    auto d = w.dialog();
+    QVERIFY(!d->ready());
+    QSignalSpy done(d.get(), &EarthbankPublishPanel::finished);
+    d->start(Action::ExportXlsx);
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(done.first().at(0).toBool(), false);
+    QCOMPARE(done.first().at(1).toString(), QStringLiteral("Not ready."));
+    QTRY_VERIFY(d->ready());
+    d->set_analyses(publishable());  // not surveyed again yet
+    d->start(Action::ExportXlsx);
+    QCOMPARE(done.count(), 2);
+    QCOMPARE(done.last().at(1).toString(), QStringLiteral("Not ready."));
+    QTRY_VERIFY(d->ready());
+  }
+
+  void panel_set_analyses_fills_the_table() {
+    World w;
+    auto d = w.dialog(AnalysisList{});
+    QTRY_VERIFY(d->ready());
+    QCOMPARE(d->table()->rowCount(), 0);
+    d->set_analyses(publishable());
+    QTRY_VERIFY(d->table()->rowCount() == 2 && d->ready());
+    QVERIFY(row_of(*d, QStringLiteral("S-FUS")) >= 0);
+  }
+
+  void panel_read_only_disables_the_cells_and_options() {
+    World w;
+    auto d = w.dialog();
+    QTRY_VERIFY(d->ready());
+    const int row = row_of(*d, QStringLiteral("S-STEP"));
+    QVERIFY(d->preferred_age(row)->isEnabled());
+    QVERIFY(d->setup_name()->isEnabled());
+    d->set_read_only(true);
+    QVERIFY(!d->preferred_age(row)->isEnabled());
+    QVERIFY(!d->setup_name()->isEnabled());
+    QVERIFY(!d->per_sample()->isEnabled());
+    QVERIFY(d->result_pane()->isEnabled());
+    QVERIFY(d->table()->editTriggers() == QAbstractItemView::NoEditTriggers);
+    d->set_read_only(false);
+    QVERIFY(d->preferred_age(row)->isEnabled());
+    QVERIFY(d->setup_name()->isEnabled());
+  }
+
   void the_workspace_opens_the_dialog_on_the_selection() {
     World w;
     pp::MemorySource source(eb::testing::both_samples());

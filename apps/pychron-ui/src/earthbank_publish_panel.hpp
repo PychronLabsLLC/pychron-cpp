@@ -83,10 +83,11 @@ class EarthbankPublishPanel : public QWidget {
   // while a run is under way.
   void set_analyses(std::vector<processing::AnalysisPtr> analyses);
 
-  // Sets the action and runs it, as Run does. Does nothing while a run is
-  // under way or the rows are not in; when the action cannot run as things
-  // stand (no profile, no folder, no sample to publish) it ends at once with
-  // finished(false, the reason). finished() follows every start, once.
+  // Sets the action and runs it, as Run does. finished() follows every start,
+  // once: when a run is under way ("Already running."), the rows are not in
+  // ("Not ready.") or the action cannot run as things stand (no profile, no
+  // folder, no sample to publish: the hint) nothing runs and it is
+  // finished(false, the reason) at once.
   void start(Action action);
   // Stops an upload after the record that is out, as the Cancel button does.
   void cancel();
