@@ -198,7 +198,7 @@ UntracedRun run_untraced(config::LoggingConfig lc) {
 }  // namespace
 
 TEST(TransportFactory, UntracedTransportWireLogsWhenRuleEnablesTrace) {
-  config::LoggingConfig lc;  // default level info
+  config::LoggingConfig lc;  // default level debug
   lc.levels.emplace_back("*.wire", LogLevel::Trace);
   const auto run = run_untraced(lc);
   ASSERT_EQ(run.wire.size(), 2u);

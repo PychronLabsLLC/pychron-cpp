@@ -678,8 +678,10 @@ class TestPreferences : public QObject {
     QCOMPARE(page->levels()->item(0, 0)->text(), QStringLiteral("scheduler"));
     QCOMPARE(page->level_at(0)->currentText(), QStringLiteral("debug"));
     QCOMPARE(page->max_files()->value(), 3);
-    QCOMPARE(page->max_size()->value(), 10);
+    QCOMPARE(page->max_size()->value(), 50);
     QVERIFY(page->folder()->text().isEmpty());
+    // An unset folder stays unset when nothing is typed: a plain save must not turn the file off.
+    QVERIFY(!page->value().dir.has_value());
     QVERIFY(!page->echo()->isChecked());
 
     page->default_level()->setCurrentText(QStringLiteral("debug"));

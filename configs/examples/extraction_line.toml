@@ -12,7 +12,7 @@ scan_interval_ms = 1000
 # dir = "~/pychron-logs"
 # max_size_mb = 50
 # max_files = 10
-# default_level = "debug"
+default_level = "info"   # the built-in default is "debug"
 # dock_level = "info"   # what the log dock shows
 # echo_stderr = false
 

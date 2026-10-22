@@ -116,6 +116,7 @@ name = "jan"
 dir = "/var/log/pychron"
 max_files = 3
 default_level = "warn"
+dock_level = "warn"
 [logging.levels]
 scheduler = "debug"
 "*.wire" = "trace"
@@ -154,6 +155,18 @@ TEST(ConfigOverride, LocalLoggingKeysWinAndTheRestStay) {
   EXPECT_EQ(r.config->logging.max_files, 3);  // the shared file's
   EXPECT_EQ(r.config->logging.dir, std::filesystem::path("/var/log/pychron"));
   EXPECT_EQ(r.config->logging.levels.size(), 2u);
+}
+
+TEST(ConfigOverride, LocalDockLevelWinsAndWhenOmittedTheSharedOneStays) {
+  const auto won = load_over_logging("[logging]\ndock_level = \"error\"\n");
+  ASSERT_TRUE(won.ok());
+  EXPECT_EQ(won.config->logging.dock_level, LogLevel::Error);
+  EXPECT_EQ(won.config->logging.max_files, 3);  // the shared file's
+  EXPECT_EQ(won.config->logging.default_level, LogLevel::Warn);
+
+  const auto stays = load_over_logging("[logging]\nmax_size_mb = 50\n");
+  ASSERT_TRUE(stays.ok());
+  EXPECT_EQ(stays.config->logging.dock_level, LogLevel::Warn);  // the shared file's
 }
 
 // The local table is the whole list: a level the shared file sets can be

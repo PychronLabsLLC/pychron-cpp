@@ -150,7 +150,13 @@ config::LoggingConfig LoggingPage::value() const {
     }
     if (!replaced) out.levels.emplace_back(pattern, level);
   }
-  out.dir = folder_->text().trimmed().toStdString();
+  // An empty field is the app's default folder, what set() showed for an unset dir.
+  const std::string folder = folder_->text().trimmed().toStdString();
+  if (folder.empty()) {
+    out.dir = std::nullopt;
+  } else {
+    out.dir = folder;
+  }
   out.max_size_mb = max_size_->value();
   out.max_files = max_files_->value();
   out.echo_stderr = echo_->isChecked();
