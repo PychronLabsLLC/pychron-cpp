@@ -1,0 +1,28 @@
+# Logging for every pychron program that reads this install folder
+# (pychron-ui, elctl). Optional: every key below shows its default.
+# logging.local.toml beside this file overrides it for this computer only.
+# Levels: trace|debug|info|warn|error.
+
+# Folder of the log file. Unset: <install>/logs for an install, else the
+# system's log folder. dir = "" turns the file off.
+# dir = "~/pychron-logs"
+
+# Size at which the file rolls over, and how many rolled files are kept.
+# max_size_mb = 50
+# max_files = 10
+
+# Level of loggers with no entry in [levels] below.
+# default_level = "debug"
+
+# What the log dock shows.
+# dock_level = "info"
+
+# Also write each record to stderr.
+# echo_stderr = false
+
+# Per-logger overrides, by name glob. Each transport logs its bytes at trace
+# to "<transport name>.wire". A [levels] table here replaces the whole list
+# the line's own [logging.levels] gave.
+# [levels]
+# "*.wire" = "trace"
+# "scheduler" = "debug"

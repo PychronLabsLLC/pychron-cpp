@@ -270,6 +270,9 @@ class ConfigBuilder {
  public:
   ConfigBuilder(std::string file, std::vector<Diagnostic>& out) : p_(file, out), file_(std::move(file)) {}
 
+  // The [logging] parser alone, for a file that holds just those keys.
+  void read_logging(const toml::table& t, LoggingConfig& l) { parse_logging(t, l); }
+
   SystemConfig build(const toml::table& root, const toml::table* local) {
     SystemConfig c;
     c.source_file = file_;
@@ -874,6 +877,18 @@ LoadReport load_report(const std::filesystem::path& path) {
   return load_report_from_string(*text, main_name,
                                  local_text ? std::optional<std::string_view>(*local_text) : std::nullopt,
                                  local_path.generic_string());
+}
+
+Result<void> parse_logging_text(std::string_view toml, std::string_view name, LoggingConfig& into) {
+  std::vector<Diagnostic> diagnostics;
+  const auto root = parse_toml(toml, name, diagnostics);
+  if (root) {
+    LoggingConfig staged = into;
+    ConfigBuilder(std::string(name), diagnostics).read_logging(*root, staged);
+    if (diagnostics.empty()) into = std::move(staged);
+  }
+  if (!diagnostics.empty()) return fail(to_error(diagnostics));
+  return {};
 }
 
 Result<SystemConfig> load_system_config(const std::filesystem::path& path) {

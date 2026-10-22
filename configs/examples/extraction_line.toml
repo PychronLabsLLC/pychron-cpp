@@ -6,22 +6,9 @@
 name = "example"
 scan_interval_ms = 1000
 
-# Optional. With no `dir` the apps log to a default folder; `dir = ""` turns the
-# file off. Levels: trace|debug|info|warn|error.
-[logging]
-# dir = "~/pychron-logs"
-# max_size_mb = 50
-# max_files = 10
-# default_level = "debug"
-# dock_level = "info"   # what the log dock shows
-# echo_stderr = false
-
-# Per-logger overrides, by name glob. Each transport logs its bytes at trace
-# to "<transport name>.wire" (e.g. "valve_bus.wire"), so this shows all wire
-# traffic; "scheduler" and "extraction_line" are the line's own loggers.
-# [logging.levels]
-# "*.wire" = "trace"
-# "scheduler" = "debug"
+# Logging is set in logging.toml in the install folder (see
+# configs/examples/logging.toml). A [logging] table here, and in
+# extraction_line.local.toml, is still read, and logging.toml overrides it.
 
 # Optional, and off unless enabled: an HTTP endpoint (GET /metrics) that the
 # lab's Prometheus scrapes. Read-only; see docs/observability.md.

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "pychron/core/config/diagnostic.hpp"
+#include "pychron/core/config/logging_config.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 
@@ -44,5 +45,10 @@ Result<SystemConfig> load_system_config(const std::filesystem::path& path);
 Result<SystemConfig> load_system_config_from_string(std::string_view main_toml, std::string_view main_name,
                                                     std::optional<std::string_view> local_toml = std::nullopt,
                                                     std::string_view local_name = "<local>");
+
+// Reads the keys of a [logging] table from the top level of `toml` into
+// `into`, over what it holds; the parser of the line's [logging] table, so the
+// keys and their checks are the same. Diagnostics name `name`.
+Result<void> parse_logging_text(std::string_view toml, std::string_view name, LoggingConfig& into);
 
 }  // namespace pychron::config

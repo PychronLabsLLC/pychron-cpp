@@ -157,10 +157,8 @@ TEST_F(ElctlTest, LoggingConfigCreatesLogFile) {
     std::ifstream f(path("extraction_line.toml"));
     text.assign(std::istreambuf_iterator<char>(f), {});
   }
-  const std::string table = "[logging]\n";
-  auto at = text.find(table);
-  ASSERT_NE(at, std::string::npos);
-  text.insert(at + table.size(), "dir = '" + logs.string() + "'\n");
+  // The example line has no [logging] table now (logging.toml holds it).
+  text += "\n[logging]\ndir = '" + logs.string() + "'\n";
   write("extraction_line.toml", text);
 
   auto o = run({"--sim", "probe"});
