@@ -23,6 +23,7 @@ add_executable(pychron_core_tests
   test_config_override.cpp
   test_local_file.cpp
   test_logging_file.cpp
+  test_log_dir.cpp
   test_http.cpp
 )
 
