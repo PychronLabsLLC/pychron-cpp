@@ -125,6 +125,7 @@ struct WireCapture {
     sub = bus.subscribe<Log>([this](const Log& e) { got.push_back(e); });
     config::LoggingConfig cfg;
     cfg.default_level = level;
+    cfg.dock_level = LogLevel::Trace;  // the wire records are read off the bus
     auto h = LogHub::create(cfg, clock, &bus);
     hub = *h;
   }

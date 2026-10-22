@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
@@ -36,6 +37,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -128,6 +130,82 @@ class BarrierSink final : public spdlog::sinks::base_sink<std::mutex> {
   std::uint64_t reached_ = 0;
 };
 
+// Advisory exclusive lock on a file, held from a successful acquire() until
+// release() or destruction. POSIX flock() and Windows LockFileEx both lock per
+// open file description, so a second lock in the same process is refused too.
+class FileLock {
+ public:
+  enum class Outcome { Held, Busy, Failed };
+
+  FileLock() = default;
+  ~FileLock() { release(); }
+  FileLock(const FileLock&) = delete;
+  FileLock& operator=(const FileLock&) = delete;
+  FileLock(FileLock&&) = delete;
+  FileLock& operator=(FileLock&&) = delete;
+
+  Outcome acquire(const std::filesystem::path& path) noexcept {
+    release();
+#ifdef _WIN32
+    const HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                 OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return Outcome::Failed;
+    OVERLAPPED overlapped{};
+    if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped)) {
+      handle_ = h;
+      return Outcome::Held;
+    }
+    const DWORD error = GetLastError();
+    CloseHandle(h);
+    return error == ERROR_LOCK_VIOLATION ? Outcome::Busy : Outcome::Failed;
+#else
+    const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (fd < 0) return Outcome::Failed;
+    if (::flock(fd, LOCK_EX | LOCK_NB) == 0) {
+      fd_ = fd;
+      return Outcome::Held;
+    }
+    const int error = errno;
+    ::close(fd);
+    return error == EWOULDBLOCK ? Outcome::Busy : Outcome::Failed;
+#endif
+  }
+
+  // Closing the descriptor (handle) drops the lock.
+  void release() noexcept {
+#ifdef _WIN32
+    if (handle_ != INVALID_HANDLE_VALUE) CloseHandle(handle_);
+    handle_ = INVALID_HANDLE_VALUE;
+#else
+    if (fd_ >= 0) ::close(fd_);
+    fd_ = -1;
+#endif
+  }
+
+ private:
+#ifdef _WIN32
+  HANDLE handle_ = INVALID_HANDLE_VALUE;
+#else
+  int fd_ = -1;
+#endif
+};
+
+std::string process_id() {
+#ifdef _WIN32
+  return std::to_string(GetCurrentProcessId());
+#else
+  return std::to_string(::getpid());
+#endif
+}
+
+// What a write uses for one record: the bus (null = none) and the clock
+// attached at that moment. Holding it keeps an attachment's destructor waiting.
+struct Route {
+  std::shared_ptr<SignalBus> bus;
+  std::shared_ptr<const Clock> clock;
+};
+
 }  // namespace
 
 namespace {
@@ -136,11 +214,32 @@ void refresh_crash_output(const LogHub::Impl& impl) noexcept;
 }  // namespace
 
 struct LogHub::Impl {
-  const Clock* clock = nullptr;
-  SignalBus* bus = nullptr;
-  SignalBus::Subscription bus_failures;  // handlers of the bus that threw
+  // Given to create(); fixed for the hub's life.
+  const Clock* base_clock = nullptr;
+  SignalBus* base_bus = nullptr;
+  SignalBus::Subscription bus_failures;  // handlers of the create() bus that threw
   bool echo_stderr = false;
+  LogLevel dock_level = LogLevel::Info;
   std::mutex echo_mutex;
+
+  // Attachments. `route_mutex` guards the members below it; it is never held
+  // across a publish, a write or a subscription change. A write copies the
+  // two refs (pin); an attached ref's deleter marks its id in `pending`
+  // released, and the attachment's destructor waits (real time) for that.
+  // Declared before the refs: a deleter may run while they are destroyed.
+  std::mutex route_mutex;
+  std::condition_variable route_cv;
+  std::vector<std::pair<std::uint64_t, bool>> pending;  // attachment id, released
+  std::atomic<std::uint64_t> next_attachment{0};
+  std::shared_ptr<SignalBus> base_bus_ref;        // no-op deleter; may hold null
+  std::shared_ptr<const Clock> base_clock_ref;    // no-op deleter
+  std::shared_ptr<SignalBus> bus_ref;             // what writes publish on now
+  std::shared_ptr<const Clock> clock_ref;         // what writes stamp with now
+  std::uint64_t bus_id = 0;                       // 0: create()'s
+  std::uint64_t clock_id = 0;
+  SignalBus::Subscription attached_failures;      // handlers of the attached bus that threw
+
+  FileLock file_lock;  // on `<dir>/<file_name>.lock`, for the hub's life
 
   // Level rules. `epoch` is bumped (under the unique lock) on every change;
   // hub loggers cache (level, epoch) and re-resolve when it moves.
@@ -190,8 +289,8 @@ struct LogHub::Impl {
 
   void report_startup_error(const std::string& message) noexcept {
     try {
-      if (bus != nullptr) {
-        bus->publish(Log{LogLevel::Error, "logging", message, clock->now()});
+      if (base_bus != nullptr) {
+        base_bus->publish(Log{LogLevel::Error, "logging", message, base_clock->now()});
       } else {
         std::cerr << "[error] logging: " << message << '\n';
       }
@@ -223,6 +322,74 @@ struct LogHub::Impl {
     return best != nullptr ? best->second : default_level;
   }
 
+  Route pin() {
+    std::lock_guard lock(route_mutex);
+    return {bus_ref, clock_ref};
+  }
+
+  // Deleter of an attached ref: the last write using it is done.
+  void release(std::uint64_t id) noexcept {
+    try {
+      {
+        std::lock_guard lock(route_mutex);
+        for (auto& entry : pending) {
+          if (entry.first == id) entry.second = true;
+        }
+      }
+      route_cv.notify_all();
+    } catch (...) {  // NOLINT(bugprone-empty-catch): a mutex that cannot be locked; nothing else to do
+    }
+  }
+
+  // Puts back create()'s bus or clock if attachment `id` is still the
+  // current one, then waits until no write holds what `id` attached.
+  void detach(std::uint64_t id) noexcept {
+    try {
+      std::shared_ptr<SignalBus> old_bus;
+      std::shared_ptr<const Clock> old_clock;
+      SignalBus::Subscription old_failures;
+      {
+        std::lock_guard lock(route_mutex);
+        if (bus_id == id) {
+          old_bus = std::exchange(bus_ref, base_bus_ref);
+          old_failures = std::move(attached_failures);
+          bus_id = 0;
+        }
+        if (clock_id == id) {
+          old_clock = std::exchange(clock_ref, base_clock_ref);
+          clock_id = 0;
+        }
+      }
+      // Outside the lock: the last ref's deleter takes it.
+      old_failures.reset();
+      old_bus.reset();
+      old_clock.reset();
+
+      std::unique_lock lock(route_mutex);
+      auto entry = [&] {
+        return std::find_if(pending.begin(), pending.end(),
+                            [id](const auto& p) { return p.first == id; });
+      };
+      route_cv.wait(lock, [&] {
+        const auto it = entry();
+        return it == pending.end() || it->second;
+      });
+      if (const auto it = entry(); it != pending.end()) pending.erase(it);
+    } catch (...) {  // NOLINT(bugprone-empty-catch): a destructor has no one to tell
+    }
+  }
+
+  // A ref to `target` whose deleter releases attachment `id`, registered in
+  // `pending` so detach(id) can wait for it.
+  template <class T>
+  std::shared_ptr<T> attached_ref(T& target, std::uint64_t id) {
+    {
+      std::lock_guard lock(route_mutex);
+      pending.emplace_back(id, false);
+    }
+    return std::shared_ptr<T>(&target, [this, id](T*) noexcept { release(id); });
+  }
+
   // Runs entirely on the calling thread apart from the file enqueue, so bus
   // subscribers may log (even at error) without deadlocking the writer.
   void write(LogLevel level, std::string_view name, std::string_view message) noexcept {
@@ -233,12 +400,23 @@ struct LogHub::Impl {
     } leave{in_flight};
     if (!alive.load()) return;
 
+    // Declared after `leave`: released before this write counts as done, so
+    // the hub (and the deleters' state) is still there when it is.
+    Route route;
+    try {
+      route = pin();
+    } catch (...) {
+      route.clock = base_clock_ref;  // a copy of a ref never throws
+    }
+    const Clock& clock = *route.clock;
+
     try {
       std::string payload;
       payload.reserve(name.size() + 2 + message.size());
       payload.append(name).append(": ").append(message);
       // Raw string_view overload: the message is never a format string.
-      logger->log(to_spdlog(level), spdlog::string_view_t(payload.data(), payload.size()));
+      logger->log(clock.wall_now(), spdlog::source_loc{}, to_spdlog(level),
+                  spdlog::string_view_t(payload.data(), payload.size()));
       if (level >= LogLevel::Error) sync_flush();
     } catch (const std::exception& e) {
       report_spdlog_error(e.what());
@@ -253,9 +431,9 @@ struct LogHub::Impl {
       }
     }
 
-    if (bus != nullptr) {
+    if (route.bus != nullptr && level >= dock_level) {
       try {
-        bus->publish(Log{level, std::string(name), std::string(message), clock->now()});
+        route.bus->publish(Log{level, std::string(name), std::string(message), clock.now()});
       } catch (...) {  // NOLINT(bugprone-empty-catch): a subscriber's failure is not the logger's
       }
     }
@@ -286,7 +464,8 @@ struct LogHub::Impl {
     try {
       std::string payload = "pychron: ";
       payload.append(text);
-      logger->log(spdlog::level::err, spdlog::string_view_t(payload.data(), payload.size()));
+      logger->log(base_clock->wall_now(), spdlog::source_loc{}, spdlog::level::err,
+                  spdlog::string_view_t(payload.data(), payload.size()));
       if (echo_stderr) {
         std::lock_guard lock(echo_mutex);
         std::cerr << "[error] " << payload << '\n';
@@ -321,6 +500,22 @@ struct LogHub::Impl {
 };
 
 namespace {
+
+// A subscriber of `bus` that throws is otherwise silent. Its first failure is
+// written, then the 10th, the 100th...: one that throws at every reading must
+// not fill the log, and this record is itself an event on the bus.
+SignalBus::Subscription subscribe_failures(SignalBus& bus, const std::shared_ptr<LogHub::Impl>& impl) {
+  return bus.subscribe<HandlerFailed>([weak = std::weak_ptr<LogHub::Impl>(impl)](const HandlerFailed& e) {
+    std::uint64_t power = 1;
+    while (power < e.count && power <= e.count / 10) power *= 10;
+    if (e.count != power) return;
+    const auto self = weak.lock();
+    if (!self) return;
+    std::string message = "a handler of " + e.event + " threw: " + e.what;
+    if (e.count > 1) message += " (" + std::to_string(e.count) + " times so far)";
+    self->write(LogLevel::Error, "bus", message);
+  });
+}
 
 // ---- Crash handlers (spec 4.5) --------------------------------------------
 
@@ -555,32 +750,42 @@ void LogHub::install_crash_handlers() {
 Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& config,
                                                const Clock& clock, SignalBus* bus) {
   auto impl = std::make_shared<Impl>();
-  impl->clock = &clock;
-  impl->bus = bus;
-  if (bus != nullptr) {
-    // A subscriber that throws is otherwise silent. Its first failure is
-    // written, then the 10th, the 100th...: one that throws at every reading
-    // must not fill the log, and this record is itself an event on the bus.
-    impl->bus_failures = bus->subscribe<HandlerFailed>([weak = std::weak_ptr<Impl>(impl)](const HandlerFailed& e) {
-      std::uint64_t power = 1;
-      while (power < e.count && power <= e.count / 10) power *= 10;
-      if (e.count != power) return;
-      const auto self = weak.lock();
-      if (!self) return;
-      std::string message = "a handler of " + e.event + " threw: " + e.what;
-      if (e.count > 1) message += " (" + std::to_string(e.count) + " times so far)";
-      self->write(LogLevel::Error, "bus", message);
-    });
-  }
+  impl->base_clock = &clock;
+  impl->base_bus = bus;
+  impl->base_clock_ref = std::shared_ptr<const Clock>(&clock, [](const Clock*) noexcept {});
+  impl->base_bus_ref = std::shared_ptr<SignalBus>(bus, [](SignalBus*) noexcept {});
+  impl->clock_ref = impl->base_clock_ref;
+  impl->bus_ref = impl->base_bus_ref;
+  if (bus != nullptr) impl->bus_failures = subscribe_failures(*bus, impl);
   impl->echo_stderr = config.echo_stderr;
+  impl->dock_level = config.dock_level;
   impl->default_level = config.default_level;
   for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
 
+  std::string lock_notice;  // written once the back end runs
   if (config.dir && !config.dir->empty()) {
     const std::filesystem::path& dir = *config.dir;
-    const std::filesystem::path file = dir / config.file_name;
+    std::filesystem::path file = dir / config.file_name;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
+    if (!ec) {
+      std::filesystem::path lock_path = file;
+      lock_path += ".lock";
+      switch (impl->file_lock.acquire(lock_path)) {
+        case FileLock::Outcome::Held: break;
+        case FileLock::Outcome::Busy: {
+          const std::filesystem::path name(config.file_name);
+          const std::filesystem::path taken = file;
+          file = dir / (name.stem().string() + "-" + process_id() + name.extension().string());
+          lock_notice = taken.string() + " is in use by another hub; this one logs to " + file.string();
+          break;
+        }
+        case FileLock::Outcome::Failed:
+          lock_notice = "cannot lock " + lock_path.string() + "; logging to " + file.string() +
+                        " without a lock";
+          break;
+      }
+    }
     if (ec) {
       impl->report_startup_error("cannot create log directory " + dir.string() + ": " +
                                  ec.message() + "; file logging disabled");
@@ -593,7 +798,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
             file.string(), size_mb * 1024 * 1024,
             std::min(files - 1, kSpdlogMaxRotated));
         impl->file_sink->set_formatter(make_file_formatter());
-        impl->file_path = file;
+        impl->file_path = std::move(file);
       } catch (const std::exception& e) {
         impl->file_sink.reset();
         impl->report_startup_error("cannot open log file in " + dir.string() + ": " +
@@ -635,6 +840,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
     state.current = impl;
     if (state.installed) retarget_crash_output(*impl);
   }
+  if (!lock_notice.empty()) impl->write(LogLevel::Info, "logging", lock_notice);
   return std::shared_ptr<LogHub>(new LogHub(std::move(impl)));
 }
 
@@ -663,6 +869,7 @@ LogHub::~LogHub() {
   impl_->pool.reset();
   impl_->file_sink.reset();
   impl_->barrier_sink.reset();
+  impl_->file_lock.release();
 }
 
 void LogHub::flush() {
@@ -680,7 +887,67 @@ void LogHub::write(LogLevel level, std::string_view logger, std::string_view mes
 
 Logger LogHub::logger(std::string name) { return Logger(std::move(name), impl_); }
 
-SignalBus* LogHub::bus() const noexcept { return impl_->bus; }
+SignalBus* LogHub::bus() const noexcept {
+  try {
+    std::lock_guard lock(impl_->route_mutex);
+    return impl_->bus_ref.get();
+  } catch (...) {
+    return impl_->base_bus;
+  }
+}
+
+std::filesystem::path LogHub::file_path() const { return impl_->file_path; }
+
+LogHub::BusAttachment LogHub::attach_bus(SignalBus& bus) {
+  const std::uint64_t id = impl_->next_attachment.fetch_add(1) + 1;
+  SignalBus::Subscription failures = subscribe_failures(bus, impl_);
+  // Before `ref`: on unwind, `ref` is released first and the wait returns.
+  BusAttachment attachment(impl_, id);
+  std::shared_ptr<SignalBus> ref = impl_->attached_ref(bus, id);
+  {
+    std::lock_guard lock(impl_->route_mutex);
+    std::swap(impl_->bus_ref, ref);
+    std::swap(impl_->attached_failures, failures);
+    impl_->bus_id = id;
+  }
+  // `ref` and `failures` now hold the replaced bus's; released outside the lock.
+  return attachment;
+}
+
+LogHub::ClockAttachment LogHub::attach_clock(const Clock& clock) {
+  const std::uint64_t id = impl_->next_attachment.fetch_add(1) + 1;
+  ClockAttachment attachment(impl_, id);
+  std::shared_ptr<const Clock> ref = impl_->attached_ref(clock, id);
+  {
+    std::lock_guard lock(impl_->route_mutex);
+    std::swap(impl_->clock_ref, ref);
+    impl_->clock_id = id;
+  }
+  return attachment;
+}
+
+LogHub::Attachment::Attachment(std::shared_ptr<Impl> impl, std::uint64_t id) noexcept
+    : impl_(std::move(impl)), id_(id) {}
+
+LogHub::Attachment::~Attachment() { detach(); }
+
+LogHub::Attachment::Attachment(Attachment&& other) noexcept
+    : impl_(std::move(other.impl_)), id_(std::exchange(other.id_, 0)) {}
+
+LogHub::Attachment& LogHub::Attachment::operator=(Attachment&& other) noexcept {
+  if (this != &other) {
+    detach();
+    impl_ = std::move(other.impl_);
+    id_ = std::exchange(other.id_, 0);
+  }
+  return *this;
+}
+
+void LogHub::Attachment::detach() noexcept {
+  if (impl_) impl_->detach(id_);
+  impl_.reset();
+  id_ = 0;
+}
 
 void LogHub::set_level(std::string_view pattern, LogLevel level) {
   std::unique_lock lock(impl_->rules_mutex);

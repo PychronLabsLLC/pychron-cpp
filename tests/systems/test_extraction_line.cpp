@@ -427,6 +427,7 @@ TEST(ExtractionLine, TransportWireLogsWhenHubAndTraceSet) {
   opts.trace_dir = dir;
   config::LoggingConfig lc;
   lc.default_level = LogLevel::Trace;
+  lc.dock_level = LogLevel::Trace;  // the wire records are read off the bus
 
   // The hub logs to its own bus so the test can observe the wire records.
   SignalBus hub_bus;
@@ -458,6 +459,7 @@ TEST(ExtractionLine, BuildsOwnHubFromLoggingConfigAndWireLogs) {
   cfg.transports["gnet"].trace = true;
   cfg.logging.dir = dir / "logs";
   cfg.logging.default_level = LogLevel::Trace;
+  cfg.logging.dock_level = LogLevel::Trace;  // the wire records are read off the bus
 
   auto opts = manual(clock);
   opts.trace_dir = dir;

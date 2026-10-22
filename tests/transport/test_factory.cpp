@@ -130,6 +130,7 @@ TEST(TransportFactory, TracedTransportMirrorsToWireLogger) {
   auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
   config::LoggingConfig lc;
   lc.default_level = LogLevel::Trace;
+  lc.dock_level = LogLevel::Trace;  // the wire records are read off the bus
   auto hub = LogHub::create(lc, clock, &bus);
   ASSERT_TRUE(hub);
 
@@ -169,6 +170,7 @@ UntracedRun run_untraced(config::LoggingConfig lc) {
   auto sub = bus.subscribe<Log>([&](const Log& e) {
     if (e.logger == "plain.wire") out.wire.push_back(e);
   });
+  lc.dock_level = LogLevel::Trace;  // the wire records are read off the bus
   auto hub = LogHub::create(lc, clock, &bus);
   EXPECT_TRUE(hub);
   if (!hub) return out;

@@ -3,6 +3,8 @@
 // Process-wide logging back end: owns the rotating file sink and its writer
 // thread. No spdlog type appears here; everything lives behind Impl.
 
+#include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -34,15 +36,24 @@ class SignalBus;
 // lexicographically greater one. No match uses `default_level`.
 //
 // Every record written also goes, on the calling thread, to stderr (when
-// `echo_stderr`) as `[level] name: message`, and to the bus (if any) as a
-// `Log` event stamped with `clock.now()`.
+// `echo_stderr`) as `[level] name: message`, and, when its level is
+// `dock_level` or above, to the bus (if any) as a `Log` event stamped with
+// `clock.now()`. File lines are stamped with `clock.wall_now()`. Bus and clock
+// are those attached (attach_bus, attach_clock) while an attachment lives,
+// else the ones given to create().
+//
+// The file is locked (advisory, `<dir>/<file_name>.lock`) for the hub's life.
+// A second hub on the same file, in this process or another, writes
+// `<stem>-<pid><ext>` instead and says so in one `info` record there.
 class LogHub {
  public:
+  struct Impl;
+
   // Fails (ErrorKind::Io) only if the logging back end itself cannot start.
   static Result<std::shared_ptr<LogHub>> create(const config::LoggingConfig& config,
                                                 const Clock& clock, SignalBus* bus = nullptr);
 
-  ~LogHub();  // flushes, stops the writer
+  ~LogHub();  // flushes, stops the writer, releases the file lock
   LogHub(const LogHub&) = delete;
   LogHub& operator=(const LogHub&) = delete;
 
@@ -62,9 +73,59 @@ class LogHub {
   // Blocks until every record written so far is on disk.
   void flush();
 
-  // The bus this hub publishes `Log` events on (null if none). Producers that
-  // own a bus use it to avoid delivering a record twice.
+  // The bus this hub publishes `Log` events on now (null if none). Producers
+  // that own a bus use it to avoid delivering a record twice.
   SignalBus* bus() const noexcept;
+
+  // An attachment of a bus or a clock to the hub; movable, not copyable. Its
+  // destructor puts back what create() was given and waits (in real time)
+  // until no write still uses what it attached, so the bus or clock may be
+  // destroyed right after. It may outlive the hub. Not to be destroyed from
+  // inside a write on the same thread (a Log handler of the attached bus):
+  // that wait would be for itself.
+  class Attachment {
+   public:
+    Attachment() = default;
+    ~Attachment();
+    Attachment(Attachment&& other) noexcept;
+    Attachment& operator=(Attachment&& other) noexcept;
+    Attachment(const Attachment&) = delete;
+    Attachment& operator=(const Attachment&) = delete;
+
+   protected:
+    friend class LogHub;
+    Attachment(std::shared_ptr<Impl> impl, std::uint64_t id) noexcept;
+
+   private:
+    void detach() noexcept;
+    std::shared_ptr<Impl> impl_;
+    std::uint64_t id_ = 0;
+  };
+
+  // While it lives, records at `dock_level` and up are published on `bus`
+  // (and a handler of `bus` that throws is logged). One bus at a time:
+  // attaching another replaces it, and the first attachment's destructor
+  // then changes nothing (it still waits for writes that used its bus).
+  class BusAttachment : public Attachment {
+    friend class LogHub;
+    BusAttachment(std::shared_ptr<Impl> impl, std::uint64_t id) noexcept
+        : Attachment(std::move(impl), id) {}
+  };
+  [[nodiscard]] BusAttachment attach_bus(SignalBus& bus);
+
+  // While it lives, file lines are stamped from clock.wall_now() and bus
+  // events with clock.now(); after, from the clock given to create(). Same
+  // one-at-a-time and wait rules as attach_bus.
+  class ClockAttachment : public Attachment {
+    friend class LogHub;
+    ClockAttachment(std::shared_ptr<Impl> impl, std::uint64_t id) noexcept
+        : Attachment(std::move(impl), id) {}
+  };
+  [[nodiscard]] ClockAttachment attach_clock(const Clock& clock);
+
+  // The file this hub writes (`<dir>/<file_name>`, or the `-<pid>` name when
+  // that one is locked); empty when there is no file.
+  std::filesystem::path file_path() const;
 
   // Used by Logger; not for callers. Never throws; `message` is written
   // verbatim (it is never interpreted as a format string).
@@ -84,8 +145,6 @@ class LogHub {
   // - Windows: an unhandled-exception filter writing `fatal exception 0x..`
   //   the same way, returning EXCEPTION_CONTINUE_SEARCH.
   static void install_crash_handlers();
-
-  struct Impl;
 
  private:
   explicit LogHub(std::shared_ptr<Impl> impl);

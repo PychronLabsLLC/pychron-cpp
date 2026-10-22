@@ -95,10 +95,17 @@ Preferences Logging page gains `dock_level` control.
   and not applied: file location fixed for process life.
 - `ExtractionLine` receives hub through existing `Options::log_hub`; its own
   `LogHub::create` fallback stays for library users and tests.
-- Hub has no bus at creation in apps. New `LogHub::attach_bus(SignalBus*)` and
-  `detach_bus()`: thread-safe; line attaches its bus when built, detaches
-  before bus is destroyed. Records written with no bus attached go to file
-  only. Existing `create(config, clock, bus)` unchanged.
+- Hub has no bus at creation in apps. New `LogHub::attach_bus(SignalBus&)`
+  returns RAII `LogHub::BusAttachment` (movable, not copyable): thread-safe;
+  line attaches its bus when built and drops attachment before bus is
+  destroyed. Attachment's destructor puts back `create()`'s bus and waits
+  (real time) until no write still publishes on its bus. One bus at a time:
+  later attach replaces earlier. Same for clock: `attach_clock(const Clock&)`
+  → `ClockAttachment` (`elctl exp run` attaches its `VirtualClock`).
+  Records written with no bus attached go to file only. Bus gets
+  `dock_level` and up only. Existing `create(config, clock, bus)` unchanged.
+  `LogHub::file_path()`: file written (`-<pid>` name on fallback), empty =
+  none.
 - File name per app: `pychron-ui` writes `pychron.log`, `elctl` writes
   `elctl.log`. New `LoggingConfig` field `file_name` (not a TOML key; set by
   app; default `pychron.log` keeps library behaviour).
@@ -244,7 +251,7 @@ with error kind, message, context and what was attempted.
 - Config (`tests/core`): precedence of four sources; absent vs empty `dir`;
   `dock_level` filters bus not file; `default_log_dir` per OS with injected
   env; unknown key error in `logging.toml`.
-- Hub: `attach_bus`/`detach_bus` under concurrent writes (TSan run before
+- Hub: `attach_bus`/attachment drop under concurrent writes (TSan run before
   landing: adds shared state with writer); lock fallback to `-<pid>` name;
   line format with thread tag and run scope; session marker fields.
 - `elctl` (`apps/elctl/tests`): command run with temp HOME and no config

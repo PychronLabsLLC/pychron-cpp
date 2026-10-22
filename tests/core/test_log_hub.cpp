@@ -1,5 +1,11 @@
 #include <gtest/gtest.h>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <csignal>
 #include <cstdio>
@@ -10,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -193,6 +200,7 @@ TEST(LogHub, RotatesAtSizeLimit) {
 
   std::vector<std::string> names;
   for (const auto& entry : fs::directory_iterator(tmp.path())) {
+    if (entry.path().extension() == ".lock") continue;  // the hub's lock file
     names.push_back(entry.path().filename().string());
   }
   std::sort(names.begin(), names.end());
@@ -597,6 +605,204 @@ TEST(LogHub, ConcurrentWriteAndSetLevel) {
     if (line.find("[error] core.w") != std::string::npos) ++file_errors;
   }
   EXPECT_EQ(file_errors, kThreads * kPerThread);
+}
+
+// ---- Attachments, dock level, file lock ------------------------------------
+
+namespace {
+
+// Calendar instant from a UTC date and time, for ManualClock epochs.
+WallTime utc(int y, unsigned mo, unsigned d, int h, int mi, int s) {
+  using namespace std::chrono;
+  return sys_days{year{y} / month{mo} / day{d}} + hours{h} + minutes{mi} + seconds{s};
+}
+
+std::string current_pid() {
+#ifdef _WIN32
+  return std::to_string(_getpid());
+#else
+  return std::to_string(::getpid());
+#endif
+}
+
+}  // namespace
+
+TEST(LogHub, DockLevelFiltersBusNotFile) {
+  TempDir tmp;
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto cfg = config_for(tmp.path());
+  cfg.default_level = LogLevel::Debug;
+  cfg.dock_level = LogLevel::Info;
+  auto hub = make_hub(cfg, clock, &bus);
+  ASSERT_TRUE(hub);
+
+  hub->logger("core").debug("quiet");
+  hub->logger("core").info("loud");
+  hub->flush();
+
+  ASSERT_EQ(got.size(), 1u);
+  EXPECT_EQ(got[0].message, "loud");
+  const auto text = read_file(tmp.path() / "pychron.log");
+  EXPECT_NE(text.find("[debug] core: quiet"), std::string::npos) << text;
+  EXPECT_NE(text.find("[info] core: loud"), std::string::npos) << text;
+}
+
+TEST(LogHub, AttachBusLater) {
+  TempDir tmp;
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<std::string> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e.message); });
+  auto hub = make_hub(config_for(tmp.path()), clock);
+  ASSERT_TRUE(hub);
+  EXPECT_EQ(hub->bus(), nullptr);
+
+  hub->write(LogLevel::Info, "core", "a");
+  {
+    const LogHub::BusAttachment attached = hub->attach_bus(bus);
+    EXPECT_EQ(hub->bus(), &bus);
+    hub->write(LogLevel::Info, "core", "b");
+  }
+  EXPECT_EQ(hub->bus(), nullptr);
+  hub->write(LogLevel::Info, "core", "c");
+  hub->flush();
+
+  EXPECT_EQ(got, (std::vector<std::string>{"b"}));
+  const auto lines = read_lines(tmp.path() / "pychron.log");
+  ASSERT_EQ(lines.size(), 3u);
+  EXPECT_NE(lines[0].find("core: a"), std::string::npos) << lines[0];
+  EXPECT_NE(lines[1].find("core: b"), std::string::npos) << lines[1];
+  EXPECT_NE(lines[2].find("core: c"), std::string::npos) << lines[2];
+}
+
+// A handler of an attached bus that throws is logged, as with a bus given to
+// create(); once detached, its failures are not.
+TEST(LogHub, AttachedBusHandlerFailuresAreLogged) {
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto bad = bus.subscribe<ValveChanged>([](const ValveChanged&) { throw std::runtime_error("no valve"); });
+  auto hub = make_hub(config::LoggingConfig{}, clock);
+  ASSERT_TRUE(hub);
+  {
+    const LogHub::BusAttachment attached = hub->attach_bus(bus);
+    bus.publish(ValveChanged{});
+  }
+  ASSERT_EQ(got.size(), 1u);
+  EXPECT_EQ(got[0].logger, "bus");
+  bus.publish(ValveChanged{});
+  EXPECT_EQ(got.size(), 1u);
+}
+
+TEST(LogHub, DetachWaitsForInFlightPublish) {
+  SteadyClock clock;
+  SignalBus bus;
+  std::promise<void> entered;
+  std::promise<void> release;
+  std::shared_future<void> released = release.get_future().share();
+  std::atomic<bool> first{true};
+  auto sub = bus.subscribe<Log>([&](const Log&) {
+    if (!first.exchange(false)) return;
+    entered.set_value();
+    released.wait();
+  });
+  auto hub = make_hub(rules_config({}, LogLevel::Info), clock);
+  ASSERT_TRUE(hub);
+
+  std::optional<LogHub::BusAttachment> attached;
+  attached.emplace(hub->attach_bus(bus));
+  std::thread writer([&] { hub->write(LogLevel::Info, "core", "held"); });
+  const bool publishing =
+      entered.get_future().wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+  EXPECT_TRUE(publishing);
+
+  std::atomic<bool> detached{false};
+  std::promise<void> done;
+  std::thread detacher([&] {
+    attached.reset();
+    detached.store(true);
+    done.set_value();
+  });
+  // The publish is still blocked in the handler: the detach must not return.
+  for (int i = 0; i < 10000 && !detached.load(); ++i) std::this_thread::yield();
+  EXPECT_FALSE(detached.load());
+
+  release.set_value();
+  EXPECT_EQ(done.get_future().wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  writer.join();
+  detacher.join();
+  EXPECT_TRUE(detached.load());
+  EXPECT_EQ(hub->bus(), nullptr);
+}
+
+TEST(LogHub, ClockDetachFallsBackToHubClock) {
+  using namespace std::chrono_literals;
+  TempDir tmp;
+  const ManualClock a(TimePoint{} + 10s, utc(2020, 1, 1, 0, 0, 0));
+  const ManualClock b(TimePoint{} + 99s, utc(2026, 10, 22, 14, 3, 22));
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto hub = make_hub(config_for(tmp.path()), a, &bus);
+  ASSERT_TRUE(hub);
+  {
+    const LogHub::ClockAttachment attached = hub->attach_clock(b);
+    hub->write(LogLevel::Info, "core", "on b");
+  }
+  hub->write(LogLevel::Info, "core", "on a");
+  hub->flush();
+
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].ts, b.now());
+  EXPECT_EQ(got[1].ts, a.now());
+  const auto lines = read_lines(tmp.path() / "pychron.log");
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0], "2026-10-22T14:03:22.000Z [info] core: on b");
+  EXPECT_EQ(lines[1], "2020-01-01T00:00:00.000Z [info] core: on a");
+}
+
+TEST(LogHub, SecondProcessGetsPidFile) {
+  TempDir tmp;
+  SteadyClock clock;
+  auto first = make_hub(config_for(tmp.path()), clock);
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->file_path(), tmp.path() / "pychron.log");
+
+  auto second = make_hub(config_for(tmp.path()), clock);
+  ASSERT_TRUE(second);
+  const fs::path pid_file = tmp.path() / ("pychron-" + current_pid() + ".log");
+  EXPECT_EQ(second->file_path(), pid_file);
+  second->flush();
+
+  const auto lines = read_lines(pid_file);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_NE(lines[0].find("[info] logging: "), std::string::npos) << lines[0];
+  EXPECT_NE(lines[0].find("in use"), std::string::npos) << lines[0];
+  EXPECT_NE(lines[0].find((tmp.path() / "pychron.log").string()), std::string::npos) << lines[0];
+}
+
+TEST(LogHub, LockReleasedOnDestruction) {
+  TempDir tmp;
+  SteadyClock clock;
+  {
+    auto hub = make_hub(config_for(tmp.path()), clock);
+    ASSERT_TRUE(hub);
+    EXPECT_EQ(hub->file_path(), tmp.path() / "pychron.log");
+  }
+  auto again = make_hub(config_for(tmp.path()), clock);
+  ASSERT_TRUE(again);
+  EXPECT_EQ(again->file_path(), tmp.path() / "pychron.log");
+}
+
+TEST(LogHub, NoFileMeansEmptyFilePath) {
+  SteadyClock clock;
+  auto hub = make_hub(config::LoggingConfig{}, clock);
+  ASSERT_TRUE(hub);
+  EXPECT_TRUE(hub->file_path().empty());
 }
 
 // --- Crash and terminate handlers (spec 4.5) -------------------------------
