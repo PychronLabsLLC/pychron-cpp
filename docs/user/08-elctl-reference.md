@@ -25,7 +25,7 @@ This page is a reference. For a first look at Pychron, start with
 - [Exit codes](#exit-codes)
 - [Which commands need persistence](#which-commands-need-persistence)
 - [Offline checks](#offline-checks): `validate`, `canvas-check`, `list-drivers`, `list`, `conditionals-check`
-- [Setup](#setup): `init`, `doctor`, `data-source`, `import-line`
+- [Setup](#setup): `init`, `doctor`, `data-source`, `import-line`, `version`
 - [Hardware and simulation](#hardware-and-simulation): `probe`, `state`, `open`, `close`, `read`, `heater`, `scan`, `trace`, `sim`
 - [Experiments](#experiments): `exp validate`, `exp run`, `exp notify`
 - [Lasers](#lasers): `laser ...`
@@ -55,7 +55,7 @@ is the command; everything after it belongs to the command.
 | `--version` | Print the version, and where the shipped `profiles` and `examples` were found. |
 | `-h`, `--help` | Print the command summary and exit 0. |
 
-`init`, `doctor` and `import-line` need no extraction line. Everything else
+`init`, `doctor`, `data-source`, `import-line` and `version` need no extraction line. Everything else
 (`validate`, `list`, `probe`, `exp`, `laser` and so on) uses the config chosen
 by `-c` / `--install`.
 
@@ -92,7 +92,8 @@ by `-c` / `--install`.
 
 Command-specific details are given under each command. Errors are written to
 standard error as `error: ...`; usage errors as `elctl: ...` followed by the
-usage line.
+usage line. `version --check` has its own codes (0, 10, 2), under
+[version](#version).
 
 ## Which commands need persistence
 
@@ -347,6 +348,37 @@ prints both files to the terminal and writes nothing. With `--out DIR` it writes
 files unless you give `--force`. Exit 0; 1 if the folder cannot be read or a
 target exists; 2 for a usage error. Then run `validate` and `canvas-check` on the
 result.
+
+### version
+
+Print the running version and, only when asked, whether a newer release exists.
+
+```bash
+elctl version
+elctl version --check
+```
+
+Without `--check` it prints `elctl <version>` and sends nothing. elctl never
+checks for updates on its own. With `--check` it asks GitHub for the latest
+release and prints one more line:
+
+| Result | Output | Exit |
+|---|---|---|
+| Up to date | `latest: <x.y.z> (up to date)` | 0 |
+| No release published yet | `latest: none published` | 0 |
+| This build is newer than the latest release | `latest: <x.y.z> (this build is newer)` | 0 |
+| A newer release | `latest: <x.y.z>` and `download: <release page URL>` | 10 |
+| The check failed, or this build has no network client | `elctl version: could not check for updates: <reason>` on standard error | 2 |
+
+An unknown argument is a usage error (2). Nothing is downloaded or installed;
+the release page is for you to open.
+
+What `--check` sends: one `GET` of
+`https://api.github.com/repos/PychronLabsLLC/pychron-cpp/releases/latest`, with
+the headers `Accept: application/vnd.github+json` and
+`User-Agent: pychron-cpp/<version>`, and a 10 second timeout. Nothing else
+identifying is sent, and nothing is written to disk. A build without Qt
+Network has no client and says so (`this build has no network client`).
 
 ## Hardware and simulation
 

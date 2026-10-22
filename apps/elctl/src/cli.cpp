@@ -33,6 +33,7 @@
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
 #include "setup.hpp"
+#include "version_cmd.hpp"
 #include "line.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/capabilities.hpp"
@@ -95,6 +96,8 @@ constexpr const char* kUsageText =
     "  init --reconfigure [--set id=value]... [--yes]\n"
     "                              re-render an install with new answers; edited files are kept\n"
     "  doctor [--strict] [--probe] check an install (the default, or --install NAME)\n"
+    "  version [--check]           print the version; --check asks GitHub for the latest release\n"
+    "                              (exit 10 when a newer one exists)\n"
     "  data-source                 the install's database and data folder\n"
     "  data-source set (--local [FILE] | --server HOST[:PORT]/DB --user USER [--password-stdin])\n"
     "                  [--data DIR] [--no-check] [--yes]\n"
@@ -793,6 +796,7 @@ int run(const std::vector<std::string>& args, Io io) {
     if (globals.install) init_args.insert(init_args.end(), {"--install", *globals.install});
     return init_command(init_args, io);
   }
+  if (command == "version") return version_command(rest, io);
   if (command == "doctor") return doctor_command(rest, globals.install, io);
   if (command == "data-source") return data_source_command(rest, globals.install, io);
   if (command == "import-line") return import_line_command(rest, io);

@@ -5,7 +5,8 @@
 //
 //   elctl [-c <extraction_line.toml>] [--sim] <command> [args...]
 //
-// Exit codes: 0 ok, 1 the command failed, 2 usage error.
+// Exit codes: 0 ok, 1 the command failed, 2 usage error, 10 (`version --check`)
+// a newer release exists.
 
 #include <iosfwd>
 #include <string>
@@ -19,7 +20,7 @@ struct Io {
   std::ostream& err;
 };
 
-enum ExitCode : int { kOk = 0, kFailed = 1, kUsage = 2 };
+enum ExitCode : int { kOk = 0, kFailed = 1, kUsage = 2, kUpdateAvailable = 10 };
 
 // `args` excludes the program name.
 int run(const std::vector<std::string>& args, Io io);

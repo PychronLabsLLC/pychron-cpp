@@ -50,7 +50,7 @@ add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})
 target_include_directories(pychron_elctl_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(pychron_elctl_lib PUBLIC cxx_std_20)
 target_link_libraries(pychron_elctl_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::devices
-  pychron::transport pychron::core)
+  pychron::transport pychron::update pychron::core)
 if(TARGET pychron_persistence)
   # A data reduction install's local database is created with the DVC store.
   # processing_store: the reduction `import verify` compares legacy ages with,
