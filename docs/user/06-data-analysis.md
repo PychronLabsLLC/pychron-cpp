@@ -976,7 +976,7 @@ everything built from it. **Set…** adds one, **Lift** ends the selected one.
 ### The Publish dialog
 
 The dialog does the whole of publishing in one place. Open it from the data
-browser's **Publish** button (on a new release made of the selected rows) or
+browser's **Publish** button (on a new release made of the Selected analyses) or
 from the Publish window's **Publish…** (on the release selected there). The
 data browser's button is off, and says "Publishing needs a database", on an
 install without one.

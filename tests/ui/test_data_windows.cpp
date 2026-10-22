@@ -1074,7 +1074,7 @@ class TestDataWindows : public QObject {
     QCOMPARE(tint(1), QColor(1, 2, 3));
   }
 
-  // The Publish button hands the selection to whoever opens the Publish dialog.
+  // The Publish button hands the Selected list to whoever opens the Publish dialog.
   void publish_button_opens_publish_dialog() {
     QTemporaryDir dir;
     auto src = make_sessions();
@@ -1087,12 +1087,13 @@ class TestDataWindows : public QObject {
     auto* browser = ws.browser();
     QVERIFY(browser);
     QCOMPARE(browser->publish_action()->toolTip(), QStringLiteral("Publish…"));
-    QVERIFY(!browser->publish_action()->isEnabled());  // nothing selected
+    QVERIFY(!browser->publish_action()->isEnabled());  // nothing in Selected
     browser->select_rows({0, 1});
+    browser->add_highlighted();
     QVERIFY(browser->publish_action()->isEnabled());
     browser->publish_action()->trigger();
     QCOMPARE(asked.size(), 1);
-    QCOMPARE(asked.first(), browser->selected_uuids());
+    QCOMPARE(asked.first(), browser->selection_uuids());
     QCOMPARE(asked.first().size(), 2);
   }
 
@@ -1108,6 +1109,7 @@ class TestDataWindows : public QObject {
     auto* browser = ws.browser();
     QVERIFY(browser);
     browser->select_rows({0, 1});
+    browser->add_highlighted();
     QVERIFY(!browser->publish_action()->isEnabled());
     QCOMPARE(browser->publish_action()->toolTip(), QStringLiteral("Publishing needs a database"));
     int calls = 0;
