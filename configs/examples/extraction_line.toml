@@ -6,13 +6,13 @@
 name = "example"
 scan_interval_ms = 1000
 
-# Optional. The library writes no file unless `dir` is set (dir = "" means none);
-# the apps pick a default folder. Levels: trace|debug|info|warn|error.
+# Optional. With no `dir` the apps log to a default folder; `dir = ""` turns the
+# file off. Levels: trace|debug|info|warn|error.
 [logging]
 # dir = "~/pychron-logs"
 # max_size_mb = 50
 # max_files = 10
-default_level = "info"   # the built-in default is "debug"
+# default_level = "debug"
 # dock_level = "info"   # what the log dock shows
 # echo_stderr = false
 

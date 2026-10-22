@@ -894,6 +894,9 @@ class TestPreferences : public QObject {
     auto line = ui::test::make_example_line();
     const std::shared_ptr<LogHub> hub = line->log_hub();
     QVERIFY(hub != nullptr);
+    // The example line starts at the built-in default (debug). This test is about a change from a
+    // quieter level, so it starts the session at info, as the test needs, whatever the default is.
+    hub->set_levels(LogLevel::Info, {});
     Logger scheduler = hub->logger("scheduler");
     Logger other = hub->logger("other");
     QVERIFY(!other.enabled(LogLevel::Debug));
