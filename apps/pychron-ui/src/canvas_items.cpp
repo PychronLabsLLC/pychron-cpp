@@ -314,7 +314,9 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
   const bool turbo = symbol == canvas::StageSymbol::Turbo;
   const bool getter = symbol == canvas::StageSymbol::Getter;
   const bool ion_pump = symbol == canvas::StageSymbol::IonPump;
-  const bool square = quadrupole || turbo || getter || ion_pump;
+  const bool cryo = symbol == canvas::StageSymbol::Cryo;
+  const bool roughing = symbol == canvas::StageSymbol::RoughingPump;
+  const bool square = quadrupole || turbo || getter || ion_pump || cryo || roughing;
   const QSizeF grid = spectrometer ? QSizeF(66, 62) : square ? QSizeF(40, 40) : QSizeF(67, 34);
   const double scale =
       std::min({area.width() / grid.width(), area.height() / grid.height(), spectrometer ? 0.8 : square ? 0.9 : 0.85});
@@ -409,6 +411,58 @@ void paint_symbol(QPainter& painter, canvas::StageSymbol symbol, const QRectF& a
     for (const QPointF& cell : {QPointF(15, 19.5), QPointF(25, 19.5), QPointF(15, 29.5), QPointF(25, 29.5)}) {
       painter.drawEllipse(cell, 3.6, 3.6);
     }
+  } else if (cryo) {
+    // A cryostat from the side: the flange, the cold chamber with frost in
+    // it, and the cold head and its drive below.
+    painter.setPen(line);
+    painter.setBrush(theme().inactive);
+    painter.drawRoundedRect(QRectF(3, 1.5, 34, 5), 1.5, 1.5);
+    painter.drawRect(QRectF(15, 26.5, 10, 6));
+    painter.drawRoundedRect(QRectF(9, 32.5, 22, 6), 1.5, 1.5);
+    painter.setBrush(fill);
+    painter.drawRoundedRect(QRectF(7, 6.5, 26, 20), 2, 2);
+    const QPointF flake(20, 16.5);
+    for (int i = 0; i < 6; ++i) {  // a snowflake: six arms, each barbed
+      const double a = i * kPi / 3 - kPi / 2;
+      const QPointF arm(std::cos(a), std::sin(a));
+      painter.drawLine(flake, flake + 7 * arm);
+      const QPointF barb = flake + 4.5 * arm;
+      for (const double side : {-0.7, 0.7}) {
+        painter.drawLine(barb, barb + 2.5 * QPointF(std::cos(a + side), std::sin(a + side)));
+      }
+    }
+  } else if (roughing) {
+    // A rotary vane pump end on: the inlet and exhaust ports, the stator
+    // round the pumping chamber, and the rotor touching the chamber wall at
+    // the bottom, its vane thrown out against the wall above it.
+    painter.setPen(line);
+    painter.setBrush(theme().inactive);
+    painter.drawRect(QRectF(9, 1.5, 6, 8));
+    painter.drawRect(QRectF(25, 1.5, 6, 8));
+    const QPointF chamber(20, 22);
+    const double wall = 14;
+    painter.drawEllipse(chamber, 17, 17);
+    painter.setBrush(fill);
+    painter.drawEllipse(chamber, wall, wall);
+    const double hub = 6.5;
+    const QPointF rotor(20, 22 + wall - hub);  // tangent: inside the chamber, so to_wall always meets it
+    // Where a ray from the rotor's centre meets the chamber wall.
+    auto to_wall = [&](double angle) {
+      const QPointF d(std::cos(angle), std::sin(angle));
+      const QPointF off = rotor - chamber;
+      const double b = off.x() * d.x() + off.y() * d.y();
+      const double c = off.x() * off.x() + off.y() * off.y() - wall * wall;
+      return rotor + (-b + std::sqrt(b * b - c)) * d;
+    };
+    const double vane = -kPi / 2 + 0.35;
+    painter.save();
+    painter.setPen(QPen(theme().text, std::max(2.6, 1.2 / scale), Qt::SolidLine, Qt::FlatCap));
+    painter.drawLine(to_wall(vane), to_wall(vane + kPi));
+    painter.restore();
+    painter.setBrush(theme().inactive);
+    painter.drawEllipse(rotor, hub, hub);
+    painter.setBrush(theme().text);
+    painter.drawEllipse(rotor, 1.5, 1.5);
   } else {
     // A laser from the side: the head with its cooling fins, the beam out of
     // the aperture, a lens, and the beam brought to a focus on the sample.

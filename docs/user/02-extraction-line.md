@@ -45,7 +45,7 @@ Related pages: [getting started](01-getting-started.md),
 | Valve flashes yellow | The last command was refused or failed. Hover for the reason. |
 | A rounded chip with a small dial and `IG1: 1.20e-08 torr` | A gauge and its latest reading. The chip text turns red while the reading is outside `alarm_high` / `alarm_low`. Rest the pointer on it for a moment (under a second) and a small chart of its last 10 minutes appears beside it (it goes when the pointer moves off, the canvas scrolls or a button is pressed). Click it to open the gauge's own window (see [Gauges](#gauges)). |
 | A gauge chip that shows only its name | The canvas draws a gauge that `extraction_line.toml` does not define; it is decoration and never shows a reading. Resting on it or clicking it does nothing. |
-| Boxes (stages) | Volumes: prep line, stage1, turbo, spectrometer, tanks. Some carry a glyph (turbo, ion pump, getter, spectrometer, laser, quadrupole). |
+| Boxes (stages) | Volumes: prep line, stage1, turbo, spectrometer, tanks. Some carry a glyph (turbo, ion pump, roughing pump, cryo, getter, spectrometer, laser, quadrupole). |
 | Pipes | Connections between boxes and valves. |
 
 The canvas is a fixed drawing; it does not zoom. Its size and scale come from
@@ -226,7 +226,10 @@ From a terminal, `elctl read <gauge>` takes one reading and
 Pychron has no "pump" widget. A pump appears in two ways:
 
 - as a **stage** in the canvas with `kind = "pump"` (or a turbo, ion pump
-  glyph): it only colors the region it is connected to, as described above;
+  or roughing pump glyph): it only colors the region it is connected to, as
+  described above. A `cryo` glyph draws a cold head and says nothing about
+  the gas, since a cryo trap and a cryopump look alike: give a cryopump
+  `kind = "pump"`;
 - as a **switch** (`[[switches]]` in the line, `[[switch]]` in the canvas),
   such as `pump_power`. Switches are clicked like valves (circle, no
   interlocks of their own).
@@ -604,7 +607,7 @@ name = "turbo"
 pos = [650, 300]                 # the box's CENTRE
 size = [60, 40]
 kind = "pump"                    # pump | tank | spectrometer | getter | laser | pipette
-# symbol = "turbo"               # glyph: spectrometer quadrupole laser turbo getter ion_pump
+# symbol = "turbo"               # glyph: spectrometer quadrupole laser turbo getter ion_pump cryo roughing_pump
 # display_name = "Turbo"         # label ("" for none)
 # color = "#8fd3ff"              # override region color
 # precedence = 120               # override who wins a shared region (0: colors nothing)

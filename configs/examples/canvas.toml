@@ -198,24 +198,29 @@ name = "cryo"
 pos = [680, 80]
 size = [80, 40]
 display_name = "Cryo trap"
+use_symbol = true
+symbol = "cryo"
 
 [[stage]]
 name = "turbo2"
 pos = [330, 590]
 size = [60, 40]
-kind = "pump"
+use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "turbo"
 pos = [850, 300]
 size = [60, 40]
-kind = "pump"
+use_symbol = true
+symbol = "turbo"
 
 [[stage]]
 name = "rough"
 pos = [1150, 400]
 size = [60, 40]
-kind = "pump"
+use_symbol = true
+symbol = "roughing_pump"
 
 [[stage]]
 name = "air_tank"

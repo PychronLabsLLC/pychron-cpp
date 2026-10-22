@@ -80,6 +80,22 @@ pos = [0, 0]
 symbol = "getter"
 precedence = 0          # drawn as a getter, colours nothing
 
+[[stage]]
+name = "rough"
+pos = [0, 0]
+symbol = "roughing_pump"
+
+[[stage]]
+name = "cryo_trap"
+pos = [0, 0]
+symbol = "cryo"         # a cold head: a trap as likely as a pump
+
+[[stage]]
+name = "cryopump"
+pos = [0, 0]
+symbol = "cryo"
+kind = "pump"
+
 [[pipette]]
 name = "air"
 pos = [0, 0]
@@ -125,12 +141,16 @@ TEST(CanvasSources, KindAndPrecedenceDefaultFromWhatTheStageIs) {
   EXPECT_EQ(of("quad").kind, SourceKind::Spectrometer);
   EXPECT_EQ(of("gp50").kind, SourceKind::Getter);
   EXPECT_EQ(of("gp50").precedence, 70);
+  EXPECT_EQ(of("rough").kind, SourceKind::Pump);
+  EXPECT_EQ(of("rough").precedence, 120);
+  EXPECT_EQ(of("cryopump").kind, SourceKind::Pump);
 }
 
 TEST(CanvasSources, APlainVolumeOrPrecedenceZeroIsNotASource) {
   const auto all = sources(fixture());
   EXPECT_FALSE(all.contains("bone"));
   EXPECT_FALSE(all.contains("dead_getter"));
+  EXPECT_FALSE(all.contains("cryo_trap"));  // a cryo glyph says nothing of the gas
 }
 
 TEST(CanvasSources, TheFileOverridesPrecedenceAndColour) {

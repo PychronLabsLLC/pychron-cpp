@@ -691,6 +691,9 @@ class TestCanvasView : public QObject {
   // A stage's symbol is a glyph inside its box, placed where it fits.
   void stageSymbolsFitInsideTheBox() {
     QCOMPARE(view_->stage("spec")->symbol(), canvas::StageSymbol::None);
+    QCOMPARE(view_->stage("turbo")->symbol(), canvas::StageSymbol::Turbo);
+    QCOMPARE(view_->stage("cryo")->symbol(), canvas::StageSymbol::Cryo);
+    QCOMPARE(view_->stage("rough")->symbol(), canvas::StageSymbol::RoughingPump);
     const QSizeF label(40, 16);
     ui::StageItem tall("Jan", "Jan", {58, 83}, Qt::white);
     QVERIFY(tall.symbol_rect(label).isEmpty());  // no symbol asked for
@@ -728,6 +731,11 @@ class TestCanvasView : public QObject {
     ui::StageItem plain("Jan", "Jan", {58, 83}, Qt::white);
     QCOMPARE(dark_pixels(plain), 0);
     QVERIFY(dark_pixels(tall) > 10);
+    for (const auto symbol : {canvas::StageSymbol::Turbo, canvas::StageSymbol::Cryo, canvas::StageSymbol::RoughingPump}) {
+      ui::StageItem pump("Jan", "Jan", {58, 83}, Qt::white);
+      pump.set_symbol(symbol);
+      QVERIFY2(dark_pixels(pump) > 10, std::to_string(static_cast<int>(symbol)).c_str());
+    }
   }
 
   // A region takes the colour of the source connected to it with the highest

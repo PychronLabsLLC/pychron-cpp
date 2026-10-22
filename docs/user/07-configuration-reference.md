@@ -362,8 +362,8 @@ be positive. Top-level sections: `[canvas]`, `[colors]`, `[[valve]]`,
 | | `volume` | number | none | cc: its size in the simulated line (50 cc with none) |
 | | `fill` | true/false | false | |
 | | `display_name` | text | the name | `""` for no label |
-| | `use_symbol`, `symbol` | true/false; `spectrometer`, `quadrupole`, `laser`, `turbo`, `getter`, `ion_pump` | false | a glyph in the box |
-| | `kind` | `volume`, `pump`, `pipette`, `laser`, `tank`, `spectrometer`, `getter` | from the symbol | what it is to the gas |
+| | `use_symbol`, `symbol` | true/false; `spectrometer`, `quadrupole`, `laser`, `turbo`, `getter`, `ion_pump`, `cryo`, `roughing_pump` | false | a glyph in the box |
+| | `kind` | `volume`, `pump`, `pipette`, `laser`, `tank`, `spectrometer`, `getter` | from the symbol (none from `cryo`) | what it is to the gas |
 | | `precedence` | whole number >= 0 | the kind's | which source wins a shared region. 0 colors nothing |
 | | `color` | `"#rrggbb"` | the theme's | |
 | | `tank` | text | | for a pipette: the tank whose gas it holds |

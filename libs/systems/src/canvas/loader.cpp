@@ -61,6 +61,8 @@ constexpr std::array kStageSymbols{
     std::pair<std::string_view, StageSymbol>{"turbo", StageSymbol::Turbo},
     std::pair<std::string_view, StageSymbol>{"getter", StageSymbol::Getter},
     std::pair<std::string_view, StageSymbol>{"ion_pump", StageSymbol::IonPump},
+    std::pair<std::string_view, StageSymbol>{"cryo", StageSymbol::Cryo},
+    std::pair<std::string_view, StageSymbol>{"roughing_pump", StageSymbol::RoughingPump},
 };
 
 constexpr std::array kOpenValveColors{

@@ -22,11 +22,13 @@ SourceKind source_kind(const StageElement& stage) noexcept {
   if (stage.kind) return *stage.kind;
   switch (stage.symbol) {
     case StageSymbol::Turbo:
-    case StageSymbol::IonPump: return SourceKind::Pump;
+    case StageSymbol::IonPump:
+    case StageSymbol::RoughingPump: return SourceKind::Pump;
     case StageSymbol::Laser: return SourceKind::Laser;
     case StageSymbol::Spectrometer:
     case StageSymbol::Quadrupole: return SourceKind::Spectrometer;
     case StageSymbol::Getter: return SourceKind::Getter;
+    case StageSymbol::Cryo:
     case StageSymbol::None: return SourceKind::None;
   }
   return SourceKind::None;

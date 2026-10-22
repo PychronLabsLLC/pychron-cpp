@@ -354,10 +354,20 @@ symbol = "getter"
 name = "f"
 pos = [0, 0]
 symbol = "ion_pump"
+[[stage]]
+name = "g"
+pos = [0, 0]
+symbol = "cryo"
+[[stage]]
+name = "h"
+pos = [0, 0]
+symbol = "roughing_pump"
 )toml",
                                          "canvas.toml");
   ASSERT_TRUE(r) << r.error().what;
-  ASSERT_EQ(r->stages.size(), 6u);
+  ASSERT_EQ(r->stages.size(), 8u);
+  EXPECT_EQ(r->stages[6].symbol, StageSymbol::Cryo);
+  EXPECT_EQ(r->stages[7].symbol, StageSymbol::RoughingPump);
   EXPECT_EQ(r->stages[5].symbol, StageSymbol::IonPump);
   EXPECT_EQ(r->stages[3].symbol, StageSymbol::Turbo);
   EXPECT_EQ(r->stages[4].symbol, StageSymbol::Getter);

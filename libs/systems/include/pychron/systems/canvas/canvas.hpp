@@ -67,7 +67,7 @@ struct GaugeElement : Located {
 };
 
 // What a stage is, for the glyph drawn inside its box; None draws the name only.
-enum class StageSymbol { None, Spectrometer, Quadrupole, Laser, Turbo, Getter, IonPump };
+enum class StageSymbol { None, Spectrometer, Quadrupole, Laser, Turbo, Getter, IonPump, Cryo, RoughingPump };
 
 // What a stage is to the gas in it. A source colours every volume connected
 // to it; when a region holds several, the one with the highest precedence
@@ -89,8 +89,9 @@ struct StageElement : Located {
   std::optional<std::string> display_name;
   bool use_symbol = false;
   StageSymbol symbol = StageSymbol::None;
-  // Unset: what the symbol says (a turbo or an ion pump is a pump, ...); a
-  // stage with neither is a plain volume.
+  // Unset: what the symbol says (a turbo, an ion pump or a roughing pump is
+  // a pump, ...); a stage with neither is a plain volume. A cryo symbol says
+  // nothing: the cold head is the same on a trap as on a pump.
   std::optional<SourceKind> kind;
   std::optional<int> precedence;     // unset: the kind's; 0: colours nothing
   std::optional<std::string> color;  // "#rrggbb"; unset: the theme's for the kind
