@@ -6,10 +6,12 @@
 #pragma once
 
 #include <compare>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "pychron/core/error.hpp"
+#include "pychron/core/http.hpp"
 
 namespace pychron::update {
 
@@ -37,5 +39,18 @@ struct Release {
 // tag_name or html_url, and a tag that is not a version are errors; a missing
 // or null body is empty notes. Unknown fields are ignored.
 [[nodiscard]] Result<Release> parse_latest_release(std::string_view json);
+
+enum class FetchOutcome { Found, NoRelease };
+
+struct Fetched {
+  FetchOutcome outcome;
+  std::optional<Release> release;  // set only for Found
+};
+
+// One GET of releases/latest of `repository` ("owner/name") through `client`.
+// 200 is Found, 404 is NoRelease (the repository has none yet); any other
+// status, an unreadable 200 and every client error are errors (a bad status
+// or body is Protocol, a client error is passed through as it came).
+[[nodiscard]] Result<Fetched> fetch_latest(http::IHttpClient& client, std::string_view repository = kRepository);
 
 }  // namespace pychron::update
