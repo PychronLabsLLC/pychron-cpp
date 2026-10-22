@@ -38,6 +38,7 @@
 // through a shared Gate the destructor closes before the bridge goes away.
 
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -107,7 +108,9 @@ class SpectrometerBridge : public QObject {
   // "stop", "integration" or "position". start_scan also reads the magnet
   // position to seed State (announced through magnetRead); a failed read
   // leaves it unset and does not fail the start. The restart after a peak
-  // center is reported as an internal "start" too.
+  // center is reported as an internal "start" too. While a peak center runs,
+  // start_scan and position are refused (Config "a peak center is running",
+  // through commandFinished) and change nothing; stop_scan is not.
   void start_scan(double integration_s);
   void stop_scan();
   void set_integration(double seconds);
@@ -145,14 +148,19 @@ class SpectrometerBridge : public QObject {
   // and reports once through peakCenterFinished. Refused, with Config "a
   // peak center is running" through peakCenterFinished, while one is.
   void peak_center(jobs::PeakCenterConfig config);
+  // What a cancelled run does with the scan it stopped: puts it back, as any
+  // run's end does, or leaves it stopped (for a window that is closing,
+  // which would stop it again at once).
+  enum class ScanAfter { Resume, Stopped };
   // No-op when none is running; the run then reports Cancelled. It is not
   // stopped at once: the runner checks between steps (an acquisition under
   // way is ended through the token's hook), and a settle or other clock wait
   // runs to its end first.
-  void cancel_peak_center();
-  // Cancels a run and waits for its thread, then delivers its finish (and the
-  // scan resume) at once, so peak_center_running() is false on return. For a
-  // caller about to delete what shows the run; asks nothing. No-op when none.
+  void cancel_peak_center(ScanAfter after = ScanAfter::Resume);
+  // Cancels a run (ScanAfter::Stopped) and waits for its thread, then
+  // delivers its finish at once, so peak_center_running() is false on
+  // return. For a caller about to delete what shows the run; asks nothing.
+  // No-op when none.
   void cancel_peak_center_and_wait();
   // From the start until its peakCenterFinished has been delivered.
   bool peak_center_running() const noexcept { return peak_center_running_; }
@@ -210,6 +218,9 @@ class SpectrometerBridge : public QObject {
   // main thread unless the bridge is gone by then.
   template <class Work, class Deliver>
   void post(Work work, Deliver deliver);
+  // Reports `what` refused (Config "a peak center is running"), queued as a
+  // command's result would be.
+  void refuse_during_peak_center(const char* what);
 
   void flush_readings();
   void on_magnet(const spectrometer::MagnetMoved& e);
@@ -240,8 +251,12 @@ class SpectrometerBridge : public QObject {
   bool peak_center_running_ = false;  // main thread
   // Integration (s) of the scan the run stopped; set while it must be restarted.
   std::optional<double> resume_integration_s_;
-  // Scan the operator asked for (start_scan, set_integration), unset after stop_scan; main thread.
+  // Scan the operator asked for (start_scan, set_integration), unset after
+  // stop_scan, after a start that failed, and after a scan that stopped with
+  // no start of ours in flight; main thread.
   std::optional<double> scan_intent_;
+  std::uint64_t start_generation_ = 0;  // each start_scan and stop_scan; main thread
+  int starts_in_flight_ = 0;            // start_scan not yet reported; main thread
 };
 
 }  // namespace pychron::ui

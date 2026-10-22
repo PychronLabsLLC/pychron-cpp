@@ -87,6 +87,13 @@ class TestSpectrometerWindow : public QObject {
   QString isotope_shown(int detector_row) const {
     return window_->intensities()->index(detector_row, IntensitiesModel::ColIsotope).data().toString();
   }
+  // A peak_center.toml whose default set runs long enough to act on.
+  void write_pc_file() {
+    const auto file = std::filesystem::path(dir_.filePath(QStringLiteral("pc.toml")).toStdString());
+    std::ofstream(file) << "[default]\nisotope = \"Ar40\"\nwindow = 0.06\nstep = 0.0005\nintegration_s = 0.1\n"
+                           "settle_s = 0.1\n";
+    window_->set_peak_center_file(file);
+  }
   // Applies the selected target and waits for the move to finish.
   void apply_and_wait() {
     const int before = positions_;
@@ -764,13 +771,62 @@ class TestSpectrometerWindow : public QObject {
     QVERIFY(window_->isVisible());
     QVERIFY(window_->peak_center_running());
 
+    QStringList commands;
+    connect(bridge_.get(), &SpectrometerBridge::commandFinished, this,
+            [&commands](const QString& what, const Result<void>&) { commands << what; });
     answer = true;
     window_->close();  // yes: cancel, close when it has finished
     QCOMPARE(asked.size(), 2);
     QTRY_VERIFY_WITH_TIMEOUT(!window_->isVisible(), kWaitMs);
     QCOMPARE(finished.count(), 1);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QVERIFY2(!commands.contains(QStringLiteral("start")), qPrintable(commands.join(u',')));  // no scan put back to be stopped
+    QVERIFY(!sim_->scan->status().running);
     QVERIFY(!window_->peak_center_running());
     QVERIFY(!finished.at(0).at(0).value<Result<jobs::PeakCenterResult>>().has_value());  // Cancelled
+  }
+
+  // While the window's peak center runs, nothing in the Controls dock may move
+  // the magnet or start a scan under the sweep: Apply, the banner's Restart
+  // and the rise rate's Start are disabled from Start until the run has
+  // finished, and a rise rate run going is ended. Stop scan is not touched.
+  void controlsAreLockedWhileAPeakCenterRuns() {
+    open();
+    write_pc_file();
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    auto* restart = window_->findChild<QPushButton*>(QStringLiteral("scanRestart"));
+    QVERIFY(restart != nullptr);
+    auto* rise = window_->rise_rate()->toggle_button();
+    QVERIFY(window_->apply_enabled());
+    QVERIFY(restart->isEnabled());
+    QVERIFY(rise->isEnabled());
+    window_->rise_rate()->toggle();
+    QVERIFY(window_->rise_rate()->running());
+
+    QSignalSpy finished(bridge_.get(), &SpectrometerBridge::peakCenterFinished);
+    QTest::mouseClick(window_->findChild<QPushButton*>(QStringLiteral("peakCenterStart")), Qt::LeftButton);
+    QVERIFY(window_->peak_center_running());
+    QVERIFY(!window_->apply_enabled());
+    QVERIFY(!restart->isEnabled());
+    QVERIFY(!rise->isEnabled());
+    QVERIFY(!window_->rise_rate()->running());
+    // The programmatic doors are shut too.
+    const int before = positions_;
+    window_->apply_position();
+    window_->restart_scan();
+    QVERIFY(window_->peak_center_running());
+
+    bridge_->cancel_peak_center();
+    QVERIFY(finished.wait(kWaitMs));
+    QVERIFY(!window_->peak_center_running());
+    QVERIFY(window_->apply_enabled());
+    QVERIFY(restart->isEnabled());
+    QVERIFY(rise->isEnabled());
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QCOMPARE(positions_, before);
   }
 
   void closeWithoutRunDoesNotAsk() {

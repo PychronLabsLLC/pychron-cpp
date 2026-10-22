@@ -140,9 +140,14 @@ QString RiseRatePanel::units_of(const std::string& detector) const {
   return tr("/min");
 }
 
+void RiseRatePanel::set_start_allowed(bool allowed) {
+  start_allowed_ = allowed;
+  toggle_->setEnabled(!detectors_.empty() && (start_allowed_ || run_.running()));
+}
+
 void RiseRatePanel::toggle() {
   if (!run_.running()) {
-    if (detector_->currentIndex() < 0) return;
+    if (!start_allowed_ || detector_->currentIndex() < 0) return;
     run_.start(detector_->currentText().toStdString());
     announced_ = false;
     void_said_ = false;
@@ -156,6 +161,7 @@ void RiseRatePanel::toggle() {
   run_.stop();
   detector_->setEnabled(true);
   toggle_->setText(tr("Start"));
+  set_start_allowed(start_allowed_);
   const auto rate = run_.current();
   if (run_.restarted()) {
     status_->setText(tr("No result: the readings began again while it ran (the scan was restarted)."));
@@ -174,6 +180,7 @@ void RiseRatePanel::abandon(const QString& why) {
   run_.stop();
   detector_->setEnabled(true);
   toggle_->setText(tr("Start"));
+  set_start_allowed(start_allowed_);
   live_->clear();
   status_->setText(tr("No result: %1.").arg(why));
   emit cleared();

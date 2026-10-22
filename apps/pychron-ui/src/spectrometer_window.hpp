@@ -145,6 +145,9 @@ class SpectrometerWindow : public QMainWindow {
   void forget_rise_marks();
   void on_readings(const std::vector<spectrometer::IntensityReading>& batch);
   void on_command_finished(const QString& what, const Result<void>& result);
+  // Apply, Restart and the rise rate's Start: disabled while the window's peak
+  // center runs (a magnet move or a scan under the sweep would spoil it).
+  void lock_for_peak_center(bool running);
 
   SpectrometerBridge& bridge_;
   bool simulation_;
@@ -177,6 +180,7 @@ class SpectrometerWindow : public QMainWindow {
   QComboBox* target_detector_ = nullptr;
   QComboBox* target_isotope_ = nullptr;
   QPushButton* apply_ = nullptr;
+  QPushButton* restart_ = nullptr;  // the banner's Restart
   QLabel* position_ = nullptr;
   QLabel* mass_ = nullptr;
 

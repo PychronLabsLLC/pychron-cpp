@@ -88,13 +88,14 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   // Center: the banner (hidden while healthy) above the chart.
   banner_->setObjectName(QStringLiteral("SpectrometerBanner"));
   style::make_banner(banner_);
-  auto* restart = new QPushButton(tr("Restart"));
+  restart_ = new QPushButton(tr("Restart"));
+  restart_->setObjectName(QStringLiteral("scanRestart"));
   auto* banner_row = new QHBoxLayout(banner_);
   banner_label_->setWordWrap(true);
   banner_row->addWidget(banner_label_, 1);
-  banner_row->addWidget(restart);
+  banner_row->addWidget(restart_);
   banner_->hide();
-  connect(restart, &QPushButton::clicked, this, [this] { restart_scan(); });
+  connect(restart_, &QPushButton::clicked, this, [this] { restart_scan(); });
 
   auto* center = new QWidget;
   auto* column = new QVBoxLayout(center);
@@ -149,11 +150,17 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   peak_plot_dock_ = new QDockWidget(tr("Peak center plot"), this);
   peak_plot_dock_->setObjectName(QStringLiteral("peakCenterPlotDock"));
   peak_plot_dock_->setWidget(peak_view_);
-  connect(peak_panel_, &PeakCenterPanel::startRequested, this, [this] { peak_view_->clear(); });
+  // From Start until the run's finish, nothing else moves the magnet or scans.
+  connect(peak_panel_, &PeakCenterPanel::startRequested, this, [this] {
+    peak_view_->clear();
+    rise_->abandon(tr("a peak center was started while it ran"));
+    lock_for_peak_center(true);
+  });
   connect(&bridge_, &SpectrometerBridge::peakCenterTryStarted, peak_view_, &PeakCenterView::on_try_started);
   connect(&bridge_, &SpectrometerBridge::peakCenterPoint, peak_view_, &PeakCenterView::on_point);
   connect(&bridge_, &SpectrometerBridge::peakCenterFinished, this, [this](const Result<jobs::PeakCenterResult>& r) {
     if (r) peak_view_->on_done(jobs::PeakCenterDone{*r});  // a failed fit too; an error has no result
+    lock_for_peak_center(bridge_.peak_center_running());  // a refused second start leaves the first going
     if (closing_after_peak_center_) {
       closing_after_peak_center_ = false;
       QTimer::singleShot(0, this, [this] { close(); });
@@ -197,6 +204,7 @@ SpectrometerWindow::SpectrometerWindow(SpectrometerBridge& bridge, bool simulati
   update_actual_integration();
   update_banner();
   sync_y_fields();
+  lock_for_peak_center(bridge_.peak_center_running());
 
   // The repaint cap: the chart is redrawn at most every 50 ms, and only when
   // the model changed.
@@ -436,7 +444,9 @@ void SpectrometerWindow::save_settings() {
 
 void SpectrometerWindow::showEvent(QShowEvent* event) {
   QMainWindow::showEvent(event);
-  if (!event->spontaneous()) {  // not a restore from minimised
+  // Not a restore from minimised; while a peak center runs, its end puts the
+  // scan back.
+  if (!event->spontaneous() && !bridge_.peak_center_running()) {
     bridge_.start_scan(integration_s());
   }
 }
@@ -452,7 +462,8 @@ void SpectrometerWindow::closeEvent(QCloseEvent* event) {
                                   QMessageBox::Yes;
       if (yes) {
         closing_after_peak_center_ = true;
-        bridge_.cancel_peak_center();
+        // The close stops the scan: the run's end does not put it back first.
+        bridge_.cancel_peak_center(SpectrometerBridge::ScanAfter::Stopped);
       }
     }
     event->ignore();
@@ -512,7 +523,7 @@ void SpectrometerWindow::select_target(const QString& detector, const QString& i
 void SpectrometerWindow::apply_position() {
   const QString detector = target_detector_->currentText();
   const QString isotope = target_isotope_->currentText();
-  if (move_pending_ || detector.isEmpty() || isotope.isEmpty()) {
+  if (move_pending_ || bridge_.peak_center_running() || detector.isEmpty() || isotope.isEmpty()) {
     return;
   }
   if (confirm_move_amu_ > 0.0) {
@@ -597,6 +608,12 @@ void SpectrometerWindow::forget_rise_marks() {
   update_rise_marks();
 }
 
+void SpectrometerWindow::lock_for_peak_center(bool running) {
+  apply_->setEnabled(!running && !move_pending_);
+  restart_->setEnabled(!running);
+  rise_->set_start_allowed(!running);
+}
+
 void SpectrometerWindow::set_wall_clock(std::function<QDateTime()> now) { rise_->set_wall_clock(std::move(now)); }
 
 void SpectrometerWindow::set_rise_rate_file(const std::filesystem::path& path) {
@@ -615,6 +632,7 @@ void SpectrometerWindow::update_rise_marks() {
 QString SpectrometerWindow::banner_text() const { return banner_->isHidden() ? QString() : banner_label_->text(); }
 
 void SpectrometerWindow::restart_scan() {
+  if (bridge_.peak_center_running()) return;  // its end puts the scan back
   rise_->abandon(tr("the scan was restarted while it ran"));
   bridge_.stop_scan();
   bridge_.start_scan(integration_s());
@@ -661,7 +679,7 @@ void SpectrometerWindow::on_readings(const std::vector<spectrometer::IntensityRe
 void SpectrometerWindow::on_command_finished(const QString& what, const Result<void>& result) {
   if (what == QLatin1String("position")) {
     move_pending_ = false;
-    apply_->setEnabled(true);
+    apply_->setEnabled(!bridge_.peak_center_running());
   }
   command_error_ = result ? QString() : QStringLiteral("%1: %2").arg(what, QString::fromStdString(result.error().what));
   update_banner();

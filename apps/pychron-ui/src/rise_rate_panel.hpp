@@ -48,6 +48,10 @@ class RiseRatePanel : public QWidget {
   // stays in the table.
   void set_results_file(std::filesystem::path path, QString spectrometer, bool simulated);
   void toggle();  // the Start / Stop button
+  // Whether a run may be started (not while a peak center sweeps the magnet):
+  // Start is disabled and toggle() starts nothing. A run going can still be
+  // stopped.
+  void set_start_allowed(bool allowed);
   // Ends a run with no result and says why (the window was closed, the scan
   // was restarted): readings either side of a break are not one rise.
   // Nothing when no run is on.
@@ -83,6 +87,7 @@ class RiseRatePanel : public QWidget {
   QString spectrometer_;
   bool simulated_ = false;
   RiseRun run_;
+  bool start_allowed_ = true;
   bool announced_ = false;  // started() sent for this run
   bool void_said_ = false;  // cleared() sent for this run's having gone void
   int count_ = 0;           // results since the table was last cleared

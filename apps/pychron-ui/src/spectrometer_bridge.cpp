@@ -245,11 +245,30 @@ void SpectrometerBridge::run(const char* what, Command command) {
        });
 }
 
+void SpectrometerBridge::refuse_during_peak_center(const char* what) {
+  QMetaObject::invokeMethod(
+      this,
+      [this, name = QString::fromLatin1(what)] {
+        const Result<void> refused = fail(ErrorKind::Config, "a peak center is running", "peak_center");
+        emit commandFinished(name, refused);
+      },
+      Qt::QueuedConnection);
+}
+
 void SpectrometerBridge::start_scan(double integration_s) {
+  // A scan beside the sweep would read the magnet as it moves; refused, it is
+  // no scan the run's end puts back either.
+  if (peak_center_running_) {
+    refuse_during_peak_center("start");
+    return;
+  }
   stop_requested_ = false;
   scan_intent_ = integration_s;
+  const std::uint64_t generation = ++start_generation_;
+  ++starts_in_flight_;
   QPointer<SpectrometerBridge> self(this);
-  run("start", [self, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)] {
+  post(
+      [self, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)]() -> Result<void> {
     // Posted before the command's own result, so the state is seeded by the
     // time "start" is reported.
     if (auto native = spec->magnet_native()) {
@@ -267,12 +286,22 @@ void SpectrometerBridge::start_scan(double integration_s) {
           Qt::QueuedConnection);
     }
     return scan->start(integration);
-  });
+      },
+      [generation](SpectrometerBridge& bridge, const Result<void>& result) {
+        --bridge.starts_in_flight_;
+        // A start that failed is no scan to put back after a peak center,
+        // unless a newer start or stop has said otherwise since.
+        if (!result && generation == bridge.start_generation_) {
+          bridge.scan_intent_.reset();
+        }
+        emit bridge.commandFinished(QStringLiteral("start"), result);
+      });
 }
 
 void SpectrometerBridge::stop_scan() {
   stop_requested_ = true;
   scan_intent_.reset();
+  ++start_generation_;
   run("stop", [scan = &scan_] {
     scan->stop();
     return Result<void>{};
@@ -288,6 +317,10 @@ void SpectrometerBridge::set_integration(double seconds) {
 }
 
 void SpectrometerBridge::position(const QString& isotope, const QString& detector) {
+  if (peak_center_running_) {  // a move under the sweep would spoil its fit
+    refuse_during_peak_center("position");
+    return;
+  }
   run("position", [spec = &spec_, isotope = isotope.toStdString(), detector = detector.toStdString()]() -> Result<void> {
     auto moved = spec->position(spectrometer::PositionTarget{spectrometer::Isotope{isotope}, detector});
     if (!moved) {
@@ -465,8 +498,11 @@ void SpectrometerBridge::start_peak_center_thread(jobs::PeakCenterConfig config)
   hold.reset();
 }
 
-void SpectrometerBridge::cancel_peak_center() {
+void SpectrometerBridge::cancel_peak_center(ScanAfter after) {
   if (peak_center_run_) {
+    if (after == ScanAfter::Stopped) {
+      resume_integration_s_.reset();
+    }
     peak_center_run_->cancel.cancel();
   }
 }
@@ -475,7 +511,7 @@ void SpectrometerBridge::cancel_peak_center_and_wait() {
   if (!peak_center_running_) {
     return;
   }
-  cancel_peak_center();
+  cancel_peak_center(ScanAfter::Stopped);  // what shows the scan is about to go
   // The run's thread may not have started: it starts when the executor has
   // stopped the scan, and sees the cancel at once. Each round lets the
   // executor finish, delivers what it posted (the thread's start, or the run's
@@ -603,6 +639,12 @@ void SpectrometerBridge::on_scan(const ScanStatus& e) {
     return;
   }
   state_.scan = e;
+  // A scan that stopped by itself (a fault, another program), with no start
+  // of ours still to report, is no scan to put back after a peak center. The
+  // run's own stop is not that.
+  if (!e.running && starts_in_flight_ == 0 && !peak_center_running_) {
+    scan_intent_.reset();
+  }
   emit scanStatus(e);
 }
 

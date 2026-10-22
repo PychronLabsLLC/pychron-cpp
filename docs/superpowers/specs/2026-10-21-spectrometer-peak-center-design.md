@@ -79,9 +79,10 @@ One helper does both, used by runner's `update_table` branch and by Apply:
 `Result<std::vector<std::string>> write_peak_center_to_table(Spectrometer&,
 const DetectorId&, const std::string& isotope, double table_value, bool
 propagate, bool save)` (returns notes). Same calls, so table after Apply
-equals table after `update_table = true` run with same fit. Save failure: in-memory table kept, failure reported (same as
-runner's note "field table not saved: <why>"). No `position` afterwards:
-magnet already at fitted centre.
+equals table after `update_table = true` run with same fit. Save failure:
+in-memory table kept, failure reported (same as runner's note "field table
+not saved: <why>"). No `position` afterwards: magnet already at fitted
+centre.
 
 ### 3.4 Sets re-read at queue start
 
@@ -126,8 +127,19 @@ settings partway.
 // running. Pauses the live scan when running, restarts it after at the
 // integration it had.
 void peak_center(jobs::PeakCenterConfig config);
-void cancel_peak_center();            // no-op when none running
+// No-op when none running. Stopped: scan run stopped stays stopped (window
+// closing would stop it at once).
+enum class ScanAfter { Resume, Stopped };
+void cancel_peak_center(ScanAfter after = ScanAfter::Resume);
+// Teardown: cancels (ScanAfter::Stopped), waits, delivers finish at once.
+void cancel_peak_center_and_wait();
 bool peak_center_running() const;     // main thread
+
+// While a run goes: refused, commandFinished("start" / "position") with
+// Config "a peak center is running"; nothing changed (no scan intent). Scan
+// beside sweep or magnet move would spoil fit. stop_scan not refused.
+void start_scan(double integration_s);
+void position(const QString& isotope, const QString& detector);
 
 // Non-blocking, on the command executor; report once each.
 void apply_peak_center(QString detector, QString isotope, double table_value, bool propagate);
@@ -174,11 +186,18 @@ Destructor: cancels, waits as above, then existing teardown.
 
 Scan pause decided from scan operator last asked for (main-thread intent,
 `scan_intent_`), not last reported status: a `start_scan` just issued has not
-reported yet. If scan wanted at start: `ScanService` stopped first (on executor, in order),
-then run. After run (any outcome): scan restarted with integration it had,
-unless operator pressed Stop scan meanwhile (existing `stop_requested_` rule).
-Runner's `integration` override (non-zero) changes integration for run only;
-restart puts old one back.
+reported yet. If scan wanted at start: `ScanService` stopped first (on
+executor, in order), then run. After run (any outcome): scan restarted with
+integration it had, unless operator pressed Stop scan meanwhile (existing
+`stop_requested_` rule) or run cancelled with `ScanAfter::Stopped`. Runner's
+`integration` override (non-zero) changes integration for run only; restart
+puts old one back.
+
+Intent cleared (nothing to put back) by: `stop_scan`; a `start` whose result
+is an error, unless a newer `start_scan` or `stop_scan` came after it
+(generation counter); a `ScanStatus` with `running = false` (fault, other
+program), but only when no `start_scan` is still unreported and no window
+run goes (run's own stop is not that).
 
 ### 4.4 Save to set
 
@@ -206,8 +225,14 @@ Existing name overwritten only after window asked (5.2).
   `PeakCenterPanel` widget (`apps/pychron-ui/src/peak_center_panel.{hpp,cpp}`,
   keeps `spectrometer_window.cpp` from growing). Contents 5.2.
 - "Peak center plot" dock: `PeakCenterView` (`peak_center_view.hpp`), placed
-  in bottom dock area, below strip chart, both visible. Cleared at each Start; tries drawn as
-  today (faint earlier tries); last result stays until next Start.
+  in bottom dock area, below strip chart, both visible. Cleared at each
+  Start; tries drawn as today (faint earlier tries); last result stays until
+  next Start.
+- Controls dock during window run (Start pressed until `peakCenterFinished`):
+  magnet Apply, banner's Restart, rise rate Start disabled; `apply_position`,
+  `restart_scan` do nothing; rise rate run going ended without result
+  ("a peak center was started while it ran"); window shown meanwhile starts
+  no scan. Graph, detectors, integration unchanged. Bridge refuses too (4.1).
 - Both closable, movable, in View menu; positions saved with window state like
   existing docks.
 
@@ -215,8 +240,9 @@ Existing name overwritten only after window asked (5.2).
 
 - Set: combo of names in `peak_center.toml` (file read at window open and
   after each save); built-in `PeakCenterConfig{}` named `default` when file
-  absent or has no `default`. File given by `SpectrometerWindow::set_peak_center_file(path)`
-  (`<lab>/peak_center.toml`), set by `MainWindow` like `set_rise_rate_file`.
+  absent or has no `default`. File given by
+  `SpectrometerWindow::set_peak_center_file(path)` (`<lab>/peak_center.toml`),
+  set by `MainWindow` like `set_rise_rate_file`.
   Unparseable file: banner names error, combo holds built-in `default` only,
   Save disabled (would overwrite what operator must fix by hand).
 - Form, one field per file key: detector (combo, spectrometer's detectors,
@@ -229,8 +255,8 @@ Existing name overwritten only after window asked (5.2).
 - Picking set loads form. Edited field marked (bold label). "Revert to set"
   reloads.
 - Form validated with runner's rules (`validate` in `peak_center.cpp`, made
-  public as `validate_peak_center_config`): invalid → Start and Save disabled,
-  reason under form.
+  public as `validate_peak_center_config`): invalid → Start and Save
+  disabled, reason under form.
 - Start: disabled while running, while queue running (5.4), while form
   invalid. Cancel: enabled while running.
 - Result area: status line (`message`, or error), initial centre, fitted
@@ -246,7 +272,8 @@ Existing name overwritten only after window asked (5.2).
 
 ### 5.3 Close
 
-Closing window with run going: asks "Cancel peak center?"; yes cancels, waits
+Closing window with run going: asks "Cancel peak center?"; yes cancels
+(`ScanAfter::Stopped`: no scan put back to be stopped), waits for finish
 (bridge 4.2), closes; no keeps window open.
 
 ### 5.4 Exclusion with queue
@@ -287,11 +314,14 @@ Closing window with run going: asks "Cancel peak center?"; yes cancels, waits
   spectrometer): run completes, events relayed in order, result posted;
   cancel → Cancelled; second start refused; scan paused and resumed at old
   integration; stop during run keeps scan stopped; destructor during run
-  returns.
+  returns; `start_scan`/`position` refused during run; failed start or scan
+  stopped behind bridge not put back; `ScanAfter::Stopped` and
+  `cancel_peak_center_and_wait` leave scan stopped.
 - `tests/ui/test_spectrometer_window.cpp`: set loads form; edit marks; revert;
   invalid disables Start/Save; Apply enable states (ok, failed, table changed,
   queue running); Save round-trip through file; queue running disables Start;
-  experiment window refuses start while peak center runs.
+  experiment window refuses start while peak center runs; Controls dock
+  locked during run, unlocked after; close after "yes" starts no scan.
 - New thread: suites above run under `-DPYCHRON_SANITIZE=thread` before land.
 
 ## 7. Docs

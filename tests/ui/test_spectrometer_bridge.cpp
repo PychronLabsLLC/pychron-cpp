@@ -841,6 +841,97 @@ class TestSpectrometerBridge : public QObject {
     QVERIFY(!sim_->scan->status().running);
   }
 
+  // A scan started or a magnet moved under the sweep would corrupt it: both
+  // are refused while the run goes, and the refused start is no scan to put
+  // back afterwards.
+  void startScanAndPositionRefusedDuringPeakCenter() {
+    use_virtual_clock();
+    auto stop = stop_time_at_first_point();
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    bridge_->start_scan(0.5);
+    bridge_->position(QStringLiteral("Ar40"), QStringLiteral("H1"));
+    QTRY_COMPARE_WITH_TIMEOUT(count("start"), 1, kWaitMs);
+    QTRY_COMPARE_WITH_TIMEOUT(count("position"), 1, kWaitMs);
+    for (const char* what : {"start", "position"}) {
+      const auto& r = last(QString::fromLatin1(what))->result;
+      QVERIFY(!r.has_value());
+      QCOMPARE(r.error().kind, ErrorKind::Config);
+      QCOMPARE(r.error().what, std::string("a peak center is running"));
+    }
+    QVERIFY(!sim_->scan->status().running);
+    bridge_->cancel_peak_center();
+    restart_time();
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QCOMPARE(count("start"), 1);
+    QVERIFY(!sim_->scan->status().running);
+
+    // Free again: both go through.
+    bridge_->start_scan(0.5);
+    QTRY_COMPARE_WITH_TIMEOUT(count("start"), 2, kWaitMs);
+    QVERIFY(last("start")->result.has_value());
+  }
+
+  // A window that is closing cancels without the scan coming back (it would
+  // stop it again at once); cancel_peak_center_and_wait does the same.
+  void cancelForACloseLeavesTheScanStopped() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    auto stop = stop_time_at_first_point();
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(!pc_points_.empty(), kWaitMs);
+    bridge_->cancel_peak_center(SpectrometerBridge::ScanAfter::Stopped);
+    restart_time();
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QCOMPARE(count("start"), 1);
+    QVERIFY(!sim_->scan->status().running);
+
+    time_stopped_ = false;
+    bridge_->start_scan(0.5);
+    QTRY_VERIFY_WITH_TIMEOUT(bridge_->state().scan.running, kWaitMs);
+    bridge_->peak_center(long_config());
+    QTRY_VERIFY_WITH_TIMEOUT(pc_points_.size() > 1 && time_stopped_, kWaitMs);
+    restart_time();
+    bridge_->cancel_peak_center_and_wait();
+    QVERIFY(!bridge_->peak_center_running());
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QCOMPARE(count("start"), 2);
+    QVERIFY(!sim_->scan->status().running);
+  }
+
+  // A start that failed leaves no scan for a peak center to put back.
+  void failedStartScanIsNotResumed() {
+    use_virtual_clock();
+    bridge_->start_scan(0.0);  // integration must be positive
+    QTRY_COMPARE_WITH_TIMEOUT(count("start"), 1, kWaitMs);
+    QVERIFY(!last("start")->result.has_value());
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QCOMPARE(count("start"), 1);
+    QVERIFY(!sim_->scan->status().running);
+  }
+
+  // Nor does a scan that stopped by itself (a fault, another program).
+  void scanStoppedBehindTheBridgeIsNotResumed() {
+    use_virtual_clock();
+    start_scan_on_virtual_clock();
+    sim_->scan->stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!bridge_->state().scan.running, kWaitMs);
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    bridge_->drain();
+    QCoreApplication::processEvents();
+    QCOMPARE(count("start"), 1);
+    QVERIFY(!sim_->scan->status().running);
+  }
+
   static std::string read_text(const std::filesystem::path& file) {
     std::ifstream in(file, std::ios::binary);
     std::ostringstream text;
