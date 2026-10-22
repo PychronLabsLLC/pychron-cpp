@@ -401,6 +401,9 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
   Qt timer; `libs/earthbank` `secret_store_linux.cpp`: the timer thread that
   cancels a secret-service call after 3 s for the probe and 120 s for a
   password call): a real network and a real desktop service;
+- the update check (`apps/pychron-ui` `update_checker.cpp`): its worker
+  thread and the request's 10 s timeout. A real socket to GitHub, not on a
+  simulated path; the worker is never a participant;
 - the notifier (`lab/notifier.cpp`, and the `Date:` of a mail in
   `lab/notifications.cpp`): it runs programs outside, on its own thread, and
   is not a participant;

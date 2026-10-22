@@ -26,6 +26,10 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
     # tests/earthbank/analyses.hpp builds on "processing/fixtures.hpp"
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
   endif()
+  # the update check's suite fakes GitHub (tests/update fake_http.hpp)
+  if(name STREQUAL "test_update_checker")
+    target_link_libraries(${target} PRIVATE pychron::update_testing)
+  endif()
   # the Publish window's suite seeds a store as the release tests do
   # (tests/publish/release_seed.hpp, over tests/persistence/store_fixture.hpp)
   if(name MATCHES "^test_publish")

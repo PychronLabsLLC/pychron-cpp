@@ -102,6 +102,7 @@ add_library(pychron_ui_lib STATIC
   src/earthbank_preferences_page.cpp
   src/earthbank_package_dialog.cpp
   src/earthbank_publish_dialog.cpp
+  src/update_checker.cpp
   src/laser_bridge.cpp
   src/tray_view.cpp
   src/camera_view.cpp
@@ -198,6 +199,7 @@ add_library(pychron_ui_lib STATIC
   src/earthbank_preferences_page.hpp
   src/earthbank_package_dialog.hpp
   src/earthbank_publish_dialog.hpp
+  src/update_checker.hpp
   src/laser_bridge.hpp
   src/tray_view.hpp
   src/camera_view.hpp
@@ -213,6 +215,9 @@ target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment p
 # asks it over HTTPS. Without Qt6 Network there is no client
 # (src/earthbank_no_network.cpp) and the EarthBank pages say so.
 target_link_libraries(pychron_ui_lib PUBLIC pychron::earthbank)
+# Telling the operator of a newer release (libs/update; asked through the
+# same HTTPS client as EarthBank).
+target_link_libraries(pychron_ui_lib PUBLIC pychron::update)
 if(TARGET pychron_earthbank_qt)
   target_link_libraries(pychron_ui_lib PUBLIC pychron::earthbank_qt)
 else()
