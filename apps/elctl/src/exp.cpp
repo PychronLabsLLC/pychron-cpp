@@ -18,6 +18,7 @@
 #include "exp_store.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/process.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/lab/lab.hpp"
@@ -307,12 +308,19 @@ class Exp {
     // (VirtualClock), which starts at the real time of day. Declared before
     // everything that is given it, so it is the last to go.
     std::unique_ptr<VirtualClock> sim_clock;
+    // After the clock, so destroyed first: the hub stops using the clock before it goes.
+    std::optional<LogHub::ClockAttachment> clock_attachment;
     if (a_.sim_speed > 0) {
       VirtualClock::Options clock_options;
       clock_options.speed = a_.sim_speed;
       clock_options.epoch = std::chrono::system_clock::now();
-      clock_options.on_stall = [this](std::string report) { complain("elctl: " + report); };
+      clock_options.on_stall = [this](const std::string& report) {
+        complain("elctl: " + report);
+        process_logger("clock").warn(report);
+      };
       sim_clock = std::make_unique<VirtualClock>(std::move(clock_options));
+      // The process log stamps its lines with the simulated time for as long as the clock lives.
+      if (const auto hub = process_log_hub()) clock_attachment.emplace(hub->attach_clock(*sim_clock));
     }
 
     systems::ExtractionLine::Options line_options;

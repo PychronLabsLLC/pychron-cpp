@@ -38,6 +38,9 @@ class Logger {
   Logger(const Logger& other);
   Logger& operator=(const Logger& other);
 
+  // A logger that writes nothing: no hub, no bus, a level above Error.
+  static Logger disabled(std::string name);
+
   const std::string& name() const noexcept { return name_; }
 
   // On a hub logger this is an explicit override that hub rules no longer replace.

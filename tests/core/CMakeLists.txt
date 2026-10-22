@@ -25,6 +25,7 @@ add_executable(pychron_core_tests
   test_local_file.cpp
   test_logging_file.cpp
   test_log_dir.cpp
+  test_process_log.cpp
   test_http.cpp
 )
 

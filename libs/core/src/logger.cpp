@@ -27,6 +27,14 @@ Logger::Logger(std::string name, const Clock& clock, SignalBus* bus, Options opt
       echo_(options.echo),
       echo_mutex_(std::make_shared<std::mutex>()) {}
 
+Logger Logger::disabled(std::string name) {
+  static const SteadyClock clock;
+  // One past Error: no record reaches it. The packed state keeps 8 bits of level.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange): deliberate, see above
+  const auto above_error = static_cast<LogLevel>(static_cast<int>(LogLevel::Error) + 1);
+  return Logger(std::move(name), clock, nullptr, Options{above_error, nullptr});
+}
+
 // Epoch 0 is never a hub epoch, so the first level() call resolves.
 Logger::Logger(std::string name, std::shared_ptr<LogHub::Impl> hub)
     : name_(std::move(name)), state_(0), hub_(std::move(hub)) {}

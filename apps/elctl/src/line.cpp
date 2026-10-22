@@ -6,6 +6,7 @@
 #include <deque>
 #include <memory>
 
+#include "pychron/core/process_log.hpp"
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
@@ -69,8 +70,13 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
   std::unique_ptr<Line> line(new Line(std::move(config)));
   const auto& cfg = line->config_;
 
-  // Logging must never stop start-up: warn and carry on without a hub.
-  if (auto hub = LogHub::create(cfg.logging, line->clock_, &line->bus_)) {
+  // The process hub (made by main()) when there is one; the line's own bus
+  // is attached to it for the line's life. Logging must never stop start-up:
+  // warn and carry on without a hub.
+  if (auto process_hub = process_log_hub()) {
+    line->bus_attachment_.emplace(process_hub->attach_bus(line->bus_));
+    line->log_hub_ = std::move(process_hub);
+  } else if (auto hub = LogHub::create(cfg.logging, line->clock_, &line->bus_)) {
     line->log_hub_ = std::move(*hub);
   } else {
     std::fprintf(stderr, "elctl: logging disabled: %s\n", hub.error().what.c_str());

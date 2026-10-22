@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -89,6 +90,8 @@ class Line {
   // After the bus and before the transports: destroyed after the transports
   // that log through it. No [logging].dir means no file sink.
   std::shared_ptr<pychron::LogHub> log_hub_;
+  // The process hub's bus attachment: declared after bus_, so it goes first.
+  std::optional<pychron::LogHub::BusAttachment> bus_attachment_;
   std::unique_ptr<Sims> sims_;
   std::vector<std::pair<std::string, std::unique_ptr<pychron::Transport>>> transports_;
   std::vector<std::pair<std::string, std::unique_ptr<pychron::Device>>> devices_;
