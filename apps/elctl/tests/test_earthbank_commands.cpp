@@ -298,13 +298,24 @@ TEST_F(ElctlEarthbank, ExportXlsxFromDraftRelease) {
   EXPECT_TRUE(contains(o.out, "FC-2: 1 analysis")) << o.out;
 }
 
+// Every selection flag, with a value that parses: --release takes none.
+const std::vector<std::vector<std::string>>& selection_flags() {
+  static const std::vector<std::vector<std::string>> flags{
+      {"--sample", "x"},          {"--identifier", "x"}, {"--project", "x"}, {"--irradiation", "x"},
+      {"--type", "unknown"},      {"--uuid", "x"},       {"--from", "2026-01-01"}, {"--to", "2026-12-31"},
+      {"--include-invalid"},      {"--limit", "7"}};
+  return flags;
+}
+
 TEST_F(ElctlEarthbank, ReleaseWithSelectionIsUsageError) {
   const auto release = make_release(*store_, ps::Actor{reducer_, red_}, unknowns_, false);
   ASSERT_TRUE(release) << to_string(release.error());
-  for (const char* flag : {"--sample", "--identifier", "--project", "--irradiation", "--type", "--uuid"}) {
-    const Outcome o = to_out({"--release", "rel", flag, "x"});
-    EXPECT_EQ(o.code, elctl::kUsage) << flag;
-    EXPECT_TRUE(contains(o.err, "--release")) << o.err;
+  for (const auto& flag : selection_flags()) {
+    std::vector<std::string> args{"--release", "rel"};
+    args.insert(args.end(), flag.begin(), flag.end());
+    const Outcome o = to_out(args);
+    EXPECT_EQ(o.code, elctl::kUsage) << flag[0];
+    EXPECT_TRUE(contains(o.err, "--release names the analyses itself: it cannot be given with")) << o.err;
     EXPECT_EQ(o.out, "");
   }
   EXPECT_EQ(to_out({"--release", "nobody"}).code, elctl::kUsage);  // no such release: fatal, as any other
@@ -1454,6 +1465,22 @@ TEST_F(ElctlEarthbankUploadRelease, UploadFromPublicReleaseSends) {
   EXPECT_GT(posts(), 0u);
   EXPECT_TRUE(contains(o.out, "FC-2: complete")) << o.out;
   EXPECT_TRUE(contains(o.out, "S-FUS: complete")) << o.out;
+}
+
+TEST_F(ElctlEarthbankUploadRelease, ReleaseWithSelectionIsUsageErrorOnPreflightAndUpload) {
+  release(true);
+  const std::size_t requests = bank_.requests().size();
+  for (const char* sub : {"preflight", "upload"}) {
+    for (const auto& flag : selection_flags()) {
+      std::vector<std::string> args{sub, "--db", db_, "--release", "rel", "--yes"};
+      if (std::string(sub) == "preflight") args.pop_back();
+      args.insert(args.end(), flag.begin(), flag.end());
+      const Outcome o = with_profiles(args);
+      EXPECT_EQ(o.code, elctl::kUsage) << sub << ' ' << flag[0];
+      EXPECT_TRUE(contains(o.err, "--release names the analyses itself: it cannot be given with")) << o.err;
+    }
+  }
+  EXPECT_EQ(bank_.requests().size(), requests);
 }
 
 TEST_F(ElctlEarthbankUploadRelease, PreflightReadsTheRelease) {
