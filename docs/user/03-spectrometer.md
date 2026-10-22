@@ -349,32 +349,31 @@ the starter `detector_ic` plan hops only Faradays for exactly that reason.
 
 Peak centring finds the magnet setting that puts an isotope's peak in the
 middle of a detector, and (by default) writes the correction into the field
-table so later moves use it. It runs from a plan (`[peak_center]
-before/after = true`), from a script, or by hand from the spectrometer window
-("From the spectrometer window", below). The result of a plan's centring
-appears in the **Evolutions** dock of the experiment window under **Peak centers** as `Ar40 on H1: center 5.001234, table
-updated`, or `failed: <reason>`. A failed centring is reported and the run
-continues; it is not an error.
+table so later moves use it. It runs from a plan (`[peak_center] before/after =
+true`), from a script, or by hand from the spectrometer window ("From the
+spectrometer window", below). The result of a plan's centring appears in the
+**Evolutions** dock of the experiment window under **Peak centers** as `Ar40 on
+H1: center 5.001234, table updated`, or `failed: <reason>`. A failed centring
+is reported and the run continues; it is not an error.
 
 A small peak can still be fitted, and its centre then goes into the field
-table: after a blank that moves the table by noise. `min_signal` in the
-plan's `[peak_center]` prevents it. When the last ten readings of the
-isotope on the detector, in the run just measured, average less than
-`min_signal` (in the detector's units, not corrected for baseline), the peak
-centre after the run is not made: the magnet is not swept and the table is
-left alone. The run's events say `peak_center.after skipped: signal 0.011
-below min_signal 0.05`, and the record keeps the same line. A peak centre
-before the run has no readings to compare and is always made. The plans an
-install ships set `min_signal = 3.0` and expose it as **Peak center minimum
-signal**, so a run may change it in the **Measurement** tab or with
-`overrides = { "peak_center.min_signal" = 50.0 }` (a blank whose remaining
-peak is above 3 is still centred unless its rows raise it); 0 is no minimum.
-(`min_peak_height` in `peak_center.toml` is a
-different thing: it fails a centring whose swept peak is lower, after the
-sweep has been made.)
+table: after a blank that moves the table by noise. `min_signal` in the plan's
+`[peak_center]` prevents it. When the last ten readings of the isotope on the
+detector, in the run just measured, average less than `min_signal` (in the
+detector's units, not corrected for baseline), the peak centre after the run is
+not made: the magnet is not swept and the table is left alone. The run's events
+say `peak_center.after skipped: signal 0.011 below min_signal 0.05`, and the
+record keeps the same line. A peak centre before the run has no readings to
+compare and is always made. The plans an install ships set `min_signal = 3.0`
+and expose it as **Peak center minimum signal**, so a run may change it in the
+**Measurement** tab or with `overrides = { "peak_center.min_signal" = 50.0 }`
+(a blank whose remaining peak is above 3 is still centred unless its rows raise
+it); 0 is no minimum. (`min_peak_height` in `peak_center.toml` is a different
+thing: it fails a centring whose swept peak is lower, after the sweep has been
+made.)
 
-The settings are named tables in the lab's `peak_center.toml`; a plan picks
-one with `config = "default"`:
+The settings are named tables in the lab's `peak_center.toml`; a plan picks one
+with `config = "default"`:
 
 ```toml
 [default]
@@ -389,64 +388,70 @@ integration_s = 1.0
 baseline_timeout_s = 10  # how long to wait for the signal to drop at the start
 update_table = true      # write the result to the field table
 propagate = true         # and move the other detectors' columns with it
-# also accepted: additional_detectors, center, direction ("increase"/"decrease"),
-# settle_s, dac_offset, peak_shift_threshold, test_peak_flat
+# also accepted: additional_detectors, center,
+# direction ("increase"/"decrease"), settle_s, dac_offset,
+# peak_shift_threshold, test_peak_flat
 ```
 
-Choose `window` from your real peak width: the example's wide window suits
-the simulator's broad peaks, and the program's built-in default is much
-narrower. A window that misses the peak fails the centring. An unknown key in
-this file is an error, and `elctl exp validate` reports a plan whose
-`config` is not in the file.
+Choose `window` from your real peak width: the example's wide window suits the
+simulator's broad peaks, and the program's built-in default is much narrower. A
+window that misses the peak fails the centring. An unknown key in this file is
+an error, and `elctl exp validate` reports a plan whose `config` is not in the
+file.
 
-`additional_detectors = ["H2", "AX"]` lists other detectors to read during
-the same sweep. They are read at every step and fitted as the reference is,
-but only for display: the centre, the field table update and the outcome come
-from the reference detector alone, and a detector whose fit fails does not
-fail the centring. In the experiment window (the Evolutions pane's Peak
-center tab, see section 3 of [Experiments](04-experiments.md)) each one is
-drawn on the
-reference's graph, scaled so that its lowest and highest readings span the
-same range as the reference's: you compare the shapes and positions of the
-peaks, not their sizes. The values stored and shown in the tooltip are the
-raw readings.
+`additional_detectors = ["H2", "AX"]` lists other detectors to read during the
+same sweep. They are read at every step and fitted as the reference is, but
+only for display: the centre, the field table update and the outcome come from
+the reference detector alone, and a detector whose fit fails does not fail the
+centring. In the experiment window (the Evolutions pane's Peak center tab, see
+section 3 of [Experiments](04-experiments.md)) each one is drawn on the
+reference's graph, scaled so that its lowest and highest readings span the same
+range as the reference's: you compare the shapes and positions of the peaks,
+not their sizes. The values stored and shown in the tooltip are the raw
+readings.
 
-Choose detectors that sit on a peak of their own when the reference is
-centred: in a multicollection setup, the detectors that collect the other
-isotopes of the same gas at that magnet setting (for example, with `Ar40` on
-`H1`, the detector that carries `Ar36` or `Ar39` in your plan). A detector
-with no peak inside the sweep window reads only baseline and noise, and
-scaling stretches that noise over the reference's whole range: it is drawn
-as a peak where there is none. Leave such a detector out. The example lab's
-`peak_center.toml` names none, because in the simulator no other detector
-has a peak in the example's window; the files a new install gets name none
-either, so each lab chooses its own.
+Choose detectors that sit on a peak of their own when the reference is centred:
+in a multicollection setup, the detectors that collect the other isotopes of
+the same gas at that magnet setting (for example, with `Ar40` on `H1`, the
+detector that carries `Ar36` or `Ar39` in your plan). A detector with no peak
+inside the sweep window reads only baseline and noise, and scaling stretches
+that noise over the reference's whole range: it is drawn as a peak where there
+is none. Leave such a detector out. The example lab's `peak_center.toml` names
+none, because in the simulator no other detector has a peak in the example's
+window; the files a new install gets name none either, so each lab chooses its
+own.
 
 `update_table = true` writes a **new version** of the field table (a
 timestamped file under `tables/<name>/`, with a `current` pointer file naming
 the active one). Old versions are kept; nothing is overwritten. If that file
-cannot be written (no data directory, a folder that is not writable), the
-peak center still succeeds and moves to the new value, but its result
-carries the note `field table not saved: <why>` and a warning is logged:
-the update then lasts only until pychron is restarted.
+cannot be written (no data directory, a folder that is not writable), the peak
+center still succeeds and moves to the new value, but its result carries the
+note `field table not saved: <why>` and a warning is logged: the update then
+lasts only until pychron is restarted.
 
 #### From the spectrometer window
 
 The window has a **Peak center** dock, tabbed with the Controls dock, and a
 **Peak center plot** dock in the bottom dock area below the strip chart; both
 can be closed, moved and brought back from the View menu. The dock starts from
-the settings of the lab's `peak_center.toml` (described above): pick a set from the
-list, and its values fill the form. Change any field (isotope, detector,
+the settings of the lab's `peak_center.toml` (described above): pick a set from
+the list, and its values fill the form. Change any field (isotope, detector,
 window, step and the rest) and it is marked as an override of the set; the
 override is used for this run only and does not touch the file. **Revert to
 set** puts the set's own values back.
 
 **Start** begins the run and **Cancel** ends it. If the scan is running it is
 stopped first and started again, with its integration time, when the run ends,
-unless you pressed Stop scan meanwhile. A cancel takes effect at the next step:
-a settle or other wait in progress runs to its end. The plot dock is cleared at
-each Start and draws each try (earlier tries faint); the last result stays
-there, and in the dock, until the next Start.
+unless you pressed Stop scan meanwhile or closed the window. A cancel takes
+effect at the next step: a settle or other wait in progress runs to its end.
+The plot dock is cleared at each Start and draws each try (earlier tries
+faint); the last result stays there, and in the dock, until the next Start.
+
+While the run goes nothing else may move the magnet or scan under the sweep: in
+the Controls dock the magnet's **Apply**, the banner's **Restart** and the rise
+rate's **Start** are disabled from Start until the run has ended, and a rise
+rate measurement in progress is ended without a result. The other controls
+(graph, detectors, integration time) stay as they are.
 
 After a successful run, **Apply to field table** writes the centre into the
 detector's row for the isotope in the active field table, after asking you to
@@ -459,15 +464,18 @@ result, and it can be used once per result.
 `peak_center.toml`: an existing name is replaced in place, a new name is added,
 and the comments and order of the rest of the file are kept. The file is read
 again when a queue starts, so a plan sees a saved set at its next start, not
-partway through a queue. If the file cannot be read (a syntax error, an
-unknown key, an invalid value), that queue start is refused with a message
-naming the file.
+partway through a queue. The experiment window checks a queue against the file
+as it is now: a row whose plan names a set you have just saved is good once the
+queue is checked again (**Revalidate**, or any edit), without restarting
+pychron. If the file cannot be read (a syntax error, an unknown key, an invalid
+value), the check shows a message naming the file and the queue start is
+refused with it.
 
 A queue and a peak center from the window never run together: Start and Apply
 are disabled, with the tooltip "a queue is running", while a queue runs (Save
-is still allowed), and starting a queue is refused with "peak center running
-in the spectrometer window" while a window run goes. Closing the window during
-a run asks whether to cancel it; closing the program or switching spectrometer
+is still allowed), and starting a queue is refused with "peak center running in
+the spectrometer window" while a window run goes. Closing the window during a
+run asks whether to cancel it; closing the program or switching spectrometer
 cancels it without asking.
 
 ## Field table editor
