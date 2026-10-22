@@ -7,6 +7,7 @@
 
 #include "pychron/core/sha256.hpp"
 #include "pychron/publish/embargo.hpp"
+#include "ingest/forwarding_store.hpp"
 #include "release_fixture.hpp"
 
 namespace ps = pychron::persistence;
@@ -212,6 +213,33 @@ TEST_P(CheckPlanTest, NewReleaseUploadJudgedAsPrivateDraft) {
   EXPECT_TRUE(allowed(p));
   embargo(ps::EmbargoScopeType::Analysis, analysis1_.str());
   EXPECT_TRUE(refused_with(p, Destination::EarthBank, "embargo"));
+}
+
+TEST_P(CheckPlanTest, WithdrawnReleaseUploadRefused) {
+  const auto release = create();
+  publish(release, true);
+  ASSERT_TRUE(withdraw_release(*store_, reducer(), release, "superseded"));
+  EXPECT_TRUE(refused_with(upload_plan(), Destination::EarthBank, "withdrawn"));
+  auto refusal = earthbank_upload_refusal(*store_, release, false, kNow);
+  ASSERT_TRUE(refusal) << to_string(refusal.error());
+  ASSERT_TRUE(refusal->has_value());
+  EXPECT_NE((*refusal)->find("withdrawn"), std::string::npos);
+}
+
+// A store error while judging the upload is an error, never "may go": the
+// gate does not tell a failed lookup from an allowed one by its message.
+TEST_P(CheckPlanTest, UploadGateStoreErrorIsAnError) {
+  const auto release = create();
+  publish(release, true);
+  struct FailingEmbargo : ingest::testing::ForwardingStore {
+    using ForwardingStore::ForwardingStore;
+    Result<std::vector<ps::Uuid>> embargoed_analyses(std::span<const ps::Uuid>, ps::UtcTime) override {
+      return fail(ErrorKind::Io, "");
+    }
+  } failing(*store_);
+  auto refusal = earthbank_upload_refusal(failing, release, false, kNow);
+  EXPECT_FALSE(refusal) << "a store error was taken for an allowed upload";
+  EXPECT_FALSE(check_plan(failing, upload_plan(), kNow));
 }
 
 TEST(DependsOnFailed, FolderFailSkipsStoreAndUploadNotPreflight) {

@@ -20,8 +20,10 @@ struct Subject {
   std::vector<Uuid> members;
 };
 
-std::optional<std::string> upload_refusal(ps::IStore& store, const Subject& s, bool made_public_in_run, UtcTime now,
-                                          Error* error) {
+// nullopt when the upload may go, else the reason; a store error is an
+// error, never "may go".
+Result<std::optional<std::string>> upload_refusal(ps::IStore& store, const Subject& s, bool made_public_in_run,
+                                                  UtcTime now) {
   if (s.state == ps::ReleaseState::Withdrawn) return "The release is withdrawn, so it cannot go to EarthBank.";
   if (s.state == ps::ReleaseState::Draft) {
     if (!made_public_in_run)
@@ -31,10 +33,7 @@ std::optional<std::string> upload_refusal(ps::IStore& store, const Subject& s, b
   }
   if (s.embargo_until && *s.embargo_until > now) return "The release is under embargo until " + s.embargo_until->iso() + ".";
   auto hidden = store.embargoed_analyses(s.members, now);
-  if (!hidden) {
-    *error = hidden.error();
-    return std::nullopt;
-  }
+  if (!hidden) return fail(hidden.error());
   if (!hidden->empty())
     return std::to_string(hidden->size()) + " member(s) of the release are under live embargo, so it cannot be uploaded.";
   return std::nullopt;
@@ -90,10 +89,7 @@ Result<std::optional<std::string>> earthbank_upload_refusal(ps::IStore& store, U
   if (!*row) return fail(ErrorKind::Config, "no such release: " + release.str());
   auto members = detail::release_members(store, **row);
   if (!members) return fail(members.error());
-  Error error;
-  auto refusal = upload_refusal(store, subject_of(**row, std::move(*members)), made_public_in_run, now, &error);
-  if (!error.what.empty()) return fail(error);
-  return refusal;
+  return upload_refusal(store, subject_of(**row, std::move(*members)), made_public_in_run, now);
 }
 
 Result<std::vector<PlanRefusal>> check_plan(ps::IStore& store, const PublicationPlan& plan, UtcTime now) {
@@ -152,10 +148,9 @@ Result<std::vector<PlanRefusal>> check_plan(ps::IStore& store, const Publication
       refuse(Destination::EarthBank, "No member of the release is free of embargo, so there is nothing to send.");
     } else if (plan.earthbank->mode == EarthBankMode::Upload) {
       const bool public_in_run = plan.store && plan.store->make_public;
-      Error error;
-      auto reason = upload_refusal(store, *subject, public_in_run, now, &error);
-      if (!error.what.empty()) return fail(error);
-      if (reason) refuse(Destination::EarthBank, std::move(*reason));
+      auto reason = upload_refusal(store, *subject, public_in_run, now);
+      if (!reason) return fail(reason.error());
+      if (*reason) refuse(Destination::EarthBank, std::move(**reason));
     }
   }
   return out;
