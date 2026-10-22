@@ -71,6 +71,11 @@ Rules:
   directory stays, a published release stays published, uploaded records
   stay (EarthBank journal rules unchanged).
 - At most one run at a time per dialog.
+- EarthBank (any mode) refused when no member of release free of embargo at
+  `now`: nothing to send.
+- EarthBank upload refused for `withdrawn` release.
+- New release: refused when it has no analyses, or when an analysis text is
+  not a uuid.
 
 ## 5. Library: `libs/publish`
 
@@ -110,6 +115,16 @@ Result<std::vector<PlanRefusal>> check_plan(persistence::IStore& store, const Pu
 enum class StepState { Pending, Running, Ok, Failed, Skipped, Cancelled };
 struct StepResult { Destination destination; StepState state = StepState::Pending; std::string message; };
 
+// D3 for EarthBank upload of `release` at `now`: nullopt = may go, else
+// one-sentence reason. `made_public_in_run`: same run publishes release
+// public (Store ticked, make_public) before upload. Store error = error,
+// never "may go".
+Result<std::optional<std::string>> earthbank_upload_refusal(persistence::IStore& store, Uuid release,
+                                                            bool made_public_in_run, UtcTime now);
+
+// "Release folder", "Publish in store", "EarthBank", "DOI", "Hosted".
+std::string_view destination_name(Destination destination);
+
 // Order of section 4 for the destinations ticked.
 std::vector<Destination> run_order(const PublicationPlan& plan);
 // Given the results so far, whether `next` runs or is skipped (section 4 rules).
@@ -118,15 +133,18 @@ bool depends_on_failed(const PublicationPlan& plan, Destination next, const std:
 }  // namespace pychron::publish
 ```
 
-- `check_plan` for EarthBank upload: release must be `published` and
-  `public` now, or `Store` ticked with `make_public = true` and release
-  `draft`; and no member under live embargo at `now`, and release's own
-  `embargo_until` null or `<= now`. Check recomputed at run time, just before
-  EarthBank step (§6.3), with `now` then: a run that took long or an embargo
-  set meanwhile is caught.
-- Embargoed members found with existing `embargoed_analyses(members, at)` and
-  `embargoed_samples(release_samples, at)`: one statement each, no new store query.
-  No migration.
+- `check_plan` for EarthBank upload: release not `withdrawn`; must be
+  `published` and `public` now, or `Store` ticked with `make_public = true`
+  and release `draft`; and no member under live embargo at `now`, and
+  release's own `embargo_until` null or `<= now`. Check recomputed at run
+  time, just before EarthBank step (§6.3), with `now` then: a run that took
+  long or an embargo set meanwhile is caught.
+- One gate: `earthbank_upload_refusal` holds upload rule. Used by
+  `check_plan`, dialog's recheck before EarthBank step, in-doubt resume
+  (§6.2) and `elctl` (§7). No second copy of rule.
+- Embargoed members found with existing `embargoed_analyses(members, at)`
+  only: it unions project, sample and analysis embargoes. One statement, no
+  new store query. No migration.
 - Running Folder and Store stays in existing functions (`build_release`,
   `publish_built`); `publication.hpp` adds no second path to them.
 
@@ -134,7 +152,7 @@ bool depends_on_failed(const PublicationPlan& plan, Destination next, const std:
 
 `release_dataset(persistence::IStore&, processing::StoreSource&, Uuid release)
 -> Result<std::vector<processing::AnalysisPtr>>`: release's members loaded at
-their pins (`load_analysis_at(analysis, release.bookmark)`), unreduced: the
+their pins (`source.load_at(member, release.bookmark)`), unreduced: the
 EarthBank panel reduces what it publishes, as it does today. Name kept from publishing spec §11; returns what
 `EarthbankPublishDialog` takes today (vector of `AnalysisPtr`), not a
 `Dataset`.
@@ -171,11 +189,16 @@ Top-level `QDialog`, non-modal, one per window that opens it. Not `QWizard`.
     package, mode, folder, per-sample table, checkboxes, in-doubt
     there/not-there), moved into widget `EarthbankPublishPanel` (§6.2).
     Mode combo: Pre-flight, Export xlsx, Upload. Panel's own Run button
-    removed; dialog's Run drives it.
+    gone; dialog's Run drives it. In-doubt there/not-there buttons stay;
+    each requests resume that dialog runs through upload gate (§6.2).
 - Refusals: `check_plan` run on every change (store read on bridge worker,
   debounced); refusals listed under destinations, Run disabled while any.
 - Run: steps in `run_order`; results table, one row per ticked destination
-  (destination, state, message); progress bar per running step (build
+  (destination, state, message). New release with no destination ticked:
+  run only creates release, one row "Release". Signal
+  `run_finished(steps, release_ok)` once per run: `steps` one per ticked
+  destination in run order (empty when none ticked); `release_ok` false only
+  when new release could not be made (every step then `Skipped`). progress bar per running step (build
   stages via `IProgress`, EarthBank via worker's progress). Cancel button.
   EarthBank upload confirmation (`ask_confirm`) unchanged: asked when step
   starts, false → step `Cancelled`.
@@ -191,6 +214,18 @@ to drive. `EarthbankPublishDialog` removed: no other user once Data button
 moves. Panel filled from `release_dataset` after release is chosen (new
 release: after creation in run, so per-sample table fills mid-run; choices
 remembered per sample name as today let it fill without operator).
+
+In-doubt answer (record whose answer never came): panel's there/not-there
+buttons send nothing; they emit `resume_requested(resolve)` (`"written:<id>"`
+or `"not-written"`). Panel method `resume(resolve)` finishes the agreed
+upload without asking again; `finished` follows once, as for `start`.
+Dialog connects `resume_requested` and runs it as run of its own: busy held,
+release section and destinations locked, one result row "EarthBank",
+`earthbank_upload_refusal(store, release, false, now)` on bridge worker
+first. Refusal → `Failed` with reason, nothing sent; allowed →
+`panel.resume(resolve)`, `finished` mapped as for EarthBank step;
+`run_finished` once. Release may have gone private, withdrawn or embargoed
+since the run that left record in doubt.
 
 Rule: new release + EarthBank ticked → per-sample choices taken from
 remembered values or rule defaults; table shown read-only during run. To
@@ -225,7 +260,7 @@ reopens on it.
 
 - `elctl earthbank preflight|export-xlsx|upload --release <name|uuid>`
   (publishing spec §11): dataset from `release_dataset`; upload refused by
-  D3 condition (same function as `check_plan`'s EarthBank rule). Selection
+  D3 condition (`earthbank_upload_refusal`, the one gate of §5.1). Selection
   flags with `--release`: usage error. Selection flags alone keep working
   (command line keeps EarthBank without release).
 - No `elctl publish run`. Out of scope.
@@ -245,7 +280,8 @@ reopens on it.
   Store public in same run allowed, private release refused, live member
   embargo refused, release embargo in future refused, lifted embargo
   allowed, Store on published release refused, Store without dir refused,
-  Doi/Hosted always refused); `depends_on_failed` (Folder fail skips Store
+  Doi/Hosted always refused, withdrawn release upload refused, store error
+  in gate is error not "may go"); `depends_on_failed` (Folder fail skips Store
   and upload, not pre-flight/xlsx).
 - `tests/publish/test_earthbank_source.cpp`: `release_dataset` returns
   pinned revisions after a later edit of a member.
@@ -253,7 +289,8 @@ reopens on it.
   selection; window opens it "existing" on its row; refusal disables Run;
   run Folder+Store makes published release; Folder fails → Store skipped;
   EarthBank xlsx on draft against fake EarthBank (`earthbank_fixture.hpp`);
-  upload refused on private release.
+  upload refused on private release; in-doubt resume refused when release no
+  longer public, and allowed resume runs as dialog run (busy, one row).
 - `tests/ui/test_earthbank_publish.cpp` → against `EarthbankPublishPanel`;
   cases kept.
 - `tests/ui/test_data_windows.cpp`: Publish button opens `PublishDialog`.

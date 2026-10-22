@@ -55,7 +55,7 @@
 - [ ] **Step 3: Extract `release_members` and `reduce_loaded`** from `build_release` (members = `bookmark_heads` subjects whose kind is neither `RefValue` nor `InterpretedAge`; reduction = the `select` → `reduce` pipeline with `constants`, `include_decay_error`). `build_release` calls both; no behaviour change.
 - [ ] **Step 4: Implement `release_dataset`**: `store.release` (Config "no release <uuid>" when absent), `release_members`, `source.load_at(member, bookmark)` each, return them in member order, unreduced (the EarthBank panel reduces what it publishes).
 - [ ] **Step 5: Run** the filter above and `--gtest_filter='*BuildTest*'`; all pass (build output unchanged: `TwoBuildsGiveEqualRowHashesAndEqualNonParquetBytes` and the fixture-hash test stay green).
-- [ ] **Step 6: Amend spec §5.1**: replace the `IStore::release_embargoed_members` paragraph with "Embargoed members found with existing `embargoed_analyses(members, at)` and `embargoed_samples(release_samples, at)`: one statement each, no new store query." Also §9: drop the `tests/persistence/test_publish.cpp` line.
+- [ ] **Step 6: Amend spec §5.1**: replace the `IStore::release_embargoed_members` paragraph with "Embargoed members found with existing `embargoed_analyses(members, at)` only: it unions project, sample and analysis embargoes; one statement, no new store query." Also §9: drop the `tests/persistence/test_publish.cpp` line.
 - [ ] **Step 7: Commit** — `feat(publish): load a release's members at their pins for EarthBank`
 
 ### Task 2: Plan, order, dependencies, refusals (`publication.hpp`)
@@ -65,9 +65,9 @@
 - Test: `tests/publish/test_publication.cpp`
 
 **Interfaces:**
-- Consumes: `detail::release_members` (Task 1); `find_release`; `IStore::release_samples`, `embargoed_samples`, `embargoed_analyses`.
+- Consumes: `detail::release_members` (Task 1); `find_release`; `IStore::embargoed_analyses`.
 - Produces: the types and functions of spec §5.1 verbatim (`Destination`, `EarthBankMode`, `NewRelease`, `ExistingRelease`, `FolderStep`, `StoreStep`, `EarthBankStep`, `PublicationPlan`, `PlanRefusal`, `StepState`, `StepResult`, `check_plan`, `run_order`, `depends_on_failed`), plus:
-  - `Result<std::optional<std::string>> earthbank_upload_refusal(persistence::IStore& store, Uuid release, bool made_public_in_run, UtcTime now);` — nullopt: allowed; else the one-sentence reason. Used by `check_plan`, the dialog's run-time recheck (Task 6) and `elctl` (Task 3).
+  - `Result<std::optional<std::string>> earthbank_upload_refusal(persistence::IStore& store, Uuid release, bool made_public_in_run, UtcTime now);` — nullopt: allowed; else the one-sentence reason; a store error is an error, never "allowed". Used by `check_plan`, the dialog's run-time recheck (Task 6), the dialog's in-doubt resume and `elctl` (Task 3).
   - `std::string_view destination_name(Destination);` — "Release folder", "Publish in store", "EarthBank", "DOI", "Hosted".
 
 - [ ] **Step 1: Write failing tests** (`TEST_P` over the release fixture; `now` passed explicitly)
@@ -120,8 +120,8 @@
 - Produces (`class EarthbankPublishPanel : public QWidget`):
   - ctor `(std::vector<processing::AnalysisPtr>, EarthbankSetup, SettingsFactory, QWidget* parent = nullptr)` and `void set_analyses(std::vector<processing::AnalysisPtr>)` (fills the per-sample table later, for a release made mid-run).
   - every accessor `EarthbankPublishDialog` has today (`action()`, `profile()`, `table()`, …, `result_pane()`), `ask_confirm`, `show_folder`, `ready()`, `busy()`.
-  - `void start(EarthBankMode mode);` `void cancel();` `void set_read_only(bool);`
-  - signal `finished(bool ok, QString message)`; `progress(int done, int total)`.
+  - `void start(Action action);` (the panel's own `Action` enum) `void cancel();` `void set_read_only(bool);` `void resume(const std::string& resolve);` (the in-doubt answer, run by the host)
+  - signal `finished(bool ok, QString message)`; `progress(int done, int total)`; `resume_requested(std::string resolve)` (the in-doubt buttons send nothing themselves: the Publish dialog runs the upload gate, then `resume()`).
   - `QPushButton* run_button()` stays on the dialog wrapper, not the panel.
 
 - [ ] **Step 1: Retarget tests**: every case constructing `EarthbankPublishDialog` for its body constructs `EarthbankPublishPanel` and calls `start(mode)`; add `EarthbankPanel.FinishedSignalCarriesResult` (xlsx export to temp dir → `finished(true, …)` once) and `EarthbankPanel.SetAnalysesFillsTable`.
@@ -170,7 +170,7 @@
 
 **Interfaces:**
 - Consumes: `run_order`, `depends_on_failed`, `earthbank_upload_refusal` (Task 2); `create_release`, `build_release`, `publish_built`; `release_dataset` (Task 1); panel `start`/`finished`/`set_analyses` (Task 4).
-- Produces: `void run();` `void cancel();` `bool busy() const;` signal `run_finished(std::vector<publish::StepResult>)`.
+- Produces: `void run();` `void cancel();` `bool busy() const;` signal `run_finished(std::vector<publish::StepResult>, bool release_ok)`.
 
 - [ ] **Step 1: Failing tests**
   - `RunFolderAndStorePublishes`: new release, Folder (temp dir) + Store public → results rows Ok, Ok; store row `published`, `public`.
