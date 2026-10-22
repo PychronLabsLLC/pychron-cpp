@@ -313,7 +313,12 @@ standard per target. Follow C++ Core Guidelines where this file is silent.
 - Headers use `#pragma once`.
 - Code that adds a thread, or shares state with one, is run under
   `-DPYCHRON_SANITIZE=thread` before it lands: CI runs ASan and UBSan only.
-  TSan and ASan cannot be combined in one build.
+  TSan and ASan cannot be combined in one build. Qt here not built with
+  TSan: hand-off inside QtCore invisible to it, so data captured in a queued
+  functor (`invokeMethod` lambda) and read on other thread is reported as
+  race, some runs only. Hand data over under own mutex, queued call carries
+  nothing (`SpectrometerBridge` Gate). No TSan suppressions file: a frame
+  match would hide real races in everything run on that thread.
 - A change made for speed comes with a measurement, before and after.
 
 ## Lifetime rules

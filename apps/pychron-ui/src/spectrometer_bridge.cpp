@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -13,7 +15,6 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QMetaObject>
-#include <QPointer>
 #include <QSemaphore>
 
 #include "pychron/core/config/local_file.hpp"
@@ -49,11 +50,20 @@ Duration to_duration(double seconds) {
 // while the bridge is destroyed. They reach the bridge only through the Gate,
 // which the destructor closes under the same lock; posting a queued call is
 // thread-safe and never runs the bridge's code on the publishing thread.
+//
+// Whatever crosses a thread (a command, a result, an event) is handed over in
+// the Gate's queues under its mutex, never captured in a queued functor. The
+// queued call that follows is a capture-free signal over a connection made
+// before the executor started, so it only says "one more is waiting". Qt's
+// own hand-off is just as safe, but runs in an uninstrumented QtCore that
+// ThreadSanitizer cannot see into: a functor written on one thread and read
+// on the other is reported as a race whenever no intercepted call (a pipe
+// write waking the loop) happens to come between them.
 struct SpectrometerBridge::Gate {
   std::mutex mutex;
   SpectrometerBridge* target = nullptr;
   // Readings waiting for the main thread, oldest first, and whether the call
-  // that will deliver them is already posted.
+  // that will deliver them is already queued.
   std::vector<IntensityReading> readings;
   bool flush_posted = false;
   // Set on the main thread before a run's thread starts, cleared when its
@@ -63,15 +73,32 @@ struct SpectrometerBridge::Gate {
   using PeakCenterEvent = std::variant<jobs::PeakCenterTryStarted, jobs::PeakCenterPoint>;
   std::vector<PeakCenterEvent> peak_center_events;
   bool peak_center_flush_posted = false;
+  // Work for the executor and calls for the main thread, oldest first; one
+  // jobQueued / deliveryQueued per entry.
+  std::deque<Job> jobs;
+  std::deque<std::function<void(SpectrometerBridge&)>> deliveries;
+
+  // Queues `call` for the main thread, unless the bridge is going away.
+  // Called with `mutex` held.
+  void deliver_locked(std::function<void(SpectrometerBridge&)> call) {
+    if (target == nullptr) {
+      return;
+    }
+    deliveries.push_back(std::move(call));
+    emit target->deliveryQueued();
+  }
+
+  void deliver(std::function<void(SpectrometerBridge&)> call) {
+    std::lock_guard lock(mutex);
+    deliver_locked(std::move(call));
+  }
 };
 
 template <class E>
 void SpectrometerBridge::relay(void (SpectrometerBridge::*apply)(const E&)) {
   subscriptions_.push_back(bus_.subscribe<E>([gate = gate_, apply](const E& event) {
     std::lock_guard lock(gate->mutex);
-    if (SpectrometerBridge* self = gate->target) {
-      QMetaObject::invokeMethod(self, [self, apply, event] { (self->*apply)(event); }, Qt::QueuedConnection);
-    }
+    gate->deliver_locked([apply, event](SpectrometerBridge& self) { (self.*apply)(event); });
   }));
 }
 
@@ -81,14 +108,13 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
   gate_->target = this;
   subscriptions_.push_back(bus_.subscribe<IntensityReading>([gate = gate_](const IntensityReading& event) {
     std::lock_guard lock(gate->mutex);
-    SpectrometerBridge* self = gate->target;
-    if (self == nullptr) {
+    if (gate->target == nullptr) {
       return;
     }
     gate->readings.push_back(event);
     if (!gate->flush_posted) {
       gate->flush_posted = true;
-      QMetaObject::invokeMethod(self, [self] { self->flush_readings(); }, Qt::QueuedConnection);
+      gate->deliver_locked([](SpectrometerBridge& self) { self.flush_readings(); });
     }
   }));
   relay<MagnetMoved>(&SpectrometerBridge::on_magnet);
@@ -100,14 +126,13 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
   const auto queue_run_event = [](const std::shared_ptr<Gate>& gate) {
     return [gate](const auto& event) {
       std::lock_guard lock(gate->mutex);
-      SpectrometerBridge* self = gate->target;
-      if (self == nullptr || !gate->peak_center_active) {
+      if (gate->target == nullptr || !gate->peak_center_active) {
         return;
       }
       gate->peak_center_events.emplace_back(event);
       if (!gate->peak_center_flush_posted) {
         gate->peak_center_flush_posted = true;
-        QMetaObject::invokeMethod(self, [self] { self->flush_peak_center_events(); }, Qt::QueuedConnection);
+        gate->deliver_locked([](SpectrometerBridge& self) { self.flush_peak_center_events(); });
       }
     };
   };
@@ -134,6 +159,22 @@ SpectrometerBridge::SpectrometerBridge(spectrometer::Spectrometer& spec, spectro
   worker_ = new QObject;
   worker_->moveToThread(&executor_);
   connect(&executor_, &QThread::finished, worker_, &QObject::deleteLater);
+  connect(
+      this, &SpectrometerBridge::jobQueued, worker_,
+      [gate = gate_] {
+        Job job;
+        {
+          std::lock_guard lock(gate->mutex);
+          if (gate->jobs.empty()) {
+            return;
+          }
+          job = std::move(gate->jobs.front());
+          gate->jobs.pop_front();
+        }
+        job(*gate);
+      },
+      Qt::QueuedConnection);
+  connect(this, &SpectrometerBridge::deliveryQueued, this, &SpectrometerBridge::deliver_next, Qt::QueuedConnection);
   executor_.start();
 }
 
@@ -149,6 +190,16 @@ SpectrometerBridge::~SpectrometerBridge() {
   subscriptions_.clear();
   executor_.quit();  // finishes the command in flight; queued ones are dropped
   executor_.wait();
+  // Taken under the lock, so the executor's last writes to them are seen
+  // here; destroyed after it is released. Also frees the jobs that hold the
+  // Gate itself.
+  std::deque<Job> jobs;
+  std::deque<std::function<void(SpectrometerBridge&)>> deliveries;
+  {
+    std::lock_guard lock(gate_->mutex);
+    jobs.swap(gate_->jobs);
+    deliveries.swap(gate_->deliveries);
+  }
   // A stop asked for after the last start is never dropped: a magnet move
   // still in flight would otherwise leave the scan running with no window.
   if (stop_requested_) scan_.stop();
@@ -217,24 +268,32 @@ QString SpectrometerBridge::reference_detector() const { return QString::fromStd
 
 double SpectrometerBridge::default_integration_s() const { return spec_.config().system.integration_time_s; }
 
+void SpectrometerBridge::enqueue(Job job) {
+  std::lock_guard lock(gate_->mutex);
+  gate_->jobs.push_back(std::move(job));
+  emit jobQueued();
+}
+
+void SpectrometerBridge::deliver_next() {
+  std::function<void(SpectrometerBridge&)> call;
+  {
+    std::lock_guard lock(gate_->mutex);
+    if (gate_->deliveries.empty()) {
+      return;
+    }
+    call = std::move(gate_->deliveries.front());
+    gate_->deliveries.pop_front();
+  }
+  call(*this);
+}
+
 template <class Work, class Deliver>
 void SpectrometerBridge::post(Work work, Deliver deliver) {
-  QPointer<SpectrometerBridge> self(this);
-  QMetaObject::invokeMethod(
-      worker_,
-      [self, work = std::move(work), deliver = std::move(deliver)]() mutable {
-        auto result = work();
-        // `self` is only dereferenced on the main thread, inside the posted call.
-        QMetaObject::invokeMethod(
-            self.data(),
-            [self, deliver = std::move(deliver), result = std::move(result)]() mutable {
-              if (self) {
-                deliver(*self, std::move(result));
-              }
-            },
-            Qt::QueuedConnection);
-      },
-      Qt::QueuedConnection);
+  enqueue([work = std::move(work), deliver = std::move(deliver)](Gate& gate) mutable {
+    gate.deliver([deliver = std::move(deliver), result = work()](SpectrometerBridge& self) mutable {
+      deliver(self, std::move(result));
+    });
+  });
 }
 
 template <class Command>
@@ -266,9 +325,8 @@ void SpectrometerBridge::start_scan(double integration_s) {
   scan_intent_ = integration_s;
   const std::uint64_t generation = ++start_generation_;
   ++starts_in_flight_;
-  QPointer<SpectrometerBridge> self(this);
   post(
-      [self, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)]() -> Result<void> {
+      [gate = gate_, spec = &spec_, scan = &scan_, integration = to_duration(integration_s)]() -> Result<void> {
     // Posted before the command's own result, so the state is seeded by the
     // time "start" is reported.
     if (auto native = spec->magnet_native()) {
@@ -276,14 +334,7 @@ void SpectrometerBridge::start_scan(double integration_s) {
       if (auto m = spec->mass_at(*native, spec->reference_detector())) {
         mass = *m;
       }
-      QMetaObject::invokeMethod(
-          self.data(),
-          [self, native = *native, mass] {
-            if (self) {
-              self->on_magnet_read(native, mass);
-            }
-          },
-          Qt::QueuedConnection);
+      gate->deliver([native = *native, mass](SpectrometerBridge& self) { self.on_magnet_read(native, mass); });
     }
     return scan->start(integration);
       },
@@ -334,7 +385,7 @@ void SpectrometerBridge::position(const QString& isotope, const QString& detecto
 
 void SpectrometerBridge::drain() {
   QSemaphore done;
-  QMetaObject::invokeMethod(worker_, [&done] { done.release(); }, Qt::QueuedConnection);
+  enqueue([&done](Gate&) { done.release(); });
   done.acquire();
 }
 
@@ -482,14 +533,7 @@ void SpectrometerBridge::start_peak_center_thread(jobs::PeakCenterConfig config)
     jobs::PeakCenterOptions options;
     options.bus = bus;
     auto result = jobs::run_peak_center(*spec, config, progress, state->cancel, options);
-    {
-      std::lock_guard lock(gate->mutex);
-      if (SpectrometerBridge* self = gate->target) {
-        QMetaObject::invokeMethod(
-            self, [self, result = std::move(result)] { self->on_peak_center_finished(result); },
-            Qt::QueuedConnection);
-      }
-    }
+    gate->deliver([result = std::move(result)](SpectrometerBridge& self) { self.on_peak_center_finished(result); });
     // Last act, still a participant.
     std::lock_guard lock(state->mutex);
     state->done = true;

@@ -40,6 +40,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -197,9 +198,14 @@ class SpectrometerBridge : public QObject {
   // What went wrong without failing the apply, e.g. "field table not saved: <why>".
   void peakCenterNote(const QString& note);
   void peakCenterSetSaved(const QString& name, const pychron::Result<void>& result);
+  // Internal: a job waits in the Gate for the executor, a call for the main
+  // thread. Not for the window.
+  void jobQueued();
+  void deliveryQueued();
 
  private:
   struct Gate;
+  using Job = std::function<void(Gate&)>;
   // What the bridge and a run's thread share. The thread's last act, while
   // still a participant, is to set `done` and notify through the clock.
   struct PeakCenterRun {
@@ -222,6 +228,10 @@ class SpectrometerBridge : public QObject {
   // command's result would be.
   void refuse_during_peak_center(const char* what);
 
+  // Queues `job` for the executor.
+  void enqueue(Job job);
+  // Runs the oldest call waiting for the main thread.
+  void deliver_next();
   void flush_readings();
   void on_magnet(const spectrometer::MagnetMoved& e);
   void on_magnet_read(double native, std::optional<double> mass);
