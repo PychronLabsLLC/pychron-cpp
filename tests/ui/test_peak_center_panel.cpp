@@ -265,6 +265,35 @@ class TestPeakCenterPanel : public QObject {
     panel_->set_queue_running({});
   }
 
+  void everyControlHasATooltip() {
+    panel_->set_file(write(QString::fromLatin1(kAr40)));
+    for (const char* name :
+         {"peakCenterSet", "peakCenterRevert", "pc_detector", "pc_isotope", "pc_additional_detectors",
+          "pc_center_enabled", "pc_center", "pc_window", "pc_step", "pc_percent", "pc_min_peak_height",
+          "pc_test_peak_flat", "pc_n_tries", "pc_direction", "pc_integration_s", "pc_settle_s",
+          "pc_baseline_timeout_s", "pc_dac_offset", "pc_peak_shift_threshold", "pc_propagate", "peakCenterStart",
+          "peakCenterCancel", "peakCenterApply", "peakCenterSave"}) {
+      auto* w = child<QWidget>(*panel_, name);
+      QVERIFY2(!w->toolTip().isEmpty(), name);
+    }
+    // A field's label explains it as its control does.
+    QCOMPARE(child<QLabel>(*panel_, "pc_window_label")->toolTip(), child<QWidget>(*panel_, "pc_window")->toolTip());
+  }
+
+  void aQueueTooltipGivesWayToTheButtonsOwnWhenItEnds() {
+    bool queue = true;
+    panel_->set_file(write(QString::fromLatin1(kAr40)));
+    const QString start_tip = child<QPushButton>(*panel_, "peakCenterStart")->toolTip();
+    const QString apply_tip = child<QPushButton>(*panel_, "peakCenterApply")->toolTip();
+    panel_->set_queue_running([&queue] { return queue; });
+    QCOMPARE(child<QPushButton>(*panel_, "peakCenterApply")->toolTip(), QStringLiteral("a queue is running"));
+    queue = false;
+    panel_->set_queue_running([&queue] { return queue; });
+    QCOMPARE(child<QPushButton>(*panel_, "peakCenterStart")->toolTip(), start_tip);
+    QCOMPARE(child<QPushButton>(*panel_, "peakCenterApply")->toolTip(), apply_tip);
+    panel_->set_queue_running({});
+  }
+
   void queueStartInvalidatesTheResult() {
     virtual_sim();
     bool queue = false;

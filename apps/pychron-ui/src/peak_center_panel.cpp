@@ -86,8 +86,10 @@ void PeakCenterPanel::build() {
 
   set_ = new QComboBox;
   set_->setObjectName(QStringLiteral("peakCenterSet"));
+  set_->setToolTip(tr("A named set from peak_center.toml. Picking one loads its values into the form."));
   revert_ = new QPushButton(tr("Revert to set"));
   revert_->setObjectName(QStringLiteral("peakCenterRevert"));
+  revert_->setToolTip(tr("Discard the edits and load the selected set's values again."));
   auto* top = new QHBoxLayout;
   top->addWidget(new QLabel(tr("Set")));
   top->addWidget(set_, 1);
@@ -100,10 +102,13 @@ void PeakCenterPanel::build() {
   outer->addWidget(banner_);
 
   auto* form = new QFormLayout;
-  const auto row = [&](const char* key, const QString& text, QWidget* w) {
+  // A field's label carries its control's tooltip, so either one explains it.
+  const auto row = [&](const char* key, const QString& text, QWidget* w, const QString& tip) {
     w->setObjectName(QStringLiteral("pc_%1").arg(QLatin1String(key)));
+    w->setToolTip(tip);
     auto* label = new QLabel(text);
     label->setObjectName(QStringLiteral("pc_%1_label").arg(QLatin1String(key)));
+    label->setToolTip(tip);
     labels_[key] = label;
     form->addRow(label, w);
   };
@@ -111,12 +116,14 @@ void PeakCenterPanel::build() {
   detector_ = new QComboBox;
   detector_->addItem(tr("(reference)"), QString());
   for (const auto& d : bridge_.detectors()) detector_->addItem(QString::fromStdString(d.name), QString::fromStdString(d.name));
-  row("detector", tr("Detector"), detector_);
+  row("detector", tr("Detector"), detector_,
+      tr("The detector the peak is centered on. (reference) is the spectrometer's reference detector."));
 
   isotope_ = new QComboBox;
   isotope_->setEditable(true);
   isotope_->setInsertPolicy(QComboBox::NoInsert);
-  row("isotope", tr("Isotope"), isotope_);
+  row("isotope", tr("Isotope"), isotope_,
+      tr("The isotope to center. Its field table position is where the sweep starts, unless a center is set."));
 
   additional_ = new QListWidget;
   additional_->setMaximumHeight(90);
@@ -125,42 +132,54 @@ void PeakCenterPanel::build() {
     item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
     item->setCheckState(Qt::Unchecked);
   }
-  row("additional_detectors", tr("Additional detectors"), additional_);
+  row("additional_detectors", tr("Additional detectors"), additional_,
+      tr("Other detectors read during the sweep and fitted for display. They do not change the result."));
 
   center_enabled_ = new QCheckBox(tr("Set center"));
   center_enabled_->setObjectName(QStringLiteral("pc_center_enabled"));
+  center_enabled_->setToolTip(tr("Start the sweep at Center instead of at the isotope's field table position."));
   center_ = spin(-1e6, 1e6, 9, 0.001);
-  row("center", tr("Center"), center_);
+  row("center", tr("Center"), center_,
+      tr("Where the sweep starts, in the magnet's native units. Used only when Set center is checked."));
   form->addRow(QString(), center_enabled_);
 
   window_ = spin(0, 1e6, 9, 0.001);
-  row("window", tr("Window"), window_);
+  row("window", tr("Window"), window_,
+      tr("How far the sweep goes either side of the center, in native units. A retry widens it."));
   step_ = spin(0, 1e6, 9, 0.0001);
-  row("step", tr("Step"), step_);
+  row("step", tr("Step"), step_, tr("The distance between sweep points, in native units. Smaller than Window."));
   percent_ = spin(0, 100, 2, 1);
-  row("percent", tr("Percent"), percent_);
+  row("percent", tr("Percent"), percent_,
+      tr("The peak's edges are where the signal falls below (100 - percent)% of its maximum."));
   min_peak_height_ = spin(0, 1e12, 3, 0.5);
-  row("min_peak_height", tr("Min peak height"), min_peak_height_);
+  row("min_peak_height", tr("Min peak height"), min_peak_height_,
+      tr("The smallest maximum signal taken as a peak."));
   test_peak_flat_ = new QCheckBox;
-  row("test_peak_flat", tr("Test peak flat"), test_peak_flat_);
+  row("test_peak_flat", tr("Test peak flat"), test_peak_flat_, tr("Reject a peak whose top is not flat."));
   n_tries_ = new QSpinBox;
   n_tries_->setRange(0, 1000);
-  row("n_tries", tr("Tries"), n_tries_);
+  row("n_tries", tr("Tries"), n_tries_,
+      tr("How many sweeps before giving up. After a miss, the next sweep goes around the highest point."));
   direction_ = new QComboBox;
   direction_->addItems({QStringLiteral("increase"), QStringLiteral("decrease")});
-  row("direction", tr("Direction"), direction_);
+  row("direction", tr("Direction"), direction_,
+      tr("Sweep from low to high magnet position (increase) or from high to low (decrease)."));
   integration_ = spin(0, 1e4, 3, 0.1, tr(" s"));
-  row("integration_s", tr("Integration"), integration_);
+  row("integration_s", tr("Integration"), integration_,
+      tr("Integration time for each point. 0 keeps the spectrometer's current integration."));
   settle_ = spin(0, 1e4, 3, 0.1, tr(" s"));
-  row("settle_s", tr("Settle"), settle_);
+  row("settle_s", tr("Settle"), settle_, tr("How long to wait after each magnet step before reading."));
   baseline_timeout_ = spin(0, 1e5, 3, 1, tr(" s"));
-  row("baseline_timeout_s", tr("Baseline timeout"), baseline_timeout_);
+  row("baseline_timeout_s", tr("Baseline timeout"), baseline_timeout_,
+      tr("How long to wait at the end of a sweep for the signal to fall back to baseline."));
   dac_offset_ = spin(-1e6, 1e6, 9, 0.001);
-  row("dac_offset", tr("DAC offset"), dac_offset_);
+  row("dac_offset", tr("DAC offset"), dac_offset_, tr("Added to the fitted center, in native units."));
   peak_shift_threshold_ = spin(0, 1e6, 9, 0.001);
-  row("peak_shift_threshold", tr("Peak shift threshold"), peak_shift_threshold_);
+  row("peak_shift_threshold", tr("Peak shift threshold"), peak_shift_threshold_,
+      tr("The largest move from the starting center that is accepted, in native units. 0 means no limit."));
   propagate_ = new QCheckBox;
-  row("propagate", tr("Propagate"), propagate_);
+  row("propagate", tr("Propagate"), propagate_,
+      tr("When the result is applied, also update the other detectors' columns of the field table."));
   outer->addLayout(form);
 
   reason_ = new QLabel;
@@ -190,11 +209,13 @@ void PeakCenterPanel::build() {
   cancel_ = new QPushButton(tr("Cancel"));
   cancel_->setObjectName(QStringLiteral("peakCenterCancel"));
   cancel_->setEnabled(false);
+  cancel_->setToolTip(tr("Stop the run at its next step. A settle already under way finishes first."));
   apply_ = new QPushButton(tr("Apply to field table"));
   apply_->setObjectName(QStringLiteral("peakCenterApply"));
   apply_->setEnabled(false);
   save_ = new QPushButton(tr("Save to set…"));
   save_->setObjectName(QStringLiteral("peakCenterSave"));
+  save_->setToolTip(tr("Write the form's values to a named set in peak_center.toml."));
   auto* buttons = new QHBoxLayout;
   for (auto* b : {start_, cancel_, apply_, save_}) buttons->addWidget(b);
   outer->addLayout(buttons);
@@ -543,10 +564,11 @@ void PeakCenterPanel::refresh() {
   const bool queue = queue_is_running();
   if (queue && result_) table_changed_ = true;
   start_->setEnabled(valid && !running && !queue);
-  start_->setToolTip(queue ? tr("a queue is running") : QString());
+  start_->setToolTip(queue ? tr("a queue is running") : tr("Run a peak center with the values in the form."));
   cancel_->setEnabled(running);
   apply_->setEnabled(apply_enabled());
-  apply_->setToolTip(queue ? tr("a queue is running") : QString());
+  apply_->setToolTip(queue ? tr("a queue is running")
+                           : tr("Write the fitted value to the active field table. Asks first."));
   save_->setEnabled(valid && file_ok());
   revert_->setEnabled(edited());
 }
