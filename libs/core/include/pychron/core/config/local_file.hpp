@@ -36,6 +36,15 @@ std::string metrics_override_toml(const MetricsConfig& wanted, const MetricsConf
 Result<void> replace_local_table(const std::filesystem::path& local_file, std::string_view table,
                                  std::string_view toml);
 
+// Like replace_local_table, but the table is replaced where it stands: the
+// comments directly above it, its place among the other tables, the blank
+// lines after it and the file's line ending (LF or CRLF) are kept, and
+// `[table.*]` subtables are replaced with it. A table that is not in the file
+// is added at the end, after a blank line. An empty `toml` removes the
+// table, as replace_local_table does. The file is made, checked and written
+// as replace_local_table does.
+Result<void> set_local_table(const std::filesystem::path& file, std::string_view table, std::string_view toml);
+
 // `main_file` without its local override: what the shared config says, which
 // is what a preference is compared with and what Restore Defaults goes back to.
 Result<SystemConfig> load_system_config_without_local(const std::filesystem::path& main_file);

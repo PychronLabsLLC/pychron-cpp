@@ -186,6 +186,48 @@ TEST_F(LocalFile, WindowsLineEndingsAreUnderstood) {
   EXPECT_NE(read(local).find("[transports.valve_bus]\r\nport = \"COM4\"\r\n"), std::string::npos);
 }
 
+TEST_F(LocalFile, SetKeepsTheCommentAndThePlaceOfTheTable) {
+  write(local, "# first\n[a]\nx = 1\n\n# about b\n[b]\ny = 1\nz = 2\n\n# about c\n[c]\nw = 1\n");
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\n"));
+  EXPECT_EQ(read(local), "# first\n[a]\nx = 1\n\n# about b\n[b]\ny = 9\n\n# about c\n[c]\nw = 1\n");
+}
+
+TEST_F(LocalFile, SetKeepsWindowsLineEndings) {
+  write(local, "# about b\r\n[b]\r\ny = 1\r\n\r\n[c]\r\nw = 1\r\n");
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\nq = 2\n"));
+  EXPECT_EQ(read(local), "# about b\r\n[b]\r\ny = 9\r\nq = 2\r\n\r\n[c]\r\nw = 1\r\n");
+}
+
+TEST_F(LocalFile, SetFindsAHeaderWithATrailingComment) {
+  write(local, "# about b\n[ b ]  # note\ny = 1\n\n[c]\nw = 1\n");
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\n"));
+  EXPECT_EQ(read(local), "# about b\n[b]\ny = 9\n\n[c]\nw = 1\n");
+}
+
+TEST_F(LocalFile, SetReplacesSubtablesWithTheTable) {
+  write(local, "# about b\n[b]\ny = 1\n[b.sub]\nk = 1\n\n[c]\nw = 1\n");
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\n"));
+  EXPECT_EQ(read(local), "# about b\n[b]\ny = 9\n\n[c]\nw = 1\n");
+}
+
+TEST_F(LocalFile, SetAppendsATableThatIsNotThere) {
+  write(local, "[a]\nx = 1\n");
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\n"));
+  EXPECT_EQ(read(local), "[a]\nx = 1\n\n[b]\ny = 9\n");
+}
+
+TEST_F(LocalFile, SetAppendsToACommentOnlyFile) {
+  write(local, "# nothing yet\n");
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\n"));
+  EXPECT_EQ(read(local), "# nothing yet\n\n[b]\ny = 9\n");
+}
+
+TEST_F(LocalFile, SetMakesAFileThatIsNotThere) {
+  ASSERT_TRUE(set_local_table(local, "b", "[b]\ny = 9\n"));
+  EXPECT_EQ(read(local), "[b]\ny = 9\n");
+  EXPECT_EQ(fs::status(local).permissions() & fs::perms::mask, fs::perms::owner_read | fs::perms::owner_write);
+}
+
 TEST_F(LocalFile, AFileItCannotMakeSenseOfIsLeftAlone) {
   const std::string broken = "[transports.valve_bus\nport = = 3\n";
   write(local, broken);
