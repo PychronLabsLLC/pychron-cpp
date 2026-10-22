@@ -1,6 +1,8 @@
 // The Publish dialog (publication workflow design, section 6.1) on a seeded
-// store: the release section, the destinations and their tabs, and the
-// refusals that keep Run off. Running a plan is not here yet.
+// store: the release section, the destinations and their tabs, the refusals
+// that keep Run off, and a run of the plan with a result per destination.
+// EarthBank is the in-memory fake (earthbank_fixture.hpp): nothing here
+// reaches EarthBank.
 
 #include <memory>
 #include <string>
@@ -8,9 +10,12 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSettings>
@@ -19,9 +24,12 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include "earthbank_fixture.hpp"
 #include "entry_bridge.hpp"
+#include "pychron/core/sha256.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/store_source.hpp"
+#include "pychron/publish/embargo.hpp"
 #include "pychron/publish/publication.hpp"
 #include "pychron/publish/release.hpp"
 #include "release_seed.hpp"
@@ -36,6 +44,8 @@ namespace ps = pychron::persistence;
 namespace pp = pychron::processing;
 namespace pb = pychron::publish;
 using pb::Destination;
+using pb::StepState;
+using Action = pychron::ui::EarthbankPublishPanel::Action;
 using pychron::ui::EarthbankPublishPanel;
 using pychron::ui::EarthbankSetup;
 using pychron::ui::EntryBridge;
@@ -51,6 +61,39 @@ bool has_tab(const PublishDialog& d, const QString& title) {
     if (d.tabs()->tabText(i) == title) return true;
   return false;
 }
+
+// What run_finished said, each time it said it.
+struct Finished {
+  int count = 0;
+  std::vector<pb::StepResult> results;
+};
+std::shared_ptr<Finished> watch(PublishDialog& d) {
+  auto got = std::make_shared<Finished>();
+  QObject::connect(&d, &PublishDialog::run_finished, &d, [got](const std::vector<pb::StepResult>& results) {
+    ++got->count;
+    got->results = results;
+  });
+  return got;
+}
+
+void set_action(EarthbankPublishPanel& panel, Action action) {
+  panel.action()->setCurrentIndex(panel.action()->findData(static_cast<int>(action)));
+}
+
+std::size_t record_posts(const pychron::earthbank::testing::FakeEarthBank& bank) {
+  return bank.count("POST", "/api/arar/") + bank.count("POST", "/api/core/");
+}
+
+PublishDialog::AskRelease named(const std::string& name) {
+  return [name](const QStringList&, std::size_t) -> std::optional<pb::ReleaseSpec> {
+    pb::ReleaseSpec s;
+    s.name = name;
+    s.title = "Release " + name;
+    return s;
+  };
+}
+
+QString state_text(const PublishDialog& d, int row) { return d.results()->item(row, 1)->text(); }
 
 }  // namespace
 
@@ -87,6 +130,20 @@ class TestPublishDialog : public QObject {
     return created->release;
   }
 
+  // A release published straight in the store, as if from a build.
+  ps::Uuid published(const std::string& name, bool make_public) {
+    const ps::Uuid r = create(name);
+    auto ok = pb::publish_release(*store_, seed_.reducer(), r, pychron::sha256(std::string_view{"x"}), make_public);
+    if (!ok) qFatal("publish: %s", pychron::to_string(ok.error()).c_str());
+    return r;
+  }
+
+  ps::ReleaseRow release_row(const std::string& name) {
+    auto row = pb::find_release(*store_, name);
+    if (!row) qFatal("find: %s", pychron::to_string(row.error()).c_str());
+    return *row;
+  }
+
   EarthbankSetup earthbank() const {
     EarthbankSetup setup;
     setup.secrets = [] { return std::shared_ptr<pychron::earthbank::ISecretStore>(pychron::earthbank::make_memory_secret_store()); };
@@ -104,7 +161,8 @@ class TestPublishDialog : public QObject {
     std::unique_ptr<EntryBridge> bridge;
     std::unique_ptr<PublishDialog> dialog;
   };
-  Open open() {
+  Open open() { return open(earthbank()); }
+  Open open(EarthbankSetup setup) {
     Open o;
     auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, {});
     if (!source) qFatal("source: %s", pychron::to_string(source.error()).c_str());
@@ -112,7 +170,7 @@ class TestPublishDialog : public QObject {
     auto bridge = EntryBridge::open({url_, "tester", "test-host", "publisher", "pychron-ui/test"});
     if (!bridge) qFatal("bridge: %s", pychron::to_string(bridge.error()).c_str());
     o.bridge = std::move(*bridge);
-    o.dialog = std::make_unique<PublishDialog>(*o.bridge, *o.source, url_, earthbank(), settings());
+    o.dialog = std::make_unique<PublishDialog>(*o.bridge, *o.source, url_, std::move(setup), settings());
     return o;
   }
 
@@ -351,6 +409,310 @@ class TestPublishDialog : public QObject {
     QCOMPARE(actions->dialog(), first);
     QVERIFY(first->new_radio()->isChecked());
     QVERIFY2(first->members()->text().contains(QStringLiteral("3 analyses")), qPrintable(first->members()->text()));
+  }
+  // ---- Running a plan (task 6) ----
+
+  void RunFolderAndStorePublishes() {
+    Open o = open();
+    o.dialog->set_ask_release(named("fresh"));
+    o.dialog->open_new(analyses());
+    o.dialog->show();
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->details_button()->isEnabled(), kWaitMs);
+    o.dialog->details_button()->click();
+    const QString out = dir_.filePath(QStringLiteral("run-out"));
+    o.dialog->folder_dir()->setText(out);
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::Store)->setChecked(true);
+    o.dialog->store_public()->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QVERIFY(o.dialog->busy());
+    QVERIFY(!o.dialog->run_button()->isEnabled());
+    QVERIFY(!o.dialog->destination(Destination::Folder)->isEnabled());
+    QVERIFY(!o.dialog->new_radio()->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QVERIFY(!o.dialog->busy());
+    QCOMPARE(got->results.size(), std::size_t{2});
+    QCOMPARE(got->results[0].destination, Destination::Folder);
+    QVERIFY2(got->results[0].state == StepState::Ok, got->results[0].message.c_str());
+    QCOMPARE(got->results[1].destination, Destination::Store);
+    QVERIFY2(got->results[1].state == StepState::Ok, got->results[1].message.c_str());
+    QCOMPARE(o.dialog->results()->rowCount(), 2);
+    QCOMPARE(o.dialog->results()->item(0, 0)->text(), QStringLiteral("Release folder"));
+    QCOMPARE(state_text(*o.dialog, 0), QStringLiteral("Ok"));
+    QCOMPARE(o.dialog->results()->item(1, 0)->text(), QStringLiteral("Publish in store"));
+    QCOMPARE(state_text(*o.dialog, 1), QStringLiteral("Ok"));
+    const ps::ReleaseRow row = release_row("fresh");
+    QCOMPARE(row.state, ps::ReleaseState::Published);
+    QCOMPARE(row.visibility, ps::Visibility::Public);
+    QVERIFY(QDir(out + QStringLiteral("/fresh-v1")).exists());
+    // The release section now holds the release the run made: a second run does not make another.
+    QVERIFY(o.dialog->existing_radio()->isChecked());
+    QTRY_COMPARE_WITH_TIMEOUT(o.dialog->release_combo()->currentData().toString(), QString::fromStdString(row.uuid.str()),
+                              kWaitMs);
+  }
+
+  void NewReleaseOnlyMakesTheRelease() {
+    Open o = open();
+    o.dialog->set_ask_release(named("only"));
+    o.dialog->open_new(analyses());
+    o.dialog->show();
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->details_button()->isEnabled(), kWaitMs);
+    o.dialog->details_button()->click();
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QVERIFY(got->results.empty());
+    QCOMPARE(o.dialog->results()->rowCount(), 1);
+    QCOMPARE(o.dialog->results()->item(0, 0)->text(), QStringLiteral("Release"));
+    QCOMPARE(state_text(*o.dialog, 0), QStringLiteral("Ok"));
+    QCOMPARE(release_row("only").state, ps::ReleaseState::Draft);
+  }
+
+  void FolderFailSkipsStore() {
+    create("r");
+    const QString out = dir_.filePath(QStringLiteral("taken"));
+    QVERIFY(QDir().mkpath(out + QStringLiteral("/r-v1")));
+    {
+      QFile stale(out + QStringLiteral("/r-v1/stale.txt"));
+      QVERIFY(stale.open(QIODevice::WriteOnly));
+      stale.write("x");
+    }
+    Open o = open();
+    o.dialog->open_existing(release_row("r").uuid);
+    o.dialog->show();
+    o.dialog->folder_dir()->setText(out);
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::Store)->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{2});
+    QVERIFY(got->results[0].state == StepState::Failed);
+    QVERIFY(!got->results[0].message.empty());
+    QVERIFY(got->results[1].state == StepState::Skipped);
+    QCOMPARE(got->results[1].message, std::string("skipped: Release folder failed"));
+    QCOMPARE(state_text(*o.dialog, 1), QStringLiteral("Skipped"));
+    QCOMPARE(o.dialog->results()->item(1, 2)->text(), QStringLiteral("skipped: Release folder failed"));
+    QCOMPARE(release_row("r").state, ps::ReleaseState::Draft);
+  }
+
+  void XlsxFromDraftAgainstFakeEarthBank() {
+    pychron::ui::test::EarthbankWorld w;  // no profile: the workbooks need none
+    const ps::Uuid r = create("r");
+    Open o = open(w.setup());
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    set_action(*panel, Action::ExportXlsx);
+    const QString folder = dir_.filePath(QStringLiteral("workbooks"));
+    panel->folder()->setText(folder);
+    QTRY_COMPARE_WITH_TIMEOUT(panel->table()->rowCount(), 3, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{1});
+    QCOMPARE(got->results[0].destination, Destination::EarthBank);
+    QVERIFY2(got->results[0].state == StepState::Ok, got->results[0].message.c_str());
+    const QStringList files = QDir(folder).entryList({QStringLiteral("*.xlsx")}, QDir::Files);
+    QVERIFY2(!files.isEmpty(), qPrintable(panel->result_pane()->toPlainText()));
+    QCOMPARE(w.bank.requests().size(), std::size_t{0});
+  }
+
+  void UploadRefusedOnPrivate() {
+    pychron::ui::test::EarthbankWorld w;
+    w.signed_up();
+    const ps::Uuid r = published("r", false);
+    Open o = open(w.setup());
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    set_action(*panel, Action::Upload);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->refusals()->text().contains(QStringLiteral("private")), kWaitMs);
+    QVERIFY(!o.dialog->run_button()->isEnabled());
+    auto got = watch(*o.dialog);
+    o.dialog->run();  // refused: Run is off
+    QVERIFY(!o.dialog->busy());
+    QCOMPARE(got->count, 0);
+    QCOMPARE(record_posts(w.bank), std::size_t{0});
+  }
+
+  // Review focus 2: the D3 condition is judged again just before the upload.
+  void UploadRecheckedAtRun() {
+    pychron::ui::test::EarthbankWorld w;
+    w.signed_up();
+    const ps::Uuid r = published("r", true);
+    Open o = open(w.setup());
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    bool asked = false;
+    panel->ask_confirm = [&asked](const QString&) {
+      asked = true;
+      return true;
+    };
+    set_action(*panel, Action::Upload);
+    panel->allow_unresolved()->setChecked(true);
+    QTRY_COMPARE_WITH_TIMEOUT(panel->table()->rowCount(), 3, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    QVERIFY2(o.dialog->refusals()->text().isEmpty(), qPrintable(o.dialog->refusals()->text()));
+    // An embargo the dialog's check never saw.
+    auto embargo = pb::set_embargo(*store_, seed_.reducer(), {ps::EmbargoScopeType::Sample, "FC-1", std::nullopt, std::nullopt});
+    QVERIFY2(embargo.has_value(), embargo ? "" : pychron::to_string(embargo.error()).c_str());
+    const std::size_t before = w.bank.requests().size();
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{1});
+    QVERIFY(got->results[0].state == StepState::Failed);
+    QVERIFY2(got->results[0].message.find("embargo") != std::string::npos, got->results[0].message.c_str());
+    QVERIFY(!asked);
+    QCOMPARE(w.bank.requests().size(), before);
+    QCOMPARE(record_posts(w.bank), std::size_t{0});
+  }
+
+  void UploadConfirmNoIsCancelled() {
+    pychron::ui::test::EarthbankWorld w;
+    w.signed_up();
+    const ps::Uuid r = published("r", true);
+    Open o = open(w.setup());
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    bool asked = false;
+    panel->ask_confirm = [&asked](const QString&) {
+      asked = true;
+      return false;
+    };
+    set_action(*panel, Action::Upload);
+    panel->allow_unresolved()->setChecked(true);
+    QTRY_COMPARE_WITH_TIMEOUT(panel->table()->rowCount(), 3, kWaitMs);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QVERIFY2(asked, qPrintable(panel->result_pane()->toPlainText()));
+    QCOMPARE(got->results.size(), std::size_t{1});
+    QVERIFY2(got->results[0].state == StepState::Cancelled, got->results[0].message.c_str());
+    QCOMPARE(state_text(*o.dialog, 0), QStringLiteral("Cancelled"));
+    QCOMPARE(record_posts(w.bank), std::size_t{0});
+  }
+
+  void CancelBetweenSteps() {
+    const ps::Uuid r = create("r");
+    const QString out = dir_.filePath(QStringLiteral("cancel-out"));
+    Open o = open();
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->folder_dir()->setText(out);
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::Store)->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    // The build is on the worker; its result has not come back yet.
+    QCOMPARE(o.dialog->cancel_button()->text(), QStringLiteral("Cancel"));
+    o.dialog->cancel_button()->click();
+    QVERIFY(o.dialog->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{2});
+    QVERIFY2(got->results[0].state == StepState::Ok, got->results[0].message.c_str());  // a build is not interrupted
+    QVERIFY(got->results[1].state == StepState::Cancelled);
+    QCOMPARE(state_text(*o.dialog, 1), QStringLiteral("Cancelled"));
+    QVERIFY(QDir(out + QStringLiteral("/r-v1")).exists());  // nothing undone
+    QCOMPARE(release_row("r").state, ps::ReleaseState::Draft);
+    QCOMPARE(o.dialog->cancel_button()->text(), QStringLiteral("Close"));
+    QVERIFY(o.dialog->isVisible());
+  }
+
+  // Review focus 3: closing during a run asks; yes cancels, and the dialog
+  // closes once the step that is out has come back.
+  void CloseDuringRunCancelsThenCloses() {
+    const ps::Uuid r = create("r");
+    Open o = open();
+    int asked = 0;
+    o.dialog->set_ask_close_while_running([&asked] { return ++asked > 1; });  // no, then yes
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->folder_dir()->setText(dir_.filePath(QStringLiteral("close-out")));
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    o.dialog->destination(Destination::Store)->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    o.dialog->close();  // no: it stays, and runs on
+    QCOMPARE(asked, 1);
+    QVERIFY(o.dialog->isVisible());
+    QVERIFY(o.dialog->busy());
+    o.dialog->close();  // yes
+    QCOMPARE(asked, 2);
+    QVERIFY(o.dialog->isVisible());  // until the build comes back
+    QTRY_VERIFY_WITH_TIMEOUT(!o.dialog->isVisible(), kWaitMs);
+    QCOMPARE(got->count, 1);
+    QVERIFY(got->results[0].state == StepState::Ok);
+    QVERIFY(got->results[1].state == StepState::Cancelled);
+    QVERIFY(!o.dialog->busy());
+  }
+
+  // A dialog destroyed with a step out: its result reaches nothing.
+  void DestroyedDuringRunIsSafe() {
+    const ps::Uuid r = create("r");
+    Open o = open();
+    o.dialog->open_existing(r);
+    o.dialog->show();
+    o.dialog->folder_dir()->setText(dir_.filePath(QStringLiteral("gone-out")));
+    o.dialog->destination(Destination::Folder)->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    o.dialog->run_button()->click();
+    o.dialog.reset();
+    // The build runs out on the worker; its stages and result are queued and dropped.
+    auto flushed = o.bridge->run_sync<int>([](ps::IStore&, const ps::Actor&) -> pychron::Result<int> { return 0; });
+    QVERIFY(flushed.has_value());
+    QTest::qWait(50);
+  }
+
+  void NewReleaseFillsEarthBankPanelMidRun() {
+    pychron::ui::test::EarthbankWorld w;
+    Open o = open(w.setup());
+    o.dialog->set_ask_release(named("fresh"));
+    o.dialog->open_new(analyses());
+    o.dialog->show();
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->details_button()->isEnabled(), kWaitMs);
+    o.dialog->details_button()->click();
+    o.dialog->destination(Destination::EarthBank)->setChecked(true);
+    EarthbankPublishPanel* panel = o.dialog->earthbank_panel();
+    QVERIFY(panel != nullptr);
+    QVERIFY(panel->read_only());
+    set_action(*panel, Action::ExportXlsx);
+    const QString folder = dir_.filePath(QStringLiteral("fresh-workbooks"));
+    panel->folder()->setText(folder);
+    QTRY_VERIFY_WITH_TIMEOUT(o.dialog->run_button()->isEnabled(), kWaitMs);
+    QCOMPARE(panel->table()->rowCount(), 0);
+    // Whether the table was read-only when the release's rows came in.
+    int filled_read_only = -1;
+    QObject::connect(panel, &EarthbankPublishPanel::controls_changed, panel, [&filled_read_only, panel] {
+      if (filled_read_only < 0 && panel->table()->rowCount() > 0) filled_read_only = panel->read_only() ? 1 : 0;
+    });
+    auto got = watch(*o.dialog);
+    o.dialog->run_button()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(got->count, 1, kWaitMs);
+    QCOMPARE(got->results.size(), std::size_t{1});
+    QVERIFY2(got->results[0].state == StepState::Ok, got->results[0].message.c_str());
+    QCOMPARE(filled_read_only, 1);
+    QCOMPARE(panel->table()->rowCount(), 3);
+    QVERIFY(!QDir(folder).entryList({QStringLiteral("*.xlsx")}, QDir::Files).isEmpty());
   }
 };
 

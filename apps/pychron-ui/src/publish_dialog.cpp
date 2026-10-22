@@ -1,8 +1,11 @@
 #include "publish_dialog.hpp"
 
+#include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
@@ -12,6 +15,9 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QMetaObject>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
@@ -31,6 +37,7 @@
 #undef signals
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/earthbank_source.hpp"
+#include "pychron/publish/workflow.hpp"
 #include "pychron/reduction/arar_types.hpp"
 #pragma pop_macro("signals")
 
@@ -65,11 +72,61 @@ pb::EarthBankMode mode_of(EarthbankPublishPanel::Action action) {
   return pb::EarthBankMode::Preflight;
 }
 
+EarthbankPublishPanel::Action action_of(pb::EarthBankMode mode) {
+  switch (mode) {
+    case pb::EarthBankMode::Preflight: return EarthbankPublishPanel::Action::Preflight;
+    case pb::EarthBankMode::ExportXlsx: return EarthbankPublishPanel::Action::ExportXlsx;
+    case pb::EarthBankMode::Upload: return EarthbankPublishPanel::Action::Upload;
+  }
+  return EarthbankPublishPanel::Action::Preflight;
+}
+
+QString state_name(pb::StepState state) {
+  switch (state) {
+    case pb::StepState::Pending: return QObject::tr("Pending");
+    case pb::StepState::Running: return QObject::tr("Running");
+    case pb::StepState::Ok: return QObject::tr("Ok");
+    case pb::StepState::Failed: return QObject::tr("Failed");
+    case pb::StepState::Skipped: return QObject::tr("Skipped");
+    case pb::StepState::Cancelled: return QObject::tr("Cancelled");
+  }
+  return {};
+}
+
+// The stages build_release reports, in order (build.hpp).
+constexpr std::array<std::string_view, 9> kBuildStages = {"select", "load",    "reduce",  "tables",  "files",
+                                                          "figures", "parquet", "records", "manifest"};
+
+// What the panel says when the upload's confirmation was answered No.
+const QString kNothingSent = QStringLiteral("Nothing was sent.");
+
 QString counted_analyses(qsizetype n) {
   return n == 1 ? QObject::tr("1 analysis") : QObject::tr("%1 analyses").arg(n);
 }
 
 }  // namespace
+
+// A build's stages, queued through the bridge (which lives on the GUI thread
+// and outlives the dialog) and dropped there once the dialog is gone. The
+// worker only copies the shared token; the dialog is read on the GUI thread.
+class PublishDialog::StageReporter final : public pb::IProgress {
+ public:
+  StageReporter(QObject* bridge, std::shared_ptr<PublishDialog*> alive, int run)
+      : bridge_(bridge), alive_(std::move(alive)), run_(run) {}
+  void stage(std::string_view name) override {
+    QMetaObject::invokeMethod(
+        bridge_,
+        [alive = alive_, run = run_, n = QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()))] {
+          if (*alive != nullptr) (*alive)->build_stage(run, n);
+        },
+        Qt::QueuedConnection);
+  }
+
+ private:
+  QObject* bridge_;
+  std::shared_ptr<PublishDialog*> alive_;
+  int run_;
+};
 
 PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& source, std::string store_url,
                              EarthbankSetup earthbank, SettingsFactory settings, QWidget* parent)
@@ -80,6 +137,9 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
       earthbank_(std::move(earthbank)),
       settings_(std::move(settings)),
       now_([] { return ps::UtcTime::now(); }),
+      alive_(std::make_shared<PublishDialog*>(this)),
+      release_box_(new QGroupBox(tr("Release"))),
+      destination_box_(new QGroupBox(tr("Destinations"))),
       new_radio_(new QRadioButton(tr("New release from selection"))),
       existing_radio_(new QRadioButton(tr("Existing release"))),
       release_combo_(new QComboBox),
@@ -116,10 +176,14 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
     if (chosen.isEmpty()) return std::nullopt;
     return chosen;
   };
+  ask_close_ = [this] {
+    return QMessageBox::question(this, tr("Publish"),
+                                 tr("A run is under way. Cancel it, and close once the step that is out is done?")) ==
+           QMessageBox::Yes;
+  };
 
   // Release section.
-  auto* release_box = new QGroupBox(tr("Release"));
-  auto* release_layout = new QVBoxLayout(release_box);
+  auto* release_layout = new QVBoxLayout(release_box_);
   auto* new_row = new QHBoxLayout;
   new_row->addWidget(new_radio_);
   new_row->addWidget(members_, 1);
@@ -132,8 +196,7 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
   new_radio_->setChecked(true);
 
   // Destinations.
-  auto* destination_box = new QGroupBox(tr("Destinations"));
-  auto* destination_layout = new QHBoxLayout(destination_box);
+  auto* destination_layout = new QHBoxLayout(destination_box_);
   for (pb::Destination d : kDestinations) {
     auto* box = new QCheckBox(name_of(d));
     destinations_[index_of(d)] = box;
@@ -183,7 +246,7 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
   store_page_->hide();
   earthbank_page_->hide();
 
-  // Results (the run, task 6).
+  // Results of the last run.
   results_->setHorizontalHeaderLabels({tr("Destination"), tr("State"), tr("Message")});
   results_->horizontalHeader()->setStretchLastSection(true);
   results_->verticalHeader()->hide();
@@ -199,12 +262,10 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
   button_row->addWidget(run_);
   run_->setDefault(true);
   run_->setEnabled(false);
-  // Run is driven by the run of task 6; until then it only says whether the
-  // plan may run.
 
   auto* layout = new QVBoxLayout(this);
-  layout->addWidget(release_box);
-  layout->addWidget(destination_box);
+  layout->addWidget(release_box_);
+  layout->addWidget(destination_box_);
   layout->addWidget(refusals_);
   layout->addWidget(tabs_, 1);
   layout->addWidget(results_);
@@ -235,7 +296,14 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
   connect(store_browse_, &QPushButton::clicked, this, [this] {
     if (auto chosen = choose_directory()) store_dir_->setText(*chosen);
   });
-  connect(cancel_, &QPushButton::clicked, this, [this] { close(); });
+  connect(run_, &QPushButton::clicked, this, [this] { run(); });
+  connect(cancel_, &QPushButton::clicked, this, [this] {
+    if (busy()) {
+      cancel();
+    } else {
+      close();
+    }
+  });
 
   recall_destinations();
   update_release_section();
@@ -244,7 +312,12 @@ PublishDialog::PublishDialog(EntryBridge& bridge, processing::StoreSource& sourc
   update_run();
 }
 
-PublishDialog::~PublishDialog() = default;
+PublishDialog::~PublishDialog() {
+  *alive_ = nullptr;  // a build's stages still queued reach nothing
+  // The panel goes with the dialog's children, after this dialog's members:
+  // nothing it says on the way may reach them.
+  if (panel_ != nullptr) panel_->disconnect(this);
+}
 
 QCheckBox* PublishDialog::destination(pb::Destination d) const { return destinations_[index_of(d)]; }
 
@@ -394,9 +467,10 @@ void PublishDialog::update_tabs() {
   if (destination(pb::Destination::EarthBank)->isChecked() && isVisible()) ensure_panel();
   if (panel_ != nullptr) {
     panel_->set_read_only(fresh);
-    if (fresh && !dataset_for_.isEmpty()) {
+    if (fresh && !dataset_for_.isEmpty() && !busy()) {
       // The panel is filled with the new release when the run makes it.
       dataset_for_.clear();
+      dataset_loading_ = false;
       ++dataset_generation_;
       panel_->set_analyses({});
     }
@@ -415,7 +489,17 @@ void PublishDialog::ensure_panel() {
   panel_ = new EarthbankPublishPanel({}, earthbank_, settings_, earthbank_page_);
   earthbank_page_->layout()->addWidget(panel_);
   panel_->set_read_only(new_radio_->isChecked());
-  connect(panel_, &EarthbankPublishPanel::controls_changed, this, [this] { update_run(); });
+  connect(panel_, &EarthbankPublishPanel::controls_changed, this, [this] {
+    update_run();
+    earthbank_poll();
+  });
+  connect(panel_, &EarthbankPublishPanel::finished, this,
+          [this](bool ok, const QString& message) { panel_finished(ok, message); });
+  connect(panel_, &EarthbankPublishPanel::progress, this, [this](int done, int total) {
+    if (running_ == nullptr || running_->earthbank != Run::EarthBank::Running) return;
+    progress_->setRange(0, std::max(total, 1));
+    progress_->setValue(std::min(done, std::max(total, 1)));
+  });
   connect(panel_->action(), &QComboBox::currentIndexChanged, this, [this] { schedule_check(); });
   load_dataset();
   schedule_check();  // the plan's mode is the panel's now
@@ -428,6 +512,7 @@ void PublishDialog::load_dataset() {
   const auto release = ps::Uuid::parse(chosen.toStdString());
   if (!release) return;
   dataset_for_ = chosen;
+  dataset_loading_ = true;
   const int generation = ++dataset_generation_;
   bridge_.run<std::vector<processing::AnalysisPtr>>(
       this,
@@ -436,13 +521,20 @@ void PublishDialog::load_dataset() {
       },
       [this, generation](Result<std::vector<processing::AnalysisPtr>> analyses) {
         if (generation != dataset_generation_ || panel_ == nullptr) return;
+        dataset_loading_ = false;
         if (!analyses) {
           dataset_for_.clear();
           earthbank_note_->setText(tr("The release's analyses could not be read: %1").arg(qs(analyses.error().what)));
           earthbank_note_->show();
+          if (running_ != nullptr && running_->earthbank == Run::EarthBank::Waiting) {
+            running_->earthbank = Run::EarthBank::Idle;
+            settle(pb::StepState::Failed, "The release's analyses could not be read: " + analyses.error().what);
+            next_step();
+          }
           return;
         }
         panel_->set_analyses(std::move(*analyses));
+        earthbank_poll();
       });
 }
 
@@ -524,6 +616,379 @@ void PublishDialog::update_run() {
                                (panel_ != nullptr && panel_->can_run());
   run_->setEnabled(!busy() && something && checked_ && check_error_.isEmpty() && refusals_list_.empty() &&
                    local_refusals().empty() && plan().has_value() && earthbank_ready);
+}
+
+// ---- The run ----
+
+void PublishDialog::run() {
+  if (busy() || !run_->isEnabled()) return;
+  auto p = plan();
+  if (!p) return;
+  auto started = std::make_unique<Run>();
+  started->id = ++runs_;
+  started->plan = std::move(*p);
+  started->order = pb::run_order(started->plan);
+  for (pb::Destination d : started->order) started->results.push_back({d, pb::StepState::Pending, {}});
+  running_ = std::move(started);
+  close_when_done_ = false;
+
+  results_->setRowCount(0);
+  const auto* fresh = std::get_if<pb::NewRelease>(&running_->plan.release);
+  if (running_->order.empty()) {
+    results_->setRowCount(1);
+    set_row(0, tr("Release"), pb::StepState::Pending, {});
+  } else {
+    results_->setRowCount(static_cast<int>(running_->order.size()));
+    for (std::size_t i = 0; i < running_->order.size(); ++i)
+      set_row(static_cast<int>(i), name_of(running_->order[i]), pb::StepState::Pending, {});
+  }
+  set_running(true);
+
+  if (fresh == nullptr) {
+    running_->release = qs(std::get<pb::ExistingRelease>(running_->plan.release).name_or_uuid);
+    next_step();
+    return;
+  }
+  // The new release first; when it cannot be made nothing else runs.
+  if (running_->order.empty()) set_row(0, tr("Release"), pb::StepState::Running, {});
+  progress_->setRange(0, 0);
+  progress_->setFormat(tr("Making the release…"));
+  const int id = running_->id;
+  bridge_.run<pb::ReleaseCreated>(
+      this,
+      [spec = fresh->spec](ps::IStore& store, const ps::Actor& actor) { return pb::create_release(store, actor, spec); },
+      [this, id](Result<pb::ReleaseCreated> created) {
+        if (!current(id)) return;
+        Run& r = *running_;
+        if (!created) {
+          const std::string why = created.error().what;
+          if (r.order.empty()) {
+            set_row(0, tr("Release"), pb::StepState::Failed, qs(why));
+          } else {
+            while (r.next < r.order.size()) settle(pb::StepState::Skipped, "skipped: release could not be made: " + why);
+          }
+          finish();
+          return;
+        }
+        r.release = qs(created->release.str());
+        r.created = true;
+        if (r.order.empty()) {
+          const auto& spec = std::get<pb::NewRelease>(r.plan.release).spec;
+          set_row(0, tr("Release"), pb::StepState::Ok,
+                  tr("made %1 v%2: %3 members").arg(qs(spec.name)).arg(created->version).arg(created->members));
+        }
+        next_step();
+      });
+}
+
+void PublishDialog::cancel() {
+  if (running_ == nullptr || running_->cancelled) return;
+  running_->cancelled = true;
+  cancel_->setEnabled(false);
+  progress_->setFormat(tr("Cancelling after the step that is out…"));
+  if (running_->earthbank == Run::EarthBank::Running && panel_ != nullptr) {
+    panel_->cancel();
+  } else if (running_->earthbank == Run::EarthBank::Waiting) {
+    earthbank_poll();
+  }
+}
+
+void PublishDialog::set_running(bool on) {
+  release_box_->setEnabled(!on);
+  destination_box_->setEnabled(!on);
+  folder_page_->setEnabled(!on);
+  store_page_->setEnabled(!on);
+  cancel_->setText(on ? tr("Cancel") : tr("Close"));
+  cancel_->setEnabled(true);
+  results_->show();
+  progress_->setVisible(on);
+  update_run();
+}
+
+void PublishDialog::set_row(int row, const QString& name, pb::StepState state, const QString& message) {
+  const std::array<QString, 3> cells = {name, state_name(state), message};
+  for (int column = 0; column < 3; ++column) {
+    auto* item = results_->item(row, column);
+    if (item == nullptr) {
+      item = new QTableWidgetItem;
+      results_->setItem(row, column, item);
+    }
+    item->setText(cells[static_cast<std::size_t>(column)]);
+  }
+  results_->item(row, 2)->setToolTip(message);
+}
+
+void PublishDialog::settle(pb::StepState state, const std::string& message) {
+  Run& r = *running_;
+  if (r.next >= r.order.size()) return;
+  pb::StepResult& result = r.results[r.next];
+  result.state = state;
+  result.message = message;
+  set_row(static_cast<int>(r.next), name_of(result.destination), state, qs(message));
+  ++r.next;
+}
+
+void PublishDialog::next_step() {
+  if (running_ == nullptr) return;
+  Run& r = *running_;
+  while (r.next < r.order.size()) {
+    const pb::Destination d = r.order[r.next];
+    if (r.cancelled) {
+      settle(pb::StepState::Cancelled, "cancelled");
+      continue;
+    }
+    const std::vector<pb::StepResult> so_far(r.results.begin(),
+                                             r.results.begin() + static_cast<std::ptrdiff_t>(r.next));
+    if (pb::depends_on_failed(r.plan, d, so_far)) {
+      // Named after the step that failed: the first Failed, else the first not Ok.
+      auto failed = std::ranges::find(so_far, pb::StepState::Failed, &pb::StepResult::state);
+      if (failed == so_far.end())
+        failed = std::ranges::find_if(so_far, [](const pb::StepResult& x) { return x.state != pb::StepState::Ok; });
+      const std::string_view name =
+          failed == so_far.end() ? std::string_view("a step before it") : pb::destination_name(failed->destination);
+      settle(pb::StepState::Skipped, "skipped: " + std::string(name) + " failed");
+      continue;
+    }
+    r.results[r.next].state = pb::StepState::Running;
+    set_row(static_cast<int>(r.next), name_of(d), pb::StepState::Running, {});
+    progress_->setFormat(tr("%1 (%v of %m)").arg(name_of(d)));
+    switch (d) {
+      case pb::Destination::Folder: run_folder(); return;
+      case pb::Destination::Store: run_store(); return;
+      case pb::Destination::EarthBank: run_earthbank(); return;
+      case pb::Destination::Doi:
+      case pb::Destination::Hosted: settle(pb::StepState::Failed, "Not built yet"); break;
+    }
+  }
+  finish();
+}
+
+void PublishDialog::run_folder() {
+  Run& r = *running_;
+  const int id = r.id;
+  progress_->setRange(0, static_cast<int>(kBuildStages.size()));
+  progress_->setValue(0);
+  auto reporter = std::make_shared<StageReporter>(&bridge_, alive_, id);
+  bridge_.run<pb::BuildResult>(
+      this,
+      [&source = source_, options = r.plan.folder->build, release = r.release.toStdString(),
+       reporter](ps::IStore& store, const ps::Actor&) -> Result<pb::BuildResult> {
+        auto uuid = ps::Uuid::parse(release);
+        if (!uuid) return fail(ErrorKind::Config, "no release " + release);
+        return pb::build_release(store, source, *uuid, options, reporter.get());
+      },
+      [this, id](Result<pb::BuildResult> built) {
+        if (!current(id)) return;
+        if (!built) {
+          settle(pb::StepState::Failed, built.error().what);
+        } else {
+          running_->built = built->dir;
+          progress_->setValue(progress_->maximum());
+          std::string message = "built " + built->dir.string();
+          if (!built->parquet_written) message += " (no Parquet tables: this program was built without Apache Arrow)";
+          settle(pb::StepState::Ok, message);
+        }
+        next_step();
+      });
+}
+
+void PublishDialog::build_stage(int run, const QString& stage) {
+  if (!current(run) || running_->next >= running_->order.size() ||
+      running_->order[running_->next] != pb::Destination::Folder)
+    return;
+  const std::string name = stage.toStdString();
+  const auto at = std::ranges::find(kBuildStages, std::string_view(name));
+  if (at != kBuildStages.end()) progress_->setValue(static_cast<int>(at - kBuildStages.begin()) + 1);
+}
+
+void PublishDialog::run_store() {
+  Run& r = *running_;
+  const int id = r.id;
+  // The directory this run built, else the one named on the Store tab.
+  std::optional<std::filesystem::path> dir = r.built ? r.built : r.plan.store->dir;
+  if (!dir) {
+    settle(pb::StepState::Failed, "No built directory of this release: tick Release folder or name one.");
+    next_step();
+    return;
+  }
+  progress_->setRange(0, 0);
+  const bool make_public = r.plan.store->make_public;
+  bridge_.run<ps::ReleaseRow>(
+      this,
+      [release = r.release.toStdString(), dir = *dir, make_public](ps::IStore& store, const ps::Actor& actor) {
+        return pb::publish_built(store, actor, release, dir, make_public);
+      },
+      [this, id, make_public](Result<ps::ReleaseRow> row) {
+        if (!current(id)) return;
+        progress_->setRange(0, 1);
+        progress_->setValue(1);
+        if (!row) {
+          settle(pb::StepState::Failed, row.error().what);
+        } else {
+          running_->made_public = make_public && row->visibility == ps::Visibility::Public;
+          settle(pb::StepState::Ok,
+                 std::string(ps::to_string(row->state)) + ", " + std::string(ps::to_string(row->visibility)));
+        }
+        next_step();
+      });
+}
+
+void PublishDialog::run_earthbank() {
+  Run& r = *running_;
+  ensure_panel();
+  if (r.created) panel_->set_read_only(true);  // per-sample choices are the remembered ones (spec 6.2)
+  progress_->setRange(0, 0);
+  // The panel holds this release's analyses, or they are on their way.
+  if (!r.created && dataset_for_ == r.release && dataset_loading_) {
+    r.earthbank = Run::EarthBank::Waiting;
+    return;  // load_dataset's result polls
+  }
+  if (!r.created && dataset_for_ == r.release && panel_->table()->rowCount() > 0) {
+    r.earthbank = Run::EarthBank::Waiting;
+    earthbank_poll();
+    return;
+  }
+  const auto release = ps::Uuid::parse(r.release.toStdString());
+  if (!release) {
+    settle(pb::StepState::Failed, "no release " + r.release.toStdString());
+    next_step();
+    return;
+  }
+  r.earthbank = Run::EarthBank::Loading;
+  dataset_for_ = r.release;
+  dataset_loading_ = true;
+  const int generation = ++dataset_generation_;
+  const int id = r.id;
+  bridge_.run<std::vector<processing::AnalysisPtr>>(
+      this,
+      [&source = source_, release = *release](ps::IStore& store, const ps::Actor&) {
+        return pb::release_dataset(store, source, release);
+      },
+      [this, id, generation](Result<std::vector<processing::AnalysisPtr>> analyses) {
+        if (generation == dataset_generation_) dataset_loading_ = false;
+        if (!current(id) || running_->earthbank != Run::EarthBank::Loading) return;
+        if (!analyses) {
+          dataset_for_.clear();
+          running_->earthbank = Run::EarthBank::Idle;
+          settle(pb::StepState::Failed, "The release's analyses could not be read: " + analyses.error().what);
+          next_step();
+          return;
+        }
+        running_->earthbank = Run::EarthBank::Waiting;
+        panel_->set_analyses(std::move(*analyses));
+        earthbank_poll();
+      });
+}
+
+void PublishDialog::earthbank_poll() {
+  if (running_ == nullptr || running_->earthbank != Run::EarthBank::Waiting || panel_ == nullptr) return;
+  Run& r = *running_;
+  if (r.cancelled) {
+    r.earthbank = Run::EarthBank::Idle;
+    settle(pb::StepState::Cancelled, "cancelled");
+    next_step();
+    return;
+  }
+  if (!panel_->ready()) return;  // the rows are not in yet: controls_changed polls again
+  if (r.plan.earthbank->mode != pb::EarthBankMode::Upload) {
+    start_panel();
+    return;
+  }
+  // D3 again, at the time of the upload: an embargo may have come since the check.
+  const auto release = ps::Uuid::parse(r.release.toStdString());
+  if (!release) {
+    r.earthbank = Run::EarthBank::Idle;
+    settle(pb::StepState::Failed, "no release " + r.release.toStdString());
+    next_step();
+    return;
+  }
+  r.earthbank = Run::EarthBank::Checking;
+  const int id = r.id;
+  bridge_.run<std::optional<std::string>>(
+      this,
+      [release = *release, made_public = r.made_public, now = now_()](ps::IStore& store, const ps::Actor&) {
+        return pb::earthbank_upload_refusal(store, release, made_public, now);
+      },
+      [this, id](Result<std::optional<std::string>> refused) {
+        if (!current(id) || running_->earthbank != Run::EarthBank::Checking) return;
+        if (!refused || *refused || running_->cancelled) {
+          running_->earthbank = Run::EarthBank::Idle;
+          if (!refused) {
+            settle(pb::StepState::Failed, "The upload could not be checked: " + refused.error().what);
+          } else if (*refused) {
+            settle(pb::StepState::Failed, **refused);
+          } else {
+            settle(pb::StepState::Cancelled, "cancelled");
+          }
+          next_step();
+          return;
+        }
+        start_panel();
+      });
+}
+
+void PublishDialog::start_panel() {
+  Run& r = *running_;
+  r.earthbank = Run::EarthBank::Running;
+  progress_->setRange(0, 0);
+  panel_->start(action_of(r.plan.earthbank->mode));  // may say finished at once (a hint): Failed
+}
+
+void PublishDialog::panel_finished(bool ok, const QString& message) {
+  if (running_ == nullptr || running_->earthbank != Run::EarthBank::Running) return;
+  running_->earthbank = Run::EarthBank::Idle;
+  pb::StepState state = pb::StepState::Failed;
+  if (ok) {
+    state = pb::StepState::Ok;
+  } else if (message == kNothingSent || running_->cancelled) {
+    state = pb::StepState::Cancelled;  // the confirmation said No, or Cancel stopped it
+  }
+  settle(state, message.toStdString());
+  next_step();
+}
+
+void PublishDialog::finish() {
+  std::unique_ptr<Run> done = std::move(running_);
+  const QPointer<PublishDialog> alive(this);
+  set_running(false);
+  if (done->created) {
+    // The release section now holds the release this run made: a second run publishes it, not another.
+    if (const auto made = ps::Uuid::parse(done->release.toStdString())) open_existing(*made);
+  } else {
+    schedule_check();  // what the run changed (a published release) is judged again
+  }
+  Q_EMIT run_finished(done->results);
+  if (!alive) return;
+  if (close_when_done_) {
+    close_when_done_ = false;
+    close();
+  }
+}
+
+void PublishDialog::closeEvent(QCloseEvent* event) {
+  if (!busy()) {
+    QDialog::closeEvent(event);
+    return;
+  }
+  event->ignore();
+  if (close_when_done_) return;  // already cancelling, and closing after
+  const QPointer<PublishDialog> alive(this);
+  const bool yes = ask_close_ && ask_close_();
+  if (!alive || !yes) return;
+  if (!busy()) {  // the run ended while the question was open
+    close();
+    return;
+  }
+  close_when_done_ = true;
+  cancel();
+}
+
+void PublishDialog::reject() {
+  if (busy()) {
+    close();  // asks, as closing the window does
+    return;
+  }
+  QDialog::reject();
 }
 
 std::optional<pb::PublicationPlan> PublishDialog::plan() const {

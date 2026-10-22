@@ -5,7 +5,17 @@
 // sent to, each with its own tab, in the fixed order they run. The plan the
 // dialog shows is checked against the store on every change (check_plan, on
 // the bridge's worker, 200 ms after the last change); Run is off while
-// anything refuses it. Running the plan is not here yet.
+// anything refuses it.
+//
+// Run makes the release first when it is new (nothing else runs when that
+// fails), then each ticked destination in run_order, one result row each. The
+// steps are sequenced on the GUI thread, each started by the result of the
+// one before: a store step (create, build, publish, the upload recheck,
+// release_dataset) is one job on the bridge's worker, EarthBank is the panel's
+// start() and its finished(). A step whose dependency failed is Skipped;
+// Cancel lets the step that is out finish (a build cannot be interrupted, an
+// upload stops after the record that is out) and marks the rest Cancelled.
+// Nothing is undone.
 //
 // Every store call runs on the bridge's worker; its result comes back queued
 // to the GUI thread and never reaches a dialog that is gone (EntryBridge::run
@@ -17,6 +27,7 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -39,6 +50,8 @@
 #pragma pop_macro("signals")
 
 class QCheckBox;
+class QCloseEvent;
+class QGroupBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -84,9 +97,16 @@ class PublishDialog : public QDialog {
   // chosen. A new release's analyses, options and versions are filled.
   std::optional<publish::PublicationPlan> plan() const;
 
-  // A run of this dialog is under way (task 6); while it is, opening it again
-  // only raises it.
-  bool busy() const noexcept { return false; }
+  // Runs the plan as the dialog stands; nothing when Run is off or a run is
+  // under way. run_finished follows, once.
+  void run();
+  // Stops the run at the next step boundary (inside an EarthBank upload,
+  // after the record that is out); the steps not run are Cancelled.
+  void cancel();
+  // A run is under way: from Run until its last row is settled. While it is,
+  // Run, the release section and the destinations are off, and opening the
+  // dialog again only raises it.
+  bool busy() const noexcept { return running_ != nullptr; }
 
   // Details…: the selection and how many of it are under embargo now; the
   // spec the user filled in, or nullopt. Default: the New release dialog.
@@ -97,6 +117,9 @@ class PublishDialog : public QDialog {
   void set_ask_directory(AskDirectory ask) { ask_directory_ = std::move(ask); }
   // The time plans are checked at. Default: the system clock, as build_release.
   void set_now(std::function<persistence::UtcTime()> now) { now_ = std::move(now); }
+  // Closing while a run is under way: true cancels it and closes once it has
+  // ended, false keeps the dialog open. Default: a message box.
+  void set_ask_close_while_running(std::function<bool()> ask) { ask_close_ = std::move(ask); }
 
   // For tests.
   QRadioButton* new_radio() const noexcept { return new_radio_; }
@@ -119,10 +142,49 @@ class PublishDialog : public QDialog {
   QTableWidget* results() const noexcept { return results_; }
   QProgressBar* progress() const noexcept { return progress_; }
 
+ Q_SIGNALS:
+  // A run is over: the result of each ticked destination, in run order
+  // (empty for a run that only made a new release).
+  void run_finished(const std::vector<publish::StepResult>& results);
+
  protected:
   void showEvent(QShowEvent* event) override;
+  void closeEvent(QCloseEvent* event) override;
+  void reject() override;
 
  private:
+  class StageReporter;  // a build's stages, queued to the GUI thread
+
+  // One run: the plan as it was when Run was pressed and what came of it.
+  struct Run {
+    enum class EarthBank { Idle, Loading, Waiting, Checking, Running };
+    int id = 0;
+    publish::PublicationPlan plan;
+    std::vector<publish::Destination> order;
+    std::vector<publish::StepResult> results;  // one per entry of order
+    std::size_t next = 0;                      // the step running, or the next to run
+    QString release;                           // uuid text, once the release exists
+    bool created = false;                      // made by this run
+    std::optional<std::filesystem::path> built;  // Folder's directory, when it ran Ok
+    bool made_public = false;                  // Store ran Ok with make_public
+    bool cancelled = false;
+    EarthBank earthbank = EarthBank::Idle;
+  };
+
+  bool current(int run) const noexcept { return running_ != nullptr && running_->id == run; }
+  void set_running(bool on);
+  void set_row(int row, const QString& name, publish::StepState state, const QString& message);
+  void settle(publish::StepState state, const std::string& message);  // the step at next; next moves on
+  void next_step();
+  void run_folder();
+  void run_store();
+  void run_earthbank();
+  void earthbank_poll();   // the EarthBank step waits for the panel's rows
+  void start_panel();
+  void panel_finished(bool ok, const QString& message);
+  void build_stage(int run, const QString& stage);
+  void finish();
+
   void load_releases();       // the combo, from the store
   void count_embargoed();     // of the selection, from the store
   void ask_details();
@@ -153,6 +215,13 @@ class PublishDialog : public QDialog {
   AskRelease ask_release_;
   AskDirectory ask_directory_;
   std::function<persistence::UtcTime()> now_;
+  std::function<bool()> ask_close_;
+  // Read on the GUI thread by a build's queued stages; null once the dialog is gone.
+  std::shared_ptr<PublishDialog*> alive_;
+  std::unique_ptr<Run> running_;
+  int runs_ = 0;
+  bool close_when_done_ = false;
+  bool dataset_loading_ = false;              // load_dataset's release_dataset is out
 
   QStringList selection_;
   std::optional<std::size_t> embargoed_;      // of the selection, once read
@@ -168,6 +237,8 @@ class PublishDialog : public QDialog {
   int dataset_generation_ = 0;
   bool restoring_ = false;
 
+  QGroupBox* release_box_;
+  QGroupBox* destination_box_;
   QRadioButton* new_radio_;
   QRadioButton* existing_radio_;
   QComboBox* release_combo_;

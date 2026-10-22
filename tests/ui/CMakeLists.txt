@@ -20,8 +20,9 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing
     ${PROJECT_SOURCE_DIR}/tests/support)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
-  # the EarthBank suites talk to the service in memory (tests/earthbank)
-  if(name MATCHES "^test_earthbank")
+  # the EarthBank suites, and the Publish dialog's EarthBank step, talk to the
+  # service in memory (tests/earthbank)
+  if(name MATCHES "^test_earthbank" OR name STREQUAL "test_publish_dialog")
     target_link_libraries(${target} PRIVATE pychron::earthbank_fake)
     # tests/earthbank/analyses.hpp builds on "processing/fixtures.hpp"
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
