@@ -204,23 +204,14 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
   ask_build_ = [this](const QString& release) { return ask_build_dialog(this, release); };
   connect(verify_button_, &QPushButton::clicked, this, &PublishWindow::verify);
   connect(publish_button_, &QPushButton::clicked, this, &PublishWindow::publish);
+  // A run of the Publish dialog changes releases through the same bridge.
+  connect(&bridge_, &EntryBridge::changed, this, [this] {
+    if (!busy()) refresh();
+  });
   connect(withdraw_button_, &QPushButton::clicked, this, &PublishWindow::withdraw);
   connect(public_button_, &QPushButton::clicked, this, &PublishWindow::make_public);
   ask_directory_ = [this](const QString& suggested) {
     return QFileDialog::getExistingDirectory(this, tr("A built release directory"), suggested);
-  };
-  ask_publish_ = [this](const QString& release) -> std::optional<bool> {
-    QMessageBox box(QMessageBox::Question, tr("Publish"),
-                    tr("Publish %1? A published release no longer changes. It stays private unless made public.")
-                        .arg(release),
-                    QMessageBox::Cancel, this);
-    QPushButton* as_private = box.addButton(tr("Publish as private"), QMessageBox::AcceptRole);
-    QPushButton* as_public = box.addButton(tr("Publish as public"), QMessageBox::AcceptRole);
-    box.setDefaultButton(as_private);
-    box.exec();
-    if (box.clickedButton() == as_private) return false;
-    if (box.clickedButton() == as_public) return true;
-    return std::nullopt;
   };
   ask_text_ = [this](const QString& question) -> std::optional<QString> {
     bool ok = false;
@@ -426,18 +417,12 @@ void PublishWindow::publish() {
     say(tr("Select a release first."));
     return;
   }
-  const QString name = current_text(Name);
-  const QString dir = ask_directory_ ? ask_directory_(last_build(uuid)) : QString();
-  if (dir.isEmpty()) return;
-  const auto make_public = ask_publish_ ? ask_publish_(name) : std::nullopt;
-  if (!make_public) return;
-  const bool pub = *make_public;
-  change(tr("published %1 (%2)").arg(name, pub ? tr("public") : tr("private")),
-         [uuid, dir, pub](ps::IStore& store, const ps::Actor& actor) -> Result<void> {
-           auto row = pb::publish_built(store, actor, uuid.toStdString(), dir.toStdString(), pub);
-           if (!row) return fail(row.error());
-           return {};
-         });
+  auto release = ps::Uuid::parse(uuid.toStdString());
+  if (!release) {
+    say(tr("no release %1").arg(uuid));
+    return;
+  }
+  if (open_publish_) open_publish_(*release);
 }
 
 void PublishWindow::withdraw() {

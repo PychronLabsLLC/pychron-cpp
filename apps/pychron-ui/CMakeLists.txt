@@ -101,7 +101,6 @@ add_library(pychron_ui_lib STATIC
   src/earthbank_worker.cpp
   src/earthbank_preferences_page.cpp
   src/earthbank_package_dialog.cpp
-  src/earthbank_publish_dialog.cpp
   src/update_checker.cpp
   src/update_ui.cpp
   src/earthbank_publish_panel.cpp
@@ -200,7 +199,6 @@ add_library(pychron_ui_lib STATIC
   src/earthbank_worker.hpp
   src/earthbank_preferences_page.hpp
   src/earthbank_package_dialog.hpp
-  src/earthbank_publish_dialog.hpp
   src/update_checker.hpp
   src/update_ui.hpp
   src/earthbank_publish_panel.hpp

@@ -16,8 +16,6 @@
 #include <QWidget>
 
 #include "data_browser_window.hpp"
-#include "earthbank_publish_dialog.hpp"
-#include "earthbank_worker.hpp"
 #include "preferences.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/processing/options.hpp"
@@ -62,14 +60,11 @@ class DataWorkspace : public QObject {
   // `path` (.json, else CSV) on the processing thread; the browser's status
   // line says what was written, or why not. False without data.
   bool export_report(const QString& path, const QStringList& uuids);
-  // Loads `uuids` on the processing thread and opens Publish to EarthBank on
-  // them (earthbank_publish_dialog.hpp); a dialog already open is closed
-  // first. False without data.
-  bool open_publish(const QStringList& uuids);
-  EarthbankPublishDialog* publish_dialog() const { return publish_.data(); }  // null unless open
-  // The service, password store and profiles file the dialog uses (default:
-  // EarthbankSetup::system()).
-  void set_earthbank_setup(EarthbankSetup setup) { earthbank_ = std::move(setup); }
+  // Where the browser's Publish button sends the selected analyses (uuid
+  // text): the Publish dialog, opened by whoever owns the store. With none
+  // (an install without a database) the button is off and says why; set
+  // after the browser exists, it takes effect on the browser open now.
+  void set_publish_handler(std::function<void(const QStringList&)> handler);
 
  private:
   void clear();
@@ -85,9 +80,7 @@ class DataWorkspace : public QObject {
   std::function<std::unique_ptr<QSettings>()> settings_;
   QList<QPointer<QWidget>> children_;  // recall and figure windows
   int export_channel_ = 0;             // the bridge channel exports run on
-  int publish_channel_ = 0;            // and the one a publish loads its analyses on
-  EarthbankSetup earthbank_ = EarthbankSetup::system();
-  QPointer<EarthbankPublishDialog> publish_;
+  std::function<void(const QStringList&)> publish_handler_;
 };
 
 }  // namespace pychron::ui

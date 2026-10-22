@@ -16,7 +16,7 @@
 // is the service library's own sentence (session.hpp), which has both taken
 // out.
 //
-// Publishing (the data browser's Publish to EarthBank) runs here too: the
+// Publishing (the Publish dialog's EarthBank tab) runs here too: the
 // survey of the selected analyses (what each sample would report, under each
 // kind of age), the pre-flight check, the workbooks, and an upload in two
 // steps. `prepare_upload` signs in, asks who the account is and what the

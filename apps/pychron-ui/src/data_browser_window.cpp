@@ -255,8 +255,6 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   publish_ = toolbar_->addAction(data_icon(QStringLiteral("publish")), tr("Publish"), this, [this] {
     if (const QStringList ids = selection_uuids(); !ids.isEmpty()) emit publish_requested(ids);
   });
-  publish_->setToolTip(tr("Publish to EarthBank...: check, export as EarthBank's workbooks, or upload the selected "
-                          "analyses (right list)"));
   set_actions_enabled(false);
   ask_export_path = [this](const QString& suggested) {
     return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
@@ -636,6 +634,16 @@ void DataBrowserWindow::refetch_selected() {
   if (dropped > 0) status_->setText(tr("%n selected analyses no longer in store", nullptr, static_cast<int>(dropped)));
 }
 
+void DataBrowserWindow::set_publish_available(bool available) {
+  publish_available_ = available;
+  update_publish();
+}
+
+void DataBrowserWindow::update_publish() {
+  publish_->setToolTip(publish_available_ ? tr("Publish…") : tr("Publishing needs a database"));
+  publish_->setEnabled(publish_available_ && !selection_.empty());
+}
+
 void DataBrowserWindow::set_unavailable(const QString& reason) {
   unavailable_->setText(reason);
   unavailable_->setVisible(!reason.isEmpty());
@@ -774,7 +782,7 @@ void DataBrowserWindow::set_actions_enabled(bool on) {
   for (QAction* a : toolbar_->actions())
     if (!a->data().toString().isEmpty()) a->setEnabled(on);
   export_->setEnabled(on);
-  publish_->setEnabled(on);
+  update_publish();
 }
 
 void DataBrowserWindow::sync_selected() {

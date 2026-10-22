@@ -25,7 +25,7 @@
 //                            spectrum_isochron, then the fit windows isotope_evolution_fit, blank_fit,
 //                            icfactor_fit
 //   toolbar, Recall          recall_requested(uuid of the current row)
-//   toolbar, Publish         publish_requested(Selected's uuids): Publish to EarthBank
+//   toolbar, Publish         publish_requested(Selected's uuids): the Publish dialog
 //   toolbar, Export          export_requested(path, Selected's uuids): one
 //                            click asks for a file name and the workspace writes the
 //                            Schaen et al. (2021) data report there (.csv or .json)
@@ -129,6 +129,9 @@ class DataBrowserWindow : public QWidget {
   QAction* recall_action() const noexcept { return recall_; }
   QAction* export_action() const noexcept { return export_; }
   QAction* publish_action() const noexcept { return publish_; }  // enabled with a selection
+  // Whether anything takes publish_requested (default true). Off: the button
+  // stays disabled and says "Publishing needs a database".
+  void set_publish_available(bool available);
   QLabel* status() const noexcept { return status_; }
   QLabel* unavailable() const noexcept { return unavailable_; }
   // A line for the status label (the workspace reports an export here).
@@ -248,6 +251,8 @@ class DataBrowserWindow : public QWidget {
   QAction* recall_;
   QAction* export_;
   QAction* publish_;
+  bool publish_available_ = true;
+  void update_publish();
   QLabel* status_;
   QLabel* unavailable_;
   int page_size_ = Preferences::kDefaultPageSize;

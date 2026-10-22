@@ -668,7 +668,10 @@ As built in phase 4 (plan `docs/superpowers/plans/2026-10-19-data-publishing-pha
 - Left: releases table (name, version, state, visibility, members, DOI,
   created). Buttons: New release…, Build…, Verify…, Publish…, Withdraw…,
   Make public (`set_release_public`: private -> public only); enabled by
-  state. Status line, progress bar.
+  state. Publish… no longer asks for a directory and a visibility here: it
+  opens the Publish dialog on the selected release
+  (`2026-10-21-publication-workflow-design.md` §6.4), whose Folder, Store and
+  EarthBank steps do it. Status line, progress bar.
 - New release: analyses = Data browser's Selected list (`selection_uuids()`;
   same as Export). Dialog (`release_dialog.*`): name, title,
   description, authors (ORCID, affiliation), licence (combo, editable;
@@ -1070,6 +1073,11 @@ store and in `libs/publish`. Phases 1 to 5 proceed without them.
 
 ## 11. EarthBank as downstream export
 
+> **UI part superseded** by `2026-10-21-publication-workflow-design.md`: the
+> Data window's Publish button opens the Publish dialog (new release from the
+> selection), whose EarthBank tab replaces the EarthBank Publish dialog this
+> section describes. The mapping and upload rules below stand.
+
 Unchanged: `libs/earthbank` maps `processing` analyses to one `Submission`
 per sample (`mapping.hpp`); pre-flight, workbooks, upload as built; all its
 rules (no test reaches production, journal, no retries) stand.
@@ -1137,6 +1145,8 @@ Static tier first. Each phase ends merged on `develop` with its tests.
 7. **Registrations.** `registrar.hpp`, DataCite (test first), SESAR
    (sandbox first), Publish page dialogs, `elctl publish doi|igsn`.
 8. **EarthBank from a release.**
+   (Superseded by `2026-10-21-publication-workflow-design.md`: the UI part is
+   the Publish dialog, one entry point for releases and EarthBank.)
 9. Later: D7 offline export; `--with-raw`; fastgeoapi per-user login.
 
 Phase 1 alone gives a lab a citable, verifiable directory it can host

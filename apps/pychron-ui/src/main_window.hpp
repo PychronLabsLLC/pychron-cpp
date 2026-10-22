@@ -171,6 +171,10 @@ class MainWindow : public QMainWindow {
   void refresh_data();
   QAction* data_action() const noexcept { return data_action_; }
   DataBrowserWindow* data_window() const noexcept { return data_->existing_browser(); }
+  // Where the Data window's Publish button sends its selection (DataWorkspace::set_publish_handler).
+  void set_publish_handler(std::function<void(const QStringList&)> handler) {
+    data_->set_publish_handler(std::move(handler));
+  }
   ProcessingBridge* processing_bridge() const noexcept { return data_->processing_bridge(); }
   // File > Installations…; hidden until a handler is set.
   void set_installations_handler(std::function<void()> handler);

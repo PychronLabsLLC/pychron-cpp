@@ -1074,6 +1074,53 @@ class TestDataWindows : public QObject {
     QCOMPARE(tint(1), QColor(1, 2, 3));
   }
 
+  // The Publish button hands the selection to whoever opens the Publish dialog.
+  void publish_button_opens_publish_dialog() {
+    QTemporaryDir dir;
+    auto src = make_sessions();
+    pp::PresetStore presets(dir.path().toStdString());
+    QWidget owner;
+    DataWorkspace ws(&owner, {});
+    ws.set_source(src.get(), &presets);
+    QList<QStringList> asked;
+    ws.set_publish_handler([&asked](const QStringList& ids) { asked.append(ids); });
+    auto* browser = ws.browser();
+    QVERIFY(browser);
+    QCOMPARE(browser->publish_action()->toolTip(), QStringLiteral("Publish…"));
+    QVERIFY(!browser->publish_action()->isEnabled());  // nothing selected
+    browser->select_rows({0, 1});
+    QVERIFY(browser->publish_action()->isEnabled());
+    browser->publish_action()->trigger();
+    QCOMPARE(asked.size(), 1);
+    QCOMPARE(asked.first(), browser->selected_uuids());
+    QCOMPARE(asked.first().size(), 2);
+  }
+
+  // No handler (no database): the button says so and stays off, however many
+  // rows are selected; a handler set after the browser exists switches it on.
+  void publish_button_needs_a_store() {
+    QTemporaryDir dir;
+    auto src = make_sessions();
+    pp::PresetStore presets(dir.path().toStdString());
+    QWidget owner;
+    DataWorkspace ws(&owner, {});
+    ws.set_source(src.get(), &presets);
+    auto* browser = ws.browser();
+    QVERIFY(browser);
+    browser->select_rows({0, 1});
+    QVERIFY(!browser->publish_action()->isEnabled());
+    QCOMPARE(browser->publish_action()->toolTip(), QStringLiteral("Publishing needs a database"));
+    int calls = 0;
+    ws.set_publish_handler([&calls](const QStringList&) { ++calls; });
+    QVERIFY(browser->publish_action()->isEnabled());
+    QCOMPARE(browser->publish_action()->toolTip(), QStringLiteral("Publish…"));
+    browser->publish_action()->trigger();
+    QCOMPARE(calls, 1);
+    ws.set_publish_handler({});
+    QVERIFY(!browser->publish_action()->isEnabled());
+    QCOMPARE(browser->publish_action()->toolTip(), QStringLiteral("Publishing needs a database"));
+  }
+
   void workspace_keeps_the_colour_choice_and_applies_the_preferences() {
     QTemporaryDir dir;
     const QString ini = dir.path() + QStringLiteral("/ui.ini");

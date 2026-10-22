@@ -70,6 +70,7 @@ PublishWindow* PublishActions::window() {
   if (!open_store()) return nullptr;
   window_ = new PublishWindow(*bridge_, *source_, url_, selection_, owner_);
   window_->setWindowFlag(Qt::Window);
+  window_->set_open_publish([this](persistence::Uuid release) { open_dialog_existing(release); });
   return window_;
 }
 
@@ -88,6 +89,10 @@ PublishDialog* PublishActions::ensure_dialog() {
   if (dialog_ != nullptr) return dialog_;
   if (!open_store()) return nullptr;
   dialog_ = new PublishDialog(*bridge_, *source_, url_, earthbank_, settings_, owner_);
+  // A run changes releases: the Publish window, if open, lists them again.
+  connect(dialog_, &PublishDialog::run_finished, this, [this] {
+    if (bridge_ != nullptr) bridge_->notify_changed();
+  });
   return dialog_;
 }
 

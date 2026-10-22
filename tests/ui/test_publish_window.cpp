@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QLabel>
 #include <QProgressBar>
+#include <QRadioButton>
 #include <QPushButton>
 #include <QMainWindow>
 #include <QStandardItemModel>
@@ -17,12 +18,14 @@
 
 #include "entry_bridge.hpp"
 #include "publish_actions.hpp"
+#include "publish_dialog.hpp"
 #include "publish_window.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/build.hpp"
 #include "pychron/publish/embargo.hpp"
 #include "pychron/publish/release.hpp"
+#include "pychron/publish/workflow.hpp"
 #include "release_seed.hpp"
 
 namespace ps = pychron::persistence;
@@ -113,6 +116,15 @@ class TestPublishWindow : public QObject {
     if (!QTest::qWaitFor([&] { return !o.window->busy(); }, kWaitMs)) return {};
     o.window->set_ask_directory([](const QString& suggested) { return suggested; });
     return out + QStringLiteral("/r-v1");
+  }
+
+  // The release published through the library, as the dialog's Store step does,
+  // and the window told to look again.
+  bool published(Open& o, const QString& uuid, const QString& dir) {
+    auto done = pb::publish_built(*store_, seed_.reducer(), uuid.toStdString(), dir.toStdString(), false);
+    if (!done) return false;
+    o.window->refresh();
+    return QTest::qWaitFor([&] { return !o.window->busy(); }, kWaitMs);
   }
 
   QString state(const PublishWindow& w) const { return cell(w, 0, PublishWindow::State); }
@@ -308,38 +320,59 @@ class TestPublishWindow : public QObject {
     QVERIFY2(reported.contains(QStringLiteral("changed README.md")), qPrintable(reported));
   }
 
-  void publishMakesItPublished() {
+  void PublishOpensDialogOnSelectedRelease() {
     Open o = open();
-    QVERIFY(!built(o, QStringLiteral("out-publish")).isEmpty());
-    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
+    std::vector<ps::Uuid> opened;
+    o.window->set_open_publish([&opened](ps::Uuid u) { opened.push_back(u); });
+    const QString uuid = made(o);
+    QVERIFY(!uuid.isEmpty());
     o.window->publish();
-    QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
-    QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
-    QCOMPARE(cell(*o.window, 0, PublishWindow::Visibility), QStringLiteral("private"));
+    QCOMPARE(int(opened.size()), 1);
+    QCOMPARE(QString::fromStdString(opened.front().str()), uuid);
   }
 
-  void publishRefusesAChangedDirectory() {
+  void ABridgeChangeListsTheReleasesAgain() {
     Open o = open();
-    const QString dir = built(o, QStringLiteral("out-refused"));
-    QVERIFY(!dir.isEmpty());
-    {
-      QFile readme(dir + QStringLiteral("/README.md"));
-      QVERIFY(readme.open(QIODevice::Append));
-      readme.write("edited\n");
-    }
-    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
-    o.window->publish();
+    o.window->refresh();
     QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
-    QVERIFY2(o.window->status()->text().contains(QStringLiteral("does not match its manifest")),
-             qPrintable(o.window->status()->text()));
-    QCOMPARE(state(*o.window), QStringLiteral("draft"));
+    QCOMPARE(o.window->releases()->model()->rowCount(), 0);
+    create("r");  // made by a Publish dialog run, say
+    o.bridge->notify_changed();
+    QTRY_COMPARE_WITH_TIMEOUT(o.window->releases()->model()->rowCount(), 1, kWaitMs);
+  }
+
+  void PublishWithNoReleaseSelectedSaysSo() {
+    Open o = open();
+    int calls = 0;
+    o.window->set_open_publish([&calls](ps::Uuid) { ++calls; });
+    o.window->publish();
+    QCOMPARE(calls, 0);
+    QVERIFY(o.window->status()->text().contains(QStringLiteral("Select a release")));
+  }
+
+  void ActionsOpenTheDialogOnTheSelectedRelease() {
+    create("r");
+    QMainWindow owner;
+    auto* actions = new PublishActions(&owner, url_);
+    PublishWindow* w = actions->window();
+    QVERIFY(w != nullptr);
+    w->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!w->busy(), kWaitMs);
+    auto row = pb::find_release(*store_, "r");
+    QVERIFY(row.has_value());
+    w->select_release(QString::fromStdString(row->uuid.str()));
+    QVERIFY(w->publish_button()->isEnabled());
+    w->publish_button()->click();
+    QVERIFY(actions->dialog() != nullptr);
+    QVERIFY(actions->dialog()->existing_radio()->isChecked());
+    actions->dialog()->close();
   }
 
   void withdrawNeedsAReason() {
     Open o = open();
-    QVERIFY(!built(o, QStringLiteral("out-withdraw")).isEmpty());
-    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
-    o.window->publish();
+    const QString dir = built(o, QStringLiteral("out-withdraw"));
+    QVERIFY(!dir.isEmpty());
+    QVERIFY(published(o, o.window->selected_release(), dir));
     QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
     QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
     o.window->set_ask_text([](const QString&) -> std::optional<QString> { return QStringLiteral("  "); });
@@ -353,9 +386,9 @@ class TestPublishWindow : public QObject {
 
   void makePublicChangesVisibility() {
     Open o = open();
-    QVERIFY(!built(o, QStringLiteral("out-public")).isEmpty());
-    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
-    o.window->publish();
+    const QString dir = built(o, QStringLiteral("out-public"));
+    QVERIFY(!dir.isEmpty());
+    QVERIFY(published(o, o.window->selected_release(), dir));
     QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
     QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
     o.window->set_confirm([](const QString&) { return true; });
@@ -365,12 +398,12 @@ class TestPublishWindow : public QObject {
 
   void buttonsFollowTheState() {
     Open o = open();
-    QVERIFY(!built(o, QStringLiteral("out-buttons")).isEmpty());
+    const QString dir = built(o, QStringLiteral("out-buttons"));
+    QVERIFY(!dir.isEmpty());
     QVERIFY(o.window->publish_button()->isEnabled());
     QVERIFY(!o.window->withdraw_button()->isEnabled());
     QVERIFY(!o.window->public_button()->isEnabled());
-    o.window->set_ask_publish([](const QString&) -> std::optional<bool> { return false; });
-    o.window->publish();
+    QVERIFY(published(o, o.window->selected_release(), dir));
     QTRY_COMPARE_WITH_TIMEOUT(state(*o.window), QStringLiteral("published"), kWaitMs);
     QTRY_VERIFY_WITH_TIMEOUT(!o.window->busy(), kWaitMs);
     QVERIFY(!o.window->publish_button()->isEnabled());

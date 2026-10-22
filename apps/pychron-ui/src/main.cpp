@@ -293,10 +293,11 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
     new pychron::ui::FitActions(&window, url, *entry, presets,
                                 [&window](const QString& uuid) { window.workspace()->open_recall(uuid); });
     // View > Publish…: releases of this database, made of the browser's selection.
-    new pychron::ui::PublishActions(&window, url, [&window] {
+    auto* publish = new pychron::ui::PublishActions(&window, url, [&window] {
       const auto* browser = window.workspace()->existing_browser();
       return browser != nullptr ? browser->selection_uuids() : QStringList();
     });
+    window.workspace()->set_publish_handler([publish](const QStringList& ids) { publish->open_dialog_new(ids); });
   }
 #endif
   window.apply_preferences(pychron::ui::load_preferences(QSettings()));
@@ -683,10 +684,11 @@ int main(int argc, char** argv) {
       new pychron::ui::FitActions(&window, database, *entry, presets,
                                   [&window](const QString& uuid) { window.open_recall(uuid); });
       // View > Publish…: releases of this database, made of the Data browser's selection.
-      new pychron::ui::PublishActions(&window, database, [&window] {
+      auto* publish = new pychron::ui::PublishActions(&window, database, [&window] {
         const auto* browser = window.data_window();
         return browser != nullptr ? browser->selection_uuids() : QStringList();
       });
+      window.set_publish_handler([publish](const QStringList& ids) { publish->open_dialog_new(ids); });
     }
     if (database_error) {
       // The data window shows the records folder, and says so and what is missing.

@@ -84,13 +84,14 @@ class PublishWindow : public QMainWindow {
   // The directory the release was last built into from this window; empty when none.
   QString last_build(const QString& release_uuid) const { return last_build_.value(release_uuid); }
 
-  // Verify… and Publish… ask for a built directory (suggested: the last
+  // Verify… asks for a built directory (suggested: the last
   // build from this window); empty cancels. Default: a directory chooser.
   using AskDirectory = std::function<QString(const QString& suggested)>;
   void set_ask_directory(AskDirectory ask) { ask_directory_ = std::move(ask); }
-  // Publish…: true public, false private, nullopt cancels. Default: a dialog.
-  using AskPublish = std::function<std::optional<bool>(const QString& release)>;
-  void set_ask_publish(AskPublish ask) { ask_publish_ = std::move(ask); }
+  // Publish… opens the Publish dialog on the selected release; the window
+  // does not own it, so whoever makes the window says how (PublishActions).
+  using OpenPublish = std::function<void(persistence::Uuid release)>;
+  void set_open_publish(OpenPublish open) { open_publish_ = std::move(open); }
   // Withdraw…: the reason (required); nullopt cancels. Default: an input dialog.
   using AskText = std::function<std::optional<QString>(const QString& question)>;
   void set_ask_text(AskText ask) { ask_text_ = std::move(ask); }
@@ -158,7 +159,7 @@ class PublishWindow : public QMainWindow {
   AskRelease ask_release_;
   AskBuild ask_build_;
   AskDirectory ask_directory_;
-  AskPublish ask_publish_;
+  OpenPublish open_publish_;
   AskText ask_text_;
   Confirm confirm_;
   Report report_;

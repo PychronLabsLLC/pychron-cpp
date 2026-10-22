@@ -69,18 +69,34 @@ profile and pressing OK removes its password too.
 Profiles from legacy Pychron are brought over, without their passwords, with
 `elctl earthbank import-profiles <its preferences file>`.
 
-## Publish from the data browser
+## Publish from the Publish dialog
 
-1. **View > Data**. Filter to the analyses you want and select them. Publish
-   acts on what is selected and nothing else.
-2. Press **Publish** on the toolbar. The dialog lists one row for each
-   sample.
-3. Read the rows (next section) and fill in **Analytical set-up**.
-4. Choose the **Action** and press **Run**:
-   - **Pre-flight** signs in and asks EarthBank whether it knows every term
-     the upload would send. Nothing is written. Do this first.
-   - **Export xlsx** writes the workbooks into a folder. No account needed.
-   - **Upload** sends the records.
+EarthBank is a tab of the Publish dialog, which works on a release. Two ways in:
+
+1. **View > Data**. Filter to the analyses you want, select them and press
+   **Publish** on the toolbar. The dialog opens on a new release made of
+   exactly those analyses. Publish acts on what is selected and nothing else.
+   The button is off on an install without a database.
+2. **View > Publish…**, select a release, press **Publish…**. The dialog opens
+   on that release.
+
+In the dialog tick **EarthBank** under Destinations; its tab holds the
+account, the package, the action, the Analytical set-up and one row for each
+sample. Choose the action and press **Run**:
+
+- **Pre-flight** signs in and asks EarthBank whether it knows every term the
+  upload would send. Nothing is written. Do this first.
+- **Export xlsx** writes the workbooks into a folder. No account needed.
+- **Upload** sends the records. It is offered only for a release that is
+  published, public and not under embargo: EarthBank has no embargo or
+  versioning, so a release is the citable unit and EarthBank one more place
+  it is listed. When Store is ticked in the same run, the release is
+  published first and the upload checked again after.
+
+For a new release the per-sample table fills while the run is under way, from
+what you chose before for each sample name, or from the rule's defaults. To
+review the choices first, make the release (a run with no destination
+ticked), then open the dialog on it.
 
 ### The rows
 

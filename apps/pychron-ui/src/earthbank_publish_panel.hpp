@@ -26,8 +26,8 @@
 // the record that is out, as Cancel does: the journal has what was written,
 // and the next upload of the same analyses finishes it.
 //
-// The panel has no Run button: its host calls start(), and EarthbankPublishDialog
-// (earthbank_publish_dialog.hpp) is the host that adds one. finished() says
+// The panel has no Run button: its host calls start(); PublishDialog
+// (publish_dialog.hpp) hosts it as its EarthBank tab. finished() says
 // how each start ended; progress() how far it is.
 
 #include <cstdint>

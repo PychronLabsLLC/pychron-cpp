@@ -18,7 +18,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
-#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
@@ -33,7 +32,6 @@
 #include "data_workspace.hpp"
 #include "earthbank_fixture.hpp"
 #include "earthbank_package_dialog.hpp"
-#include "earthbank_publish_dialog.hpp"
 #include "earthbank_publish_panel.hpp"
 #include "earthbank_worker.hpp"
 #include "pychron/processing/options.hpp"
@@ -45,7 +43,6 @@ namespace eb = pychron::earthbank;
 namespace pp = pychron::processing;
 using eb::testing::AnalysisList;
 using pychron::ui::DataBrowserWindow;
-using pychron::ui::EarthbankPublishDialog;
 using pychron::ui::EarthbankPublishPanel;
 using Action = pychron::ui::EarthbankPublishPanel::Action;
 using Column = pychron::ui::EarthbankPublishPanel::Column;
@@ -829,85 +826,6 @@ class EarthbankPublishTest : public QObject {
     d->set_read_only(false);
     QVERIFY(d->preferred_age(row)->isEnabled());
     QVERIFY(d->setup_name()->isEnabled());
-  }
-
-  void the_workspace_opens_the_dialog_on_the_selection() {
-    World w;
-    pp::MemorySource source(eb::testing::both_samples());
-    pp::PresetStore presets(w.folder() / "presets");
-    QWidget owner;
-    ui::DataWorkspace workspace(&owner, {});
-    workspace.set_source(&source, &presets);
-    workspace.set_settings(w.settings());
-    workspace.set_earthbank_setup(w.setup());
-    DataBrowserWindow* browser = workspace.browser();
-    QVERIFY(browser != nullptr);
-    QVERIFY(workspace.publish_dialog() == nullptr);
-
-    QList<int> rows;
-    for (int r = 0; r < 16; ++r) rows << r;
-    browser->select_rows(rows);
-    browser->add_highlighted();
-    QCOMPARE(browser->selection_uuids().size(), 16);
-    browser->publish_action()->trigger();
-    QTRY_VERIFY(workspace.publish_dialog() != nullptr);
-    EarthbankPublishDialog* d = workspace.publish_dialog();
-    QTRY_VERIFY(d->ready());
-    const EarthbankPublishPanel& p = *d->panel();
-    QCOMPARE(p.table()->rowCount(), 2);
-    QCOMPARE(cell(p, row_of(p, QStringLiteral("S-STEP")), Column::Analyses), QStringLiteral("10"));
-  }
-
-  void a_second_publish_does_not_replace_a_dialog_that_is_uploading() {
-    World w;
-    w.signed_up();
-    pp::MemorySource source(publishable());
-    pp::PresetStore presets(w.folder() / "presets");
-    QWidget owner;
-    ui::DataWorkspace workspace(&owner, {});
-    workspace.set_source(&source, &presets);
-    workspace.set_settings(w.settings());
-    workspace.set_earthbank_setup(w.setup());
-    DataBrowserWindow* browser = workspace.browser();
-    QList<int> rows;
-    for (int r = 0; r < 16; ++r) rows << r;
-    browser->select_rows(rows);
-    browser->add_highlighted();
-    browser->publish_action()->trigger();
-    QTRY_VERIFY(workspace.publish_dialog() != nullptr);
-    QPointer<EarthbankPublishDialog> d = workspace.publish_dialog();
-    QTRY_VERIFY(d->ready());
-    d->panel()->ask_confirm = [](const QString&) { return true; };
-    d->panel()->setup_name()->setText(QStringLiteral("Noble gas lab"));
-    set_action(*d->panel(), Action::Upload);
-    w.gate.hold_at("POST", "/api/arar/ArArMeasurement");
-    QVERIFY(d->run_button()->isEnabled());
-    d->run_button()->click();  // the wrapper's own Run
-    QTRY_VERIFY_WITH_TIMEOUT(w.gate.waiting(), 20000);
-    QVERIFY(d->busy());
-    QVERIFY(!d->run_button()->isEnabled());
-
-    browser->clear_selected();
-    browser->select_rows({0, 1});
-    browser->add_highlighted();
-    browser->publish_action()->trigger();
-    QTRY_VERIFY2(browser->status()->text().contains(QStringLiteral("still running")), qPrintable(browser->status()->text()));
-    QVERIFY(!d.isNull());
-    QCOMPARE(workspace.publish_dialog(), d.data());
-
-    w.gate.release();
-    QTRY_VERIFY_WITH_TIMEOUT(d->ready(), 20000);
-    QCOMPARE(w.bank.store().measurements.size(), std::size_t{16});
-    QVERIFY(d->panel()->result_pane()->toPlainText().contains(QStringLiteral("S-STEP: complete")));
-
-    // Idle, it is replaced by one on the new selection.
-    browser->publish_action()->trigger();
-    QTRY_VERIFY(workspace.publish_dialog() != nullptr && workspace.publish_dialog() != d.data());
-    EarthbankPublishDialog* next = workspace.publish_dialog();
-    QTRY_VERIFY(next->ready());
-    int analyses = 0;
-    for (int r = 0; r < next->panel()->table()->rowCount(); ++r) analyses += cell(*next->panel(), r, Column::Analyses).toInt();
-    QCOMPARE(analyses, 2);
   }
 
   void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }

@@ -270,6 +270,7 @@ three groups:
 | **Blanks...**, **IC factors...** | The reference-fit window. |
 | **Recall** (or double-click or Space on a row) | The recall window for the current row. **Ctrl+N** and **Ctrl+B** (Cmd on macOS) step to the next and previous row and recall it. |
 | **Export** | A data report (CSV or JSON) of the Selected analyses. See [Exporting](#exporting). |
+| **Publish** | The Publish dialog on a new release of the Selected analyses. See [Publishing a release](#publishing-a-release). Off without a database. |
 
 ## Recall: one analysis in detail
 
@@ -964,10 +965,7 @@ DOI and date. Then, in order:
    when the program was built without Apache Arrow (no Parquet tables).
 3. **Verify…**: checks a built directory against its manifest and against a
    rebuild from the database, and lists every file or table that differs.
-4. **Publish…**: from a built directory that still matches its manifest and
-   was built from this release: draft becomes published (it no longer
-   changes), private or public as you choose. A private build cannot be
-   published as public.
+4. **Publish…**: opens the Publish dialog on the selected release (see below).
 5. **Withdraw…** (with a reason) and **Make public** for a published release.
 
 The **Embargoes** dock lists embargoes in force: a project, a sample (its
@@ -975,8 +973,43 @@ name, or `name@project`) or an analysis (`70001-01`), until a date or until
 lifted. An embargoed analysis is left out of a release's public build and of
 everything built from it. **Set…** adds one, **Lift** ends the selected one.
 
-DOI and IGSN registration and publishing a release to EarthBank are not in
-the window yet.
+### The Publish dialog
+
+The dialog does the whole of publishing in one place. Open it from the data
+browser's **Publish** button (on a new release made of the selected rows) or
+from the Publish window's **Publish…** (on the release selected there). The
+data browser's button is off, and says "Publishing needs a database", on an
+install without one.
+
+At the top choose the release: **New release from selection** (it shows how
+many analyses and how many are under embargo now; **Details…** asks for the
+name, title, authors and the rest, and a name is required) or **Existing
+release** (a draft or published one). Under it tick the destinations; nothing
+is ticked at first, and the dialog remembers your choice. Each ticked
+destination has a tab for its settings:
+
+- **Release folder**: the directory to build into, with figures, private
+  build.
+- **Publish in store**: makes the draft a published release, private or
+  public. It is built from the folder of the same run; without Folder ticked,
+  name the directory of a build of this release.
+- **EarthBank**: pre-flight, export of the workbooks, or upload, as in
+  [Publishing to EarthBank](../earthbank.md). An upload is allowed only for a
+  release that is published, public and not under embargo.
+
+The dialog lists what stops a run (a release already published, a missing
+directory, an upload of a private release) under the destinations, and Run
+stays off while anything does. A run goes in a fixed order whatever order you
+ticked: the new release is made, then the folder, the store, EarthBank. The
+table of results has a row for each destination saying whether it ran, was
+skipped (because a step it needs failed), was cancelled or failed, and why. A
+step that fails skips the ones that depend on it; the others still run.
+**Cancel** stops the run at the next step (inside an upload, after the record
+that is out). Nothing is undone: a built folder stays, a published release
+stays published, and records already sent stay on EarthBank. Closing the
+dialog during a run asks first.
+
+DOI and Hosted are shown and cannot be ticked: neither is built yet.
 
 ## Unverified or not yet implemented
 
