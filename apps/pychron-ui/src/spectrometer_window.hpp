@@ -3,8 +3,9 @@
 // SpectrometerWindow (spectrometer-window design sections 5.4, 5.6, 6): the
 // live strip chart with a "Controls" dock (integration, graph, detectors,
 // magnet), an "Intensities" dock and a banner for scan and command errors.
-// A "Peak center" dock (tabbed with Controls) runs peak centers and a
-// "Peak center plot" dock draws them (spectrometer peak center design 5).
+// Peak centring is the Peak Center window's (PeakCenterWindow); this window
+// only keeps its magnet and scan controls still while a run goes
+// (spectrometer peak center design 5).
 //
 // The window talks only to SpectrometerBridge: readings and state arrive as
 // signals on the GUI thread, and every command is non-blocking. Showing the
@@ -27,8 +28,6 @@
 #include <QTimer>
 
 #include "intensities_model.hpp"
-#include "peak_center_panel.hpp"
-#include "peak_center_view.hpp"
 #include "rise_rate_panel.hpp"
 #include "spectrometer_bridge.hpp"
 #include "strip_chart_model.hpp"
@@ -71,23 +70,6 @@ class SpectrometerWindow : public QMainWindow {
   // The CSV file each rise rate result is appended to (empty: none).
   void set_rise_rate_file(const std::filesystem::path& path);
 
-  // The peak_center.toml the Peak center dock reads its sets from and saves
-  // to (empty: the built-in default only; read at once and after each save).
-  void set_peak_center_file(const std::filesystem::path& file);
-  // Whether a queue is running: the dock's Start and Apply are then disabled.
-  void set_queue_running(std::function<bool()> queue_running);
-  // A queue started or ended: the dock reads the state again.
-  void queue_state_changed() { peak_panel_->queue_state_changed(); }
-  // For code about to close and delete the window (a new spectrometer, quit):
-  // cancels a peak center and waits for it, without the question closeEvent asks.
-  void cancel_peak_center_and_wait() { bridge_.cancel_peak_center_and_wait(); }
-  bool peak_center_running() const { return bridge_.peak_center_running(); }
-  PeakCenterPanel* peak_center_panel() const noexcept { return peak_panel_; }
-  PeakCenterView* peak_center_view() const noexcept { return peak_view_; }
-  // The question asked when the window is closed during a peak center
-  // ("Cancel peak center?"). Default: a Yes/No QMessageBox, default No.
-  void set_ask(std::function<bool(QString)> ask) { ask_ = std::move(ask); }
-
   // Asked before a large move with the mass change on the reference detector
   // (NaN when the current mass is unknown). Default: Yes/No dialog, default No.
   void set_confirm_move(std::function<bool(double delta_amu)> confirm);
@@ -123,7 +105,9 @@ class SpectrometerWindow : public QMainWindow {
 
  protected:
   void showEvent(QShowEvent* event) override;    // start scan at saved or default integration
-  void closeEvent(QCloseEvent* event) override;  // stop scan, save settings
+  // Stops the scan and saves the settings. Asks nothing: a peak center
+  // going on then ends with the scan left stopped.
+  void closeEvent(QCloseEvent* event) override;
 
  private:
   QWidget* build_controls();
@@ -145,7 +129,7 @@ class SpectrometerWindow : public QMainWindow {
   void forget_rise_marks();
   void on_readings(const std::vector<spectrometer::IntensityReading>& batch);
   void on_command_finished(const QString& what, const Result<void>& result);
-  // Apply, Restart and the rise rate's Start: disabled while the window's peak
+  // Apply, Restart and the rise rate's Start: disabled while the bridge's peak
   // center runs (a magnet move or a scan under the sweep would spoil it).
   void lock_for_peak_center(bool running);
 
@@ -155,12 +139,6 @@ class SpectrometerWindow : public QMainWindow {
   DockLayouts* layouts_ = nullptr;
   QDockWidget* controls_dock_ = nullptr;
   QDockWidget* intensities_dock_ = nullptr;
-  QDockWidget* peak_dock_ = nullptr;
-  QDockWidget* peak_plot_dock_ = nullptr;
-  PeakCenterPanel* peak_panel_ = nullptr;
-  PeakCenterView* peak_view_ = nullptr;
-  std::function<bool(QString)> ask_;
-  bool closing_after_peak_center_ = false;  // closeEvent asked to cancel; close when the run has finished
   StripChartModel model_;
   StripChartView* view_;
   IntensitiesModel* intensities_;

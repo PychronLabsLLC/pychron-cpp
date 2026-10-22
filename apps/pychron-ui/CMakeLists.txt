@@ -71,6 +71,7 @@ add_library(pychron_ui_lib STATIC
   src/peak_center_panel.cpp
   src/peak_center_scale.cpp
   src/peak_center_view.cpp
+  src/peak_center_window.cpp
   src/rise_rate.cpp
   src/rise_rate_panel.cpp
   src/figure_window.cpp
@@ -170,6 +171,7 @@ add_library(pychron_ui_lib STATIC
   src/peak_center_panel.hpp
   src/peak_center_scale.hpp
   src/peak_center_view.hpp
+  src/peak_center_window.hpp
   src/rise_rate.hpp
   src/rise_rate_panel.hpp
   src/figure_window.hpp

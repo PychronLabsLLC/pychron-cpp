@@ -11,7 +11,7 @@
 // peak_center(), Cancel stops it, the result area shows the outcome, "Apply to
 // field table" writes the fitted centre (after asking) and "Save to set…"
 // writes the form as a named set of the file. The panel listens to the
-// bridge's signals itself; the window only feeds the plot dock.
+// bridge's signals itself; PeakCenterWindow feeds the plot beside it.
 
 #include <filesystem>
 #include <functional>

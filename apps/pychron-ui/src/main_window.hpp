@@ -49,6 +49,7 @@
 #include "reading_history.hpp"
 #include "rehearsal_window.hpp"
 #include "field_table_editor_window.hpp"
+#include "peak_center_window.hpp"
 #include "spectrometer_window.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -96,8 +97,8 @@ class MainWindow : public QMainWindow {
   // Where the spectrometer window appends its rise rate results (empty:
   // nowhere). Set before the window is first opened.
   void set_rise_rate_file(std::filesystem::path path) { rise_rate_file_ = std::move(path); }
-  // The peak_center.toml the spectrometer window's Peak center dock reads and
-  // saves (empty: the built-in default only). Set before the window is first opened.
+  // The peak_center.toml the Peak Center window reads and saves (empty: the
+  // built-in default only). Set before the window is first opened.
   void set_peak_center_file(std::filesystem::path path) { peak_center_file_ = std::move(path); }
   // Null until the action is first triggered.
   SpectrometerWindow* spectrometer_window() const noexcept { return spectrometer_window_; }
@@ -108,6 +109,13 @@ class MainWindow : public QMainWindow {
   // Null until the action is first triggered, and again after
   // set_spectrometer replaces the bridge.
   FieldTableEditorWindow* field_table_window() const noexcept { return field_table_window_; }
+  // Spectrometer > Peak Center…, in every window's bar: opens the one Peak
+  // Center window (or raises it). Disabled, with the reason as tooltip,
+  // without a spectrometer.
+  QAction* peak_center_action() const noexcept { return peak_center_action_; }
+  // Null until the action is first triggered, and again after
+  // set_spectrometer replaces the bridge.
+  PeakCenterWindow* peak_center_window() const noexcept { return peak_center_window_; }
 
   // Enables View > Experiment for `bridge` (null disables it and closes the
   // window). `queue` is opened the first time the window shows. Same
@@ -223,8 +231,9 @@ class MainWindow : public QMainWindow {
   AboutDialog* about_dialog() const { return findChild<AboutDialog*>(QString(), Qt::FindDirectChildrenOnly); }
 
  protected:
-  // Closes the experiment window (which may refuse, keeping everything open)
-  // and the spectrometer window first.
+  // Closes the experiment window (which may refuse, keeping everything open),
+  // then the Peak Center window (its run cancelled, nothing asked) and the
+  // spectrometer window.
   void closeEvent(QCloseEvent* event) override;
 
  private:
@@ -261,6 +270,8 @@ class MainWindow : public QMainWindow {
   SpectrometerWindow* spectrometer_window_ = nullptr;
   QAction* field_table_action_;
   FieldTableEditorWindow* field_table_window_ = nullptr;
+  QAction* peak_center_action_;
+  PeakCenterWindow* peak_center_window_ = nullptr;
   std::filesystem::path rise_rate_file_;
   std::filesystem::path peak_center_file_;
   QAction* experiment_action_;

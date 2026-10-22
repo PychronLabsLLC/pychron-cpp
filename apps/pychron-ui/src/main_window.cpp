@@ -182,6 +182,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
       health_(new HealthBar(this, [this] { return bridge_.now(); })),
       spectrometer_action_(new QAction(QStringLiteral("Spectrometer"), this)),
       field_table_action_(new QAction(QStringLiteral("Field Table…"), this)),
+      peak_center_action_(new QAction(QStringLiteral("Peak Center…"), this)),
       experiment_action_(new QAction(QStringLiteral("Experiment"), this)),
       data_action_(new QAction(QStringLiteral("Data"), this)),
       laser_action_(new QAction(QStringLiteral("Laser"), this)),
@@ -215,6 +216,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
   spectrometer_action_->setEnabled(false);
   field_table_action_->setEnabled(false);
   field_table_action_->setToolTip(QStringLiteral("no spectrometer configured"));
+  peak_center_action_->setEnabled(false);
+  peak_center_action_->setToolTip(QStringLiteral("no spectrometer configured"));
   experiment_action_->setShortcut(key(Shortcut::ExperimentWindow));
   experiment_action_->setEnabled(false);
   installations_->setVisible(false);
@@ -257,7 +260,8 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
   menus.contribute(this, MenuHub::Menu::View,
                    {line_window, spectrometer_action_, experiment_action_, data_action_, laser_action_},
                    MenuHub::Scope::App);
-  menus.contribute(this, MenuHub::Menu::Spectrometer, {field_table_action_}, MenuHub::Scope::App);
+  menus.contribute(this, MenuHub::Menu::Spectrometer, {field_table_action_, peak_center_action_},
+                   MenuHub::Scope::App);
   // A script stepped against a copy of the line: from every window, greyed
   // until there is a session's lab to pick from.
   interlocks_ = line.switches().interlock_sets();
@@ -301,6 +305,18 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
     field_table_window_->raise();
     field_table_window_->activateWindow();
   });
+  connect(peak_center_action_, &QAction::triggered, this, [this] {
+    if (spectrometer_ == nullptr) return;
+    if (peak_center_window_ == nullptr) {
+      peak_center_window_ = new PeakCenterWindow(*spectrometer_, simulation_, spectrometer_settings(), this);
+      peak_center_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+      peak_center_window_->set_peak_center_file(peak_center_file_);
+      peak_center_window_->set_queue_running([this] { return experiment_ != nullptr && experiment_->running(); });
+    }
+    peak_center_window_->show();
+    peak_center_window_->raise();
+    peak_center_window_->activateWindow();
+  });
   connect(spectrometer_action_, &QAction::triggered, this, [this] {
     if (spectrometer_ == nullptr) {
       return;
@@ -310,8 +326,6 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
       spectrometer_window_->setAttribute(Qt::WA_DeleteOnClose, false);
       spectrometer_window_->set_wall_clock([this] { return bridge_.wall_now(); });
       spectrometer_window_->set_rise_rate_file(rise_rate_file_);
-      spectrometer_window_->set_peak_center_file(peak_center_file_);
-      spectrometer_window_->set_queue_running([this] { return experiment_ != nullptr && experiment_->running(); });
     }
     spectrometer_window_->show();
     spectrometer_window_->raise();
@@ -395,9 +409,14 @@ std::unique_ptr<QSettings> MainWindow::spectrometer_settings() const {
 
 void MainWindow::set_spectrometer(SpectrometerBridge* bridge, bool simulation,
                                   std::function<std::unique_ptr<QSettings>()> settings) {
+  if (peak_center_window_ != nullptr) {
+    peak_center_window_->cancel_peak_center_and_wait();  // a run cannot outlive its window; no question
+    peak_center_window_->close();                        // saves its splitter and geometry
+    delete peak_center_window_;  // it holds the old bridge
+    peak_center_window_ = nullptr;
+  }
   if (spectrometer_window_ != nullptr) {
-    spectrometer_window_->cancel_peak_center_and_wait();  // a run cannot outlive its window; no question
-    spectrometer_window_->close();                        // saves settings and queues the scan stop
+    spectrometer_window_->close();  // saves settings and queues the scan stop
     delete spectrometer_window_;    // it holds the old bridge
     spectrometer_window_ = nullptr;
   }
@@ -415,6 +434,9 @@ void MainWindow::set_spectrometer(SpectrometerBridge* bridge, bool simulation,
   field_table_action_->setEnabled(tables);
   field_table_action_->setToolTip(tables ? QStringLiteral("Edit the spectrometer's field tables")
                                          : QStringLiteral("no spectrometer configured"));
+  peak_center_action_->setEnabled(bridge != nullptr);
+  peak_center_action_->setToolTip(bridge != nullptr ? QStringLiteral("Center a peak and apply it to the field table")
+                                                    : QStringLiteral("no spectrometer configured"));
 }
 
 void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::optional<std::filesystem::path> queue,
@@ -451,13 +473,13 @@ void MainWindow::set_experiment(ExperimentBridge* bridge, bool simulation, std::
                                        });
     experiment_refreshes_[4] = connect(bridge, &ExperimentBridge::queueEnded, health_,
                                        [this](const experiment::lab::QueueEnded&) { health_->clear_hold(); });
-    // The spectrometer window's Peak center dock follows the queue: Start and
-    // Apply are off while it runs, and a result seen then is stale.
+    // The Peak Center window follows the queue: Start and Apply are off
+    // while it runs, and a result seen then is stale.
     experiment_refreshes_[5] = connect(bridge, &ExperimentBridge::queueStarted, this, [this] {
-      if (spectrometer_window_ != nullptr) spectrometer_window_->queue_state_changed();
+      if (peak_center_window_ != nullptr) peak_center_window_->queue_state_changed();
     });
     experiment_refreshes_[6] = connect(bridge, &ExperimentBridge::queueEnded, this, [this] {
-      if (spectrometer_window_ != nullptr) spectrometer_window_->queue_state_changed();
+      if (peak_center_window_ != nullptr) peak_center_window_->queue_state_changed();
     });
   }
   health_->clear_hold();  // a hold of the old bridge's queue
@@ -478,7 +500,7 @@ ExperimentWindow* MainWindow::ensure_experiment_window() {
     experiment_window_->setAttribute(Qt::WA_DeleteOnClose, false);
     experiment_window_->factory()->set_identifier_source(identifier_source_);
     experiment_window_->set_peak_center_running(
-        [this] { return spectrometer_window_ != nullptr && spectrometer_window_->peak_center_running(); });
+        [this] { return peak_center_window_ != nullptr && peak_center_window_->peak_center_running(); });
     give_references();
     connect(experiment_window_, &ExperimentWindow::rehearseRequested, this,
             [this](scripting::ScriptKind kind, const QString& name, const QString& text) { rehearse(kind, name, text); });
@@ -853,10 +875,11 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     event->ignore();  // unsaved field table edits, and the user chose Cancel
     return;
   }
-  if (spectrometer_window_ != nullptr) {
-    spectrometer_window_->cancel_peak_center_and_wait();  // quitting: no question
-    spectrometer_window_->close();
+  if (peak_center_window_ != nullptr) {
+    peak_center_window_->cancel_peak_center_and_wait();  // quitting: no question
+    peak_center_window_->close();
   }
+  if (spectrometer_window_ != nullptr) spectrometer_window_->close();
   for (auto& [device, window] : laser_windows_) window->close();
   for (auto& [name, window] : gauge_windows_) window->close();
   gauge_popup_->hide();
