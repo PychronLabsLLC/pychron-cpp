@@ -1,19 +1,66 @@
 #include "spectrometer_bridge.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <mutex>
+#include <sstream>
+#include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <QMetaObject>
 #include <QPointer>
 #include <QSemaphore>
 
+#include "pychron/core/config/local_file.hpp"
 #include "pychron/systems/spectrometer/field_table_store.hpp"
 
 namespace pychron::ui {
 
+bool valid_set_name(const QString& name) {
+  if (name.isEmpty()) {
+    return false;
+  }
+  return std::ranges::all_of(name, [](QChar c) {
+    return (c.unicode() < 128 && c.isLetterOrNumber()) || c == QLatin1Char('_') || c == QLatin1Char('-');
+  });
+}
+
 namespace {
+
+// The comment lines directly above `[name]` in `text`, each with its line
+// ending. replace_local_table drops them with the table; a set's comment
+// belongs to the set's place in the file, so the bridge writes them back.
+std::string comments_above_set(const std::string& text, const std::string& name) {
+  std::vector<std::string> lines;
+  std::istringstream in(text);
+  for (std::string line; std::getline(in, line);) {
+    lines.push_back(std::move(line));
+  }
+  const auto trim = [](const std::string& line) {
+    const auto first = line.find_first_not_of(" \t\r");
+    const auto last = line.find_last_not_of(" \t\r");
+    return first == std::string::npos ? std::string() : line.substr(first, last - first + 1);
+  };
+  const std::string header = "[" + name + "]";
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (trim(lines[i]) != header) {
+      continue;
+    }
+    std::size_t first = i;
+    while (first > 0 && trim(lines[first - 1]).starts_with('#')) {
+      --first;
+    }
+    std::string out;
+    for (std::size_t k = first; k < i; ++k) {
+      out += lines[k] + "\n";
+    }
+    return out;
+  }
+  return {};
+}
 
 using spectrometer::DetectorState;
 using spectrometer::FieldTable;
@@ -323,6 +370,64 @@ void SpectrometerBridge::restore_table_version(const QString& name, const QStrin
        [name, version](SpectrometerBridge& self, const Result<void>& result) {
          emit self.tableRestored(name, version, result);
        });
+}
+
+void SpectrometerBridge::apply_peak_center(const QString& detector, const QString& isotope, double table_value,
+                                           bool propagate) {
+  struct Applied {
+    Result<void> result;
+    std::vector<std::string> notes;
+  };
+  post(
+      [spec = &spec_, detector = detector.toStdString(), isotope = isotope.toStdString(), table_value,
+       propagate]() -> Applied {
+        auto notes = jobs::write_peak_center_to_table(*spec, detector, isotope, table_value, propagate, true);
+        if (!notes) {
+          return {fail(notes.error()), {}};
+        }
+        return {Result<void>{}, std::move(*notes)};
+      },
+      [](SpectrometerBridge& self, const Applied& applied) {
+        // The helper has logged a failed save already; only relayed here.
+        for (const auto& note : applied.notes) {
+          emit self.peakCenterNote(QString::fromStdString(note));
+        }
+        emit self.peakCenterApplied(applied.result);
+      });
+}
+
+void SpectrometerBridge::save_peak_center_set(std::filesystem::path file, const QString& name,
+                                              jobs::PeakCenterConfig config) {
+  post(
+      [file = std::move(file), name = name.toStdString(), valid = valid_set_name(name),
+       config = std::move(config)]() -> Result<void> {
+        if (!valid) {
+          return fail(ErrorKind::Config, "set name must be letters, digits, _ or -", "peak_center");
+        }
+        if (auto ok = jobs::validate_peak_center_config(config); !ok) {
+          return fail(ok.error());
+        }
+        std::string previous;
+        if (std::ifstream old(file, std::ios::binary); old) {
+          std::ostringstream text;
+          text << old.rdbuf();
+          previous = text.str();
+        }
+        const std::string body =
+            comments_above_set(previous, name) + "[" + name + "]\n" + jobs::format_peak_center_config(config);
+        if (auto written = config::replace_local_table(file, name, body); !written) {
+          return fail(written.error());
+        }
+        std::ifstream in(file, std::ios::binary);
+        std::ostringstream text;
+        text << in.rdbuf();
+        if (auto parsed = jobs::parse_peak_center_configs(text.str(), file.string()); !parsed) {
+          return fail(ErrorKind::Config, "saved, but peak_center.toml does not load: " + parsed.error().what,
+                      "peak_center");
+        }
+        return Result<void>{};
+      },
+      [name](SpectrometerBridge& self, const Result<void>& result) { emit self.peakCenterSetSaved(name, result); });
 }
 
 void SpectrometerBridge::peak_center(jobs::PeakCenterConfig config) {

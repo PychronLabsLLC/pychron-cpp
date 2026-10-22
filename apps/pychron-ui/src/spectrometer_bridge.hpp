@@ -62,6 +62,9 @@
 
 namespace pychron::ui {
 
+// Letters, digits, '_' and '-' (a peak_center.toml table name written bare).
+bool valid_set_name(const QString& name);
+
 class SpectrometerBridge : public QObject {
   Q_OBJECT
 
@@ -149,6 +152,16 @@ class SpectrometerBridge : public QObject {
   void cancel_peak_center();
   // From the start until its peakCenterFinished has been delivered.
   bool peak_center_running() const noexcept { return peak_center_running_; }
+  // Non-blocking, on the executor: jobs::write_peak_center_to_table into the
+  // active table, saved. Reported once through peakCenterApplied (a failed
+  // save is not a failure: it comes first as a peakCenterNote).
+  void apply_peak_center(const QString& detector, const QString& isotope, double table_value, bool propagate);
+  // Non-blocking, on the executor: writes `config` as table `[name]` of
+  // `file` (peak_center.toml), keeping the file's comments and other sets,
+  // then reads the whole file again. A name that valid_set_name refuses is
+  // reported as Config before anything is written. Reported once through
+  // peakCenterSetSaved.
+  void save_peak_center_set(std::filesystem::path file, const QString& name, jobs::PeakCenterConfig config);
 
  signals:
   void readings(const std::vector<pychron::spectrometer::IntensityReading>& batch);
@@ -168,6 +181,10 @@ class SpectrometerBridge : public QObject {
   void peakCenterPoint(const pychron::jobs::PeakCenterPoint& point);
   // The run's result, after its last point; also a refused start.
   void peakCenterFinished(const pychron::Result<pychron::jobs::PeakCenterResult>& result);
+  void peakCenterApplied(const pychron::Result<void>& result);
+  // What went wrong without failing the apply, e.g. "field table not saved: <why>".
+  void peakCenterNote(const QString& note);
+  void peakCenterSetSaved(const QString& name, const pychron::Result<void>& result);
 
  private:
   struct Gate;

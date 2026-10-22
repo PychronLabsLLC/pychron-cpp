@@ -14,6 +14,8 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -178,11 +180,23 @@ class TestSpectrometerBridge : public QObject {
   }
 
   // Rebuilds the fixture on a VirtualClock at full speed.
-  void use_virtual_clock() {
+  // With `own_tables`, on a copy of the example tables in a temporary
+  // directory, so that a save never writes into the source tree.
+  void use_virtual_clock(bool own_tables = false) {
     bridge_.reset();
     sim_.reset();
     clock_ = std::make_unique<VirtualClock>();
-    sim_ = ui::test::make_sim_spectrometer({}, clock_.get());
+    if (own_tables) {
+      tables_dir_ = std::make_unique<QTemporaryDir>();
+      QVERIFY(tables_dir_->isValid());
+      const std::filesystem::path root = tables_dir_->path().toStdString();
+      std::filesystem::copy(std::filesystem::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "tables", root / "tables",
+                            std::filesystem::copy_options::recursive);
+      sim_ = ui::test::make_sim_spectrometer([&root](spectrometer::cfg::SpectrometerData& data) { data.root = root; },
+                                             clock_.get());
+    } else {
+      sim_ = ui::test::make_sim_spectrometer({}, clock_.get());
+    }
     make_bridge();
   }
 
@@ -825,6 +839,112 @@ class TestSpectrometerBridge : public QObject {
     QCoreApplication::processEvents();
     QVERIFY(!bridge_->state().scan.running);
     QVERIFY(!sim_->scan->status().running);
+  }
+
+  static std::string read_text(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+  }
+
+  static void write_text(const std::filesystem::path& file, const std::string& text) {
+    std::ofstream out(file, std::ios::binary);
+    out << text;
+  }
+
+  void applyWritesTheTable() {
+    use_virtual_clock(true);
+    bridge_->peak_center(ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(pc_results_.size(), std::size_t{1}, kWaitMs);
+    QVERIFY(pc_results_[0].has_value());
+    const auto& result = *pc_results_[0];
+    QVERIFY2(result.ok, result.message.c_str());
+    QVERIFY(result.table_value.has_value());
+
+    QSignalSpy applied(bridge_.get(), &SpectrometerBridge::peakCenterApplied);
+    const auto changes_before = changed_.size();
+    const auto det = QString::fromStdString(result.detector);
+    bridge_->apply_peak_center(det, QStringLiteral("Ar40"), *result.table_value, true);
+    QTRY_COMPARE_WITH_TIMEOUT(applied.count(), 1, kWaitMs);
+    const auto outcome = applied.at(0).at(0).value<Result<void>>();
+    QVERIFY(outcome.has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(changed_.size() > changes_before, kWaitMs);
+    const auto table = bridge_->table_copy(bridge_->active_table());
+    const double mass = *bridge_->mass_of("Ar40");
+    const auto value = table.value_for(mass, result.detector);
+    QVERIFY(value.has_value());
+    QVERIFY(std::abs(*value - *result.table_value) < 1e-6);
+  }
+
+  void SaveKeepsCommentsAndOtherSets() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path file = std::filesystem::path(dir.path().toStdString()) / "peak_center.toml";
+    const std::string other = "# other\n[other]\nisotope = \"Ar36\"\nwindow = 0.01\n";
+    const std::string original = "# keep me\n[default]\nisotope = \"Ar40\"\n\n" + other;
+    write_text(file, original);
+
+    auto config = ar40_config();
+    config.window = 0.02;
+    QSignalSpy saved(bridge_.get(), &SpectrometerBridge::peakCenterSetSaved);
+    bridge_->save_peak_center_set(file, QStringLiteral("default"), config);
+    QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, kWaitMs);
+    QCOMPARE(saved.at(0).at(0).toString(), QStringLiteral("default"));
+    const auto outcome = saved.at(0).at(1).value<Result<void>>();
+    if (!outcome) QFAIL(outcome.error().what.c_str());
+
+    const std::string text = read_text(file);
+    QVERIFY(text.find("# keep me\n") != std::string::npos);
+    QVERIFY(text.find(other) != std::string::npos);  // comment and block, byte for byte
+    auto parsed = jobs::parse_peak_center_configs(text);
+    QVERIFY(parsed.has_value());
+    QCOMPARE(parsed->at("default").window, 0.02);
+    QCOMPARE(parsed->at("other").window, 0.01);
+    QCOMPARE(parsed->at("other").isotope, std::string("Ar36"));
+  }
+
+  void saveNewSetAppends() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path file = std::filesystem::path(dir.path().toStdString()) / "peak_center.toml";
+    const std::string original = "[default]\nisotope = \"Ar40\"\n";
+    write_text(file, original);
+
+    QSignalSpy saved(bridge_.get(), &SpectrometerBridge::peakCenterSetSaved);
+    bridge_->save_peak_center_set(file, QStringLiteral("fine-2"), ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, kWaitMs);
+    const auto outcome = saved.at(0).at(1).value<Result<void>>();
+    if (!outcome) QFAIL(outcome.error().what.c_str());
+    const std::string text = read_text(file);
+    QVERIFY(text.rfind(original, 0) == 0);
+    auto parsed = jobs::parse_peak_center_configs(text);
+    QVERIFY(parsed.has_value());
+    QVERIFY(parsed->contains("default"));
+    QVERIFY(parsed->contains("fine-2"));
+    QCOMPARE(parsed->at("fine-2").window, 0.06);
+  }
+
+  void saveRefusesBadName() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path file = std::filesystem::path(dir.path().toStdString()) / "peak_center.toml";
+    const std::string original = "[default]\nisotope = \"Ar40\"\n";
+    write_text(file, original);
+    const auto mtime = std::filesystem::last_write_time(file);
+
+    QVERIFY(ui::valid_set_name(QStringLiteral("a_b-C9")));
+    QVERIFY(!ui::valid_set_name(QStringLiteral("a b")));
+    QVERIFY(!ui::valid_set_name(QString()));
+    QSignalSpy saved(bridge_.get(), &SpectrometerBridge::peakCenterSetSaved);
+    bridge_->save_peak_center_set(file, QStringLiteral("a b"), ar40_config());
+    QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, kWaitMs);
+    const auto outcome = saved.at(0).at(1).value<Result<void>>();
+    QVERIFY(!outcome.has_value());
+    QCOMPARE(outcome.error().kind, ErrorKind::Config);
+    QCOMPARE(outcome.error().what, std::string("set name must be letters, digits, _ or -"));
+    QCOMPARE(read_text(file), original);
+    QVERIFY(std::filesystem::last_write_time(file) == mtime);
   }
 
   void planPeakCenterNotRelayed() {
