@@ -56,16 +56,23 @@ the two.
 |---|---|
 | `libs/reduction`: `ufloat`, `fits`, `stats`; noble spec's `noble.hpp`, `noble_types.hpp` | stay (neutral numerics and gas stages) |
 | `libs/reduction/arar_types.hpp`: `MeasuredSignal`, `IsotopeSignal`, `make_signal(label)` (noble §3.3), `baseline_corrected`, `non_detector_corrected`, `corrected_intensity`, deadtime E5 | stay, in new `libs/reduction/.../signal.hpp` |
-| `libs/reduction/arar_types.hpp` rest (`ArgonIsotope`, `index`, `make_signal(ArgonIsotope)`, `ReductionInput`, `ArArResult`, `Flux`, `ProductionRatios`, `Dose`, `ReductionConstants`, `ConstantsPreset`), `arar.hpp`, `arar_reduction.hpp`, `flux.hpp` | → `libs/arar` (new; links `reduction`, `processing`) |
+| `libs/reduction/arar_types.hpp` rest (`ArgonIsotope`, `index`, `make_signal(ArgonIsotope)`, `ReductionInput`, `ReductionConstants`, `ConstantsPreset`, `ProductionRatios`, `Dose`, `Flux`, `make_j`), `arar_reduction.hpp` (`ArArResult`, `reduce`, decay), `flux.hpp` | → `libs/arar` (new; links `reduction`, `processing`) |
+| `libs/reduction/arar.hpp`, `arar.cpp` (`compute_arar`, live conditionals), `src/arar_kernels.hpp` | stay: `libs/experiment` links them and sits below `processing` in dependency order (top `CMakeLists.txt:31`). Kernels become `include/pychron/reduction/detail/arar_kernels.hpp` so `libs/arar` reads them too. Whatever else `arar.cpp` needs stays with it. |
 | `libs/processing`: `arar_figures`, `arar_groups`, `group_ages`, `report` (Schaen), `derived` (`derived_age`), `flux_fit`, `flux_view`; units ideogram, spectrum, inverse_isochron, spectrum_isochron | → `libs/arar` |
 | `libs/processing` rest: `UnitRegistry`, `Pipeline`, `Runner`, select, reduce, filter, group, edits, group_stats, `time_series`, `isotope_evolution_fit`, `reference_fit`, `scene*`, `options`, `source`, `recall`, `quantity`, `model`, `reduced` | stay; names no isotope, no age, no J |
 | `libs/processing` link to `pychron::reduction` PUBLIC | keeps it: `reduction` is neutral after the split |
 | `libs/processing/adapters/store`, `adapters/records` | stay; load neutral `Analysis`; call the extension loader (§3.3) |
 | new `libs/arar/adapters/store`, `libs/arar/adapters/records` | Ar-Ar loaders: flux, production, chronology from store rows / record files |
-| `libs/publish`, `libs/earthbank`, `libs/earthbank_qt` | unchanged inside; wired by Ar-Ar's `DomainUi` only (§5.6) |
+| `libs/publish`, `libs/earthbank`, `libs/earthbank_qt` | unchanged inside; link `pychron::arar` (`earthbank/src/mapping.cpp:1281` reduces); wired by Ar-Ar's `DomainUi` only (§5.6) |
 
+`libs/arar` builds two targets so the move can land in steps without a
+link cycle: `pychron::arar_reduction` (types, `reduce()`, decay, flux
+math; links `reduction` only) and `pychron::arar` (units, figures, report,
+group ages, `Domain`, loaders; links `processing` and `arar_reduction`).
 Apps (`pychron-ui`, `elctl`) link `libs/arar`; `libs/processing` never does.
-CMake enforces: `processing` lists no `arar` target.
+CMake enforces: `processing` lists no `arar` target. `arar` goes in
+`PYCHRON_LIBS` (top `CMakeLists.txt:31`) after `processing`, before
+`earthbank`; `tests/arar` follows from the same list.
 
 ### 3.2 Reduced model
 
@@ -89,6 +96,11 @@ struct DomainReduced {  // libs/processing reduced.hpp
   virtual std::vector<std::string> names() const = 0;
   virtual std::string_view error() const = 0;  // why no values (reduction_error today)
 };
+// The domain's reduction version string, part of every input fingerprint
+// (`StoreSource` passes it where it passes `kReductionVersion` today) and of
+// `reduction_tag`: `arar` keeps "arar-1", so cached rows survive the move;
+// `noble_gas` is the noble spec's `kNobleReductionVersion`.
+// Domain::reduction_version()
 struct ReducedAnalysis {
   AnalysisPtr analysis;
   std::vector<reduction::IsotopeSignal> signals;  // same order as analysis->isotopes
@@ -104,7 +116,11 @@ builds `ReductionInput` from `signals` plus the Ar-Ar extension of the
 analysis (§3.3), runs `reduction::reduce()`, attaches `ArArReduced :
 DomainReduced` holding `ArArResult`, `constants`, `j`, `lambda_k_total`,
 the two Ar-Ar stages per isotope. Options: what `ReductionSettings` lost.
-Values bit-identical to today: same signals, same `reduce()`.
+Values bit-identical to today: same signals, same `reduce()`. The cache
+write that `ReduceUnit` makes today (`units_builtin.cpp:164-169`, through
+`RunContext::source->derived()`) moves into `arar_reduce`: the unit that
+makes the derived values writes them; core `reduce` writes nothing.
+`reduction_tag` is `reduction_version() + "/" + options` as today.
 
 ### 3.3 Analysis model
 
@@ -146,19 +162,31 @@ registry.
 
 ### 3.5 Selection
 
-Main config:
+No single main config exists: a data-reduction install has only its
+`site.toml` entry (`SiteInstall`, `libs/setup` `site.hpp:33`). So the key
+is the install's:
 
 ```toml
-[domain]
-name = "arar"   # or "noble_gas"
+[[installs]]
+name = "lab"
+kind = "data_reduction"
+domain = "arar"   # or "noble_gas"
 ```
 
-Absent → `"arar"`: every install today is Ar-Ar; nothing changes for them.
-Profiles `argus`, `helix`, `ngx` write `arar`; `data-reduction` asks
-(`choice`: "Ar/Ar", "Noble gas") and writes the answer. `doctor` checks the
-name is registered. `pychron-ui` and `elctl` read it once at startup;
-unknown name → startup error listing `DomainRegistry::ids()`. One binary
-holds every domain: compile-time exclusion out of scope.
+`SiteInstall::domain` (`std::string`, default `"arar"`); `load_site` reads
+it, `save_site` writes it. Absent → `"arar"`: every install today is Ar-Ar;
+nothing changes for them. A profile's `profile.toml` top table gains
+`domain = "arar"` (default when absent), copied to the install entry;
+`data-reduction` asks (`choice` question id `domain`, choices
+`["arar", "noble_gas"]`, labels "Ar/Ar geochronology", "Noble gas
+(abundances, no age)", default `arar`) and the answer wins over the top
+key. `doctor` checks the name is registered. `pychron-ui` reads it from the
+chosen install (`main.cpp:410-426`); a run with no install (`--files`,
+`--examples`) is `arar`. `elctl` resolves it with the install
+(`resolve_install`); commands that take `--db` without an install take
+`--domain <id>` (default `arar`). Unknown name → startup error listing
+`DomainRegistry::ids()`. One binary holds every domain: compile-time
+exclusion out of scope.
 
 ## 4. The `Domain` interface
 
@@ -179,7 +207,11 @@ struct FigureEntry {
   bool separator_before = false;
 };
 
-struct DerivedValue { std::string name; double value = 0, error = 0; };  // source.hpp, replaces DerivedAge
+// source.hpp: replaces DerivedAge {uuid, input_fingerprint, age, age_w_j, kca}.
+struct DerivedValue { std::string name; std::optional<reduction::UFloat> value; std::string units; };
+struct DerivedValues { std::string uuid, input_fingerprint; std::vector<DerivedValue> values; };
+// IDerivedSink::put(std::vector<DerivedValues>); StoreSource writes one derived_value row per value,
+// a valueless row when `value` is absent (today's "no age" row).
 
 // What the derive pass writes to derived_value and the browser may show.
 struct DerivedQuantity {
@@ -210,8 +242,12 @@ class Domain {
   virtual std::vector<std::string> quantities() const = 0;  // names and stages Quantity may use beyond core's
   virtual std::string default_quantity() const = 0;
   // Browser column and filter; empty → no column, no filter, no cache join.
+  // First entry is the marker row: written for every derived analysis, valueless when there is
+  // no value, and the name fingerprint lookups use (`derived_fingerprints`, today 'age').
   virtual std::vector<DerivedQuantity> derived() const = 0;
-  virtual std::vector<DerivedValue> derive(const ReducedAnalysis&) const = 0;
+  // Nullopt when not cacheable (no input fingerprint); else one DerivedValues per derived().
+  virtual std::optional<DerivedValues> derive(const ReducedAnalysis&) const = 0;
+  virtual std::string_view reduction_version() const = 0;  // §3.2
   // Recall window: sections after the neutral ones, and the error budget (empty: no tab).
   virtual std::vector<RecallSection> recall_sections(const ReducedAnalysis&) const = 0;
   virtual std::vector<RecallErrorComponent> error_budget(const ReducedAnalysis&) const = 0;
@@ -248,8 +284,8 @@ inverse_isochron, spectrum_isochron, flux units; `reduction_chain` =
 `{"reduce", "arar_reduce"}`; figures = today's toolbar, same order, same
 labels, same tips, group keys from `figure_window.cpp:51-55`; quantities =
 `age`, `kca`, `kcl`, `rad40`, ..., stages `decay_corrected`,
-`interference_corrected`; derived = `age` ("Age (Ma)", filterable), `kca`
-(not filterable; written today); recall sections = today's Summary rows
+`interference_corrected`; derived = `age` ("Age (Ma)", filterable, marker), `age_w_j`, `kca` (not
+filterable, not shown; written today, kept); recall sections = today's Summary rows
 after the five neutral ones (computed values, corrected ratios); error
 budget = `ArArResult::age_error_components`; exporters = Schaen CSV/JSON.
 
@@ -288,19 +324,29 @@ Fixed columns stay: Run ID, Type, Sample, Identifier, Spec., Date, Extract,
 Tag, Project, Irradiation, Uuid. Columns after Extract from
 `domain.derived()`: `arar` → "Age (Ma)"; `noble_gas` → none. Filter panel:
 one from/to pair per `filterable` derived quantity; none → no form.
-`AnalysisQuery::age_min/age_max` → `derived_bounds: std::vector<DerivedBound{name, min, max}>`;
-`BrowseRow::age/age_err` → `derived: std::map<std::string, Value>` for the
-names the domain lists. Store count/facet/page statements take the name as
-parameter; age cache spec rules keep their shape: join `derived_value` only
+`BrowseQuery::age_min/age_max` (`source.hpp:35`) →
+`derived_bounds: std::vector<DerivedBound{name, min, max}>`;
+`AnalysisSummary::age/age_err` (`source.hpp:51`) →
+`derived: std::map<std::string, Value>` for the names the domain lists;
+`MemorySource::set_age` → `set_derived(uuid, name, value, err)`.
+Persistence mirrors: `BrowseFilter::derived_bounds`, `BrowseRow::derived`
+(`store.hpp:519-551`); `kBrowseSelect`, `kBrowseAgeJoin`,
+`kBrowseAgeRangeJoin` (`sql/browse.hpp:20-58`) and `derived_fingerprints`
+(`sql/statements.hpp:207`) take the name as a bound parameter; age cache spec rules keep their shape: join `derived_value` only
 when a bound is set; page joins by primary key with the name bound
 (`dv.name || '' = ?`); never a hard-coded `'age'`.
 
 ### 5.2 Derive pass
 
-`import_run.cpp` derive pass, `elctl db derive`, `StoreSource` cache write
-call `domain.derive(reduced)` and write what comes back. `noble_gas`
-returns nothing, writes nothing; the three cache rules (fingerprint from
-load, one fingerprint per analysis, join rules) hold unchanged.
+`derive_ages` (`adapters/store` `derive.cpp:33`, called by
+`import_run.cpp:123` and `db.cpp:70`) becomes `derive_values(source,
+domain, options, keep_going)`: runs `reduction_chain()` at default options
+and writes `domain.derive()`'s result through `write_derived_now`. With
+`domain.derived()` empty the pass returns at once with zero counts, so
+`noble_gas` writes nothing; the three cache rules (fingerprint from load,
+one fingerprint per analysis, join rules) hold unchanged. The in-run write
+(§3.2) and `RecallWindow::display` (`recall_window.cpp:305`) go through the
+same `derive()`.
 `derived_age()` moves to `libs/arar` as `arar`'s `derive()`; `DerivedAge`
 (`source.hpp:90`) becomes `std::vector<DerivedValue>` and the source's cache
 write takes that. `derived_age()`'s "nullopt when settings are not the
@@ -325,8 +371,9 @@ unknown name → generic figure glyph.
 
 ### 5.5 elctl
 
-`elctl export`, `elctl flux`, `elctl db derive` take the domain; `flux`
-under a domain without it fails with
+`elctl export`, `elctl flux`, `elctl db derive`, `elctl import` take the
+domain (§3.5: from the install, else `--domain`); `flux` under a domain
+without it fails with
 `elctl flux: needs domain arar (this install: noble_gas)`. `elctl import`
 derive pass per §5.2.
 
@@ -371,15 +418,18 @@ domain. Spec and code change together.
 1. `feat(processing): domain seam`. `Domain`, `DomainRegistry`,
    `make_noble_gas_domain()`, an `ArArDomain` inside `libs/processing` for
    now answering with what is hard-coded today (toolbar list, `age`,
-   Schaen, recall summary). UI, `elctl`, `[domain]` key read it. No file
-   moves. Toolbar, menus, palette, dispatch data-driven. `reduction_chain`
-   = `{"reduce"}` still.
+   Schaen, recall summary). UI, `elctl`, the install's `domain` key read
+   it. No file moves. Toolbar, menus, palette, dispatch data-driven; recall
+   window fills its Summary and Error budget from `recall_sections()` and
+   `error_budget()`. `reduction_chain` = `{"reduce"}` still.
 2. `refactor(arar): own library`. §3.1 moves; §3.2 `ReducedAnalysis` split
    and `arar_reduce`; §3.3 `Analysis::extension` and loaders; §3.4
-   quantities; preset key migration. `tests/arar` holds the moved tests
-   (golden vectors unchanged, compared as today). Largest step, mechanical.
-3. `feat(ui): noble gas domain`. §5.1 browser, §5.2 derive, §5.3 recall,
-   stages CSV exporter, `data-reduction` profile question, `doctor` check,
+   quantities; preset key migration; `RecallModel` loses its Ar-Ar rows
+   (the domain computes them) and the recall window runs the chain.
+   `tests/arar` holds the moved tests (golden vectors unchanged, compared
+   as today). Largest step, in six commits (plan).
+3. `feat(ui): noble gas domain`. §5.1 browser, §5.2 derive, stages CSV
+   exporter, `data-reduction` profile question, `doctor` check,
    `elctl flux` refusal.
 4. `refactor(ui): domain ui`. `DomainUi` registry; §5.6.
 
