@@ -1,5 +1,7 @@
 #include "pychron/core/log_hub.hpp"
 
+#include "pychron/core/log_dir.hpp"
+
 #include <spdlog/async_logger.h>
 #include <spdlog/details/thread_pool.h>
 #include <spdlog/pattern_formatter.h>
@@ -248,6 +250,7 @@ struct LogHub::Impl {
   LogLevel default_level = LogLevel::Info;
   std::vector<std::pair<std::string, LogLevel>> rules;
   std::atomic<std::uint64_t> epoch{1};
+  std::atomic<bool> session_begun{false};
 
   // Liveness: loggers hold this Impl and may outlive the LogHub. The
   // destructor clears `alive` and waits for in-flight writes to drain before
@@ -867,6 +870,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
 LogHub::LogHub(std::shared_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 LogHub::~LogHub() {
+  if (impl_->session_begun.load()) impl_->write(LogLevel::Info, "pychron", "session end");
   impl_->bus_failures.reset();
   // Hub loggers may still hold impl_: stop accepting writes and let the ones
   // in progress finish before the back end goes away.
@@ -890,6 +894,69 @@ LogHub::~LogHub() {
   impl_->file_sink.reset();
   impl_->barrier_sink.reset();
   impl_->file_lock.release();
+}
+
+namespace {
+
+const char* session_level_name(LogLevel level) noexcept {
+  switch (level) {
+    case LogLevel::Trace: return "trace";
+    case LogLevel::Debug: return "debug";
+    case LogLevel::Info: return "info";
+    case LogLevel::Warn: return "warn";
+    case LogLevel::Error: return "error";
+  }
+  return "info";
+}
+
+const char* session_os_name(HostOs os) noexcept {
+  switch (os) {
+    case HostOs::Mac: return "macos";
+    case HostOs::Linux: return "linux";
+    case HostOs::Windows: return "windows";
+  }
+  return "linux";
+}
+
+void append_field(std::string& out, std::string_view key, std::string_view value) {
+  out += ' ';
+  out += key;
+  out += '=';
+  if (value.find(' ') == std::string_view::npos) {
+    out += value;
+  } else {
+    out += '"';
+    out += value;
+    out += '"';
+  }
+}
+
+}  // namespace
+
+void LogHub::begin_session(const SessionInfo& info) {
+  std::string line = "session start";
+  append_field(line, "app", info.app);
+  append_field(line, "version", info.version);
+  append_field(line, "os", session_os_name(host_os()));
+  append_field(line, "install", info.install_root ? info.install_root->generic_string() : "none");
+  append_field(line, "profiles", info.profiles.empty() ? "none" : info.profiles);
+  append_field(line, "sim", info.simulated ? "yes" : "no");
+  append_field(line, "clock", info.clock);
+  std::string levels;
+  {
+    std::shared_lock lock(impl_->rules_mutex);
+    append_field(line, "default_level", session_level_name(impl_->default_level));
+    for (const auto& [pattern, level] : impl_->rules) {
+      if (!levels.empty()) levels += ',';
+      levels += pattern;
+      levels += ':';
+      levels += session_level_name(level);
+    }
+  }
+  append_field(line, "dock_level", session_level_name(impl_->dock_level));
+  append_field(line, "levels", levels.empty() ? "none" : levels);
+  impl_->session_begun.store(true);
+  impl_->write(LogLevel::Info, "pychron", line);
 }
 
 void LogHub::flush() {

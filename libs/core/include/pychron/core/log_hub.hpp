@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -20,6 +21,16 @@ namespace pychron {
 
 class Logger;
 class SignalBus;
+
+// What a process says about itself in its `session start` record.
+struct SessionInfo {
+  std::string app;                                    // "pychron-ui", "elctl"
+  std::string version;                                // pychron::setup::version()
+  std::optional<std::filesystem::path> install_root;
+  std::string profiles;                               // "" when none
+  bool simulated = false;
+  std::string clock;                                  // "steady", "virtual x10", "virtual max"
+};
 
 // File line format: `2026-10-01T14:03:22.481Z [warn] transport.serial.ig1: msg`
 // (UTC wall time, milliseconds). Records are written asynchronously by one
@@ -69,6 +80,13 @@ class LogHub {
   // `levels` no longer applies. Explicitly set loggers keep their level, as
   // with set_level. Thread-safe.
   void set_levels(LogLevel default_level, const std::vector<std::pair<std::string, LogLevel>>& levels);
+
+  // Logs one info record on logger `pychron`: `session start` and `key=value`
+  // fields (app, version, os, install, profiles, sim, clock, default_level,
+  // dock_level, levels); values with spaces are double-quoted. Marks the hub
+  // so its destructor first logs `session end`. Calling it again logs another
+  // start line.
+  void begin_session(const SessionInfo& info);
 
   // Blocks until every record written so far is on disk.
   void flush();

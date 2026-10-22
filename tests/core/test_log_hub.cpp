@@ -1143,3 +1143,76 @@ TEST(LogHubCrash, InstallIsIdempotent) {
   // No active exception: the terminate route still logs a line.
   EXPECT_EQ(count_lines_containing(tmp.path() / "pychron.log", "terminate"), 1u);
 }
+
+TEST(LogHub, SessionMarkerFields) {
+  TempDir tmp;
+  SteadyClock clock;
+  {
+    auto hub = make_hub(config_for(tmp.path()), clock);
+    ASSERT_TRUE(hub);
+    SessionInfo info;
+    info.app = "elctl";
+    info.version = "0.4.0";
+    info.clock = "steady";
+    hub->begin_session(info);
+  }
+  const auto text = read_bare_file(tmp.path() / "pychron.log");
+  EXPECT_NE(text.find("[info] pychron: session start "), std::string::npos) << text;
+  for (const char* field : {"app=elctl", "version=0.4.0", "install=none", "profiles=none", "sim=no",
+                            "clock=steady", "default_level=debug", "dock_level=info", "levels=none"}) {
+    EXPECT_NE(text.find(field), std::string::npos) << field << " in " << text;
+  }
+  EXPECT_NE(text.find("os="), std::string::npos) << text;
+}
+
+TEST(LogHub, SessionMarkerQuotesSpacesAndListsRules) {
+  TempDir tmp;
+  SteadyClock clock;
+  {
+    auto hub = make_hub(config_for(tmp.path()), clock);
+    ASSERT_TRUE(hub);
+    hub->set_level("transport", LogLevel::Warn);
+    SessionInfo info;
+    info.app = "pychron-ui";
+    info.version = "0.4.0";
+    info.install_root = fs::path("/tmp/my install");
+    info.profiles = "a,b";
+    info.simulated = true;
+    info.clock = "virtual x10";
+    hub->begin_session(info);
+  }
+  const auto text = read_bare_file(tmp.path() / "pychron.log");
+  EXPECT_NE(text.find("install=\"/tmp/my install\""), std::string::npos) << text;
+  EXPECT_NE(text.find("profiles=a,b"), std::string::npos) << text;
+  EXPECT_NE(text.find("sim=yes"), std::string::npos) << text;
+  EXPECT_NE(text.find("clock=\"virtual x10\""), std::string::npos) << text;
+  EXPECT_NE(text.find("levels=transport:warn"), std::string::npos) << text;
+}
+
+TEST(LogHub, SessionEndOnDestruction) {
+  TempDir tmp;
+  SteadyClock clock;
+  {
+    auto hub = make_hub(config_for(tmp.path()), clock);
+    ASSERT_TRUE(hub);
+    SessionInfo info;
+    info.app = "elctl";
+    hub->begin_session(info);
+    hub->write(LogLevel::Info, "x", "work");
+  }
+  const auto lines = read_bare_lines(tmp.path() / "pychron.log");
+  ASSERT_GE(lines.size(), 3u);
+  const std::string tail = "pychron: session end";
+  EXPECT_EQ(lines.back().substr(lines.back().size() - tail.size()), tail) << lines.back();
+}
+
+TEST(LogHub, NoSessionNoEndLine) {
+  TempDir tmp;
+  SteadyClock clock;
+  {
+    auto hub = make_hub(config_for(tmp.path()), clock);
+    ASSERT_TRUE(hub);
+    hub->write(LogLevel::Info, "x", "work");
+  }
+  EXPECT_EQ(read_file(tmp.path() / "pychron.log").find("session"), std::string::npos);
+}
