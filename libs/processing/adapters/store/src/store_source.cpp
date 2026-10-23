@@ -631,6 +631,10 @@ struct StoreSource::Impl {
 
 namespace {
 
+// Why a source opened without a reduction version writes no derived rows:
+// they would be under version "", a cache no other source reads.
+constexpr std::string_view kNoReductionVersion = "StoreSourceOptions::reduction_version not set";
+
 // A SHA-256 as 64 hex digits (to_hex's text) back to its bytes.
 std::optional<Sha256Digest> digest_from_hex(std::string_view hex) {
   Sha256Digest out{};
@@ -672,16 +676,22 @@ void StoreSource::Impl::write_derived(ps::IStore& s, const std::vector<DerivedVa
   DerivedFlush done;
   // One put an analysis: the last of a batch that names one twice.
   std::map<ps::Uuid, ps::DerivedPut> wanted;
-  for (const auto& d : ages) {
-    const auto id = parse_uuid(d.uuid);
-    const auto fingerprint = digest_from_hex(d.input_fingerprint);
-    if (!id || !fingerprint) {
-      ++done.failed;
-      done.last_error = !id ? "derived age of '" + d.uuid + "': not an analysis id"
-                            : "derived age of " + d.uuid + ": '" + d.input_fingerprint + "' is no fingerprint";
-      continue;
+  if (reduction_version.empty()) {
+    // Refused whole: nothing is wanted, every age is counted failed.
+    done.failed = ages.size();
+    done.last_error = kNoReductionVersion;
+  } else {
+    for (const auto& d : ages) {
+      const auto id = parse_uuid(d.uuid);
+      const auto fingerprint = digest_from_hex(d.input_fingerprint);
+      if (!id || !fingerprint) {
+        ++done.failed;
+        done.last_error = !id ? "derived age of '" + d.uuid + "': not an analysis id"
+                              : "derived age of " + d.uuid + ": '" + d.input_fingerprint + "' is no fingerprint";
+        continue;
+      }
+      wanted.insert_or_assign(*id, ps::DerivedPut{*id, *fingerprint, derived_rows(d)});
     }
-    wanted.insert_or_assign(*id, ps::DerivedPut{*id, *fingerprint, derived_rows(d)});
   }
   if (!wanted.empty()) {
     std::vector<ps::Uuid> ids;
@@ -773,6 +783,7 @@ Result<std::map<std::string, StoreSource::Fingerprints>> StoreSource::fingerprin
 }
 
 Result<std::size_t> StoreSource::write_derived_now(const std::vector<DerivedValues>& ages) {
+  if (impl_->reduction_version.empty()) return fail(ErrorKind::Config, std::string(kNoReductionVersion));
   std::map<ps::Uuid, ps::DerivedPut> wanted;
   for (const auto& d : ages) {
     const auto id = parse_uuid(d.uuid);

@@ -54,7 +54,10 @@ struct StoreSourceOptions {
   std::string user, hostname;
   // The active domain's reduction version (Domain::reduction_version()):
   // part of every input fingerprint, and the version the derived values are
-  // written under. Empty is a version like any other.
+  // written under. Must be set for a source that caches: with it empty the
+  // sink and write_derived_now refuse every write (ErrorKind::Config,
+  // "StoreSourceOptions::reduction_version not set"), since rows under ""
+  // would be a cache no other source reads. Browsing and loading work without.
   std::string reduction_version;
   // Sets Analysis::extension on each load; empty: no extension.
   using ExtensionLoader = StoreExtensionLoader;
@@ -65,7 +68,9 @@ struct StoreSourceOptions {
 struct DerivedFlush {
   std::size_t written = 0;  // analyses whose rows were written
   std::size_t current = 0;  // analyses already cached under that fingerprint: not written
-  std::size_t failed = 0;   // analyses dropped: a malformed id or fingerprint, or a write the store refused
+  // Analyses dropped: a malformed id or fingerprint, a write the store
+  // refused, or a source without a reduction version.
+  std::size_t failed = 0;
   std::string last_error;   // of the last that failed
 };
 
@@ -116,8 +121,9 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource, public
   };
   Result<std::map<std::string, Fingerprints>> fingerprints(const std::vector<std::string>& analyses);
   // Writes the ages now, in one transaction, whatever is cached (the
-  // backfill's --all); how many were written. A malformed id or fingerprint
-  // is a Config error and nothing is written.
+  // backfill's --all); how many were written. A malformed id or
+  // fingerprint, or a source without a reduction version, is a Config error
+  // and nothing is written.
   Result<std::size_t> write_derived_now(const std::vector<DerivedValues>& ages);
   // Forgets loaded analyses without moving the generation: a walk over a
   // whole store holds no more than a page of them.

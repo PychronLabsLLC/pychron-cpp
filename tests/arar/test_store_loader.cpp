@@ -298,6 +298,34 @@ TEST_F(StoreSourceTest, WhatTheSinkCannotWriteIsDroppedAndCounted) {
   EXPECT_EQ(src.flush_derived().written, 1u);
 }
 
+// A source opened without a reduction version caches nothing: its rows would
+// be a namespace of their own, never read by a source opened with one.
+TEST_F(StoreSourceTest, ASourceWithoutAReductionVersionRefusesToCache) {
+  const DerivedValues d = derived_of(unknown_);
+  StoreSourceOptions options = source_options();
+  options.reduction_version.clear();
+  auto opened = StoreSource::open(ps::StoreConfig{url_, false}, std::move(options));
+  ASSERT_TRUE(opened) << to_string(opened.error());
+  StoreSource& unversioned = **opened;
+
+  ASSERT_NE(unversioned.derived(), nullptr);
+  unversioned.derived()->put({d});
+  const auto done = unversioned.flush_derived();
+  EXPECT_EQ(done.written, 0u);
+  EXPECT_EQ(done.failed, 1u);
+  EXPECT_EQ(done.last_error, "StoreSourceOptions::reduction_version not set");
+
+  const auto now = unversioned.write_derived_now({d});
+  ASSERT_FALSE(now);
+  EXPECT_EQ(now.error().kind, ErrorKind::Config);
+  EXPECT_EQ(now.error().what, "StoreSourceOptions::reduction_version not set");
+
+  EXPECT_TRUE(cached(unknown_).empty());
+  auto any = store_->get_derived(unknown_, "");
+  ASSERT_TRUE(any) << to_string(any.error());
+  EXPECT_FALSE(*any);
+}
+
 // ---- Every reduction the application makes writes the cache (spec 4.5) -----
 
 namespace {

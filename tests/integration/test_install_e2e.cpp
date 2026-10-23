@@ -60,6 +60,15 @@ namespace fs = std::filesystem;
 namespace ps = pychron::persistence;
 using namespace std::chrono_literals;
 
+// How the data window opens the store: under the Ar-Ar domain's reduction
+// version (this suite does not link the domain; arar::store_source_options()
+// gives the same), so a source that caches has one.
+processing::StoreSourceOptions store_source_options() {
+  processing::StoreSourceOptions options;
+  options.reduction_version = "arar-1";
+  return options;
+}
+
 // An environment variable set for the life of this object, then put back.
 class ScopedEnv {
  public:
@@ -296,7 +305,7 @@ class InstallE2E : public pychron::testing::VirtualTimeTest, public ::testing::W
 
   // Run ids as the data window lists them: newest first.
   std::vector<processing::AnalysisSummary> browse() const {
-    auto source = processing::StoreSource::open(ps::StoreConfig{url_, false});
+    auto source = processing::StoreSource::open(ps::StoreConfig{url_, false}, store_source_options());
     if (!source) {
       ADD_FAILURE() << source.error().what;
       return {};
@@ -458,7 +467,7 @@ TEST_P(InstallE2E, AFreshInstallsQueueLandsInItsDatabase) {
               total_ms / static_cast<double>(ran.saved.size()), ran.saved.size());
 
   // The data window's reader, opened on this thread.
-  auto opened = processing::StoreSource::open(ps::StoreConfig{url_, false});
+  auto opened = processing::StoreSource::open(ps::StoreConfig{url_, false}, store_source_options());
   ASSERT_TRUE(opened) << opened.error().what;
   processing::StoreSource& source = **opened;
   auto page = source.browse({});
@@ -602,7 +611,7 @@ TEST_P(InstallE2E, EveryShippedPlanIsStoredAndReadsAsItsRecord) {
   EXPECT_EQ(ran.pending, 0u);
   ASSERT_EQ(ran.saved.size(), plans.size());
 
-  auto opened = processing::StoreSource::open(ps::StoreConfig{url_, false});
+  auto opened = processing::StoreSource::open(ps::StoreConfig{url_, false}, store_source_options());
   ASSERT_TRUE(opened) << opened.error().what;
   processing::StoreSource& source = **opened;
   auto store = ps::open_store(ps::StoreConfig{url_, false});
