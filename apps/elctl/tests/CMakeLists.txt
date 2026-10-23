@@ -3,7 +3,8 @@ file(GLOB PYCHRON_ELCTL_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tes
 add_executable(pychron_elctl_tests ${PYCHRON_ELCTL_TESTS})
 target_link_libraries(pychron_elctl_tests PRIVATE pychron_elctl_lib pychron::update_testing GTest::gtest_main)
 pychron_link_drivers(pychron_elctl_tests pychron_sim)
-# log_capture.hpp: a process log hub on a temporary folder, read back.
+# tests/support: log_capture.hpp (a process log hub on a temporary folder,
+# read back) and example_lab.hpp (a scratch copy of the examples).
 target_include_directories(pychron_elctl_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests/support")
 target_compile_definitions(pychron_elctl_tests PRIVATE
   PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"

@@ -18,6 +18,7 @@
 #include <QCoreApplication>
 #include <QtTest/QtTest>
 
+#include "example_lab.hpp"
 #include "laser_bridge.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
@@ -51,9 +52,7 @@ struct SimLaserLab {
     namespace fs = std::filesystem;
     std::random_device rd;
     dir = fs::temp_directory_path() / ("pychron-ui-laser-" + std::to_string(rd()) + std::to_string(rd()));
-    fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir, fs::copy_options::recursive);
-    fs::remove_all(dir / "data");
-    fs::remove_all(dir / "stage_corrections");
+    pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir);
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;

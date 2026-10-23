@@ -16,6 +16,7 @@
 
 #include <QtTest/QtTest>
 
+#include "example_lab.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/lab/session.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
@@ -31,8 +32,7 @@ namespace pychron::ui::test {
 inline std::filesystem::path scratch_lab() {
   namespace fs = std::filesystem;
   const fs::path dir = pychron::testing::unique_temp_path("pychron-ui-lab-");
-  fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir, fs::copy_options::recursive);
-  fs::remove_all(dir / "data");
+  pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir);
   return dir;
 }
 

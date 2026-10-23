@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "example_lab.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/devices/link.hpp"
@@ -144,8 +145,7 @@ class LabSessionTest : public pychron::testing::VirtualTimeTest {
 
   void SetUp() override {
     dir_ = pychron::testing::unique_temp_path("pychron-session-");
-    fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
-    fs::remove_all(dir_ / "data");
+    pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir_);
     prepare_lab();
 
     systems::ExtractionLine::Options options;

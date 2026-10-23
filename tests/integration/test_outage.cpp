@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "example_lab.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/executor/links.hpp"
 #include "pychron/experiment/lab/session.hpp"
@@ -79,8 +80,7 @@ class World {
       : dir_(pychron::testing::unique_temp_path("pychron-outage-")),
         clock_(clock_options()),
         still_(std::in_place, clock_) {
-    fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
-    fs::remove_all(dir_ / "data");
+    pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir_);
     systems::ExtractionLine::Options options;
     options.clock = &clock_;
     options.force_sim = true;

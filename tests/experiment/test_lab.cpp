@@ -7,6 +7,7 @@
 #include <fstream>
 #include <string>
 
+#include "example_lab.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "temp_path.hpp"
@@ -20,8 +21,7 @@ class LabTest : public ::testing::Test {
  protected:
   void SetUp() override {
     dir_ = pychron::testing::unique_temp_path("pychron-lab-");
-    fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
-    fs::remove_all(dir_ / "data");
+    pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir_);
   }
   void TearDown() override { fs::remove_all(dir_); }
 

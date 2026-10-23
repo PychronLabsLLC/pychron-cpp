@@ -34,6 +34,7 @@
 #include <utility>
 #include <vector>
 
+#include "example_lab.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/core/events.hpp"
 #include "pychron/core/signal_bus.hpp"
@@ -92,8 +93,7 @@ class ScratchLab {
   // `prepare` changes the copy before anything is loaded from it.
   explicit ScratchLab(const std::function<void(const fs::path&)>& prepare = {})
       : dir_(pychron::testing::unique_temp_path("pychron-labsim-")) {
-    fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_, fs::copy_options::recursive);
-    fs::remove_all(dir_ / "data");
+    pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir_);
     if (prepare) prepare(dir_);
 
     systems::ExtractionLine::Options options;

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "elctl_fixture.hpp"
+#include "example_lab.hpp"
 #include "pychron/laser/calibration_store.hpp"
 #include "pychron/laser/tray_map.hpp"
 #include "pychron/vision/fixture.hpp"
@@ -26,9 +27,7 @@ class LaserCmd : public ElctlTest {
  protected:
   void SetUp() override {
     ElctlTest::SetUp();
-    fs::copy(fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR), dir_ / "lab",
-             fs::copy_options::recursive | fs::copy_options::overwrite_existing);
-    fs::remove_all(dir_ / "lab" / "data");
+    pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir_ / "lab");
   }
   fs::path lab(const std::string& f) const { return dir_ / "lab" / f; }
   fs::path calibration() const { return lab("stage_calibrations") / "co2.example-9.toml"; }
