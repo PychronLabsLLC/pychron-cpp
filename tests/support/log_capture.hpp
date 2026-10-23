@@ -42,6 +42,7 @@ class LogCapture {
   LogCapture& operator=(LogCapture&&) = delete;
 
   [[nodiscard]] bool ok() const noexcept { return hub_ != nullptr; }
+  [[nodiscard]] LogHub& hub() const noexcept { return *hub_; }
 
   // Every line written so far (flushed first), stripped as above.
   [[nodiscard]] std::vector<std::string> lines() const {

@@ -10,6 +10,7 @@
 #include "fakes.hpp"
 #include "host_call_trace.hpp"
 #include "log_capture.hpp"
+#include "rehearse_fakes.hpp"
 #include "pychron/core/process_log.hpp"
 #include "pychron/scripting/script_host.hpp"
 
@@ -90,6 +91,38 @@ TEST_F(ScriptLog, ReadsLogTheirAnswer) {
   EXPECT_TRUE(starts_with_at(records, 1, "[debug] get_pressure(controller=c, gauge=g) -> 1e-08 in "))
       << records[1];
   EXPECT_TRUE(starts_with_at(records, 2, "[debug] is_open(name=A) -> false in ")) << records[2];
+}
+
+// A failure the host calls never saw still leaves its `end` at warn level.
+TEST_F(ScriptLog, EndOfAScriptThatRaisedIsWarnAtWarnLevel) {
+  capture.hub().set_levels(LogLevel::Warn, {});
+  Script script{"inline.py", "def main():\n    raise ValueError('boom')\n", ScriptKind::Extraction};
+  ASSERT_FALSE(host->run(script, rig.env, token).has_value());
+  auto records = script_records(capture);
+  ASSERT_EQ(records.size(), 1u) << ::testing::PrintToString(records);
+  EXPECT_TRUE(starts_with_at(records, 0, "[warn] end inline.py error: ")) << records[0];
+  EXPECT_NE(records[0].find("boom"), std::string::npos) << records[0];
+}
+
+// Each rehearsal step is one trace record, and nothing else is logged.
+TEST_F(ScriptLog, RehearsalStepsLogAtTrace) {
+  capture.hub().set_levels(LogLevel::Trace, {});
+  ScriptEnvironment env;
+  extraction::CapabilitySet all;
+  for (std::size_t i = 0; i < extraction::kCapabilityCount; ++i) all.add(static_cast<extraction::Capability>(i));
+  env.capabilities = all;
+  env.valve_names = std::vector<std::string>{"A", "B", "C"};
+  env.context = make_context({{"duration", 5.0}});
+  env.log = [](std::string_view) {};
+  RecordingRehearsal rehearsal;
+  Script script{"inline.py", "def main():\n    open('A')\n    set_xy(1.5, 2, block=False)\n",
+                ScriptKind::Extraction};
+  auto r = host->rehearse(script, env, rehearsal, token);
+  ASSERT_TRUE(r.has_value()) << to_string(r.error());
+  auto records = script_records(capture);
+  ASSERT_EQ(records.size(), 2u) << ::testing::PrintToString(records);
+  EXPECT_TRUE(starts_with_at(records, 0, "[trace] step open(arg0=A)")) << records[0];
+  EXPECT_TRUE(starts_with_at(records, 1, "[trace] step set_xy(arg0=1.5, arg1=2, block=false)")) << records[1];
 }
 
 // No host call takes a password: the redaction is the summary's, reached through

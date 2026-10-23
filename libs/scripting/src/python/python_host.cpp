@@ -197,20 +197,23 @@ class PythonScriptHost final : public IScriptHost {
 
     // Only a real run is logged: an estimate or a rehearsal touches no hardware.
     const bool logged = mode == HostState::Mode::Run;
-    Logger log = logged ? process_logger("script." + script.name) : Logger::disabled("script");
+    const bool rehearsing = mode == HostState::Mode::Rehearse;
+    Logger log = logged || rehearsing ? process_logger("script." + script.name) : Logger::disabled("script");
     const SteadyClock fallback;
     const Clock& clock = env.clock ? *env.clock : fallback;
     const auto began = clock.now();
     // The script's own name stands for its path: a Script carries no other.
-    if (log.enabled(LogLevel::Debug))
+    if (logged && log.enabled(LogLevel::Debug))
       log.debug("start " + script.name + " path=" + script.name + " sha=" + out.sha +
                 " kind=" + std::string(to_string(script.kind)));
     auto finish = [&](const Error* error, std::string_view outcome) {
-      if (!log.enabled(LogLevel::Debug)) return;
+      if (!logged) return;
+      const bool bad = error && error->kind != ErrorKind::Cancelled;
+      // A failure is a warn and is wanted at warn; the rest is debug.
+      if (!log.enabled(bad ? LogLevel::Warn : LogLevel::Debug)) return;
       std::array<char, 32> took{};
       std::snprintf(took.data(), took.size(), "%.2f",
                     std::chrono::duration<double>(clock.now() - began).count());
-      const bool bad = error && error->kind != ErrorKind::Cancelled;
       log.log(bad ? LogLevel::Warn : LogLevel::Debug,
               "end " + script.name + " " + std::string(outcome) + " in " + took.data() + " s");
     };
@@ -220,6 +223,7 @@ class PythonScriptHost final : public IScriptHost {
       py::gil_scoped_acquire gil;
       HostState state(env, token, mode, script.kind, nullptr, rehearsal);
       if (logged) state.set_log(log);
+      if (rehearsing) state.set_step_log(log);  // steps at trace, nothing else
       r = state.guarded([&] { body(state); });
       out.messages = state.messages();
     }

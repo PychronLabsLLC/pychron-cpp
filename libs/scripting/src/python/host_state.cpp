@@ -51,6 +51,17 @@ Value to_value(const py::handle& v) {
   return py::str(v).cast<std::string>();
 }
 
+std::string value_text(const Value& v) {
+  return std::visit(
+      [](const auto& x) -> std::string {
+        using T = std::decay_t<decltype(x)>;
+        if constexpr (std::is_same_v<T, std::monostate>) return "None";
+        else if constexpr (std::is_same_v<T, std::string>) return x;
+        else return HostCallTrace::text(x);
+      },
+      v);
+}
+
 const char* type_name(const Value& v) {
   return std::visit(
       [](const auto& x) -> const char* {
@@ -325,6 +336,12 @@ Value HostState::step(std::string command, std::vector<Value> args, ValueMap kwa
   StepCall call{std::move(command), std::move(args), std::move(kwargs), current_script_, current_line_, {}};
   // The scripts that called into this one, outermost first.
   if (script_stack_.size() > 1) call.gosubs.assign(script_stack_.begin(), script_stack_.end() - 1);
+  if (step_log_.enabled(LogLevel::Trace)) {
+    HostCallTrace::Args fields;
+    for (std::size_t i = 0; i < call.args.size(); ++i) fields.emplace_back("arg" + std::to_string(i), value_text(call.args[i]));
+    for (const auto& [k, v] : call.kwargs) fields.emplace_back(k, value_text(v));
+    step_log_.trace("step " + call.command + "(" + summarize(fields) + ")");
+  }
   auto* rehearsal = rehearsal_;
   const auto held_from = std::chrono::steady_clock::now();
   auto result = nogil([&] { return rehearsal->step(call); });
