@@ -14,6 +14,7 @@
 #include <toml++/toml.hpp>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
@@ -433,6 +434,7 @@ Result<void> ExtractionLine::start() {
     // Every input, every scan interval: published, kept for the cryo
     // service, and a failure raised once until the next good scan.
     auto scan = [this, tc] {
+      const LogContext::Polling polling;
       for (const auto& input : tc->inputs()) {
         const TimePoint ts = clock_->now();
         auto t = tc->read_temperature(input);
@@ -466,6 +468,7 @@ Result<void> ExtractionLine::start() {
     // Every field of every heater, always: an enable from the controller's
     // own panel is seen (legacy read only the readback, only while on).
     auto scan = [this] {
+      const LogContext::Polling polling;
       for (const auto& h : config_.heaters) {
         auto sample = read_heater(h.name, *heater(h.name));
         if (!sample) {

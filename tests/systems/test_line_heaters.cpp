@@ -2,10 +2,13 @@
 // 2026-10-05, task E1), on simulated PLC heaters.
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <string>
 #include <vector>
 
+#include "log_capture.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/devices/extraction/capability.hpp"
 #include "pychron/systems/extraction_line.hpp"
@@ -218,6 +221,44 @@ TEST(LineHeaters, AFailedScanAlarmsOnceUntilTheNextGoodOne) {
   plc->set_offline(true);
   l.scan();
   EXPECT_EQ(l.raised().size(), 2u);
+}
+
+// The scan is a poll (spec 2.2): a read that went through is a trace record,
+// and of a read that keeps failing only the first failure warns.
+TEST(LineHeaters, TheScanIsLoggedAsAPoll) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Line l;  // after the capture: devices take their logger when they are built
+  ASSERT_TRUE(l.line->start());
+  l.scan();
+  for (const auto& line : log.lines()) EXPECT_EQ(line.find("device.furnace_plc"), std::string::npos) << line;
+
+  log.hub().set_levels(LogLevel::Trace, {});
+  l.scan();
+  auto lines = log.lines();
+  EXPECT_TRUE(std::ranges::any_of(lines, [](const std::string& s) {
+    return s.starts_with("[trace] device.furnace_plc: ") && s.find(" ok in ") != std::string::npos;
+  })) << ::testing::PrintToString(lines);
+
+  l.line->sim()->heater("furnace_plc")->set_offline(true);
+  const auto before = lines.size();
+  l.scan();
+  l.scan();
+  lines = log.lines();
+  std::vector<std::string> failed;
+  for (auto i = before; i < lines.size(); ++i) {
+    if (lines[i].find("device.furnace_plc: ") != std::string::npos && lines[i].find(" failed: ") != std::string::npos) {
+      failed.push_back(lines[i]);
+    }
+  }
+  // Each read has a relay record (trace) beside the call's: one warn in all,
+  // for the first scan, the repeat at trace.
+  const auto warns = std::ranges::count_if(failed, [](const std::string& s) { return s.starts_with("[warn] "); });
+  EXPECT_EQ(warns, 1) << ::testing::PrintToString(failed);
+  EXPECT_GE(failed.size(), 3u) << ::testing::PrintToString(failed);
+  for (const auto& s : failed) {
+    EXPECT_TRUE(s.starts_with("[warn] ") || s.starts_with("[trace] ")) << s;
+  }
 }
 
 TEST(LineHeaters, ADriverThatIsNotAHeaterFailsStart) {

@@ -4,10 +4,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <string>
 #include <vector>
 
+#include "log_capture.hpp"
 #include "pychron/core/config/loader.hpp"
 
 namespace {
@@ -98,6 +101,26 @@ TEST(LineCryo, TheLineScansEveryInputAndPublishesIt) {
   l.line->scheduler().run_pending();
   std::lock_guard lock(l.m);
   EXPECT_EQ(l.samples.size(), 4u);
+}
+
+// The scan is a poll (spec 2.2): its reads are trace records, so the file at
+// debug does not get one per input per second.
+TEST(LineCryo, TheScanIsLoggedAsAPoll) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Line l;  // after the capture: devices take their logger when they are built
+  ASSERT_TRUE(l.line->start());
+  l.clock.advance(1s);
+  l.line->scheduler().run_pending();
+  for (const auto& line : log.lines()) EXPECT_EQ(line.find("device.cryostat"), std::string::npos) << line;
+
+  log.hub().set_levels(LogLevel::Trace, {});
+  l.clock.advance(1s);
+  l.line->scheduler().run_pending();
+  const auto lines = log.lines();
+  EXPECT_TRUE(std::ranges::any_of(lines, [](const std::string& s) {
+    return s.starts_with("[trace] device.cryostat: ") && s.find(" ok in ") != std::string::npos;
+  })) << ::testing::PrintToString(lines);
 }
 
 TEST(LineCryo, ADriverThatIsNotAControllerFailsStart) {
