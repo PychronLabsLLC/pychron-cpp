@@ -11,8 +11,8 @@
 #include <vector>
 
 #include "pychron/core/error.hpp"
-#include "pychron/reduction/arar_types.hpp"
-#include "pychron/reduction/flux.hpp"
+#include "pychron/arar/arar_types.hpp"
+#include "pychron/arar/flux.hpp"
 #include "pychron/reduction/stats.hpp"
 #include "pychron/reduction/ufloat.hpp"
 

@@ -43,7 +43,7 @@
 #include "pychron/publish/embargo.hpp"
 #include "pychron/publish/release.hpp"
 #include "pychron/publish/workflow.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 #pragma pop_macro("signals")
 
 namespace pychron::ui {

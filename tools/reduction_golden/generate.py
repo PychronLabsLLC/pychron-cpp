@@ -3,7 +3,7 @@ r"""Generate the Ar-Ar reduction golden vectors by calling legacy pychron.
 
 Spec: docs/superpowers/specs/2026-10-02-arar-reduction-design.md, section 9
 (golden vectors), 4.7 (tolerances), 5.3 (constants presets), 5.6
-(diagnostics). The committed JSON under tests/reduction/golden/ is the test
+(diagnostics). The committed JSON under tests/arar/golden/ is the test
 input of the C++ reduction tests; this script is only needed to regenerate it.
 Never edit the JSON by hand.
 
@@ -13,7 +13,7 @@ Run (from the repo root):
       --with numpy==2.4.4 --with scipy==1.17.1 --with statsmodels==0.14.6 \
       --with uncertainties==3.2.3 --with traits==7.1.0 --with pyyaml==6.0.3 \
       python tools/reduction_golden/generate.py \
-        --legacy /Users/jakeross/Programming/pychron --out tests/reduction/golden
+        --legacy /Users/jakeross/Programming/pychron --out tests/arar/golden
 
 Add `--check` to regenerate into a temporary directory and exit 1 when any
 file differs from `--out` (drift detector).
@@ -2167,7 +2167,7 @@ def generate(legacy, out_dir):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--legacy", required=True, help="legacy pychron checkout (read only)")
-    p.add_argument("--out", required=True, help="golden directory (tests/reduction/golden)")
+    p.add_argument("--out", required=True, help="golden directory (tests/arar/golden)")
     p.add_argument("--check", action="store_true",
                    help="regenerate into a temporary directory; exit 1 if --out differs")
     args = p.parse_args(argv)

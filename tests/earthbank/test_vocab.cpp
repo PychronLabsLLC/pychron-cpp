@@ -17,7 +17,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/earthbank/model.hpp"
 #include "pychron/earthbank/vocab.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 #include "pychron/reduction/stats.hpp"
 #include "records_support.hpp"
 

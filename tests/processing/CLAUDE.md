@@ -1,1 +1,1 @@
-@../../libs/processing/AGENTS.md
+@../../libs/arar/AGENTS.md

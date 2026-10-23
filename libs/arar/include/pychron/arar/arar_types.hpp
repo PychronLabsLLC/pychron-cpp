@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "pychron/core/error.hpp"
+#include "pychron/reduction/arar_live.hpp"
 #include "pychron/reduction/signal.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
@@ -33,12 +34,8 @@ inline constexpr std::size_t index(ArgonIsotope i) noexcept { return static_cast
 // overload (signal.hpp) with to_string(iso).
 IsotopeSignal make_signal(ArgonIsotope iso, const MeasuredSignal& m);
 
-// Analysis types whose blank is not subtracted (pychron_constants.py:264).
-bool corrects_for_blank(std::string_view analysis_type) noexcept;
-
 // ---- 5.3 Constants --------------------------------------------------------
 
-enum class K3739Mode { Normal, Fixed };
 enum class AgeUnits { a, ka, Ma, Ga };
 
 struct CosmogenicRatios {

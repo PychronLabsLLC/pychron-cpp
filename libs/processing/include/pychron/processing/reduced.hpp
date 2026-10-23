@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "pychron/processing/model.hpp"
-#include "pychron/reduction/arar_reduction.hpp"
+#include "pychron/arar/arar_reduction.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::processing {

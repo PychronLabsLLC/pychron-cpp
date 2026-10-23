@@ -14,7 +14,7 @@
 
 #include "processing/fixtures.hpp"
 #include "pychron/processing/model.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 
 namespace pychron::earthbank::testing {
 

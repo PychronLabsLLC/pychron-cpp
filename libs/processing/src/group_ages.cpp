@@ -7,7 +7,7 @@
 #include <span>
 #include <vector>
 
-#include "pychron/reduction/arar_reduction.hpp"
+#include "pychron/arar/arar_reduction.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::processing {

@@ -1,4 +1,4 @@
-#include "pychron/reduction/flux.hpp"
+#include "pychron/arar/flux.hpp"
 
 #include <gtest/gtest.h>
 

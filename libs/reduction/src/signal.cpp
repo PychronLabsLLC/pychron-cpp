@@ -28,6 +28,13 @@ IsotopeSignal make_signal(std::string_view label, const MeasuredSignal& m) {
   return s;
 }
 
+bool corrects_for_blank(std::string_view t) noexcept {
+  for (const std::string_view prefix : {"blank", "detector_ic", "background"}) {
+    if (t.starts_with(prefix)) return false;
+  }
+  return true;
+}
+
 // ---- Isotope arithmetic -----------------------------------------------------
 
 // E1. Without include_baseline_error legacy subtracts nominal_value(baseline),

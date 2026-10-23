@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 
-#include "golden.hpp"
+#include "golden_json.hpp"
 
 namespace golden = pychron::reduction::golden;
 using pychron::reduction::intern_tag;

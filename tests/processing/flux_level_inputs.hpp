@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "../reduction/flux_golden.hpp"
+#include "../arar/flux_golden.hpp"
 #include "pychron/processing/flux_fit.hpp"
 
 namespace pychron::processing::flux_test {

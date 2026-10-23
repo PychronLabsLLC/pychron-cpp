@@ -1,11 +1,11 @@
-#include "pychron/reduction/flux.hpp"
+#include "pychron/arar/flux.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <numeric>
 
-#include "least_squares.hpp"
+#include "pychron/reduction/detail/least_squares.hpp"
 
 namespace pychron::reduction {
 

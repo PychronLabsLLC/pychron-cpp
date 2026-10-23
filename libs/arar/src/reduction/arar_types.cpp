@@ -1,4 +1,4 @@
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 
 #include <cmath>
 #include <string>
@@ -18,13 +18,6 @@ std::string_view to_string(ArgonIsotope iso) noexcept {
 
 IsotopeSignal make_signal(ArgonIsotope iso, const MeasuredSignal& m) {
   return make_signal(to_string(iso), m);
-}
-
-bool corrects_for_blank(std::string_view t) noexcept {
-  for (const std::string_view prefix : {"blank", "detector_ic", "background"}) {
-    if (t.starts_with(prefix)) return false;
-  }
-  return true;
 }
 
 ReductionConstants constants_preset(ConstantsPreset p) noexcept {

@@ -39,7 +39,7 @@
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/earthbank_source.hpp"
 #include "pychron/publish/workflow.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 #pragma pop_macro("signals")
 
 namespace pychron::ui {

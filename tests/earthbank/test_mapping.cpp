@@ -27,8 +27,8 @@
 #include "pychron/processing/model.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/report.hpp"
-#include "pychron/reduction/arar_reduction.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_reduction.hpp"
+#include "pychron/arar/arar_types.hpp"
 #include "pychron/reduction/stats.hpp"
 #include "pychron/reduction/ufloat.hpp"
 

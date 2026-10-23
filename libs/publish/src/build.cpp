@@ -20,7 +20,7 @@
 #include "pychron/publish/figures.hpp"
 #include "pychron/publish/parquet.hpp"
 #include "pychron/publish/records.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 
 #include "members.hpp"
 

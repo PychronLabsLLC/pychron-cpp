@@ -9,7 +9,7 @@
 #include "pychron/processing/arar_groups.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/units.hpp"
-#include "pychron/reduction/arar_reduction.hpp"
+#include "pychron/arar/arar_reduction.hpp"
 
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;

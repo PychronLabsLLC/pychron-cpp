@@ -22,7 +22,7 @@
 #include <variant>
 #include <vector>
 
-#include "../reduction/flux_golden.hpp"
+#include "../arar/flux_golden.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/flux_store.hpp"
 

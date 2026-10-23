@@ -1,13 +1,15 @@
-// Test-only reader for the Ar-Ar golden vectors (spec 9.4).
+// Test-only reader for golden vectors (spec 9.4): the Ar-Ar ones under
+// tests/arar/golden and the UFloat programs (ufloat.json) tests/reduction runs.
 //
 // The golden files are produced by tools/reduction_golden/generate.py from
 // legacy pychron (spec 9.1); the case format is documented in that script's
 // docstring and in spec 9.3. This is a minimal strict JSON parser (RFC 8259:
 // objects, arrays, strings with escapes and \u surrogate pairs, numbers,
 // true/false/null) plus the comparison helpers the golden tests share. It does
-// not reuse libs/experiment's parser: pychron_reduction_tests must not link
-// experiment. Numbers are converted with std::from_chars (locale independent,
-// correctly rounded).
+// not reuse libs/experiment's parser: the reduction and Ar-Ar test binaries
+// must not link experiment. Numbers are converted with std::from_chars (locale
+// independent, correctly rounded). The Ar-Ar case parsing (constants_of and
+// friends) is in tests/arar/golden.hpp.
 #pragma once
 
 #include <gtest/gtest.h>
@@ -26,10 +28,9 @@
 #include <vector>
 
 #include "pychron/core/number.hpp"
-#include "pychron/reduction/arar_types.hpp"
 
 #ifndef PYCHRON_REDUCTION_GOLDEN_DIR
-#error "PYCHRON_REDUCTION_GOLDEN_DIR must be defined (tests/reduction/CMakeLists.txt)"
+#error "PYCHRON_REDUCTION_GOLDEN_DIR must be defined (the test target's CMakeLists.txt)"
 #endif
 
 namespace pychron::reduction::golden {
@@ -415,62 +416,6 @@ inline void expect_close(double got, double want, double rtol, double atol,
                   << ::testing::PrintToString(want) << " (|diff| " << diff << " > " << bound
                   << " = atol " << atol << " + rtol " << rtol << " * |want|)";
   }
-}
-
-// ---- Shared case parsing ----------------------------------------------------
-
-// A {"v", "e"} object.
-inline Measured measured_of(const Json& j) { return {j["v"].as_number(), j["e"].as_number()}; }
-
-// "a" / "ka" / "Ma" / "Ga"; false for anything else.
-inline bool units_of(std::string_view s, AgeUnits& out) {
-  if (s == "a") out = AgeUnits::a;
-  else if (s == "ka") out = AgeUnits::ka;
-  else if (s == "Ma") out = AgeUnits::Ma;
-  else if (s == "Ga") out = AgeUnits::Ga;
-  else return false;
-  return true;
-}
-
-// A case's "constants" object. Every key is read; an unknown key or value is
-// a failure (ADD_FAILURE, returns false).
-inline bool constants_of(const Json& k, ReductionConstants& rc, const std::string& name) {
-  bool ok = true;
-  for (const auto& [key, v] : k.as_object()) {
-    if (key == "lambda_b") rc.lambda_b = measured_of(v);
-    else if (key == "lambda_e") rc.lambda_e = measured_of(v);
-    else if (key == "include_decay_error") rc.include_decay_error = v.as_bool();
-    else if (key == "age_units") {
-      if (!units_of(v.as_string(), rc.age_units)) {
-        ADD_FAILURE() << name << ": unknown age_units " << v.string;
-        ok = false;
-      }
-    } else if (key == "lambda_cl36") rc.lambda_cl36 = measured_of(v);
-    else if (key == "lambda_ar37") rc.lambda_ar37 = measured_of(v);
-    else if (key == "lambda_ar39") rc.lambda_ar39 = measured_of(v);
-    else if (key == "atm4036") rc.atm4036 = measured_of(v);
-    else if (key == "atm4038") rc.atm4038 = measured_of(v);
-    else if (key == "fixed_k3739") rc.fixed_k3739 = measured_of(v);
-    else if (key == "allow_negative_ca_correction") rc.allow_negative_ca_correction = v.as_bool();
-    else if (key == "abundance_sensitivity") rc.abundance_sensitivity = v.as_number();
-    else if (key == "use_irradiation_endtime") rc.use_irradiation_endtime = v.as_bool();
-    else if (key == "k3739_mode") {
-      if (v.as_string() == "Fixed") {
-        rc.k3739_mode = K3739Mode::Fixed;
-      } else if (v.as_string() != "Normal") {
-        ADD_FAILURE() << name << ": unknown k3739_mode " << v.string;
-        ok = false;
-      }
-    } else if (key == "cosmogenic") {
-      if (!v.is_null()) {
-        rc.cosmogenic = CosmogenicRatios{measured_of(v["solar3836"]), measured_of(v["cosmo3836"])};
-      }
-    } else {
-      ADD_FAILURE() << name << ": unhandled constants key " << key;
-      ok = false;
-    }
-  }
-  return ok;
 }
 
 // Every key of `obj` is one of `keys`; each other key is a failure.

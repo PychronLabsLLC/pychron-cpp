@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 #include "pychron/reduction/fits.hpp"
 
 namespace pychron::processing {

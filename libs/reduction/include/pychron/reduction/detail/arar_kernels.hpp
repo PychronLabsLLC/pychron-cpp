@@ -15,7 +15,8 @@
 #include <cmath>
 #include <optional>
 
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/reduction/arar_live.hpp"
+#include "pychron/reduction/signal.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::reduction::kernels {

@@ -4,10 +4,13 @@ file(GLOB PYCHRON_REDUCTION_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}
 if(PYCHRON_REDUCTION_TESTS)
   add_executable(pychron_reduction_tests ${PYCHRON_REDUCTION_TESTS})
   target_link_libraries(pychron_reduction_tests PRIVATE pychron::reduction GTest::gtest_main)
+  # golden_json.hpp, the golden reader shared with tests/arar.
+  target_include_directories(pychron_reduction_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
+  # The golden vectors are one directory (tools/reduction_golden/generate.py
+  # --out): test_ufloat.cpp reads ufloat.json from it.
   target_compile_definitions(pychron_reduction_tests PRIVATE
-    PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
     PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
-    PYCHRON_REDUCTION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+    PYCHRON_REDUCTION_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/arar/golden")
   pychron_set_warnings(pychron_reduction_tests)
   # -ffp-contract=off (unfused test arithmetic) comes PUBLIC from pychron::reduction.
   gtest_discover_tests(pychron_reduction_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)

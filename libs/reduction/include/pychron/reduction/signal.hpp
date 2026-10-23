@@ -55,6 +55,9 @@ struct MeasuredSignal {
 // dvc/dvc_analysis.py:759).
 IsotopeSignal make_signal(std::string_view label, const MeasuredSignal& m);
 
+// Analysis types whose blank is not subtracted (pychron_constants.py:264).
+bool corrects_for_blank(std::string_view analysis_type) noexcept;
+
 // ---- Isotope arithmetic (per isotope) ---------------------------------------
 
 // E1: I - B when include_baseline_error, else I - nom(B) (the baseline's

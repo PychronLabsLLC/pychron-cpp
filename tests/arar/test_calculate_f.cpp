@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "golden.hpp"
-#include "pychron/reduction/arar_reduction.hpp"
+#include "pychron/arar/arar_reduction.hpp"
 
 using namespace pychron::reduction;
 namespace g = pychron::reduction::golden;

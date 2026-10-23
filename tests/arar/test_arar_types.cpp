@@ -1,8 +1,9 @@
 // Data model, constants presets, stored-row resolution (spec 5.1-5.5).
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 
 #include <gtest/gtest.h>
 
+#include <bit>
 #include <cmath>
 #include <set>
 #include <string>
@@ -45,6 +46,23 @@ void expect_matches_golden(const ReductionConstants& c, const golden::Json& g,
   EXPECT_EQ(c.include_decay_error, g["include_decay_error"].as_bool()) << w;
   EXPECT_EQ(c.age_units, units_of(g["age_units"].as_string())) << w;
   EXPECT_EQ(c.cosmogenic.has_value(), !g["cosmogenic"].is_null()) << w;
+}
+
+MeasuredSignal sample() {
+  MeasuredSignal m;
+  m.intercept = {12.5, 0.4};
+  m.baseline = {0.3, 0.05};
+  m.blank = {0.2, 0.03};
+  m.ic_factor = {1.01, 0.002};
+  m.include_baseline_error = true;
+  m.correct_for_blank = true;
+  return m;
+}
+
+std::set<std::string> tags_of(const UFloat& x) {
+  std::set<std::string> out;
+  for (const auto& [tag, sigma] : error_components(x)) out.emplace(tag_name(tag));
+  return out;
 }
 
 }  // namespace
@@ -163,12 +181,6 @@ TEST(ArArTypes, MakeSignalUsesLegacyTagsAndFreshVariables) {
   EXPECT_EQ(to_string(ArgonIsotope::Ar37), "Ar37");
 }
 
-TEST(ArArTypes, CorrectsForBlank) {
-  for (const char* t : {"blank_unknown", "blank_air", "detector_ic", "background"})
-    EXPECT_FALSE(corrects_for_blank(t)) << t;
-  for (const char* t : {"unknown", "air", "cocktail"}) EXPECT_TRUE(corrects_for_blank(t)) << t;
-}
-
 TEST(ArArTypes, ProductionFromRows) {
   std::map<std::string, Measured, std::less<>> rows{
       {"K4039", {0.01, 0.001}},  {"K3839", {0.013, 0.0}},  {"K3739", {0.0002, 0.0}},
@@ -242,4 +254,23 @@ TEST(ArArTypes, MakeJTagged) {
   EXPECT_EQ(j.std_dev(), 1e-6);
   ASSERT_EQ(j.terms().size(), 1u);
   EXPECT_EQ(tag_name(j.terms()[0].tag), "J");
+}
+
+TEST(ArArTypes, ArgonOverloadIsBitEqualToTheLabelOverload) {
+  const MeasuredSignal m = sample();
+  const IsotopeSignal a = make_signal(ArgonIsotope::Ar40, m);
+  const IsotopeSignal b = make_signal("Ar40", m);
+  const auto same = [](const UFloat& x, const UFloat& y) {
+    return std::bit_cast<unsigned long long>(x.nominal()) ==
+               std::bit_cast<unsigned long long>(y.nominal()) &&
+           std::bit_cast<unsigned long long>(x.std_dev()) ==
+               std::bit_cast<unsigned long long>(y.std_dev());
+  };
+  EXPECT_TRUE(same(a.intercept, b.intercept));
+  EXPECT_TRUE(same(a.baseline, b.baseline));
+  EXPECT_TRUE(same(a.blank, b.blank));
+  EXPECT_TRUE(same(a.ic_factor, b.ic_factor));
+  EXPECT_TRUE(same(corrected_intensity(a), corrected_intensity(b)));
+  EXPECT_EQ(tags_of(corrected_intensity(a)), tags_of(corrected_intensity(b)));
+  EXPECT_EQ(tags_of(a.intercept), (std::set<std::string>{"Ar40"}));
 }

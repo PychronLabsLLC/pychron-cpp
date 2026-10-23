@@ -359,7 +359,7 @@ parallel agent waves (each agent worktree builds its own tree).
 
 ### Regenerating the Ar-Ar reduction golden vectors
 
-The JSON under `tests/reduction/golden/` is produced by calling the read-only
+The JSON under `tests/arar/golden/` is produced by calling the read-only
 legacy pychron checkout (`~/Programming/pychron`), never edited by hand. To
 regenerate it, run the spec 9.1 command from the repo root (see the docstring
 of `tools/reduction_golden/generate.py`):
@@ -369,7 +369,7 @@ uv run --no-project --python 3.12 \
   --with numpy==2.4.4 --with scipy==1.17.1 --with statsmodels==0.14.6 \
   --with uncertainties==3.2.3 --with traits==7.1.0 --with pyyaml==6.0.3 \
   python tools/reduction_golden/generate.py \
-    --legacy ~/Programming/pychron --out tests/reduction/golden
+    --legacy ~/Programming/pychron --out tests/arar/golden
 ```
 
 Add `--check` to regenerate into a temporary directory and exit 1 if any

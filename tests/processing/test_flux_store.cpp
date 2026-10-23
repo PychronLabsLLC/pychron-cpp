@@ -17,7 +17,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "../reduction/flux_golden.hpp"
+#include "../arar/flux_golden.hpp"
 #include "flux_store_fixture.hpp"
 #include "pychron/processing/flux_store.hpp"
 #include "pychron/processing/reduced.hpp"

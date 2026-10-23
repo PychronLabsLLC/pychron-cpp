@@ -14,7 +14,7 @@
 #include "pychron/core/user_file.hpp"
 #include "pychron/processing/arar_groups.hpp"
 #include "pychron/processing/group_ages.hpp"
-#include "pychron/reduction/arar_reduction.hpp"
+#include "pychron/arar/arar_reduction.hpp"
 
 namespace pychron::processing {
 

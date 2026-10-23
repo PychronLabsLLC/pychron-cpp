@@ -15,7 +15,7 @@
 #include "pychron/core/number.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/dataset.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 
 namespace elctl {
 

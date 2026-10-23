@@ -4,12 +4,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <bit>
 #include <set>
 #include <string>
 #include <vector>
-
-#include "pychron/reduction/arar_types.hpp"
 
 using namespace pychron::reduction;
 
@@ -49,21 +46,8 @@ TEST(Signal, TagsCarryTheLabel) {
   }
 }
 
-TEST(Signal, ArgonOverloadIsBitEqualToTheLabelOverload) {
-  const MeasuredSignal m = sample();
-  const IsotopeSignal a = make_signal(ArgonIsotope::Ar40, m);
-  const IsotopeSignal b = make_signal("Ar40", m);
-  const auto same = [](const UFloat& x, const UFloat& y) {
-    return std::bit_cast<unsigned long long>(x.nominal()) ==
-               std::bit_cast<unsigned long long>(y.nominal()) &&
-           std::bit_cast<unsigned long long>(x.std_dev()) ==
-               std::bit_cast<unsigned long long>(y.std_dev());
-  };
-  EXPECT_TRUE(same(a.intercept, b.intercept));
-  EXPECT_TRUE(same(a.baseline, b.baseline));
-  EXPECT_TRUE(same(a.blank, b.blank));
-  EXPECT_TRUE(same(a.ic_factor, b.ic_factor));
-  EXPECT_TRUE(same(corrected_intensity(a), corrected_intensity(b)));
-  EXPECT_EQ(tags_of(corrected_intensity(a)), tags_of(corrected_intensity(b)));
-  EXPECT_EQ(tags_of(a.intercept), (std::set<std::string>{"Ar40"}));
+TEST(Signal, CorrectsForBlank) {
+  for (const char* t : {"blank_unknown", "blank_air", "detector_ic", "background"})
+    EXPECT_FALSE(corrects_for_blank(t)) << t;
+  for (const char* t : {"unknown", "air", "cocktail"}) EXPECT_TRUE(corrects_for_blank(t)) << t;
 }

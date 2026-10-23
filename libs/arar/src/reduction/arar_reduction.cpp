@@ -1,5 +1,5 @@
 // Ar-Ar reduction step functions (spec 6) on the shared kernels (spec 8.1).
-#include "pychron/reduction/arar_reduction.hpp"
+#include "pychron/arar/arar_reduction.hpp"
 
 #include <algorithm>
 #include <cmath>

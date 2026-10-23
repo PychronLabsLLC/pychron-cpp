@@ -239,7 +239,7 @@ given it when it reads a file there; any other agent opens it itself).
 |---|---|
 | `libs/persistence`, `tests/persistence`, a migration, any query against the store | `libs/persistence/AGENTS.md` (has "Schema and queries": a migration costs every lab a step, a query is paid once per analysis) |
 | `libs/ingest`, `libs/dvc`, `tests/dvc`, `elctl import` | `libs/ingest/AGENTS.md` |
-| `libs/processing`, `tests/processing`: publication report, flux fitting, `elctl export`, `elctl flux`, flux window | `libs/processing/AGENTS.md` |
+| `libs/arar`, `tests/arar`; `libs/processing`, `tests/processing`: publication report, flux fitting, `elctl export`, `elctl flux`, flux window | `libs/arar/AGENTS.md` |
 | `libs/entry`, `tests/entry`, an install's `seed.toml` | `libs/entry/AGENTS.md` |
 | `libs/earthbank`, `libs/earthbank_qt`, `tests/earthbank`, `elctl earthbank`, EarthBank page and Publish dialog | `libs/earthbank/AGENTS.md` |
 | `libs/experiment` record, store adapter, `tests/experiment`, how a run is saved, executor hold, safe state, gap rule | `libs/experiment/AGENTS.md` |

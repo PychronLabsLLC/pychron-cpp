@@ -21,7 +21,7 @@
 #include "pychron/publish/manifest.hpp"
 #include "pychron/publish/release.hpp"
 #include "pychron/publish/workflow.hpp"
-#include "pychron/reduction/arar_types.hpp"
+#include "pychron/arar/arar_types.hpp"
 #include "selection.hpp"
 
 namespace elctl {

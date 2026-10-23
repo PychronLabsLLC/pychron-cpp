@@ -7,7 +7,7 @@
 #include <set>
 #include <string>
 
-#include "least_squares.hpp"
+#include "pychron/reduction/detail/least_squares.hpp"
 
 // Port of pychron.core.regression. Error model shared by every kind:
 //   sef     = sqrt(SSR / (n - q))                 (BaseRegressor.calculate_standard_error_fit)
