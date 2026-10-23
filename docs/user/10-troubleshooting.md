@@ -221,11 +221,48 @@ Both programs write a log file as they run, with no setup.
   command line problem, from the time of the problem, plus the one before it
   if the program was restarted. For a device that does not answer, set
   `"*.wire" = "trace"` first (see the extraction line chapter) and repeat.
-- **Reading a line.** Each line is `time [level] [thread] logger: message`.
-  The thread field says which thread wrote the line; for now every thread
-  shows as a number (`t3`), so lines from one thread can be followed with
-  `grep '\[t3\]'`. Threads are given names, and lines written during a run
-  a `run=<id>` field, in a later release.
+- **Reading a line.** Each line is
+  `time [level] [thread] run=<id> logger: message`. The time is UTC (in a
+  simulated run, the simulated time). The thread field names the thread that
+  wrote the line: `queue` for the experiment queue, `run` for the thread
+  that carries out a run, `scheduler` for timed jobs such as gauge and
+  temperature polling, `transport.<name>` for a device link, `ui` for the
+  window, `elctl` for the command line; a thread pychron did not name shows
+  as a number (`t3`). `run=<id>` is there only on lines written while a run
+  is in progress.
+- **What a run looks like.** With the default `debug` level the log holds
+  the whole sequence of an experiment. Lines named `trace.<event>` are the
+  events the programs pass between their parts, `script.<script>` the
+  scripts and every call they make, `experiment.run` the steps of a run,
+  `device.<name>` each call to a device, `spool` and `store` the saving of
+  the record. Shortened, from a simulated queue (polling lines and most
+  script calls left out):
+
+  ```
+  2026-10-23T09:48:27.512Z [info] [queue] trace.QueueStarted: rows=3, from_row=0
+  2026-10-23T09:48:32.512Z [debug] [queue] trace.RunStarted: row=0, run_id=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670, identifier=bu
+  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 trace.RunStateChanged: run_id=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670, from=preparing, to=extracting, reason=
+  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 script.extraction/sim_extract.py: start extraction/sim_extract.py path=extraction/sim_extract.py sha=f062bc07dd7b0bb9627525100a62d1edeefbf18bc62a7f4b16340109559ce87a kind=extraction
+  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 device.actuator1: close ok in 0 ms
+  2026-10-23T09:48:32.512Z [info] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 switches: valve C closed
+  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 script.extraction/sim_extract.py: close(name=C) -> ok in 0 ms
+  2026-10-23T09:48:34.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 script.extraction/sim_extract.py: sleep(seconds=2) -> ok in 2000 ms
+  ...
+  2026-10-23T09:52:21.112Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 spool: put bu-1 (f0e1bcfa-bfaf-40d6-9ac0-7772913f2670)
+  2026-10-23T09:52:21.112Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 store: save bu-1: wrote .../records/bu/bu-1.json in 0 ms
+  2026-10-23T09:52:21.112Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 spool: hand-off f0e1bcfa-bfaf-40d6-9ac0-7772913f2670: sent
+  2026-10-23T09:52:21.112Z [debug] [queue] trace.RunFinished: row=0, identifier=bu, run_id=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670, aliquot=1, step=, state=success, truncated=false, save_error=false, status=complete
+  2026-10-23T10:00:07.912Z [info] [queue] trace.QueueEnded: end=completed, reason=, runs=3
+  ```
+- **Finding one run.** The `run=` field is the run's id (a long code), not
+  its name. Find the name once, in the `spool: put` or `trace.RunStarted`
+  line (`grep 'spool: put bu-1 '` gives `put bu-1 (<id>)`), then
+  `grep 'run=<id>'` gives every line written for that run, on whichever
+  thread wrote it. The Log panel shows the same id in its Run column, and
+  its filter box matches it.
+- **What `elctl` printed.** Everything `elctl` writes to the terminal's error
+  output is also in `elctl.log`, under the logger `elctl`: a line starting
+  `error` at `error`, any other at `warn`.
 - **No log file.** If `logging.toml` or `logging.local.toml` cannot be read,
   logging goes on with the built-in defaults and the first error in the log
   (and in the Log panel) says what is wrong with the file. Without an install

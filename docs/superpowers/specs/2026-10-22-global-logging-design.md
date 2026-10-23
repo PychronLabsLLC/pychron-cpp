@@ -163,15 +163,18 @@ empty; dock's text filter matches message, thread, run.
 File line format becomes:
 
 ```
-2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: message
+2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 device.actuator1: close ok in 0 ms
 ```
 
 - `[<thread tag>]`: from thread-local tag, set by RAII
-  `pychron::LogContext::Thread tag{"executor"}`; untagged thread shows
+  `pychron::LogContext::Thread tag{"run"}`; untagged thread shows
   `[t<n>]`, n = small id hub assigns per thread on first record.
-- `run=<runid>`: present only while thread-local run scope is set
-  (`LogContext::Run scope{runid}`, set by executor around a run, and by
+- `run=<run id>`: present only while thread-local run scope is set
+  (`LogContext::Run scope{run_id}`, set by executor around a run, and by
   whatever thread works for that run). Absent otherwise; no empty field.
+  Value is executor's run id (uuid, as `run_id=` of `trace.RunStarted`), not
+  run name (`bu-1`): name not known before aliquot given. Name to id:
+  `trace.RunStarted` (identifier), `spool: put <name> (<id>)`.
 - Context captured on calling thread in `LogHub::write` (before queue), so
   writer thread does not need it. `Log` bus event gains `std::string thread`
   and `std::string run` fields; Log dock shows them as two new columns,
@@ -189,59 +192,100 @@ rules in force. Last record at clean exit: `session end`.
 
 ### 2.1 Bus tap
 
-`EventRecorder` (`libs/core`, `event_recorder.hpp`): subscribes to bus given
-to it, writes each event as one line on logger `trace.<event>` with event's
-fields as `key=value`. Line constructs one on its bus once hub attached;
-destroyed before bus.
+Three recorders, one per library that publishes events, each writing an
+event as one line on logger `trace.<event>`, event's fields as `key=value`:
+`EventRecorder` (`libs/core`, `event_recorder.hpp`), `systems::SystemsEventRecorder`
+(`libs/systems`, `event_log.hpp`), `experiment::ExperimentEventRecorder`
+(`libs/experiment`, `event_log.hpp`). Each library classifies every event
+type it publishes in `core_event_classes()` / `systems_event_classes()` /
+`experiment_event_classes()`: logged at a level, or never logged. A test holds
+every event type, so new type fails it until classified.
 
-| Event | Level |
-|---|---|
-| `ValveChanged`, `SwitchLockChanged`, `LinkReconnected`, `TransportHealth` (on change only), `ActuationFailed` (warn) | debug / as noted |
-| `Alarm` | warn |
-| Executor: `ExecutorStateChanged`, `RunStarted`, `RunFinished` (with `RunSummary`), `QueueEdited`, `QueueFrontier`, `ExecutorWaiting`, `ExecutorHolding`, `QueueResult` | debug (`QueueResult` and `RunFinished` with failure: info) |
+| Recorder | Event | Level |
+|---|---|---|
+| core | `ValveChanged`, `SwitchLockChanged`, `LinkReconnected`, `TransportHealth` (on change of connected only) | debug |
+| core | `ActuationFailed`, `Alarm` | warn |
+| systems | `JobStarted`, `JobFinished`, `PeakCenterTryStarted`, `PeakCenterDone`, `DetectorState`, `FieldTableChanged` | debug |
+| systems | `ScanStatus` | debug; warn when it carries error |
+| experiment | `ExecutorStateChanged`, `RunStarted`, `QueueEdited`, `QueueFrontier`, `ExecutorWaiting`, `ExecutorHolding`, `RunStateChanged`, `BlockStarted`, `BlockFinished`, `NotificationSent` | debug |
+| experiment | `RunFinished` (with `RunSummary`) | debug; info when run did not succeed or was not saved |
+| experiment | `SpoolStatus` | debug; warn when record could not be sent |
+| experiment | `QueueStarted`, `QueueEnded` (carries queue result: `end=`, `reason=`, `runs=`), `ConditionalTripped`, `RunNote` | info |
+| experiment | `MeasurementGap` | info; warn when readings did not resume |
 
-Never logged by tap: `Sample`, `PressureSample`, `TemperatureSample`,
-`HeaterSample`, `Snapshot` (high rate), `Log` (loop). Event types added later
-must be listed in recorder or in its never-logged list; a test holds the list
-of every event type in `events.hpp` and `executor.hpp`, so a new type fails it
-until classified.
+`QueueResult` is not bus event: logged inside `QueueEnded`, info.
 
+Never logged. core: `Sample`, `PressureSample`, `TemperatureSample`,
+`HeaterSample`, `Snapshot` (every scan), `Log` (loop), `HandlerFailed`.
+systems: `JobProgress`, `PeakCenterPoint`, `IntensityReading`,
+`MagnetMoved` (every step). experiment: `CountsProgress`, `OverlapReady`,
+`NotificationOutbox`, `SeriesUpdated`, `FitsUpdated` (every reading).
+
+Recorders built by apps, not by line: one of each kind per bus app makes
+(line bus; executor's bus when another), each destroyed before its bus.
 Executor publishes on `ExecutorContext::services.bus`, which app supplies.
-App constructs one `EventRecorder` per bus it creates (line bus; executor's
-bus when that is another), each destroyed before its bus.
+
+Component that publishes `Log` on bus also writes it to file:
+`log_and_publish` (`libs/core` `log_error.hpp`) writes through process logger,
+and publishes on own bus only when that bus is not hub's (hub already
+publishes it there). Every dock line in file once.
 
 ### 2.2 Explicit records where no event exists
 
 Each at `debug` unless noted. Every one runs inside run scope (1.6) when a
-run is active.
+run is active. Components take loggers with `process_logger(name)` when
+constructed (apps build them after `set_process_log_hub`), never in static
+initializer; nothing threaded through `RunServices`, `ExecutorContext`,
+`ScriptEnvironment`, `Device`. No process hub (most unit tests): record
+dropped at cost of one atomic load.
 
-- Scripts (`libs/scripting`): script start (name, path, sha) and end (exit
-  reason, duration); each host call: name, argument summary (max 200 chars),
-  result or error, duration. Logger `script.<name>`. Thread tag
-  `script:<n>`.
+- Scripts (`libs/scripting`): script start (name, path, sha, kind) and end
+  (exit reason, duration; `warn` when script failed); each host call: name,
+  argument summary (max 200 chars), result or error, duration
+  (`close(name=C) -> ok in 0 ms`). Logger `script.<name>`. No thread tag of
+  own: script carries tag of thread it runs on (`run` in a run). Rehearsal:
+  each step at `trace` (`step <cmd>(args)`), nothing else in rehearse or
+  estimate.
 - Run steps (`libs/experiment`): extraction start/end, equilibration,
   measurement phase boundaries, peak center start/result, baseline
   start/end, each conditional evaluated (`info` when it fires), truncation,
-  abort reason (`warn`). Logger `experiment.run`.
-- Devices (`libs/devices`): each driver command: device, command, short
-  reply (max 200 chars), duration, error. One choke point per driver family;
-  plan names them. Raw bytes stay on `*.wire` at trace. Logger
-  `device.<name>`. Polling commands (gauge reads, temperature reads driven
-  by sampler) at `trace`, not debug: they repeat every second.
-- Store and spool (`libs/experiment` persist, `libs/persistence`): record
-  write start/end with runid and duration, spool hand-off, spool retry and
-  result. Failure: `error`. Logger `store`.
+  abort reason (`warn`). Logger `experiment.run`; measurement engine
+  `experiment.engine`, its dock lines `measurement`.
+- Devices (`libs/devices`): each driver call, one line naming device and
+  call: `<what> ok in <ms> ms`, `<what> failed: <kind>: <message>`. No
+  command text, no reply: bytes stay on `*.wire` at trace. Logger
+  `device.<name>`. Polling calls (gauge, temperature reads driven by
+  sampler or scheduler) at `trace`. Cancelled call: `debug` (`trace` while
+  polling), not warn. While polling only first failure of a streak warns;
+  repeats at `trace`. Link reconnect failure: `warn` on
+  `device.<transport name>`, one per attempt.
+- Store and spool (`libs/experiment` persist, `libs/experiment/adapters/store`):
+  logger `store` per save: `StorePersister` `save <runid>: start` /
+  `save <runid>: done in <ms> ms`; records folder (`FilePersister`, `elctl
+  exp run --data`) `save <run name>: wrote <path> in <ms> ms`. Save failure:
+  `error` on each failed attempt (each attempt one occurrence; flush cadence
+  5-30 min). Logger `spool`: `put`, `remove`, `hand-off <uuid>: sent`,
+  `flush: sent <n>, <m> pending`; hand-off failure `warn` once per record per
+  attempt; flush `warn` only for failures not from a hand-off.
 - UI actions (`apps/pychron-ui`): each user command that changes state or
   starts work (start/stop/abort queue, open/close valve, queue edit, save,
-  run script, preference change) at `info`, logger `ui.action`. Thread tag
-  `ui`.
+  run script, preference change) at `info`, logger `ui.action`. Queue start
+  logged by experiment window. Thread tag `ui`. UI loggers `ui.<area>`.
+
+Redaction (host call and other argument summaries): value of key equal to
+`password`, `token`, `secret` or `key`, or ending `_<one of them>` or
+`-<one of them>`, case-insensitive, written `***`.
 
 ### 2.3 Thread tags
 
 Every thread pychron starts sets tag first thing (beside its
-`Clock::Participant`): `executor`, `script:<n>`, `sampler.<device>`,
-`spool`, `scheduler.<n>`, `ui`, `metrics`, `log-writer` (writer itself
-never logs). Plan lists threads found.
+`Clock::Participant`). Tags as built: `run` (executor run slot),
+`run.post-eq` (post-equilibration), `run.phase` (phase thread), `queue`,
+`scheduler`, `transport.<name>`, `metrics`, `camera`, `ngx.reader`,
+`process.<program>`, `notifier`, `rehearsal`, `store`, `ui`, `laser`,
+`laser.video`, `entry`, `update`, `peak-center`, `processing`, `elctl`.
+Writer thread never logs. Threads with no body in pychron code (Qt thread
+pools, store source pool) stay untagged (`[t<n>]`).
 
 ### 2.4 Error rule
 
@@ -252,10 +296,22 @@ with error kind, message, context and what was attempted.
 - Helper `log_error(const Logger&, const Error&, std::string_view attempted)`
   in `libs/core` (`log_error.hpp`); one line, `attempted: kind: what
   (context)`.
-- In `pychron-ui`, error display goes through one function that calls
-  helper (plan finds existing display sites and routes them).
-- In `elctl`, the place that prints `error: ...` and sets exit status calls
-  helper.
+- In `pychron-ui`: `show_error` / `show_warning` (`error_report.hpp`) log
+  and show; banner or status line that shows error its own way calls
+  `log_shown` first.
+- In `elctl`: no call at each of ~170 write sites. `main()` tees `std::cerr`
+  into log (`elctl::LogTeeBuf`, `apps/elctl/src/log_tee.hpp`, put on and
+  taken off by RAII `StreamTee`), logger `elctl`: line starting `error` or
+  `elctl: error` at `error`, every other line at `warn`; empty line no
+  record. Tee unbuffered: every byte reaches stderr in call that wrote it;
+  only unfinished line kept, logged at its newline or when tee goes. Tee
+  made after process hub set; `std::cerr` gets its own buffer back before
+  hub unset. Hub's stderr echo and writer's error report go to C `stderr`
+  (`fwrite`), not `std::cerr`: through tee every echoed record would be
+  logged again, and echo would re-enter hub's echo mutex. Line hub writes to
+  stderr while tee logs on same thread passed through, not logged.
+  `VirtualClock` stall report stays on `clock` (warn) too, so in file twice
+  (`clock`, `elctl`).
 - Error not shown to user but swallowed (retry, fallback) logged at `warn`
   once per occurrence.
 
@@ -269,8 +325,8 @@ with error kind, message, context and what was attempted.
   `2026-10-06-virtual-clock-design.md` 4.4): no record path waits on clock.
 - Timestamps from `clock.wall_now()` of session clock.
 - No secret in log: credentials, passwords, tokens never in argument
-  summaries; script host call summary and device command summary pass
-  through redaction of keys named `password`, `token`, `secret`, `key`.
+  summaries; script host call summary passes through redaction (2.2). Device
+  record holds no command text.
 - Record that is `error` is on disk when `write` returns (unchanged).
 - Debug logging cost: record below logger level costs one atomic load
   (unchanged). Argument summaries built only when `enabled(level)`.
@@ -289,11 +345,19 @@ with error kind, message, context and what was attempted.
 - UI (`tests/ui`): `qWarning` reaches file; error shown in dialog reaches
   file at `error`.
 - Recorder: each logged event type gives expected line; sample events give
-  none; every event type is either logged or listed as never logged.
-- Sequence (`tests/experiment`, `VirtualTimeTest`): one-run sim queue; file
-  holds, in order, queue start, run started, script start, host calls, run
-  steps, record written, run finished, queue result; executor lines tagged
-  `[executor]`, run lines carry `run=`.
+  none; every event type of each library is either logged or listed as
+  never logged.
+- Sequence (`apps/elctl/tests`, `ElctlExpTest.ExecutionSequenceIsLogged`):
+  example queue, from test's temporary copy of `configs/examples`, on sim at
+  `--sim-speed max` under `ProcessLogScope`; file holds, in order,
+  `trace.QueueStarted`, `trace.RunStarted`, `script.` `start`, a host call,
+  `trace.RunStateChanged` `to=measuring`, `store` save line,
+  `trace.RunFinished`, `trace.QueueEnded`; every line run thread wrote
+  between `RunStarted` and `RunFinished` is `[run] run=<that run's id>`.
+- `elctl` tee (`apps/elctl/tests/test_log_tee.cpp`): error line is `error`
+  record, other `warn`; partial line waits for newline, logged when tee
+  goes; bytes pass through unchanged and at once; with `echo_stderr` and
+  `std::cerr` teed, each record in file once.
 - Errors: forced store failure gives `error` line with context; `elctl`
   error exit gives `error` line.
 - Redaction: host call with `password=` argument logs `password=***`.
