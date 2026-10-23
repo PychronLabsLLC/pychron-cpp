@@ -1,6 +1,7 @@
 #include "recall_window.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 
@@ -84,9 +85,11 @@ void fill_section(QTableWidget* t, const pp::RecallSection& s) {
   t->resizeColumnsToContents();
 }
 
-constexpr pp::Stage kStages[] = {pp::Stage::Intercept,       pp::Stage::Baseline,       pp::Stage::BaselineCorrected,
-                                 pp::Stage::Blank,           pp::Stage::BlankCorrected, pp::Stage::IcFactor,
-                                 pp::Stage::IcCorrected,     pp::Stage::DecayCorrected, pp::Stage::InterferenceCorrected};
+// The core stages; a domain's own (Ar-Ar's decay and interference corrected)
+// show in its Summary sections.
+constexpr std::array kStages{pp::Stage::Intercept,      pp::Stage::Baseline,  pp::Stage::BaselineCorrected,
+                             pp::Stage::Blank,          pp::Stage::BlankCorrected, pp::Stage::IcFactor,
+                             pp::Stage::IcCorrected};
 
 const char* stage_title(pp::Stage s) {
   switch (s) {
@@ -104,10 +107,6 @@ const char* stage_title(pp::Stage s) {
       return "IC";
     case pp::Stage::IcCorrected:
       return "×IC";
-    case pp::Stage::DecayCorrected:
-      return "Decay";
-    case pp::Stage::InterferenceCorrected:
-      return "IFC";
   }
   return "";
 }
@@ -295,13 +294,23 @@ bool RecallWindow::show_analysis(const QString& uuid) {
 }
 
 void RecallWindow::display() {
-  const auto reduced = pp::reduce_analysis(shown_, {});
+  // The domain's reduction chain over the analysis as shown. Its units write
+  // what they derive from the stored fits to the source's cache (age cache
+  // spec 4.5); one with unsaved fit edits is not the analysis's, so that run
+  // has no source and writes nothing.
+  auto unreduced = std::make_shared<pp::ReducedAnalysis>();
+  unreduced->analysis = shown_;
+  pp::Dataset one;
+  one.mutable_items().emplace_back();
+  one.mutable_items().back().analysis = std::move(unreduced);
+  pp::RunContext context;
+  context.source = edits_.empty() ? &source_ : nullptr;
+  context.domain = &domain_;
+  auto chain = pp::run_reduction_chain(domain_, pp::make_dataset(std::move(one)), context);
+  if (!chain) log_shown("recall", tr("Reduce %1").arg(qs(shown_->runid)), chain.error());
+  const pp::ReducedPtr reduced = chain && !(*chain)->empty() ? (*chain)->items().front().analysis
+                                                              : pp::reduce_analysis(shown_, {});
   model_ = pp::make_recall_model(*reduced);
-  // The stored fits' age goes to the source's cache (age cache spec 4.5);
-  // one with unsaved fit edits is not the analysis's and does not.
-  if (pp::IDerivedSink* sink = source_.derived(); sink && edits_.empty()) {
-    if (auto derived = domain_.derive(*reduced)) sink->put({std::move(*derived)});
-  }
 
   setWindowTitle(tr("Recall — %1").arg(qs(shown_->runid)) + (edits_.empty() ? QString() : QStringLiteral(" *")));
   QStringList header;

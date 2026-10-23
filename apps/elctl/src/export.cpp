@@ -151,12 +151,13 @@ int run(const Args& a, const pp::Domain& domain, Io io) {
     if (!ok) return ok.error();
     return std::nullopt;
   };
-  auto& reduce = pipeline.add(reg, "reduce", "reduce", {"select"});
+  pipeline.add(reg, "reduce", "reduce", {"select"});
+  auto& reduce = pipeline.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
   if (auto e = set(reduce, "constants", a.ages.constants)) return fatal(io, *e);
   if (auto e = set(reduce, "include_decay_error", a.ages.decay_error)) return fatal(io, *e);
 
   pp::Runner runner(reg, source->get(), &domain);
-  auto reduced = runner.run(pipeline, "reduce");
+  auto reduced = runner.run(pipeline, "arar_reduce");
   if (!reduced) return fatal(io, reduced.error());
   const auto& before_grouping = std::get<pp::DatasetPtr>(reduced->at(0));
   if (before_grouping->empty()) {
@@ -165,7 +166,7 @@ int run(const Args& a, const pp::Domain& domain, Io io) {
   }
   std::string key = a.group_by;
   if (key == "auto") key = any_step(*before_grouping) ? "aliquot" : "identifier";
-  auto& group = pipeline.add(reg, "group", "group", {"reduce"});
+  auto& group = pipeline.add(reg, "group", "group", {"arar_reduce"});
   if (auto e = set(group, "key", key)) return fatal(io, *e);
   auto grouped = runner.run(pipeline, "group");
   if (!grouped) return fatal(io, grouped.error());

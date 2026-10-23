@@ -32,6 +32,7 @@ struct RecallIsotope {
   std::map<Stage, Value> stages;
 };
 
+// One line of a domain's error budget (Domain::error_budget), largest first.
 struct RecallErrorComponent {
   std::string name;  // "Ar40", "Ar40 bs", "J", "lambda_k", ...
   double percent = 0.0;
@@ -40,16 +41,15 @@ struct RecallErrorComponent {
 struct RecallModel {
   std::string title;  // "66001-01A  FC-2  unknown"
   std::vector<std::string> header;  // date, spectrometer, extraction device, tag
-  RecallSection computed;      // age, F, K/Ca, ...
-  RecallSection ratios;        // corrected argon ratios
   RecallSection identity;      // identifier, sample, project, irradiation, ...
   RecallSection extraction;    // value, duration, cleanup, positions, ...
   RecallSection spectrometer;  // gains, deflections, source, peak centers
-  std::vector<RecallIsotope> isotopes;
-  std::vector<RecallErrorComponent> error_budget;  // sorted, largest first
-  std::string reduction_note;  // why computed values are missing
+  std::vector<RecallIsotope> isotopes;  // core stages
+  std::string reduction_note;  // why the domain's values are missing (ReducedAnalysis::reduction_error)
 };
 
+// The neutral tables; a domain's sections and budget are Domain::recall_sections
+// and Domain::error_budget.
 RecallModel make_recall_model(const ReducedAnalysis& analysis);
 
 // Isotope evolutions as a scene: one panel per series of `kind` (isotopes for

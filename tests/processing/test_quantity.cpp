@@ -74,22 +74,17 @@ TEST(Quantity, RatioPropagatesLikeUFloat) {
   EXPECT_NEAR(self->error, 0.0, 1e-15);
 }
 
-TEST(Quantity, ReducedValuesNeedAFlux) {
-  auto air = pp::reduce_analysis(make_air(0), {});
-  EXPECT_TRUE(air->arar);
-  EXPECT_FALSE(q("age").eval(*air));  // no J
-  EXPECT_TRUE(q("F").eval(*air));
+// Without a domain's reduction there are no domain values or stages, and no crash.
+TEST(Quantity, DomainTermsHaveNoValueWithoutTheDomainsReduction) {
   auto unk = pp::reduce_analysis(make_unknown(0), {});
-  ASSERT_TRUE(unk->arar);
-  const auto age = q("age").eval(*unk);
-  ASSERT_TRUE(age);
-  EXPECT_GT(age->value, 0.0);
-  const auto with_j = q("age_w_j").eval(*unk);
-  ASSERT_TRUE(with_j);
-  EXPECT_GT(with_j->error, age->error);
-  EXPECT_TRUE(q("radiogenic_yield").eval(*unk));
-  EXPECT_TRUE(q("Ar39.decay_corrected").eval(*unk));
-  EXPECT_TRUE(q("Ar36.interference_corrected").eval(*unk));
+  EXPECT_EQ(unk->domain, nullptr);
+  EXPECT_FALSE(q("age").eval(*unk));
+  EXPECT_FALSE(q("j").eval(*unk));
+  EXPECT_FALSE(q("Ar39.decay_corrected").eval(*unk));
+  EXPECT_FALSE(q("Ar36.interference_corrected/Ar36").eval(*unk));
+  EXPECT_TRUE(q("Ar39.decay_corrected").needs_reduction());
+  EXPECT_EQ(q("Ar39.decay_corrected").text(), "Ar39.decay_corrected");
+  EXPECT_EQ(q("Ar39.decay_corrected").label(), "Ar39 decay corrected (fA)");
 }
 
 TEST(Quantity, MetadataAndMissing) {
@@ -107,7 +102,7 @@ TEST(Quantity, Available) {
   std::vector<pp::ReducedPtr> v{pp::reduce_analysis(make_air(0), {}), pp::reduce_analysis(make_unknown(1), {})};
   const auto names = pp::available_quantities(v);
   auto has = [&](const char* n) { return std::find(names.begin(), names.end(), n) != names.end(); };
-  EXPECT_TRUE(has("age"));
+  EXPECT_FALSE(has("age"));  // no domain's reduction: tests/arar test_quantity_arar.cpp has it
   EXPECT_TRUE(has("Ar40/Ar36"));
   EXPECT_TRUE(has("Ar40/Ar39"));
   EXPECT_FALSE(has("Ar36/Ar40"));

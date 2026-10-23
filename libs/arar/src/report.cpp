@@ -15,6 +15,7 @@
 #include "pychron/arar/arar_groups.hpp"
 #include "pychron/arar/group_ages.hpp"
 #include "pychron/arar/arar_reduction.hpp"
+#include "pychron/arar/reduce.hpp"
 
 namespace pychron::processing {
 
@@ -119,7 +120,7 @@ struct Inventory {
   std::set<std::string> spectrometers, devices, analysts, projects, samples, materials, irradiations, monitors;
   std::size_t total = 0, included = 0, groups = 0, reduced = 0;
   double first = 0, last = 0;
-  const ReducedAnalysis* reference = nullptr;  // the first reduced analysis: its constants and units
+  const arar::ArArReduced* reference = nullptr;  // the first reduced analysis: its constants and units
   bool constants_differ = false;
 };
 
@@ -148,13 +149,13 @@ Inventory take_inventory(const Dataset& d, int nsigma) {
     if (first || a.timestamp < inv.first) inv.first = a.timestamp;
     if (first || a.timestamp > inv.last) inv.last = a.timestamp;
     first = false;
-    if (it.analysis->constants) {
+    if (const arar::ArArReduced* reduced = arar::reduced_of(*it.analysis)) {
       ++inv.reduced;
       if (inv.reference == nullptr) {
-        inv.reference = it.analysis.get();
+        inv.reference = reduced;
       } else {
-        const auto& c = *it.analysis->constants;
-        const auto& ref = *inv.reference->constants;
+        const auto& c = reduced->constants;
+        const auto& ref = inv.reference->constants;
         if (c.lambda_b.value != ref.lambda_b.value || c.lambda_e.value != ref.lambda_e.value ||
             c.atm4036.value != ref.atm4036.value || c.lambda_ar37.value != ref.lambda_ar37.value ||
             c.lambda_ar39.value != ref.lambda_ar39.value || c.include_decay_error != ref.include_decay_error)
@@ -194,7 +195,7 @@ void metadata_table(const Dataset& d, const ReportOptions& o, const Inventory& i
   item("irradiations", txt(join(inv.irradiations)));
   item("fluence monitors", txt(join(inv.monitors)));
   item("uncertainty level", Cell{std::to_string(o.nsigma) + " sigma (every ± column)"});
-  const r::AgeUnits units = inv.reference ? inv.reference->constants->age_units : r::AgeUnits::Ma;
+  const r::AgeUnits units = inv.reference ? inv.reference->constants.age_units : r::AgeUnits::Ma;
   item("age units", Cell{std::string(age_units_name(units))});
   item("intensity units", Cell{std::string("fA")});
   item("isotope intensities",
@@ -202,7 +203,7 @@ void metadata_table(const Dataset& d, const ReportOptions& o, const Inventory& i
                         "39Ar) for radioactive decay since irradiation; the interfering-reaction corrections are "
                         "applied in 40Ar*/39ArK, 39ArK, K/Ca and K/Cl")});
   item("blanks", Cell{std::string("the blank subtracted from each isotope is listed with every analysis")});
-  const bool decay_error = inv.reference && inv.reference->constants->include_decay_error;
+  const bool decay_error = inv.reference && inv.reference->constants.include_decay_error;
   item("age uncertainties",
        Cell{std::string("analytical: measured intensities, baselines, blanks and detector factors; with J: analytical "
                         "plus the J uncertainty of the irradiation position. Decay-constant uncertainty included: ") +
@@ -236,7 +237,7 @@ void constants_table(const ReportOptions& o, const Inventory& inv, Report& rep) 
   }
   if (inv.constants_differ)
     rep.warnings.emplace_back("the analyses were reduced with different constants; those of the first are listed");
-  const auto& c = *inv.reference->constants;
+  const auto& c = inv.reference->constants;
   auto row = [&](std::string name, const r::Measured& m, const char* units) {
     t.rows.push_back({Cell{std::move(name)}, num(m.value), num(m.error * o.nsigma), Cell{std::string(units)}});
   };
@@ -449,13 +450,15 @@ void analyses_table(const std::vector<GroupRef>& groups, const r::AgeUnits units
       row[weight] = num(a.extraction.weight);
       row[included] = yes_no(it->exclusion.included());
       row[tag] = txt(a.tag);
+      const arar::ArArReduced* reduced = arar::reduced_of(ra);
       for (std::size_t i = 0; i < 5; ++i) {
         const auto name = r::to_string(r::kArgonKeys[i]);
-        set_pm(row, iso[i], ra.stage(name, Stage::DecayCorrected), ns);
+        // Decay corrected; without an Ar-Ar result that is the IC-corrected stage.
+        set_pm(row, iso[i], reduced ? reduced->stage(name, "decay_corrected") : ra.stage(name, Stage::IcCorrected), ns);
         set_pm(row, blank[i], ra.stage(name, Stage::Blank), ns);
       }
-      if (ra.arar) {
-        const auto& res = *ra.arar;
+      if (reduced) {
+        const auto& res = reduced->arar;
         set_pm(row, f, res.f.f, ns);
         set_pm(row, yield, res.f.radiogenic_yield, ns);
         set_pm(row, k39, res.f.interference.k39, ns);
@@ -732,7 +735,7 @@ Report make_report(const Dataset& dataset, const ReportOptions& options) {
   metadata_table(dataset, o, inv, rep);
   constants_table(o, inv, rep);
   irradiation_table(dataset, o, rep);
-  const r::AgeUnits units = inv.reference ? inv.reference->constants->age_units : r::AgeUnits::Ma;
+  const r::AgeUnits units = inv.reference ? inv.reference->constants.age_units : r::AgeUnits::Ma;
   const auto groups = groups_of(dataset);
   analyses_table(groups, units, o, rep);
   summary_table(groups, units, o, rep);

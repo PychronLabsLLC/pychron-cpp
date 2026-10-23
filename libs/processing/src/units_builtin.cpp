@@ -127,11 +127,7 @@ class SelectUnit final : public Unit {
 
 class ReduceUnit final : public Unit {
  public:
-  ReduceUnit()
-      : schema_(make_schema("unit.reduce", "Reduce",
-                            {choice("constants", "Constants", "Reduction", {"default", "legacy", "legacy_preferences"}),
-                             boolean("include_decay_error", "Include decay constant error", "Reduction", false),
-                             boolean("use_irradiation_endtime", "Decay from the irradiation end", "Reduction", false)})) {}
+  ReduceUnit() : schema_(make_schema("unit.reduce", "Reduce", {})) {}
 
   std::string_view kind() const override { return "reduce"; }
   std::string_view title() const override { return "Reduce"; }
@@ -139,39 +135,17 @@ class ReduceUnit final : public Unit {
   std::vector<PortSpec> inputs() const override { return {{"analyses", PortType::Dataset}}; }
   std::vector<PortSpec> outputs() const override { return {{"reduced", PortType::Dataset}}; }
 
-  Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& o,
+  // The core stages of every isotope. A domain's reduction runs after this
+  // unit (Domain::reduction_chain) and writes what it derives: this one
+  // derives nothing and caches nothing.
+  Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& /*o*/,
                                          RunContext& ctx) const override {
-    ReductionSettings s;
-    const std::string c = o.get_string("constants");
-    s.preset = c == "legacy"               ? reduction::ConstantsPreset::Legacy
-               : c == "legacy_preferences" ? reduction::ConstantsPreset::LegacyPreferences
-                                           : reduction::ConstantsPreset::Default;
-    s.include_decay_error = o.get_bool("include_decay_error");
-    s.use_irradiation_endtime = o.get_bool("use_irradiation_endtime");
     Dataset d = *dataset_in(in);
-    std::size_t failed = 0;
     for (auto& item : d.mutable_items()) {
       if (ctx.cancelled()) return fail(ErrorKind::Cancelled, "reduce: cancelled");
-      item.analysis = reduce_analysis(item.analysis->analysis, s);
-      if (!item.analysis->reduction_error.empty()) ++failed;
+      item.analysis = reduce_analysis(item.analysis->analysis, ReductionSettings{});
     }
-    if (failed) ctx.diagnostics.push_back(std::to_string(failed) + " analyses did not reduce");
-    // Every reduction the application makes keeps its ages in the source's
-    // cache, when it has one (age cache spec 4.5); the sink drops the current.
-    // The analyses here carry their stored fits: one with unsaved fit edits
-    // keeps the stored input fingerprint and must never reach this unit.
-    // The cache is the domain's to derive; a run without one writes nothing.
-    // A reduction made under other than the default settings is no cached one.
-    if (IDerivedSink* sink = ctx.source && ctx.domain ? ctx.source->derived() : nullptr) {
-      std::vector<DerivedValues> values;
-      for (const auto& item : d.items()) {
-        auto derived = s == ReductionSettings{} ? ctx.domain->derive(*item.analysis) : std::nullopt;
-        if (derived) values.push_back(std::move(*derived));
-      }
-      if (!values.empty()) sink->put(std::move(values));
-    }
-    d.reduction_tag = std::string(reduction::kReductionVersion) + "/" + c + "/" + (s.include_decay_error ? "d1" : "d0") +
-                      (s.use_irradiation_endtime ? "e1" : "e0");
+    d.reduction_tag = ctx.domain ? std::string(ctx.domain->reduction_version()) : std::string("core");
     return one(make_dataset(std::move(d)));
   }
 

@@ -2838,7 +2838,8 @@ class TestDataWindows : public QObject {
     FigureWindow w(bridge, presets, entry("ideogram"), {QStringLiteral("step-0")});
     std::vector<std::string> kinds;
     for (const auto& node : w.pipeline().nodes) kinds.push_back(node.kind);
-    QCOMPARE(kinds, (std::vector<std::string>{"select", "reduce", "group", "group", "edits", "ideogram"}));
+    QCOMPARE(kinds,
+             (std::vector<std::string>{"select", "reduce", "arar_reduce", "group", "group", "edits", "ideogram"}));
     QCOMPARE(w.pipeline().find("group")->options.get_string("key"), std::string("identifier"));
   }
 
@@ -3009,18 +3010,19 @@ class TestDataWindows : public QObject {
     QVERIFY(csv.contains(QStringLiteral("[summary]")));
     QVERIFY(csv.contains(QStringLiteral("S1-01A")));
     QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));  // the plateau of eight concordant steps, grouped by aliquot
-    // Byte for byte the report the export pipeline gave before exporters: select, reduce, group by aliquot.
+    // Byte for byte the report the export pipeline gave before exporters: select, the reduction, group by aliquot.
     {
-      pp::Runner runner(pp::UnitRegistry::builtin(), src.get());
+      const auto& reg = arar_.units();
+      pp::Runner runner(reg, src.get());
       pp::Pipeline reference;
-      const auto& reg = pp::UnitRegistry::builtin();
       auto& select = reference.add(reg, "select", "select");
       std::vector<std::string> uuids;
       for (const auto& id : ids) uuids.push_back(id.toStdString());
       QVERIFY(select.options.set("uuids", uuids));
       QVERIFY(select.options.set("remove_tags", std::vector<std::string>{}));
       reference.add(reg, "reduce", "reduce", {"select"});
-      reference.add(reg, "by_aliquot", "group", {"reduce"});
+      reference.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
+      reference.add(reg, "by_aliquot", "group", {"arar_reduce"});
       QVERIFY(reference.find("by_aliquot")->options.set("key", std::string("aliquot")));
       const auto ran = runner.run(reference, "by_aliquot");
       QVERIFY(ran.has_value());

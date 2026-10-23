@@ -14,7 +14,7 @@
 // the store, another source's) has no place in the walk. The analysis is
 // then built from the chosen payloads by the function the Data browser uses
 // for the heads (processing::analysis_from_store) and reduced the same way
-// (processing::reduce_analysis), so nothing of the reduction is repeated here.
+// (arar::reduce_with_arar), so nothing of the reduction is repeated here.
 //
 // Reference data (flux, production, chronology, gains) comes from another
 // source, whose walk cannot be compared with this one; it is taken as of the
@@ -63,6 +63,7 @@
 #include <vector>
 
 #include "import_impl.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
 
@@ -70,6 +71,7 @@ namespace elctl::import_detail {
 
 namespace ingest = pychron::ingest;
 namespace processing = pychron::processing;
+namespace arar = pychron::arar;
 
 namespace {
 
@@ -192,15 +194,15 @@ class AgeAsOf {
     if (!built->context.flux) return no("no_j");
     if (!built->context.production) return no("no_production");
     if (built->context.chronology.empty()) return no("no_chronology");
-    processing::ReductionSettings reduction;
+    arar::ArArSettings reduction;
     reduction.preset = constants_;
-    const auto reduced =
-        processing::reduce_analysis(std::make_shared<const processing::Analysis>(std::move(*built)), reduction);
-    if (!reduced || !reduced->arar) return no("not_reducible");
-    if (!reduced->arar->ages) return no("age_undefined");
+    const auto reduced = arar::reduce_with_arar(std::make_shared<const processing::Analysis>(std::move(*built)), reduction);
+    const arar::ArArReduced* ar = reduced ? arar::reduced_of(*reduced) : nullptr;
+    if (!ar) return no("not_reducible");
+    if (!ar->arar.ages) return no("age_undefined");
     // Both errors: the verifier compares the one the legacy file stored.
-    const auto& age = reduced->arar->ages->age;                // J without its error
-    const auto& with_j = reduced->arar->ages->age_w_j_err;
+    const auto& age = ar->arar.ages->age;                // J without its error
+    const auto& with_j = ar->arar.ages->age_w_j_err;
     if (!std::isfinite(age.nominal()) || !std::isfinite(age.std_dev()) || !std::isfinite(with_j.std_dev()))
       return no("age_undefined");
     ingest::ComputedAge computed;

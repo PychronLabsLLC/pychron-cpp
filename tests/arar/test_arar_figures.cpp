@@ -6,6 +6,7 @@
 #include <set>
 
 #include "fixtures.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/arar_groups.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/processing/quantity.hpp"
@@ -28,7 +29,7 @@ pp::Dataset steps(int n = 8, double f = 10.0) {
   const double ar36[] = {0.5, 0.3, 0.2, 0.1, 0.08, 0.06, 0.1, 0.2, 0.3, 0.4};
   for (int i = 0; i < n; ++i) {
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(make_step(i, ar39[i], ar36[i], f), {});
+    item.analysis = pychron::arar::reduce_with_arar(make_step(i, ar39[i], ar36[i], f));
     d.mutable_items().push_back(item);
   }
   return d;
@@ -108,10 +109,11 @@ TEST(ArArGroups, AnUnknownWithoutProductionStaysOutOfGroupAges) {
   auto odd = make_step(8, 30.0, 0.1, 50.0);
   odd->context.production.reset();
   pp::DatasetItem item;
-  item.analysis = pp::reduce_analysis(odd, {});
-  ASSERT_TRUE(item.analysis->arar);
-  EXPECT_FALSE(item.analysis->arar->ages);
-  EXPECT_FALSE(item.analysis->j);
+  item.analysis = pychron::arar::reduce_with_arar(odd);
+  const auto* arar = pychron::arar::reduced_of(*item.analysis);
+  ASSERT_TRUE(arar);
+  EXPECT_FALSE(arar->arar.ages);
+  EXPECT_FALSE(arar->j);
   EXPECT_EQ(item.analysis->reduction_error, "no age: no production ratios");
   EXPECT_NEAR(pp::Quantity::parse("F")->eval(*item.analysis)->value, 50.0, 1e-9);
   d.mutable_items().push_back(item);
@@ -200,7 +202,7 @@ TEST(Ideogram, ExclusionDashesTheOriginalCurveAndMovesTheMean) {
   auto d = steps();
   // A stray analysis: F = 12.
   pp::DatasetItem odd;
-  odd.analysis = pp::reduce_analysis(make_step(9, 30, 0.1, 12.0, "S2"), {});
+  odd.analysis = pychron::arar::reduce_with_arar(make_step(9, 30, 0.1, 12.0, "S2"));
   d.mutable_items().push_back(odd);
   pp::Options o(pp::ideogram_schema());
   auto with = pp::build_ideogram(d, o);
@@ -402,7 +404,7 @@ TEST(Spectrum, DiscordantStepsAndFixedPlateau) {
   for (int i = 0; i < 8; ++i) {
     pp::DatasetItem item;
     // Two young low-temperature steps.
-    item.analysis = pp::reduce_analysis(make_step(i, ar39[i], 0.1, i < 2 ? 7.0 : 10.0), {});
+    item.analysis = pychron::arar::reduce_with_arar(make_step(i, ar39[i], 0.1, i < 2 ? 7.0 : 10.0));
     d.mutable_items().push_back(item);
   }
   pp::Options o(pp::spectrum_schema());
@@ -563,7 +565,7 @@ TEST(Isochron, ExcludeNonPlateau) {
   const double ar39[] = {5, 10, 40, 60, 50, 30, 15, 5};
   for (int i = 0; i < 8; ++i) {
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(make_step(i, ar39[i], 0.1 + 0.02 * i, i < 2 ? 7.0 : 10.0), {});
+    item.analysis = pychron::arar::reduce_with_arar(make_step(i, ar39[i], 0.1 + 0.02 * i, i < 2 ? 7.0 : 10.0));
     d.mutable_items().push_back(item);
   }
   pp::Options o(pp::isochron_schema());
@@ -583,7 +585,7 @@ pp::Dataset discordant_steps() {
   const double ar39[] = {5, 10, 40, 60, 50, 30, 15, 5};
   for (int i = 0; i < 8; ++i) {
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(make_step(i, ar39[i], 0.1 + 0.02 * i, i < 2 ? 7.0 : 10.0), {});
+    item.analysis = pychron::arar::reduce_with_arar(make_step(i, ar39[i], 0.1 + 0.02 * i, i < 2 ? 7.0 : 10.0));
     d.mutable_items().push_back(item);
   }
   return d;
@@ -818,7 +820,8 @@ TEST(ArArFigures, PipelineRunsEachFigure) {
     pp::Pipeline p;
     p.add(arar_units(), "select", "select");
     p.add(arar_units(), "reduce", "reduce", {"select"});
-    auto& g = p.add(arar_units(), "group", "group", {"reduce"});
+    p.add(arar_units(), "arar_reduce", "arar_reduce", {"reduce"});
+    auto& g = p.add(arar_units(), "group", "group", {"arar_reduce"});
     ASSERT_TRUE(g.options.set("key", std::string("aliquot")));
     p.add(arar_units(), "figure", kind, {"group"});
     auto out = runner.run(p, "figure");

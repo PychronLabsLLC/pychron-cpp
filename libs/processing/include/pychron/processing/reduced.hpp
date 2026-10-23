@@ -8,33 +8,33 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "pychron/processing/model.hpp"
-#include "pychron/arar/arar_reduction.hpp"
+#include "pychron/reduction/signal.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::processing {
 
+// Core stages only: a domain's own stages (Ar-Ar's decay and interference
+// corrected) are its DomainReduced's, by name.
 enum class Stage {
   Intercept,
   Baseline,
   Blank,
   IcFactor,
-  BaselineCorrected,      // intercept - baseline
-  BlankCorrected,         // - blank (unless the type is not blank corrected)
-  IcCorrected,            // * discrimination * IC; legacy get_intensity
-  DecayCorrected,         // Ar37 and Ar39 decay corrected; equals IcCorrected for others
-  InterferenceCorrected,  // Ar40 - K40, K39, Ar38, Ar37, atm36 (E14); argon only
+  BaselineCorrected,  // intercept - baseline
+  BlankCorrected,     // - blank (unless the type is not blank corrected)
+  IcCorrected,        // * discrimination * IC; legacy get_intensity
 };
 
 std::string_view to_string(Stage stage) noexcept;  // "intercept", "bs_corrected", ...
 std::optional<Stage> parse_stage(std::string_view text) noexcept;
 
+// Core's reduction has nothing to choose yet; a domain's options are its own
+// units' (Ar-Ar: arar_reduce).
 struct ReductionSettings {
-  reduction::ConstantsPreset preset = reduction::ConstantsPreset::Default;
-  bool include_decay_error = false;
-  bool use_irradiation_endtime = false;
   friend bool operator==(const ReductionSettings&, const ReductionSettings&) = default;
 };
 
@@ -43,21 +43,44 @@ struct IsotopeStages {
   std::map<Stage, reduction::UFloat> values;
 };
 
+// What a domain's reduction adds to a reduced analysis (domain seam spec
+// 3.2): its stages and named values, built from the analysis's signals so
+// they correlate with the core stages.
+class DomainReduced {
+ public:
+  DomainReduced() = default;
+  DomainReduced(const DomainReduced&) = default;
+  DomainReduced(DomainReduced&&) = default;
+  DomainReduced& operator=(const DomainReduced&) = default;
+  DomainReduced& operator=(DomainReduced&&) = default;
+  virtual ~DomainReduced() = default;
+
+  virtual std::string_view domain() const = 0;
+  // A stage of this domain for `label` ("decay_corrected"); nullopt: not one of its.
+  virtual std::optional<reduction::UFloat> stage(std::string_view label, std::string_view stage) const = 0;
+  // A named value ("age", "kca"); nullopt: not one of its.
+  virtual std::optional<reduction::UFloat> named(std::string_view name) const = 0;
+  // Units of a named value ("Ma"; "" for a ratio or an unknown name).
+  virtual std::string units(std::string_view name) const = 0;
+  virtual std::vector<std::string> stages() const = 0;  // names, in order after IcCorrected
+  virtual std::vector<std::string> names() const = 0;
+  virtual std::string_view error() const = 0;  // why some values are missing; empty when none are
+};
+
 struct ReducedAnalysis {
   AnalysisPtr analysis;
-  std::vector<IsotopeStages> isotopes;  // same order as analysis->isotopes
-  // Present when the five argon isotopes reduced (missing ones enter as 0).
-  std::optional<reduction::ArArResult> arar;
-  // Why `arar` is absent, if it failed; or, with `arar` present, why it has no
-  // ages and must not feed group results (an unknown without production
-  // ratios or chronology).
+  // One per isotope, same order as analysis->isotopes: the variables every
+  // stage is built from. A domain's reduction reads these, never mints its own,
+  // so its values correlate with the core stages (UFloat correlation is by
+  // variable id).
+  std::vector<reduction::IsotopeSignal> isotope_signals;
+  std::vector<IsotopeStages> isotopes;  // same order as analysis->isotopes; core stages only
+  // The domain's part, when its reduction ran and gave one; null otherwise.
+  std::shared_ptr<const DomainReduced> domain;
+  // Why the domain's reduction gave no values, or why some are missing (an
+  // Ar-Ar unknown without production ratios: no age); such an analysis must
+  // not feed group results.
   std::string reduction_error;
-  // What reduce() was given, for group ages (integrated, isochron) that run
-  // the age equation again: the constants, J (the same variable the ages
-  // used) and the flux's lambda_k_total override.
-  std::optional<reduction::ReductionConstants> constants;
-  std::optional<reduction::UFloat> j;
-  std::optional<reduction::Measured> lambda_k_total;
 
   const IsotopeStages* find(std::string_view key) const;
   // Stage of an isotope key, or of the first isotope with that name.
@@ -66,14 +89,9 @@ struct ReducedAnalysis {
 
 using ReducedPtr = std::shared_ptr<const ReducedAnalysis>;
 
-// Never fails: reduction errors are recorded in reduction_error. Ages need a
-// flux in the analysis context. An argon isotope whose intercept, baseline,
-// blank or IC factor is unknown (Value::known() false), or a flux whose J
-// error or lambda_k_total error is NaN, gives no `arar` (and
-// no `j`), and reduction_error names what is missing; that isotope's stages
-// are NaN. An "unknown" without production ratios or without a chronology
-// reduces with neither interference nor decay correction for them, so it gets
-// `arar` without ages (and no `j`), and reduction_error names what is missing.
+// Never fails, and sets no reduction_error: an isotope whose intercept,
+// baseline, blank or IC factor is unknown (Value::known() false) has NaN
+// stages. The core stages of every isotope, from one signal each.
 ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settings);
 
 }  // namespace pychron::processing

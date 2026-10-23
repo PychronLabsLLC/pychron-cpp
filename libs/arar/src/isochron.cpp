@@ -8,6 +8,7 @@
 
 #include "figure_common.hpp"
 #include "pychron/arar/arar_figures.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/arar_groups.hpp"
 #include "pychron/processing/units.hpp"
 #include "schema_builder.hpp"
@@ -133,14 +134,14 @@ Result<Scene> detail::build_isochron_scene(const Dataset& d, const Options& o, c
         std::unique_ptr<bool[]> ex(new bool[points.size()]);
         bool ok = true;
         for (std::size_t i = 0; i < points.size(); ++i) {
-          const auto& ra = *points[i].item->analysis;
-          if (!ra.arar || !ra.arar->ages) {
+          const arar::ArArReduced* reduced = arar::reduced_of(*points[i].item->analysis);
+          if (!reduced || !reduced->arar.ages) {
             ok = false;
             break;
           }
-          ages.push_back(ra.arar->ages->age.nominal());
-          errs.push_back(ra.arar->ages->age.std_dev());
-          gas.push_back(ra.arar->f.interference_corrected[r::index(r::ArgonIsotope::Ar39)].nominal());
+          ages.push_back(reduced->arar.ages->age.nominal());
+          errs.push_back(reduced->arar.ages->age.std_dev());
+          gas.push_back(reduced->arar.f.interference_corrected[r::index(r::ArgonIsotope::Ar39)].nominal());
           ex[i] = points[i].item->exclusion.excluded();
         }
         if (ok) {

@@ -31,6 +31,7 @@
 #include <string_view>
 #include <vector>
 
+#include "pychron/arar/reduce.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/processing/model.hpp"
 #include "pychron/processing/reduced.hpp"
@@ -54,7 +55,7 @@ struct AgeFlags {
   int plateau_steps = 3;
   double plateau_gas = 50.0;
 
-  pychron::processing::ReductionSettings reduction() const;
+  pychron::arar::ArArSettings reduction() const;
   pychron::reduction::PlateauCriteria criteria() const;
 };
 

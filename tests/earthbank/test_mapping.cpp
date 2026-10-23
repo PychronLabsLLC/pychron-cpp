@@ -26,6 +26,7 @@
 #include "pychron/arar/group_ages.hpp"
 #include "pychron/processing/model.hpp"
 #include "pychron/processing/reduced.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/report.hpp"
 #include "pychron/arar/arar_reduction.hpp"
 #include "pychron/arar/arar_types.hpp"
@@ -107,9 +108,9 @@ std::string printed(double value, int digits) {
 }
 
 // The analyses reduced and put in a dataset, as the report takes them.
-pp::Dataset dataset_of(const AnalysisList& analyses, const pp::ReductionSettings& settings = {}) {
+pp::Dataset dataset_of(const AnalysisList& analyses, const pychron::arar::ArArSettings& settings = {}) {
   pp::Dataset d;
-  for (const auto& a : analyses) d.mutable_items().push_back(pp::DatasetItem{pp::reduce_analysis(a, settings), {}, {}});
+  for (const auto& a : analyses) d.mutable_items().push_back(pp::DatasetItem{pychron::arar::reduce_with_arar(a, settings), {}, {}});
   return d;
 }
 
@@ -361,24 +362,31 @@ TEST(Mapping, DataPoint) {
 
 // Every number of a measurement against the reduction of the same analysis.
 void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
-  const pp::ReducedPtr reduced = pp::reduce_analysis(analysis, {});
-  ASSERT_TRUE(reduced->arar && reduced->arar->ages) << reduced->reduction_error;
-  const r::ArArResult& arar = *reduced->arar;
+  const pp::ReducedPtr reduced = pychron::arar::reduce_with_arar(analysis);
+  const auto* ar = pychron::arar::reduced_of(*reduced);
+  ASSERT_TRUE(ar && ar->arar.ages) << reduced->reduction_error;
+  const r::ArArResult& arar = ar->arar;
   const auto stage = [&](const char* isotope, pp::Stage which) {
     const auto v = reduced->stage(isotope, which);
     EXPECT_TRUE(v.has_value()) << isotope;
     return v.value_or(r::UFloat{});
   };
+  // The Ar-Ar stages ("decay_corrected", "interference_corrected").
+  const auto arar_stage = [&](const char* isotope, const char* which) {
+    const auto v = ar->stage(isotope, which);
+    EXPECT_TRUE(v.has_value()) << isotope << " " << which;
+    return v.value_or(r::UFloat{});
+  };
 
-  // Stage::InterferenceCorrected: 40Ar less 40ArK, 39ArK, 37Ar decay
+  // The interference-corrected stage: 40Ar less 40ArK, 39ArK, 37Ar decay
   // corrected, atmospheric 36Ar. 38Ar is not that stage (which removes
   // nothing from it): it is the corrected 38Ar less the K- and Ca-derived 38Ar.
   const r::UFloat c38 =
       arar.corrected[r::index(r::ArgonIsotope::Ar38)] - arar.f.interference.k38 - arar.f.interference.ca38;
-  EXPECT_REL(m.ar40Corr, stage("Ar40", pp::Stage::InterferenceCorrected).nominal());
-  EXPECT_REL(m.ar40CorrUncertainty, stage("Ar40", pp::Stage::InterferenceCorrected).std_dev());
-  EXPECT_REL(m.ar39Corr, stage("Ar39", pp::Stage::InterferenceCorrected).nominal());
-  EXPECT_REL(m.ar39CorrUncertainty, stage("Ar39", pp::Stage::InterferenceCorrected).std_dev());
+  EXPECT_REL(m.ar40Corr, arar_stage("Ar40", "interference_corrected").nominal());
+  EXPECT_REL(m.ar40CorrUncertainty, arar_stage("Ar40", "interference_corrected").std_dev());
+  EXPECT_REL(m.ar39Corr, arar_stage("Ar39", "interference_corrected").nominal());
+  EXPECT_REL(m.ar39CorrUncertainty, arar_stage("Ar39", "interference_corrected").std_dev());
   EXPECT_REL(m.ar38Corr, c38.nominal());
   EXPECT_REL(m.ar38CorrUncertainty, c38.std_dev());
   EXPECT_GT(arar.f.interference.k38.nominal(), 0.0);
@@ -389,17 +397,17 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
   // what is left of the 38Ar once the two interferences are gone.
   const r::UFloat left38 = arar.f.atmospheric.atm38 + arar.f.atmospheric.cl38;
   EXPECT_NEAR(*m.ar38Corr, left38.nominal(), std::abs(left38.nominal()) * 1e-9);
-  EXPECT_REL(m.ar37Corr, stage("Ar37", pp::Stage::InterferenceCorrected).nominal());
-  EXPECT_REL(m.ar37CorrUncertainty, stage("Ar37", pp::Stage::InterferenceCorrected).std_dev());
-  EXPECT_REL(m.ar36Corr, stage("Ar36", pp::Stage::InterferenceCorrected).nominal());
-  EXPECT_REL(m.ar36CorrUncertainty, stage("Ar36", pp::Stage::InterferenceCorrected).std_dev());
+  EXPECT_REL(m.ar37Corr, arar_stage("Ar37", "interference_corrected").nominal());
+  EXPECT_REL(m.ar37CorrUncertainty, arar_stage("Ar37", "interference_corrected").std_dev());
+  EXPECT_REL(m.ar36Corr, arar_stage("Ar36", "interference_corrected").nominal());
+  EXPECT_REL(m.ar36CorrUncertainty, arar_stage("Ar36", "interference_corrected").std_dev());
   // The same numbers by their names in the result.
   EXPECT_REL(m.ar39Corr, arar.f.interference.k39.nominal());
   EXPECT_REL(m.ar36Corr, arar.f.atmospheric.atm36.nominal());
   EXPECT_REL(m.ar40Corr, (arar.corrected[r::index(r::ArgonIsotope::Ar40)] - arar.f.k40).nominal());
   EXPECT_REL(m.ar37Corr, arar.corrected[r::index(r::ArgonIsotope::Ar37)].nominal());
 
-  // Excluding the interference correction: Stage::DecayCorrected, which for
+  // Excluding the interference correction: the decay-corrected stage, which for
   // 40Ar, 38Ar and 36Ar is the discrimination stage and for 39Ar has the decay
   // too; 37Ar is the same stage with its decay taken out again ("mass
   // discrimination only"), which with no abundance sensitivity, as here, is
@@ -407,22 +415,22 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
   const r::UFloat exc37 = arar.corrected[r::index(r::ArgonIsotope::Ar37)] / arar.decay.df37;
   EXPECT_REL(m.ar37ExcInt, exc37.nominal());
   EXPECT_REL(m.ar37ExcIntUncertainty, exc37.std_dev());
-  EXPECT_REL(m.ar40ExcInt, stage("Ar40", pp::Stage::DecayCorrected).nominal());
-  EXPECT_REL(m.ar40ExcIntUncertainty, stage("Ar40", pp::Stage::DecayCorrected).std_dev());
-  EXPECT_REL(m.ar39ExcInt, stage("Ar39", pp::Stage::DecayCorrected).nominal());
-  EXPECT_REL(m.ar39ExcIntUncertainty, stage("Ar39", pp::Stage::DecayCorrected).std_dev());
-  EXPECT_REL(m.ar38ExcInt, stage("Ar38", pp::Stage::DecayCorrected).nominal());
-  EXPECT_REL(m.ar38ExcIntUncertainty, stage("Ar38", pp::Stage::DecayCorrected).std_dev());
+  EXPECT_REL(m.ar40ExcInt, arar_stage("Ar40", "decay_corrected").nominal());
+  EXPECT_REL(m.ar40ExcIntUncertainty, arar_stage("Ar40", "decay_corrected").std_dev());
+  EXPECT_REL(m.ar39ExcInt, arar_stage("Ar39", "decay_corrected").nominal());
+  EXPECT_REL(m.ar39ExcIntUncertainty, arar_stage("Ar39", "decay_corrected").std_dev());
+  EXPECT_REL(m.ar38ExcInt, arar_stage("Ar38", "decay_corrected").nominal());
+  EXPECT_REL(m.ar38ExcIntUncertainty, arar_stage("Ar38", "decay_corrected").std_dev());
   EXPECT_REL(m.ar37ExcInt, stage("Ar37", pp::Stage::IcCorrected).nominal());
   EXPECT_REL(m.ar37ExcIntUncertainty, stage("Ar37", pp::Stage::IcCorrected).std_dev());
-  EXPECT_REL(m.ar36ExcInt, stage("Ar36", pp::Stage::DecayCorrected).nominal());
-  EXPECT_REL(m.ar36ExcIntUncertainty, stage("Ar36", pp::Stage::DecayCorrected).std_dev());
+  EXPECT_REL(m.ar36ExcInt, arar_stage("Ar36", "decay_corrected").nominal());
+  EXPECT_REL(m.ar36ExcIntUncertainty, arar_stage("Ar36", "decay_corrected").std_dev());
   EXPECT_REL(m.ar40ExcInt, stage("Ar40", pp::Stage::IcCorrected).nominal());
   EXPECT_REL(m.ar36ExcInt, stage("Ar36", pp::Stage::IcCorrected).nominal());
 
   // The fixture is such that the stages are different numbers.
   EXPECT_GT(*m.ar39ExcInt, 1.0005 * stage("Ar39", pp::Stage::IcCorrected).nominal());
-  EXPECT_GT(stage("Ar37", pp::Stage::DecayCorrected).nominal(), 2.0 * *m.ar37ExcInt);
+  EXPECT_GT(arar_stage("Ar37", "decay_corrected").nominal(), 2.0 * *m.ar37ExcInt);
   EXPECT_LT(*m.ar40Corr, *m.ar40ExcInt);
   EXPECT_LT(*m.ar39Corr, *m.ar39ExcInt);
   EXPECT_LT(*m.ar36Corr, *m.ar36ExcInt);
@@ -484,10 +492,10 @@ void expect_measurement(const Measurement& m, const pp::AnalysisPtr& analysis) {
   EXPECT_REL(m.clK, arar.clk->nominal());
   EXPECT_REL(m.clKUncertainty, arar.clk->std_dev());
 
-  // ReducedAnalysis::j: J with its uncertainty.
-  ASSERT_TRUE(reduced->j.has_value());
-  EXPECT_REL(m.jValue, reduced->j->nominal());
-  EXPECT_REL(m.jValueUncertainty, reduced->j->std_dev());
+  // ArArReduced::j: J with its uncertainty.
+  ASSERT_TRUE(ar->j.has_value());
+  EXPECT_REL(m.jValue, ar->j->nominal());
+  EXPECT_REL(m.jValueUncertainty, ar->j->std_dev());
   EXPECT_EQ(m.jValue, 0.0015);
   EXPECT_EQ(m.jValueUncertainty, 3e-6);
   EXPECT_EQ(m.jvalueUncertaintyTypeName, "1 sigma");
@@ -521,7 +529,7 @@ TEST(Mapping, MeasurementValues) {
   std::vector<double> k39;
   double total = 0.0;
   for (const auto& a : steps) {
-    k39.push_back(pp::reduce_analysis(a, {})->arar->f.interference.k39.nominal());
+    k39.push_back(pychron::arar::reduced_of(*pychron::arar::reduce_with_arar(a))->arar.f.interference.k39.nominal());
     total += k39.back();
   }
   double sum = 0.0;
@@ -562,8 +570,8 @@ TEST(Mapping, Ar37ExcIntIsTheOtherFoursStageWithoutDecay) {
   });
   const Submission s = build_one(steps);
   const Measurement& m = s.measurements[3];
-  const pp::ReducedPtr reduced = pp::reduce_analysis(steps[3], {});
-  const r::ArArResult& arar = *reduced->arar;
+  const pp::ReducedPtr reduced = pychron::arar::reduce_with_arar(steps[3]);
+  const r::ArArResult& arar = pychron::arar::reduced_of(*reduced)->arar;
   ASSERT_GT(arar.decay.df37, 2.0);
   const r::UFloat exc37 = arar.corrected[r::index(r::ArgonIsotope::Ar37)] / arar.decay.df37;
   EXPECT_REL(m.ar37ExcInt, exc37.nominal());
@@ -590,8 +598,8 @@ TEST(Mapping, AgesAreInMa) {
   const Submission ka = build_one(steps);
   const Submission ma = build_one(step_sample());
 
-  const pp::ReducedPtr reduced = pp::reduce_analysis(steps[4], {});
-  const r::UFloat& age = reduced->arar->ages->age;
+  const pp::ReducedPtr reduced = pychron::arar::reduce_with_arar(steps[4]);
+  const r::UFloat& age = pychron::arar::reduced_of(*reduced)->arar.ages->age;
   EXPECT_GT(age.nominal(), 20'000.0);  // thousands of years
   EXPECT_REL(ka.measurements[4].apparentAge, age.nominal() * 1e-3);
   EXPECT_REL(ka.measurements[4].apparentAgeUncertainty, age.std_dev() * 1e-3);
@@ -860,9 +868,9 @@ TEST(Mapping, PreferredAgeRule) {
 TEST(Mapping, ASingleAnalysisHasNoMswd) {
   const AnalysisList one = {fusion_analysis(0)};
   const Submission s = build_one(one);
-  const pp::ReducedPtr reduced = pp::reduce_analysis(one[0], {});
+  const pp::ReducedPtr reduced = pychron::arar::reduce_with_arar(one[0]);
   EXPECT_EQ(s.age_summary.ageCalcTypeName, "Weighted Mean Age");
-  EXPECT_REL(s.age_summary.age, reduced->arar->ages->age.nominal());
+  EXPECT_REL(s.age_summary.age, pychron::arar::reduced_of(*reduced)->arar.ages->age.nominal());
   EXPECT_EQ(s.age_summary.nAnalysisGrouped, 1);
   EXPECT_FALSE(s.age_summary.mswd.has_value());
   EXPECT_FALSE(s.age_summary.agepvalue.has_value());
@@ -1233,8 +1241,8 @@ TEST(Mapping, AnalysesWithoutAgesAreLeftOutAndCounted) {
   // Step F has no J; step H has an intercept the store does not know.
   AnalysisList steps = with_edit(step_sample(), 5, [](pp::Analysis& a) { a.context.flux.reset(); });
   steps = with_edit(steps, 7, [](pp::Analysis& a) { a.isotopes[1].intercept = {kNaN, 0.01}; });
-  ASSERT_FALSE(pp::reduce_analysis(steps[5], {})->arar->ages.has_value());
-  ASSERT_FALSE(pp::reduce_analysis(steps[7], {})->arar.has_value());
+  ASSERT_FALSE(pychron::arar::reduced_of(*pychron::arar::reduce_with_arar(steps[5]))->arar.ages.has_value());
+  ASSERT_FALSE(pychron::arar::reduced_of(*pychron::arar::reduce_with_arar(steps[7])));
 
   const Submission s = build_one(steps);
   ASSERT_EQ(s.measurements.size(), 8u);
@@ -1558,7 +1566,7 @@ TEST(Mapping, AMissingIsotopeIsAbsent) {
   // one that they are left out.
   for (const char* isotope : {"Ar38", "Ar37", "Ar36"}) {
     const AnalysisList one = with_edit(fusion_sample(), 2, dropping({isotope}));
-    ASSERT_TRUE(pp::reduce_analysis(one[2], {})->arar->ages.has_value()) << isotope;
+    ASSERT_TRUE(pychron::arar::reduced_of(*pychron::arar::reduce_with_arar(one[2]))->arar.ages.has_value()) << isotope;
   }
 
   // Two missing: both are named; and two analyses: both are counted.

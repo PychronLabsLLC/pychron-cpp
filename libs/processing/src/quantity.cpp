@@ -1,9 +1,9 @@
 #include "pychron/processing/quantity.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
-#include <limits>
 #include <set>
 
 namespace pychron::processing {
@@ -16,7 +16,7 @@ struct NamedInfo {
   Named named;
   std::string_view name;
   std::string_view label;
-  bool reduced;  // needs reduce()
+  bool reduced;  // the domain's: DomainReduced::named(name)
 };
 
 constexpr NamedInfo kNamed[] = {
@@ -31,7 +31,7 @@ constexpr NamedInfo kNamed[] = {
     {Named::RadiogenicYield, "radiogenic_yield", "%40Ar*", true},
     {Named::Rad40, "rad40", "40Ar*", true},
     {Named::K39, "k39", "39ArK", true},
-    {Named::J, "j", "J", false},
+    {Named::J, "j", "J", true},
     {Named::Timestamp, "timestamp", "Time", false},
     {Named::Aliquot, "aliquot", "Aliquot", false},
     {Named::StepIndex, "step_index", "Step", false},
@@ -54,6 +54,24 @@ constexpr FamilyInfo kFamilies[] = {
     {Family::Environmental, "env", ""},
     {Family::PeakCenter, "peak_center", "peak center"},
 };
+
+// Stages a domain's reduction adds (DomainReduced::stage), by the names a
+// quantity has always used for them.
+struct DomainStageInfo {
+  std::string_view name;
+  std::string_view label;
+};
+
+constexpr std::array<DomainStageInfo, 2> kDomainStages{{
+    {"decay_corrected", "decay corrected"},
+    {"interference_corrected", "interference corrected"},
+}};
+
+const DomainStageInfo* domain_stage_info(std::string_view name) {
+  for (const auto& i : kDomainStages)
+    if (i.name == name) return &i;
+  return nullptr;
+}
 
 const NamedInfo* named_info(Named n) {
   for (const auto& i : kNamed)
@@ -125,10 +143,14 @@ Result<Term> parse_term(std::string_view raw) {
       }
     }
     if (!is_isotope_key(head)) return fail(ErrorKind::Config, "quantity: unknown term '" + s + "'");
-    const auto stage = parse_stage(tail);
-    if (!stage) return fail(ErrorKind::Config, "quantity: unknown stage '" + tail + "' in '" + s + "'");
     t.kind = Term::Kind::Isotope;
     t.key = head;
+    if (const auto* domain = domain_stage_info(tail)) {
+      t.domain_stage = std::string(domain->name);
+      return t;
+    }
+    const auto stage = parse_stage(tail);
+    if (!stage) return fail(ErrorKind::Config, "quantity: unknown stage '" + tail + "' in '" + s + "'");
     t.stage = *stage;
     return t;
   }
@@ -146,6 +168,7 @@ std::string term_text(const Term& t) {
     case Term::Kind::Family:
       return std::string(family_info(t.family)->name) + "." + t.key;
     case Term::Kind::Isotope:
+      if (!t.domain_stage.empty()) return t.key + "." + t.domain_stage;
       if (t.stage == Stage::IcCorrected) return t.key;
       return t.key + "." + std::string(to_string(t.stage));
   }
@@ -168,10 +191,6 @@ std::string stage_label(Stage s) {
       return "bk corrected";
     case Stage::IcCorrected:
       return "";
-    case Stage::DecayCorrected:
-      return "decay corrected";
-    case Stage::InterferenceCorrected:
-      return "interference corrected";
   }
   return "";
 }
@@ -186,14 +205,13 @@ std::string term_label(const Term& t) {
       return t.key + " " + std::string(f->label);
     }
     case Term::Kind::Isotope: {
-      const std::string st = stage_label(t.stage);
+      const std::string st =
+          t.domain_stage.empty() ? stage_label(t.stage) : std::string(domain_stage_info(t.domain_stage)->label);
       return st.empty() ? t.key : t.key + " " + st;
     }
   }
   return {};
 }
-
-std::optional<r::UFloat> opt(const std::optional<r::UFloat>& v) { return v; }
 
 std::optional<r::UFloat> exact(std::optional<double> v) {
   if (!v) return std::nullopt;
@@ -211,6 +229,7 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
   if (!a) return std::nullopt;
   switch (t.kind) {
     case Term::Kind::Isotope:
+      if (!t.domain_stage.empty()) return ra.domain ? ra.domain->stage(t.key, t.domain_stage) : std::nullopt;
       return ra.stage(t.key, t.stage);
     case Term::Kind::Family:
       switch (t.family) {
@@ -229,47 +248,10 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
       }
       return std::nullopt;
     case Term::Kind::Named: {
-      const auto& ar = ra.arar;
+      // The domain's values: what its reduction made, under the quantity's name.
+      if (const auto* info = named_info(t.named); info->reduced)
+        return ra.domain ? ra.domain->named(info->name) : std::nullopt;
       switch (t.named) {
-        case Named::Age:
-          if (ar && ar->ages) return ar->ages->age;
-          return std::nullopt;
-        case Named::AgeWithJ:
-          if (ar && ar->ages) return ar->ages->age_w_j_err;
-          return std::nullopt;
-        case Named::AgeWithPosition:
-          if (ar && ar->ages) return ar->ages->age_w_position_err;
-          return std::nullopt;
-        case Named::F:
-          if (ar) return opt(ar->f.f);
-          return std::nullopt;
-        case Named::KCa:
-          if (ar) return opt(ar->kca);
-          return std::nullopt;
-        case Named::CaK:
-          if (ar) return opt(ar->cak);
-          return std::nullopt;
-        case Named::KCl:
-          if (ar) return opt(ar->kcl);
-          return std::nullopt;
-        case Named::ClK:
-          if (ar) return opt(ar->clk);
-          return std::nullopt;
-        case Named::RadiogenicYield:
-          if (ar) return opt(ar->f.radiogenic_yield);
-          return std::nullopt;
-        case Named::Rad40:
-          if (ar) return ar->f.rad40;
-          return std::nullopt;
-        case Named::K39:
-          if (ar) return ar->f.interference_corrected[r::index(r::ArgonIsotope::Ar39)];
-          return std::nullopt;
-        case Named::J:
-          if (!a->context.flux) return std::nullopt;
-          // An unknown J or J error is NaN, not a variable (which needs a finite sigma).
-          if (const auto& j = a->context.flux->j; !std::isfinite(j.value) || !std::isfinite(j.error))
-            return r::UFloat(std::numeric_limits<double>::quiet_NaN());
-          return r::UFloat::variable(a->context.flux->j.value, a->context.flux->j.error, "J");
         case Named::Timestamp:
           return r::UFloat(a->timestamp);
         case Named::Aliquot:
@@ -285,8 +267,9 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
           return exact(a->extraction.cleanup);
         case Named::Weight:
           return exact(a->extraction.weight);
+        default:  // the domain's, above
+          return std::nullopt;
       }
-      return std::nullopt;
     }
   }
   return std::nullopt;
@@ -294,8 +277,7 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
 
 bool term_needs_reduction(const Term& t) {
   if (t.kind == Term::Kind::Named) return named_info(t.named)->reduced;
-  if (t.kind == Term::Kind::Isotope)
-    return t.stage == Stage::DecayCorrected || t.stage == Stage::InterferenceCorrected;
+  if (t.kind == Term::Kind::Isotope) return !t.domain_stage.empty();
   return false;
 }
 
@@ -382,8 +364,8 @@ std::vector<std::string> available_quantities(const std::vector<ReducedPtr>& ana
     for (const auto& [d, _] : a.gains) detectors.insert(d);
     for (const auto& [k, _] : a.environmentals) envs.insert(k);
     for (const auto& pc : a.peak_centers) peaks.insert(pc.detector);
-    if (ra->arar) reduced = true;
-    if (ra->arar && ra->arar->ages) ages = true;
+    if (ra->domain) reduced = true;
+    if (ra->domain && ra->domain->named("age")) ages = true;
     if (a.extraction.value) extract = true;
   }
   std::vector<std::string> out;

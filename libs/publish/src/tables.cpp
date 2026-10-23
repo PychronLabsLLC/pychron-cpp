@@ -12,6 +12,7 @@
 #include <set>
 #include <utility>
 
+#include "pychron/arar/reduce.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/reduction/fits.hpp"
 
@@ -381,9 +382,9 @@ ReleaseTables build_tables(const TableInputs& in) {
       b.set(row, "tag", text(a.tag));
       b.set(row, "included", m.item->exclusion.included());
       b.set(row, "comment", text(a.comment));
-      if (ra.j) {
-        b.set(row, "j", num(ra.j->nominal()));
-        b.set(row, "j_err", num(ra.j->std_dev()));
+      if (const arar::ArArReduced* ar = arar::reduced_of(ra); ar && ar->j) {
+        b.set(row, "j", num(ar->j->nominal()));
+        b.set(row, "j_err", num(ar->j->std_dev()));
       }
       if (m.report_row) {
         const std::size_t r = *m.report_row;
@@ -481,7 +482,9 @@ ReleaseTables build_tables(const TableInputs& in) {
         b.set(row, "ic_factor", num(iso.ic_factor.value));
         b.set(row, "ic_factor_err", num(iso.ic_factor.error));
         b.set(row, "decay_corrected", iso.isotope == "Ar37" || iso.isotope == "Ar39");
-        if (auto v = ra.stage(iso.key, pp::Stage::DecayCorrected)) {
+        // Decay corrected; without an Ar-Ar result that is the IC-corrected stage.
+        const arar::ArArReduced* ar = arar::reduced_of(ra);
+        if (auto v = ar ? ar->stage(iso.key, "decay_corrected") : ra.stage(iso.key, pp::Stage::IcCorrected)) {
           b.set(row, "corrected", num(v->nominal()));
           b.set(row, "corrected_err", num(v->std_dev()));
         }

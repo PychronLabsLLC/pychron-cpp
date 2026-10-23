@@ -14,6 +14,7 @@
 #include <variant>
 
 #include "pychron/arar/flux_store.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/processing/reduced.hpp"
 
 namespace pychron::processing {
@@ -154,20 +155,21 @@ Result<std::vector<AnalysisSummary>> browse_all(IAnalysisSource& source, const s
 // position's saved flux, so a level with no flux yet, or one saved with a J
 // that has no error, still gives its monitors' F. That reduction is not the
 // analysis's age, so it never goes to the source's age cache (age cache spec
-// 4.5): reduce_analysis here, not the reduce unit.
+// 4.5): reduce_with_arar here, not the reduction units.
 Result<LevelAnalysis> reduce_monitor(IAnalysisSource& source, const AnalysisSummary& row) {
   auto loaded = source.load(row.uuid);
   if (!loaded) return fail(loaded.error());
   auto without_flux = std::make_shared<Analysis>(**loaded);
   without_flux->context.flux.reset();
-  const ReducedPtr reduced = reduce_analysis(std::move(without_flux), ReductionSettings{});
+  const ReducedPtr reduced = arar::reduce_with_arar(std::move(without_flux));
+  const arar::ArArReduced* ar = arar::reduced_of(*reduced);
 
   LevelAnalysis out;
   out.uuid = row.uuid;
   out.record_id = row.runid;
   out.tag = (*loaded)->tag;
-  if (reduced->arar && reduced->arar->f.f && reduced->reduction_error.empty()) {
-    out.f = *reduced->arar->f.f;
+  if (ar && ar->arar.f.f && reduced->reduction_error.empty()) {
+    out.f = *ar->arar.f.f;
   } else {
     out.reduction_error = !reduced->reduction_error.empty() ? reduced->reduction_error : "F is undefined (no 39ArK)";
   }

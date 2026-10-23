@@ -8,18 +8,30 @@
 #include <vector>
 
 #include "pychron/arar/arar_reduction.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::processing {
 
 namespace r = reduction;
 
+namespace {
+
+// The age of an item group_plateau or group_weighted_mean is given: one with ages (has_ages).
+const r::UFloat& age_of(const DatasetItem& item) { return arar::reduced_of(*item.analysis)->arar.ages->age; }
+
+}  // namespace
+
 double k39_of(const DatasetItem& item) {
-  if (!item.analysis->arar) return std::numeric_limits<double>::quiet_NaN();
-  return item.analysis->arar->f.interference.k39.nominal();
+  const arar::ArArReduced* reduced = arar::reduced_of(*item.analysis);
+  if (!reduced) return std::numeric_limits<double>::quiet_NaN();
+  return reduced->arar.f.interference.k39.nominal();
 }
 
-bool has_ages(const DatasetItem& item) { return item.analysis->arar && item.analysis->arar->ages; }
+bool has_ages(const DatasetItem& item) {
+  const arar::ArArReduced* reduced = arar::reduced_of(*item.analysis);
+  return reduced && reduced->arar.ages;
+}
 
 GroupItems step_ordered(GroupItems items) {
   std::stable_sort(items.begin(), items.end(), [](const DatasetItem* a, const DatasetItem* b) {
@@ -38,7 +50,7 @@ std::optional<GroupPlateau> group_plateau(const GroupItems& reduced, const r::Pl
   for (const auto* it : reduced) {
     const double k = k39_of(*it);
     if (!(k > 0)) continue;
-    const r::UFloat& age = it->analysis->arar->ages->age;
+    const r::UFloat& age = age_of(*it);
     vs.push_back(age.nominal());
     es.push_back(age.std_dev());
     ws.push_back(k);
@@ -63,7 +75,7 @@ std::optional<GroupPlateau> group_plateau(const GroupItems& reduced, const r::Pl
 Result<r::Mean> group_weighted_mean(const GroupItems& items, r::MeanErrorKind error) {
   std::vector<double> vs, es;
   for (const auto* it : items) {
-    const r::UFloat& age = it->analysis->arar->ages->age;
+    const r::UFloat& age = age_of(*it);
     vs.push_back(age.nominal());
     es.push_back(age.std_dev());
   }

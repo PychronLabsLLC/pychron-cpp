@@ -79,7 +79,7 @@ TEST(Units, SelectReduceGroup) {
   ASSERT_TRUE(out) << out.error().what;
   const auto& d = dataset(*out);
   EXPECT_EQ(d.size(), 6u);
-  EXPECT_TRUE(d.items().front().analysis->arar.has_value());
+  EXPECT_FALSE(d.items().front().analysis->isotopes.empty());
   EXPECT_LT(d.items().front().analysis->analysis->timestamp, d.items().back().analysis->analysis->timestamp);
   ASSERT_EQ(d.group_names.size(), 1u);
   EXPECT_EQ(d.group_names[0], "air");
@@ -212,6 +212,23 @@ TEST(Units, ReduceOverASourceWithNoSinkRunsAsBefore) {
   ASSERT_TRUE(out) << out.error().what;
   EXPECT_EQ(dataset(*out).size(), 6u);
   EXPECT_TRUE(runner.diagnostics().empty());
+}
+
+// Core's reduce has nothing to choose and nothing of a domain's: its stages
+// end at the IC-corrected one, built on one signal per isotope.
+TEST(Units, ReduceHasNoOptionsAndNoDomain) {
+  const pp::Unit* reduce = reg().find("reduce");
+  ASSERT_NE(reduce, nullptr);
+  EXPECT_TRUE(reduce->schema()->fields.empty());
+  const auto reduced = pp::reduce_analysis(make_unknown(0), {});
+  EXPECT_EQ(reduced->domain, nullptr);
+  EXPECT_TRUE(reduced->reduction_error.empty());
+  ASSERT_EQ(reduced->isotopes.size(), 5u);
+  EXPECT_EQ(reduced->isotope_signals.size(), reduced->isotopes.size());
+  for (const auto& iso : reduced->isotopes) {
+    ASSERT_FALSE(iso.values.empty());
+    EXPECT_EQ(iso.values.rbegin()->first, pp::Stage::IcCorrected) << iso.key;
+  }
 }
 
 // A MemorySource keeps the ages set_age gives it as a store keeps its cache:

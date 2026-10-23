@@ -18,6 +18,7 @@
 
 #include "fixtures.hpp"
 #include "pychron/arar/derived.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/report.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/units.hpp"
@@ -151,7 +152,7 @@ TEST(Domain, ArArFiguresAreTodaysToolbarInOrder) {
 
 TEST(Domain, ArArAnswersWhatTheApplicationHardCodesToday) {
   const auto domain = pychron::arar::make_domain();
-  EXPECT_EQ(domain->reduction_chain(), std::vector<std::string>{"reduce"});
+  EXPECT_EQ(domain->reduction_chain(), (std::vector<std::string>{"reduce", "arar_reduce"}));
   EXPECT_EQ(domain->default_quantity(), "age");
   EXPECT_EQ(domain->reduction_version(), "arar-1");
   const auto derived = domain->derived();
@@ -168,25 +169,25 @@ TEST(Domain, ArArAnswersWhatTheApplicationHardCodesToday) {
   for (const char* q : {"age", "kca", "kcl", "rad40", "decay_corrected", "interference_corrected"})
     EXPECT_NE(std::find(quantities.begin(), quantities.end(), q), quantities.end()) << q;
 
-  // The recall window's rows are the model's, whatever the domain moves.
+  // The recall window's Summary sections after the neutral ones, and the budget.
   auto a = make_unknown(0);
-  const auto reduced = pp::reduce_analysis(a, pp::ReductionSettings{});
-  const auto model = pp::make_recall_model(*reduced);
+  const auto reduced = pychron::arar::reduce_with_arar(a);
   const auto sections = domain->recall_sections(*reduced);
   ASSERT_EQ(sections.size(), 2u);
-  EXPECT_EQ(sections[0].title, model.computed.title);
-  EXPECT_EQ(sections[0].rows.size(), model.computed.rows.size());
-  EXPECT_EQ(sections[1].rows.size(), model.ratios.rows.size());
-  EXPECT_EQ(domain->error_budget(*reduced).size(), model.error_budget.size());
+  EXPECT_EQ(sections[0].title, "Computed");
+  EXPECT_EQ(sections[1].title, "Corrected ratios");
+  EXPECT_EQ(sections[0].rows.size(), 9u);  // three ages, F, K/Ca, K/Cl, 40Ar*, %40Ar*, 39ArK
+  EXPECT_EQ(sections[1].rows.size(), 6u);
+  EXPECT_FALSE(domain->error_budget(*reduced).empty());
 }
 
 TEST(Domain, ArArDerivesTheSameRowsAsDerivedAge) {
   const auto domain = pychron::arar::make_domain();
   auto a = make_unknown(0);
   a->input_fingerprint = kFingerprint;
-  const auto reduced = pp::reduce_analysis(a, pp::ReductionSettings{});
+  const auto reduced = pychron::arar::reduce_with_arar(a);
   const auto derived = domain->derive(*reduced);
-  const auto expected = pp::derived_age(*reduced, pp::ReductionSettings{});
+  const auto expected = pp::derived_age(*reduced);
   ASSERT_TRUE(derived && expected);
   EXPECT_EQ(derived->uuid, a->uuid);
   EXPECT_EQ(derived->input_fingerprint, kFingerprint);
@@ -196,18 +197,18 @@ TEST(Domain, ArArDerivesTheSameRowsAsDerivedAge) {
   EXPECT_EQ(derived->values[2].units, "");
   ASSERT_TRUE(derived->values[0].value && expected->values[0].value);
   EXPECT_DOUBLE_EQ(derived->values[0].value->nominal(), expected->values[0].value->nominal());
-  EXPECT_DOUBLE_EQ(derived->values[0].value->nominal(), reduced->arar->ages->age.nominal());
+  EXPECT_DOUBLE_EQ(derived->values[0].value->nominal(), pychron::arar::reduced_of(*reduced)->arar.ages->age.nominal());
 
   // Nothing to cache without a fingerprint.
   auto bare = make_unknown(1);
-  EXPECT_FALSE(domain->derive(*pp::reduce_analysis(bare, pp::ReductionSettings{})).has_value());
+  EXPECT_FALSE(domain->derive(*pychron::arar::reduce_with_arar(bare)).has_value());
 }
 
 TEST(Domain, ArArMarkerRowIsValuelessWithoutAnAge) {
   const auto domain = pychron::arar::make_domain();
   auto air = make_air(0);
   air->input_fingerprint = kFingerprint;
-  const auto derived = domain->derive(*pp::reduce_analysis(air, pp::ReductionSettings{}));
+  const auto derived = domain->derive(*pychron::arar::reduce_with_arar(air));
   ASSERT_TRUE(derived);
   ASSERT_EQ(derived->values.size(), 1u);
   EXPECT_EQ(derived->values[0].name, "age");
@@ -221,7 +222,7 @@ TEST(Domain, EveryFigureKindIsInTheDomainsRegistry) {
     EXPECT_NE(domain->units().find(entry.kind), nullptr) << domain->id() << ": " << entry.kind;
 }
 
-TEST(Domain, ReduceWritesThroughTheRunnersDomain) {
+TEST(Domain, ArArReduceWritesThroughTheRunnersDomain) {
   SinkSource source;
   auto a = make_unknown(0);
   a->input_fingerprint = kFingerprint;
@@ -230,21 +231,21 @@ TEST(Domain, ReduceWritesThroughTheRunnersDomain) {
   const auto arar = pychron::arar::make_domain();
   pp::Runner with_domain(arar->units(), &source, arar.get());
   const auto pipeline = reduce_pipeline(*arar);
-  ASSERT_TRUE(with_domain.run(pipeline, "reduce"));
+  ASSERT_TRUE(with_domain.run(pipeline, "arar_reduce"));
   ASSERT_EQ(source.puts.size(), 1u);
   ASSERT_EQ(source.puts[0].size(), 1u);
   EXPECT_EQ(names_of(source.puts[0][0]), (std::vector<std::string>{"age", "age_w_j", "kca"}));
 
-  // Another reduction setting is no cached one, with a domain as without.
+  // Another reduction setting is no cached one.
   source.puts.clear();
   pp::Pipeline other = reduce_pipeline(*arar);
-  ASSERT_TRUE(other.find("reduce")->options.set("include_decay_error", true));
-  ASSERT_TRUE(with_domain.run(other, "reduce"));
+  ASSERT_TRUE(other.find("arar_reduce")->options.set("include_decay_error", true));
+  ASSERT_TRUE(with_domain.run(other, "arar_reduce"));
   EXPECT_TRUE(source.puts.empty());
 
   // Without a domain the reduction writes nothing: the cache is the domain's.
-  pp::Runner without(pp::UnitRegistry::builtin(), &source);
-  ASSERT_TRUE(without.run(pipeline, "reduce"));
+  pp::Runner without(arar->units(), &source);
+  ASSERT_TRUE(without.run(pipeline, "arar_reduce"));
   EXPECT_TRUE(source.puts.empty());
 }
 
@@ -260,12 +261,13 @@ TEST(Domain, ArArExporterWritesTheReportOfTheGroupingThatFits) {
   // reduce, group by aliquot, then make_report.
   pp::MemorySource source;
   for (int i = 0; i < 4; ++i) source.add(make_step(i, 5.0 + i, 0.1));
-  pp::Runner runner(pp::UnitRegistry::builtin(), &source);
+  pp::Runner runner(domain->units(), &source);
   pp::Pipeline pipeline;
-  const auto& reg = pp::UnitRegistry::builtin();
+  const auto& reg = domain->units();
   pipeline.add(reg, "select", "select");
   pipeline.add(reg, "reduce", "reduce", {"select"});
-  pipeline.add(reg, "by_aliquot", "group", {"reduce"});
+  pipeline.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
+  pipeline.add(reg, "by_aliquot", "group", {"arar_reduce"});
   ASSERT_TRUE(pipeline.find("by_aliquot")->options.set("key", std::string("aliquot")));
   auto ran = runner.run(pipeline, "by_aliquot");
   ASSERT_TRUE(ran) << ran.error().what;
@@ -273,7 +275,7 @@ TEST(Domain, ArArExporterWritesTheReportOfTheGroupingThatFits) {
   const std::string expected = pp::report_csv(pp::make_report(*dataset, pp::ReportOptions{}));
 
   std::vector<pp::ReducedPtr> steps;
-  for (const auto& item : dataset->items()) steps.push_back(pp::reduce_analysis(item.analysis->analysis, pp::ReductionSettings{}));
+  for (const auto& item : dataset->items()) steps.push_back(pychron::arar::reduce_with_arar(item.analysis->analysis));
   const std::string text = exported(exporters[0], steps);
   EXPECT_EQ(without_generated(text), without_generated(expected));
   EXPECT_NE(text.find("arar-1/default/d0e0"), std::string::npos);
@@ -296,13 +298,14 @@ TEST(Domain, ArArExporterGroupsByIdentifierAndOmitsTheTagsSelectWould) {
     uuids.push_back(a->uuid);
     source.add(a);
   }
-  pp::Runner runner(pp::UnitRegistry::builtin(), &source);
+  pp::Runner runner(domain->units(), &source);
   pp::Pipeline pipeline;
-  const auto& reg = pp::UnitRegistry::builtin();
+  const auto& reg = domain->units();
   auto& select = pipeline.add(reg, "select", "select");
   ASSERT_TRUE(select.options.set("uuids", uuids));
   pipeline.add(reg, "reduce", "reduce", {"select"});
-  pipeline.add(reg, "by_identifier", "group", {"reduce"});
+  pipeline.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
+  pipeline.add(reg, "by_identifier", "group", {"arar_reduce"});
   ASSERT_TRUE(pipeline.find("by_identifier")->options.set("key", std::string("identifier")));
   auto ran = runner.run(pipeline, "by_identifier");
   ASSERT_TRUE(ran) << ran.error().what;
@@ -315,7 +318,7 @@ TEST(Domain, ArArExporterGroupsByIdentifierAndOmitsTheTagsSelectWould) {
 
   std::vector<pp::ReducedPtr> analyses;
   for (const auto& item : dataset->items())
-    analyses.push_back(pp::reduce_analysis(item.analysis->analysis, pp::ReductionSettings{}));
+    analyses.push_back(pychron::arar::reduce_with_arar(item.analysis->analysis));
   const std::string text = exported(exporters[0], analyses);
   EXPECT_EQ(without_generated(text), without_generated(expected));
   EXPECT_NE(text.find("U1"), std::string::npos);

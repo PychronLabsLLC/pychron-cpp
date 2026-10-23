@@ -1,10 +1,12 @@
 #include "pychron/processing/derive.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/reduced.hpp"
+#include "pychron/processing/units.hpp"
 
 namespace pychron::processing {
 
@@ -37,7 +39,6 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const Domain& domain, con
   query.exclude_tags.clear();  // invalid analyses are cached too
   const int page_size = std::max(1, options.page_size);
   query.limit = page_size;
-  const ReductionSettings settings{};
   while (true) {
     if (options.limit) {
       const int left = *options.limit - stats.seen;
@@ -73,8 +74,22 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const Domain& domain, con
       }
       // The age is of the fingerprint the analysis was loaded with, which is
       // the one compared above unless a reference changed in between: then a
-      // correct row is written and counted as written.
-      auto age = domain.derive(*reduce_analysis(*analysis, settings));
+      // correct row is written and counted as written. The domain's chain at
+      // its default options, with no source: this pass writes, not its units.
+      auto unreduced = std::make_shared<ReducedAnalysis>();
+      unreduced->analysis = *analysis;
+      Dataset one;
+      one.mutable_items().push_back(DatasetItem{});
+      one.mutable_items().back().analysis = std::move(unreduced);
+      RunContext context;
+      context.domain = &domain;
+      auto reduced = run_reduction_chain(domain, make_dataset(std::move(one)), context);
+      if (!reduced) {
+        ++stats.failed;
+        stats.failures.push_back(run_id(row) + ": " + to_string(reduced.error()));
+        continue;
+      }
+      auto age = domain.derive(*(*reduced)->items().front().analysis);
       if (!age) {
         ++stats.failed;
         stats.failures.push_back(run_id(row) + ": no input fingerprint");

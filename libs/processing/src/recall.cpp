@@ -14,11 +14,6 @@ namespace r = pychron::reduction;
 
 namespace {
 
-std::optional<Value> val(const std::optional<r::UFloat>& u) {
-  if (!u || !std::isfinite(u->nominal())) return std::nullopt;
-  return Value{u->nominal(), u->std_dev()};
-}
-
 std::string utc(double t) {
   const auto tt = static_cast<std::time_t>(std::llround(t));
   std::tm tm{};
@@ -71,46 +66,7 @@ RecallModel make_recall_model(const ReducedAnalysis& ra) {
   m.title = a.runid + (a.sample.empty() ? "" : "  " + a.sample) + "  " + a.analysis_type;
   m.header = {utc(a.timestamp), a.mass_spectrometer, a.extract_device, "tag: " + a.tag};
 
-  // Computed values.
-  m.computed.title = "Computed";
-  const auto& ar = ra.arar;
-  if (ar) {
-    if (ar->ages) {
-      m.computed.rows.push_back(value_row("Age", val(ar->ages->age_w_j_err), "Ma", "with J error"));
-      m.computed.rows.push_back(value_row("Age w/o J", val(ar->ages->age), "Ma", "analytical error only"));
-      RecallRow wo;
-      wo.name = "Age w/o J, irrad.";
-      wo.value = Value{ar->ages->age.nominal(), ar->ages->age_err_wo_irrad};
-      wo.units = "Ma";
-      m.computed.rows.push_back(wo);
-    } else {
-      m.computed.rows.push_back(value_row("Age", std::nullopt, "Ma",
-                                          ra.reduction_error.empty() ? "no J for this analysis" : ra.reduction_error));
-      m.reduction_note = ra.reduction_error;
-    }
-    m.computed.rows.push_back(value_row("F (40Ar*/39ArK)", val(ar->f.f)));
-    m.computed.rows.push_back(value_row("K/Ca", val(ar->kca)));
-    m.computed.rows.push_back(value_row("K/Cl", val(ar->kcl)));
-    m.computed.rows.push_back(value_row("40Ar*", val(ar->f.rad40), "fA"));
-    m.computed.rows.push_back(value_row("%40Ar*", val(ar->f.radiogenic_yield), "%"));
-    m.computed.rows.push_back(value_row("39ArK", val(ar->f.interference_corrected[r::index(r::ArgonIsotope::Ar39)]), "fA"));
-    for (const auto d : ar->diagnostics) m.computed.rows.push_back(text_row("note", std::string(r::to_string(d))));
-  } else {
-    m.reduction_note = ra.reduction_error.empty() ? "no argon isotopes to reduce" : ra.reduction_error;
-  }
-
-  // Corrected ratios from the IC-corrected (and decay-corrected) stages.
-  m.ratios.title = "Corrected ratios";
-  auto stage = [&](const char* iso) -> std::optional<r::UFloat> {
-    auto d = ra.stage(iso, Stage::DecayCorrected);
-    return d ? d : ra.stage(iso, Stage::IcCorrected);
-  };
-  for (auto [n, d] : {std::pair{"Ar40", "Ar39"}, {"Ar40", "Ar36"}, {"Ar40", "Ar38"}, {"Ar38", "Ar39"}, {"Ar37", "Ar39"},
-                      {"Ar36", "Ar39"}}) {
-    auto num = stage(n), den = stage(d);
-    if (!num || !den || den->nominal() == 0) continue;
-    m.ratios.rows.push_back(value_row(std::string(n) + "/" + d, val(*num / *den)));
-  }
+  m.reduction_note = ra.reduction_error;
 
   m.identity.title = "Identity";
   m.identity.rows = {text_row("Run id", a.runid),          text_row("UUID", a.uuid),
@@ -160,19 +116,6 @@ RecallModel make_recall_model(const ReducedAnalysis& ra) {
     m.isotopes.push_back(std::move(iso));
   }
 
-  if (ar && ar->ages) {
-    // Error budget of the age with J error, by variable tag (legacy E20).
-    const r::UFloat& age = ar->ages->age_w_j_err;
-    const double var = age.variance();
-    if (var > 0) {
-      std::map<std::string, double> by;
-      for (const auto& [t, sigma] : r::error_components(age)) by[std::string(r::tag_name(t))] += sigma * sigma / var * 100.0;
-      for (const auto& [tag, pct] : by)
-        if (pct >= 1e-6) m.error_budget.push_back({tag.empty() ? "other" : tag, pct});
-    }
-    std::sort(m.error_budget.begin(), m.error_budget.end(),
-              [](const auto& x, const auto& y) { return x.percent > y.percent; });
-  }
   return m;
 }
 

@@ -14,7 +14,9 @@
 #include "pychron/core/env.hpp"
 #include "pychron/core/process.hpp"
 #include "pychron/core/user_file.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/arar/report.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
 #include "pychron/publish/figures.hpp"
@@ -273,7 +275,9 @@ Result<pp::DatasetPtr> reduce_loaded(const std::vector<pp::AnalysisPtr>& loaded,
   uuids.reserve(loaded.size());
   for (const auto& a : loaded) uuids.push_back(a->uuid);
   pp::MemorySource memory(loaded);
-  const auto& reg = pp::UnitRegistry::builtin();
+  // A release is of Ar-Ar ages: the Ar-Ar domain's units and reduction chain.
+  static const std::unique_ptr<pp::Domain> domain = arar::make_domain();
+  const auto& reg = domain->units();
   pp::Pipeline pipeline;
   pipeline.name = "release";
   auto& select = pipeline.add(reg, "select", "select");
@@ -285,18 +289,19 @@ Result<pp::DatasetPtr> reduce_loaded(const std::vector<pp::AnalysisPtr>& loaded,
   set(select, "uuids", uuids);
   set(select, "remove_tags", std::vector<std::string>{});
   set(select, "limit", static_cast<std::int64_t>(uuids.size()));
-  auto& reduce = pipeline.add(reg, "reduce", "reduce", {"select"});
+  pipeline.add(reg, "reduce", "reduce", {"select"});
+  auto& reduce = pipeline.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
   set(reduce, "constants", opts.constants);
   set(reduce, "include_decay_error", opts.decay_error);
   if (bad) return fail(*bad);
-  pp::Runner runner(reg, &memory);
-  auto reduced = runner.run(pipeline, "reduce");
+  pp::Runner runner(reg, &memory, domain.get());
+  auto reduced = runner.run(pipeline, "arar_reduce");
   if (!reduced) return fail(reduced.error());
   pp::DatasetPtr dataset = std::get<pp::DatasetPtr>(reduced->at(0));
   if (group) {
     std::string key = opts.group_by;
     if (key == "auto") key = any_step(*dataset) ? "aliquot" : "identifier";
-    auto& node = pipeline.add(reg, "group", "group", {"reduce"});
+    auto& node = pipeline.add(reg, "group", "group", {"arar_reduce"});
     if (auto ok = node.options.set("key", key); !ok) return fail(ok.error());
     auto grouped = runner.run(pipeline, "group");
     if (!grouped) return fail(grouped.error());

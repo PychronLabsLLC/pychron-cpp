@@ -15,6 +15,7 @@
 
 #include "pychron/arar/derived.hpp"
 #include "pychron/arar/domain.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/processing/derive.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/recall.hpp"
@@ -27,6 +28,9 @@ namespace {
 
 namespace ps = pychron::persistence;
 namespace fs = std::filesystem;
+
+// The Ar-Ar part of a reduction made by arar::reduce_with_arar, or null.
+const arar::ArArReduced* ar_of(const ReducedPtr& reduced) { return reduced ? arar::reduced_of(*reduced) : nullptr; }
 
 ps::Bytes tv(float offset, int n = 5) {
   std::vector<ps::TvPoint> p;
@@ -231,7 +235,7 @@ class StoreSourceTest : public ::testing::Test {
     auto loaded = source().load(uuid.str());
     EXPECT_TRUE(loaded) << (loaded ? "" : to_string(loaded.error()));
     if (!loaded) return {};
-    auto d = derived_age(*reduce_analysis(*loaded, ReductionSettings{}), ReductionSettings{});
+    auto d = derived_age(*arar::reduce_with_arar(*loaded));
     EXPECT_TRUE(d);
     return d ? *d : DerivedValues{};
   }
@@ -483,9 +487,9 @@ TEST_F(StoreSourceTest, LoadAssemblesTheAnalysisAndItsReductionContext) {
   EXPECT_EQ(a.monitor.age, (Value{28.201, 0.023}));
   EXPECT_EQ(a.context.reactor, "Triga");
 
-  const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
-  ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
-  ASSERT_TRUE(reduced->arar->ages);
+  const auto reduced = arar::reduce_with_arar(*loaded);
+  ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
+  ASSERT_TRUE(ar_of(reduced)->arar.ages);
 
   // The air has no irradiation position, hence no flux and no age.
   auto air = source().load(air_.str());
@@ -551,8 +555,8 @@ TEST_F(StoreSourceTest, ReferenceValuesWithoutContentAreNoValues) {
   EXPECT_FALSE((*loaded)->context.flux);
   EXPECT_FALSE((*loaded)->context.production);  // not nine ratios of zero
   EXPECT_TRUE((*loaded)->context.chronology.empty());
-  const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
-  EXPECT_FALSE(reduced->arar && reduced->arar->ages);
+  const auto reduced = arar::reduce_with_arar(*loaded);
+  EXPECT_FALSE(ar_of(reduced) && ar_of(reduced)->arar.ages);
 }
 
 TEST_F(StoreSourceTest, LoadRawDecodesUploadedBlobsAndSlicesWindows) {
@@ -793,12 +797,20 @@ TEST_F(StoreSourceTest, WhatTheSinkCannotWriteIsDroppedAndCounted) {
 
 namespace {
 
+// The Ar-Ar domain's units, for the age cache's tests: the cache is the domain's.
+const Domain& arar_units_domain() {
+  static const std::unique_ptr<Domain> domain = arar::make_domain();
+  return *domain;
+}
+
+// select, reduce, arar_reduce: what writes the age cache.
 Pipeline reduce_pipeline(const std::vector<std::string>& uuids, const std::string& constants = "default") {
-  const auto& reg = UnitRegistry::builtin();
+  const auto& reg = arar_units_domain().units();
   Pipeline p;
   auto& select = p.add(reg, "select", "select");
   EXPECT_TRUE(select.options.set("uuids", uuids));
-  auto& reduce = p.add(reg, "reduce", "reduce", {"select"});
+  p.add(reg, "reduce", "reduce", {"select"});
+  auto& reduce = p.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
   EXPECT_TRUE(reduce.options.set("constants", constants));
   return p;
 }
@@ -807,9 +819,9 @@ Pipeline reduce_pipeline(const std::vector<std::string>& uuids, const std::strin
 
 TEST_F(StoreSourceTest, ReducingThroughAUnitFillsTheCache) {
   auto& src = source();
-  const auto domain = arar::make_domain();
-  Runner runner(UnitRegistry::builtin(), &src, domain.get());
-  auto out = runner.run(reduce_pipeline({unknown_.str(), air_.str()}), "reduce");
+  const Domain* domain = &arar_units_domain();
+  Runner runner(domain->units(), &src, domain);
+  auto out = runner.run(reduce_pipeline({unknown_.str(), air_.str()}), "arar_reduce");
   ASSERT_TRUE(out) << to_string(out.error());
   const auto done = src.flush_derived();
   EXPECT_EQ(done.written, 2u);
@@ -821,8 +833,8 @@ TEST_F(StoreSourceTest, ReducingThroughAUnitFillsTheCache) {
   EXPECT_EQ(cached(air_).size(), 1u);  // an air: a null age
 
   // The same figure again on a fresh runner: one read, no write.
-  Runner again(UnitRegistry::builtin(), &src, domain.get());
-  ASSERT_TRUE(again.run(reduce_pipeline({unknown_.str(), air_.str()}), "reduce"));
+  Runner again(domain->units(), &src, domain);
+  ASSERT_TRUE(again.run(reduce_pipeline({unknown_.str(), air_.str()}), "arar_reduce"));
   const auto second = src.flush_derived();
   EXPECT_EQ(second.written, 0u);
   EXPECT_EQ(second.current, 2u);
@@ -832,14 +844,14 @@ TEST_F(StoreSourceTest, AUnitWithOtherSettingsWritesNothing) {
   auto& src = source();
   const auto other = [&](const char* key, OptionValue value) {
     auto p = reduce_pipeline({unknown_.str()});
-    EXPECT_TRUE(p.find("reduce")->options.set(key, std::move(value)));
+    EXPECT_TRUE(p.find("arar_reduce")->options.set(key, std::move(value)));
     return p;
   };
-  const auto domain = arar::make_domain();
+  const Domain* domain = &arar_units_domain();
   for (const auto& p : {reduce_pipeline({unknown_.str()}, "legacy"), other("include_decay_error", true),
                         other("use_irradiation_endtime", true)}) {
-    Runner runner(UnitRegistry::builtin(), &src, domain.get());
-    ASSERT_TRUE(runner.run(p, "reduce"));
+    Runner runner(domain->units(), &src, domain);
+    ASSERT_TRUE(runner.run(p, "arar_reduce"));
     const auto done = src.flush_derived();
     EXPECT_EQ(done.written + done.current + done.failed, 0u);
     EXPECT_TRUE(cached(unknown_).empty());
@@ -1621,7 +1633,7 @@ ReducedPtr reduce_parts(const StoreAnalysisParts& parts) {
   auto a = analysis_from_store(parts);
   EXPECT_TRUE(a) << (a ? "" : to_string(a.error()));
   if (!a) return nullptr;
-  return reduce_analysis(std::make_shared<const Analysis>(std::move(*a)), ReductionSettings{});
+  return arar::reduce_with_arar(std::make_shared<const Analysis>(std::move(*a)));
 }
 
 // A NULL value or error in a stored row is unknown, not 0: it reaches the
@@ -1713,7 +1725,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersAreUnknownNotZero) {
   {
     const auto reduced = reduce_parts(argon_parts());
     ASSERT_TRUE(reduced);
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
     for (const auto& iso : reduced->analysis->isotopes) {
       EXPECT_TRUE(iso.intercept.known());
       EXPECT_TRUE(iso.baseline.known());
@@ -1761,7 +1773,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersAreUnknownNotZero) {
     EXPECT_TRUE(std::isnan(c.is_error ? v.error : v.value));
     EXPECT_EQ(c.is_error ? v.value : v.error, c.other);  // the stored half survives
 
-    EXPECT_FALSE(reduced->arar);
+    EXPECT_FALSE(ar_of(reduced));
     EXPECT_NE(reduced->reduction_error.find("not reducible"), std::string::npos) << reduced->reduction_error;
     EXPECT_NE(reduced->reduction_error.find(c.what), std::string::npos) << reduced->reduction_error;
     // The stage is not a number either, whichever half is missing.
@@ -1785,7 +1797,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->intercept, (Value{90.0, 0.2}));
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
   }
   // A flagged override that holds no number does not.
   {
@@ -1796,7 +1808,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->intercept.known());
-    EXPECT_FALSE(reduced->arar);
+    EXPECT_FALSE(ar_of(reduced));
   }
   // No row at all is still "none": blank 0, IC factor 1.
   {
@@ -1807,7 +1819,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     ASSERT_TRUE(reduced);
     EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->blank, (Value{0.0, 0.0}));
     EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
   }
   // Nor is an IC factor stub row, with neither a value nor an error.
   {
@@ -1820,7 +1832,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     ASSERT_TRUE(reduced);
     EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
     EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->ic_reviewed);
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
   }
   // Unless the importer noted that its value or error was not finite: then
   // the factor is unknown.
@@ -1836,7 +1848,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_FALSE(reduced->analysis->find_isotope("Ar40")->ic_factor.known());
-    EXPECT_FALSE(reduced->arar);
+    EXPECT_FALSE(ar_of(reduced));
     EXPECT_NE(reduced->reduction_error.find("Ar40 IC factor value"), std::string::npos) << reduced->reduction_error;
   }
   // A note about some other field leaves it a stub.
@@ -1849,7 +1861,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_EQ(reduced->analysis->find_isotope("Ar40")->ic_factor, (Value{1.0, 0.0}));
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
   }
   // An isotope reduce() never sees does not stop it.
   {
@@ -1861,7 +1873,7 @@ TEST(StoreSourceMapping, MissingStoredNumbersOverridesAndScope) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_FALSE(reduced->analysis->find_isotope("Ar41")->intercept.known());
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
     EXPECT_TRUE(std::isnan(reduced->stage("Ar41", Stage::Intercept)->nominal()));
   }
 }
@@ -1882,9 +1894,9 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     parts.refs = {flux(), production_ref(), chronology_ref()};
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
-    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
-    EXPECT_TRUE(reduced->arar->ages);
-    EXPECT_TRUE(reduced->j);
+    ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)->arar.ages);
+    EXPECT_TRUE(ar_of(reduced) && ar_of(reduced)->j);
   }
 
   struct Case {
@@ -1908,8 +1920,8 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     ASSERT_TRUE(reduced->analysis->context.flux);
     EXPECT_TRUE(std::isnan(c.mapped(*reduced->analysis->context.flux)));
     EXPECT_EQ(reduced->analysis->context.flux->j.value, 0.001);
-    EXPECT_FALSE(reduced->arar);
-    EXPECT_FALSE(reduced->j);
+    EXPECT_FALSE(ar_of(reduced));
+    EXPECT_FALSE(ar_of(reduced) && ar_of(reduced)->j);
     EXPECT_NE(reduced->reduction_error.find(std::string("no stored ") + c.what), std::string::npos)
         << reduced->reduction_error;
   }
@@ -1937,8 +1949,8 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_EQ(reduced->analysis->context.flux->position_jerr, 0.0);
-    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
-    EXPECT_TRUE(reduced->arar->ages);
+    ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)->arar.ages);
   }
 
   // No J is no flux: reduced, without ages. No lambda_k_total is no override.
@@ -1950,8 +1962,8 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_FALSE(reduced->analysis->context.flux);
-    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
-    EXPECT_FALSE(reduced->arar->ages);
+    ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
+    EXPECT_FALSE(ar_of(reduced)->arar.ages);
   }
   {
     auto f = flux();
@@ -1962,7 +1974,7 @@ TEST(StoreSourceMapping, MissingFluxErrorsAreUnknownNotZero) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     EXPECT_FALSE(reduced->analysis->context.flux->lambda_k_total);
-    EXPECT_TRUE(reduced->arar) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)) << reduced->reduction_error;
   }
 }
 
@@ -1979,11 +1991,11 @@ TEST(StoreSourceMapping, UnknownWithoutProductionOrChronologyHasNoAge) {
     parts.refs = {flux, production_ref(), chronology_ref()};
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
-    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
-    EXPECT_TRUE(reduced->arar->ages);
-    EXPECT_TRUE(reduced->j);
+    ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
+    EXPECT_TRUE(ar_of(reduced)->arar.ages);
+    EXPECT_TRUE(ar_of(reduced) && ar_of(reduced)->j);
     EXPECT_EQ(reduced->reduction_error, "");
-    EXPECT_NE(reduced->arar->decay.df39, 1.0);
+    EXPECT_NE(ar_of(reduced)->arar.decay.df39, 1.0);
   }
 
   struct Case {
@@ -2003,11 +2015,11 @@ TEST(StoreSourceMapping, UnknownWithoutProductionOrChronologyHasNoAge) {
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
     ASSERT_TRUE(reduced->analysis->context.flux);
-    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
-    EXPECT_FALSE(reduced->arar->ages);
-    EXPECT_FALSE(reduced->j);
+    ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
+    EXPECT_FALSE(ar_of(reduced)->arar.ages);
+    EXPECT_FALSE(ar_of(reduced) && ar_of(reduced)->j);
     EXPECT_EQ(reduced->reduction_error, c.error);
-    EXPECT_TRUE(reduced->arar->f.f);
+    EXPECT_TRUE(ar_of(reduced)->arar.f.f);
     EXPECT_FALSE(Quantity::parse("age")->eval(*reduced));
 
     // Recall says why there is no age.
@@ -2022,7 +2034,7 @@ TEST(StoreSourceMapping, UnknownWithoutProductionOrChronologyHasNoAge) {
     parts.refs = {flux};
     const auto reduced = reduce_parts(parts);
     ASSERT_TRUE(reduced);
-    EXPECT_FALSE(reduced->arar);
+    EXPECT_FALSE(ar_of(reduced));
     EXPECT_NE(reduced->reduction_error.find("not reducible"), std::string::npos) << reduced->reduction_error;
   }
 }
@@ -2039,9 +2051,9 @@ TEST(StoreSourceMapping, UnirradiatedTypesNeedNoProductionOrChronology) {
     EXPECT_FALSE(reduced->analysis->context.flux);
     EXPECT_FALSE(reduced->analysis->context.production);
     EXPECT_TRUE(reduced->analysis->context.chronology.empty());
-    ASSERT_TRUE(reduced->arar) << reduced->reduction_error;
+    ASSERT_TRUE(ar_of(reduced)) << reduced->reduction_error;
     EXPECT_EQ(reduced->reduction_error, "");
-    EXPECT_EQ(reduced->arar->decay.df39, 1.0);
+    EXPECT_EQ(ar_of(reduced)->arar.decay.df39, 1.0);
   }
 }
 
@@ -2063,8 +2075,8 @@ TEST_F(StoreSourceTest, NullInterceptLoadsAsUnknownAndDoesNotReduce) {
   ASSERT_TRUE(iso);
   EXPECT_TRUE(std::isnan(iso->intercept.value));
   EXPECT_EQ(iso->intercept.error, 0.5);
-  const auto reduced = reduce_analysis(*loaded, ReductionSettings{});
-  EXPECT_FALSE(reduced->arar);
+  const auto reduced = arar::reduce_with_arar(*loaded);
+  EXPECT_FALSE(ar_of(reduced));
   EXPECT_NE(reduced->reduction_error.find("Ar40 intercept value"), std::string::npos) << reduced->reduction_error;
 }
 

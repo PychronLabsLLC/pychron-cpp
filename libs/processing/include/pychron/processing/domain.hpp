@@ -94,4 +94,10 @@ class DomainRegistry {
 
 std::unique_ptr<Domain> make_noble_gas_domain();  // core only
 
+// The domain's reduction_chain() over `dataset` (its items loaded, as select
+// gives them), each unit at its default options, in `context` (whose source,
+// when set, is where a unit writes what it derives). The dataset the last
+// unit gives, or the first unit's error.
+[[nodiscard]] Result<DatasetPtr> run_reduction_chain(const Domain& domain, DatasetPtr dataset, RunContext& context);
+
 }  // namespace pychron::processing

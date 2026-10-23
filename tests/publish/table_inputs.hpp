@@ -8,6 +8,7 @@
 #include <string>
 
 #include "processing/fixtures.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/publish/tables.hpp"
 
 namespace pychron::publish::testing {
@@ -67,7 +68,7 @@ inline TableInputs inputs(bool fc2_located = true, bool u1_has_age = true) {
     pins.analysis = ps::Uuid::v5(in.release.uuid, a->uuid);
     a->uuid = pins.analysis.str();  // as the store's source names an analysis
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(a, {});
+    item.analysis = pychron::arar::reduce_with_arar(a);
     item.path.group = 0;
     d.mutable_items().push_back(item);
     pins.sample = fc2.uuid;
@@ -86,7 +87,7 @@ inline TableInputs inputs(bool fc2_located = true, bool u1_has_age = true) {
     pins.analysis = ps::Uuid::v5(in.release.uuid, a->uuid);
     a->uuid = pins.analysis.str();
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(a, {});
+    item.analysis = pychron::arar::reduce_with_arar(a);
     item.path.group = 1;
     d.mutable_items().push_back(item);
     pins.sample = u1.uuid;

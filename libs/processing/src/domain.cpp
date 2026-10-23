@@ -1,5 +1,6 @@
 #include "pychron/processing/domain.hpp"
 
+#include <string>
 #include <utility>
 
 namespace pychron::processing {
@@ -8,6 +9,17 @@ void DomainRegistry::add(std::unique_ptr<Domain> domain) {
   if (!domain) return;
   std::string id(domain->id());
   domains_[std::move(id)] = std::move(domain);
+}
+
+Result<DatasetPtr> run_reduction_chain(const Domain& domain, DatasetPtr dataset, RunContext& context) {
+  for (const auto& kind : domain.reduction_chain()) {
+    const Unit* unit = domain.units().find(kind);
+    if (unit == nullptr) return fail(ErrorKind::Config, "reduction chain: no unit '" + kind + "' in domain " + std::string(domain.id()));
+    auto out = unit->execute({PortValue(std::move(dataset))}, Options(unit->schema()), context);
+    if (!out) return fail(out.error());
+    dataset = std::get<DatasetPtr>(out->at(0));
+  }
+  return dataset;
 }
 
 const Domain* DomainRegistry::find(std::string_view id) const {

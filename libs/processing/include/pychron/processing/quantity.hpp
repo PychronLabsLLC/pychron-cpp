@@ -51,6 +51,9 @@ struct Term {
   enum class Kind { Isotope, Named, Family } kind = Kind::Isotope;
   std::string key;  // isotope key, or the family key ("H1")
   Stage stage = Stage::IcCorrected;
+  // A stage of the domain's (DomainReduced::stage) rather than a core one;
+  // empty: `stage` is the one.
+  std::string domain_stage;
   Named named = Named::Age;
   Family family = Family::Gain;
   friend bool operator==(const Term&, const Term&) = default;
@@ -66,7 +69,7 @@ class Quantity {
   std::string label(bool with_units = true) const;
   std::string units() const;   // "fA", "Ma", "" for ratios
   bool is_ratio() const noexcept { return denominator_.has_value(); }
-  bool needs_reduction() const;  // uses decay/interference stages or reduced values
+  bool needs_reduction() const;  // uses a domain's stages or values
 
   std::optional<Value> eval(const ReducedAnalysis& a) const;
 

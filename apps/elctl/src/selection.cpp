@@ -63,8 +63,8 @@ std::optional<int> parse_int(std::string_view text) {
   return value;
 }
 
-pp::ReductionSettings AgeFlags::reduction() const {
-  pp::ReductionSettings s;
+pychron::arar::ArArSettings AgeFlags::reduction() const {
+  pychron::arar::ArArSettings s;
   for (const auto p : {r::ConstantsPreset::Default, r::ConstantsPreset::Legacy, r::ConstantsPreset::LegacyPreferences})
     if (r::to_string(p) == constants) s.preset = p;
   s.include_decay_error = decay_error;

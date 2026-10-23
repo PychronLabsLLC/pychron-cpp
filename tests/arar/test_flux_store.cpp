@@ -21,6 +21,7 @@
 #include "flux_store_fixture.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/arar/flux_store.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/units.hpp"
 
@@ -505,7 +506,7 @@ TEST_P(FluxLoadLevel, AMonitorReducedForFluxIsNotCached) {
   const auto done = source()->flush_derived();
   EXPECT_EQ(done.written + done.current + done.failed, 0u);
 
-  // The same monitor reduced by the reduce unit is cached: the source would
+  // The same monitor reduced by the reduction chain is cached: the source would
   // have taken it.
   const auto domain = arar::make_domain();
   const auto& reg = domain->units();
@@ -513,8 +514,9 @@ TEST_P(FluxLoadLevel, AMonitorReducedForFluxIsNotCached) {
   auto& select = p.add(reg, "select", "select");
   ASSERT_TRUE(select.options.set("uuids", std::vector<std::string>{hole(*in, 1).analyses.front().uuid}));
   p.add(reg, "reduce", "reduce", {"select"});
+  p.add(reg, "arar_reduce", "arar_reduce", {"reduce"});
   Runner runner(reg, source(), domain.get());
-  ASSERT_TRUE(runner.run(p, "reduce"));
+  ASSERT_TRUE(runner.run(p, "arar_reduce"));
   EXPECT_EQ(source()->flush_derived().written, 1u);
 }
 
@@ -1008,9 +1010,10 @@ class FluxSaveLevel : public FluxLoadLevel {
       ADD_FAILURE() << to_string(loaded.error());
       return std::nullopt;
     }
-    const ReducedPtr reduced = reduce_analysis(*loaded, ReductionSettings{});
-    if (!reduced->arar || !reduced->arar->ages) return std::nullopt;
-    return reduced->arar->ages->age.nominal();
+    const ReducedPtr reduced = arar::reduce_with_arar(*loaded);
+    const arar::ArArReduced* ar = arar::reduced_of(*reduced);
+    if (!ar || !ar->arar.ages) return std::nullopt;
+    return ar->arar.ages->age.nominal();
   }
 
   // The store's sets with a third, "Second": the second default set renamed,

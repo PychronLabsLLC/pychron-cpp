@@ -11,6 +11,7 @@
 #include "processing/fixtures.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/processing/reduced.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/publish/figures.hpp"
 
 namespace pychron::publish {
@@ -27,7 +28,7 @@ pp::Dataset steps_of(const std::string& identifier, int aliquot, int n) {
     a->aliquot = aliquot;
     a->uuid += "-" + std::to_string(aliquot);
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(a, {});
+    item.analysis = pychron::arar::reduce_with_arar(a);
     d.mutable_items().push_back(item);
   }
   return d;
@@ -88,7 +89,7 @@ TEST(ReleaseFigures, ASampleWithoutEnoughPointsSkipsTheIsochronWithAWarning) {
   pp::Dataset d;
   for (int i = 0; i < 2; ++i) {
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(pp::test::make_unknown(i), {});
+    item.analysis = pychron::arar::reduce_with_arar(pp::test::make_unknown(i));
     d.mutable_items().push_back(item);
   }
   std::vector<std::string> warnings;

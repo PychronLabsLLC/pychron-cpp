@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include "pychron/arar/reduce.hpp"
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 #include "pychron/processing/quantity.hpp"
@@ -303,7 +304,7 @@ end = "2026-01-01T10:00:00Z"
   EXPECT_DOUBLE_EQ((*a)->context.flux->j.value, 0.001);
   ASSERT_TRUE((*a)->context.production);
   EXPECT_EQ((*a)->context.chronology.size(), 1u);
-  auto ra = pp::reduce_analysis(*a, {});
+  auto ra = pychron::arar::reduce_with_arar(*a);
   auto age = pp::Quantity::parse("age")->eval(*ra);
   ASSERT_TRUE(age) << ra->reduction_error;
   EXPECT_GT(age->value, 0.0);

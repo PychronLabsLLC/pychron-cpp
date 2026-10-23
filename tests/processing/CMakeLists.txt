@@ -16,7 +16,10 @@ gtest_discover_tests(pychron_processing_tests DISCOVERY_TIMEOUT 60 PROPERTIES TI
 
 if(TARGET pychron_processing_records)
   add_executable(pychron_processing_records_tests test_record_source.cpp)
-  target_link_libraries(pychron_processing_records_tests PRIVATE pychron::processing_records GTest::gtest_main)
+  # Temporary: pychron::arar for the age the record directory's references
+  # give (arar_reduce); Task 10 moves that case to tests/arar and removes it.
+  target_link_libraries(pychron_processing_records_tests PRIVATE pychron::processing_records pychron::arar
+    GTest::gtest_main)
   pychron_set_warnings(pychron_processing_records_tests)
   gtest_discover_tests(pychron_processing_records_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)
 endif()

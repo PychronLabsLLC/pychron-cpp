@@ -19,35 +19,25 @@ const pp::RecallRow* row(const pp::RecallSection& s, const std::string& name) {
   return nullptr;
 }
 
-TEST(Recall, UnknownHasComputedValuesAndBudget) {
+// The neutral tables: the isotopes' core stages and the analysis's own rows.
+// The computed values, ratios and error budget are the domain's (tests/arar
+// test_recall_arar.cpp).
+TEST(Recall, UnknownHasItsCoreStagesAndIdentity) {
   auto ra = pp::reduce_analysis(make_unknown(0), {});
   const auto m = pp::make_recall_model(*ra);
   EXPECT_EQ(m.title, "U1-01  air  unknown");
-  ASSERT_NE(row(m.computed, "Age"), nullptr);
-  ASSERT_TRUE(row(m.computed, "Age")->value);
-  EXPECT_GT(row(m.computed, "Age")->value->value, 0.0);
-  ASSERT_TRUE(row(m.computed, "Age w/o J")->value);
-  EXPECT_LT(row(m.computed, "Age w/o J")->value->error, row(m.computed, "Age")->value->error);
-  ASSERT_NE(row(m.ratios, "Ar40/Ar36"), nullptr);
   ASSERT_EQ(m.isotopes.size(), 5u);
   EXPECT_EQ(m.isotopes[0].key, "Ar40");
-  EXPECT_EQ(m.isotopes[0].stages.count(pp::Stage::InterferenceCorrected), 1u);
+  EXPECT_EQ(m.isotopes[0].stages.size(), 7u);
+  EXPECT_EQ(m.isotopes[0].stages.rbegin()->first, pp::Stage::IcCorrected);
   EXPECT_NEAR(m.isotopes[0].stages.at(pp::Stage::Intercept).value, 1000.0, 1e-12);
-  ASSERT_FALSE(m.error_budget.empty());
-  double total = 0;
-  for (const auto& c : m.error_budget) total += c.percent;
-  EXPECT_NEAR(total, 100.0, 1e-6);
-  EXPECT_GE(m.error_budget.front().percent, m.error_budget.back().percent);
+  EXPECT_TRUE(m.reduction_note.empty());
   ASSERT_NE(row(m.identity, "J"), nullptr);
 }
 
-TEST(Recall, AirWithoutFluxExplainsMissingAge) {
+TEST(Recall, AirHasItsExtractionAndSpectrometer) {
   auto ra = pp::reduce_analysis(make_air(0), {});
   const auto m = pp::make_recall_model(*ra);
-  ASSERT_NE(row(m.computed, "Age"), nullptr);
-  EXPECT_FALSE(row(m.computed, "Age")->value);
-  EXPECT_TRUE(m.error_budget.empty());
-  EXPECT_NEAR(row(m.ratios, "Ar40/Ar36")->value->value, 295.5, 1e-9);
   ASSERT_NE(row(m.extraction, "Extract value"), nullptr);
   EXPECT_EQ(row(m.extraction, "Extract value")->units, "W");
   ASSERT_NE(row(m.spectrometer, "H1 gain"), nullptr);

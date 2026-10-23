@@ -25,6 +25,7 @@
 #include "pychron/processing/reduced.hpp"
 #include "pychron/arar/arar_reduction.hpp"
 #include "pychron/arar/arar_types.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/reduction/stats.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
@@ -149,10 +150,12 @@ struct Member {
   pr::ReducedPtr reduced;
 
   const pr::Analysis& a() const { return *analysis; }
-  bool has_age() const { return reduced->arar && reduced->arar->ages; }
+  // The Ar-Ar result: present for every member with an age.
+  const arar::ArArReduced* ar() const { return arar::reduced_of(*reduced); }
+  bool has_age() const { return ar() != nullptr && ar()->arar.ages; }
   bool is_step() const { return analysis->increment >= 0; }
   // The analysis measured the isotope. The reduction puts a zero in the place
-  // of one it did not (reduce_analysis) and goes on, so an analysis is
+  // of one it did not (reduce_arar) and goes on, so an analysis is
   // published only when it measured all five (submission_of).
   bool measured(r::ArgonIsotope isotope) const {
     return reduced->stage(r::to_string(isotope), pr::Stage::Intercept).has_value();
@@ -348,13 +351,13 @@ std::string_view units_name(r::AgeUnits units) {
 // The total 40K decay constant an analysis's age used, per year: the flux's
 // own when it carries one (not exactly 0 +- 0, as reduction::age_equation
 // reads it), otherwise lambda_b + lambda_e.
-double decay_constant_of(const pr::ReducedAnalysis& reduced) {
+double decay_constant_of(const arar::ArArReduced& reduced) {
   if (const auto& k = reduced.lambda_k_total; k && !(k->value == 0.0 && k->error == 0.0)) return k->value;
-  return r::lambda_k(*reduced.constants).value;
+  return r::lambda_k(reduced.constants).value;
 }
 
-// What the ages of the sample rest on. Every analysis with an age has
-// constants (reduce_analysis sets them before it reduces).
+// What the ages of the sample rest on. Every analysis with an age has an
+// Ar-Ar result, and with it the constants it was reduced with.
 struct Constants {
   double decay_constant = 0.0;  // per year
   double atm4036 = 0.0;
@@ -369,19 +372,19 @@ Result<Constants> constants_of(std::string_view sample, const Members& dated) {
   const auto show = [](double v) { return shown(v); };
   auto decay = agreed(
       sample, dated, "decay constant",
-      [](const Member& m) { return std::optional(decay_constant_of(*m.reduced)); }, show);
+      [](const Member& m) { return std::optional(decay_constant_of(*m.ar())); }, show);
   if (!decay) return fail(decay.error());
   auto air = agreed(
       sample, dated, "atmospheric 40Ar/36Ar",
-      [](const Member& m) { return std::optional(m.reduced->constants->atm4036.value); }, show);
+      [](const Member& m) { return std::optional(m.ar()->constants.atm4036.value); }, show);
   if (!air) return fail(air.error());
   auto units = agreed(
-      sample, dated, "age unit", [](const Member& m) { return std::optional(m.reduced->constants->age_units); },
+      sample, dated, "age unit", [](const Member& m) { return std::optional(m.ar()->constants.age_units); },
       [](r::AgeUnits u) { return std::string(units_name(u)); });
   if (!units) return fail(units.error());
   auto decay_error = agreed(
       sample, dated, "decay constant uncertainty in the ages",
-      [](const Member& m) { return std::optional(m.reduced->constants->include_decay_error); },
+      [](const Member& m) { return std::optional(m.ar()->constants.include_decay_error); },
       [](bool included) { return std::string(included ? "included" : "not included"); });
   if (!decay_error) return fail(decay_error.error());
   Constants out;
@@ -477,28 +480,37 @@ struct GroupJ {
 
 double relative_error(const r::UFloat& j) { return j.nominal() == 0 ? 0.0 : j.std_dev() / std::abs(j.nominal()); }
 
+// The J an analysis's ages were made with; none without an Ar-Ar result.
+std::optional<r::UFloat> j_of(const pr::ReducedAnalysis& reduced) {
+  const arar::ArArReduced* ar = arar::reduced_of(reduced);
+  return ar ? ar->j : std::nullopt;
+}
+
 GroupJ j_of(const pr::GroupItems& items) {
   GroupJ out;
   for (const pr::DatasetItem* item : items) {
     const pr::ReducedAnalysis& reduced = *item->analysis;
-    if (!reduced.j) continue;
+    const auto j = j_of(reduced);
+    if (!j) continue;
     if (out.first == nullptr) {
       out.first = out.widest = &reduced;
-      out.relative = relative_error(*reduced.j);
+      out.relative = relative_error(*j);
       continue;
     }
-    const bool same = reduced.j->nominal() == out.first->j->nominal() && reduced.j->std_dev() == out.first->j->std_dev();
+    const auto first = j_of(*out.first);
+    const bool same = j->nominal() == first->nominal() && j->std_dev() == first->std_dev();
     if (!same && out.other == nullptr) out.other = &reduced;
-    if (relative_error(*reduced.j) > out.relative) {
+    if (relative_error(*j) > out.relative) {
       out.widest = &reduced;
-      out.relative = relative_error(*reduced.j);
+      out.relative = relative_error(*j);
     }
   }
   return out;
 }
 
 std::string j_text(const pr::ReducedAnalysis& reduced) {
-  return shown(reduced.j->nominal()) + " +/- " + shown(reduced.j->std_dev()) + " (" + reduced.analysis->runid + ")";
+  const auto j = j_of(reduced);  // GroupJ holds only analyses with one
+  return shown(j->nominal()) + " +/- " + shown(j->std_dev()) + " (" + reduced.analysis->runid + ")";
 }
 
 // The J term of a mean of ages: the relative J uncertainty of the analyses
@@ -564,7 +576,7 @@ Candidate weighted_mean_age(const Group& g, const PublishOptions& o) {
   out.analytical = mean->error;
   // The mean passes over an age without a usable error (reduction::weighted_mean).
   for (const pr::DatasetItem* item : g.all) {
-    const r::UFloat& age = item->analysis->arar->ages->age;
+    const r::UFloat& age = arar::reduced_of(*item->analysis)->arar.ages->age;
     if (std::isfinite(age.nominal()) && std::isfinite(age.std_dev()) && age.std_dev() != 0.0) out.used.push_back(item);
   }
   add_j_term(out, mean->value, mean->error);
@@ -618,7 +630,7 @@ Candidate integrated_age(const Group& g) {
   out.analytical = plain->std_dev();
   out.with_j = with_j->std_dev();
   // Every analysis here has an age, so the sum took each of them: an analysis
-  // that reduced with something missing has no age (reduce_analysis).
+  // that reduced with something missing has no age (reduce_arar).
   out.n = g.all.size();
   out.error_kind = false;
   out.used = g.all;
@@ -772,7 +784,7 @@ std::map<const pr::ReducedAnalysis*, Released> released_39(const Members& given,
       return x->a().timestamp < y->a().timestamp;
     });
     // A published analysis has an age, and so a reduction.
-    const auto k39 = [](const Member* m) { return m->reduced->arar->f.interference.k39.nominal(); };
+    const auto k39 = [](const Member* m) { return m->ar()->arar.f.interference.k39.nominal(); };
     double total = 0.0;
     for (const Member* m : steps) {
       if (k39(m) > 0) total += k39(m);
@@ -844,8 +856,8 @@ constexpr std::array kRatioFields = {PYCHRON_EARTHBANK_RATIO(36), PYCHRON_EARTHB
 // removed; the atmospheric and the chlorine-derived 38Ar are no interference
 // and stay. (A published analysis measured every isotope.)
 std::optional<r::UFloat> corrected(const Member& m, r::ArgonIsotope isotope) {
-  if (isotope != r::ArgonIsotope::Ar38) return m.reduced->stage(r::to_string(isotope), pr::Stage::InterferenceCorrected);
-  const r::ArArResult& arar = *m.reduced->arar;
+  if (isotope != r::ArgonIsotope::Ar38) return m.ar()->stage(r::to_string(isotope), "interference_corrected");
+  const r::ArArResult& arar = m.ar()->arar;
   return arar.corrected[r::index(isotope)] - arar.f.interference.k38 - arar.f.interference.ca38;
 }
 
@@ -858,9 +870,9 @@ std::optional<r::UFloat> corrected(const Member& m, r::ArgonIsotope isotope) {
 // the same stage with the decay factor, an exact number, divided out again,
 // so that the five have had the same done to them but for 39Ar's decay.
 std::optional<r::UFloat> excluding_interferences(const Member& m, r::ArgonIsotope isotope) {
-  auto stage = m.reduced->stage(r::to_string(isotope), pr::Stage::DecayCorrected);
+  auto stage = m.ar()->stage(r::to_string(isotope), "decay_corrected");
   if (!stage || isotope != r::ArgonIsotope::Ar37) return stage;
-  return *stage / m.reduced->arar->decay.df37;
+  return *stage / m.ar()->arar.decay.df37;
 }
 
 // Laser power with its units, or the furnace's temperature: units with a `C`
@@ -892,7 +904,7 @@ Measurement measurement_of(const Member& m, const Released* released, const Summ
                            double to_ma, Notes& notes) {
   const pr::Analysis& a = m.a();
   const pr::ReducedAnalysis& reduced = *m.reduced;
-  const r::ArArResult& arar = *reduced.arar;
+  const r::ArArResult& arar = m.ar()->arar;
   Numbers numbers(a.runid, notes);
   Measurement out;
 
@@ -936,7 +948,7 @@ Measurement measurement_of(const Member& m, const Released* released, const Summ
     PYCHRON_EARTHBANK_SET(numbers, out, cumulative39ArK, released->cumulative);
   }
 
-  PYCHRON_EARTHBANK_SET_PM(numbers, out, jValue, reduced.j);
+  PYCHRON_EARTHBANK_SET_PM(numbers, out, jValue, m.ar()->j);
   out.jvalueUncertaintyTypeName = std::string(kOneSigma);
   PYCHRON_EARTHBANK_SET_PM(numbers, out, apparentAge, arar.ages->age, to_ma);
   out.apparentAgeUncertainityTypeName = std::string(kOneSigma);
@@ -1278,7 +1290,7 @@ Result<std::vector<Submission>> build_submissions(const std::vector<processing::
     if (analysis->sample.empty()) {
       return fail(ErrorKind::Config, "earthbank: analysis " + analysis->runid + " has no sample name");
     }
-    by_sample[analysis->sample].push_back({analysis, pr::reduce_analysis(analysis, options.reduction)});
+    by_sample[analysis->sample].push_back({analysis, arar::reduce_with_arar(analysis, options.reduction)});
   }
 
   std::vector<Submission> out;

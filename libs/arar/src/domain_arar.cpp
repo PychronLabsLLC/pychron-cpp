@@ -4,11 +4,14 @@
 #include "pychron/arar/domain.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <string>
 #include <utility>
 
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/derived.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/report.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/units.hpp"
@@ -63,6 +66,92 @@ Result<void> write_schaen(const std::filesystem::path& path, const std::vector<s
   return save_report(make_report(by_key, ReportOptions{}), path);
 }
 
+namespace r = pychron::reduction;
+
+std::optional<Value> val(const std::optional<r::UFloat>& u) {
+  if (!u || !std::isfinite(u->nominal())) return std::nullopt;
+  return Value{u->nominal(), u->std_dev()};
+}
+
+RecallRow text_row(std::string name, std::string text) {
+  RecallRow row;
+  row.name = std::move(name);
+  row.text = std::move(text);
+  return row;
+}
+
+RecallRow value_row(std::string name, std::optional<Value> v, std::string units = {}, std::string note = {}) {
+  RecallRow row;
+  row.name = std::move(name);
+  row.value = v;
+  row.units = std::move(units);
+  row.note = std::move(note);
+  if (!v) row.text = "—";
+  return row;
+}
+
+// The recall window's Summary sections: the computed values of the Ar-Ar
+// result, and the corrected argon ratios from the decay-corrected stages.
+std::vector<RecallSection> arar_sections(const ReducedAnalysis& ra) {
+  RecallSection computed;
+  computed.title = "Computed";
+  const arar::ArArReduced* reduced = arar::reduced_of(ra);
+  if (reduced) {
+    const r::ArArResult& ar = reduced->arar;
+    if (ar.ages) {
+      computed.rows.push_back(value_row("Age", val(ar.ages->age_w_j_err), "Ma", "with J error"));
+      computed.rows.push_back(value_row("Age w/o J", val(ar.ages->age), "Ma", "analytical error only"));
+      RecallRow wo;
+      wo.name = "Age w/o J, irrad.";
+      wo.value = Value{ar.ages->age.nominal(), ar.ages->age_err_wo_irrad};
+      wo.units = "Ma";
+      computed.rows.push_back(wo);
+    } else {
+      computed.rows.push_back(value_row("Age", std::nullopt, "Ma",
+                                        ra.reduction_error.empty() ? "no J for this analysis" : ra.reduction_error));
+    }
+    computed.rows.push_back(value_row("F (40Ar*/39ArK)", val(ar.f.f)));
+    computed.rows.push_back(value_row("K/Ca", val(ar.kca)));
+    computed.rows.push_back(value_row("K/Cl", val(ar.kcl)));
+    computed.rows.push_back(value_row("40Ar*", val(ar.f.rad40), "fA"));
+    computed.rows.push_back(value_row("%40Ar*", val(ar.f.radiogenic_yield), "%"));
+    computed.rows.push_back(value_row("39ArK", val(ar.f.interference_corrected[r::index(r::ArgonIsotope::Ar39)]), "fA"));
+    for (const auto d : ar.diagnostics) computed.rows.push_back(text_row("note", std::string(r::to_string(d))));
+  }
+
+  // Corrected ratios from the IC-corrected (and decay-corrected) stages.
+  RecallSection ratios;
+  ratios.title = "Corrected ratios";
+  auto stage = [&](const char* iso) -> std::optional<r::UFloat> {
+    auto d = reduced ? reduced->stage(iso, "decay_corrected") : std::nullopt;
+    return d ? d : ra.stage(iso, Stage::IcCorrected);
+  };
+  for (auto [n, d] : {std::pair{"Ar40", "Ar39"}, {"Ar40", "Ar36"}, {"Ar40", "Ar38"}, {"Ar38", "Ar39"}, {"Ar37", "Ar39"},
+                      {"Ar36", "Ar39"}}) {
+    auto num = stage(n), den = stage(d);
+    if (!num || !den || den->nominal() == 0) continue;
+    ratios.rows.push_back(value_row(std::string(n) + "/" + d, val(*num / *den)));
+  }
+  return {std::move(computed), std::move(ratios)};
+}
+
+// Error budget of the age with J error, by variable tag (legacy E20), largest first.
+std::vector<RecallErrorComponent> arar_budget(const ReducedAnalysis& ra) {
+  std::vector<RecallErrorComponent> out;
+  const arar::ArArReduced* reduced = arar::reduced_of(ra);
+  if (!reduced || !reduced->arar.ages) return out;
+  const r::UFloat& age = reduced->arar.ages->age_w_j_err;
+  const double var = age.variance();
+  if (var > 0) {
+    std::map<std::string, double> by;
+    for (const auto& [t, sigma] : r::error_components(age)) by[std::string(r::tag_name(t))] += sigma * sigma / var * 100.0;
+    for (const auto& [tag, pct] : by)
+      if (pct >= 1e-6) out.push_back({tag.empty() ? "other" : tag, pct});
+  }
+  std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.percent > y.percent; });
+  return out;
+}
+
 class ArArDomain final : public Domain {
  public:
   std::string_view id() const override { return "arar"; }
@@ -72,6 +161,7 @@ class ArArDomain final : public Domain {
     static const UnitRegistry registry = [] {
       UnitRegistry r;
       add_builtin_units(r);
+      r.add(arar::make_arar_reduce_unit());
       r.add(make_ideogram_unit());
       r.add(make_spectrum_unit());
       r.add(make_isochron_unit());
@@ -80,7 +170,7 @@ class ArArDomain final : public Domain {
     }();
     return registry;
   }
-  std::vector<std::string> reduction_chain() const override { return {"reduce"}; }
+  std::vector<std::string> reduction_chain() const override { return {"reduce", "arar_reduce"}; }
 
   std::vector<FigureEntry> figures() const override {
     using W = FigureEntry::Window;
@@ -113,16 +203,15 @@ class ArArDomain final : public Domain {
     return {{"age", "Age (Ma)", "Ma", true}, {"age_w_j", "Age with J error (Ma)", "Ma", false}, {"kca", "K/Ca", "", false}};
   }
   std::optional<DerivedValues> derive(const ReducedAnalysis& reduced) const override {
-    return derived_age(reduced, ReductionSettings{});
+    return derived_age(reduced);
   }
   std::string_view reduction_version() const override { return reduction::kReductionVersion; }
 
   std::vector<RecallSection> recall_sections(const ReducedAnalysis& reduced) const override {
-    RecallModel model = make_recall_model(reduced);
-    return {std::move(model.computed), std::move(model.ratios)};
+    return arar_sections(reduced);
   }
   std::vector<RecallErrorComponent> error_budget(const ReducedAnalysis& reduced) const override {
-    return make_recall_model(reduced).error_budget;
+    return arar_budget(reduced);
   }
 
   std::vector<Exporter> exporters() const override {

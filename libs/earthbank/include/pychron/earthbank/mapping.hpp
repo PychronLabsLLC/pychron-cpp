@@ -90,6 +90,7 @@
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/processing/model.hpp"
 #include "pychron/processing/reduced.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/report.hpp"
 
 namespace pychron::earthbank {
@@ -126,7 +127,7 @@ namespace pychron::earthbank {
 // trapped 40Ar/36Ar, the error kind of a mean (or that the uncertainty is
 // propagated), whether the J uncertainty is included, that the decay
 // constant's is when the reduction carries it into the ages
-// (ReductionSettings::include_decay_error, or the analyses' constants), and
+// (ArArSettings::include_decay_error, or the analyses' constants), and
 // the software. The same sentence is in Submission::notes.
 using PreferredAge = AgeKind;
 
@@ -142,7 +143,7 @@ struct SampleOptions {
 };
 
 struct PublishOptions {
-  processing::ReductionSettings reduction;  // as the report
+  arar::ArArSettings reduction;  // as the report
   // The plateau criteria and weighting, the error kind of the plateau and
   // the weighted mean, and the isochron's regression. The rest (the sigma
   // level, the laboratory, the notes) is the report's own and is not read:

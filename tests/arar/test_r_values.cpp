@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "fixtures.hpp"
+#include "pychron/arar/reduce.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/reduction/stats.hpp"
 #include "pychron/reduction/ufloat.hpp"
@@ -20,9 +21,11 @@ namespace {
 
 // A reduced step whose F is set by hand, in `group` of `graph`.
 pp::DatasetItem with_f(double f, double e, int group, int graph = 0) {
-  static const pp::ReducedPtr base = pp::reduce_analysis(make_step(0, 20, 0.1), {});
+  static const pp::ReducedPtr base = pychron::arar::reduce_with_arar(make_step(0, 20, 0.1));
   auto a = std::make_shared<pp::ReducedAnalysis>(*base);
-  a->arar->f.f = r::UFloat::variable(f, e);
+  auto arar = std::make_shared<pychron::arar::ArArReduced>(*pychron::arar::reduced_of(*base));
+  arar->arar.f.f = r::UFloat::variable(f, e);
+  a->domain = std::move(arar);
   pp::DatasetItem item;
   item.analysis = std::move(a);
   item.path.group = group;
@@ -34,7 +37,7 @@ pp::DatasetItem with_f(double f, double e, int group, int graph = 0) {
 pp::DatasetItem without_f(int group) {
   auto item = with_f(10, 0.1, group);
   auto a = std::make_shared<pp::ReducedAnalysis>(*item.analysis);
-  a->arar.reset();
+  a->domain.reset();
   a->reduction_error = "no argon";
   item.analysis = std::move(a);
   return item;
@@ -146,12 +149,12 @@ TEST(RValues, UsesFWhileIdeogramPlotsAge) {
   pp::Dataset d;
   for (int i = 0; i < 3; ++i) {
     pp::DatasetItem it;
-    it.analysis = pp::reduce_analysis(make_step(i, 20, 0.1, 10.0), {});
+    it.analysis = pychron::arar::reduce_with_arar(make_step(i, 20, 0.1, 10.0));
     d.mutable_items().push_back(it);
   }
   for (int i = 0; i < 3; ++i) {
     pp::DatasetItem it;
-    it.analysis = pp::reduce_analysis(make_step(i, 20, 0.1, 12.0, "S2"), {});
+    it.analysis = pychron::arar::reduce_with_arar(make_step(i, 20, 0.1, 12.0, "S2"));
     it.path.group = 1;
     d.mutable_items().push_back(it);
   }
