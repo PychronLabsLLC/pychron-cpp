@@ -38,6 +38,7 @@ file:
 | camera scales | `<lab>/camera_scales/` | `<state>/camera_scales/` |
 | snapshots | `<lab>/snapshots/<device>/` | `<state>/snapshots/<device>/` |
 | data (records, rise rates), when no `--data` / install data | `<lab>/data` | `<state>/data` |
+| field tables (peak center saves a version, rewrites `current`) | `<spectrometer dir>/tables/` | `<state>/tables/`, see 3.5 |
 
 `<state>` for lab `<examples>/<rel>` is `<user examples dir>/<rel>`
 (`<rel>` empty for examples root).
@@ -99,7 +100,30 @@ Only place the rule lives. Programs call it once with
 - Folder made when first written (stores already do this); nothing created
   at start-up.
 
-### 3.5 Tests
+### 3.5 Field tables (added while implementing)
+
+Queue's peak center saves new table version by default
+(`PeakCenterConfig::save_table`): `<spectrometer dir>/tables/<name>/<stamp>.toml`
+and tracked `current` rewritten. Unlike corrections, examples ship tables,
+so state folder needs them to start from.
+
+- `cfg::SpectrometerData::table_root` (empty: `root`): where tables are read
+  and saved. `cfg::load_spectrometer(config, table_root = {})` reads them
+  there; assembler sets `Spectrometer::Options::data_root` from it.
+  Weights, profiles still read beside config.
+- `LabPaths::spectrometer_tables` (empty: beside config) passed to
+  `load_spectrometer` by `load_lab`.
+- `setup::field_table_root(root, examples, user_dir) -> Result<path>`:
+  `lab_state_dir(root, ...)`. When that is not `root`: each
+  `<root>/tables/<name>` that has `current` is copied to
+  `<state>/tables/<name>` unless `<state>/tables/<name>/current` exists. What a
+  session saved kept; a version shipped later not seen until copy removed.
+  Copy failure: `Io` error, spectrometer not loaded, said as any spectrometer
+  error.
+- `elctl exp run`, `pychron-ui`: pass it for spectrometer config. Field table
+  editor follows (`Spectrometer::data_root`).
+
+### 3.6 Tests
 
 `tests/support/example_lab.hpp` `copy_lab(from, to)`: copy of a lab leaving
 out runtime state (`data`, `notifications.toml`, any `stage_corrections`,
@@ -116,7 +140,7 @@ and writes state under a scratch `HOME`/`XDG_STATE_HOME`.
 ## 4. Rules that must hold
 
 - Running `elctl` or `pychron-ui` on shipped examples leaves examples folder
-  byte-identical (state, data, snapshots, corrections, scales).
+  byte-identical (state, data, snapshots, corrections, scales, field tables).
 - Lab that is not shipped examples: every path as before. Install layout,
   doctor, installer unchanged.
 - One function decides (`setup::lab_state_dir`); programs never restate rule.
@@ -125,8 +149,8 @@ and writes state under a scratch `HOME`/`XDG_STATE_HOME`.
 
 ## 5. Out of scope
 
-- Operator edits of lab files on examples: saving a queue, field table editor,
-  peak center config, `elctl laser calibrate` (writes `stage_calibrations`,
+- Operator edits of lab files on examples: saving a queue, peak center
+  config, `elctl laser calibrate` (writes `stage_calibrations`,
   shipped and tracked). Still write into examples. Follow-up: refuse with
   "the shipped examples are read-only; install a lab (elctl setup)" or save a
   copy.

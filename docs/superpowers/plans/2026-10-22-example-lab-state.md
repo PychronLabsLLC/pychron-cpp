@@ -24,3 +24,7 @@ Spec: `docs/superpowers/specs/2026-10-22-example-lab-state-design.md`.
    the user folder.
 6. `pychron-ui` does the same (`apps/pychron-ui/src/main.cpp`). Built and
    run under `dev-ui`.
+7. Field tables (spec 3.5): `SpectrometerData::table_root`,
+   `LabPaths::spectrometer_tables`, `setup::field_table_root` copying the
+   shipped tables once. Tests: `tests/setup/test_install.cpp`; the elctl test
+   of task 5 also checks the saved table is in the user folder.

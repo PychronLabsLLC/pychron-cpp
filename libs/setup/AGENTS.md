@@ -22,3 +22,12 @@ only this component's. Kept compressed, as that file is.
 - Data-source change (`data_source.cpp`) writes credentials, install record,
   site entry; nothing else under root. Reconfigure must keep it:
   `DataSource*.AReconfigureKeepsTheNewSource`.
+- Shipped examples (`configs/examples`, in macOS bundle) read-only to
+  programs. Program run on them keeps runtime state (line state, corrections,
+  camera scales, snapshots, default data, field tables) in per-user examples
+  folder: `setup::lab_state_dir`, `setup::field_table_root`
+  (spec `2026-10-22-example-lab-state-design.md`). New file a program writes
+  beside a lab goes through `LabPaths::state()` or those functions, never
+  `<lab>/...` direct. Tests copy examples with `pychron::testing::copy_lab`
+  (`tests/support/example_lab.hpp`): new runtime state in examples gets a
+  `.gitignore` line and a place in `is_lab_runtime_state`.
