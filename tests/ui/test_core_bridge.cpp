@@ -1,6 +1,7 @@
 // CoreBridge: bus events reach the main thread and the snapshot; actuate()
 // never blocks the caller and reports its Result back on the main thread.
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <thread>
@@ -8,6 +9,7 @@
 #include <QtTest/QtTest>
 
 #include "core_bridge.hpp"
+#include "log_capture.hpp"
 #include "pychron/sim/sim_system.hpp"
 #include "ui_fixture.hpp"
 
@@ -87,6 +89,23 @@ class TestCoreBridge : public QObject {
     QVERIFY(finished->has_value());
     QVERIFY(!bridge_->pending("B"));
     QTRY_COMPARE(bridge_->state().valves.at("B"), ValveState::Open);
+  }
+
+  // The operator's valve command is on ui.action at info: verb, kind, name.
+  void actuateIsLoggedAsAction() {
+    const pychron::testing::LogCapture capture;
+    QVERIFY(capture.ok());
+    QVERIFY(line_->start().has_value());
+    QTRY_VERIFY(bridge_->state().switches.contains("B"));  // the snapshot says what B is
+    std::optional<Result<void>> finished;
+    connect(bridge_.get(), &CoreBridge::actuationFinished, this,
+            [&](const QString&, const Result<void>& r) { finished = r; });
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_VERIFY(finished.has_value());
+    const auto lines = capture.lines();
+    std::string all;
+    for (const auto& l : lines) all.append(l).push_back('\n');
+    QVERIFY2(std::ranges::find(lines, std::string("[info] ui.action: open valve B")) != lines.end(), all.c_str());
   }
 
   void interlockRejectionIsReported() {

@@ -27,6 +27,7 @@
 #include "gauge_popup.hpp"
 #include "gauge_window.hpp"
 #include "history_chart.hpp"
+#include "log_capture.hpp"
 #include "field_table_editor_window.hpp"
 #include "main_window.hpp"
 #include "menu_hub.hpp"
@@ -51,6 +52,18 @@ using pychron::ui::HealthBar;
 using pychron::ui::LogDock;
 using pychron::ui::LogModel;
 using pychron::ui::LogRecord;
+
+namespace {
+
+// The error lines a LogCapture holds, in order.
+std::vector<std::string> error_lines(const pychron::testing::LogCapture& capture) {
+  std::vector<std::string> out;
+  for (auto& l : capture.lines())
+    if (l.starts_with("[error]")) out.push_back(std::move(l));
+  return out;
+}
+
+}  // namespace
 
 class TestDocks : public QObject {
   Q_OBJECT
@@ -142,6 +155,71 @@ class TestDocks : public QObject {
     QCOMPARE(dock.line_count(), 2);
     QVERIFY(dock.text().contains(QStringLiteral("INFO [ui] hello")));
     QVERIFY(dock.text().contains(QStringLiteral("ERROR [ui] A rejected: busy")));
+  }
+
+  // An error shown on the dock is in the log file too: written once, shown once.
+  // The hub publishes on the bus the dock is fed from: the row comes back that way.
+  void dockErrorOnTheFedBusIsWrittenAndShownOnce() {
+    const pychron::testing::LogCapture capture;
+    QVERIFY(capture.ok());
+    SignalBus bus;
+    auto attached = capture.hub().attach_bus(bus);
+    LogDock dock;
+    dock.set_fed_by(&bus);
+    std::vector<Log> relayed;  // what CoreBridge::logLine would hand the dock
+    auto sub = bus.subscribe<Log>([&](const Log& l) { relayed.push_back(l); });
+    dock.append_line(QStringLiteral("ERROR [x] boom"));
+    QTRY_COMPARE(relayed.size(), std::size_t{1});
+    for (const auto& l : relayed) dock.append_log(l);
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 1);
+    // the relayed record, with the thread the hub stamped
+    QVERIFY2(dock.text().contains(QStringLiteral(" ERROR ")) && dock.text().contains(QStringLiteral("[ui.x] boom")),
+             qPrintable(dock.text()));
+    QCOMPARE(error_lines(capture), std::vector<std::string>{"[error] ui.x: boom"});
+  }
+
+  // The hub on another bus: the dock shows the line itself, the file has it once.
+  void dockErrorWithTheHubOnAnotherBusIsWrittenAndShownOnce() {
+    const pychron::testing::LogCapture capture;
+    QVERIFY(capture.ok());
+    SignalBus hub_bus;
+    SignalBus dock_bus;
+    auto attached = capture.hub().attach_bus(hub_bus);
+    LogDock dock;
+    dock.set_fed_by(&dock_bus);
+    dock.append_error("line", QStringLiteral("A rejected"), QStringLiteral("interlock"));
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 1);
+    QVERIFY2(dock.text().contains(QStringLiteral("ERROR [ui.line] A rejected: interlock")), qPrintable(dock.text()));
+    QCOMPARE(error_lines(capture), std::vector<std::string>{"[error] ui.line: A rejected: interlock"});
+  }
+
+  // No process hub (most tests): the dock shows it, nothing else happens.
+  void dockErrorWithoutAHubIsShown() {
+    LogDock dock;
+    SignalBus bus;
+    dock.set_fed_by(&bus);
+    dock.append_line(QStringLiteral("ERROR [x] boom"));
+    dock.append_error("line", QStringLiteral("A rejected"), QStringLiteral("busy"));
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 2);
+  }
+
+  // The source of an ERROR line names the logger: ui.<source>, unless it is ui already.
+  void dockErrorSourceMapsToAUiLogger() {
+    const pychron::testing::LogCapture capture;
+    QVERIFY(capture.ok());
+    LogDock dock;
+    dock.append_line(QStringLiteral("ERROR [cryo] a"));
+    dock.append_line(QStringLiteral("ERROR [ui] b"));
+    dock.append_line(QStringLiteral("ERROR [ui.data] c"));
+    dock.append_line(QStringLiteral("ERROR [laser L2] d"));
+    dock.append_line(QStringLiteral("WARN [cryo] not an error"));
+    QCOMPARE(error_lines(capture), (std::vector<std::string>{"[error] ui.cryo: a", "[error] ui: b",
+                                                             "[error] ui.data: c", "[error] ui.laser.L2: d"}));
+    dock.flush_pending();
+    QCOMPARE(dock.line_count(), 5);
   }
 
   void ringEvictsAtCapacity() {

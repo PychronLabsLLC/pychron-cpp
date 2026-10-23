@@ -12,6 +12,7 @@
 // but the line's local override file (extraction_line.local.toml), written
 // here beside a config in a temp folder.
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -37,6 +38,7 @@
 #include <QtTest/QtTest>
 
 #include "code_editor.hpp"
+#include "log_capture.hpp"
 #include "data_browser_window.hpp"
 #include "data_main_window.hpp"
 #include "line_settings.hpp"
@@ -418,6 +420,32 @@ class TestPreferences : public QObject {
       click(d.buttons(), QDialogButtonBox::Cancel);
       QCOMPARE(applied.size(), std::size_t{2});
     }
+  }
+
+  // A commit names the pages that changed on ui.action, never a value.
+  void a_commit_logs_the_pages_that_changed() {
+    const pychron::testing::LogCapture capture;
+    QVERIFY(capture.ok());
+    const auto actions = [&] {
+      std::vector<std::string> out;
+      for (auto& l : capture.lines())
+        if (l.find("ui.action") != std::string::npos) out.push_back(std::move(l));
+      return out;
+    };
+    PreferencesDialog d({Preferences{}, std::nullopt}, [](const PreferencesDialog::Values&) {});
+    click(d.buttons(), QDialogButtonBox::Apply);  // nothing changed: nothing said
+    QVERIFY(actions().empty());
+    d.page_size()->setValue(137);
+    click(d.buttons(), QDialogButtonBox::Apply);
+    QCOMPARE(actions(), std::vector<std::string>{"[info] ui.action: preferences changed: Data"});
+    d.font_size()->setValue(15);
+    d.page_size()->setValue(138);
+    click(d.buttons(), QDialogButtonBox::Ok);
+    const auto said = actions();
+    QCOMPARE(said.size(), std::size_t{2});
+    QCOMPARE(said.back(), std::string("[info] ui.action: preferences changed: Appearance, Data"));
+    for (const auto& line : said)  // no value: not 137, 138 or 15
+      QVERIFY2(std::ranges::none_of(line, [](char c) { return c >= '0' && c <= '9'; }), line.c_str());
   }
 
   void fonts_reach_the_application_and_the_script_editor() {
