@@ -18,6 +18,7 @@ class Plain : public Device {
   using Device::begin;
   using Device::call;
   using Device::observe;
+  using Device::relay;
 
   // One operation, observed without a name of its own in the test.
   template <class T>
@@ -143,10 +144,85 @@ TEST(DeviceLog, PollingIsTrace) {
   pychron::testing::LogCapture log;
   ASSERT_TRUE(log.ok());
   Plain d("ig1");
-  {
+  const auto read = [&] {
     const LogContext::Polling polling;
     auto r = d.call<double>("read_pressure", [](Resend) -> Result<double> { return 1.5; }, Repeat::Safe);
     ASSERT_TRUE(r);
-  }
+  };
+  read();  // default level debug: nothing
   for (const auto& line : log.lines()) EXPECT_EQ(line.find("device.ig1"), std::string::npos) << line;
+
+  log.hub().set_levels(LogLevel::Trace, {});
+  read();
+  const auto lines = log.lines();
+  EXPECT_TRUE(std::ranges::any_of(
+      lines, [](const std::string& l) { return l.starts_with("[trace] device.ig1: read_pressure ok in "); }))
+      << ::testing::PrintToString(lines);
+}
+
+namespace {
+
+Result<double> failing_read(Plain& d, ErrorKind kind) {
+  return d.call<double>(
+      "read_pressure", [kind](Resend) -> Result<double> { return fail(kind, "no reply"); }, Repeat::Safe);
+}
+
+}  // namespace
+
+TEST(DeviceLog, CancelledIsDebugNotWarn) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Plain d("ig1");
+  ASSERT_FALSE(failing_read(d, ErrorKind::Cancelled));
+  const auto lines = log.lines();
+  EXPECT_TRUE(has_line(lines, "[debug] device.ig1: read_pressure failed: cancelled: no reply"))
+      << ::testing::PrintToString(lines);
+}
+
+TEST(DeviceLog, WhilePollingOnlyTheFirstFailureOfAStreakWarns) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  log.hub().set_levels(LogLevel::Trace, {});
+  Plain d("ig1");
+  {
+    const LogContext::Polling polling;
+    ASSERT_FALSE(failing_read(d, ErrorKind::Timeout));
+    ASSERT_FALSE(failing_read(d, ErrorKind::Timeout));
+  }
+  const auto lines = log.lines();
+  const std::vector<std::string> wanted{"[warn] device.ig1: read_pressure failed: timeout: no reply",
+                                        "[trace] device.ig1: read_pressure failed: timeout: no reply"};
+  std::vector<std::string> got;
+  for (const auto& l : lines)
+    if (l.find("device.ig1: read_pressure failed") != std::string::npos) got.push_back(l);
+  EXPECT_EQ(got, wanted);
+}
+
+TEST(DeviceLog, OutsidePollingARepeatedFailureStillWarns) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Plain d("ig1");
+  ASSERT_FALSE(failing_read(d, ErrorKind::Timeout));
+  ASSERT_FALSE(failing_read(d, ErrorKind::Timeout));
+  const auto lines = log.lines();
+  EXPECT_EQ(std::ranges::count(lines, std::string("[warn] device.ig1: read_pressure failed: timeout: no reply")), 2)
+      << ::testing::PrintToString(lines);
+}
+
+TEST(DeviceLog, RelayWritesATraceRecord) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  log.hub().set_levels(LogLevel::Trace, {});
+  ManualClock clock;
+  Plain d("ig1", DeviceOptions{&clock, 3});
+  auto r = d.relay<double>(
+      "query",
+      [&](Resend) -> Result<double> {
+        clock.advance(std::chrono::milliseconds(3));
+        return 1.5;
+      },
+      Repeat::Safe);
+  ASSERT_TRUE(r);
+  const auto lines = log.lines();
+  EXPECT_TRUE(has_line(lines, "[trace] device.ig1: query ok in 3 ms")) << ::testing::PrintToString(lines);
 }

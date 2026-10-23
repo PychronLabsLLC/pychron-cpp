@@ -76,6 +76,8 @@ void Device::log_outcome(const Operation& op, const Error* error, bool failing) 
     if (op.started && log_.enabled(ok_level())) log_.log(ok_level(), took(op.what, *op.started, log_now()));
     return;
   }
+  // Not a device failure (a cancel), or a poll of a device already failing
+  // (said at warn when the streak began): at the level of an ok.
   const LogLevel level = error->kind == ErrorKind::Cancelled || (failing && LogContext::polling())
                              ? ok_level()
                              : LogLevel::Warn;
