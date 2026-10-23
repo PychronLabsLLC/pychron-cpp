@@ -99,7 +99,7 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
         if (!usable) problems_.insert_or_assign(name, usable.error().what);
       }
     }
-    system->set_snapshot_dir(lab.paths.dir / "snapshots" / name);
+    system->set_snapshot_dir(lab.paths.state() / "snapshots" / name);
     systems_.emplace(name, std::move(system));
   }
 }

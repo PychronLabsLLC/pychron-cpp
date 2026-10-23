@@ -18,10 +18,14 @@
 //   <lab>/tray_maps/*.txt         sample trays, in legacy pychron's format (optional)
 //   <lab>/patterns/*.toml         laser patterns a run may name (optional)
 //   <lab>/cameras.toml            the camera of each extraction device (optional)
-//   <lab>/stage_corrections/      where autocenter found each hole
+//   <state>/stage_corrections/    where autocenter found each hole
 //                                 (<device>.<tray>.toml, written as runs center holes)
+//   <state>/camera_scales/        each camera's measured pixel scale
+//   <state>/snapshots/<device>/   pictures a camera was asked to keep
 //   <lab>/stage_calibrations/     where each tray sits on each extraction device's stage
 //                                 (<device>.<tray>.toml, written by `elctl laser calibrate`)
+//
+// <state> is LabPaths::state(): the lab itself, except for the shipped examples.
 
 #include <filesystem>
 #include <map>
@@ -58,6 +62,12 @@ struct LabPaths {
   std::filesystem::path dir;
   std::filesystem::path line_config;   // extraction_line.toml; empty: none
   std::filesystem::path spectrometer;  // spectrometer config; empty: none
+  // Where what a program writes while running lives: autocenter corrections,
+  // camera scales, snapshots. Empty: `dir`. The shipped examples keep theirs
+  // elsewhere (setup::lab_state_dir).
+  std::filesystem::path state_dir{};
+
+  [[nodiscard]] const std::filesystem::path& state() const { return state_dir.empty() ? dir : state_dir; }
 
   // Queue directory (queue-directory design, section 2): the lab's queues
   // and, below them, its blocks. Derived from `dir`, so not fields.

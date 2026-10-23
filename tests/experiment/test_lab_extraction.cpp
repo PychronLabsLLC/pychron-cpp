@@ -253,6 +253,16 @@ TEST_F(LabExtractionTest, LoadsCamerasAndHasACorrectionStore) {
   EXPECT_TRUE(l.problems.empty());
 }
 
+TEST_F(LabExtractionTest, WhatRunsWriteGoesToTheStateFolder) {
+  LabPaths paths{dir_, dir_ / "line.toml", dir_ / "spectrometer.sim-integrated.toml"};
+  paths.state_dir = dir_ / "elsewhere";
+  const Lab l = load_lab(paths);
+  EXPECT_EQ(l.corrections->dir(), dir_ / "elsewhere" / "stage_corrections");
+  EXPECT_EQ(l.camera_scales->file("co2").parent_path(), dir_ / "elsewhere" / "camera_scales");
+  // What the lab ships is read where it is.
+  EXPECT_EQ(l.calibrations->dir(), dir_ / "stage_calibrations");
+}
+
 // A camera table that does not load stops the runs on its device, with the
 // table's own problem; a device that simply has no camera is fine.
 TEST_F(LabExtractionTest, ACameraThatDidNotLoadStopsRunsOnItsDevice) {
