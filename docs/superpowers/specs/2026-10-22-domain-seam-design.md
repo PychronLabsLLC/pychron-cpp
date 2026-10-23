@@ -418,8 +418,9 @@ domain. Spec and code change together.
 1. `feat(processing): domain seam`. `Domain`, `DomainRegistry`,
    `make_noble_gas_domain()`, an `ArArDomain` inside `libs/processing` for
    now answering with what is hard-coded today (toolbar list, `age`,
-   Schaen, recall summary). UI, `elctl`, the install's `domain` key read
-   it. No file moves. Toolbar, menus, palette, dispatch data-driven; recall
+   Schaen, recall summary). UI and `elctl` read it; the install's `domain`
+   key, the profile question, `doctor`'s check and `elctl flux`'s refusal
+   land here. No file moves. Toolbar, menus, palette, dispatch data-driven; recall
    window fills its Summary and Error budget from `recall_sections()` and
    `error_budget()`. `reduction_chain` = `{"reduce"}` still.
 2. `refactor(arar): own library`. §3.1 moves; §3.2 `ReducedAnalysis` split
@@ -429,8 +430,7 @@ domain. Spec and code change together.
    `tests/arar` holds the moved tests (golden vectors unchanged, compared
    as today). Largest step, in six commits (plan).
 3. `feat(ui): noble gas domain`. §5.1 browser, §5.2 derive, stages CSV
-   exporter, `data-reduction` profile question, `doctor` check,
-   `elctl flux` refusal.
+   exporter.
 4. `refactor(ui): domain ui`. `DomainUi` registry; §5.6.
 
 ## 8. Testing

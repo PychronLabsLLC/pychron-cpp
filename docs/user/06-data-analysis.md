@@ -276,10 +276,9 @@ left to right, in three groups:
 | **Publish** | The Publish dialog on a new release of the Selected analyses. See [Publishing a release](#publishing-a-release). Off without a database. |
 
 An install whose domain is `noble_gas` measures abundances and has no age, so
-its toolbar has **Time series**, **Isotope evolutions...**, **Blanks...**,
-**IC factors...**, **Recall** and **Publish**. It has no **Export** yet, no
-ideogram, spectrum or isochron, and no age column or age filter in the
-browser.
+its toolbar shows **Time series**, **Isotope evolutions...**, **Blanks...**,
+**IC factors...**, **Recall** and **Publish**. The browser's Age column and
+age filter, and **Export**, follow in a later release.
 
 ## Recall: one analysis in detail
 
@@ -292,7 +291,7 @@ an age. Several can be open at once. Its title line is
 | **Summary** | *Computed*: age, 40Ar\*/39ArK (F), K/Ca, %40Ar\* and so on, each with its 1-sigma, percent error and units. *Corrected ratios*: the argon ratios after all corrections. If values are missing, a note says why (no J, no production ratios, an isotope with an unknown intercept or blank, ...). |
 | **Isotopes** | One row per isotope with detector, fit, number of points, and the value after each correction **stage**; choose one stage or all. Stages: `I` intercept; `Bs` baseline; `I-Bs` baseline corrected; `Bk` blank; `I-Bs-Bk` blank corrected; `IC` detector factor; `x IC` IC corrected; `Decay`; `IFC` interference corrected. A last column says where the blank came from. |
 | **Evolutions** | The raw measurements against time with the fit drawn through them and the intercept at time zero. Switch between **Signal**, **Baseline** and **Sniff**. See below. |
-| **Error budget** | Which inputs the age's variance comes from, as a percentage each, largest first (the isotopes, their baselines, J, the decay constant, ...). |
+| **Error budget** | When the analysis has an age: which inputs the age's variance comes from, as a percentage each, largest first (the isotopes, their baselines, J, the decay constant, ...). |
 | **Identity**, **Extraction**, **Spectrometer** | Sample, project and irradiation; extraction settings (value, duration, cleanup, positions); gains, deflections, source settings and peak centers at the time of the run. |
 | **History** | Database only. See below. |
 

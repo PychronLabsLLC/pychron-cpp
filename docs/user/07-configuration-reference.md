@@ -117,7 +117,8 @@ The password for a `postgresql://` database is in
 analyses. `arar` is Ar/Ar geochronology: ages, J, flux, the age figures and
 the data report. Every install made before this key existed is `arar`, and
 so is an entry that leaves the key out. `noble_gas` is abundances with no
-age: time series, isotope evolutions, and blank and IC factor fits only.
+age: the data toolbar offers time series, isotope evolutions, and blank and
+IC factor fits.
 `elctl doctor` reports a value that is neither. `elctl --domain ID` chooses
 one for a single command (see the
 [elctl reference](08-elctl-reference.md)).
