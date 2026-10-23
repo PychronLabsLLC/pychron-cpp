@@ -54,6 +54,7 @@
 #include "processing_bridge.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/report.hpp"
+#include "pychron/arar/analysis_data.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/time_series.hpp"
@@ -71,12 +72,14 @@
 #undef signals
 #include "flux_seed.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 #endif
 
 using namespace pychron;
 namespace pp = pychron::processing;
+using pychron::arar::edit_analysis_data;
 using pychron::ui::AnalysisTableModel;
 using pychron::ui::DataBrowserWindow;
 using pychron::ui::DataWorkspace;
@@ -140,6 +143,9 @@ std::shared_ptr<pp::Analysis> analysis(int i) {
   iso("Ar37", "L2", 0.5, 0.01);
   iso("Ar36", "CDD", 10.0, 0.02);
   a->gains = {{"H1", 1.0}};
+  // Ar-Ar data with no flux, as the Ar-Ar loaders give an air: it reduces
+  // under arar (and is ignored under noble_gas).
+  a->extension = std::make_shared<const pychron::arar::ArArAnalysisData>();
   return a;
 }
 
@@ -257,9 +263,9 @@ std::unique_ptr<pp::MemorySource> make_steps() {
     iso("Ar38", 0.05, 0.005);
     iso("Ar37", 0.1, 0.005);
     iso("Ar36", ar36[i], 0.003);
-    a->context.flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
-    a->context.production = reduction::ProductionRatios{};  // no correction
-    a->context.chronology = {reduction::Dose{0.0, 1'690'000'000, 1'690'003'600}};
+    edit_analysis_data(*a).flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
+    edit_analysis_data(*a).production = reduction::ProductionRatios{};  // no correction
+    edit_analysis_data(*a).chronology = {reduction::Dose{0.0, 1'690'000'000, 1'690'003'600}};
     src->add(a);
   }
   return src;
@@ -294,9 +300,9 @@ std::unique_ptr<pp::MemorySource> make_aliquots() {
         iso("Ar38", 0.05, 0.005);
         iso("Ar37", 0.1, 0.005);
         iso("Ar36", ar36, 0.003);
-        a->context.flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
-        a->context.production = reduction::ProductionRatios{};
-        a->context.chronology = {reduction::Dose{0.0, 1'690'000'000, 1'690'003'600}};
+        edit_analysis_data(*a).flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
+        edit_analysis_data(*a).production = reduction::ProductionRatios{};
+        edit_analysis_data(*a).chronology = {reduction::Dose{0.0, 1'690'000'000, 1'690'003'600}};
         src->add(a);
       }
     }
@@ -1044,7 +1050,7 @@ class TestDataWindows : public QObject {
     identifier.identifier = "66574";
     QVERIFY((*store)->add_identifier(*client, identifier).has_value());
 
-    auto opened = pp::StoreSource::open(ps::StoreConfig{url, false});
+    auto opened = pp::StoreSource::open(ps::StoreConfig{url, false}, arar::store_source_options());
     QVERIFY2(opened.has_value(), opened ? "" : to_string(opened.error()).c_str());
     {
       DataBrowserWindow w(**opened, arar_);

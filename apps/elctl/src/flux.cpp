@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 #include "pychron/core/env.hpp"
 #include "pychron/core/host_name.hpp"
@@ -28,6 +29,7 @@
 #include "pychron/arar/flux_store.hpp"
 #include "pychron/arar/report.hpp"
 #include "pychron/processing/store_source.hpp"
+#include "selection.hpp"
 
 namespace elctl {
 
@@ -511,10 +513,12 @@ class CsvFile {
   fs::path destination_, temporary_;
 };
 
-int run(const Args& a, Io io) {
+int run(const Args& a, const pychron::processing::Domain& domain, Io io) {
   auto store = open_flux_store(a.db);
   if (!store) return fatal(io, store.error().what);
-  auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, pp::StoreSourceOptions{1, "", ""});
+  auto options = store_options(domain);
+  options.connections = 1;
+  auto source = pp::StoreSource::open(ps::StoreConfig{a.db, false}, std::move(options));
   if (!source) return fatal(io, source.error().what);
 
   // Before anything is saved: a CSV that cannot be written saves nothing.
@@ -588,7 +592,7 @@ int flux_command(const std::vector<std::string>& args, const pychron::processing
   if (!parsed) return usage(io, parsed.error().what);
   // No exception leaves a library, but std::filesystem and iostreams can throw.
   try {
-    return run(*parsed, io);
+    return run(*parsed, domain, io);
   } catch (const std::exception& e) {
     return fatal(io, e.what());
   }

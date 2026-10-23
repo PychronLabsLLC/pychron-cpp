@@ -6,14 +6,14 @@
 
 #include <limits>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/processing/reduced.hpp"
 
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;
-using pp::test::make_air;
-using pp::test::make_unknown;
+using pychron::arar::test::make_air;
+using pychron::arar::test::make_unknown;
 namespace ar = pychron::arar;
 
 namespace {
@@ -32,7 +32,7 @@ pp::ReducedPtr reduced_unknown(r::AgeUnits units = r::AgeUnits::Ma) {
   if (units != r::AgeUnits::Ma) {
     auto c = r::constants_preset(r::ConstantsPreset::Default);
     c.age_units = units;
-    a->context.constants = c;
+    ar::edit_analysis_data(*a).constants = c;
   }
   return ar::reduce_with_arar(a);
 }
@@ -92,7 +92,7 @@ TEST(DerivedAge, AnAnalysisThatReducesToNoAgeIsADerivedAgeWithoutOne) {
   // an unknown with no flux, likewise
   auto unknown = make_unknown(1);
   unknown->input_fingerprint = kFingerprint;
-  unknown->context.flux.reset();
+  ar::edit_analysis_data(*unknown).flux.reset();
   const auto no_flux = pp::derived_age(*ar::reduce_with_arar(unknown));
   ASSERT_TRUE(no_flux);
   EXPECT_FALSE(dv(*no_flux, "age"));

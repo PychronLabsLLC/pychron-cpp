@@ -3,7 +3,7 @@
 // nothing unless told which store (one command line):
 //
 //   PYCHRON_BENCH_DB=sqlite:/path/to/store.db [PYCHRON_BENCH_N=400]
-//     build/dev/tests/processing/pychron_processing_store_tests --gtest_filter='StoreLoadTiming.*'
+//     build/dev/tests/arar/pychron_arar_store_tests --gtest_filter='StoreLoadTiming.*'
 //
 // ReferenceSeries times what the experiment window's reference series dock
 // reads after a run is saved: the newest N references of one spectrometer
@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "pychron/arar/domain.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/processing/units.hpp"
 
@@ -39,7 +40,7 @@ TEST(StoreLoadTiming, FigurePipeline) {
   const char* url = std::getenv("PYCHRON_BENCH_DB");
   if (url == nullptr) return;
   double t0 = now_s();
-  auto opened = StoreSource::open(persistence::StoreConfig{url, false});
+  auto opened = StoreSource::open(persistence::StoreConfig{url, false}, arar::store_source_options());
   ASSERT_TRUE(opened) << to_string(opened.error());
   auto& source = **opened;
   std::printf("open                 %8.3f s\n", now_s() - t0);
@@ -176,7 +177,7 @@ TEST(StoreLoadTiming, ReferenceSeries) {
   const Tab unknowns{"unknowns", {"unknown"}};
 
   const auto open = [&] {
-    auto opened = StoreSource::open(persistence::StoreConfig{url, false});
+    auto opened = StoreSource::open(persistence::StoreConfig{url, false}, arar::store_source_options());
     EXPECT_TRUE(opened) << to_string(opened.error());
     return opened ? std::move(*opened) : nullptr;
   };

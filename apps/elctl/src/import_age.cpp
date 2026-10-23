@@ -63,7 +63,9 @@
 #include <vector>
 
 #include "import_impl.hpp"
+#include "pychron/arar/analysis_data.hpp"
 #include "pychron/arar/reduce.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
 
@@ -189,11 +191,12 @@ class AgeAsOf {
       parts.refs.push_back(std::move(**production));
     }
 
-    auto built = processing::analysis_from_store(parts);
+    auto built = processing::analysis_from_store(parts, arar::store_extension_loader());
     if (!built) return no("not_reducible");
-    if (!built->context.flux) return no("no_j");
-    if (!built->context.production) return no("no_production");
-    if (built->context.chronology.empty()) return no("no_chronology");
+    const arar::ArArAnalysisData* references = arar::analysis_data_of(*built);
+    if (references == nullptr || !references->flux) return no("no_j");
+    if (!references->production) return no("no_production");
+    if (references->chronology.empty()) return no("no_chronology");
     arar::ArArSettings reduction;
     reduction.preset = constants_;
     const auto reduced = arar::reduce_with_arar(std::make_shared<const processing::Analysis>(std::move(*built)), reduction);

@@ -9,9 +9,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "pychron/arar/arar_types.hpp"
 #include "pychron/reduction/fits.hpp"
 
 namespace pychron::processing {
@@ -85,15 +85,14 @@ struct PeakCenterInfo {
   std::optional<double> resolution;
 };
 
-// What reduce() needs beyond the stored values. Any part may be absent: a
-// record directory knows no flux, so its unknowns have no age.
-struct ReductionContext {
-  std::optional<reduction::Flux> flux;
-  std::optional<reduction::ProductionRatios> production;
-  std::vector<reduction::Dose> chronology;
-  std::optional<reduction::ReductionConstants> constants;  // absent: the run's settings decide
-  std::optional<reduction::Measured> fixed_k3739;
-  std::string reactor;  // where `production` was measured (production.reactor); informational
+// What a domain adds to an analysis beyond the neutral model (domain seam spec
+// 3.3): Ar-Ar's flux, production ratios and chronology, say. The source's
+// extension loader, which the application wires for the active domain, makes
+// it; the domain's own units read it back by casting to their type.
+struct DomainAnalysisData {
+  virtual ~DomainAnalysisData() = default;
+  // The id of the domain the data is of ("arar").
+  [[nodiscard]] virtual std::string_view domain() const = 0;
 };
 
 struct Analysis {
@@ -121,7 +120,9 @@ struct Analysis {
   std::map<std::string, double> gains, deflections, source;
   std::map<std::string, double> environmentals;  // lab_temperature, lab_humidity, ...
   std::vector<PeakCenterInfo> peak_centers;
-  ReductionContext context;
+  // The active domain's data of this analysis; null when no loader was wired
+  // (noble_gas wires none).
+  std::shared_ptr<const DomainAnalysisData> extension;
   // Head revision id per revision kind ("intercepts", "blanks", ...), from
   // sources that keep revisions; edits are saved on top of these.
   std::map<std::string, std::string> heads;

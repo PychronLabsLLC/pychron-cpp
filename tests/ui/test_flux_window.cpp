@@ -74,6 +74,7 @@ class FluxWindowTest : public QObject {
 #undef signals
 #include "flux_seed.hpp"
 #include "pychron/arar/flux_store.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 
@@ -164,7 +165,7 @@ class FluxWindowTest : public QObject {
 
   // Opened after everything a test seeds, so the source sees it.
   Rig rig() {
-    auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, {});
+    auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, arar::store_source_options());
     if (!source) qFatal("source: %s", to_string(source.error()).c_str());
     auto bridge = EntryBridge::open({url_, "tester", "test-host"});
     if (!bridge) qFatal("bridge: %s", to_string(bridge.error()).c_str());

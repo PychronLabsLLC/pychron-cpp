@@ -14,6 +14,7 @@
 
 #include "flux_seed.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "store_fixture.hpp"
 
@@ -87,7 +88,10 @@ class FluxStoreTest : public ::testing::TestWithParam<std::string> {
   // nullptr (and a failure) when it cannot be opened.
   StoreSource* source() {
     if (!source_) {
-      auto s = StoreSource::open(persistence::StoreConfig{url_, false}, StoreSourceOptions{2, "tester", "test-host"});
+      StoreSourceOptions options;
+      options.user = "tester";
+      options.hostname = "test-host";
+      auto s = StoreSource::open(persistence::StoreConfig{url_, false}, arar::store_source_options(std::move(options)));
       EXPECT_TRUE(s) << (s ? "" : to_string(s.error()));
       if (s) source_ = std::move(*s);
     }

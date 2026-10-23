@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/quantity.hpp"
@@ -24,6 +24,7 @@
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;
 namespace g = pychron::reduction::golden;
+using pychron::arar::edit_analysis_data;
 
 namespace {
 
@@ -89,40 +90,40 @@ std::shared_ptr<pp::Analysis> analysis_of(const g::Json& in, const r::ReductionC
   }
   // No production ratios or chronology needed for an age: an air is not irradiated.
   a->analysis_type = blank_corrected ? "air" : "blank_unknown";
-  a->context.constants = rc;
+  edit_analysis_data(*a).constants = rc;
   std::map<std::string, r::Measured, std::less<>> rows;
   for (const auto& [key, m] : in["production"].as_object()) rows[key] = g::measured_of(m);
   auto production = r::production_from_rows(rows);
   EXPECT_TRUE(production);
-  if (production) a->context.production = *production;
+  if (production) edit_analysis_data(*a).production = *production;
   const auto t = static_cast<std::int64_t>(a->timestamp);
   for (const g::Json& s : in["irradiation"]["segments"].as_array()) {
     const auto dt = static_cast<std::int64_t>(s["dt_days"].as_number() * 86'400.0);
     const auto duration = static_cast<std::int64_t>(s["duration_days"].as_number() * 86'400.0);
     const std::int64_t ref = t - dt;
     const std::int64_t start = rc.use_irradiation_endtime ? ref - duration : ref;
-    a->context.chronology.push_back(r::Dose{s["power"].as_number(), start, start + duration});
+    edit_analysis_data(*a).chronology.push_back(r::Dose{s["power"].as_number(), start, start + duration});
   }
   if (!in["j"].is_null()) {
     r::Flux flux{g::measured_of(in["j"]), in["position_jerr"].as_number(), std::nullopt};
     if (!in["lambda_k_total"].is_null()) flux.lambda_k_total = g::measured_of(in["lambda_k_total"]);
-    a->context.flux = flux;
+    edit_analysis_data(*a).flux = flux;
   }
-  if (!in["fixed_k3739"].is_null()) a->context.fixed_k3739 = g::measured_of(in["fixed_k3739"]);
+  if (!in["fixed_k3739"].is_null()) edit_analysis_data(*a).fixed_k3739 = g::measured_of(in["fixed_k3739"]);
   return a;
 }
 
 // make_unknown(1) with real decay and production ratios (Phase 1's reference
 // values, variant B).
 std::shared_ptr<pp::Analysis> decayed_unknown() {
-  auto a = pp::test::make_unknown(1);
+  auto a = pychron::arar::test::make_unknown(1);
   const auto t = static_cast<std::int64_t>(a->timestamp);
-  a->context.chronology = {r::Dose{1.0, t - 365 * 86'400, t - 365 * 86'400 + 36'000}};
+  edit_analysis_data(*a).chronology = {r::Dose{1.0, t - 365 * 86'400, t - 365 * 86'400 + 36'000}};
   r::ProductionRatios p;
   p.k4039 = {0.0008, 5e-5};
   p.ca3937 = {0.0007, 1e-5};
   p.ca3637 = {0.00027, 2e-6};
-  a->context.production = p;
+  edit_analysis_data(*a).production = p;
   return a;
 }
 
@@ -237,7 +238,7 @@ TEST(ArArReduceUnit, AHeliumOnlyAnalysisDoesNotReduce) {
 TEST(ArArReduceUnit, WritesTheCacheOnceWithTheArArVersion) {
   SinkSource source;
   for (int i = 0; i < 2; ++i) {
-    auto a = pp::test::make_unknown(i);
+    auto a = pychron::arar::test::make_unknown(i);
     a->input_fingerprint = std::string(64, 'a');
     source.add(a);
   }

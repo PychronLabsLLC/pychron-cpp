@@ -7,9 +7,10 @@ only this component's. Kept compressed, as that file is.
   2021) is Qt-free and reads only the `Analysis` model: metadata it needs
   (sample location and lithology, flux monitor, reactor) is carried by
   `Analysis::sample_info`, `Analysis::monitor` and
-  `ReductionContext::reactor`, filled by the store source. A column added to
-  a table gets a row in `tests/arar/test_report.cpp`; CSV must stay
-  RFC 4180 and every row the width of its header. `elctl export` is split
+  `ArArAnalysisData::reactor`, filled by the store source and its Ar-Ar
+  loader. A column added to a table gets a row in
+  `tests/arar/test_report.cpp`; CSV must stay RFC 4180 and every row the
+  width of its header. `elctl export` is split
   into `export.cpp` / `export_stub.cpp` like `import`. User guide:
   `docs/export.md`.
 - Flux fitting: math is `libs/arar` `flux.hpp`, pure fit of a level
@@ -28,3 +29,12 @@ only this component's. Kept compressed, as that file is.
   scene, options schema and status line are in `libs/arar`
   `flux_view.hpp` and are the window's own; warnings and CSV text there are
   shared with `elctl flux`.
+- Ar-Ar inputs (flux, production, chronology, constants) ride on
+  `Analysis::extension` as `ArArAnalysisData` (`analysis_data.hpp`), made
+  only by the loaders: store loader `arar_store` `store_loader.hpp` (same
+  references and queries as old `StoreSource`, so `input_fingerprint`
+  covers them; `store_source_options()` for Ar-Ar-only code), record loader
+  `arar_records` `record_loader.hpp` (`references.toml`, read again when its
+  mtime changes). An app wires them under domain `arar` only. Without them
+  `arar_reduce` gives `no Ar-Ar reference data for this analysis` and nothing
+  is cached.

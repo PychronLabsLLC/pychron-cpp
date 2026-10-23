@@ -5,7 +5,7 @@
 #include <cmath>
 #include <set>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/arar/arar_groups.hpp"
 #include "pychron/arar/domain.hpp"
@@ -15,7 +15,7 @@
 
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;
-using pp::test::make_step;
+using pychron::arar::test::make_step;
 
 namespace {
 
@@ -107,7 +107,7 @@ TEST(ArArGroups, IsochronRecoversFAndTrapped) {
 TEST(ArArGroups, AnUnknownWithoutProductionStaysOutOfGroupAges) {
   auto d = steps();
   auto odd = make_step(8, 30.0, 0.1, 50.0);
-  odd->context.production.reset();
+  pychron::arar::edit_analysis_data(*odd).production.reset();
   pp::DatasetItem item;
   item.analysis = pychron::arar::reduce_with_arar(odd);
   const auto* arar = pychron::arar::reduced_of(*item.analysis);

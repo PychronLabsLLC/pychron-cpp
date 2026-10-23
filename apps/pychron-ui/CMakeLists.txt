@@ -224,7 +224,7 @@ add_library(pychron::ui ALIAS pychron_ui_lib)
 
 target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::processing_records
-  pychron::arar Qt6::Widgets qcustomplot)
+  pychron::arar pychron::arar_records Qt6::Widgets qcustomplot)
 # Publishing to EarthBank: libs/earthbank says what to ask, libs/earthbank_qt
 # asks it over HTTPS. Without Qt6 Network there is no client
 # (src/earthbank_no_network.cpp) and the EarthBank pages say so.

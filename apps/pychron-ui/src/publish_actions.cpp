@@ -13,6 +13,7 @@
 // Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 
@@ -38,7 +39,8 @@ PublishActions::~PublishActions() {
 
 bool PublishActions::open_store() {
   if (source_ == nullptr) {
-    auto opened = processing::StoreSource::open(persistence::StoreConfig{url_, false}, {});
+    // A release is of Ar-Ar ages: its analyses load with the Ar-Ar references.
+    auto opened = processing::StoreSource::open(persistence::StoreConfig{url_, false}, arar::store_source_options());
     if (!opened) {
       if (report_error_)
         report_error_(tr("The store %1 could not be opened:\n%2")

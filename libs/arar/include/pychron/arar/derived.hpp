@@ -12,8 +12,9 @@
 namespace pychron::processing {
 
 // Nullopt when the reduction is not one to cache: the analysis has no input
-// fingerprint (its source keeps none), or `settings` are not the default
-// ones, which the fingerprint does not cover. Else the Ar-Ar values of its
+// fingerprint (its source keeps none), it has no Ar-Ar data (its source was
+// opened without the Ar-Ar loader: no age is no fact about it), or `settings`
+// are not the default ones, which the fingerprint does not cover. Else the Ar-Ar values of its
 // ArArReduced: `age` in Ma (valueless when the reduction gave none), then
 // `age_w_j` in Ma and `kca` when there is an age and they are numbers.
 [[nodiscard]] std::optional<DerivedValues> derived_age(const ReducedAnalysis& reduced,

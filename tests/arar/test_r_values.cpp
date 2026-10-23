@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/reduction/stats.hpp"
@@ -15,7 +15,7 @@
 
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;
-using pp::test::make_step;
+using pychron::arar::test::make_step;
 
 namespace {
 

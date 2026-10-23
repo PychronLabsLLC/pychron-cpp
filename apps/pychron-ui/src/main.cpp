@@ -112,12 +112,14 @@
 #include "pychron/experiment/metrics/service.hpp"
 #endif
 #include "pychron/sim/sim_system.hpp"
+#include "pychron/arar/record_loader.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/record_source.hpp"
 #ifdef PYCHRON_UI_HAS_STORE
 // Qt's `signals` keyword macro would rewrite CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/experiment/store/store_persister.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
@@ -268,18 +270,39 @@ std::function<void()> reopen_on(QWidget* window, std::string name) {
   };
 }
 
+// The records directory's analyses carry the domain's data: Ar-Ar's from the
+// references.toml beside the records. noble_gas adds none.
+void wire_extension(pychron::processing::RecordDirectorySource& records, const pychron::processing::Domain& domain) {
+  if (domain.id() == "arar")
+    records.set_extension_loader(pychron::arar::record_extension_loader(records.root() / "references.toml"));
+}
+
+#ifdef PYCHRON_UI_HAS_STORE
+// How the data window's store source opens under `domain` (domain seam spec
+// 3.3): its reduction version, and its extension loader (Ar-Ar's; noble_gas
+// has none).
+pychron::processing::StoreSourceOptions store_options(const pychron::processing::Domain& domain) {
+  pychron::processing::StoreSourceOptions options;
+  options.reduction_version = std::string(domain.reduction_version());
+  if (domain.id() == "arar") options.extension_loader = pychron::arar::store_extension_loader();
+  return options;
+}
+#endif
+
 // A data-reduction install: the data browser on its database, nothing else.
 int run_data_reduction(const setup::SiteInstall& install, const pychron::processing::Domain& domain,
                        const pychron::ui::CommandLine& cli, const setup::Resources& resources) {
   pychron::processing::RecordDirectorySource records(install.path(install.data.empty() ? "data" : install.data) /
                                                      "records");
+  wire_extension(records, domain);
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
   const auto chosen = pychron::ui::choose_database(cli, &install);
   if (!chosen) return fatal(chosen.error().what);
   const std::string url = chosen->value_or(std::string{});
   if (!url.empty()) {
 #ifdef PYCHRON_UI_HAS_STORE
-    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{url, false});
+    auto opened =
+        pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{url, false}, store_options(domain));
     if (!opened) {
       return fatal("installation '" + install.name + "': database " + install.database + ": " +
                    pychron::to_string(opened.error()) + "\n\nelctl doctor --install " + install.name +
@@ -651,6 +674,7 @@ int main(int argc, char** argv) {
                             : install && !install->data.empty() ? install->path(install->data)
                                                                 : lab_state / "data";
   pychron::processing::RecordDirectorySource records(data_dir / "records");
+  wire_extension(records, domain);
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
 #ifdef PYCHRON_UI_HAS_STORE
   // One database for the data window, Entry, Fit, the run factory and the
@@ -664,7 +688,8 @@ int main(int argc, char** argv) {
     database_error = chosen.error().what;
   } else if (chosen->has_value()) {
     splash.status(QStringLiteral("Opening the DVC store"));
-    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{**chosen, false});
+    auto opened = pychron::processing::StoreSource::open(pychron::persistence::StoreConfig{**chosen, false},
+                                                         store_options(domain));
     if (opened) {
       store_source = std::move(*opened);
       database = **chosen;

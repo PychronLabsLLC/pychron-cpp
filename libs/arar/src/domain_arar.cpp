@@ -11,6 +11,7 @@
 #include <string_view>
 #include <utility>
 
+#include "pychron/arar/analysis_data.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/derived.hpp"
 #include "pychron/arar/quantities.hpp"
@@ -94,10 +95,14 @@ RecallRow value_row(std::string name, std::optional<Value> v, std::string units 
 }
 
 // The recall window's Summary sections: the computed values of the Ar-Ar
-// result, and the corrected argon ratios from the decay-corrected stages.
+// result (after the analysis's J), and the corrected argon ratios from the
+// decay-corrected stages.
 std::vector<RecallSection> arar_sections(const ReducedAnalysis& ra) {
   RecallSection computed;
   computed.title = "Computed";
+  if (const arar::ArArAnalysisData* data = ra.analysis ? arar::analysis_data_of(*ra.analysis) : nullptr;
+      data != nullptr && data->flux)
+    computed.rows.push_back(value_row("J", Value{data->flux->j.value, data->flux->j.error}));
   const arar::ArArReduced* reduced = arar::reduced_of(ra);
   if (reduced) {
     const r::ArArResult& ar = reduced->arar;

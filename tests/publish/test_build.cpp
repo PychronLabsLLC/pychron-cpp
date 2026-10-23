@@ -44,7 +44,8 @@ class BuildTest : public ReleaseFixture {
     ReleaseFixture::SetUp();
     out_ = fs::temp_directory_path() / ("pychron_build_" + std::to_string(std::random_device{}()));
     fs::create_directories(out_);
-    auto source = pp::StoreSource::open(ps::StoreConfig{db_->url(), false}, pp::StoreSourceOptions{2, "tester", "test-host"});
+    auto source =
+        pp::StoreSource::open(ps::StoreConfig{db_->url(), false}, pychron::publish::testing::source_options());
     ASSERT_TRUE(source) << to_string(source.error());
     source_ = std::move(*source);
   }

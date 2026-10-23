@@ -24,7 +24,8 @@ class ReleaseDatasetTest : public ReleaseFixture {
  protected:
   void SetUp() override {
     ReleaseFixture::SetUp();
-    auto source = pp::StoreSource::open(ps::StoreConfig{db_->url(), false}, pp::StoreSourceOptions{2, "tester", "test-host"});
+    auto source =
+        pp::StoreSource::open(ps::StoreConfig{db_->url(), false}, pychron::publish::testing::source_options());
     ASSERT_TRUE(source) << to_string(source.error());
     source_ = std::move(*source);
   }

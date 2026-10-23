@@ -14,6 +14,7 @@
 #include <variant>
 
 #include "pychron/arar/flux_store.hpp"
+#include "pychron/arar/analysis_data.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/processing/reduced.hpp"
 
@@ -160,7 +161,7 @@ Result<LevelAnalysis> reduce_monitor(IAnalysisSource& source, const AnalysisSumm
   auto loaded = source.load(row.uuid);
   if (!loaded) return fail(loaded.error());
   auto without_flux = std::make_shared<Analysis>(**loaded);
-  without_flux->context.flux.reset();
+  if (arar::analysis_data_of(*without_flux) != nullptr) arar::edit_analysis_data(*without_flux).flux.reset();
   const ReducedPtr reduced = arar::reduce_with_arar(std::move(without_flux));
   const arar::ArArReduced* ar = arar::reduced_of(*reduced);
 

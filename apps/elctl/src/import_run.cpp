@@ -12,6 +12,7 @@
 #include "import_impl.hpp"
 #include "pychron/processing/derive.hpp"
 #include "pychron/processing/store_source.hpp"
+#include "selection.hpp"
 
 // Last, so that its macros reach nothing but this file.
 #ifdef _WIN32
@@ -120,7 +121,7 @@ void derive_after_import(const Context& ctx) {
     ctx.io.out << "derive: nothing to derive under domain " << ctx.domain->id() << '\n';
     return;
   }
-  auto source = pp::StoreSource::open(P::StoreConfig{ctx.url, false});
+  auto source = pp::StoreSource::open(P::StoreConfig{ctx.url, false}, store_options(*ctx.domain));
   if (!source) {
     ctx.io.err << "elctl import: derive: " << one_line(source.error().what) << '\n';
     return;

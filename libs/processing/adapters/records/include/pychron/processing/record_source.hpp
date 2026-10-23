@@ -4,26 +4,15 @@
 // visualization design, section 9.2): the FilePersister layout
 // <root>/<identifier>/<runid>.json, one AnalysisRecord per file.
 //
-// Records carry no flux or production, so ages need an optional
-// <root>/references.toml:
-//
-//   [flux."66001"]                 # by identifier
-//   j = 0.0012
-//   j_err = 1.2e-6
-//   position_jerr = 0.0            # optional
-//
-//   [production."NM-300"]          # by irradiation; pairs are [value, error]
-//   K4039 = [0.0002, 0.00001]     # legacy keys: K4039 K3839 K3739 Ca3937 Ca3837 Ca3637 Cl3638 Ca_K Cl_K
-//   Ca3937 = [0.0007, 0.00001]
-//
-//   [[chronology."NM-300"]]        # by irradiation
-//   power = 1.0
-//   start = "2025-01-01T00:00:00Z"
-//   end = "2025-01-01T10:00:00Z"
+// Records carry no domain data (an Ar-Ar flux or production): the domain's
+// extension loader adds it (domain seam spec 3.3), Ar-Ar's from an optional
+// <root>/references.toml (libs/arar record_loader.hpp).
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -43,6 +32,21 @@ int increment_from_step(std::string_view step);
 Analysis analysis_from_record(const experiment::record::AnalysisRecord& rec);
 RawData raw_from_record(const experiment::record::AnalysisRecord& rec);
 
+// What a domain adds to the analyses of a records directory (domain seam spec
+// 3.3). A loader belongs to one source: what `refresh` remembers is what that
+// source has applied.
+struct RecordExtensionLoader {
+  // Reads again what `load` draws on (a file beside the records), at the
+  // start of each RecordDirectorySource::refresh(); true when it changed
+  // since the last call, and every record is then mapped again. A failure
+  // fails the refresh. Empty: nothing to read, never changed.
+  std::function<Result<bool>()> refresh;
+  // The extension of the analysis mapped from `record`; null: none.
+  std::function<std::shared_ptr<const DomainAnalysisData>(const experiment::record::AnalysisRecord& record,
+                                                          const Analysis& analysis)>
+      load;
+};
+
 class RecordDirectorySource final : public IAnalysisSource {
  public:
   explicit RecordDirectorySource(std::filesystem::path root);
@@ -61,6 +65,10 @@ class RecordDirectorySource final : public IAnalysisSource {
   // Files that failed to parse in the last refresh, with the reason.
   std::vector<std::string> problems() const;
 
+  // Sets each analysis's extension from now on: the next refresh maps every
+  // record again with it.
+  void set_extension_loader(RecordExtensionLoader loader);
+
  private:
   struct Entry {
     std::filesystem::path path;
@@ -70,9 +78,6 @@ class RecordDirectorySource final : public IAnalysisSource {
     AnalysisSummary summary;
   };
 
-  void apply_references(Analysis& a) const;
-  Result<void> load_references();
-
   std::filesystem::path root_;
   mutable std::mutex mutex_;
   std::map<std::string, Entry> by_path_;  // path string -> entry
@@ -81,11 +86,8 @@ class RecordDirectorySource final : public IAnalysisSource {
   std::atomic<std::uint64_t> generation_{0};
   std::atomic<bool> scanned_{false};
 
-  // references.toml
-  std::optional<std::filesystem::file_time_type> references_mtime_;
-  std::map<std::string, reduction::Flux> flux_;
-  std::map<std::string, reduction::ProductionRatios> production_;
-  std::map<std::string, std::vector<reduction::Dose>> chronology_;
+  RecordExtensionLoader loader_;
+  bool loader_changed_ = false;  // set_extension_loader since the last refresh
 };
 
 }  // namespace pychron::processing

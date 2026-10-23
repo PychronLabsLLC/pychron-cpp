@@ -28,6 +28,7 @@
 #include "entry_bridge.hpp"
 #include "pychron/core/sha256.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/embargo.hpp"
 #include "pychron/publish/publication.hpp"
@@ -177,7 +178,7 @@ class TestPublishDialog : public QObject {
   Open open() { return open(earthbank()); }
   Open open(EarthbankSetup setup) {
     Open o;
-    auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, {});
+    auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, pychron::arar::store_source_options());
     if (!source) qFatal("source: %s", pychron::to_string(source.error()).c_str());
     o.source = std::move(*source);
     auto bridge = EntryBridge::open({url_, "tester", "test-host", "publisher", "pychron-ui/test"});

@@ -249,7 +249,7 @@ int create(const std::vector<std::string>& args, Io io) {
     io.err << "warning: no text is shipped for licence " << spec.licence << "; LICENSE.txt will name it only\n";
 
   std::vector<std::string> warnings;
-  auto loaded = load_selection(selection, db, warnings);
+  auto loaded = load_selection(selection, db, arar_store_options(), warnings);
   if (!loaded) return fatal(io, loaded.error());
   for (const auto& w : warnings) io.err << "warning: " << w << '\n';
   if (loaded->empty()) {
@@ -313,7 +313,7 @@ int build(const std::vector<std::string>& args, Io io) {
   if (!opened) return fatal(io, opened.error());
   auto row = pb::find_release(*opened->store, c.release);
   if (!row) return fatal(io, row.error());
-  auto source = open_source(c.db);
+  auto source = open_source(c.db, arar_store_options());
   if (!source) return fatal(io, source.error());
   Progress progress(io);
   auto built = pb::build_release(*opened->store, **source, row->uuid, options, &progress);
@@ -358,7 +358,7 @@ int verify(const std::vector<std::string>& args, Io io) {
     if (!manifest) return fatal(io, manifest.error());
     auto opened = open_store_as_publisher(db);
     if (!opened) return fatal(io, opened.error());
-    auto source = open_source(db);
+    auto source = open_source(db, arar_store_options());
     if (!source) return fatal(io, source.error());
     auto against = pb::verify_against_store(*opened->store, **source, dir, db);
     if (!against) return fatal(io, against.error());

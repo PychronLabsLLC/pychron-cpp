@@ -8,15 +8,15 @@
 #include <map>
 #include <sstream>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/processing/quantity.hpp"
 
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;
-using pp::test::make_air;
-using pp::test::make_step;
-using pp::test::make_unknown;
+using pychron::arar::test::make_air;
+using pychron::arar::test::make_step;
+using pychron::arar::test::make_unknown;
 
 namespace {
 
@@ -46,7 +46,7 @@ pp::Dataset steps(int n = 8, std::map<int, double> f_of_step = {}) {
     a->monitor.name = "FC-2";
     a->monitor.material = "sanidine";
     a->monitor.age = pp::Value{28.201, 0.023};
-    a->context.reactor = "Triga";
+    pychron::arar::edit_analysis_data(*a).reactor = "Triga";
     item.analysis = pychron::arar::reduce_with_arar(a);
     d.mutable_items().push_back(item);
   }

@@ -69,7 +69,9 @@ TEST_P(BuildTiming, CreateAndBuildScaleWithTheCount) {
   ASSERT_TRUE(created) << to_string(created.error());
   std::cout << "create " << n << ": " << seconds_since(t0) << " s\n";
 
-  auto source = pp::StoreSource::open(ps::StoreConfig{db_->url(), false}, pp::StoreSourceOptions{2, "bench", "bench"});
+  auto source =
+
+      pp::StoreSource::open(ps::StoreConfig{db_->url(), false}, pychron::publish::testing::source_options("bench", "bench"));
   ASSERT_TRUE(source);
   const fs::path out = fs::temp_directory_path() / ("pychron_bench_" + std::to_string(std::random_device{}()));
   fs::create_directories(out);

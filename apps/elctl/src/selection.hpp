@@ -33,6 +33,7 @@
 
 #include "pychron/arar/reduce.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/model.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/processing/store_source.hpp"
@@ -70,9 +71,18 @@ pychron::Result<void> check_selection(const Selection& selection);
 
 std::optional<int> parse_int(std::string_view text);
 
-// The store at `db_url`, for reading. A command that reads does not make a
-// store: a SQLite file that is not there, or is empty, is an error.
-pychron::Result<std::unique_ptr<pychron::processing::StoreSource>> open_source(const std::string& db_url);
+// How a store source opens under `domain`: the domain's reduction version
+// and its extension loader (Ar-Ar's; noble_gas has none).
+pychron::processing::StoreSourceOptions store_options(const pychron::processing::Domain& domain);
+// store_options() of the Ar-Ar domain: `elctl publish` and `earthbank` are
+// Ar-Ar's whatever the install.
+pychron::processing::StoreSourceOptions arar_store_options();
+
+// The store at `db_url`, for reading, opened with `options` on one
+// connection. A command that reads does not make a store: a SQLite file that
+// is not there, or is empty, is an error.
+pychron::Result<std::unique_ptr<pychron::processing::StoreSource>> open_source(
+    const std::string& db_url, pychron::processing::StoreSourceOptions options);
 
 // Adds the node `select` that loads the selection, oldest analysis first.
 pychron::Result<void> add_select(pychron::processing::Pipeline& pipeline, const pychron::processing::UnitRegistry& registry,
@@ -80,8 +90,8 @@ pychron::Result<void> add_select(pychron::processing::Pipeline& pipeline, const 
 
 // The selected analyses, not reduced, oldest first. `warnings` gets what the
 // load has to say (analyses that could not be read).
-pychron::Result<std::vector<pychron::processing::AnalysisPtr>> load_selection(const Selection& selection,
-                                                                              const std::string& db_url,
-                                                                              std::vector<std::string>& warnings);
+pychron::Result<std::vector<pychron::processing::AnalysisPtr>> load_selection(
+    const Selection& selection, const std::string& db_url, pychron::processing::StoreSourceOptions options,
+    std::vector<std::string>& warnings);
 
 }  // namespace elctl

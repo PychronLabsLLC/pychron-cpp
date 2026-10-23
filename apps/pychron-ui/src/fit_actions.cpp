@@ -13,6 +13,7 @@
 // Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 
@@ -50,7 +51,8 @@ FluxWindow* FitActions::flux() {
   if (flux_ != nullptr) return flux_;
   if (entry_ == nullptr) return nullptr;
   if (source_ == nullptr) {
-    auto opened = processing::StoreSource::open(persistence::StoreConfig{url_, false}, {});
+    // The flux window is Ar-Ar's: its monitors load with the Ar-Ar references.
+    auto opened = processing::StoreSource::open(persistence::StoreConfig{url_, false}, arar::store_source_options());
     if (!opened) {
       if (report_error_)
         report_error_(tr("The store could not be opened:\n%1").arg(QString::fromStdString(to_string(opened.error()))));

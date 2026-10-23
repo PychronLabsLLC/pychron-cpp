@@ -1,1 +1,0 @@
-@../../libs/arar/AGENTS.md

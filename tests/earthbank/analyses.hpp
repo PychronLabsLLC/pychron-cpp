@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "processing/fixtures.hpp"
+#include "arar/arar_fixtures.hpp"
 #include "pychron/processing/model.hpp"
 #include "pychron/arar/arar_types.hpp"
 
@@ -23,7 +23,7 @@ using AnalysisList = std::vector<processing::AnalysisPtr>;
 // An irradiation of ten hours at full power, a hundred days before the run,
 // with interference ratios of the usual size and a J known to 0.2%.
 inline void irradiate_for_real(processing::Analysis& a) {
-  a.context.flux = reduction::Flux{{0.0015, 3e-6}, 0.0, std::nullopt};
+  arar::edit_analysis_data(a).flux = reduction::Flux{{0.0015, 3e-6}, 0.0, std::nullopt};
   reduction::ProductionRatios p;
   p.k4039 = {0.0085, 0.0002};
   p.k3839 = {0.0123, 0.0001};
@@ -34,10 +34,10 @@ inline void irradiate_for_real(processing::Analysis& a) {
   p.cl3638 = {262.8, 1.7};
   p.ca_k = reduction::Measured{1.96, 0.02};
   p.cl_k = reduction::Measured{0.227, 0.004};
-  a.context.production = p;
+  arar::edit_analysis_data(a).production = p;
   const auto t = static_cast<std::int64_t>(a.timestamp);
   const std::int64_t day = 86'400;
-  a.context.chronology = {reduction::Dose{1.0, t - 100 * day, t - 100 * day + 36'000}};
+  arar::edit_analysis_data(a).chronology = {reduction::Dose{1.0, t - 100 * day, t - 100 * day + 36'000}};
 }
 
 // A blank and a baseline on every isotope, and a detector factor on 36Ar.
@@ -59,7 +59,7 @@ inline std::shared_ptr<processing::Analysis> step_analysis(int step) {
   const std::array<double, kStepCount> ar39 = {4, 8, 30, 55, 60, 50, 35, 20, 6, 3};
   const std::array<double, kStepCount> ar36 = {0.40, 0.25, 0.12, 0.08, 0.06, 0.05, 0.06, 0.08, 0.20, 0.30};
   const std::array<double, kStepCount> f = {13.0, 11.5, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 8.8, 8.0};
-  auto a = processing::test::make_step(step, ar39[step], ar36[step], f[step], "20001");
+  auto a = arar::test::make_step(step, ar39[step], ar36[step], f[step], "20001");
   a->sample = "S-STEP";
   a->material = "sanidine";
   a->project = "Mapping";
@@ -94,7 +94,7 @@ inline constexpr int kFusionCount = 6;
 // Fusion `index` of the fusion sample: aliquot index + 1 of identifier 20002.
 inline std::shared_ptr<processing::Analysis> fusion_analysis(int index) {
   const std::array<double, kFusionCount> ar40 = {1000.0, 1003.0, 998.0, 1001.5, 999.0, 1002.0};
-  auto a = processing::test::make_unknown(index, ar40[index]);
+  auto a = arar::test::make_unknown(index, ar40[index]);
   a->identifier = "20002";
   a->uuid = "fusion-20002-" + std::to_string(index);
   a->runid = processing::make_runid(a->identifier, a->aliquot, -1);

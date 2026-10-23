@@ -14,7 +14,7 @@
 
 #include <QtTest/QtTest>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
@@ -100,7 +100,7 @@ pp::Pipeline now_pipeline() {
 }
 
 void fill(LoggingSource& src) {
-  for (int i = 0; i < 6; ++i) src.add(pp::test::make_air(i, 295.0 + i));
+  for (int i = 0; i < 6; ++i) src.add(pychron::arar::test::make_air(i, 295.0 + i));
 }
 
 double first_x(const PipelineResult& r) {

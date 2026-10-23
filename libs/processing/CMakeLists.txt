@@ -12,9 +12,7 @@ target_include_directories(pychron_processing PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_compile_features(pychron_processing PUBLIC cxx_std_20)
-# Temporary: processing still uses the Ar-Ar reduction types until the domain
-# seam moves its Ar-Ar code to libs/arar (removed again by that move).
-target_link_libraries(pychron_processing PUBLIC pychron::reduction pychron::arar_reduction pychron::core)
+target_link_libraries(pychron_processing PUBLIC pychron::reduction pychron::core)
 pychron_set_warnings(pychron_processing)
 
 # The AnalysisRecord directory source links the experiment library, so it is a

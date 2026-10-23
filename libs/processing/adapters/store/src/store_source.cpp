@@ -360,7 +360,7 @@ int signal_points(const ps::SignalRefs* signals, const std::string& key, const s
 
 }  // namespace
 
-Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
+Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts, const StoreExtensionLoader& loader) {
   const auto& d = parts.detail;
   const auto& row = d.row;
   Analysis a;
@@ -480,36 +480,17 @@ Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts) {
       a.monitor.name = f->monitor_name.value_or("");
       a.monitor.material = f->monitor_material.value_or("");
       if (f->monitor_age) a.monitor.age = Value{*f->monitor_age, f->monitor_age_err.value_or(0.0)};
-      // No J: no flux yet, hence no age. With a J, a NULL error is unknown
-      // (NaN), not 0, and the analysis does not reduce. The position error is
-      // an optional extra: NULL is none.
-      if (!f->j) continue;
-      constexpr double unknown = std::numeric_limits<double>::quiet_NaN();
-      reduction::Flux flux;
-      flux.j = {*f->j, f->j_err.value_or(unknown)};
-      flux.position_jerr = f->position_jerr.value_or(0.0);
-      if (f->lambda_k_total)
-        flux.lambda_k_total = reduction::Measured{*f->lambda_k_total, f->lambda_k_total_err.value_or(unknown)};
-      a.context.flux = flux;
-    } else if (const auto* p = std::get_if<ps::ProductionValue>(&ref)) {
-      a.context.reactor = p->reactor.value_or("");
-      // A production without ratios is no production (reference data the
-      // source removed), not nine ratios of zero.
-      if (p->ratios.empty()) continue;
-      std::map<std::string, reduction::Measured, std::less<>> rows;
-      for (const auto& r : p->ratios) rows[r.key] = {r.value, r.error};
-      auto ratios = reduction::production_from_rows(rows);
-      if (!ratios) return fail(ErrorKind::Config, a.runid + ": production: " + ratios.error().what);
-      a.context.production = *ratios;
-    } else if (const auto* c = std::get_if<ps::ChronologyValue>(&ref)) {
-      a.context.chronology.clear();
-      for (const auto& dose : c->doses)
-        a.context.chronology.push_back(
-            reduction::Dose{dose.power, dose.start.micros / 1'000'000, dose.end.micros / 1'000'000});
     } else if (const auto* g = std::get_if<ps::GainsValue>(&ref)) {
       // Gains used at acquisition win; the reference fills the rest.
       for (const auto& gain : g->gains) a.gains.emplace(gain.detector, gain.gain);
     }
+  }
+  // What the domain reads of the references (an Ar-Ar flux, production and
+  // chronology) is the domain's: its loader makes the extension.
+  if (loader) {
+    auto extension = loader(parts, a);
+    if (!extension) return fail(extension.error());
+    a.extension = std::move(*extension);
   }
   return a;
 }
@@ -583,6 +564,10 @@ struct StoreSource::Impl {
 
   // Who saves edits; registered on the first save.
   std::string user, hostname;
+  // StoreSourceOptions: the version fingerprints and derived rows are of, and
+  // what makes each loaded analysis's extension.
+  std::string reduction_version;
+  StoreExtensionLoader extension_loader;
   std::mutex actor_mutex;
   std::optional<ps::Actor> actor;
 
@@ -717,7 +702,7 @@ void StoreSource::Impl::write_derived(ps::IStore& s, const std::vector<DerivedVa
         }
       }
       if (!puts.empty()) {
-        if (auto wrote = s.put_derived_many(puts, std::string(reduction::kReductionVersion)); wrote) {
+        if (auto wrote = s.put_derived_many(puts, reduction_version); wrote) {
           done.written += puts.size();
         } else {
           done.failed += puts.size();
@@ -771,7 +756,8 @@ Result<std::map<std::string, StoreSource::Fingerprints>> StoreSource::fingerprin
     ids.push_back(*id);
   }
   return impl_->call<std::map<std::string, Fingerprints>>(
-      [ids = std::move(ids)](ps::IStore& s) -> Result<std::map<std::string, Fingerprints>> {
+      [ids = std::move(ids),
+       &version = impl_->reduction_version](ps::IStore& s) -> Result<std::map<std::string, Fingerprints>> {
         auto cached = s.derived_fingerprints(ids);
         if (!cached) return fail(cached.error());
         std::map<std::string, Fingerprints> out;
@@ -779,7 +765,7 @@ Result<std::map<std::string, StoreSource::Fingerprints>> StoreSource::fingerprin
           Fingerprints f;
           if (const auto it = cached->find(id); it != cached->end()) f.cached = to_hex(it->second);
           // One that cannot be read is loaded, and the load says why.
-          if (auto now = s.input_fingerprint(id, std::string(reduction::kReductionVersion))) f.current = to_hex(*now);
+          if (auto now = s.input_fingerprint(id, version)) f.current = to_hex(*now);
           out.emplace(id.str(), std::move(f));
         }
         return out;
@@ -801,8 +787,9 @@ Result<std::size_t> StoreSource::write_derived_now(const std::vector<DerivedValu
   puts.reserve(wanted.size());
   for (auto& [id, put] : wanted) puts.push_back(std::move(put));
   const std::size_t n = puts.size();
-  return impl_->call<std::size_t>([puts = std::move(puts), n](ps::IStore& s) -> Result<std::size_t> {
-    if (auto wrote = s.put_derived_many(puts, std::string(reduction::kReductionVersion)); !wrote)
+  const std::string& version = impl_->reduction_version;
+  return impl_->call<std::size_t>([puts = std::move(puts), n, &version](ps::IStore& s) -> Result<std::size_t> {
+    if (auto wrote = s.put_derived_many(puts, version); !wrote)
       return fail(wrote.error());
     return n;
   });
@@ -821,6 +808,8 @@ Result<std::unique_ptr<StoreSource>> StoreSource::open(ps::StoreConfig config, S
   impl->config = std::move(config);
   impl->user = !options.user.empty() ? options.user : env_var("USER").value_or("pychron");
   impl->hostname = !options.hostname.empty() ? options.hostname : host_name();
+  impl->reduction_version = std::move(options.reduction_version);
+  impl->extension_loader = std::move(options.extension_loader);
   const int n = std::max(1, options.connections);
   // The first connection opens alone, so only it applies migrations.
   for (int i = 0; i < n; ++i) {
@@ -902,7 +891,7 @@ namespace {
 // What one load reads of an analysis: its detail, heads and payloads (at the
 // bookmark when one is given), references and sample row.
 Result<StoreAnalysisParts> read_parts(ps::IStore& s, ps::Uuid id, const std::string& uuid,
-                                      std::optional<ps::Uuid> bookmark) {
+                                      std::optional<ps::Uuid> bookmark, const std::string& reduction_version) {
   StoreAnalysisParts p;
   auto detail = s.load_analysis_detail(id);
   if (!detail) return fail(detail.error());
@@ -921,7 +910,7 @@ Result<StoreAnalysisParts> read_parts(ps::IStore& s, ps::Uuid id, const std::str
     // Of what this load read: no statement of its own (age cache spec 4.3).
     if (*view)
       p.input_fingerprint =
-          to_hex(ps::fingerprint_of((*view)->heads, refs->refs, std::string(reduction::kReductionVersion)));
+          to_hex(ps::fingerprint_of((*view)->heads, refs->refs, reduction_version));
     for (const auto& ref : refs->refs) {
       auto payload = s.load_payload(ref.revision);
       if (!payload) return fail(payload.error());
@@ -954,9 +943,11 @@ Result<AnalysisPtr> StoreSource::load(const std::string& uuid) {
   auto id = parse_uuid(uuid);
   if (!id) return fail(id.error());
   auto parts = impl_->call<StoreAnalysisParts>(
-      [id = *id, &uuid](ps::IStore& s) { return read_parts(s, id, uuid, std::nullopt); });
+      [id = *id, &uuid, &version = impl_->reduction_version](ps::IStore& s) {
+        return read_parts(s, id, uuid, std::nullopt, version);
+      });
   if (!parts) return fail(parts.error());
-  auto analysis = analysis_from_store(*parts);
+  auto analysis = analysis_from_store(*parts, impl_->extension_loader);
   if (!analysis) return fail(analysis.error());
   auto ptr = std::make_shared<const Analysis>(std::move(*analysis));
   std::lock_guard lock(impl_->cache_mutex);
@@ -971,9 +962,11 @@ Result<AnalysisPtr> StoreSource::load_at(const std::string& uuid, const std::str
   auto bm = parse_uuid(bookmark);
   if (!bm) return fail(bm.error());
   auto parts = impl_->call<StoreAnalysisParts>(
-      [id = *id, bm = *bm, &uuid](ps::IStore& s) { return read_parts(s, id, uuid, bm); });
+      [id = *id, bm = *bm, &uuid, &version = impl_->reduction_version](ps::IStore& s) {
+        return read_parts(s, id, uuid, bm, version);
+      });
   if (!parts) return fail(parts.error());
-  auto analysis = analysis_from_store(*parts);
+  auto analysis = analysis_from_store(*parts, impl_->extension_loader);
   if (!analysis) return fail(analysis.error());
   return AnalysisPtr(std::make_shared<const Analysis>(std::move(*analysis)));
 }

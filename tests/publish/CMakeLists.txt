@@ -14,8 +14,9 @@ target_include_directories(pychron_publish_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 target_compile_definitions(pychron_publish_tests PRIVATE QT_NO_KEYWORDS
   PYCHRON_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
   PYCHRON_PUBLISH_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
-target_link_libraries(pychron_publish_tests PRIVATE pychron::publish pychron::arar pychron::processing pychron::reduction
-  pychron_elctl_lib TinyOrm::TinyOrm Qt6::Core Qt6::Sql GTest::gtest_main)
+# arar_store: the Ar-Ar loader the release's store source opens with.
+target_link_libraries(pychron_publish_tests PRIVATE pychron::publish pychron::arar pychron::arar_store pychron::processing
+  pychron::reduction pychron_elctl_lib TinyOrm::TinyOrm Qt6::Core Qt6::Sql GTest::gtest_main)
 pychron_set_warnings(pychron_publish_tests)
 # test_parquet.cpp reads the files back with Arrow when the build has it.
 if(PYCHRON_PUBLISH_ARROW_ENABLED)

@@ -11,15 +11,15 @@
 #include <string>
 #include <vector>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/quantity.hpp"
 
 namespace pp = pychron::processing;
-using pp::test::make_air;
-using pp::test::make_unknown;
+using pychron::arar::test::make_air;
+using pychron::arar::test::make_unknown;
 using pychron::arar::reduce_with_arar;
 
 namespace {

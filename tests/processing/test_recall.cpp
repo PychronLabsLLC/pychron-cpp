@@ -32,7 +32,7 @@ TEST(Recall, UnknownHasItsCoreStagesAndIdentity) {
   EXPECT_EQ(m.isotopes[0].stages.rbegin()->first, pp::Stage::IcCorrected);
   EXPECT_NEAR(m.isotopes[0].stages.at(pp::Stage::Intercept).value, 1000.0, 1e-12);
   EXPECT_TRUE(m.reduction_note.empty());
-  ASSERT_NE(row(m.identity, "J"), nullptr);
+  EXPECT_EQ(row(m.identity, "J"), nullptr);  // the J is the Ar-Ar domain's (test_recall_arar.cpp)
 }
 
 TEST(Recall, AirHasItsExtractionAndSpectrometer) {

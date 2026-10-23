@@ -21,6 +21,7 @@
 #include "publish_dialog.hpp"
 #include "publish_window.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/publish/build.hpp"
 #include "pychron/publish/embargo.hpp"
@@ -83,7 +84,7 @@ class TestPublishWindow : public QObject {
   };
   Open open(std::function<QStringList()> selection = {}) {
     Open o;
-    auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, {});
+    auto source = pp::StoreSource::open(ps::StoreConfig{url_, false}, pychron::arar::store_source_options());
     if (!source) qFatal("source: %s", pychron::to_string(source.error()).c_str());
     o.source = std::move(*source);
     auto bridge = EntryBridge::open({url_, "tester", "test-host", "publisher", "pychron-ui/test"});

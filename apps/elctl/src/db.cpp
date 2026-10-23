@@ -14,6 +14,7 @@
 #include "pychron/processing/derive.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/store_source.hpp"
+#include "selection.hpp"
 
 namespace elctl {
 
@@ -63,7 +64,7 @@ namespace pp = pychron::processing;
 // elctl db derive: the backfill of the cache of ages (age cache spec 4.5).
 int derive(const std::string& url, const pp::Domain& domain, bool all, std::optional<int> limit, bool quiet, Io io) {
   // As it is: a store behind its migrations is refused, never migrated here.
-  auto source = pp::StoreSource::open(pychron::persistence::StoreConfig{url, false});
+  auto source = pp::StoreSource::open(pychron::persistence::StoreConfig{url, false}, store_options(domain));
   if (!source) return fatal(io, source.error().what);
   pp::DeriveOptions options;
   options.all = all;

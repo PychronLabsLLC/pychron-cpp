@@ -7,6 +7,7 @@
 #include <limits>
 #include <utility>
 
+#include "pychron/arar/analysis_data.hpp"
 #include "pychron/arar/quantities.hpp"
 
 namespace pychron::arar {
@@ -93,6 +94,11 @@ Result<std::shared_ptr<const ArArReduced>> reduce_arar(const pp::ReducedAnalysis
   }
   const bool any_argon = std::any_of(argon_at.begin(), argon_at.end(), [](const auto& i) { return i.has_value(); });
   if (!any_argon) return fail(ErrorKind::Config, "no argon isotopes to reduce");
+  // The flux, production and chronology are the Ar-Ar loader's: an analysis
+  // from a source that was given none has nothing to reduce with.
+  const ArArAnalysisData* references = analysis_data_of(a);
+  if (references == nullptr) return fail(ErrorKind::Config, "no Ar-Ar reference data for this analysis");
+  const ArArAnalysisData& inputs = *references;
 
   r::ReductionInput in;
   for (const auto iso : r::kArgonKeys) {
@@ -104,14 +110,14 @@ Result<std::shared_ptr<const ArArReduced>> reduce_arar(const pp::ReducedAnalysis
       in.isotopes[r::index(iso)] = r::make_signal(iso, zero);
     }
   }
-  in.constants = a.context.constants.value_or(r::constants_preset(settings.preset));
+  in.constants = inputs.constants.value_or(r::constants_preset(settings.preset));
   in.constants.include_decay_error = settings.include_decay_error || in.constants.include_decay_error;
   in.constants.use_irradiation_endtime = settings.use_irradiation_endtime || in.constants.use_irradiation_endtime;
-  in.production = r::make_production_variables(a.context.production.value_or(r::ProductionRatios{}));
-  if (!a.context.chronology.empty())
-    in.irradiation = r::irradiation_from_doses(a.context.chronology, static_cast<std::int64_t>(std::llround(a.timestamp)),
+  in.production = r::make_production_variables(inputs.production.value_or(r::ProductionRatios{}));
+  if (!inputs.chronology.empty())
+    in.irradiation = r::irradiation_from_doses(inputs.chronology, static_cast<std::int64_t>(std::llround(a.timestamp)),
                                                in.constants.use_irradiation_endtime);
-  in.fixed_k3739 = a.context.fixed_k3739;
+  in.fixed_k3739 = inputs.fixed_k3739;
 
   // A stored number the source does not have is not a zero signal or a zero
   // error: no result rather than an age from it.
@@ -124,7 +130,7 @@ Result<std::shared_ptr<const ArArReduced>> reduce_arar(const pp::ReducedAnalysis
     add_unknown(unknown, iso, "blank", iso.blank);
     add_unknown(unknown, iso, "IC factor", iso.ic_factor);
   }
-  if (const auto& flux = a.context.flux) {
+  if (const auto& flux = inputs.flux) {
     add_unknown(unknown, "J", flux->j.value, flux->j.error);
     if (flux->lambda_k_total) add_unknown(unknown, "lambda_k_total", flux->lambda_k_total->value, flux->lambda_k_total->error);
   }
@@ -136,13 +142,13 @@ Result<std::shared_ptr<const ArArReduced>> reduce_arar(const pp::ReducedAnalysis
   // reduction_error says why. Airs, blanks and cocktails need neither.
   std::string missing;
   if (a.analysis_type == "unknown") {
-    if (!a.context.production) missing = "no production ratios";
-    if (a.context.chronology.empty()) missing += (missing.empty() ? "" : ", ") + std::string("no chronology");
+    if (!inputs.production) missing = "no production ratios";
+    if (inputs.chronology.empty()) missing += (missing.empty() ? "" : ", ") + std::string("no chronology");
   }
-  if (a.context.flux && missing.empty()) {
-    in.j = r::make_j(*a.context.flux);
-    in.position_jerr = a.context.flux->position_jerr;
-    in.lambda_k_total = a.context.flux->lambda_k_total;
+  if (inputs.flux && missing.empty()) {
+    in.j = r::make_j(*inputs.flux);
+    in.position_jerr = inputs.flux->position_jerr;
+    in.lambda_k_total = inputs.flux->lambda_k_total;
   }
   auto result = r::reduce(in);
   if (!result) return fail(result.error());

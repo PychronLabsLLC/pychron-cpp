@@ -3,7 +3,9 @@
 // An analysis source over the DVC store (data browsing and visualization
 // design, section 9.2). Browse and facets are SQL in the store; load() reads
 // the analysis detail, the head payloads and the references resolve_refs()
-// picks (flux, production, chronology, gains) into one Analysis.
+// picks into one Analysis: the gains and the flux monitor itself, the rest
+// (an Ar-Ar flux, production, chronology) through the domain's extension
+// loader (StoreSourceOptions::extension_loader).
 //
 // Store rule: a connection belongs to the thread that opened it. The source
 // owns a small pool of threads, each opening its own store, and runs every
@@ -11,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -24,11 +27,38 @@
 
 namespace pychron::processing {
 
+// What load() assembles. `refs` are the payloads of the resolved references.
+struct StoreAnalysisParts {
+  persistence::AnalysisDetail detail;
+  std::map<persistence::Kind, persistence::RevisionPayload> heads;
+  std::map<persistence::Kind, persistence::Uuid> head_revisions;
+  std::vector<persistence::RefPayload> refs;
+  // persistence::fingerprint_of the heads and references read, as hex.
+  std::string input_fingerprint;
+  // The catalog row of the analysis's sample (location, lithology, IGSN for
+  // the report); absent when the store has no sample of that name.
+  std::optional<persistence::SampleRow> sample;
+};
+
+// What a domain makes of an analysis it loads from the store (domain seam spec
+// 3.3): its Analysis::extension, from the parts (the resolved references
+// among them) and the neutral analysis built from them. Fails with the reason
+// when the references cannot be read (the load then fails); null: no data.
+using StoreExtensionLoader =
+    std::function<Result<std::shared_ptr<const DomainAnalysisData>>(const StoreAnalysisParts&, const Analysis&)>;
+
 struct StoreSourceOptions {
   int connections = 2;  // worker threads, one store each
   // Who saves edits: an app_user name and this machine's client (role
   // "reduction"). Empty: $USER and $HOSTNAME (or "pychron", "localhost").
   std::string user, hostname;
+  // The active domain's reduction version (Domain::reduction_version()):
+  // part of every input fingerprint, and the version the derived values are
+  // written under. Empty is a version like any other.
+  std::string reduction_version;
+  // Sets Analysis::extension on each load; empty: no extension.
+  using ExtensionLoader = StoreExtensionLoader;
+  ExtensionLoader extension_loader;
 };
 
 // What the sink did with the ages given to it since the last flush.
@@ -117,19 +147,9 @@ persistence::BrowseFilter to_store_filter(const BrowseQuery& query);
 AnalysisSummary summary_from_row(const persistence::BrowseRow& row);
 persistence::BrowseFacet to_store_facet(Facet facet) noexcept;
 
-// What load() assembles. `refs` are the payloads of the resolved references.
-struct StoreAnalysisParts {
-  persistence::AnalysisDetail detail;
-  std::map<persistence::Kind, persistence::RevisionPayload> heads;
-  std::map<persistence::Kind, persistence::Uuid> head_revisions;
-  std::vector<persistence::RefPayload> refs;
-  // persistence::fingerprint_of the heads and references read, as hex.
-  std::string input_fingerprint;
-  // The catalog row of the analysis's sample (location, lithology, IGSN for
-  // the report); absent when the store has no sample of that name.
-  std::optional<persistence::SampleRow> sample;
-};
-Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts);
+// The neutral analysis of `parts`; with `loader` set, its `extension` is what
+// the loader makes of the parts and that analysis. Fails when the loader does.
+Result<Analysis> analysis_from_store(const StoreAnalysisParts& parts, const StoreExtensionLoader& loader = {});
 
 // One decoded raw series; slices [start_index, end_index) when either is set.
 Result<RawSeries> series_from_blob(const persistence::SignalRefRow& ref, const persistence::BlobData& blob);

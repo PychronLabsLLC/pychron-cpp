@@ -2,12 +2,15 @@
 
 #include <cmath>
 
+#include "pychron/arar/analysis_data.hpp"
+
 namespace pychron::processing {
 
 namespace r = pychron::reduction;
 
 std::optional<DerivedValues> derived_age(const ReducedAnalysis& reduced, const arar::ArArSettings& settings) {
   if (!reduced.analysis || reduced.analysis->input_fingerprint.empty()) return std::nullopt;
+  if (arar::analysis_data_of(*reduced.analysis) == nullptr) return std::nullopt;
   if (settings != arar::ArArSettings{}) return std::nullopt;
   DerivedValues out;
   out.uuid = reduced.analysis->uuid;

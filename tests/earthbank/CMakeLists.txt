@@ -1,6 +1,6 @@
 # One test_<component>.cpp per earthbank component. Globbed so parallel units
-# only add files. The mapping's fixtures are built on the processing tests'
-# (tests/processing/fixtures.hpp), included as "processing/fixtures.hpp".
+# only add files. The mapping's fixtures are built on the Ar-Ar tests'
+# (tests/arar/arar_fixtures.hpp), included as "arar/arar_fixtures.hpp".
 # test_ooxml.cpp tests an internal unit, and test_xlsx.cpp reads workbooks back
 # with it: they include "ooxml.hpp" from the library's src/ and read the
 # vendor templates where the library keeps them. test_secret_store.cpp includes

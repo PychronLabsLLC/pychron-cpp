@@ -16,7 +16,8 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   set(target pychron_ui_${name})
   add_executable(${target} ${src} ui_fixture.hpp)
   # tests/processing: fixtures.hpp, the analyses of the processing tests;
-  # tests/arar: flux_seed.hpp, the seeded level of the flux tests;
+  # tests/arar: arar_fixtures.hpp, the same with their Ar-Ar data, and
+  # flux_seed.hpp, the seeded level of the flux tests;
   # tests/support: temp_path.hpp, the fixtures' scratch names
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing
     ${PROJECT_SOURCE_DIR}/tests/arar ${PROJECT_SOURCE_DIR}/tests/support)
@@ -25,7 +26,7 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   # service in memory (tests/earthbank)
   if(name MATCHES "^test_earthbank" OR name STREQUAL "test_publish_dialog")
     target_link_libraries(${target} PRIVATE pychron::earthbank_fake)
-    # tests/earthbank/analyses.hpp builds on "processing/fixtures.hpp"
+    # tests/earthbank/analyses.hpp builds on "arar/arar_fixtures.hpp"
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
   endif()
   # the update check's suites fake GitHub (tests/update fake_http.hpp)

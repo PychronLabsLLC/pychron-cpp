@@ -16,6 +16,8 @@
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/dataset.hpp"
 #include "pychron/arar/arar_types.hpp"
+#include "pychron/arar/domain.hpp"
+#include "pychron/arar/store_loader.hpp"
 
 namespace elctl {
 
@@ -145,7 +147,16 @@ Result<void> check_selection(const Selection& s) {
   return {};
 }
 
-Result<std::unique_ptr<pp::StoreSource>> open_source(const std::string& db_url) {
+pp::StoreSourceOptions store_options(const pp::Domain& domain) {
+  pp::StoreSourceOptions options;
+  options.reduction_version = std::string(domain.reduction_version());
+  if (domain.id() == "arar") options.extension_loader = pychron::arar::store_extension_loader();
+  return options;
+}
+
+pp::StoreSourceOptions arar_store_options() { return store_options(pychron::arar::shared_domain()); }
+
+Result<std::unique_ptr<pp::StoreSource>> open_source(const std::string& db_url, pp::StoreSourceOptions options) {
   // A mistyped SQLite path is an error, not a new empty store.
   constexpr std::string_view kSqlite = "sqlite:";
   if (db_url.starts_with(kSqlite) && db_url != "sqlite::memory:") {
@@ -154,7 +165,8 @@ Result<std::unique_ptr<pp::StoreSource>> open_source(const std::string& db_url) 
     if (!fs::is_regular_file(file, code)) return fail(ErrorKind::Io, "no database at " + file.string());
     if (fs::file_size(file, code) == 0 && !code) return fail(ErrorKind::Io, file.string() + " is empty: not a pychron store");
   }
-  return pp::StoreSource::open(ps::StoreConfig{db_url, false}, pp::StoreSourceOptions{1, "", ""});
+  options.connections = 1;
+  return pp::StoreSource::open(ps::StoreConfig{db_url, false}, std::move(options));
 }
 
 Result<void> add_select(pp::Pipeline& pipeline, const pp::UnitRegistry& registry, const Selection& s) {
@@ -179,8 +191,9 @@ Result<void> add_select(pp::Pipeline& pipeline, const pp::UnitRegistry& registry
 }
 
 Result<std::vector<pp::AnalysisPtr>> load_selection(const Selection& selection, const std::string& db_url,
+                                                    pp::StoreSourceOptions options,
                                                     std::vector<std::string>& warnings) {
-  auto source = open_source(db_url);
+  auto source = open_source(db_url, std::move(options));
   if (!source) return fail(source.error());
   // select only: core's units, built here and run here (a pipeline is built
   // from the registry it runs on).

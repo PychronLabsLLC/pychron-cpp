@@ -8,7 +8,7 @@
 #include <cctype>
 #include <set>
 
-#include "processing/fixtures.hpp"
+#include "arar/arar_fixtures.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/arar/reduce.hpp"
@@ -24,7 +24,7 @@ pp::Dataset steps_of(const std::string& identifier, int aliquot, int n) {
   constexpr std::array<double, 8> ar39 = {5, 20, 40, 60, 50, 30, 15, 5};
   constexpr std::array<double, 8> ar36 = {0.5, 0.3, 0.2, 0.1, 0.08, 0.06, 0.1, 0.2};
   for (int i = 0; i < n; ++i) {
-    auto a = pp::test::make_step(i, ar39[static_cast<std::size_t>(i)], ar36[static_cast<std::size_t>(i)], 10.0, identifier);
+    auto a = pychron::arar::test::make_step(i, ar39[static_cast<std::size_t>(i)], ar36[static_cast<std::size_t>(i)], 10.0, identifier);
     a->aliquot = aliquot;
     a->uuid += "-" + std::to_string(aliquot);
     pp::DatasetItem item;
@@ -89,7 +89,7 @@ TEST(ReleaseFigures, ASampleWithoutEnoughPointsSkipsTheIsochronWithAWarning) {
   pp::Dataset d;
   for (int i = 0; i < 2; ++i) {
     pp::DatasetItem item;
-    item.analysis = pychron::arar::reduce_with_arar(pp::test::make_unknown(i));
+    item.analysis = pychron::arar::reduce_with_arar(pychron::arar::test::make_unknown(i));
     d.mutable_items().push_back(item);
   }
   std::vector<std::string> warnings;

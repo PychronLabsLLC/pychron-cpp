@@ -33,13 +33,14 @@
 #include "experiment_fixture.hpp"
 #include "experiment_window.hpp"
 #include "executor_pane.hpp"
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/experiment/model/queue_file.hpp"
 #include "pychron/processing/record_source.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/arar/domain.hpp"
+#include "pychron/arar/record_loader.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -77,7 +78,7 @@ const pp::UnitRegistry& reg() { return arar_domain().units(); }
 // An analysis of `type` on `spectrometer` at `time`; its uuid is `uuid`.
 pp::AnalysisPtr analysis(const std::string& uuid, const std::string& type, double time,
                          const std::string& spectrometer = "jan") {
-  auto a = pp::test::make_air(0, 295.5, type, "R");
+  auto a = pychron::arar::test::make_air(0, 295.5, type, "R");
   a->uuid = uuid;
   a->timestamp = time;
   a->mass_spectrometer = spectrometer;
@@ -769,6 +770,8 @@ class TestReferenceSeries : public QObject {
     QTemporaryDir dir;
     // The folder the session writes its records to.
     pp::RecordDirectorySource records(sim.dir / "data" / "records");
+    // As pychron-ui wires it under arar: the airs and blanks reduce with the Ar-Ar references.
+    records.set_extension_loader(pychron::arar::record_extension_loader(records.root() / "references.toml"));
     pp::PresetStore presets((dir.path() + QStringLiteral("/presets")).toStdString());
     ProcessingBridge processing(records, arar_domain());
     pychron::ui::ExperimentBridge bridge(*sim.session, sim.line->bus());

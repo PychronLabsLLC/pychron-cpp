@@ -16,7 +16,7 @@
 #include <set>
 #include <sstream>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/derived.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/arar/report.hpp"
@@ -24,9 +24,9 @@
 #include "pychron/processing/units.hpp"
 
 namespace pp = pychron::processing;
-using pp::test::make_air;
-using pp::test::make_step;
-using pp::test::make_unknown;
+using pychron::arar::test::make_air;
+using pychron::arar::test::make_step;
+using pychron::arar::test::make_unknown;
 
 namespace {
 
@@ -176,7 +176,7 @@ TEST(Domain, ArArAnswersWhatTheApplicationHardCodesToday) {
   ASSERT_EQ(sections.size(), 2u);
   EXPECT_EQ(sections[0].title, "Computed");
   EXPECT_EQ(sections[1].title, "Corrected ratios");
-  EXPECT_EQ(sections[0].rows.size(), 9u);  // three ages, F, K/Ca, K/Cl, 40Ar*, %40Ar*, 39ArK
+  EXPECT_EQ(sections[0].rows.size(), 10u);  // J, three ages, F, K/Ca, K/Cl, 40Ar*, %40Ar*, 39ArK
   EXPECT_EQ(sections[1].rows.size(), 6u);
   EXPECT_FALSE(domain->error_budget(*reduced).empty());
 }

@@ -7,7 +7,7 @@
 #include <array>
 #include <string>
 
-#include "processing/fixtures.hpp"
+#include "arar/arar_fixtures.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/publish/tables.hpp"
 
@@ -15,8 +15,8 @@ namespace pychron::publish::testing {
 
 namespace pp = pychron::processing;
 namespace ps = pychron::persistence;
-using pp::test::make_step;
-using pp::test::make_unknown;
+using arar::test::make_step;
+using arar::test::make_unknown;
 
 // Fixed ids, so two builds of the same inputs are the same bytes.
 inline const ps::Uuid kNamespace = *ps::Uuid::parse("0192f3a0-0000-7000-8000-000000000001");
@@ -82,7 +82,7 @@ inline TableInputs inputs(bool fc2_located = true, bool u1_has_age = true) {
     a->material = "sanidine";
     a->project = "Fish Canyon";
     a->timestamp = 1'700'000'000.0 - 600.0;  // before every step: it sorts first
-    if (!u1_has_age) a->context.flux = std::nullopt;
+    if (!u1_has_age) arar::edit_analysis_data(*a).flux = std::nullopt;
     AnalysisPins pins;
     pins.analysis = ps::Uuid::v5(in.release.uuid, a->uuid);
     a->uuid = pins.analysis.str();

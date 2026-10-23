@@ -139,7 +139,7 @@ int run(const Args& a, const pp::Domain& domain, Io io) {
   const auto exporters = domain.exporters();
   if (std::none_of(exporters.begin(), exporters.end(), [](const pp::Exporter& e) { return e.id == "schaen"; }))
     return fatal(io, "needs domain arar (this install: " + std::string(domain.id()) + ")");
-  auto source = open_source(a.db);
+  auto source = open_source(a.db, store_options(domain));
   if (!source) return fatal(io, source.error());
 
   const auto& reg = domain.units();

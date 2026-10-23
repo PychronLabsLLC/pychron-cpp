@@ -38,6 +38,7 @@ namespace {
 
 namespace pp = pychron::processing;
 namespace r = pychron::reduction;
+using arar::edit_analysis_data;
 using testing::AnalysisList;
 using testing::both_samples;
 using testing::fusion_analysis;
@@ -565,8 +566,8 @@ TEST(Mapping, MeasurementValues) {
 // at that stage, the abundance sensitivity among it, and no decay.
 TEST(Mapping, Ar37ExcIntIsTheOtherFoursStageWithoutDecay) {
   const AnalysisList steps = with_edit_all(step_sample(), [](pp::Analysis& a) {
-    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
-    a.context.constants->abundance_sensitivity = 2e-3;
+    edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::Default);
+    edit_analysis_data(a).constants->abundance_sensitivity = 2e-3;
   });
   const Submission s = build_one(steps);
   const Measurement& m = s.measurements[3];
@@ -591,8 +592,8 @@ TEST(Mapping, Ar37ExcIntIsTheOtherFoursStageWithoutDecay) {
 // Ages are in Ma whatever unit the reduction counts in.
 TEST(Mapping, AgesAreInMa) {
   const auto in_ka = [](pp::Analysis& a) {
-    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
-    a.context.constants->age_units = r::AgeUnits::ka;
+    edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::Default);
+    edit_analysis_data(a).constants->age_units = r::AgeUnits::ka;
   };
   const AnalysisList steps = with_edit_all(step_sample(), in_ka);
   const Submission ka = build_one(steps);
@@ -670,7 +671,7 @@ TEST(Mapping, PlateauStepsAreFlagged) {
   EXPECT_EQ(flags(build_one(steps, strict), &Measurement::plateauStepName), "----------");
 
   // A step without an age is not a step of the plateau that is left.
-  const AnalysisList holed = with_edit(steps, 4, [](pp::Analysis& a) { a.context.flux.reset(); });
+  const AnalysisList holed = with_edit(steps, 4, [](pp::Analysis& a) { edit_analysis_data(a).flux.reset(); });
   const Submission without = build_one(holed);
   EXPECT_EQ(without.measurements.size(), 9u);
   const pp::Dataset hd = dataset_of(holed);
@@ -1013,21 +1014,21 @@ TEST(Mapping, AgeCalcNamesComeFromTheConstantsUsed) {
   // The constants an analysis carries win over the preset, and a decay
   // constant on the flux over those.
   const Submission own = build_one(with_edit_all(step_sample(), [](pp::Analysis& a) {
-    a.context.constants = r::constants_preset(r::ConstantsPreset::LegacyPreferences);
-    a.context.flux->lambda_k_total = r::Measured{5.463e-10, 1.07e-12};
+    edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::LegacyPreferences);
+    edit_analysis_data(a).flux->lambda_k_total = r::Measured{5.463e-10, 1.07e-12};
   }));
   EXPECT_EQ(own.age_calc.decayConstantName, "Min et al. 2000");
   EXPECT_EQ(own.age_calc.airRatioName, "Nier 1950");
   // An override of exactly 0 +- 0 is no override.
   const Submission zero = build_one(with_edit_all(
-      step_sample(), [](pp::Analysis& a) { a.context.flux->lambda_k_total = r::Measured{0.0, 0.0}; }));
+      step_sample(), [](pp::Analysis& a) { edit_analysis_data(a).flux->lambda_k_total = r::Measured{0.0, 0.0}; }));
   EXPECT_EQ(zero.age_calc.decayConstantName, "Steiger and Jager, 1977");
 
   // A value EarthBank has no name for: no name, and a note.
   const AnalysisList odd = with_edit_all(step_sample(), [](pp::Analysis& a) {
-    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
-    a.context.constants->atm4036 = {300.0, 0.3};
-    a.context.constants->lambda_e = {6.0e-11, 0.0};
+    edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::Default);
+    edit_analysis_data(a).constants->atm4036 = {300.0, 0.3};
+    edit_analysis_data(a).constants->lambda_e = {6.0e-11, 0.0};
   });
   const Submission unnamed = build_one(odd);
   EXPECT_FALSE(unnamed.age_calc.airRatioName.has_value());
@@ -1199,12 +1200,12 @@ TEST(Mapping, DisagreementIsRefusedNamingBothValues) {
                  {"lithology", "\"ash-flow tuff\" (20001-01A)", "\"rhyolite\" (20001-01J)"});
   // Two decay constants: one analysis's flux carries its own.
   expect_refused(with_edit(step_sample(), 5,
-                           [](pp::Analysis& a) { a.context.flux->lambda_k_total = r::Measured{5.463e-10, 0.0}; }),
+                           [](pp::Analysis& a) { edit_analysis_data(a).flux->lambda_k_total = r::Measured{5.463e-10, 0.0}; }),
                  {"decay constant", "5.543e-10 (20001-01A)", "5.463e-10 (20001-01F)"});
   // Two air ratios: one analysis was reduced with other constants.
   expect_refused(with_edit(step_sample(), 1,
                            [](pp::Analysis& a) {
-                             a.context.constants = r::constants_preset(r::ConstantsPreset::Legacy);
+                             edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::Legacy);
                            }),
                  {"atmospheric 40Ar/36Ar", "298.56 (20001-01A)", "295.5 (20001-01B)"});
   // A location that differs on some analyses: the two points, each whole.
@@ -1239,7 +1240,7 @@ TEST(Mapping, DisagreementIsRefusedNamingBothValues) {
 
 TEST(Mapping, AnalysesWithoutAgesAreLeftOutAndCounted) {
   // Step F has no J; step H has an intercept the store does not know.
-  AnalysisList steps = with_edit(step_sample(), 5, [](pp::Analysis& a) { a.context.flux.reset(); });
+  AnalysisList steps = with_edit(step_sample(), 5, [](pp::Analysis& a) { edit_analysis_data(a).flux.reset(); });
   steps = with_edit(steps, 7, [](pp::Analysis& a) { a.isotopes[1].intercept = {kNaN, 0.01}; });
   ASSERT_FALSE(pychron::arar::reduced_of(*pychron::arar::reduce_with_arar(steps[5]))->arar.ages.has_value());
   ASSERT_FALSE(pychron::arar::reduced_of(*pychron::arar::reduce_with_arar(steps[7])));
@@ -1271,7 +1272,7 @@ TEST(Mapping, AnalysesWithoutAgesAreLeftOutAndCounted) {
   EXPECT_LE(*s.age_summary.nAnalysisGrouped, 8);
 
   // F alone, which reduced but has no J: the same, though its 39ArK is known.
-  const AnalysisList no_j = with_edit(step_sample(), 5, [](pp::Analysis& a) { a.context.flux.reset(); });
+  const AnalysisList no_j = with_edit(step_sample(), 5, [](pp::Analysis& a) { edit_analysis_data(a).flux.reset(); });
   const Submission t = build_one(no_j);
   ASSERT_EQ(t.measurements.size(), 9u);
   expect_no_shares(t);
@@ -1318,7 +1319,7 @@ TEST(Mapping, AnalysesWithoutAgesAreLeftOutAndCounted) {
 }
 
 TEST(Mapping, ASampleWithNoAgeIsRefused) {
-  const AnalysisList no_flux = with_edit_all(step_sample(), [](pp::Analysis& a) { a.context.flux.reset(); });
+  const AnalysisList no_flux = with_edit_all(step_sample(), [](pp::Analysis& a) { edit_analysis_data(a).flux.reset(); });
   const std::string what = refused(no_flux);
   EXPECT_TRUE(contains(what, "earthbank: sample \"S-STEP\"") && contains(what, "none of its 10 analyses has an age") &&
               contains(what, "20001-01A"))
@@ -1326,7 +1327,7 @@ TEST(Mapping, ASampleWithNoAgeIsRefused) {
 
   // An unknown without its irradiation: the reduction's own reason is passed on.
   const AnalysisList no_chronology =
-      with_edit_all(fusion_sample(), [](pp::Analysis& a) { a.context.chronology.clear(); });
+      with_edit_all(fusion_sample(), [](pp::Analysis& a) { edit_analysis_data(a).chronology.clear(); });
   EXPECT_TRUE(contains(refused(no_chronology), "no chronology")) << refused(no_chronology);
 
   // With a good sample beside it, still refused.
@@ -1505,7 +1506,7 @@ TEST(Mapping, NonFiniteValuesAreLeftOutAndNoted) {
   // have an age): no time is invented for it, and the date is of the others.
   const AnalysisList fusions = with_edit(fusion_sample(), 2, [](pp::Analysis& a) {
     a.analysis_type = "monitor";
-    a.context.chronology.clear();
+    edit_analysis_data(a).chronology.clear();
     a.timestamp = 0.0;
   });
   const Submission f = build_one(fusions);
@@ -1599,7 +1600,7 @@ TEST(Mapping, AMissingIsotopeIsAbsent) {
         << what;
   }
   // The same when some lack an isotope and the rest an age.
-  AnalysisList none = with_edit_all(fusion_sample(), [](pp::Analysis& a) { a.context.flux.reset(); });
+  AnalysisList none = with_edit_all(fusion_sample(), [](pp::Analysis& a) { edit_analysis_data(a).flux.reset(); });
   none = with_edit(none, 0, dropping({"Ar38"}));
   const std::string what = refused(none);
   EXPECT_TRUE(contains(what, "none of its 6 analyses can be published: 20002-01 (Ar38 not measured), 20002-02") &&
@@ -1704,8 +1705,8 @@ TEST(Mapping, TheAgeSummarySaysWhatItsUncertaintyIs) {
       << note_with(decay_only, "reported age's uncertainty");
   // The constants of the analyses can ask for it as well as the settings.
   const AnalysisList by_constants = with_edit_all(steps, [](pp::Analysis& a) {
-    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
-    a.context.constants->include_decay_error = true;
+    edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::Default);
+    edit_analysis_data(a).constants->include_decay_error = true;
   });
   EXPECT_EQ(described(build_one(by_constants)), described(with_decay));
   EXPECT_EQ(build_one(by_constants).age_summary.ageUncertainty, with_decay.age_summary.ageUncertainty);
@@ -1730,7 +1731,7 @@ TEST(Mapping, TheAgeSummarySaysWhatItsUncertaintyIs) {
   }
   // A mean over several J says both.
   const AnalysisList two_j =
-      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 6.04e-6}; });
+      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { edit_analysis_data(a).flux->j = r::Measured{0.00151, 6.04e-6}; });
   PublishOptions fusion_decay;
   fusion_decay.reduction.include_decay_error = true;
   EXPECT_EQ(described(build_one(two_j, fusion_decay)),
@@ -1739,8 +1740,8 @@ TEST(Mapping, TheAgeSummarySaysWhatItsUncertaintyIs) {
             "included; reduced with pychron-cpp.");
   // Analyses that do not agree on it have no one sentence that is true of them.
   const std::string mixed = refused(with_edit(steps, 4, [](pp::Analysis& a) {
-    a.context.constants = r::constants_preset(r::ConstantsPreset::Default);
-    a.context.constants->include_decay_error = true;
+    edit_analysis_data(a).constants = r::constants_preset(r::ConstantsPreset::Default);
+    edit_analysis_data(a).constants->include_decay_error = true;
   }));
   EXPECT_TRUE(contains(mixed, "earthbank: sample \"S-STEP\"") &&
               contains(mixed, "decay constant uncertainty in the ages differs between analyses") &&
@@ -1748,7 +1749,7 @@ TEST(Mapping, TheAgeSummarySaysWhatItsUncertaintyIs) {
       << mixed;
 
   // An analysis left out is in neither number.
-  const AnalysisList nine = with_edit(steps, 9, [](pp::Analysis& a) { a.context.flux.reset(); });
+  const AnalysisList nine = with_edit(steps, 9, [](pp::Analysis& a) { edit_analysis_data(a).flux.reset(); });
   EXPECT_TRUE(contains(described(build_one(nine)), "Plateau Age of 6 of 9 analyses (steps C to H, "))
       << described(build_one(nine));
 }
@@ -1758,7 +1759,7 @@ TEST(Mapping, TheJOfAMeanIsThatOfItsAnalyses) {
   const PublishOptions defaults;
   // Steps A and J, outside the plateau, and a fusion run before the schedule
   // sit in other irradiation positions, whose J is ten times less well known.
-  const auto elsewhere = [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.0015, 3e-5}; };
+  const auto elsewhere = [](pp::Analysis& a) { edit_analysis_data(a).flux->j = r::Measured{0.0015, 3e-5}; };
   auto fusion = std::make_shared<pp::Analysis>(*fusion_analysis(0));
   fusion->identifier = "20001";
   fusion->aliquot = 2;
@@ -1791,7 +1792,7 @@ TEST(Mapping, TheJOfAMeanIsThatOfItsAnalyses) {
   // and the J term of the mean is the larger of the two relative
   // uncertainties, which no weighting of them exceeds. Both are said.
   const AnalysisList fusions =
-      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 6.04e-6}; });
+      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { edit_analysis_data(a).flux->j = r::Measured{0.00151, 6.04e-6}; });
   const pp::Dataset fd = dataset_of(fusions);
   const auto fmean = pp::group_weighted_mean(items_of(fd), defaults.ages.mean_error);
   ASSERT_TRUE(fmean.has_value());
@@ -1824,9 +1825,9 @@ TEST(Mapping, AnAgeOfOneJIsRefusedOverTwo) {
     for (const std::string_view part : parts) EXPECT_TRUE(contains(what, part)) << part << " not in: " << what;
   };
   const AnalysisList other_j =
-      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00151, 3e-6}; });
+      with_edit(fusion_sample(), 4, [](pp::Analysis& a) { edit_analysis_data(a).flux->j = r::Measured{0.00151, 3e-6}; });
   const AnalysisList other_error =
-      with_edit(fusion_sample(), 2, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.0015, 4e-6}; });
+      with_edit(fusion_sample(), 2, [](pp::Analysis& a) { edit_analysis_data(a).flux->j = r::Measured{0.0015, 4e-6}; });
 
   for (const PreferredAge kind : {PreferredAge::Integrated, PreferredAge::Isochron}) {
     PublishOptions options;
@@ -1851,7 +1852,7 @@ TEST(Mapping, AnAgeOfOneJIsRefusedOverTwo) {
   PublishOptions strict;
   strict.ages.plateau.nsteps = 9;
   const AnalysisList steps =
-      with_edit(step_sample(), 7, [](pp::Analysis& a) { a.context.flux->j = r::Measured{0.00152, 3e-6}; });
+      with_edit(step_sample(), 7, [](pp::Analysis& a) { edit_analysis_data(a).flux->j = r::Measured{0.00152, 3e-6}; });
   expect_refused(steps, strict,
                  {"earthbank: sample \"S-STEP\"", "no age to report", "at least 9 steps", "Total Gas Age",
                   "0.0015 +/- 3e-06 (20001-01A)", "0.00152 +/- 3e-06 (20001-01H)", "weighted_mean"});

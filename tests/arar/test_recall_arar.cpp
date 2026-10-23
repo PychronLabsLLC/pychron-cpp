@@ -6,15 +6,15 @@
 
 #include <string>
 
-#include "fixtures.hpp"
+#include "arar_fixtures.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/recall.hpp"
 
 namespace pp = pychron::processing;
-using pp::test::make_air;
-using pp::test::make_unknown;
+using pychron::arar::test::make_air;
+using pychron::arar::test::make_unknown;
 
 namespace {
 
@@ -37,6 +37,12 @@ TEST(ArArRecall, SectionsAndBudgetMatchTodaysModel) {
   const pp::RecallSection& ratios = sections[1];
   EXPECT_EQ(computed.title, "Computed");
   EXPECT_EQ(ratios.title, "Corrected ratios");
+  // The analysis's J first, as the neutral Identity table showed it before the domain seam.
+  ASSERT_FALSE(computed.rows.empty());
+  EXPECT_EQ(computed.rows.front().name, "J");
+  ASSERT_TRUE(computed.rows.front().value);
+  EXPECT_EQ(computed.rows.front().value->value, 0.001);
+  EXPECT_EQ(computed.rows.front().value->error, 1e-6);
   ASSERT_NE(row(computed, "Age"), nullptr);
   ASSERT_TRUE(row(computed, "Age")->value);
   EXPECT_GT(row(computed, "Age")->value->value, 0.0);
@@ -56,6 +62,7 @@ TEST(ArArRecall, SectionsAndBudgetMatchTodaysModel) {
   const auto air = pychron::arar::reduce_with_arar(make_air(0));
   const auto air_sections = domain->recall_sections(*air);
   ASSERT_EQ(air_sections.size(), 2u);
+  EXPECT_EQ(row(air_sections[0], "J"), nullptr);  // an air has no flux
   ASSERT_NE(row(air_sections[0], "Age"), nullptr);
   EXPECT_FALSE(row(air_sections[0], "Age")->value);
   EXPECT_EQ(row(air_sections[0], "Age")->note, "no J for this analysis");

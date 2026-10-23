@@ -77,9 +77,6 @@ RecallModel make_recall_model(const ReducedAnalysis& ra) {
                                                  (a.position.empty() ? "" : " " + a.position)),
                      text_row("Load", a.load),             text_row("Analyst", a.analyst),
                      text_row("Comment", a.comment)};
-  if (a.context.flux) {
-    m.identity.rows.push_back(value_row("J", Value{a.context.flux->j.value, a.context.flux->j.error}));
-  }
 
   m.extraction.title = "Extraction";
   const auto& ex = a.extraction;

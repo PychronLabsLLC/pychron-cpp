@@ -15,6 +15,7 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/processing/model.hpp"
+#include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::processing {
 

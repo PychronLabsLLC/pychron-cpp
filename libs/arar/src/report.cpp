@@ -12,6 +12,7 @@
 
 #include "figure_common.hpp"
 #include "pychron/core/user_file.hpp"
+#include "pychron/arar/analysis_data.hpp"
 #include "pychron/arar/arar_groups.hpp"
 #include "pychron/arar/group_ages.hpp"
 #include "pychron/arar/arar_reduction.hpp"
@@ -20,6 +21,8 @@
 namespace pychron::processing {
 
 namespace r = reduction;
+using arar::analysis_data_of;
+using arar::ArArAnalysisData;
 
 namespace {
 
@@ -306,10 +309,13 @@ void irradiation_table(const Dataset& d, const ReportOptions& o, Report& rep) {
   const auto ca_k = c.add_pm("Ca/K", o.nsigma);
   const auto cl_k = c.add_pm("Cl/K", o.nsigma);
 
+  const ArArAnalysisData no_data;
   std::set<std::string> seen;
   for (const auto& it : d.items()) {
     const auto& a = *it.analysis->analysis;
     if (!seen.insert(a.identifier).second) continue;
+    const ArArAnalysisData* data = analysis_data_of(a);
+    const ArArAnalysisData& inputs = data != nullptr ? *data : no_data;
     Row& row = c.row();
     row[identifier] = txt(a.identifier);
     row[sample] = txt(a.sample);
@@ -326,9 +332,9 @@ void irradiation_table(const Dataset& d, const ReportOptions& o, Report& rep) {
     row[irradiation] = txt(a.irradiation);
     row[level] = txt(a.level);
     row[position] = txt(a.position);
-    row[reactor] = txt(a.context.reactor);
-    if (!a.context.chronology.empty()) {
-      const auto& ch = a.context.chronology;
+    row[reactor] = txt(inputs.reactor);
+    if (!inputs.chronology.empty()) {
+      const auto& ch = inputs.chronology;
       double total = 0;
       for (const auto& dose : ch) total += static_cast<double>(dose.end_utc_s - dose.start_utc_s) / 3600.0;
       row[start] = Cell{detail::format_utc(static_cast<double>(ch.front().start_utc_s))};
@@ -338,15 +344,15 @@ void irradiation_table(const Dataset& d, const ReportOptions& o, Report& rep) {
     row[monitor] = txt(a.monitor.name);
     row[monitor_material] = txt(a.monitor.material);
     if (a.monitor.age) set_pm(row, monitor_age, a.monitor.age->value, a.monitor.age->error, o.nsigma);
-    if (a.context.flux) {
-      set_pm(row, j, a.context.flux->j, o.nsigma);
-      if (a.context.flux->position_jerr > 0) row[j_position] = num(a.context.flux->position_jerr * o.nsigma);
-      if (a.context.flux->lambda_k_total &&
-          !(a.context.flux->lambda_k_total->value == 0 && a.context.flux->lambda_k_total->error == 0))
-        set_pm(row, lambda_k, *a.context.flux->lambda_k_total, o.nsigma);
+    if (inputs.flux) {
+      set_pm(row, j, inputs.flux->j, o.nsigma);
+      if (inputs.flux->position_jerr > 0) row[j_position] = num(inputs.flux->position_jerr * o.nsigma);
+      if (inputs.flux->lambda_k_total &&
+          !(inputs.flux->lambda_k_total->value == 0 && inputs.flux->lambda_k_total->error == 0))
+        set_pm(row, lambda_k, *inputs.flux->lambda_k_total, o.nsigma);
     }
-    if (a.context.production) {
-      const auto& p = *a.context.production;
+    if (inputs.production) {
+      const auto& p = *inputs.production;
       set_pm(row, k4039, p.k4039, o.nsigma);
       set_pm(row, k3839, p.k3839, o.nsigma);
       set_pm(row, k3739, p.k3739, o.nsigma);

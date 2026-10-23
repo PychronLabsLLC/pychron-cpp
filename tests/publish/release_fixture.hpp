@@ -12,15 +12,27 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "persistence/store_fixture.hpp"
 #include "release_seed.hpp"
+#include "pychron/arar/store_loader.hpp"
 #include "pychron/persistence/store.hpp"
 
 namespace pychron::publish::testing {
 
 namespace ps = persistence;
+
+// How the tests open a StoreSource on the release store: the Ar-Ar domain's
+// version and loader (releases are of Ar-Ar ages), `user` on `host`, two
+// connections.
+inline processing::StoreSourceOptions source_options(std::string user = "tester", std::string host = "test-host") {
+  processing::StoreSourceOptions options;
+  options.user = std::move(user);
+  options.hostname = std::move(host);
+  return arar::store_source_options(std::move(options));
+}
 
 class ReleaseFixture : public ::testing::TestWithParam<std::string> {
  protected:

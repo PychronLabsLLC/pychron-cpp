@@ -46,7 +46,8 @@ target_link_libraries(pychron_arar PUBLIC pychron::processing pychron::arar_redu
 pychron_set_warnings(pychron_arar)
 
 # pychron::arar_store: the flux store (monitor sets, a level's saved fit, flux
-# options) over the DVC store; exists only when processing's store adapter does.
+# options) and the store source's Ar-Ar extension loader over the DVC store;
+# exists only when processing's store adapter does.
 if(TARGET pychron_processing_store)
   file(GLOB PYCHRON_ARAR_STORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/adapters/store/src/*.cpp")
   add_library(pychron_arar_store STATIC ${PYCHRON_ARAR_STORE_SOURCES})
@@ -58,4 +59,18 @@ if(TARGET pychron_processing_store)
   target_link_libraries(pychron_arar_store PUBLIC pychron::arar pychron::processing_store
     PRIVATE nlohmann_json::nlohmann_json)
   pychron_set_warnings(pychron_arar_store)
+endif()
+
+# pychron::arar_records: the Ar-Ar extension loader of a records directory
+# (references.toml); exists only when processing's records adapter does.
+if(TARGET pychron_processing_records)
+  file(GLOB PYCHRON_ARAR_RECORDS_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/adapters/records/src/*.cpp")
+  add_library(pychron_arar_records STATIC ${PYCHRON_ARAR_RECORDS_SOURCES})
+  add_library(pychron::arar_records ALIAS pychron_arar_records)
+  target_include_directories(pychron_arar_records PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/adapters/records/include>
+    $<INSTALL_INTERFACE:include>
+  )
+  target_link_libraries(pychron_arar_records PUBLIC pychron::arar pychron::processing_records)
+  pychron_set_warnings(pychron_arar_records)
 endif()

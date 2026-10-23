@@ -1,8 +1,8 @@
 #pragma once
 
-// Synthetic analyses for the processing tests.
+// Synthetic analyses for the processing tests: neutral, with no domain data
+// (Analysis::extension). tests/arar arar_fixtures.hpp adds the Ar-Ar one.
 
-#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -48,23 +48,13 @@ inline std::shared_ptr<Analysis> make_air(int index, double ratio = 295.5, std::
   return a;
 }
 
-// An unknown needs production ratios and a chronology to have an age. These
-// add no correction: zero interference ratios and a dose of zero power, a day
-// before the run, so the decay factors are exactly 1.
-inline void irradiate(Analysis& a) {
-  a.context.flux = reduction::Flux{{0.001, 1e-6}, 0.0, std::nullopt};
-  a.context.production = reduction::ProductionRatios{};
-  const auto t = static_cast<std::int64_t>(a.timestamp);
-  a.context.chronology = {reduction::Dose{0.0, t - 86'400, t - 82'800}};
-}
-
-// An unknown with a flux, so it has an age.
+// An unknown: more Ar39 and less Ar36 than an air. No domain data: the Ar-Ar
+// one with a flux, so an age, is tests/arar arar_fixtures.hpp's.
 inline std::shared_ptr<Analysis> make_unknown(int index, double ar40 = 1000.0) {
   auto a = make_air(index, 295.5, "unknown", "U1");
   a->isotopes[0].intercept = {ar40, 0.5};   // Ar40
   a->isotopes[1].intercept = {100.0, 0.1};  // Ar39
   a->isotopes[4].intercept = {0.5, 0.01};   // Ar36
-  irradiate(*a);
   return a;
 }
 
@@ -95,7 +85,6 @@ inline std::shared_ptr<Analysis> make_step(int step, double ar39, double ar36, d
   iso("Ar38", 0.2 * ar36 + 0.01, 0.005);
   iso("Ar37", 0.1, 0.005);
   iso("Ar36", ar36, ar36 * 0.01 + 0.001);
-  irradiate(*a);
   return a;
 }
 
