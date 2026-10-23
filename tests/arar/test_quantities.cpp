@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "fixtures.hpp"
@@ -141,15 +142,27 @@ TEST(ArArQuantities, LabelsAndUnitsAreTheAxisTitles) {
   EXPECT_EQ(q("radiogenic_yield").label(false), "%40Ar*");
 }
 
-// With the domain, an isotope's stage is core's or the domain's; a name the
-// domain does not know still parses, and has no value.
+// With the domain, an isotope's stage is core's or the domain's, and a bare
+// name is core's or the domain's: anything else is refused, naming it.
 TEST(ArArQuantities, TheDomainKnowsItsStages) {
   EXPECT_FALSE(pp::Quantity::parse("Ar40.nope", &arar()));
   EXPECT_FALSE(pp::Quantity::parse("Ar40.age", &arar()));
+  EXPECT_FALSE(pp::Quantity::parse("decay_corrected", &arar()));  // a stage is not a value
+  EXPECT_FALSE(pp::Quantity::parse("age/foo", &arar()));
+}
+
+// A typo of a domain's name is refused when the domain is known; without it
+// the name is taken as the domain's, and has no value.
+TEST(ArArQuantities, AnUnknownNameIsRefusedUnderTheDomain) {
+  const auto typo = pp::Quantity::parse("agee", &arar());
+  ASSERT_FALSE(typo);
+  EXPECT_NE(typo.error().what.find("unknown term 'agee'"), std::string::npos) << typo.error().what;
+
+  const auto bare = pp::Quantity::parse("agee");
+  ASSERT_TRUE(bare) << bare.error().what;
+  EXPECT_EQ(bare->numerator().kind, pp::Term::Kind::Domain);
   const auto unk = reduce_with_arar(make_unknown(0));
-  EXPECT_FALSE(q("foo").eval(*unk));
-  EXPECT_EQ(q("foo").label(), "foo");
-  EXPECT_FALSE(q("decay_corrected").eval(*unk));  // a stage is not a value
+  EXPECT_FALSE(bare->eval(*unk));
 }
 
 TEST(ArArQuantities, ReducedValuesNeedAFlux) {

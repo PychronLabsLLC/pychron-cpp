@@ -155,6 +155,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, c
   presets_->ask_name = [this] { return ask_preset_name ? ask_preset_name() : QString(); };
   hl->addWidget(presets_);
   editor_ = new OptionsEditor;
+  editor_->set_domain(&bridge.domain());
   hl->addWidget(editor_, 1);
   dock->setWidget(host);
   addDockWidget(Qt::RightDockWidgetArea, dock);

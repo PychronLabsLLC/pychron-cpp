@@ -1,6 +1,8 @@
 #include "options_editor.hpp"
 #include "flow_layout.hpp"
 #include "theme.hpp"
+#include "pychron/processing/domain.hpp"
+#include "pychron/processing/quantity.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -152,8 +154,20 @@ QListWidget* OptionsEditor::rows(const QString& list) const {
   return it == lists_.end() ? nullptr : it->second.list;
 }
 
+Result<pp::OptionValue> OptionsEditor::checked(const pp::FieldSpec& field, pp::OptionValue value) const {
+  if (field.type != pp::FieldType::Quantity || domain_ == nullptr) return value;
+  const auto* text = std::get_if<std::string>(&value);
+  if (text == nullptr || (text->empty() && field.optional)) return value;
+  auto q = pp::Quantity::parse(*text, domain_);
+  if (!q) return fail(q.error());
+  return pp::OptionValue(q->text());
+}
+
 bool OptionsEditor::apply(const QString& key, const pp::OptionValue& value) {
-  auto ok = options_.set(key.toStdString(), value);
+  const pp::FieldSpec* field = options_.schema() ? options_.schema()->field(key.toStdString()) : nullptr;
+  auto value_to_set = field ? checked(*field, value) : Result<pp::OptionValue>(value);
+  if (!value_to_set) return false;
+  auto ok = options_.set(key.toStdString(), std::move(*value_to_set));
   if (!ok) return false;
   rebuild();
   emit changed();
@@ -240,7 +254,20 @@ QWidget* OptionsEditor::make_editor(const pp::FieldSpec& f, const pp::Options& v
       combo->setCurrentText(qs(values.get_string(f.key)));
       combo->setInsertPolicy(QComboBox::NoInsert);
       auto commit = [=, this] {
-        if (!building_) report(combo, set(combo->currentText().trimmed().toStdString()));
+        if (building_) return;
+        auto value = checked(f, combo->currentText().trimmed().toStdString());
+        if (!value) {
+          mark(combo, qs(value.error().what));
+          return;
+        }
+        const auto r = set(*value);
+        if (r) {
+          // The canonical spelling ("F" for "f"), as stored.
+          const bool was_building = std::exchange(building_, true);
+          combo->setCurrentText(qs(std::get<std::string>(*value)));
+          building_ = was_building;
+        }
+        report(combo, r);
       };
       connect(combo, qOverload<int>(&QComboBox::activated), this, commit);
       connect(combo->lineEdit(), &QLineEdit::editingFinished, this, commit);

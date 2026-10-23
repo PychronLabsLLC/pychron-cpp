@@ -8,6 +8,9 @@
 // per field type; each list (panels, groups, ...) is a row list with add,
 // remove and move buttons and a form for the selected row. Every edit is
 // validated through Options::set; an invalid value is marked and not applied.
+// A Quantity field is checked against the domain first, when one is set: a
+// name or stage the domain does not know is refused there, and an accepted
+// quantity is stored in its canonical spelling.
 //
 //   Bool -> check box        Int -> spin box          Double -> line edit
 //   Enum -> combo box        Color -> swatch button   Quantity -> editable combo
@@ -21,6 +24,7 @@
 #include <QStringList>
 #include <QWidget>
 
+#include "pychron/core/error.hpp"
 #include "pychron/processing/options.hpp"
 
 class QFormLayout;
@@ -28,6 +32,10 @@ class QListWidget;
 class QAbstractButton;
 class QButtonGroup;
 class QStackedWidget;
+
+namespace pychron::processing {
+class Domain;
+}
 
 namespace pychron::ui {
 
@@ -43,6 +51,9 @@ class OptionsEditor : public QWidget {
 
   // Completion list for Quantity fields (available_quantities of the data).
   void set_quantity_choices(const QStringList& choices);
+  // The domain Quantity fields are checked against (not owned, outliving the
+  // editor); null: checked by Options::set alone.
+  void set_domain(const processing::Domain* domain) noexcept { domain_ = domain; }
 
   // For tests: the editor of a top-level field, or of `row`'s field in a list.
   QWidget* editor(const QString& key) const;
@@ -72,9 +83,14 @@ class OptionsEditor : public QWidget {
   QWidget* make_editor(const processing::FieldSpec& field, const processing::Options& values,
                        std::function<Result<void>(processing::OptionValue)> set);
   QString row_label(const processing::Options& row, int index) const;
+  // `value` of `field` as the editor stores it: a quantity parsed under the
+  // domain (refused, or canonical); anything else as given.
+  [[nodiscard]] Result<processing::OptionValue> checked(const processing::FieldSpec& field,
+                                                        processing::OptionValue value) const;
 
   processing::Options options_;
   QStringList quantities_;
+  const processing::Domain* domain_ = nullptr;
   QWidget* section_bar_;
   QButtonGroup* section_buttons_;
   QStackedWidget* pages_;

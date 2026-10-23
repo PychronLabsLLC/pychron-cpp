@@ -3124,6 +3124,51 @@ class TestDataWindows : public QObject {
     QVERIFY(!w.export_report(dir.path() + QStringLiteral("/no/such/dir/x.json")));
   }
 
+  // Under the Ar-Ar domain a quantity the domain does not know is refused on
+  // entry, naming it, and the option keeps its value; one it knows is stored
+  // in its canonical spelling.
+  void options_editor_refuses_quantity_typos_under_the_domain() {
+    QTemporaryDir dir;
+    auto src = make_aliquots();
+    ProcessingBridge bridge(*src, arar_);
+    pp::PresetStore presets(dir.path().toStdString());
+    QStringList ids;
+    for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
+    FigureWindow w(bridge, presets, entry("ideogram"), ids);
+    w.show();
+    QVERIFY(wait_runs(w, bridge, 1));
+    auto* editor = w.options_editor();
+    auto* combo = qobject_cast<QComboBox*>(editor->editor(QStringLiteral("quantity")));
+    QVERIFY(combo);
+    QVERIFY(combo->lineEdit());
+    const std::string before = editor->options().get_string("quantity");
+    QCOMPARE(before, std::string("age"));
+    QSignalSpy changed(editor, &OptionsEditor::changed);
+
+    auto type = [combo](const QString& text) {
+      combo->lineEdit()->setText(text);
+      emit combo->lineEdit()->editingFinished();
+    };
+    for (const QString& typo : {QStringLiteral("agee"), QStringLiteral("Ar40.bad")}) {
+      type(typo);
+      QCOMPARE(editor->options().get_string("quantity"), before);
+      QVERIFY2(combo->property("invalid").toBool(), qPrintable(typo));
+      QVERIFY2(combo->toolTip().contains(typo.section('.', -1)), qPrintable(combo->toolTip()));
+      QVERIFY(!editor->apply(QStringLiteral("quantity"), typo.toStdString()));
+      QCOMPARE(editor->options().get_string("quantity"), before);
+    }
+    QCOMPARE(changed.count(), 0);
+
+    // An alias is accepted and stored as the domain spells it.
+    type(QStringLiteral("f"));
+    QCOMPARE(editor->options().get_string("quantity"), std::string("F"));
+    QVERIFY(!combo->property("invalid").toBool());
+    QCOMPARE(combo->currentText(), QStringLiteral("F"));
+    // Applied (the combo may apply it a second time when the text matches one
+    // of its completion items).
+    QVERIFY(changed.count() >= 1);
+  }
+
   void options_editor_rows() {
     OptionsEditor e;
     e.set_options(pp::Options(pp::time_series_schema()));

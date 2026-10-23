@@ -118,6 +118,7 @@ ReferenceFitWindow::ReferenceFitWindow(ProcessingBridge& bridge, pp::PresetStore
   presets_->current = [this] { return pipeline_.find(kFit)->options; };
   hl->addWidget(presets_);
   editor_ = new OptionsEditor;
+  editor_->set_domain(&bridge_.domain());
   hl->addWidget(editor_, 1);
   dock->setWidget(host);
   addDockWidget(Qt::RightDockWidgetArea, dock);

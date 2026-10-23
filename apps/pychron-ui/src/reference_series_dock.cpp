@@ -268,6 +268,7 @@ QDialog* ReferenceSeriesDock::options_dialog(ReferenceKind kind) {
   bar->current = [this, kind] { return tab(kind).figure; };
   layout->addWidget(bar);
   auto* editor = new OptionsEditor;
+  editor->set_domain(&deps_.bridge->domain());
   layout->addWidget(editor, 1);
   auto* message = new QLabel;
   message->setWordWrap(true);

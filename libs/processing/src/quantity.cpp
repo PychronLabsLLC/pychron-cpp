@@ -123,18 +123,21 @@ Result<Term> domain_stage_term(const std::string& s, const std::string& key, con
   return t;
 }
 
-// A bare name core does not have: the domain's value of that name.
-Term domain_name_term(const std::string& name, const Domain* domain) {
+// A bare name core does not have: the domain's value of that name. Given the
+// domain, a name it does not know (or one of its stages) is refused.
+Result<Term> domain_name_term(const std::string& name, const Domain* domain) {
   Term t;
   t.kind = Term::Kind::Domain;
   t.name = name;
   t.label = name;
   if (domain) {
-    if (const auto info = domain->quantity_info(name); info && !info->stage) {
-      t.name = info->name;
-      t.label = info->label;
-      t.units = info->units;
-    }
+    const auto info = domain->quantity_info(name);
+    if (!info || info->stage)
+      return fail(ErrorKind::Config,
+                  "quantity: unknown term '" + name + "' (domain " + std::string(domain->id()) + ")");
+    t.name = info->name;
+    t.label = info->label;
+    t.units = info->units;
   }
   return t;
 }

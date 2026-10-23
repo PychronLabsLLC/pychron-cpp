@@ -61,10 +61,11 @@ struct Term {
 class Quantity {
  public:
   // Fails (Config, "quantity: ...") naming the bad part: malformed text, an
-  // isotope's stage that is not a name (or, given `domain`, neither core's nor
-  // the domain's), a family key that is not one. A bare name never fails: one
-  // that is not core's is the domain's, and has no value where the domain has
-  // none. `domain` (may be null) gives a domain term its canonical spelling,
+  // isotope's stage that is not a name, a family key that is not one, and,
+  // given `domain`, a bare name or a stage that is neither core's nor the
+  // domain's. Without a domain, a bare name or stage core does not have is
+  // taken as the domain's (it has no value where the analysis has no domain
+  // part). `domain` (may be null) gives a domain term its canonical spelling,
   // label and units.
   [[nodiscard]] static Result<Quantity> parse(std::string_view text, const Domain* domain = nullptr);
 
