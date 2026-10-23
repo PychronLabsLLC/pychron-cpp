@@ -61,7 +61,7 @@ the two.
 | `libs/reduction/arar_types.hpp` rest (`ArgonIsotope`, `index`, `make_signal(ArgonIsotope)`, `ReductionInput`, `ReductionConstants`, `ConstantsPreset`, `ProductionRatios`, `Dose`, `Flux`, `make_j`, `kReductionVersion`), `arar_reduction.hpp` (`ArArResult`, `reduce`, decay), `flux.hpp` | → `libs/arar` `pychron/arar/{arar_types,arar_reduction,flux}.hpp`; sources `libs/arar/src/reduction/{arar_types,arar_reduction,decay,flux}.cpp`. `K3739Mode` stays neutral in `pychron/reduction/arar_live.hpp` (`arar.hpp` and kernels need it); `pychron/arar/arar_types.hpp` includes it |
 | `libs/reduction/arar.hpp`, `arar.cpp` (`compute_arar`, live conditionals), `src/arar_kernels.hpp` | stay: `libs/experiment` links them and sits below `processing` in dependency order (top `CMakeLists.txt:31`). Kernels → `include/pychron/reduction/detail/arar_kernels.hpp` (include `arar_live.hpp`, `signal.hpp` only) so `libs/arar` reads them too. `to_live_constants` (`ReductionConstants`/`ProductionRatios`/`Flux`/`DecayFactors` → live `ArArConstants`; only tests call it) → `libs/arar` `pychron/arar/live_parity.hpp`, `src/reduction/live_parity.cpp`. `libs/reduction` includes nothing under `pychron/arar/` |
 | `libs/processing`: `arar_figures`, `arar_groups`, `group_ages`, `report` (Schaen), `derived` (`derived_age`), `flux_fit`, `flux_view`, `r_values` (F ratios of ideogram groups); units ideogram, spectrum, inverse_isochron, spectrum_isochron; `domain_arar.cpp` | → `libs/arar`: headers `pychron/arar/*.hpp`; sources `ideogram`, `spectrum`, `isochron`, `spectrum_isochron`, `arar_groups`, `group_ages`, `report`, `derived`, `flux_fit`, `flux_view`, `r_values`, `domain_arar` (`arar_figures.hpp` declares the figure units; no `arar_figures.cpp`). New there: `reduce.cpp`, `unit_reduce.cpp` (`ArArReduced`, `arar_reduce`, §3.2), `analysis_data.cpp` (§3.3), `quantities.cpp` + `quantities.hpp` (Ar-Ar quantity table: name, label, units, stage; `arar::shared_domain()`, process-wide const Ar-Ar `Domain` the figure units parse quantities with, since publish builds figures outside a run) |
-| `libs/processing` rest: `UnitRegistry`, `Pipeline`, `Runner`, select, reduce, filter, group, edits, group_stats, `time_series`, `isotope_evolution_fit`, `reference_fit`, `scene*`, `options`, `source`, `recall`, `quantity`, `model`, `reduced` | stay; names no isotope, no age, no J. Also stay: `domain.{hpp,cpp}` (`Domain`, `noble_gas`, `run_reduction_chain`), `src/figure_common.{hpp,cpp}` (shared figure fields and styling, `group_mean`; neutral figures use it), `src/schema_builder.hpp`; `pychron_arar` includes `libs/processing/src` PRIVATE for those two headers. `group_color` neutral, in `scene.hpp` |
+| `libs/processing` rest: `UnitRegistry`, `Pipeline`, `Runner`, select, reduce, filter, group, edits, group_stats, `time_series`, `isotope_evolution_fit`, `reference_fit`, `scene*`, `options`, `source`, `recall`, `quantity`, `model`, `reduced` | stay; no Ar-Ar reduction logic (§10 rule 1, its neutral data and exceptions). Also stay: `domain.{hpp,cpp}` (`Domain`, `noble_gas`, `run_reduction_chain`), `src/figure_common.{hpp,cpp}` (shared figure fields and styling, `group_mean`; neutral figures use it), `src/schema_builder.hpp`; `pychron_arar` includes `libs/processing/src` PRIVATE for those two headers. `group_color` neutral, in `scene.hpp` |
 | `libs/processing` link to `pychron::reduction` PUBLIC | keeps it: `reduction` is neutral after the split |
 | `libs/processing/adapters/store`, `adapters/records` | stay; load neutral `Analysis`; call the extension loader (§3.3) |
 | new `libs/arar/adapters/store`, `libs/arar/adapters/records` | Ar-Ar loaders (`store_loader`, `record_loader`): flux, production, chronology from store rows / record files. `adapters/store` also holds `flux_store.cpp`, `flux_monitors.cpp`, `flux_options.cpp`, moved from `libs/processing/adapters/store` |
@@ -616,13 +616,18 @@ EarthBank for any domain but Ar-Ar; translation of figure and exporter labels
 
 ## 10. Rules (in root `AGENTS.md` since step 2, 2026-10-23)
 
-- `libs/processing`, `libs/reduction` outside `libs/arar`, `apps/pychron-ui`
-  outside `src/arar/`, `apps/elctl` outside `flux`: name no isotope, no
-  age, no J. What does lives in `libs/arar` or Ar-Ar's `DomainUi`.
-  Exceptions by design: `libs/reduction` `arar.hpp`, `arar.cpp`,
-  `arar_live.hpp`, `detail/arar_kernels.hpp` (§3.1); `derive_ages` until
-  step 3 renames it. `apps/pychron-ui` and `apps/elctl` parts hold from
-  step 4.
+- `libs/processing`; `libs/reduction` outside files Ar-Ar by design
+  (`arar.hpp`, `arar.cpp`, `arar_live.hpp`, `detail/arar_kernels.hpp`,
+  §3.1); `apps/pychron-ui` outside `src/arar/`; `apps/elctl` outside
+  `flux`: no Ar-Ar reduction logic (age, J, flux, production, decay or
+  interference stage) and no literal only Ar-Ar understands in a window,
+  unit, exporter or quantity. What has one lives in `libs/arar` or Ar-Ar's
+  `DomainUi`. Neutral data that happens to list argon stays: isotope mass
+  table (`isotope_classifier.cpp`), detector-discrimination text
+  (`reference_fit.hpp`); comments naming age or J as examples. Exceptions
+  for now: `Ar40`/`Ar36` factory time-series presets (`time_series.cpp`;
+  step 3: a domain supplies its factory presets), `derive_ages` until step 3
+  renames it. `apps/pychron-ui` and `apps/elctl` parts hold from step 4.
 - A new figure, exporter, derived quantity or recall section is a
   `Domain` entry, never a literal in a window.
 - `UnitRegistry::core(default_quantity)` holds core units only; a domain's

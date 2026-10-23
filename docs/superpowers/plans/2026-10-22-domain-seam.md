@@ -427,6 +427,8 @@ Landed differently: the migration rule is neutral (an option a node does not own
 - Modify: `libs/processing/src/domain.cpp` (`noble_gas` exporter `{"stages", "Export", "Export: write every core stage of the selected analyses as CSV", "CSV (*.csv)", write}`), `apps/elctl/src/export.cpp:137-199` (`--format` chooses among `domain.exporters()` ids; default the first; unknown id → `fatal` listing them)
 - Test: `tests/processing/test_stages_csv.cpp` (header, row count = analyses × isotopes × 7 stages, a quoted detector name), `apps/elctl/tests/test_export_cmd.cpp` (`--domain noble_gas` writes the stages CSV; `--format schaen` under `noble_gas` fails listing `stages`)
 
+- Also (from the Task 11 review): the `Ar40`/`Ar36` factory time-series presets in `libs/processing/src/time_series.cpp` move out of processing, since a domain supplies its own factory presets; until then they are the one listed exception to the domain seam rule in root `AGENTS.md`.
+
 - [ ] **Step 1: Tests FAIL; implement; PASS.** Commit `feat(processing): stages CSV export for the noble gas domain`
 
 ### Task 16: Install, wizard, doctor, e2e per domain; Phase 3 close

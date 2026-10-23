@@ -261,15 +261,22 @@ given it when it reads a file there; any other agent opens it itself).
 Domain seam (`docs/superpowers/specs/2026-10-22-domain-seam-design.md` §10),
 every change keeps:
 
-- `libs/processing` and `libs/reduction` name no isotope, no age, no J. What
-  does lives in `libs/arar` (or, from spec step 4, Ar-Ar's `DomainUi` under
-  `apps/pychron-ui/src/arar`). Exceptions by design: `libs/reduction`
-  `arar.hpp`, `arar.cpp`, `arar_live.hpp`, `detail/arar_kernels.hpp`
-  (`compute_arar`, live conditionals: `libs/experiment` links them, below
-  `processing`); derive pass's name `derive_ages` until spec step 3.
-  `apps/pychron-ui` outside `src/arar/` and `elctl` outside
-  `flux` follow when spec step 4 lands. CMake keeps direction:
-  `pychron_processing` links no `arar` target; apps link `libs/arar`.
+- `libs/processing`; `libs/reduction` outside files Ar-Ar by design
+  (`arar.hpp`, `arar.cpp`, `arar_live.hpp`, `detail/arar_kernels.hpp`:
+  `compute_arar`, live conditionals, `libs/experiment` links them, below
+  `processing`); `apps/pychron-ui` outside `src/arar/`; `elctl` outside
+  `flux`: no Ar-Ar reduction logic (age, J, flux, production, decay or
+  interference stage) and no literal only Ar-Ar understands in a window,
+  unit, exporter or quantity. What has one lives in `libs/arar` (or, from
+  spec step 4, Ar-Ar's `DomainUi` under `apps/pychron-ui/src/arar`). Neutral
+  data that happens to list argon stays: isotope mass table
+  (`isotope_classifier.cpp`), detector-discrimination text
+  (`reference_fit.hpp`); comments naming age or J as examples. Exceptions
+  for now: `Ar40`/`Ar36` factory time-series presets (`time_series.cpp`;
+  spec step 3: a domain supplies its factory presets), derive pass's name
+  `derive_ages` (step 3). UI and `elctl` parts hold from step 4. CMake keeps
+  direction: `pychron_processing` links no `arar` target; apps link
+  `libs/arar`.
 - A new figure, exporter, derived quantity or recall section is a `Domain`
   entry, never a literal in a window.
 - `UnitRegistry::core(default_quantity)` holds core units only; a domain's
