@@ -1107,7 +1107,7 @@ class TestPreferences : public QObject {
 
   // A logging.toml that does not load: the page is there, on the built-in
   // defaults (what the program runs on), says why, and a save leaves
-  // logging.toml as it is.
+  // logging.toml and logging.local.toml as they are.
   void a_broken_logging_toml_shows_the_built_in_defaults() {
     const fs::path root = make_install_root();
     write_file(root / "logging.toml", "colour = 1\n");
@@ -1125,7 +1125,7 @@ class TestPreferences : public QObject {
     page->dock_level()->setCurrentText(QStringLiteral("warn"));
     QCOMPARE(ui::save_line_settings(main_file_, *d.values().line), QString());
     QCOMPARE(read_file(root / "logging.toml"), std::string("colour = 1\n"));
-    QCOMPARE(read_file(root / "logging.local.toml"), std::string("dock_level = \"warn\"\n"));
+    QVERIFY(!fs::exists(root / "logging.local.toml"));  // nothing is written while a file is broken
 
     // A broken logging.local.toml: the same, and the save leaves it for the user to mend.
     write_file(root / "logging.toml", "default_level = \"error\"\n");
@@ -1145,6 +1145,24 @@ class TestPreferences : public QObject {
     QVERIFY(fine->logging_problem.isEmpty());
     PreferencesDialog ok({Preferences{}, std::nullopt, *fine}, {});
     QVERIFY(!ok.logging_page()->problem()->isVisibleTo(ok.logging_page()));
+  }
+
+  // A broken logging.toml beside a valid logging.local.toml: the page is on the
+  // defaults, so an Apply of anything must not rewrite the user's local file.
+  void a_broken_logging_toml_never_lets_a_save_rewrite_the_local_file() {
+    const fs::path root = make_install_root();
+    write_file(root / "logging.toml", "colour = 1\n");
+    const std::string local = "# mine\ndock_level = \"warn\"\n";
+    write_file(root / "logging.local.toml", local);
+    auto s = ui::load_line_settings(main_file_, root);
+    QVERIFY(s.has_value());
+    QVERIFY(!s->logging_problem.isEmpty());
+    QVERIFY(!s->logging_writable);
+
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    QVERIFY(!d.values().line->logging_writable);
+    QCOMPARE(ui::save_line_settings(main_file_, *d.values().line), QString());
+    QCOMPARE(read_file(root / "logging.local.toml"), local);
   }
 
   // Every window here was given its settings: none fell back to the application's.

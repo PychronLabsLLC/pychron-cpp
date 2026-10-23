@@ -4,28 +4,9 @@
 #include "pychron/core/config/logging_file.hpp"
 #include "pychron/core/config/local_file.hpp"
 
-#include <fstream>
-#include <iterator>
 #include <string>
-#include <system_error>
 
 namespace pychron::ui {
-
-namespace {
-
-// `<root>/logging.local.toml` is there and does not load.
-bool local_logging_broken(const std::filesystem::path& install_root) {
-  const std::filesystem::path file = config::logging_local_file(install_root);
-  std::error_code ec;
-  if (!std::filesystem::is_regular_file(file, ec)) return false;
-  std::ifstream in(file, std::ios::binary);
-  if (!in) return true;
-  const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-  config::LoggingConfig scratch;
-  return !config::apply_logging_toml(text, file.generic_string(), scratch);
-}
-
-}  // namespace
 
 std::optional<LineSettings> load_line_settings(const std::filesystem::path& main_file,
                                                const std::optional<std::filesystem::path>& install_root) {
@@ -51,7 +32,9 @@ std::optional<LineSettings> load_line_settings(const std::filesystem::path& main
       s.logging = config::LoggingConfig{};
       s.shared_logging = config::LoggingConfig{};
       s.logging_problem = QString::fromStdString((below ? sources.error() : below.error()).what);
-      s.logging_writable = !local_logging_broken(*install_root);  // a broken local file is left alone
+      // Any logging file that fails to load leaves the local one alone: the page shows the
+      // built-in defaults, and a diff against them would rewrite the user's overrides.
+      s.logging_writable = false;
     }
   }
   return s;

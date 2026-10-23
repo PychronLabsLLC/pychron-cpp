@@ -37,8 +37,9 @@ struct LineSettings {
   // The program then runs on the built-in defaults, and so do `logging` and
   // `shared_logging`. Empty when they load.
   QString logging_problem;
-  // False when it is logging.local.toml that does not load: a save leaves it
-  // (and logging.toml) as it is, for the user to mend.
+  // False when any logging file of the install does not load (the page is on
+  // the built-in defaults): a save leaves logging.toml and logging.local.toml
+  // as they are, for the user to mend.
   bool logging_writable = true;
 };
 
@@ -52,8 +53,8 @@ std::optional<LineSettings> load_line_settings(const std::filesystem::path& main
 // Writes `wanted`'s metrics into `main_file`'s local override and its logging
 // into that or, with an install root, `logging.local.toml`, as far as they
 // differ from everything beneath; what does not differ is taken out of it.
-// logging.toml is never written; logging.local.toml not while it does not
-// load (`logging_writable`). Empty when it is done, else what to tell the user (the file is
+// logging.toml is never written; logging.local.toml not while any logging file
+// does not load (`logging_writable`). Empty when it is done, else what to tell the user (the file is
 // then as it was).
 QString save_line_settings(const std::filesystem::path& main_file, const LineSettings& wanted);
 
