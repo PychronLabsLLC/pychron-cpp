@@ -221,10 +221,17 @@ Both programs write a log file as they run, with no setup.
   command line problem, from the time of the problem, plus the one before it
   if the program was restarted. For a device that does not answer, set
   `"*.wire" = "trace"` first (see the extraction line chapter) and repeat.
-- **Reading a line.** Each line is `time [level] [thread] run=<id> logger:
-  message`. The thread says what was working (`executor`, or `t3` for a
-  thread with no name). `run=` is present only while a run is measured, so
-  `grep run=12345-01A pychron.log` gives one analysis.
+- **Reading a line.** Each line is `time [level] [thread] logger: message`.
+  The thread field says which thread wrote the line; for now every thread
+  shows as a number (`t3`), so lines from one thread can be followed with
+  `grep '\[t3\]'`. Threads are given names, and lines written during a run
+  a `run=<id>` field, in a later release.
+- **No log file.** If `logging.toml` or `logging.local.toml` cannot be read,
+  logging goes on with the built-in defaults and the first error in the log
+  (and in the Log panel) says what is wrong with the file. Without an install
+  and with `HOME` (Windows: `LOCALAPPDATA`) unset there is no folder for the
+  file; the program says `no log folder: HOME is not set` once and runs
+  without one.
 
 ## Still stuck
 

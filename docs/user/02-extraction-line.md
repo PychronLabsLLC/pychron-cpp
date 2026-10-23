@@ -312,12 +312,12 @@ Controls on its toolbar:
 |---|---|
 | Level box | Hide everything below this level (trace, debug, info, warn, error). |
 | `logger (prefix or glob)` | Show only matching loggers. `valve_bus` also matches `valve_bus.wire`; `*.wire` matches every wire log. |
-| `message contains` | Case-insensitive text filter on the message. |
+| `text contains` | Case-insensitive text filter on the message, the thread and the run. |
 | **Pause** | Stop adding lines so you can read; a `+N new` badge counts what you are missing. Un-pause to catch up. |
 | **Clear** | Empties the dock (not the log file). |
 | **Autoscroll** | Follow the newest line while you are at the bottom. |
-| **Save...** | Writes the lines currently visible (after filters) to a text file. |
-| **Set logger level...** | Asks for a logger name or glob and a level and applies it now (for example `valve_bus.wire` at `trace` to watch bytes). Only shown when logging could be started. |
+| **Save...** | Writes the lines currently visible (after filters) to a text file, one per line: `time LEVEL [thread] [logger] message` (with `run=<id>` after the thread when the line has one). |
+| **Set logger level...** | Asks for a logger name or glob and a level and applies it now (for example `valve_bus.wire` at `trace` to watch bytes). When the level is below what the panel shows (`dock_level`, normally `info`), the panel is lowered to it for this session too, and says so. Only shown when logging could be started. |
 
 Logger names to know: `extraction_line`, `switches` (every valve actuation,
 failure and lock change), `scheduler`, and `<transport name>.wire` (the raw
@@ -365,12 +365,14 @@ takes effect. There is no way to say "unset" in a file: to go back to the
 default folder after a lower layer set `dir`, remove `dir` from that file.
 
 Lines look like
-`2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: message`:
-time (UTC), level, the thread, the run being measured (left out when there is
-none) and the logger. The Log panel has the same thread and run in its Thread
-and Run columns. When the program starts it reads the tail of the file back
-into the panel (up to 10 000 lines), old lines in the earlier format too, so
-you see what happened before the last restart.
+`2026-10-22T14:03:22.481Z [debug] [t3] scheduler: message`:
+time (UTC), level, the thread that wrote it and the logger. Threads show as
+numbers (`t3`) for now; named threads (`[executor]`) and a `run=<id>` field
+on lines written during a run come in a later release. The Log panel has the
+thread in its Thread column (and the run in its Run column, empty for now).
+When the program starts it reads the tail of the file back into the panel
+(the last 1000 lines at `dock_level` and above), old lines in the earlier
+format too, so you see what happened before the last restart.
 
 For hardware faults, set `"*.wire" = "trace"` under `[levels]` or use
 **Set logger level...** and send the log (or a `trace` capture, below) along

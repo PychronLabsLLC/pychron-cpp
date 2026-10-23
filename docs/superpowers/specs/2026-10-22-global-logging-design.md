@@ -24,6 +24,13 @@ Two phases, one branch each, phase 1 lands first.
   Same keys as today's `[logging]` table, at top level, plus `dock_level`
   (1.3). Parsed by same `parse_logging` (`libs/core/src/config/loader.cpp`);
   unknown key is error, as now.
+- `logging.toml` or `logging.local.toml` that does not load (bad TOML, unknown
+  key, wrong type): apps fall back to built-in defaults (default folder for
+  install/OS included), hub made anyway; load error is first `error` record,
+  logger `logging`, and one stderr line. `pychron-ui` also shows it once in
+  Log dock. Preferences Logging page then shown on built-in defaults (in force
+  and beneath), with reason above fields; save never writes `logging.toml`,
+  and leaves broken `logging.local.toml` as it is.
 - `<root>/logging.local.toml`: this computer's override, same merge rules as
   other `*.local.toml` (key present overrides; `levels` table is whole
   list). File > Preferences, Logging page, writes here
@@ -32,8 +39,9 @@ Two phases, one branch each, phase 1 lands first.
 - Legacy: `[logging]` in `extraction_line.toml` (and its local file) still
   read. Precedence, lowest first: built-in defaults; legacy `[logging]`
   (shared, then local); `logging.toml`; `logging.local.toml`. When legacy
-  table is present and `logging.toml` is too, one `warn` line on logger
-  `logging` names legacy file as overridden. Legacy table alone: one `info`
+  table is present and `logging.toml` and/or `logging.local.toml` are too, one
+  `warn` line on logger `logging` names legacy file as overridden, and by
+  which of the two. All config notes on logger `logging`. Legacy table alone: one `info`
   line suggesting move. Nothing removed in this spec.
 - No profile writes `logging.toml`: absent file means defaults, so every
   install, data-reduction included, logs without one. Documented in user
@@ -59,6 +67,11 @@ Default `dir` is resolved by apps, not by `LoggingConfig`:
 - Otherwise: OS log folder. macOS `~/Library/Logs/pychron`; Linux
   `$XDG_STATE_HOME/pychron/logs`, `~/.local/state/pychron/logs` when unset;
   Windows `%LOCALAPPDATA%\pychron\logs`.
+- Variable the OS folder needs unset or empty (`HOME`; Windows
+  `LOCALAPPDATA`) and `dir` not given: no file, one `warn` record on logger
+  `logging` `no log folder: HOME is not set` (variable named per OS), one
+  stderr line (left out when `echo_stderr`, which already prints record);
+  `pychron-ui` also shows it once in Log dock.
 - `dir = ""` written explicitly: no file. Loader must tell "key absent" from
   "empty string": `LoggingConfig::dir` becomes `std::optional<path>`
   (absent = default, empty path = off).
@@ -79,6 +92,21 @@ without `default_level` get debug in file. Intended.
 (`default_level`, `levels`); bus publish checks `dock_level` after. Log
 dock's own minimum-level control filters what bus gave, as now.
 Preferences Logging page gains `dock_level` control.
+
+Live, not fixed at creation: hub holds it atomic,
+`LogHub::set_dock_level(LogLevel)` / `dock_level()`; change in force for next
+write on any thread; session line says value in force. Preferences Apply sets
+it when it changed (as levels). Log dock "Set logger level..." below hub's
+dock level lowers dock level to it (and dock's own minimum-level filter when
+above), so records asked for reach dock; dock's info record saying level was
+set also says panel now shows that level and up.
+
+Log dock history (tail of file loaded at start) takes minimum level: caller
+passes hub's dock level; lines below it, and continuation lines of those,
+left out; last N lines at level and up loaded (scan goes further back, up to
+dock capacity). Save and Copy rows carry thread and run as file line does:
+`HH:mm:ss LEVEL [thread] run=<id> [logger] message`, each left out when
+empty; dock's text filter matches message, thread, run.
 
 `*.wire` stays `trace` unless raised; 1.2 does not change it.
 
@@ -235,7 +263,8 @@ with error kind, message, context and what was attempted.
 
 - Library default: no file unless `dir` given. Apps resolve default dir.
 - Logging never stops anything: hub creation failure, unwritable dir, lock
-  failure each degrade (stderr, or no file) and say so once; app goes on.
+  failure, logging file that does not load, no folder each degrade (stderr,
+  defaults, or no file) and say so once; app goes on.
 - Writer thread and `LogHub::write` stay on real time (spec
   `2026-10-06-virtual-clock-design.md` 4.4): no record path waits on clock.
 - Timestamps from `clock.wall_now()` of session clock.

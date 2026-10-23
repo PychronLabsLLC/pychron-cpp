@@ -330,7 +330,7 @@ Docks can be dragged, floated or closed. The main window has these:
 
 | Dock | Where | What it shows |
 |---|---|---|
-| **Log** | bottom | The program's log lines. Controls: a minimum level, a logger filter (prefix or glob), a "message contains" filter, **Pause**, **Autoscroll**, **Clear**, **Save...** (writes the visible lines to a text file) and **Set logger level...** (change a logger's level while running, for example `transport.*`, when the line has a log hub). A "+N new" badge counts lines that arrived while paused. On start it loads the tail of `pychron.log` if a log directory is configured. |
+| **Log** | bottom | The program's log lines. Controls: a minimum level, a logger filter (prefix or glob), a "text contains" filter (message, thread or run), **Pause**, **Autoscroll**, **Clear**, **Save...** (writes the visible lines to a text file) and **Set logger level...** (change a logger's level while running, for example `transport.*`, when the line has a log hub). A "+N new" badge counts lines that arrived while paused. On start it loads the tail of `pychron.log` (the lines at the panel's level and above) unless logging to a file is turned off. |
 | **Alarms** | right | One row per alarm source with severity (warning or critical), message and time. **Acknowledge** removes the selected rows, **Acknowledge all** clears the list. A new alarm from the same source replaces its row. |
 | **Heaters** | right | Only if the line config defines heaters. Per heater: an on/off button (it asks "Turn X on?"), a **Use PID** checkbox, a setpoint field (press Enter to send), the readback, and a strip chart. |
 | **Cryo** | right | Only if the line has a cryo controller. Temperature readbacks per input, setpoint fields per loop with a **Set** button, and a chart in kelvin. |
@@ -543,16 +543,22 @@ changed, a live plot and a figure draw series or group n in the same color,
 on white.
 
 **Logging** and **Metrics** are different in two ways. They belong to the
-extraction line, not to you: they are kept beside the line's config, in its
-local file (`extraction_line.local.toml`, see the configuration reference),
-so `elctl` on this computer follows them too, and another computer sharing
-the same config does not. And their default is whatever the shared
-`extraction_line.toml` says: **Restore Defaults** goes back to that, and the
-local file then holds nothing about them.
+install or the extraction line, not to you, and are kept in files so `elctl`
+on this computer follows them too, and another computer sharing the same
+config does not. For an install, Logging is kept in `logging.local.toml` in
+the install folder, over everything beneath it (the built-in defaults, the
+line's `[logging]` tables, `logging.toml`); Metrics, and Logging when there is
+no install, are kept in the line's local file (`extraction_line.local.toml`,
+see the configuration reference) over `extraction_line.toml`. **Restore
+Defaults** goes back to what is beneath, and the local file then holds
+nothing about them. If `logging.toml` or `logging.local.toml` cannot be read,
+the Logging page says why and shows the built-in defaults the program is
+running on; a broken `logging.local.toml` is not overwritten.
 
 | Page | Setting | Effect |
 |---|---|---|
 | Logging | **Everything else** | The level for any logger not listed below: `trace`, `debug`, `info`, `warn` or `error`. At once. |
+| Logging | **Shown in the Log panel** | The lowest level the Log panel receives (`dock_level`). The file still gets everything at its own levels. At once. |
 | Logging | **Logger / Level** table | A level for one logger or a family of them. A logger is named like `scheduler` or `transport.serial`; `*` stands for any part, so `*.wire` at `trace` shows every byte sent and received. **Add** and **Remove** change the list. At once. |
 | Logging | **Folder** | Where log files go; empty for the default folder, or tick **No log file**. To return to the default after a folder was set in `logging.toml`, remove `dir` there. Next start. |
 | Logging | **Start a new file at**, **Files kept** | The size at which a log file rolls over, and how many old ones are kept. Next start. |
