@@ -171,6 +171,17 @@ class FluxCmd : public elctl::testing::ElctlTest {
   ps::Actor actor_;
 };
 
+TEST_F(FluxCmd, RefusesOutsideArAr) {
+  const auto before = seq();
+  const Outcome o = run_raw({"--domain", "noble_gas", "flux", "fit", "NM-300", "A", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_EQ(o.err, "elctl flux: needs domain arar (this install: noble_gas)\n");
+  EXPECT_EQ(o.out, "");
+  EXPECT_EQ(seq(), before);
+  // Every subcommand, not only fit.
+  EXPECT_EQ(run_raw({"--domain", "noble_gas", "flux", "show", "NM-300", "A", "--db", db_}).code, elctl::kUsage);
+}
+
 TEST_F(FluxCmd, PrintsBothTablesAndWritesNothing) {
   const auto before = seq();
   const Outcome o = fit({});

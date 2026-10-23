@@ -36,9 +36,11 @@
 #include <vector>
 
 #include "cli.hpp"
+#include "pychron/processing/domain.hpp"
 
 namespace elctl {
 
-int db_command(const std::vector<std::string>& args, const std::optional<std::string>& install, Io io);
+int db_command(const std::vector<std::string>& args, const std::optional<std::string>& install,
+               const pychron::processing::Domain& domain, Io io);
 
 }  // namespace elctl

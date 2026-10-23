@@ -26,10 +26,11 @@
 #include <vector>
 
 #include "cli.hpp"
+#include "pychron/processing/domain.hpp"
 
 namespace elctl {
 
-int import_command(const std::vector<std::string>& args, Io io);
+int import_command(const std::vector<std::string>& args, const pychron::processing::Domain& domain, Io io);
 
 // For tests: called after each batch `import run` commits, before the run
 // asks whether it was interrupted. Empty: nothing is called.

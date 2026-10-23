@@ -133,11 +133,11 @@ bool any_step(const pp::Dataset& d) {
   return false;
 }
 
-int run(const Args& a, Io io) {
+int run(const Args& a, const pp::Domain& domain, Io io) {
   auto source = open_source(a.db);
   if (!source) return fatal(io, source.error());
 
-  const auto& reg = pp::UnitRegistry::builtin();
+  const auto& reg = domain.units();
   pp::Pipeline pipeline;
   pipeline.name = "export";
   if (auto selected = add_select(pipeline, reg, a.selection); !selected) return fatal(io, selected.error());
@@ -150,7 +150,7 @@ int run(const Args& a, Io io) {
   if (auto e = set(reduce, "constants", a.ages.constants)) return fatal(io, *e);
   if (auto e = set(reduce, "include_decay_error", a.ages.decay_error)) return fatal(io, *e);
 
-  pp::Runner runner(reg, source->get());
+  pp::Runner runner(reg, source->get(), &domain);
   auto reduced = runner.run(pipeline, "reduce");
   if (!reduced) return fatal(io, reduced.error());
   const auto& before_grouping = std::get<pp::DatasetPtr>(reduced->at(0));
@@ -185,7 +185,7 @@ int run(const Args& a, Io io) {
 
 }  // namespace
 
-int export_command(const std::vector<std::string>& args, Io io) {
+int export_command(const std::vector<std::string>& args, const pp::Domain& domain, Io io) {
   if (!args.empty() && (args[0] == "help" || args[0] == "--help")) {
     io.out << kUsageText;
     return kOk;
@@ -195,7 +195,7 @@ int export_command(const std::vector<std::string>& args, Io io) {
   // No exception leaves a library, but std::filesystem can throw: a fatal
   // error like any other.
   try {
-    return run(*parsed, io);
+    return run(*parsed, domain, io);
   } catch (const std::exception& e) {
     return fatal(io, e.what());
   }

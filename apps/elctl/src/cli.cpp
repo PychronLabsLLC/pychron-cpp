@@ -23,6 +23,7 @@
 #include "exp.hpp"
 #include "data_source.hpp"
 #include "db.hpp"
+#include "domain.hpp"
 #include "embargo.hpp"
 #include "export.hpp"
 #include "publish.hpp"
@@ -39,6 +40,7 @@
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/channel_gauge.hpp"
 #include "pychron/devices/driver_registry.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/experiment/conditionals/conditional.hpp"
 #include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
@@ -181,7 +183,9 @@ constexpr const char* kUsageText =
     "\n"
     "Options:\n"
     "  -c, --config <file>         system config (default: extraction_line.toml)\n"
-    "  --sim                       run every transport as kind = \"sim\"\n";
+    "  --sim                       run every transport as kind = \"sim\"\n"
+    "  --domain <id>               the kind of data reduction to run: arar or noble_gas\n"
+    "                              (default: the install's domain, else arar)\n";
 
 constexpr const char* kActor = "elctl";
 
@@ -190,6 +194,7 @@ struct Globals {
   bool config_given = false;
   bool sim = false;
   std::optional<std::string> install;  // --install NAME (site config)
+  std::string domain = "arar";         // the install's domain; --domain ID over it
   ExpGlobals exp;                      // defaults --install fills in
 };
 
@@ -250,6 +255,16 @@ class Session {
  public:
   Session(Globals globals, Io io) : g_(std::move(globals)), io_(io) {}
 
+  // Registers the domains and picks g_.domain; false (reason on stderr) when
+  // there is none by that id. Called once, before execute().
+  bool choose_domain() {
+    domain_ = elctl::choose_domain(domains_, g_.domain, io_.err);
+    return domain_ != nullptr;
+  }
+
+  // The domain this invocation runs on; valid after choose_domain() succeeded.
+  const processing::Domain& domain() const { return *domain_; }
+
   int execute(const std::vector<std::string>& argv) {
     const std::string& cmd = argv.front();
     const std::vector<std::string> args(argv.begin() + 1, argv.end());
@@ -270,13 +285,13 @@ class Session {
       return laser_command(args, e, io_);
     }
     if (cmd == "spec") return spec_command(args, g_.exp, io_);
-    if (cmd == "import") return import_command(args, io_);
+    if (cmd == "import") return import_command(args, domain(), io_);
     if (cmd == "entry") return entry_command(args, io_);
-    if (cmd == "export") return export_command(args, io_);
+    if (cmd == "export") return export_command(args, domain(), io_);
     if (cmd == "publish") return publish_command(args, io_);
     if (cmd == "embargo") return embargo_command(args, io_);
-    if (cmd == "db") return db_command(args, g_.install, io_);
-    if (cmd == "flux") return flux_command(args, io_);
+    if (cmd == "db") return db_command(args, g_.install, domain(), io_);
+    if (cmd == "flux") return flux_command(args, domain(), io_);
     if (cmd == "earthbank") return earthbank_command(args, io_);
     if (cmd == "list-drivers") return list_drivers();
     if (cmd == "list") return list();
@@ -744,6 +759,8 @@ class Session {
 
   Globals g_;
   Io io_;
+  processing::DomainRegistry domains_;
+  const processing::Domain* domain_ = nullptr;
   std::unique_ptr<Line> line_;
   bool opened_ = false;
   bool in_repl_ = false;
@@ -753,6 +770,7 @@ class Session {
 
 int run(const std::vector<std::string>& args, Io io) {
   Globals globals;
+  std::optional<std::string> domain_flag;  // --domain ID, which wins over the install's
   std::size_t i = 0;
   for (; i < args.size(); ++i) {
     const std::string& a = args[i];
@@ -769,6 +787,12 @@ int run(const std::vector<std::string>& args, Io io) {
         return kUsage;
       }
       globals.install = args[++i];
+    } else if (a == "--domain") {
+      if (i + 1 >= args.size()) {
+        io.err << "elctl: --domain needs an id\n" << kUsageLine;
+        return kUsage;
+      }
+      domain_flag = args[++i];
     } else if (a == "--sim") {
       globals.sim = true;
     } else if (a == "-h" || a == "--help") {
@@ -806,6 +830,7 @@ int run(const std::vector<std::string>& args, Io io) {
     if (install) {
       if (!globals.config_given) globals.config = install->path(install->line);
       globals.sim = globals.sim || install->simulation;
+      globals.domain = install->domain;
       globals.exp.lab = install->root;
       globals.exp.spectrometer = install->path(install->spectrometer);
       globals.exp.canvas = install->path(install->canvas);
@@ -830,7 +855,9 @@ int run(const std::vector<std::string>& args, Io io) {
       return kFailed;
     }
   }
+  if (domain_flag) globals.domain = *domain_flag;
   Session session(std::move(globals), io);
+  if (!session.choose_domain()) return kUsage;
   return session.execute(std::vector<std::string>(args.begin() + static_cast<std::ptrdiff_t>(i), args.end()));
 }
 

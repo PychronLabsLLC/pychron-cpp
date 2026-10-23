@@ -7,7 +7,7 @@
 
 namespace elctl {
 
-int export_command(const std::vector<std::string>&, Io io) {
+int export_command(const std::vector<std::string>&, const pychron::processing::Domain&, Io io) {
   io.err << "elctl was built without persistence\n";
   return kUsage;
 }

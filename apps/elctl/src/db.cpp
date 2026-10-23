@@ -94,7 +94,10 @@ pychron::Result<std::string> install_url(const std::optional<std::string>& name,
 
 }  // namespace
 
-int db_command(const std::vector<std::string>& args, const std::optional<std::string>& install, Io io) {
+// The domain is threaded to the entry and not read yet: the derive pass is
+// still the Ar-Ar age pass (pp::derive_ages), whatever domain the install names.
+int db_command(const std::vector<std::string>& args, const std::optional<std::string>& install,
+               const pychron::processing::Domain& /*domain*/, Io io) {
   if (args.empty() || args[0] == "help" || args[0] == "--help") {
     io.out << kShortUsage;
     return args.empty() ? kUsage : kOk;

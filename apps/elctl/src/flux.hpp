@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "cli.hpp"
+#include "pychron/processing/domain.hpp"
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
 #include <memory>
@@ -61,7 +62,7 @@
 
 namespace elctl {
 
-int flux_command(const std::vector<std::string>& args, Io io);
+int flux_command(const std::vector<std::string>& args, const pychron::processing::Domain& domain, Io io);
 
 #ifdef PYCHRON_ELCTL_HAS_STORE
 

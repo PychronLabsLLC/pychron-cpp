@@ -34,9 +34,10 @@
 #include <vector>
 
 #include "cli.hpp"
+#include "pychron/processing/domain.hpp"
 
 namespace elctl {
 
-int export_command(const std::vector<std::string>& args, Io io);
+int export_command(const std::vector<std::string>& args, const pychron::processing::Domain& domain, Io io);
 
 }  // namespace elctl

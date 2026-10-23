@@ -209,7 +209,9 @@ int fatal(Io io, const Error& error) { return fatal(io, error.what); }
 
 }  // namespace import_detail
 
-int import_command(const std::vector<std::string>& args, Io io) {
+// The domain is threaded to the entry and not read yet: import's derive pass
+// (derive_after_import) is still the Ar-Ar age pass.
+int import_command(const std::vector<std::string>& args, const pychron::processing::Domain& /*domain*/, Io io) {
   using namespace import_detail;
   if (args.empty()) {
     io.err << kShortUsage;

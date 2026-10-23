@@ -563,7 +563,7 @@ int run(const Args& a, Io io) {
 
 }  // namespace
 
-int flux_command(const std::vector<std::string>& args, Io io) {
+int flux_command(const std::vector<std::string>& args, const pychron::processing::Domain& domain, Io io) {
   if (args.empty() || args[0] == "help" || args[0] == "--help") {
     (args.empty() ? io.err : io.out) << kUsageText;
     return args.empty() ? kUsage : kOk;
@@ -575,6 +575,8 @@ int flux_command(const std::vector<std::string>& args, Io io) {
     io.out << kUsageText;
     return kOk;
   }
+  // Flux is the Ar-Ar irradiation's J; no other domain has it.
+  if (domain.id() != "arar") return fatal(io, "needs domain arar (this install: " + std::string(domain.id()) + ")");
   if (args[0] != "fit") {
     try {
       return flux_admin_command(args[0], rest, io);

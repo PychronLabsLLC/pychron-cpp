@@ -10,7 +10,7 @@
 
 namespace elctl {
 
-int db_command(const std::vector<std::string>&, const std::optional<std::string>&, Io io) {
+int db_command(const std::vector<std::string>&, const std::optional<std::string>&, const pychron::processing::Domain&, Io io) {
   io.err << "elctl was built without persistence\n";
   return kUsage;
 }
