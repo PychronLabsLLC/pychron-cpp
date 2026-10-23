@@ -737,8 +737,10 @@ key names.
 
 "Reducing" an analysis turns what the spectrometer measured into an age. The
 steps are the same everywhere (Recall, figures, export), implemented in
-`libs/reduction` (arithmetic and ages) and `libs/processing` (what to
-reduce, with which stored values).
+`libs/reduction` (uncertainty arithmetic and isotope fits), `libs/processing`
+(what to reduce: the intercepts with their baseline, blank and detector
+corrections) and `libs/arar` (the Ar-Ar corrections and ages, with the flux,
+production ratios and chronology they take from the store).
 
 ### 1. Fit each isotope's evolution to get the intercept
 

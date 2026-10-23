@@ -3,9 +3,9 @@
 How to turn the fluence monitor analyses of an irradiation level into a J for
 every position of that level, and save it, with `elctl flux`. The design is
 `superpowers/specs/2026-10-06-flux-fitting-design.md`; the code is
-`libs/reduction` (`flux.hpp`, the math), `libs/processing` (`flux_fit.hpp`,
-the fit of a level) and the `processing_store` adapter (`flux_store.hpp`,
-reading and writing the store). The review step (leave an analysis out,
+`libs/arar` (`flux.hpp`, the math, and `flux_fit.hpp`, the fit of a level)
+and its `arar_store` adapter (`flux_store.hpp`, reading and writing the
+store). The review step (leave an analysis out,
 leave a position out) is done in the flux window (below) or with flags.
 
 ## Before you start
@@ -39,7 +39,7 @@ does, with the review done by eye: the plot shows the monitors and the fit,
 and every change refits at once. It needs a store, like entry. The design is
 `superpowers/specs/2026-10-07-flux-window-design.md`. The window computes
 nothing itself: the fit is `fit_level`, and what it shows comes from
-`libs/processing` (`flux_view.hpp`). The warnings, the model line and the CSV
+`libs/arar` (`flux_view.hpp`). The warnings, the model line and the CSV
 are the same code `elctl flux` prints from; the plot, the options schema and
 the status line are the window's own.
 

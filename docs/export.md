@@ -3,7 +3,7 @@
 How to get a 40Ar/39Ar data report that follows Schaen et al. (2021),
 "Interpreting and reporting 40Ar/39Ar geochronologic data" (GSA Bulletin,
 v. 133, p. 461-487, doi:10.1130/B35560.1), out of pychron in one step, from
-`pychron-ui` or `elctl export`. The code is `libs/processing`
+`pychron-ui` or `elctl export`. The code is `libs/arar`
 (`report.hpp`); the standard's own text is the authority on what a paper
 must carry, this page says what the export puts where.
 
