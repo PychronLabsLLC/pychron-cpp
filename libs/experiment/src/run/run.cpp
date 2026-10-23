@@ -17,6 +17,7 @@
 #include <thread>
 #include <type_traits>
 
+#include "pychron/core/log_context.hpp"
 #include "pychron/devices/link.hpp"
 #include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/measurement/results.hpp"
@@ -546,6 +547,8 @@ void Run::build_engine(RunControl& control) {
       auto hold = std::make_shared<Clock::Hold>(*s_.clock);
       post_eq_thread_ = std::thread([&control, this, hold]() mutable {
         Clock::Participant participant(*s_.clock, "run.post_eq");
+        const LogContext::Thread log_thread("run.post-eq");
+        const LogContext::Run log_run(id());
         hold.reset();
         if (auto r = run_script(*post_eq_, scripting::ScriptKind::PostEquilibration, control); !r)
           note("post-equilibration failed: " + r.error().what);
@@ -601,6 +604,8 @@ Result<void> Run::extract(RunControl& control) {
     auto hold = std::make_shared<Clock::Hold>(*s_.clock);  // no time passes before the thread takes part
     phase_thread_ = std::thread([this, hold]() mutable {
       Clock::Participant participant(*s_.clock, "run.during_extraction");
+      const LogContext::Thread log_thread("run.phase");
+      const LogContext::Run log_run(id());
       hold.reset();
       auto r = engine_->run_phase(plan::When::DuringExtraction, phase_token_);
       // Said while this thread is still a participant.

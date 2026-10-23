@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/experiment/executor/links.hpp"
 #include "pychron/experiment/lab/script_actor.hpp"
 #include "pychron/experiment/measurement/adapters.hpp"
@@ -235,6 +236,7 @@ Result<void> LabSession::start(QueueSpec queue, std::size_t from_row) {
   auto hold = std::make_shared<Clock::Hold>(clock);
   thread_ = std::thread([this, &clock, hold, queue = std::move(queue), from_row]() mutable {
     Clock::Participant participant(clock, "lab.session");
+    const LogContext::Thread log_thread("queue");
     hold.reset();
     run(std::move(queue), from_row);
     // Said while this thread is still a participant.

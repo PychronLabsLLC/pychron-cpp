@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <system_error>
 
+#include "pychron/core/log_context.hpp"
 #include "pychron/transport/link_transport.hpp"
 
 namespace pychron::spectrometer {
@@ -175,6 +176,7 @@ void NgxLink::went_down(const Error& why) {
 
 void NgxLink::reader(std::shared_ptr<Clock::Hold> started) {
   Clock::Participant participant(clock_, "ngx.reader");
+  const LogContext::Thread log_thread("ngx.reader");
   started.reset();
   // Said while this thread is still a participant: the destructor is runnable
   // again before the clock stops counting the reader.

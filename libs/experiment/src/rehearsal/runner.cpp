@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "pychron/core/log_context.hpp"
+
 namespace pychron::experiment::rehearsal {
 
 RehearsalRunner::RehearsalRunner(scripting::IScriptHost& host, scripting::Script script,
@@ -15,6 +17,7 @@ RehearsalRunner::RehearsalRunner(scripting::IScriptHost& host, scripting::Script
   env.clock = &clock_;
   thread_ = std::thread([this, &host, script = std::move(script), env = std::move(env),
                          on_finished = std::move(on_finished)] {
+    const LogContext::Thread log_thread("rehearsal");
     const auto result = host.rehearse(script, env, rehearsal_, token_);
     if (on_finished) on_finished(result);
   });

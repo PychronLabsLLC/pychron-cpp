@@ -5,6 +5,8 @@
 #include <limits>
 #include <string>
 
+#include "pychron/core/log_context.hpp"
+
 namespace pychron::spectrometer {
 
 namespace {
@@ -522,6 +524,7 @@ void AcquisitionEngine::deliver(std::vector<Reading>& readings, std::vector<Alar
 }
 
 void AcquisitionEngine::poll(std::size_t index) {
+  const LogContext::Polling polling;
   if (index >= acquirers_.size()) return;
   std::vector<Reading> out;
   std::vector<Alarm> alarms;

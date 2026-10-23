@@ -4,6 +4,7 @@
 
 #include "pychron/core/env.hpp"
 #include "pychron/core/host_name.hpp"
+#include "pychron/core/log_context.hpp"
 
 namespace pychron::ui {
 
@@ -14,6 +15,7 @@ Result<std::unique_ptr<EntryBridge>> EntryBridge::open(Options options) {
   std::promise<Result<ps::Actor>> opened;
   auto future = opened.get_future();
   bridge->worker_ = std::thread([b = bridge.get(), options = std::move(options), &opened]() mutable {
+    const LogContext::Thread log_thread("entry");
     b->loop(std::move(options), [&opened](Result<ps::Actor> r) { opened.set_value(std::move(r)); });
   });
   auto actor = future.get();

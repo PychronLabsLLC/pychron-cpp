@@ -18,6 +18,7 @@
 #include <QSemaphore>
 
 #include "pychron/core/config/local_file.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/systems/spectrometer/field_table_store.hpp"
 
 namespace pychron::ui {
@@ -531,6 +532,7 @@ void SpectrometerBridge::start_peak_center_thread(jobs::PeakCenterConfig config)
   peak_center_thread_ = std::thread([state = peak_center_run_.get(), spec = &spec_, bus = &bus_, gate = gate_,
                                      config = std::move(config), hold]() mutable {
     Clock::Participant participant(spec->clock(), "spectrometer.peak_center");
+    const LogContext::Thread log_thread("peak-center");
     hold.reset();
     jobs::Progress progress;  // the bus events carry the progress
     jobs::PeakCenterOptions options;

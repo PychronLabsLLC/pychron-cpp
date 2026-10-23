@@ -8,6 +8,8 @@
 #include <system_error>
 #include <thread>
 
+#include "pychron/core/log_context.hpp"
+
 #if defined(__APPLE__)
 #include <pthread.h>
 #include <pthread/qos.h>
@@ -359,6 +361,7 @@ Result<ProcessResult> run_process(const ProcessSpec& spec) {
 
   ProcessResult result;
   std::thread reader([&] {
+    const LogContext::Thread log_thread("process." + spec.argv.front());
     char buf[4096];
     DWORD n = 0;
     while (ReadFile(out_r, buf, sizeof buf, &n, nullptr) && n > 0) keep(result.output, buf, n);

@@ -6,6 +6,7 @@
 #include "cli.hpp"
 #include "exp.hpp"
 #include "pychron/core/clock.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/log_dir.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/process_log.hpp"
@@ -14,6 +15,7 @@
 extern "C" void elctl_on_interrupt(int) { ++elctl::interrupt_count(); }
 
 int main(int argc, char** argv) {
+  const pychron::LogContext::Thread log_thread("elctl");
   pychron::LogHub::install_crash_handlers();
   std::signal(SIGINT, elctl_on_interrupt);
   std::vector<std::string> args(argv + 1, argv + argc);

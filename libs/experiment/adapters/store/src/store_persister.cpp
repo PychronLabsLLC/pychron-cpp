@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "pychron/core/host_name.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/experiment/factory/increments.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
 #include "pychron/persistence/catalog.hpp"
@@ -496,6 +497,7 @@ Result<std::unique_ptr<Acquisition>> open_acquisition(const std::string& url, st
   AcquisitionImpl& core = *impl;
   core.url = url;  // before the worker exists; read by it and by callers, never written again
   core.worker = std::thread([&core, data = std::move(data), software_version]() mutable {
+    const LogContext::Thread log_thread("store");
     core.work(std::move(data), software_version);
   });
   {

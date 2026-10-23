@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/experiment/conditionals/metrics.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
 #include "pychron/transport/transport.hpp"
@@ -365,6 +366,8 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
   auto hold = std::make_shared<Clock::Hold>(clock_);
   s->thread = std::thread([this, s, hold]() mutable {
     Clock::Participant participant(clock_, "executor.slot." + std::to_string(s->row));
+    const LogContext::Thread log_thread("run");
+    const LogContext::Run log_run(s->run->id());
     hold.reset();
     s->result = s->run->execute(s->control);
     // Said while this thread is still a participant.

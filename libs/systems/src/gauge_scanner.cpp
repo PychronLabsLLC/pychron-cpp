@@ -2,6 +2,8 @@
 
 #include <sstream>
 
+#include "pychron/core/log_context.hpp"
+
 namespace pychron {
 
 namespace {
@@ -48,6 +50,7 @@ Result<void> GaugeScanner::add_gauge(const config::GaugeConfig& gauge, Reader re
 
   // Scheduler guarantees non-overlap per job, so State needs no lock.
   auto task = [this, state] {
+    const LogContext::Polling polling;
     const auto& cfg = state->cfg;
     const TimePoint ts = clock_.now();
     auto r = state->reader();

@@ -10,6 +10,7 @@
 #include <toml++/toml.hpp>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_context.hpp"
 
 namespace pychron::experiment::lab {
 
@@ -72,7 +73,10 @@ Notifier::Notifier(SignalBus& bus, NotificationConfig config, NotifierOptions op
   if (!options_.runner) options_.runner = ProcessRunner(run_process);
   load();
   say_outbox();
-  if (options_.thread) thread_ = std::thread([this] { work(); });
+  if (options_.thread) thread_ = std::thread([this] {
+      const LogContext::Thread log_thread("notifier");
+      work();
+    });
   run_finished_ = bus_.subscribe<executor::RunFinished>([this](const executor::RunFinished& e) {
     const auto& r = e.summary;
     if (r.state != run::RunState::Failed && !r.save_error) return;

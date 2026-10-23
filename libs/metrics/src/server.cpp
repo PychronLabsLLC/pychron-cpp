@@ -7,6 +7,8 @@
 #include <unordered_set>
 #include <utility>
 
+#include "pychron/core/log_context.hpp"
+
 namespace pychron::metrics {
 
 namespace {
@@ -204,7 +206,10 @@ Result<std::unique_ptr<MetricsServer>> MetricsServer::start(Registry& registry, 
 
   impl->accept();
   Impl* raw = impl.get();
-  impl->thread = std::thread([raw] { raw->serve(); });
+  impl->thread = std::thread([raw] {
+    const LogContext::Thread log_thread("metrics");
+    raw->serve();
+  });
   return std::unique_ptr<MetricsServer>(new MetricsServer(std::move(impl)));
 }
 

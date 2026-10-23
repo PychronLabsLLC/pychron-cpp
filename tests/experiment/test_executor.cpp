@@ -21,6 +21,8 @@
 #include <thread>
 #include <vector>
 
+#include "log_capture.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/executor/links.hpp"
 #include "pychron/transport/sim_transport.hpp"
@@ -981,6 +983,31 @@ double real_seconds_since(std::chrono::steady_clock::time_point t) {
 }
 
 using ExecutorVirtual = pychron::testing::VirtualTimeTest;
+
+// What a script writes while a run executes carries the run's thread tag and
+// the run's id (the one RunStarted gave).
+TEST_F(ExecutorVirtual, RunThreadCarriesRunScope) {
+  pychron::testing::LogCapture log;  // before the world: the run's thread ends first
+  ASSERT_TRUE(log.ok());
+  World w({});
+  Clock::Participant me(w.clock, "test");
+  w.host.bodies["extract"] = [](const scripting::ScriptEnvironment&, scripting::CancelToken&) -> Result<void> {
+    process_logger("t").info("from the script");
+    return {};
+  };
+  auto q = w.queue({counted_run("12345", 10)}, Seconds{10}, Seconds{60});
+  Executor ex(w.context(), w.options());
+  const auto r = ex.execute(q);
+  ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
+  const std::string id = w.run_id("12345");
+  ASSERT_FALSE(id.empty());
+
+  const auto lines = log.raw_lines();
+  const auto it = std::find_if(lines.begin(), lines.end(),
+                               [](const std::string& l) { return l.find(" t: from the script") != std::string::npos; });
+  ASSERT_NE(it, lines.end());
+  EXPECT_NE(it->find(" [run] run=" + id + " t: from the script"), std::string::npos) << *it;
+}
 
 TEST_F(ExecutorVirtual, QueueOfThreeRunsTakesNoRealTime) {
   World w({});

@@ -11,6 +11,7 @@
 
 #include <QMetaObject>
 
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/process.hpp"
 
 namespace pychron::ui {
@@ -87,13 +88,17 @@ LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
   state_ = system_.snapshot();
   watch_only_ = deps_.lasers.driver() == Lasers::Driver::Queue;
   worker_->watch_only = watch_only_;
-  thread_ = std::thread([this] { loop(); });
+  thread_ = std::thread([this] {
+    const LogContext::Thread log_thread("laser");
+    loop();
+  });
   video_ = std::make_unique<Video>();
   if (system_.has_camera()) {
     // Held until the thread is a participant: time does not go past it first.
     auto hold = std::make_shared<Clock::Hold>(video_clock_);
     video_thread_ = std::thread([this, hold]() mutable {
       const Clock::Participant participant(video_clock_, "laser video");
+      const LogContext::Thread log_thread("laser.video");
       hold.reset();
       show();
       // Said while still a participant: the destructor waits for it in the clock.

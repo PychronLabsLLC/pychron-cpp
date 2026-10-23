@@ -6,6 +6,8 @@
 #include <QMetaObject>
 #include <QSettings>
 
+#include "pychron/core/log_context.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -104,6 +106,7 @@ void UpdateChecker::start(bool manual, std::unique_ptr<http::IHttpClient> client
   if (worker_.joinable()) worker_.join();  // the last one has posted its answer and is ending
   set_busy(true);
   worker_ = std::thread([this, manual, client = std::move(client)] {
+    const LogContext::Thread log_thread("update");
     auto result = update::fetch_latest(*client);
     QMetaObject::invokeMethod(
         this, [this, manual, answer = std::move(result)] { finish(manual, answer); }, Qt::QueuedConnection);

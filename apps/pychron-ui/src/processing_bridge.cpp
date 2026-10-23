@@ -9,12 +9,17 @@
 #include <QPointer>
 #include <QThread>
 
+#include "pychron/core/log_context.hpp"
+
 namespace pychron::ui {
 
 namespace pp = pychron::processing;
 
 ProcessingBridge::ProcessingBridge(pp::IAnalysisSource& source, QObject* parent)
-    : QObject(parent), source_(source), worker_([this] { loop(); }) {}
+    : QObject(parent), source_(source), worker_([this] {
+        const LogContext::Thread log_thread("processing");
+        loop();
+      }) {}
 
 ProcessingBridge::~ProcessingBridge() {
   {

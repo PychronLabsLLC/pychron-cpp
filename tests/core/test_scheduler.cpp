@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -17,7 +18,9 @@
 #include <vector>
 
 #include "pychron/core/config/logging_config.hpp"
+#include "log_capture.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/core/virtual_clock.hpp"
@@ -527,6 +530,26 @@ TEST_F(SchedulerVirtual, PeriodicJobRunsAtExactTimes) {
   for (int i = 1; i <= 10; ++i) expected.push_back(kStart + i * 1s);
   EXPECT_EQ(recorded(), expected);
   EXPECT_EQ(clock.now(), kStart + 10s + 1ms);
+}
+
+// A job writes to the log with its thread named: the scheduler's.
+TEST_F(SchedulerVirtual, JobsRunTaggedScheduler) {
+  pychron::testing::LogCapture log;  // before the scheduler: its threads end first
+  ASSERT_TRUE(log.ok());
+  VirtualClock clock;
+  Clock::Participant main(clock, "test");
+  Scheduler s(clock);
+  s.start();
+  ASSERT_TRUE(s.after("once", 1s, [] { process_logger("t").info("from a job"); }));
+
+  clock.sleep_for(2s);
+  s.wait_idle();
+
+  const auto lines = log.raw_lines();
+  const auto it = std::find_if(lines.begin(), lines.end(),
+                               [](const std::string& l) { return l.find(" t: from a job") != std::string::npos; });
+  ASSERT_NE(it, lines.end());
+  EXPECT_NE(it->find(" [info] [scheduler] "), std::string::npos) << *it;
 }
 
 TEST_F(SchedulerVirtual, AfterRunsOnceAtItsDelay) {

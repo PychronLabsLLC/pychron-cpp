@@ -4,6 +4,7 @@
 #include <system_error>
 #include <utility>
 
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/signal_bus.hpp"
 
 namespace pychron {
@@ -271,6 +272,7 @@ void Scheduler::publish_log(LogLevel level, std::string message) const {
 
 void Scheduler::worker_loop(std::shared_ptr<Clock::Hold> started) {
   Clock::Participant participant(clock_, "scheduler.worker");
+  const LogContext::Thread log_thread("scheduler");
   started.reset();
   for (;;) {
     std::shared_ptr<Job> job;
@@ -332,6 +334,7 @@ bool Scheduler::started() const {
 
 void Scheduler::dispatcher_loop(std::shared_ptr<Clock::Hold> started) {
   Clock::Participant participant(clock_, "scheduler.dispatch");
+  const LogContext::Thread log_thread("scheduler");
   started.reset();
   std::unique_lock lock(mutex_);
   while (dispatching_) {

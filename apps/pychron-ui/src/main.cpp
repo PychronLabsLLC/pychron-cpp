@@ -87,6 +87,7 @@
 #include "no_database_persister.hpp"
 #include "pattern_maker_window.hpp"
 #include "preferences.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/site.hpp"
@@ -381,6 +382,7 @@ int run_laser(pychron::systems::ExtractionLine& line, const pychron::ui::Command
 }  // namespace
 
 int main(int argc, char** argv) {
+  const pychron::LogContext::Thread log_thread("ui");
   pychron::LogHub::install_crash_handlers();
 #ifdef _WIN32
   // A GUI program has no console: --version and --self-test print to the one

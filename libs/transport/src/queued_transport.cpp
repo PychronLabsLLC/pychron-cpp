@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/transport/transport.hpp"
 
@@ -161,6 +162,7 @@ struct QueuedTransport::Impl {
 
   void run_worker(std::shared_ptr<Clock::Hold> started) {
     Clock::Participant participant(*clock, "transport." + options.name);
+    const LogContext::Thread log_thread("transport." + options.name);
     started.reset();
     for (;;) {
       Job job;

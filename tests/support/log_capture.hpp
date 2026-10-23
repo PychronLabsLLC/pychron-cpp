@@ -57,6 +57,16 @@ class LogCapture {
     return out;
   }
 
+  // Every line written so far, whole: timestamp, thread tag and run field kept.
+  [[nodiscard]] std::vector<std::string> raw_lines() const {
+    std::vector<std::string> out;
+    if (!hub_) return out;
+    hub_->flush();
+    std::ifstream in(hub_->file_path(), std::ios::binary);
+    for (std::string line; std::getline(in, line);) out.push_back(std::move(line));
+    return out;
+  }
+
   // The lines of loggers named trace.*.
   [[nodiscard]] std::vector<std::string> trace_lines() const {
     std::vector<std::string> out;
