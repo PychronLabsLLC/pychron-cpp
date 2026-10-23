@@ -471,4 +471,23 @@ TEST(Units, PipelineTomlRoundTrip) {
   EXPECT_FALSE(pp::pipeline_from_toml(reg(), "schema = \"pipeline\"\n[[units]]\nid = \"a\"\nkind = \"warp\"\n"));
 }
 
+// A reduce node saved before the domain seam split the reduction carries the
+// Ar-Ar options. Over core's registry no unit owns them: nothing moves, and
+// they are kept unread and written back unchanged, as any unknown key
+// (tests/arar/test_preset_migration.cpp: over the Ar-Ar registry they move).
+TEST(Pipeline, ReducePresetKeysStayOverCore) {
+  const auto core = pp::UnitRegistry::core("");
+  const std::string text =
+      "schema = \"pipeline\"\n[[units]]\nid = \"select\"\nkind = \"select\"\n"
+      "[[units]]\nid = \"reduce\"\nkind = \"reduce\"\ninputs = [\"select\"]\n"
+      "[units.options]\nconstants = \"legacy\"\n";
+  std::vector<std::string> warnings;
+  auto p = pp::pipeline_from_toml(core, text, &warnings);
+  ASSERT_TRUE(p) << p.error().what;
+  EXPECT_TRUE(warnings.empty()) << warnings.front();
+  ASSERT_EQ(p->find("reduce")->options.extra.count("constants"), 1u);
+  const std::string saved = pp::pipeline_to_toml(*p);
+  EXPECT_NE(saved.find("constants = 'legacy'"), std::string::npos) << saved;
+}
+
 }  // namespace

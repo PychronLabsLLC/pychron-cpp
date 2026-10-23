@@ -116,6 +116,10 @@ class Pipeline {
   Result<std::vector<std::string>> order() const;
 };
 
+// Reads a pipeline document. An option a node's schema does not own, that the
+// one node taking its output owns, moves to that node with a warning
+// "'<id>': option '<key>' now belongs to <kind>" (a unit split in two leaves
+// its old options in files saved before); other unknown keys are kept unread.
 Result<Pipeline> pipeline_from_toml(const UnitRegistry& registry, std::string_view text,
                                     std::vector<std::string>* warnings = nullptr);
 std::string pipeline_to_toml(const Pipeline& pipeline);

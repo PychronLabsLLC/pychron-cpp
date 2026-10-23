@@ -1011,7 +1011,7 @@ TEST_F(StoreSource, FingerprintUnchangedByTheMoveAndChangedByJ) {
   const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   ASSERT_EQ(hex.size(), 64u);
   EXPECT_EQ(to_hex(sha256(std::string_view{text})), hex);  // the text format is pinned too
-  const auto id = [](const char* text) { return *ps::Uuid::parse(text); };
+  const auto id = [](const char* uuid) { return *ps::Uuid::parse(uuid); };
   const ps::Uuid subject = id("00000000-0000-7000-8000-000000000001");
   const std::vector<ps::HeadInfo> heads{
       {subject, ps::Kind::Intercepts, id("00000000-0000-7000-8000-00000000000a"), 1},

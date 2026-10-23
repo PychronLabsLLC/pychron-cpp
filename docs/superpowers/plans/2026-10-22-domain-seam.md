@@ -275,11 +275,11 @@ git commit -am "feat(elctl): commands run on the install's domain"
 **Interfaces:**
 - Produces: in `signal.hpp`: `IsotopeSignal make_signal(std::string_view label, const MeasuredSignal& m)` minting tags `<label>`, `<label> bs`, `<label> bk`, `<label> IC`; the `ArgonIsotope` overload stays in `arar_types.hpp` and calls it with `to_string(iso)`. `reduced.cpp:107` calls the label overload with `iso.isotope`.
 
-- [ ] **Step 1: Write the failing test** (noble spec §3.3): `TEST(Signal, TagsCarryTheLabel)`: `make_signal("He3", m)` stages' `error_components` tags are `He3`, `He3 bs`, ..., none `Ar40`; `make_signal(ArgonIsotope::Ar40, m)` bit-equal to `make_signal("Ar40", m)` in value and sigma.
-- [ ] **Step 2: Run, expect FAIL** (`signal.hpp` missing).
-- [ ] **Step 3: Move the declarations and bodies; `arar_types.hpp` includes `signal.hpp`** so no caller changes yet.
-- [ ] **Step 4: Run `build/dev/tests/reduction/pychron_reduction_tests` and the golden suites, expect PASS** (bit-equal: same operations).
-- [ ] **Step 5: Commit** `refactor(reduction): neutral signal types in signal.hpp`
+- [x] **Step 1: Write the failing test** (noble spec §3.3): `TEST(Signal, TagsCarryTheLabel)`: `make_signal("He3", m)` stages' `error_components` tags are `He3`, `He3 bs`, ..., none `Ar40`; `make_signal(ArgonIsotope::Ar40, m)` bit-equal to `make_signal("Ar40", m)` in value and sigma.
+- [x] **Step 2: Run, expect FAIL** (`signal.hpp` missing).
+- [x] **Step 3: Move the declarations and bodies; `arar_types.hpp` includes `signal.hpp`** so no caller changes yet.
+- [x] **Step 4: Run `build/dev/tests/reduction/pychron_reduction_tests` and the golden suites, expect PASS** (bit-equal: same operations).
+- [x] **Step 5: Commit** `refactor(reduction): neutral signal types in signal.hpp`
 
 ### Task 6: `libs/arar` holds the Ar-Ar reduction (`pychron::arar_reduction`)
 
@@ -289,10 +289,12 @@ git commit -am "feat(elctl): commands run on the install's domain"
 - Stay in `libs/reduction`: `arar.hpp`, `arar.cpp` (`compute_arar`, live conditionals: `libs/experiment/CMakeLists.txt:20` keeps linking `pychron::reduction` only), `detail/arar_kernels.hpp`, `test_arar.cpp`, `test_isotope_arithmetic.cpp`, `test_stats.cpp`, `test_fits.cpp`, `test_ufloat.cpp`. Whatever `arar.cpp` needs from `arar_types.hpp` stays with it in `signal.hpp` or a new `pychron/reduction/arar_live.hpp`.
 - Modify: top `CMakeLists.txt:31` (`arar` after `processing`, before `earthbank`); `libs/processing/CMakeLists.txt:15` (`PUBLIC pychron::arar_reduction` added, removed again in Task 10); `tools/flux_reference.py` output path; `tools/spec_router/spec_router/units.toml:159-160`; every `#include "pychron/reduction/arar_types.hpp"`, `arar_reduction.hpp`, `flux.hpp` → `pychron/arar/...` (`grep -rl 'reduction/arar_types\|reduction/arar_reduction\|reduction/flux\.hpp' libs apps tests`)
 
-- [ ] **Step 1: Move, fix includes and CMake.**
-- [ ] **Step 2: `cmake --build --preset dev-ui`**. Expected: links; `libs/experiment` still builds against `pychron::reduction` alone.
-- [ ] **Step 3: `ctest --preset dev-ui`**. Expected: PASS, the `tests/arar` golden suites included, bytes unchanged.
-- [ ] **Step 4: Commit** `refactor(arar): Ar-Ar reduction in its own library`
+- [x] **Step 1: Move, fix includes and CMake.**
+- [x] **Step 2: `cmake --build --preset dev-ui`**. Expected: links; `libs/experiment` still builds against `pychron::reduction` alone.
+- [x] **Step 3: `ctest --preset dev-ui`**. Expected: PASS, the `tests/arar` golden suites included, bytes unchanged.
+- [x] **Step 4: Commit** `refactor(arar): Ar-Ar reduction in its own library`
+
+Landed differently: `least_squares.hpp` stays in `libs/reduction` as `detail/least_squares.hpp` (the neutral `fits.cpp` uses it); `K3739Mode` went to a new neutral `pychron/reduction/arar_live.hpp`, `corrects_for_blank` to `signal.hpp`, and `to_live_constants` to `libs/arar` `live_parity.hpp`; the golden JSON reader shared by `tests/reduction` and `tests/arar` is `tests/support/golden_json.hpp`.
 
 ### Task 7: Figures, report, group ages, flux fit and the domain move to `pychron::arar`
 
@@ -302,10 +304,12 @@ git commit -am "feat(elctl): commands run on the install's domain"
 - Modify: `libs/processing/src/units_builtin.cpp:451-471` (`builtin()` drops ideogram, spectrum, inverse_isochron, spectrum_isochron), `libs/processing/include/pychron/processing/domain.hpp` (drop `make_arar_domain`; declared in new `libs/arar/include/pychron/arar/domain.hpp`), `libs/arar/src/domain_arar.cpp` (`units()` = `UnitRegistry::builtin()` plus the four figure units and the flux units; `reduction_chain()` still `{"reduce"}`), `libs/earthbank/CMakeLists.txt:63`, `libs/publish/CMakeLists.txt:22`, `apps/pychron-ui/CMakeLists.txt:216-234`, `apps/elctl/CMakeLists.txt:59`, `tests/ui/CMakeLists.txt:18-37` (`flux_seed.hpp` path), `tests/earthbank`, `tests/publish`, `tests/integration` CMake link lines (`pychron::arar`, `pychron::arar_store`); every `#include "pychron/processing/report.hpp"` and kin in `apps`, `libs/earthbank`, `libs/publish` → `pychron/arar/...`
 - Test: the moved suites; new `tests/arar/test_domain_arar.cpp`: `TEST(ArArDomain, HoldsTheFigureUnitsAndCoreDoesNot)` (`make_arar_domain()->units().find("ideogram") != nullptr`; `UnitRegistry::builtin().find("ideogram") == nullptr`; `tests/processing/test_domain.cpp`'s Ar-Ar cases move here)
 
-- [ ] **Step 1: Write the registry test, run, expect FAIL.**
-- [ ] **Step 2: Move the files, fix includes, CMake and `units_builtin.cpp`.** The files still read `ReducedAnalysis::arar`: that is Task 8's change.
-- [ ] **Step 3: `cmake --build --preset dev-ui && ctest --preset dev-ui`**, expect PASS.
-- [ ] **Step 4: Commit** `refactor(arar): figures, report, group ages and flux in libs/arar`
+- [x] **Step 1: Write the registry test, run, expect FAIL.**
+- [x] **Step 2: Move the files, fix includes, CMake and `units_builtin.cpp`.** The files still read `ReducedAnalysis::arar`: that is Task 8's change.
+- [x] **Step 3: `cmake --build --preset dev-ui && ctest --preset dev-ui`**, expect PASS.
+- [x] **Step 4: Commit** `refactor(arar): figures, report, group ages and flux in libs/arar`
+
+Landed differently: `make_arar_domain()` became `arar::make_domain()` in `pychron/arar/domain.hpp`; `figure_common.cpp` stays in `libs/processing` (the neutral figures use it, and there was no `arar_figures.cpp`); `r_values`, `flux_monitors.cpp` and `flux_options.cpp` moved as well; the Ar-Ar cases of `test_options.cpp` went to `tests/arar/test_options_arar.cpp`.
 
 ### Task 8: Neutral `ReducedAnalysis`, `DomainReduced`, `arar_reduce`
 
@@ -317,7 +321,7 @@ git commit -am "feat(elctl): commands run on the install's domain"
 **Interfaces:**
 - Produces: `struct ArArReduced final : processing::DomainReduced { reduction::ArArResult arar; ReductionConstants constants; std::optional<reduction::UFloat> j; std::optional<reduction::Measured> lambda_k_total; std::vector<std::map<std::string, reduction::UFloat>> stages; }` (per isotope: `decay_corrected`, `interference_corrected`), `named()` over `age`, `age_w_j`, `age_w_position`, `F`, `kca`, `cak`, `kcl`, `clk`, `radiogenic_yield`, `rad40`, `k39`, `j`; `stages()` = `{"decay_corrected","interference_corrected"}`. `struct ArArSettings { ConstantsPreset preset; bool include_decay_error; bool use_irradiation_endtime; }`. `Result<std::shared_ptr<const ArArReduced>> reduce_arar(const processing::ReducedAnalysis&, const ArArSettings&)` = `reduced.cpp:128-204` moved, reading `signals` rather than re-minting them, and `analysis->context` for flux, production, chronology until Task 10. `std::unique_ptr<processing::Unit> make_arar_reduce_unit()`: kind `arar_reduce`, title "Ar-Ar reduction", schema `unit.arar_reduce` with the three options moved from `unit.reduce` (same keys, choices and defaults), Dataset in and out; per item sets `item.analysis->domain` or `reduction_error`; writes the cache through `ctx.source->derived()` with `ctx.domain->derive()`; diagnostic "N analyses did not reduce".
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```cpp
 TEST(ArArReduceUnit, MatchesTheGoldenReduce)  // select→reduce→arar_reduce over reduce_golden.hpp's inputs: ages->age nominal and sigma equal the golden to tests/arar/test_reduce.cpp's tolerances
@@ -328,10 +332,12 @@ TEST(Units, ReduceHasNoOptionsAndNoDomain)  // builtin reduce schema fields empt
 TEST(ArArRecall, SectionsAndBudgetMatchTodaysModel)  // make_arar_domain()->recall_sections(reduced) rows equal the computed and ratios rows test_recall.cpp asserted today; error_budget non-empty for an unknown, empty for an air
 ```
 
-- [ ] **Step 2: Run, expect FAIL** (no `arar_reduce` kind, no `ArArReduced`).
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: `ctest --preset dev-ui`, expect PASS** (UI recall and figure tests unchanged in what they assert).
-- [ ] **Step 5: Commit** `refactor(processing): neutral ReducedAnalysis; arar_reduce carries the Ar-Ar result`
+- [x] **Step 2: Run, expect FAIL** (no `arar_reduce` kind, no `ArArReduced`).
+- [x] **Step 3: Implement.**
+- [x] **Step 4: `ctest --preset dev-ui`, expect PASS** (UI recall and figure tests unchanged in what they assert).
+- [x] **Step 5: Commit** `refactor(processing): neutral ReducedAnalysis; arar_reduce carries the Ar-Ar result`
+
+Landed differently: `signals` is named `isotope_signals` (Qt's `signals` macro); `ReductionSettings` was removed outright rather than emptied; `DomainReduced::units` was added here and removed again in Task 9; a neutral `run_reduction_chain` was added for the derive pass and the recall window. Fix commit `fix(arar): the j quantity stays an independent variable` followed.
 
 ### Task 9: Quantities resolve domain terms through `DomainReduced`
 
@@ -342,9 +348,11 @@ TEST(ArArRecall, SectionsAndBudgetMatchTodaysModel)  // make_arar_domain()->reca
 **Interfaces:**
 - Produces: `Named` = `{Timestamp, Aliquot, StepIndex, ExtractValue, ExtractDuration, CleanupDuration, Weight}`; `Term::Kind::Domain` with `name` (a bare name) or `label` + `stage` (an isotope with a non-core stage); `Quantity::eval` resolves them through `a.domain->named(name)` / `->stage(label, stage)`, nullopt when `a.domain` is null; `needs_reduction()` true for any `Domain` term; `term_units` asks `a.domain->units(name)`; `available_quantities(analyses, const std::vector<std::string>& domain_quantities)`.
 
-- [ ] **Step 1: Tests**: `TEST(Quantity, ADomainNameHasNoValueWithoutADomain)` (`parse("age")` ok; `eval` on a core-only reduced nullopt, no throw); `TEST(Quantity, ADomainStageParses)` (`Ar40.interference_corrected` is `Kind::Domain`, `needs_reduction()`); `TEST(Units, CoreRegistryTakesTheDefaultQuantity)` (`core("He4").find("group_stats")->schema()` default of `quantity` == "He4"); `tests/arar`: `TEST(ArArQuantities, AgeAndRatiosEvaluateAsBefore)` (every value of today's Ar-Ar cases, through `arar_reduce`).
-- [ ] **Step 2: FAIL; implement; `ctest --preset dev-ui` PASS.**
-- [ ] **Step 3: Commit** `refactor(processing): quantities name no isotope; domain terms resolve through DomainReduced`
+- [x] **Step 1: Tests**: `TEST(Quantity, ADomainNameHasNoValueWithoutADomain)` (`parse("age")` ok; `eval` on a core-only reduced nullopt, no throw); `TEST(Quantity, ADomainStageParses)` (`Ar40.interference_corrected` is `Kind::Domain`, `needs_reduction()`); `TEST(Units, CoreRegistryTakesTheDefaultQuantity)` (`core("He4").find("group_stats")->schema()` default of `quantity` == "He4"); `tests/arar`: `TEST(ArArQuantities, AgeAndRatiosEvaluateAsBefore)` (every value of today's Ar-Ar cases, through `arar_reduce`).
+- [x] **Step 2: FAIL; implement; `ctest --preset dev-ui` PASS.**
+- [x] **Step 3: Commit** `refactor(processing): quantities name no isotope; domain terms resolve through DomainReduced`
+
+Landed differently: `UnitRegistry::core(const std::string&)` is static and returns a fresh registry by value; labels and units come from a new `Domain::quantity_info` at parse instead of `DomainReduced::units`; `arar::shared_domain()` serves the Ar-Ar figures' own parsing; `OptionsEditor::set_domain` refuses quantity typos on entry (fix commit `fix(ui): quantity typos are refused on entry under the domain`).
 
 ### Task 10: `Analysis::extension` and the Ar-Ar loaders
 
@@ -356,11 +364,13 @@ TEST(ArArRecall, SectionsAndBudgetMatchTodaysModel)  // make_arar_domain()->reca
 **Interfaces:**
 - Produces: `using ExtensionLoader = std::function<std::shared_ptr<const DomainAnalysisData>(const StoreAnalysisParts&)>`; `using RecordExtensionLoader = std::function<std::shared_ptr<const DomainAnalysisData>(const experiment::AnalysisRecord&, const Analysis&)>`. The fingerprint statement is unchanged: it hashes heads, refs and the version string, and the flux, production and chronology refs are already among `refs->refs`.
 
-- [ ] **Step 0: Record the fingerprint fixture** from the Phase 1 binary: `build/dev/tests/processing/pychron_processing_tests --gtest_filter='StoreSource.*Fingerprint*'` (add a one-line print of the hex to that test in Task 4 if none prints) → `tests/arar/fixtures/fingerprint_before_move.txt`.
-- [ ] **Step 1: Write the failing tests**: `TEST(StoreLoader, LoadsFluxProductionChronology)` (today's assertions, over `extension`); `TEST(StoreSource, FingerprintUnchangedByTheMoveAndChangedByJ)` (equals the fixture under `reduction_version = "arar-1"`; a new flux revision changes it); `TEST(RecordLoader, AppliesReferencesByIdentifierAndIrradiation)`; `TEST(ArArReduceUnit, WithoutTheLoaderNothingReduces)` (store opened without the loader: every item's error is the message above).
-- [ ] **Step 2: FAIL; implement.** Then `grep -n 'reduction::\|arar' libs/processing/include/pychron/processing/model.hpp libs/processing/CMakeLists.txt` returns nothing.
-- [ ] **Step 3: `ctest --preset dev-ui`, expect PASS.**
-- [ ] **Step 4: Commit** `refactor(processing): Analysis carries its domain data through an extension the domain loads`
+- [x] **Step 0: Record the fingerprint fixture** from the Phase 1 binary: `build/dev/tests/processing/pychron_processing_tests --gtest_filter='StoreSource.*Fingerprint*'` (add a one-line print of the hex to that test in Task 4 if none prints) → `tests/arar/fixtures/fingerprint_before_move.txt`.
+- [x] **Step 1: Write the failing tests**: `TEST(StoreLoader, LoadsFluxProductionChronology)` (today's assertions, over `extension`); `TEST(StoreSource, FingerprintUnchangedByTheMoveAndChangedByJ)` (equals the fixture under `reduction_version = "arar-1"`; a new flux revision changes it); `TEST(RecordLoader, AppliesReferencesByIdentifierAndIrradiation)`; `TEST(ArArReduceUnit, WithoutTheLoaderNothingReduces)` (store opened without the loader: every item's error is the message above).
+- [x] **Step 2: FAIL; implement.** Then `grep -n 'reduction::\|arar' libs/processing/include/pychron/processing/model.hpp libs/processing/CMakeLists.txt` returns nothing.
+- [x] **Step 3: `ctest --preset dev-ui`, expect PASS.**
+- [x] **Step 4: Commit** `refactor(processing): Analysis carries its domain data through an extension the domain loads`
+
+Landed differently: the store loader returns a `Result` and also receives the neutral `Analysis`; `RecordExtensionLoader` is a `{refresh, load}` pair so the references file is read again when it changes; `ReductionContext` was removed entirely; `ArArAnalysisData` also carries `constants` and `fixed_k3739`; the loaders live in their own targets, `pychron::arar_store` and `pychron::arar_records`.
 
 ### Task 11: Preset migration, rules; Phase 2 close
 
@@ -368,11 +378,13 @@ TEST(ArArRecall, SectionsAndBudgetMatchTodaysModel)  // make_arar_domain()->reca
 - Modify: `libs/processing/src/units.cpp:171-202` (`pipeline_from_toml`: a `reduce` node carrying a key that the registry's `arar_reduce` schema owns and `reduce`'s does not moves it to the pipeline's `arar_reduce` node and warns `'<id>': option '<key>' now belongs to arar_reduce`), `apps/pychron-ui/src/figure_window.cpp` (a saved preset loads through the same path), root `AGENTS.md` (component table row `libs/arar`, `tests/arar`, `apps/pychron-ui/src/arar` → `libs/arar/AGENTS.md`; the C++ conventions rule from spec §10; the age-cache paragraph at `:207-216` names the marker row and `derive()`), `README.md:16-26` (`libs/arar` row), `tools/spec_router/spec_router/units.toml`
 - Test: `tests/processing/test_units.cpp`: `TEST(Pipeline, ReducePresetKeysMigrateToArArReduce)` (TOML with `[reduce] constants = "legacy"` over `make_arar_domain()->units()`: loads, one warning naming `constants`, the `arar_reduce` node's `constants == "legacy"`; the same TOML over `core("")` loads with the key dropped and the existing unknown-key warning); `tests/ui/test_data_windows.cpp` `figure_options_presets_and_export` extended with a pre-split preset file under the test's preset root.
 
-- [ ] **Step 1: Tests FAIL; implement; PASS.**
-- [ ] **Step 2: `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --build-dir build/dev-ui`.**
-- [ ] **Step 3: `cmake --build --preset dev-ui && ctest --preset dev-ui`.** Also one ASan/UBSan build and run of `tests/arar` and `tests/processing` (`-DPYCHRON_SANITIZE=address,undefined`) if the `dev` preset does not set it (check `CMakePresets.json`).
-- [ ] **Step 4: Spec check**: §3.1 table against `git ls-files libs/arar libs/reduction libs/processing`; fix the spec where a file landed elsewhere.
-- [ ] **Step 5: Commit and land** `refactor(arar): preset keys migrate to arar_reduce; rules` then push `refactor/arar-library:develop`.
+- [x] **Step 1: Tests FAIL; implement; PASS.**
+- [x] **Step 2: `python3 tools/quality_check.py`; `python3 tools/compiler_sweep.py --build-dir build/dev-ui`.**
+- [x] **Step 3: `cmake --build --preset dev-ui && ctest --preset dev-ui`.** Also one ASan/UBSan build and run of `tests/arar` and `tests/processing` (`-DPYCHRON_SANITIZE=address,undefined`) if the `dev` preset does not set it (check `CMakePresets.json`).
+- [x] **Step 4: Spec check**: §3.1 table against `git ls-files libs/arar libs/reduction libs/processing`; fix the spec where a file landed elsewhere.
+- [ ] **Step 5: Commit and land** `refactor(arar): preset keys migrate to arar_reduce; rules` then push `refactor/arar-library:develop`. (Committed; the push is left to the owner.)
+
+Landed differently: the migration rule is neutral (an option a node does not own, that the one node taking its output owns, moves there with the warning) and lives in `pipeline_from_toml` only. A figure window's preset holds the figure node's options alone and no screen saves a pipeline, so `figure_window.cpp` is unchanged and there is no UI test. The tests are in `tests/arar/test_preset_migration.cpp` (the Ar-Ar registry) and `tests/processing/test_units.cpp` `Pipeline.ReducePresetKeysStayOverCore`; over core the key is kept unread in `extra`, not dropped with a warning, because that is what unknown keys already do.
 
 ---
 

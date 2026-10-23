@@ -21,9 +21,10 @@ spectrometers, runs automated experiment queues, and stores the results.
 | `libs/systems` | Extraction line, switch manager, spectrometer facade, acquisition, jobs |
 | `libs/experiment` | Queues, run plans, conditionals, the executor |
 | `libs/scripting` | Embedded CPython host for extraction scripts |
-| `libs/reduction` | Fits and data reduction |
+| `libs/reduction` | Neutral numerics: uncertainties (`UFloat`), fits, statistics, isotope signals; the live Ar-Ar arithmetic run conditionals use (`compute_arar`) |
 | `libs/persistence` | Database-backed store for analyses (TinyORM on QtSql) |
-| `libs/processing` | Browsing, recall and figures: analysis sources (record directories, the DVC store), quantities, figure options and presets, composable reduction units, time-series, ideogram, age-spectrum and inverse-isochron figures, and the publication data report after Schaen et al. (2021) |
+| `libs/processing` | Browsing, recall and figures, free of any one domain: analysis sources (record directories, the DVC store), quantities, figure options and presets, composable units and pipelines, the core reduction (intercepts to IC-corrected signals), time-series and reference-fit figures, and the `Domain` interface |
+| `libs/arar` | Ar-Ar: reduction, figures (ideogram, spectrum, isochrons), group ages, the Schaen report, flux fitting, the Ar-Ar domain |
 | `apps/elctl` | Command-line tool: validate configs, drive the line, run experiments |
 | `apps/pychron-ui` | Qt 6 application: extraction-line canvas, log and alarm docks, spectrometer window, experiment window, script and conditionals editors, data browser, recall and figure windows |
 | `configs/examples` | An example lab: line, canvas, spectrometers, plans, scripts, a three-run queue; `nmgrl/` is a full-size line (the NMGRL valve box, simulated) |

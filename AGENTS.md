@@ -204,9 +204,16 @@ Inner loop (keep waits short):
   `apt install qt6-base-dev libqt6sql6-sqlite libqt6sql6-psql`. Qt must not
   appear in its public headers or in any other `libs/` library but
   `libs/earthbank_qt`, HTTPS adapter of `libs/earthbank`.
-- Cache of ages (`derived_value`; spec
-  `docs/superpowers/specs/2026-10-09-age-cache-filter-design.md`): browser's
-  Age column and age filter read it, nothing calculates with it. Three rules:
+- Cache of derived values (`derived_value`; specs
+  `docs/superpowers/specs/2026-10-09-age-cache-filter-design.md`,
+  `2026-10-22-domain-seam-design.md` §4, §5.2): rows are what
+  `Domain::derive()` gives (Ar-Ar: `age`, `age_w_j`, `kca`), written only
+  through it: by `arar_reduce` in a run, by derive pass (`derive_ages`,
+  domain's `reduction_chain()` at default options), never by core `reduce`.
+  First entry of `Domain::derived()` is marker row: written for every derived
+  analysis, valueless when there is no value, and the name fingerprint
+  lookups use (Ar-Ar: `age`). Browser's Age column and age filter read it,
+  nothing calculates with it. Three rules:
   - Cache write uses fingerprint analysis was loaded with
     (`Analysis::input_fingerprint`, set by `StoreSource::load`), never one
     computed at write time.
@@ -239,7 +246,7 @@ given it when it reads a file there; any other agent opens it itself).
 |---|---|
 | `libs/persistence`, `tests/persistence`, a migration, any query against the store | `libs/persistence/AGENTS.md` (has "Schema and queries": a migration costs every lab a step, a query is paid once per analysis) |
 | `libs/ingest`, `libs/dvc`, `tests/dvc`, `elctl import` | `libs/ingest/AGENTS.md` |
-| `libs/arar`, `tests/arar`; `libs/processing`, `tests/processing`: publication report, flux fitting, `elctl export`, `elctl flux`, flux window | `libs/arar/AGENTS.md` |
+| `libs/arar`, `tests/arar`, `apps/pychron-ui/src/arar`; publication report, flux fitting, `elctl export`, `elctl flux`, flux window | `libs/arar/AGENTS.md` |
 | `libs/entry`, `tests/entry`, an install's `seed.toml` | `libs/entry/AGENTS.md` |
 | `libs/earthbank`, `libs/earthbank_qt`, `tests/earthbank`, `elctl earthbank`, EarthBank page and Publish dialog | `libs/earthbank/AGENTS.md` |
 | `libs/experiment` record, store adapter, `tests/experiment`, how a run is saved, executor hold, safe state, gap rule | `libs/experiment/AGENTS.md` |
@@ -248,8 +255,26 @@ given it when it reads a file there; any other agent opens it itself).
 | `libs/sim`, `sim.toml`, simulator noise or gas | `libs/sim/AGENTS.md` |
 | `libs/metrics`, an exporter, a dashboard | `libs/metrics/AGENTS.md` |
 | `apps/pychron-ui` Preferences, the line's local override file | `apps/pychron-ui/AGENTS.md` |
-| `libs/processing` `domain.hpp`, data windows of `apps/pychron-ui` (browser, figure, recall), `elctl` export and flux | No file: new figure, exporter, derived quantity or recall section is a `Domain` entry, never a literal in a window. `libs/processing` names no isotope outside `domain_arar.cpp` until it moves. |
+| `libs/processing`, `libs/reduction`, `domain.hpp`, data windows of `apps/pychron-ui` (browser, figure, recall), `elctl` export and flux | No file: domain seam rules below the table. |
 | `packaging/`, signing, entitlements | `packaging/AGENTS.md` |
+
+Domain seam (`docs/superpowers/specs/2026-10-22-domain-seam-design.md` §10),
+every change keeps:
+
+- `libs/processing` and `libs/reduction` name no isotope, no age, no J. What
+  does lives in `libs/arar` (or, from spec step 4, Ar-Ar's `DomainUi` under
+  `apps/pychron-ui/src/arar`). Exceptions by design: `libs/reduction`
+  `arar.hpp`, `arar.cpp`, `arar_live.hpp`, `detail/arar_kernels.hpp`
+  (`compute_arar`, live conditionals: `libs/experiment` links them, below
+  `processing`); derive pass's name `derive_ages` until spec step 3.
+  `apps/pychron-ui` outside `src/arar/` and `elctl` outside
+  `flux` follow when spec step 4 lands. CMake keeps direction:
+  `pychron_processing` links no `arar` target; apps link `libs/arar`.
+- A new figure, exporter, derived quantity or recall section is a `Domain`
+  entry, never a literal in a window.
+- `UnitRegistry::core(default_quantity)` holds core units only; a domain's
+  registry is `Domain::units()`. A pipeline is built from the registry it
+  runs on.
 
 A rule that is one component's goes in that file; one that every change must
 keep stays here. A new component with rules easy to break gets its own file,
