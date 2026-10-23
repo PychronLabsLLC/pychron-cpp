@@ -48,8 +48,6 @@ class ReferenceFitWindow : public QMainWindow {
                      QStringList unknowns, QWidget* parent = nullptr);
   ~ReferenceFitWindow() override;
 
-  static bool handles(const std::string& kind) { return kind == "blank_fit" || kind == "icfactor_fit"; }
-
   const std::string& kind() const noexcept { return kind_; }
   const processing::Pipeline& pipeline() const noexcept { return pipeline_; }
 

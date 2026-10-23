@@ -34,9 +34,11 @@ class DataWorkspace : public QObject {
   // Deletes every data window before the bridge they use.
   ~DataWorkspace() override;
 
-  // Null source or presets disables data and deletes every window. Both must
-  // outlive the workspace or be cleared first.
-  void set_source(processing::IAnalysisSource* source, processing::PresetStore* presets);
+  // Null source, presets or domain disables data and deletes every window. All
+  // three must outlive the workspace or be cleared first. The domain says
+  // which figures, recall sections and exporters the windows offer.
+  void set_source(processing::IAnalysisSource* source, processing::PresetStore* presets,
+                  const processing::Domain* domain);
   bool enabled() const noexcept { return processing_ != nullptr; }
 
   // The browser, made on first use. `embed_in` makes it a child widget there
@@ -53,14 +55,16 @@ class DataWorkspace : public QObject {
   // QSettings), under data_browser/color_by.
   void set_settings(std::function<std::unique_ptr<QSettings>()> settings) { settings_ = std::move(settings); }
 
-  // Null without data (or for an unknown figure kind).
+  // Null without data (or for a figure kind the domain does not offer).
   QWidget* open_recall(const QString& uuid);
   QWidget* open_figure(const QString& kind, const QStringList& uuids);
-  // Reduces `uuids`, groups them (by aliquot when any is a heating step,
-  // else by identifier) and writes the Schaen et al. (2021) data report to
-  // `path` (.json, else CSV) on the processing thread; the browser's status
-  // line says what was written, or why not. False without data.
-  bool export_report(const QString& path, const QStringList& uuids);
+  // Reduces `uuids` as the domain does, groups them (by aliquot when any is a
+  // heating step, else by identifier) and hands them to the domain's exporter
+  // `exporter_id`, which writes `path`; the browser's status line says what was
+  // written, or why not. False without data, or for an exporter the domain
+  // does not have (said in the log and the status line). The exporter sees
+  // the analyses as the store has them: no user edits, the default reduction.
+  bool export_report(const QString& exporter_id, const QString& path, const QStringList& uuids);
   // Where the browser's Publish button sends the selected analyses (uuid
   // text): the Publish dialog, opened by whoever owns the store. With none
   // (an install without a database) the button is off and says why; set
@@ -69,14 +73,12 @@ class DataWorkspace : public QObject {
 
  private:
   void clear();
-  // The Ar-Ar domain, until the workspace is given the install's.
-  static const processing::Domain& fallback_domain();
 
   QWidget* owner_;
   std::function<void(const QString&)> log_;
   processing::IAnalysisSource* source_ = nullptr;
   processing::PresetStore* presets_ = nullptr;
-  const processing::Domain* domain_ = &fallback_domain();  // Phase 1 scaffolding: Task 3c passes the install's domain.
+  const processing::Domain* domain_ = nullptr;
   std::unique_ptr<ProcessingBridge> processing_;
   DataBrowserWindow* browser_ = nullptr;
   Preferences preferences_;

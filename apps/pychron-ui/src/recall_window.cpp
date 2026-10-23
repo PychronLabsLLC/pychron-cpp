@@ -26,7 +26,6 @@
 #include <QVBoxLayout>
 #include <utility>
 
-#include "pychron/processing/derived.hpp"
 #include "error_report.hpp"
 #include "scene_view.hpp"
 #include "theme.hpp"
@@ -118,7 +117,8 @@ constexpr r::FitKind kFitKinds[] = {r::FitKind::Average, r::FitKind::Linear, r::
 
 }  // namespace
 
-RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidget(parent, Qt::Window), source_(source) {
+RecallWindow::RecallWindow(pp::IAnalysisSource& source, const pp::Domain& domain, QWidget* parent)
+    : QWidget(parent, Qt::Window), source_(source), domain_(domain) {
   resize(900, 650);
   auto* layout = new QVBoxLayout(this);
   title_ = new QLabel;
@@ -130,13 +130,7 @@ RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidg
 
   const QStringList value_headers{tr("Name"), tr("Value"), tr("±1σ"), tr("%"), tr("Units")};
   auto* summary = new QWidget;
-  auto* sl = new QVBoxLayout(summary);
-  computed_ = make_table(value_headers);
-  ratios_ = make_table(value_headers);
-  sl->addWidget(new QLabel(tr("Computed")));
-  sl->addWidget(computed_, 3);
-  sl->addWidget(new QLabel(tr("Corrected ratios")));
-  sl->addWidget(ratios_, 2);
+  summary_layout_ = new QVBoxLayout(summary);  // a table per section of the domain, once there is an analysis
   tabs_->addTab(summary, tr("Summary"));
 
   auto* iso_page = new QWidget;
@@ -228,9 +222,11 @@ RecallWindow::RecallWindow(pp::IAnalysisSource& source, QWidget* parent) : QWidg
   connect(evolutions_, &SceneView::point_clicked, this, [this](const QString& ref) { toggle_points({ref}); });
   connect(evolutions_, &SceneView::points_toggled, this, [this](const QStringList& refs) { toggle_points(refs); });
   tabs_->addTab(evo_page, tr("Evolutions"));
+  evolutions_page_ = evo_page;
 
-  budget_ = make_table({tr("Component"), tr("% of age variance"), QString()});
-  tabs_->addTab(budget_, tr("Error budget"));
+  budget_ = make_table({tr("Component"), tr("% of age variance"), QString()});  // added to tabs_ when there is a budget
+  budget_->setParent(this);
+  budget_->hide();
   identity_ = make_table(value_headers);
   tabs_->addTab(identity_, tr("Identity"));
   extraction_ = make_table(value_headers);
@@ -304,7 +300,7 @@ void RecallWindow::display() {
   // The stored fits' age goes to the source's cache (age cache spec 4.5);
   // one with unsaved fit edits is not the analysis's and does not.
   if (pp::IDerivedSink* sink = source_.derived(); sink && edits_.empty()) {
-    if (auto age = pp::derived_age(*reduced, {})) sink->put({std::move(*age)});
+    if (auto derived = domain_.derive(*reduced)) sink->put({std::move(*derived)});
   }
 
   setWindowTitle(tr("Recall — %1").arg(qs(shown_->runid)) + (edits_.empty() ? QString() : QStringLiteral(" *")));
@@ -314,17 +310,59 @@ void RecallWindow::display() {
   title_->setText(qs(model_.title) + QStringLiteral("\n") + header.join(QStringLiteral("  ·  ")) +
                   (model_.reduction_note.empty() ? QString() : QStringLiteral("\n") + qs(model_.reduction_note)) +
                   (edits_.empty() ? QString() : QStringLiteral("\n") + tr("Unsaved fit edits")));
-  fill_section(computed_, model_.computed);
-  fill_section(ratios_, model_.ratios);
+  fill_summary(domain_.recall_sections(*reduced));
   fill_section(identity_, model_.identity);
   fill_section(extraction_, model_.extraction);
   fill_section(spectrometer_, model_.spectrometer);
   fill_isotopes();
   fill_evolutions();
 
-  budget_->setRowCount(static_cast<int>(model_.error_budget.size()));
-  for (int i = 0; std::cmp_less(i, model_.error_budget.size()); ++i) {
-    const auto& c = model_.error_budget[static_cast<std::size_t>(i)];
+  fill_budget(domain_.error_budget(*reduced));
+  update_edit_state();
+}
+
+std::vector<QTableWidget*> RecallWindow::section_tables() const {
+  std::vector<QTableWidget*> tables;
+  tables.reserve(sections_.size());
+  for (const auto& s : sections_) tables.push_back(s.table);
+  return tables;
+}
+
+// One labelled table per section; the widgets stay while the sections' titles
+// do, which is every display() of a window.
+void RecallWindow::fill_summary(const std::vector<pp::RecallSection>& sections) {
+  const bool same = sections.size() == sections_.size() &&
+                    std::ranges::equal(sections, sections_, {}, &pp::RecallSection::title,
+                                       [](const Section& s) { return s.title->text().toStdString(); });
+  if (!same) {
+    for (auto& s : sections_) {
+      delete s.title;
+      delete s.table;
+    }
+    sections_.clear();
+    const QStringList value_headers{tr("Name"), tr("Value"), tr("±1σ"), tr("%"), tr("Units")};
+    sections_.reserve(sections.size());
+    for (std::size_t i = 0; i < sections.size(); ++i) {
+      Section s{new QLabel(qs(sections[i].title)), make_table(value_headers)};
+      summary_layout_->addWidget(s.title);
+      summary_layout_->addWidget(s.table, std::max(1, 3 - static_cast<int>(i)));  // the first gets the most room
+      sections_.push_back(s);
+    }
+  }
+  for (std::size_t i = 0; i < sections.size(); ++i) fill_section(sections_[i].table, sections[i]);
+}
+
+// The tab is there only while there is a budget: after Evolutions, as it was.
+void RecallWindow::fill_budget(const std::vector<pp::RecallErrorComponent>& budget) {
+  const int at = tabs_->indexOf(budget_);
+  if (budget.empty()) {
+    if (at >= 0) tabs_->removeTab(at);
+    return;
+  }
+  if (at < 0) tabs_->insertTab(tabs_->indexOf(evolutions_page_) + 1, budget_, tr("Error budget"));
+  budget_->setRowCount(static_cast<int>(budget.size()));
+  for (int i = 0; std::cmp_less(i, budget.size()); ++i) {
+    const auto& c = budget[static_cast<std::size_t>(i)];
     set_cell(budget_, i, 0, qs(c.name));
     set_cell(budget_, i, 1, QString::number(c.percent, 'f', 3));
     auto* bar = new QProgressBar;
@@ -334,7 +372,6 @@ void RecallWindow::display() {
     budget_->setCellWidget(i, 2, bar);
   }
   budget_->resizeColumnsToContents();
-  update_edit_state();
 }
 
 void RecallWindow::fill_isotopes() {

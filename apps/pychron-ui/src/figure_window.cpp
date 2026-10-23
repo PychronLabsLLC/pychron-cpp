@@ -22,6 +22,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "domain_pipeline.hpp"
 #include "error_report.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
@@ -97,11 +98,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, c
   auto& select = pipeline_.add(reg, "select", "select");
   (void)select.options.set("uuids", to_std(uuids));
   (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
-  std::string last = "select";
-  for (const auto& chain_kind : bridge.domain().reduction_chain()) {
-    pipeline_.add(reg, chain_kind, chain_kind, {last});
-    last = chain_kind;
-  }
+  const std::string last = add_reduction_chain(pipeline_, reg, bridge.domain(), "select");
   pipeline_.add(reg, kGroup, "group", {last});
   auto& graph = pipeline_.add(reg, kGraph, "group", {kGroup});
   (void)graph.options.set("level", std::string("graph"));

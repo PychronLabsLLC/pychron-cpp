@@ -18,6 +18,7 @@
 #include <QHeaderView>
 #include <QVBoxLayout>
 
+#include "domain_pipeline.hpp"
 #include "error_report.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
@@ -60,25 +61,15 @@ ReferenceFitWindow::ReferenceFitWindow(ProcessingBridge& bridge, pp::PresetStore
   resize(1200, 820);
 
   const auto& reg = bridge.domain().units();
-  const auto chain = bridge.domain().reduction_chain();
-  // The domain's reduction chain after `from`, each unit fed by the one before
-  // it; a node is named for its kind and `suffix`. Gives the last node's id.
-  const auto add_chain = [&](std::string from, const std::string& suffix) {
-    for (const auto& chain_kind : chain) {
-      pipeline_.add(reg, chain_kind + suffix, chain_kind, {from});
-      from = chain_kind + suffix;
-    }
-    return from;
-  };
   auto& u = pipeline_.add(reg, "unknowns", "select");
   (void)u.options.set("uuids", to_std(unknowns_));
   (void)u.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
-  const std::string reduced_unknowns = add_chain("unknowns", "_unknowns");
+  const std::string reduced_unknowns = add_reduction_chain(pipeline_, reg, bridge.domain(), "unknowns", "_unknowns");
   // No uuids yet: a type no analysis has, so the select is empty rather than
   // the whole source.
   auto& refs = pipeline_.add(reg, kReferences, "select");
   (void)refs.options.set("analysis_types", std::vector<std::string>{"-"});
-  const std::string reduced_references = add_chain(kReferences, "_references");
+  const std::string reduced_references = add_reduction_chain(pipeline_, reg, bridge.domain(), kReferences, "_references");
   pipeline_.add(reg, kEdits, "edits", {reduced_references});
   auto& fit = pipeline_.add(reg, kFit, kind_, {reduced_unknowns, kEdits});
   fit.options = store_.defaults(schema_);

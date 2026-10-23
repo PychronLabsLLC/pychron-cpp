@@ -43,8 +43,10 @@
 // File > Preferences… sets the font sizes, the data browser page size and the
 // spectrometer's large-move threshold; they are kept in the user's settings.
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -109,6 +111,7 @@
 #include "pychron/experiment/metrics/service.hpp"
 #endif
 #include "pychron/sim/sim_system.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/record_source.hpp"
 #ifdef PYCHRON_UI_HAS_STORE
 // Qt's `signals` keyword macro would rewrite CollectionRoots::signals.
@@ -145,6 +148,30 @@ int fatal(const std::string& what) {
   std::fprintf(stderr, "pychron-ui: %s\n", what.c_str());
   pychron::ui::show_error(nullptr, "startup", QStringLiteral("pychron-ui"), QString::fromStdString(what));
   return 1;
+}
+
+// Registers the domains this build links and gives the one named `id` (an
+// install's `domain`; "arar" without an install). An id no domain has is the
+// install file's mistake and ends the program; a registry that disagrees with
+// setup::known_domains() is this program's own, and does too.
+const pychron::processing::Domain& choose_domain(pychron::processing::DomainRegistry& registry, std::string_view id) {
+  registry.add(pychron::processing::make_noble_gas_domain());
+  registry.add(pychron::processing::make_arar_domain());
+  const auto join = [](const std::vector<std::string>& ids) {
+    std::string text;
+    for (const auto& name : ids) text += (text.empty() ? "" : ", ") + name;
+    return text;
+  };
+  auto known = setup::known_domains();
+  auto registered = registry.ids();  // sorted
+  std::sort(known.begin(), known.end());
+  if (known != registered) {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): start-up, before any thread of ours
+    std::exit(fatal("setup::known_domains() lists " + join(known) + " but the registry holds " + join(registered)));
+  }
+  if (const auto* domain = registry.find(id)) return *domain;
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): start-up, before any thread of ours
+  std::exit(fatal("unknown domain '" + std::string(id) + "'; known: " + join(registered)));
 }
 
 // The update check of `window` (update check spec 2.3): its indicator and
@@ -265,8 +292,8 @@ std::function<void()> reopen_on(QWidget* window, std::string name) {
 }
 
 // A data-reduction install: the data browser on its database, nothing else.
-int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::CommandLine& cli,
-                       const setup::Resources& resources) {
+int run_data_reduction(const setup::SiteInstall& install, const pychron::processing::Domain& domain,
+                       const pychron::ui::CommandLine& cli, const setup::Resources& resources) {
   pychron::processing::RecordDirectorySource records(install.path(install.data.empty() ? "data" : install.data) /
                                                      "records");
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
@@ -292,7 +319,7 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::ui::Com
   pychron::processing::PresetStore presets(
       fs::path(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString()) / "presets",
       install.root / "figures");
-  pychron::ui::DataMainWindow window(source, presets, QString::fromStdString(install.name));
+  pychron::ui::DataMainWindow window(source, presets, domain, QString::fromStdString(install.name));
   window.set_installations_handler(installations_handler(&window, resources, install.name));
   window.set_data_source(data_source_deps(install.name, resources, cli.db), reopen_on(&window, install.name));
 #ifdef PYCHRON_UI_HAS_STORE
@@ -481,7 +508,11 @@ int main(int argc, char** argv) {
   std::optional<pychron::ui::QtLogHandler> qt_log;
   if (hub) qt_log.emplace(*hub);
 
-  if (install && install->kind == "data_reduction") return run_data_reduction(*install, *cli, resources);
+
+  // The domain every data window of this run reduces in; the registry outlives the windows.
+  pychron::processing::DomainRegistry domains;
+  const pychron::processing::Domain& domain = choose_domain(domains, install ? install->domain : std::string("arar"));
+  if (install && install->kind == "data_reduction") return run_data_reduction(*install, domain, *cli, resources);
 
   std::optional<fs::path> spectrometer_file = cli->spectrometer_file;
   if (install && !spectrometer_file && !install->spectrometer.empty() &&
@@ -729,7 +760,7 @@ int main(int argc, char** argv) {
 #else
     const bool session_store = false;
 #endif
-    window.set_data(&data_source, &presets, session_store);
+    window.set_data(&data_source, &presets, &domain, session_store);
 #ifdef PYCHRON_UI_HAS_STORE
     // The Entry and Fit menus, parented to the window, Entry made first (fit_actions.hpp).
     if (!database.empty()) {
@@ -880,7 +911,7 @@ int main(int argc, char** argv) {
     splash.finish_after(&window, std::chrono::milliseconds(1200));
     rc = QApplication::exec();
     window.set_lasers({}, false);             // the laser windows go before their bridges
-    window.set_data(nullptr, nullptr);        // data windows go before the data source
+    window.set_data(nullptr, nullptr, nullptr);  // data windows go before the data source
     window.set_experiment(nullptr, false);    // the experiment window goes before its bridge
     window.set_spectrometer(nullptr, false);  // closes the spectrometer window before the bridge goes
   }

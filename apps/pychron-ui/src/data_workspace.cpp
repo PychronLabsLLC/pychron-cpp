@@ -9,9 +9,9 @@
 
 #include <QSettings>
 
+#include "domain_pipeline.hpp"
 #include "figure_window.hpp"
 #include "isotope_evolution_window.hpp"
-#include "pychron/processing/report.hpp"
 #include "recall_window.hpp"
 #include "reference_fit_window.hpp"
 #include "row_colors.hpp"
@@ -34,10 +34,38 @@ void DataWorkspace::clear() {
   export_channel_ = 0;
 }
 
-bool DataWorkspace::export_report(const QString& path, const QStringList& uuids) {
+namespace {
+
+// The reduced analyses of a dataset, one vector per group in group order, each
+// in item order.
+std::vector<std::vector<processing::ReducedPtr>> groups_of(const processing::Dataset& dataset) {
+  std::vector<std::vector<processing::ReducedPtr>> groups;
+  for (const int graph : dataset.graphs())
+    for (const auto& [index, items] : dataset.groups_of_graph(graph)) {
+      std::vector<processing::ReducedPtr> group;
+      group.reserve(items.size());
+      for (const auto* item : items) group.push_back(item->analysis);
+      groups.push_back(std::move(group));
+    }
+  return groups;
+}
+
+}  // namespace
+
+bool DataWorkspace::export_report(const QString& exporter_id, const QString& path, const QStringList& uuids) {
   if (!processing_) return false;
+  const auto exporters = domain_->exporters();
+  const auto found = std::find_if(exporters.begin(), exporters.end(), [&](const processing::Exporter& e) {
+    return e.id == exporter_id.toStdString();
+  });
+  if (found == exporters.end()) {
+    const QString text = tr("Export failed: no exporter %1").arg(exporter_id);
+    if (browser_) browser_->show_message(text);
+    if (log_) log_(QStringLiteral("[ui] ") + text);
+    return false;
+  }
   if (export_channel_ == 0) export_channel_ = processing_->new_channel();
-  const auto& reg = processing::UnitRegistry::builtin();
+  const auto& reg = domain_->units();
   processing::Pipeline pipeline;
   pipeline.name = "export";
   auto& select = pipeline.add(reg, "select", "select");
@@ -45,14 +73,15 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
   for (const auto& id : uuids) ids.push_back(id.toStdString());
   (void)select.options.set("uuids", ids);
   (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
-  pipeline.add(reg, "reduce", "reduce", {"select"});
-  // Two groupings: the report takes the one that fits what came back.
-  pipeline.add(reg, "by_aliquot", "group", {"reduce"});
+  const std::string reduced = add_reduction_chain(pipeline, reg, *domain_, "select");
+  // Two groupings: the exporter gets the one that fits what came back.
+  pipeline.add(reg, "by_aliquot", "group", {reduced});
   (void)pipeline.find("by_aliquot")->options.set("key", std::string("aliquot"));
-  pipeline.add(reg, "by_identifier", "group", {"reduce"});
+  pipeline.add(reg, "by_identifier", "group", {reduced});
   (void)pipeline.find("by_identifier")->options.set("key", std::string("identifier"));
   if (browser_) browser_->show_message(tr("Exporting %n analyses...", nullptr, static_cast<int>(uuids.size())));
-  processing_->submit(export_channel_, pipeline, {"by_aliquot", "by_identifier"}, [this, path](const PipelineResult& r) {
+  processing_->submit(export_channel_, pipeline, {"by_aliquot", "by_identifier"},
+                      [this, path, write = found->write](const PipelineResult& r) {
     const auto say = [this](const QString& text) {
       if (browser_) browser_->show_message(text);
       if (log_) log_(QStringLiteral("[ui] ") + text);
@@ -71,22 +100,16 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
     bool steps = false;
     for (const auto& it : by_aliquot->items()) steps = steps || it.analysis->analysis->increment >= 0;
     const processing::Dataset& dataset = steps ? *by_aliquot : *by_identifier;
-    const auto report = processing::make_report(dataset, processing::ReportOptions{});
-    if (auto saved = processing::save_report(report, std::filesystem::path(path.toStdString())); !saved) {
+    const auto groups = groups_of(dataset);
+    if (auto saved = write(std::filesystem::path(path.toStdString()), groups); !saved) {
       fail(tr("Export failed: %1").arg(QString::fromStdString(saved.error().what)));
       return;
     }
-    say(tr("Wrote %1: %n analyses, %2 groups", nullptr, static_cast<int>(report.analyses.rows.size()))
+    say(tr("Wrote %1: %n analyses, %2 groups", nullptr, static_cast<int>(dataset.size()))
             .arg(path)
-            .arg(report.summary.rows.size()));
+            .arg(groups.size()));
   });
   return true;
-}
-
-const processing::Domain& DataWorkspace::fallback_domain() {
-  // Phase 1 scaffolding: Task 3c passes the install's domain.
-  static const std::unique_ptr<processing::Domain> domain = processing::make_arar_domain();
-  return *domain;
 }
 
 void DataWorkspace::set_publish_handler(std::function<void(const QStringList&)> handler) {
@@ -94,11 +117,14 @@ void DataWorkspace::set_publish_handler(std::function<void(const QStringList&)> 
   if (browser_ != nullptr) browser_->set_publish_available(static_cast<bool>(publish_handler_));
 }
 
-void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::PresetStore* presets) {
+void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::PresetStore* presets,
+                               const processing::Domain* domain) {
   clear();
   source_ = source;
   presets_ = presets;
-  if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source, *domain_);
+  domain_ = domain;
+  if (source != nullptr && presets != nullptr && domain != nullptr)
+    processing_ = std::make_unique<ProcessingBridge>(*source, *domain);
 }
 
 namespace {
@@ -138,7 +164,9 @@ DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
     connect(browser_, &DataBrowserWindow::figure_requested, this,
             [this](const QString& kind, const QStringList& ids) { open_figure(kind, ids); });
     connect(browser_, &DataBrowserWindow::export_requested, this,
-            [this](const QString&, const QString& path, const QStringList& ids) { export_report(path, ids); });
+            [this](const QString& exporter, const QString& path, const QStringList& ids) {
+              export_report(exporter, path, ids);
+            });
     browser_->set_publish_available(static_cast<bool>(publish_handler_));
     connect(browser_, &DataBrowserWindow::publish_requested, this, [this](const QStringList& ids) {
       if (publish_handler_) publish_handler_(ids);
@@ -148,8 +176,8 @@ DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
 }
 
 QWidget* DataWorkspace::open_recall(const QString& uuid) {
-  if (source_ == nullptr) return nullptr;
-  auto* w = new RecallWindow(*source_, owner_);
+  if (source_ == nullptr || domain_ == nullptr) return nullptr;
+  auto* w = new RecallWindow(*source_, *domain_, owner_);
   w->setAttribute(Qt::WA_DeleteOnClose);
   if (!w->show_analysis(uuid) && log_) log_(QStringLiteral("ERROR [ui.data] recall failed: ") + uuid);
   children_.append(w);
@@ -163,19 +191,24 @@ QWidget* DataWorkspace::open_figure(const QString& kind, const QStringList& uuid
   const auto figures = domain_->figures();
   const auto entry = std::find_if(figures.begin(), figures.end(), [&](const processing::FigureEntry& e) { return e.kind == kind_id; });
   if (entry == figures.end()) return nullptr;
-  if (kind == QLatin1String(IsotopeEvolutionWindow::kKind)) {
-    auto* e = new IsotopeEvolutionWindow(*processing_, *presets_, uuids, owner_);
-    e->setAttribute(Qt::WA_DeleteOnClose);
-    children_.append(e);
-    e->show();
-    return e;
-  }
-  if (ReferenceFitWindow::handles(kind_id)) {
-    auto* r = new ReferenceFitWindow(*processing_, *presets_, kind_id, uuids, owner_);
-    r->setAttribute(Qt::WA_DeleteOnClose);
-    children_.append(r);
-    r->show();
-    return r;
+  using Window = processing::FigureEntry::Window;
+  switch (entry->window) {
+    case Window::IsotopeEvolution: {
+      auto* e = new IsotopeEvolutionWindow(*processing_, *presets_, uuids, owner_);
+      e->setAttribute(Qt::WA_DeleteOnClose);
+      children_.append(e);
+      e->show();
+      return e;
+    }
+    case Window::ReferenceFit: {
+      auto* r = new ReferenceFitWindow(*processing_, *presets_, kind_id, uuids, owner_);
+      r->setAttribute(Qt::WA_DeleteOnClose);
+      children_.append(r);
+      r->show();
+      return r;
+    }
+    case Window::Figure:
+      break;
   }
   auto* w = new FigureWindow(*processing_, *presets_, *entry, uuids, owner_);
   w->setAttribute(Qt::WA_DeleteOnClose);

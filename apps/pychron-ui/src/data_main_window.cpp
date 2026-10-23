@@ -16,13 +16,13 @@
 namespace pychron::ui {
 
 DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::PresetStore& presets,
-                               const QString& title, QWidget* parent)
+                               const processing::Domain& domain, const QString& title, QWidget* parent)
     : QMainWindow(parent),
       data_(new DataWorkspace(this, [this](const QString& line) { statusBar()->showMessage(line, 10000); })),
       installations_(new QAction(tr("Installations…"), this)),
       preferences_(new QAction(tr("Preferences…"), this)) {
   setWindowTitle(QStringLiteral("pychron — %1").arg(title));
-  data_->set_source(&source, &presets);
+  data_->set_source(&source, &presets, &domain);
   setCentralWidget(data_->browser(this));
 
   preferences_->setShortcut(key(Shortcut::Preferences));
@@ -46,7 +46,7 @@ DataMainWindow::DataMainWindow(processing::IAnalysisSource& source, processing::
 
 DataMainWindow::~DataMainWindow() {
   takeCentralWidget();  // the workspace deletes the browser with the other data windows
-  data_->set_source(nullptr, nullptr);
+  data_->set_source(nullptr, nullptr, nullptr);
 }
 
 void DataMainWindow::set_installations_handler(std::function<void()> handler) {

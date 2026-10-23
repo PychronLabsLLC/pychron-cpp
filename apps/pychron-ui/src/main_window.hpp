@@ -164,12 +164,14 @@ class MainWindow : public QMainWindow {
   PatternMakerWindow* open_pattern_maker();        // null without a pattern library
 
   // Enables View > Data (browser, recall and figure windows) over `source`
-  // with figure presets from `presets` (null disables it and closes every data
-  // window). Both must outlive the main window or be cleared first.
+  // with figure presets from `presets`, reducing as `domain` says (null for
+  // any of the three disables it and closes every data window). All three
+  // must outlive the main window or be cleared first.
   // `session_store`: `source` is the store the session saves its runs to;
   // only then does the experiment window get its References dock (not over
   // the records folder, nor a database that could not be opened).
-  void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets, bool session_store = false);
+  void set_data(processing::IAnalysisSource* source, processing::PresetStore* presets, const processing::Domain* domain,
+                bool session_store = false);
   // Why the data window has less than was expected (a database that could
   // not be opened): DataBrowserWindow::set_unavailable, whenever it is made.
   void set_data_unavailable(const QString& reason);

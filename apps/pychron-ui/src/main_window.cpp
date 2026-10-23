@@ -747,16 +747,17 @@ MainWindow::~MainWindow() {
   for (auto& [name, window] : gauge_windows_) delete window;
   gauge_windows_.clear();
   set_lasers({}, false);
-  set_data(nullptr, nullptr);
+  set_data(nullptr, nullptr, nullptr);
 }
 
-void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets, bool session_store) {
+void MainWindow::set_data(processing::IAnalysisSource* source, processing::PresetStore* presets,
+                          const processing::Domain* domain, bool session_store) {
   // The References dock reads through the workspace's bridge, which
   // set_source destroys: the dock goes first.
   if (experiment_window_ != nullptr) experiment_window_->set_references(nullptr, nullptr);
-  data_->set_source(source, presets);
+  data_->set_source(source, presets, domain);
   presets_ = presets;
-  session_store_ = session_store && source != nullptr && presets != nullptr;
+  session_store_ = session_store && data_->enabled();
   data_action_->setEnabled(data_->enabled());
   give_references();
 }

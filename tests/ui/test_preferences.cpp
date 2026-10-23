@@ -497,7 +497,7 @@ class TestPreferences : public QObject {
     QTemporaryDir presets_dir;
     pp::PresetStore presets(presets_dir.path().toStdString());
     ui::MainWindow window(*line);
-    window.set_data(src.get(), &presets);
+    window.set_data(src.get(), &presets, &arar_domain());
     window.set_preferences_settings(factory());
     QCOMPARE(window.preferences_action()->menuRole(), QAction::PreferencesRole);
     QCOMPARE(window.preferences_action()->shortcut(), QKeySequence(QKeySequence::Preferences));
@@ -569,7 +569,7 @@ class TestPreferences : public QObject {
     auto src = make_source(260);
     QTemporaryDir presets_dir;
     pp::PresetStore presets(presets_dir.path().toStdString());
-    ui::DataMainWindow window(*src, presets, QStringLiteral("data-reduction"));
+    ui::DataMainWindow window(*src, presets, arar_domain(), QStringLiteral("data-reduction"));
     window.set_preferences_settings(factory());
     QVERIFY(window.preferences_action()->isVisible());
     QCOMPARE(window.browser()->model()->rowCount(), Preferences::kDefaultPageSize);
@@ -658,7 +658,7 @@ class TestPreferences : public QObject {
     auto src = make_source(10);
     QTemporaryDir presets_dir;
     pp::PresetStore presets(presets_dir.path().toStdString());
-    ui::DataMainWindow window(*src, presets, QStringLiteral("data-reduction"));
+    ui::DataMainWindow window(*src, presets, arar_domain(), QStringLiteral("data-reduction"));
     window.set_preferences_settings(factory());
     int read = 0;
     const fs::path root = config_dir_;

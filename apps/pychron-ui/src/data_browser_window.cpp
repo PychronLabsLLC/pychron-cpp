@@ -245,8 +245,9 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, const pp::Doma
   recall_->setToolTip(tr("Recall: open the current analysis"));
   for (const pp::Exporter& exporter : domain_.exporters()) {
     const QString id = qs(exporter.id);
+    const QString dialog_filters = qs(exporter.filters);
     QAction* a = toolbar_->addAction(data_icon(QStringLiteral("export")), qs(exporter.label), this,
-                                     [this, id] { request_export(id); });
+                                     [this, id, dialog_filters] { request_export(id, dialog_filters); });
     a->setData(id);
     a->setToolTip(qs(exporter.tip));
     exports_.push_back(a);
@@ -851,7 +852,22 @@ void DataBrowserWindow::request_figure(const QString& kind) {
 
 void DataBrowserWindow::show_message(const QString& text) { status_->setText(text); }
 
-void DataBrowserWindow::request_export(const QString& exporter_id) {
+namespace {
+
+// The extension of the first pattern of a file dialog filter ("CSV report
+// (*.csv);;JSON report (*.json)" gives ".csv"); empty when it names none.
+QString first_extension(const QString& filters) {
+  const QString first = filters.section(QStringLiteral(";;"), 0, 0);
+  const qsizetype open = first.indexOf(QLatin1Char('('));
+  const qsizetype close = first.indexOf(QLatin1Char(')'), open + 1);
+  if (open < 0 || close < 0) return {};
+  const QString pattern = first.mid(open + 1, close - open - 1).trimmed().section(QLatin1Char(' '), 0, 0);
+  return pattern.startsWith(QStringLiteral("*.")) ? pattern.mid(1) : QString();
+}
+
+}  // namespace
+
+void DataBrowserWindow::request_export(const QString& exporter_id, const QString& filters) {
   const QStringList ids = selection_uuids();
   if (ids.isEmpty()) {
     status_->setText(tr("Nothing to export"));
@@ -866,10 +882,8 @@ void DataBrowserWindow::request_export(const QString& exporter_id) {
     one_sample = row.sample == sample;
   }
   const QString stem = one_sample && !sample.empty() ? qs(sample) : QStringLiteral("analyses");
-  QString filters;
-  for (const pp::Exporter& exporter : domain_.exporters())
-    if (qs(exporter.id) == exporter_id) filters = qs(exporter.filters);
-  const QString path = ask_export_path ? ask_export_path(stem + QStringLiteral("-report.csv"), filters) : QString();
+  const QString path =
+      ask_export_path ? ask_export_path(stem + QStringLiteral("-report") + first_extension(filters), filters) : QString();
   if (path.isEmpty()) return;
   emit export_requested(exporter_id, path, ids);
 }

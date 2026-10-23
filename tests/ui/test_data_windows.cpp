@@ -52,6 +52,7 @@
 #include "options_editor.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/processing/arar_figures.hpp"
+#include "pychron/processing/report.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
@@ -1105,7 +1106,7 @@ class TestDataWindows : public QObject {
     pp::PresetStore presets(dir.path().toStdString());
     QWidget owner;
     DataWorkspace ws(&owner, {});
-    ws.set_source(src.get(), &presets);
+    ws.set_source(src.get(), &presets, &arar_);
     QList<QStringList> asked;
     ws.set_publish_handler([&asked](const QStringList& ids) { asked.append(ids); });
     auto* browser = ws.browser();
@@ -1129,7 +1130,7 @@ class TestDataWindows : public QObject {
     pp::PresetStore presets(dir.path().toStdString());
     QWidget owner;
     DataWorkspace ws(&owner, {});
-    ws.set_source(src.get(), &presets);
+    ws.set_source(src.get(), &presets, &arar_);
     auto* browser = ws.browser();
     QVERIFY(browser);
     browser->select_rows({0, 1});
@@ -1157,7 +1158,7 @@ class TestDataWindows : public QObject {
     {
       DataWorkspace ws(&owner, {});
       ws.set_settings(settings);
-      ws.set_source(src.get(), &presets);
+      ws.set_source(src.get(), &presets, &arar_);
       auto* browser = ws.browser();
       QVERIFY(browser);
       QCOMPARE(browser->color_by(), ui::ColorBy::AnalysisType);
@@ -1176,7 +1177,7 @@ class TestDataWindows : public QObject {
              QStringLiteral("irradiation_level"));
     DataWorkspace again(&owner, {});
     again.set_settings(settings);
-    again.set_source(src.get(), &presets);
+    again.set_source(src.get(), &presets, &arar_);
     QCOMPARE(again.browser()->color_by(), ui::ColorBy::IrradiationLevel);
   }
 
@@ -1671,6 +1672,14 @@ class TestDataWindows : public QObject {
     const auto actions = w.toolbar()->actions();
     QCOMPARE(actions.size(), expected.size() + 3);
     QCOMPARE(figures_.size(), std::size_t{8});
+    // The Ar-Ar toolbar, pinned by hand rather than read back from figures().
+    QStringList kinds;
+    for (const auto& e : expected)
+      if (!e.isEmpty()) kinds << e;
+    QCOMPARE(kinds, (QStringList{QStringLiteral("time_series"), QStringLiteral("ideogram"), QStringLiteral("spectrum"),
+                                 QStringLiteral("inverse_isochron"), QStringLiteral("spectrum_isochron"),
+                                 QStringLiteral("isotope_evolution_fit"), QStringLiteral("blank_fit"),
+                                 QStringLiteral("icfactor_fit")}));
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
     w.select_rows({0, 1, 2, 3});
     w.add_highlighted();
@@ -1754,10 +1763,10 @@ class TestDataWindows : public QObject {
 
   void recall_shows_every_tab() {
     auto src = make_source(3);
-    RecallWindow w(*src);
+    RecallWindow w(*src, arar_);
     QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
     QVERIFY(w.title_label()->text().contains(QStringLiteral("air-02")));
-    QVERIFY(w.computed_table()->rowCount() > 0);
+    QVERIFY(w.section_tables().at(0)->rowCount() > 0);
     QCOMPARE(w.isotope_table()->rowCount(), 5);
     QCOMPARE(w.isotope_table()->item(0, 0)->text(), QStringLiteral("Ar40"));
     const int all_columns = w.isotope_table()->columnCount();
@@ -1770,11 +1779,39 @@ class TestDataWindows : public QObject {
     QVERIFY(!w.show_analysis(QStringLiteral("nope")));
   }
 
+  // The error budget is the Ar-Ar domain's: a domain without one gets no tab.
+  void recall_under_noble_gas_has_no_error_budget_tab() {
+    auto src = make_source(3);
+    RecallWindow noble(*src, *domains_.find("noble_gas"));
+    QVERIFY(noble.show_analysis(QStringLiteral("uuid-1")));
+    QStringList tabs;
+    for (int i = 0; i < noble.tabs()->count(); ++i) tabs << noble.tabs()->tabText(i);
+    QCOMPARE(tabs, (QStringList{QStringLiteral("Summary"), QStringLiteral("Isotopes"), QStringLiteral("Evolutions"),
+                                QStringLiteral("Identity"), QStringLiteral("Extraction"), QStringLiteral("Spectrometer"),
+                                QStringLiteral("History")}));
+    QVERIFY(noble.section_tables().empty());  // no domain section beside the neutral ones
+    QVERIFY(noble.title_label()->text().contains(QStringLiteral("air-02")));
+
+    RecallWindow ar(*src, arar_);
+    QVERIFY(ar.show_analysis(QStringLiteral("uuid-1")));
+    QCOMPARE(ar.section_tables().size(), std::size_t{2});
+    QCOMPARE(ar.tabs()->tabText(0), QStringLiteral("Summary"));
+    QCOMPARE(ar.tabs()->count(), 7);  // an air has no age to budget: the tab is not there either
+
+    // Eight heating steps have an age: the tab appears after Evolutions.
+    auto steps = make_steps();
+    RecallWindow st(*steps, arar_);
+    QVERIFY(st.show_analysis(QStringLiteral("step-0")));
+    QCOMPARE(st.tabs()->count(), 8);
+    QCOMPARE(st.tabs()->tabText(3), QStringLiteral("Error budget"));
+    QVERIFY(st.budget_table()->rowCount() > 0);
+  }
+
   // A recall puts its analysis's age in the cache once; unsaved fit edits
   // are not the analysis's age and put nothing.
   void recall_keeps_the_age_in_the_cache() {
     SinkSource src(2);
-    RecallWindow w(src);
+    RecallWindow w(src, arar_);
     QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
     QCOMPARE(src.puts.size(), std::size_t{1});
     QCOMPARE(src.puts[0].size(), std::size_t{1});
@@ -1791,7 +1828,7 @@ class TestDataWindows : public QObject {
 
   void recall_fit_edits_are_pending_without_a_revision_source() {
     auto src = make_source(2);
-    RecallWindow w(*src);
+    RecallWindow w(*src, arar_);
     QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
     QVERIFY(w.fit_editor()->isVisible() || !w.isVisible());
     QCOMPARE(w.fit_isotope()->count(), 5);
@@ -1846,7 +1883,7 @@ class TestDataWindows : public QObject {
 
   void recall_saves_fit_edits_and_shows_history() {
     RevisionMemorySource src(2);
-    RecallWindow w(src);
+    RecallWindow w(src, arar_);
     QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
     QVERIFY(!w.save_button()->isEnabled());
     w.fit_kind()->setCurrentIndex(w.fit_kind()->findText(QStringLiteral("average")));
@@ -1894,7 +1931,7 @@ class TestDataWindows : public QObject {
 
   void recall_edits_baselines_and_restores_from_history() {
     RevisionMemorySource src(2);
-    RecallWindow w(src);
+    RecallWindow w(src, arar_);
     QVERIFY(w.show_analysis(QStringLiteral("uuid-1")));
     w.evolution_kind()->setCurrentIndex(1);  // baselines
     QCOMPARE(w.evolutions()->panel_count(), 5);
@@ -1953,7 +1990,7 @@ class TestDataWindows : public QObject {
 
     // Without revisions there is nothing to restore.
     auto plain = make_source(1);
-    RecallWindow v(*plain);
+    RecallWindow v(*plain, arar_);
     QVERIFY(v.show_analysis(QStringLiteral("uuid-0")));
     QVERIFY(!v.restore_selected());
     QVERIFY(v.restore_button()->toolTip().contains(QStringLiteral("--db")));
@@ -2940,13 +2977,13 @@ class TestDataWindows : public QObject {
     QWidget owner;
     QStringList logged;
     DataWorkspace ws(&owner, [&logged](const QString& line) { logged << line; });
-    ws.set_source(src.get(), &presets);
+    ws.set_source(src.get(), &presets, &arar_);
     auto* browser = ws.browser();
     QVERIFY(browser);
     QStringList ids;
     for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
     const QString path = dir.path() + QStringLiteral("/steps-report.csv");
-    QVERIFY(ws.export_report(path, ids));
+    QVERIFY(ws.export_report(QStringLiteral("schaen"), path, ids));
     QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
     QVERIFY2(browser->status()->text().startsWith(QStringLiteral("Wrote ")), qPrintable(browser->status()->text()));
     QVERIFY(browser->status()->text().contains(QStringLiteral("8 analyses, 1 groups")));
@@ -2957,6 +2994,24 @@ class TestDataWindows : public QObject {
     QVERIFY(csv.contains(QStringLiteral("[summary]")));
     QVERIFY(csv.contains(QStringLiteral("S1-01A")));
     QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));  // the plateau of eight concordant steps, grouped by aliquot
+    // Byte for byte the report the export pipeline gave before exporters: select, reduce, group by aliquot.
+    {
+      pp::Runner runner(pp::UnitRegistry::builtin(), src.get());
+      pp::Pipeline reference;
+      const auto& reg = pp::UnitRegistry::builtin();
+      auto& select = reference.add(reg, "select", "select");
+      std::vector<std::string> uuids;
+      for (const auto& id : ids) uuids.push_back(id.toStdString());
+      QVERIFY(select.options.set("uuids", uuids));
+      QVERIFY(select.options.set("remove_tags", std::vector<std::string>{}));
+      reference.add(reg, "reduce", "reduce", {"select"});
+      reference.add(reg, "by_aliquot", "group", {"reduce"});
+      QVERIFY(reference.find("by_aliquot")->options.set("key", std::string("aliquot")));
+      const auto ran = runner.run(reference, "by_aliquot");
+      QVERIFY(ran.has_value());
+      const auto dataset = std::get<pp::DatasetPtr>(ran->at(0));
+      QCOMPARE(csv.toStdString(), pp::report_csv(pp::make_report(*dataset, pp::ReportOptions{})));
+    }
     // The browser's Export button goes the same way.
     browser->ask_export_path = [&dir](const QString&, const QString&) { return dir.path() + QStringLiteral("/again.json"); };
     browser->select_rows({0});
@@ -2967,10 +3022,53 @@ class TestDataWindows : public QObject {
     QVERIFY(json.open(QIODevice::ReadOnly));
     QVERIFY(json.readAll().startsWith("{"));
     // An unwritable path is reported, not thrown.
-    QVERIFY(ws.export_report(dir.path() + QStringLiteral("/no/such/dir/x.csv"), ids));
+    QVERIFY(ws.export_report(QStringLiteral("schaen"), dir.path() + QStringLiteral("/no/such/dir/x.csv"), ids));
     QVERIFY(ws.processing_bridge()->wait_idle(kWaitMs));
     QVERIFY2(browser->status()->text().startsWith(QStringLiteral("Export failed")), qPrintable(browser->status()->text()));
     QVERIFY(!logged.isEmpty());
+    // An exporter the domain does not have is refused and said.
+    logged.clear();
+    QVERIFY(!ws.export_report(QStringLiteral("no_such_exporter"), path, ids));
+    QVERIFY(!logged.isEmpty());
+  }
+
+  void workspace_opens_only_the_domains_figures() {
+    QTemporaryDir dir;
+    auto src = make_source(4);
+    pp::PresetStore presets(dir.path().toStdString());
+    QWidget owner;
+    DataWorkspace ws(&owner, {});
+    ws.set_source(src.get(), &presets, domains_.find("noble_gas"));
+    const QStringList ids{QStringLiteral("uuid-0"), QStringLiteral("uuid-1")};
+    QWidget* series = ws.open_figure(QStringLiteral("time_series"), ids);
+    QVERIFY(series);
+    QVERIFY(qobject_cast<FigureWindow*>(series));
+    QVERIFY(!ws.open_figure(QStringLiteral("ideogram"), ids));
+    QVERIFY(!ws.open_figure(QStringLiteral("no_such_figure"), ids));
+    delete series;
+    // A null domain disables data like a null source.
+    ws.set_source(src.get(), &presets, nullptr);
+    QVERIFY(!ws.enabled());
+    QVERIFY(!ws.browser());
+  }
+
+  void workspace_opens_a_window_of_each_kind() {
+    QTemporaryDir dir;
+    auto src = make_source(4);
+    pp::PresetStore presets(dir.path().toStdString());
+    QWidget owner;
+    DataWorkspace ws(&owner, {});
+    ws.set_source(src.get(), &presets, &arar_);
+    const QStringList ids{QStringLiteral("uuid-0"), QStringLiteral("uuid-1")};
+    QWidget* figure = ws.open_figure(QStringLiteral("ideogram"), ids);
+    QVERIFY(qobject_cast<FigureWindow*>(figure));
+    QWidget* fit = ws.open_figure(QStringLiteral("blank_fit"), ids);
+    QVERIFY(qobject_cast<ReferenceFitWindow*>(fit));
+    QWidget* ic = ws.open_figure(QStringLiteral("icfactor_fit"), ids);
+    QVERIFY(qobject_cast<ReferenceFitWindow*>(ic));
+    QWidget* evolution = ws.open_figure(QStringLiteral("isotope_evolution_fit"), ids);
+    QVERIFY(qobject_cast<IsotopeEvolutionWindow*>(evolution));
+    for (QWidget* w : {figure, fit, ic, evolution}) delete w;
   }
 
   void figure_export_report_uses_the_figures_grouping_and_plateau() {
@@ -3127,7 +3225,7 @@ class TestDataWindows : public QObject {
     {
       ui::MainWindow window(*line);
       QVERIFY(!window.data_action()->isEnabled());
-      window.set_data(src.get(), &presets);
+      window.set_data(src.get(), &presets, &arar_);
       QVERIFY(window.data_action()->isEnabled());
       window.data_action()->trigger();
       QVERIFY(window.data_window());
@@ -3150,7 +3248,7 @@ class TestDataWindows : public QObject {
     {
       ui::ExperimentBridge bridge(*sim.session, sim.line->bus());
       ui::MainWindow window(*sim.line);
-      window.set_data(&src, &presets);
+      window.set_data(&src, &presets, &arar_);
       window.set_experiment(&bridge, true);
       emit bridge.runFinished({});
       QCoreApplication::processEvents();
@@ -3195,7 +3293,7 @@ class TestDataWindows : public QObject {
     {
       // The records folder, or a database that could not be opened: none.
       ui::MainWindow window(*sim.line);
-      window.set_data(&src, &presets);
+      window.set_data(&src, &presets, &arar_);
       window.set_experiment(&bridge, true, std::nullopt,
                             [&dir] { return std::make_unique<QSettings>(dir.filePath("a.ini"), QSettings::IniFormat); });
       window.experiment_action()->trigger();
@@ -3203,24 +3301,24 @@ class TestDataWindows : public QObject {
       QVERIFY(!has_dock(window));
       QVERIFY(window.experiment_window()->references() == nullptr);
       // The session's store, set on a window that exists.
-      window.set_data(&src, &presets, true);
+      window.set_data(&src, &presets, &arar_, true);
       QVERIFY(has_dock(window));
       QVERIFY(window.experiment_window()->references() != nullptr);
-      window.set_data(nullptr, nullptr, true);  // no data: no dock
+      window.set_data(nullptr, nullptr, nullptr, true);  // no data: no dock
       QVERIFY(!has_dock(window));
       window.set_experiment(nullptr, false);
     }
     {
       // The session's store, given before the window is made.
       ui::MainWindow window(*sim.line);
-      window.set_data(&src, &presets, true);
+      window.set_data(&src, &presets, &arar_, true);
       window.set_experiment(&bridge, true, std::nullopt,
                             [&dir] { return std::make_unique<QSettings>(dir.filePath("b.ini"), QSettings::IniFormat); });
       window.experiment_action()->trigger();
       QVERIFY(has_dock(window));
-      window.set_data(&src, &presets);  // another source, not the session's
+      window.set_data(&src, &presets, &arar_);  // another source, not the session's
       QVERIFY(!has_dock(window));
-      window.set_data(&src, &presets, true);
+      window.set_data(&src, &presets, &arar_, true);
       QVERIFY(has_dock(window));
       // Destroyed with the dock there: it goes before the bridge.
     }
@@ -3233,7 +3331,7 @@ class TestDataWindows : public QObject {
     auto src = make_source(0);
     pp::PresetStore presets(dir.path().toStdString());
     ui::MainWindow window(*line);
-    window.set_data(src.get(), &presets);
+    window.set_data(src.get(), &presets, &arar_);
     window.set_data_unavailable(QStringLiteral("The database could not be opened: gone"));
     window.data_action()->trigger();
     QVERIFY(window.data_window());

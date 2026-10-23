@@ -1,11 +1,12 @@
 #pragma once
 
 // RecallWindow (data browsing and visualization design, section 11.3): one
-// analysis in depth. Tabs: Summary (computed values and corrected ratios),
-// Isotopes (any correction stage, or all side by side), Evolutions (raw
-// signal, baseline and sniff with the stored fit), Error budget, Identity,
-// Extraction, Spectrometer, History. Everything shown comes from processing::
-// RecallModel and make_evolution_scene.
+// analysis in depth. Tabs: Summary (one table per section the domain adds:
+// for Ar-Ar the computed values and corrected ratios), Isotopes (any
+// correction stage, or all side by side), Evolutions (raw signal, baseline and
+// sniff with the stored fit), Error budget (only when the domain has one for
+// the analysis), Identity, Extraction, Spectrometer, History. Everything shown
+// comes from processing::RecallModel, the domain and make_evolution_scene.
 //
 // Fit editing (Evolutions, signal and baseline panels): change an isotope's
 // or a detector baseline's fit, error type or outlier filter, or click points
@@ -18,10 +19,12 @@
 // the current revision.
 
 #include <map>
+#include <vector>
 
 #include <QString>
 #include <QWidget>
 
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/fit_edit.hpp"
 #include "pychron/processing/recall.hpp"
 #include "pychron/processing/revisions.hpp"
@@ -36,6 +39,7 @@ class QPushButton;
 class QSpinBox;
 class QTabBar;
 class QTabWidget;
+class QVBoxLayout;
 class QTableWidget;
 
 namespace pychron::ui {
@@ -46,8 +50,8 @@ class RecallWindow : public QWidget {
   Q_OBJECT
 
  public:
-  // `source` must outlive the window.
-  RecallWindow(processing::IAnalysisSource& source, QWidget* parent = nullptr);
+  // `source` and `domain` must outlive the window.
+  RecallWindow(processing::IAnalysisSource& source, const processing::Domain& domain, QWidget* parent = nullptr);
 
   // Loads, reduces and shows `uuid`; false (and the error in the title) when
   // the source cannot load it. Pending fit edits are dropped.
@@ -65,8 +69,10 @@ class RecallWindow : public QWidget {
 
   // For tests.
   QTabWidget* tabs() const noexcept { return tabs_; }
-  QTableWidget* computed_table() const noexcept { return computed_; }
+  // The Summary tab's tables, one per section of the domain, in its order.
+  std::vector<QTableWidget*> section_tables() const;
   QTableWidget* isotope_table() const noexcept { return isotopes_; }
+  // The Error budget tab's table; its tab is in tabs() only while the domain has a budget to show.
   QTableWidget* budget_table() const noexcept { return budget_; }
   QComboBox* stage_selector() const noexcept { return stage_; }
   SceneView* evolutions() const noexcept { return evolutions_; }
@@ -94,6 +100,8 @@ class RecallWindow : public QWidget {
 
  private:
   void display();  // everything from shown_
+  void fill_summary(const std::vector<processing::RecallSection>& sections);
+  void fill_budget(const std::vector<processing::RecallErrorComponent>& budget);
   void recompute();
   void fill_isotopes();
   void fill_evolutions();
@@ -109,6 +117,7 @@ class RecallWindow : public QWidget {
   processing::FitEdit current_edit(processing::SeriesKind kind, const std::string& key) const;
 
   processing::IAnalysisSource& source_;
+  const processing::Domain& domain_;
   QString uuid_;
   processing::AnalysisPtr analysis_;  // as loaded
   processing::AnalysisPtr shown_;     // with pending edits
@@ -120,8 +129,13 @@ class RecallWindow : public QWidget {
   processing::RecallModel model_;
   QLabel* title_;
   QTabWidget* tabs_;
-  QTableWidget* computed_;
-  QTableWidget* ratios_;
+  QVBoxLayout* summary_layout_;
+  struct Section {
+    QLabel* title;
+    QTableWidget* table;
+  };
+  std::vector<Section> sections_;  // the domain's, under the Summary tab
+  QWidget* evolutions_page_;
   QComboBox* stage_;
   QTableWidget* isotopes_;
   QTabBar* kind_;

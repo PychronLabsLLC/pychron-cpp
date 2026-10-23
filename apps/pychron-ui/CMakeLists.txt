@@ -60,6 +60,7 @@ add_library(pychron_ui_lib STATIC
   src/flow_layout.cpp
   src/options_editor.cpp
   src/processing_bridge.cpp
+  src/domain_pipeline.cpp
   src/analysis_table_model.cpp
   src/facet_box.cpp
   src/row_colors.cpp
@@ -163,6 +164,7 @@ add_library(pychron_ui_lib STATIC
   src/flow_layout.hpp
   src/options_editor.hpp
   src/processing_bridge.hpp
+  src/domain_pipeline.hpp
   src/analysis_table_model.hpp
   src/facet_box.hpp
   src/row_colors.hpp

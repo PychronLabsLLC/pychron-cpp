@@ -19,9 +19,10 @@ class DataMainWindow : public QMainWindow {
   Q_OBJECT
 
  public:
-  // `source` and `presets` must outlive the window. `title` names the install.
-  DataMainWindow(processing::IAnalysisSource& source, processing::PresetStore& presets, const QString& title,
-                 QWidget* parent = nullptr);
+  // `source`, `presets` and `domain` must outlive the window. `title` names
+  // the install.
+  DataMainWindow(processing::IAnalysisSource& source, processing::PresetStore& presets,
+                 const processing::Domain& domain, const QString& title, QWidget* parent = nullptr);
   ~DataMainWindow() override;
 
   DataWorkspace* workspace() const noexcept { return data_; }

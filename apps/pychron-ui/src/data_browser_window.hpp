@@ -225,7 +225,7 @@ class DataBrowserWindow : public QWidget {
   void recall_in(const QTableView* view);
   void recall_step_in(QTableView* view, int delta);
   void request_figure(const QString& kind);
-  void request_export(const QString& exporter_id);
+  void request_export(const QString& exporter_id, const QString& filters);
 
   processing::IAnalysisSource& source_;
   const processing::Domain& domain_;

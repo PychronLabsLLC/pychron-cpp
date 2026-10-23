@@ -12,6 +12,7 @@
 #include "brand.hpp"
 #include "data_main_window.hpp"
 #include "main_window.hpp"
+#include "pychron/processing/domain.hpp"
 #include "theme.hpp"
 #include "ui_fixture.hpp"
 
@@ -139,7 +140,8 @@ class TestBrand : public QObject {
     QTemporaryDir dir;
     pychron::processing::MemorySource source;
     pychron::processing::PresetStore presets(dir.path().toStdString());
-    pychron::ui::DataMainWindow window(source, presets, QStringLiteral("reduction"));
+    const auto domain = pychron::processing::make_arar_domain();
+    pychron::ui::DataMainWindow window(source, presets, *domain, QStringLiteral("reduction"));
     QVERIFY(!window.windowIcon().isNull());
     QCOMPARE(window.about_action()->menuRole(), QAction::AboutRole);
     window.about_action()->trigger();
