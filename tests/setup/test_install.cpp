@@ -405,6 +405,11 @@ TEST(Installer, TheExamplesKeepTheirStateInTheUserFolder) {
   if (!ec) {
     EXPECT_EQ(lab_state_dir(tmp.dir / "link" / "nmgrl", examples, user), user / "nmgrl");
   }
+  // Other letter case, where the disk ignores it (macOS, Windows), is still the examples.
+  std::string upper = (tmp.dir / "res" / "EXAMPLES" / "nmgrl").string();
+  if (fs::exists(upper)) {
+    EXPECT_EQ(lab_state_dir(upper, examples, user), user / "nmgrl");
+  }
   // Any other lab keeps its state beside it, one beside the examples included.
   fs::create_directories(tmp.dir / "res" / "examples-copy");
   EXPECT_EQ(lab_state_dir(tmp.dir / "res" / "examples-copy", examples, user), tmp.dir / "res" / "examples-copy");

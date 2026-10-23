@@ -29,8 +29,9 @@ Resources find_resources(const std::filesystem::path& executable_dir);
 // corrections, camera scales, snapshots, default data): `lab` itself, unless
 // `lab` is `examples` or a folder under it; then the same place under
 // `user_dir` (pychron::default_examples_state_dir), since the shipped
-// examples are never written to. Compared after weakly_canonical, so a
-// relative or linked path to the examples is still the examples. An empty
+// examples are never written to. Folders are compared as files
+// (fs::equivalent, from `lab` up), so a relative or linked path, or other
+// letter case on a disk that ignores it, is still the examples. An empty
 // `user_dir` is <temp>/pychron/examples.
 [[nodiscard]] std::filesystem::path lab_state_dir(const std::filesystem::path& lab,
                                                   const std::filesystem::path& examples,

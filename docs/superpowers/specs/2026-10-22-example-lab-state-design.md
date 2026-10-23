@@ -66,8 +66,9 @@ Pure, as `default_log_dir`. macOS folder same parent as `site.toml`.
 ```cpp
 // The folder a program keeps a lab's runtime state in: `lab` itself, unless
 // `lab` is `examples` or a folder under it; then the same place under
-// `user_dir` (default_examples_state_dir). Compared after weakly_canonical,
-// so a relative or symlinked path to the examples is still the examples. When
+// `user_dir` (default_examples_state_dir). Folders compared as files
+// (fs::equivalent, from `lab` up), so a relative or linked path, or other
+// letter case on a disk that ignores it, is still the examples. When
 // `user_dir` is empty: <temp>/pychron/examples.
 [[nodiscard]] std::filesystem::path lab_state_dir(const std::filesystem::path& lab,
                                                   const std::filesystem::path& examples,
@@ -90,7 +91,9 @@ Only place the rule lives. Programs call it once with
 
 - `elctl exp run`, `elctl laser`: `state = lab_state_dir(lab, examples, default_examples_state_dir(...))`.
   `LabPaths::state_dir = state`; `ExtractionLine::Options::state_file =
-  state / (<config stem> + ".state.toml")` when state differs from lab;
+  lab_state_dir(<config folder>, ...) / (<config stem> + ".state.toml")`:
+  line state follows its config's folder, not the lab (config in examples,
+  lab elsewhere: state in user folder; the reverse: beside the config);
   default data dir `state / "data"` (only when `--data` and install data
   absent); laser snapshots `state / "snapshots" / <device>`.
 - `pychron-ui`: same for `lab_dir` (examples via `--examples`, no args with
@@ -98,7 +101,9 @@ Only place the rule lives. Programs call it once with
 - When `state` differs from lab, programs log once at info:
   `examples: runtime state in <state>`.
 - Folder made when first written (stores already do this); nothing created
-  at start-up.
+  at start-up, except the copy of shipped field tables (3.5), made whenever
+  a spectrometer config of the examples is loaded (`elctl exp validate`
+  included).
 
 ### 3.5 Field tables (added while implementing)
 
@@ -158,3 +163,5 @@ and writes state under a scratch `HOME`/`XDG_STATE_HOME`.
   migrated; delete by hand.
 - Cleaning per-user examples folder.
 - Process log (already per-user, global logging spec).
+- `elctl line trace`: `.elctl-trace` and `traces/` still beside the line
+  config, examples included. Opt-in debugging tool; follow-up.
