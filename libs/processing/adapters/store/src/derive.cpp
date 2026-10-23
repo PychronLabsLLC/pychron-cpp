@@ -92,7 +92,7 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const Domain& domain, con
       auto age = domain.derive(*(*reduced)->items().front().analysis);
       if (!age) {
         ++stats.failed;
-        stats.failures.push_back(run_id(row) + ": no input fingerprint");
+        stats.failures.push_back(run_id(row) + ": nothing to cache (no input fingerprint, or no domain data)");
         continue;
       }
       if (const auto* marker = age->values.empty() ? nullptr : &age->values.front(); !marker || !marker->value) ++without_age;

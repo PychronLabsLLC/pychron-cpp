@@ -16,8 +16,6 @@ if(PYCHRON_ARAR_TESTS)
   target_include_directories(pychron_arar_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/support
     ${PROJECT_SOURCE_DIR}/tests/processing)
   target_compile_definitions(pychron_arar_tests PRIVATE
-    PYCHRON_EXAMPLE_CONFIGS_DIR="${PROJECT_SOURCE_DIR}/configs/examples"
-    PYCHRON_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data"
     PYCHRON_REDUCTION_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
   pychron_set_warnings(pychron_arar_tests)
   # -ffp-contract=off (unfused test arithmetic) comes PUBLIC from pychron::arar_reduction.

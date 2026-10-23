@@ -71,6 +71,12 @@ struct ArArReduced final : processing::DomainReduced {
 [[nodiscard]] Result<std::shared_ptr<const ArArReduced>> reduce_arar(const processing::ReducedAnalysis& reduced,
                                                                      const ArArSettings& settings);
 
+// What arar_reduce makes of one analysis core's reduce gave: a copy of
+// `reduced` with the Ar-Ar part attached (any earlier one replaced), or with
+// none and the reason in reduction_error.
+[[nodiscard]] processing::ReducedPtr attach_arar(const processing::ReducedAnalysis& reduced,
+                                                 const ArArSettings& settings);
+
 // What select, reduce and arar_reduce give one analysis: core's reduction with
 // the Ar-Ar part attached, or the reason it has none in reduction_error.
 [[nodiscard]] processing::ReducedPtr reduce_with_arar(processing::AnalysisPtr analysis, const ArArSettings& settings = {});

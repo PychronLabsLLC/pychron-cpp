@@ -20,6 +20,10 @@ namespace pychron::arar {
 // ArArReduced's names, in order, without the aliases.
 [[nodiscard]] std::vector<std::string> value_names();
 
+// What the Ar-Ar domain offers as quantities (Domain::quantities()), in
+// order: the values reduce() computes, then the two stages. Not "j".
+[[nodiscard]] std::vector<std::string> listed_quantities();
+
 // "F" for "f", "radiogenic_yield" for "rad40_percent"; any other name as given.
 [[nodiscard]] std::string_view canonical_name(std::string_view name) noexcept;
 

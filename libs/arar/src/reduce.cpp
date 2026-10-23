@@ -184,17 +184,22 @@ Result<std::shared_ptr<const ArArReduced>> reduce_arar(const pp::ReducedAnalysis
   return std::shared_ptr<const ArArReduced>(std::move(out));
 }
 
-pp::ReducedPtr reduce_with_arar(pp::AnalysisPtr analysis, const ArArSettings& settings) {
-  pp::ReducedPtr core = pp::reduce_analysis(std::move(analysis));
-  if (!core->analysis) return core;
-  auto out = std::make_shared<pp::ReducedAnalysis>(*core);
-  if (auto arar = reduce_arar(*core, settings)) {
+pp::ReducedPtr attach_arar(const pp::ReducedAnalysis& reduced, const ArArSettings& settings) {
+  auto out = std::make_shared<pp::ReducedAnalysis>(reduced);
+  out->domain.reset();
+  if (auto arar = reduce_arar(reduced, settings)) {
     out->reduction_error = (*arar)->reduction_error;
     out->domain = std::move(*arar);
   } else {
     out->reduction_error = arar.error().what;
   }
   return out;
+}
+
+pp::ReducedPtr reduce_with_arar(pp::AnalysisPtr analysis, const ArArSettings& settings) {
+  pp::ReducedPtr core = pp::reduce_analysis(std::move(analysis));
+  if (!core->analysis) return core;
+  return attach_arar(*core, settings);
 }
 
 }  // namespace pychron::arar

@@ -184,6 +184,18 @@ TEST(ArArQuantities, ReducedValuesNeedAFlux) {
   EXPECT_TRUE(q("j").eval(*unk));
 }
 
+// The names the domain offers come from the quantity table: each has its
+// label and units, and the list is the one offered before it was built from
+// the table (J is not offered).
+TEST(ArArQuantities, TheOfferedNamesAreTheTablesRows) {
+  const auto names = arar().quantities();
+  EXPECT_EQ(names, (std::vector<std::string>{"age", "age_w_j", "age_w_position", "F", "kca", "cak", "kcl", "clk",
+                                             "radiogenic_yield", "rad40", "k39", "decay_corrected",
+                                             "interference_corrected"}));
+  for (const auto& n : names) EXPECT_TRUE(arar().quantity_info(n)) << n;
+  EXPECT_TRUE(arar().quantity_info("j"));
+}
+
 TEST(ArArQuantities, Available) {
   std::vector<pp::ReducedPtr> v{reduce_with_arar(make_air(0)), reduce_with_arar(make_unknown(1))};
   const auto names = pp::available_quantities(v, arar().quantities());

@@ -90,6 +90,11 @@ struct PeakCenterInfo {
 // extension loader, which the application wires for the active domain, makes
 // it; the domain's own units read it back by casting to their type.
 struct DomainAnalysisData {
+  DomainAnalysisData() = default;
+  DomainAnalysisData(const DomainAnalysisData&) = default;
+  DomainAnalysisData(DomainAnalysisData&&) = default;
+  DomainAnalysisData& operator=(const DomainAnalysisData&) = default;
+  DomainAnalysisData& operator=(DomainAnalysisData&&) = default;
   virtual ~DomainAnalysisData() = default;
   // The id of the domain the data is of ("arar").
   [[nodiscard]] virtual std::string_view domain() const = 0;

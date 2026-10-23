@@ -202,11 +202,7 @@ class ArArDomain final : public Domain {
 
   // ArArReduced's values (but `j`, which the completion list never offered),
   // and the two stages of it that core does not know.
-  std::vector<std::string> quantities() const override {
-    return {"age",     "age_w_j", "age_w_position", "F",  "kca",
-            "cak",     "kcl",     "clk",            "radiogenic_yield",
-            "rad40",   "k39",     "decay_corrected", "interference_corrected"};
-  }
+  std::vector<std::string> quantities() const override { return arar::listed_quantities(); }
   std::optional<QuantityInfo> quantity_info(std::string_view name) const override { return arar::quantity_info(name); }
   std::string default_quantity() const override { return std::string(kDefaultQuantity); }
 

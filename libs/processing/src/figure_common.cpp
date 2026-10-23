@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <set>
 #include <string_view>
 
 #include "schema_builder.hpp"

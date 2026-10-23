@@ -11,25 +11,28 @@ struct Row {
   std::string_view label;
   std::string_view units;
   bool stage;
+  // Offered by Domain::quantities(): what reduce() computes and its stages.
+  // Not J, the flux's value (a typed quantity may still use it).
+  bool listed;
 };
 
 // The labels and units quantity.cpp's table gave before the domain seam:
 // figure axes, SVG and PDF fixtures and presets' titles read them.
 constexpr std::array<Row, 14> kRows{{
-    {"age", "Age", "Ma", false},
-    {"age_w_j", "Age (with J error)", "Ma", false},
-    {"age_w_position", "Age (with position error)", "Ma", false},
-    {"F", "40Ar*/39ArK", "", false},
-    {"kca", "K/Ca", "", false},
-    {"cak", "Ca/K", "", false},
-    {"kcl", "K/Cl", "", false},
-    {"clk", "Cl/K", "", false},
-    {"radiogenic_yield", "%40Ar*", "%", false},
-    {"rad40", "40Ar*", "fA", false},
-    {"k39", "39ArK", "fA", false},
-    {"j", "J", "", false},
-    {"decay_corrected", "decay corrected", "fA", true},
-    {"interference_corrected", "interference corrected", "fA", true},
+    {"age", "Age", "Ma", false, true},
+    {"age_w_j", "Age (with J error)", "Ma", false, true},
+    {"age_w_position", "Age (with position error)", "Ma", false, true},
+    {"F", "40Ar*/39ArK", "", false, true},
+    {"kca", "K/Ca", "", false, true},
+    {"cak", "Ca/K", "", false, true},
+    {"kcl", "K/Cl", "", false, true},
+    {"clk", "Cl/K", "", false, true},
+    {"radiogenic_yield", "%40Ar*", "%", false, true},
+    {"rad40", "40Ar*", "fA", false, true},
+    {"k39", "39ArK", "fA", false, true},
+    {"j", "J", "", false, false},
+    {"decay_corrected", "decay corrected", "fA", true, true},
+    {"interference_corrected", "interference corrected", "fA", true, true},
 }};
 
 }  // namespace
@@ -52,6 +55,13 @@ std::vector<std::string> value_names() {
   std::vector<std::string> out;
   for (const auto& row : kRows)
     if (!row.stage) out.emplace_back(row.name);
+  return out;
+}
+
+std::vector<std::string> listed_quantities() {
+  std::vector<std::string> out;
+  for (const auto& row : kRows)
+    if (row.listed) out.emplace_back(row.name);
   return out;
 }
 

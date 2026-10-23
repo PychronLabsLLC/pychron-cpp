@@ -7,6 +7,7 @@
 #include <span>
 
 #include "figure_common.hpp"
+#include "isochron_scene.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/arar/arar_groups.hpp"

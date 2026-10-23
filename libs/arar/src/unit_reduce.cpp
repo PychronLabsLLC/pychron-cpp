@@ -44,16 +44,8 @@ class ArArReduceUnit final : public pp::Unit {
     std::size_t failed = 0;
     for (auto& item : d.mutable_items()) {
       if (ctx.cancelled()) return fail(ErrorKind::Cancelled, "arar_reduce: cancelled");
-      auto out = std::make_shared<pp::ReducedAnalysis>(*item.analysis);
-      out->domain.reset();
-      if (auto reduced = reduce_arar(*item.analysis, s)) {
-        out->reduction_error = (*reduced)->reduction_error;
-        out->domain = std::move(*reduced);
-      } else {
-        out->reduction_error = reduced.error().what;
-      }
-      if (!out->reduction_error.empty()) ++failed;
-      item.analysis = std::move(out);
+      item.analysis = attach_arar(*item.analysis, s);
+      if (!item.analysis->reduction_error.empty()) ++failed;
     }
     if (failed) ctx.diagnostics.push_back(std::to_string(failed) + " analyses did not reduce");
     // Every reduction the application makes keeps its derived values in the
