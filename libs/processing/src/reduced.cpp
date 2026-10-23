@@ -104,7 +104,7 @@ ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settin
     m.include_baseline_error = iso.include_baseline_error;
     m.correct_for_blank = blank_corrected;
     const auto ar = argon(iso.isotope);
-    r::IsotopeSignal s = r::make_signal(ar.value_or(r::ArgonIsotope::Ar40), m);
+    r::IsotopeSignal s = r::make_signal(iso.isotope, m);
 
     IsotopeStages st;
     st.key = iso.key;

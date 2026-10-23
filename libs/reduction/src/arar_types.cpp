@@ -5,14 +5,6 @@
 
 namespace pychron::reduction {
 
-Measured resolve(const StoredValue& row) noexcept {
-  Measured m{row.value, row.error};
-  if (row.use_manual_value) m.value = row.manual_value;
-  if (row.use_manual_error) m.error = row.manual_error;
-  if (row.modifier_error) m.error = *row.modifier_error;
-  return m;
-}
-
 std::string_view to_string(ArgonIsotope iso) noexcept {
   switch (iso) {
     case ArgonIsotope::Ar40: return "Ar40";
@@ -25,16 +17,7 @@ std::string_view to_string(ArgonIsotope iso) noexcept {
 }
 
 IsotopeSignal make_signal(ArgonIsotope iso, const MeasuredSignal& m) {
-  const std::string name(to_string(iso));
-  IsotopeSignal s;
-  s.intercept = UFloat::variable(m.intercept.value, m.intercept.error, name);
-  s.baseline = UFloat::variable(m.baseline.value, m.baseline.error, name + " bs");
-  s.blank = UFloat::variable(m.blank.value, m.blank.error, name + " bk");
-  s.ic_factor = UFloat::variable(m.ic_factor.value, m.ic_factor.error, name + " IC");
-  s.include_baseline_error = m.include_baseline_error;
-  s.correct_for_blank = m.correct_for_blank;
-  s.deadtime_tau_s = m.deadtime_tau_s;
-  return s;
+  return make_signal(to_string(iso), m);
 }
 
 bool corrects_for_blank(std::string_view t) noexcept {

@@ -1,5 +1,6 @@
-// Ar-Ar reduction data model (spec 5.1-5.5): measured values, stored rows,
-// isotope signals, constants and presets, production ratios, flux.
+// Ar-Ar reduction data model (spec 5.1-5.5): Ar isotopes, constants and
+// presets, production ratios, flux. Measured values, stored rows and isotope
+// signals live in signal.hpp, included here.
 #pragma once
 
 #include <array>
@@ -14,28 +15,10 @@
 #include <vector>
 
 #include "pychron/core/error.hpp"
+#include "pychron/reduction/signal.hpp"
 #include "pychron/reduction/ufloat.hpp"
 
 namespace pychron::reduction {
-
-// ---- 5.1 Values and stored rows -------------------------------------------
-
-struct Measured {
-  double value = 0.0, error = 0.0;  // 1 sigma
-};
-
-// One payload row (dvc schema 4.1) reduced to what the age needs.
-struct StoredValue {
-  double value = 0.0, error = 0.0;
-  bool use_manual_value = false;
-  double manual_value = 0.0;
-  bool use_manual_error = false;
-  double manual_error = 0.0;
-  std::optional<double> modifier_error;  // baseline_value only
-};
-// manual_* replace value/error when flagged; modifier_error replaces the error
-// (dvc/dvc_analysis.py:722-737, :745-746).
-Measured resolve(const StoredValue& row) noexcept;
 
 // ---- 5.2 Isotopes ---------------------------------------------------------
 
@@ -46,26 +29,8 @@ inline constexpr std::array<ArgonIsotope, 5> kArgonKeys{ArgonIsotope::Ar40, Argo
 std::string_view to_string(ArgonIsotope iso) noexcept;
 inline constexpr std::size_t index(ArgonIsotope i) noexcept { return static_cast<std::size_t>(i); }
 
-struct IsotopeSignal {
-  UFloat intercept;                      // tag "<iso>"
-  UFloat baseline;                       // tag "<iso> bs"
-  bool include_baseline_error = false;   // intercept_value.include_baseline_error
-  UFloat blank;                          // tag "<iso> bk"; exact 0 when none
-  bool correct_for_blank = true;         // false for blank/detector_ic/background types
-  UFloat ic_factor = 1.0;                // tag "<iso> IC"
-  UFloat discrimination = 1.0;
-  std::optional<double> deadtime_tau_s;  // absent = off (D4)
-};
-
-struct MeasuredSignal {
-  Measured intercept, baseline, blank;
-  Measured ic_factor{1.0, 0.0};
-  bool include_baseline_error = false, correct_for_blank = true;
-  std::optional<double> deadtime_tau_s;
-};
-
-// Mints fresh variables with the legacy tags (isotope.py:469, :713, :770;
-// dvc/dvc_analysis.py:759).
+// Mints fresh variables with the legacy tags for an Ar isotope: the label
+// overload (signal.hpp) with to_string(iso).
 IsotopeSignal make_signal(ArgonIsotope iso, const MeasuredSignal& m);
 
 // Analysis types whose blank is not subtracted (pychron_constants.py:264).

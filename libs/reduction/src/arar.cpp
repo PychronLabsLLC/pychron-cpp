@@ -1,7 +1,7 @@
 // Live Ar-Ar quantities (conditionals spec 5) on the double kernels (spec 8.2).
 #include "pychron/reduction/arar.hpp"
 
-#include "arar_kernels.hpp"
+#include "pychron/reduction/detail/arar_kernels.hpp"
 
 namespace pychron::reduction {
 
