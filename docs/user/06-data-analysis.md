@@ -260,8 +260,11 @@ dropped, and the status line says so.
 ### The toolbar
 
 The buttons along the top of the window each have an icon with its name
-under it; hold the pointer over one for what it does. From left to right, in
-three groups:
+under it; hold the pointer over one for what it does. They are the buttons of
+the install's domain (the `domain` key of its entry in the
+[site file](07-configuration-reference.md#the-site-file)). The table below is
+the Ar/Ar set, which is what an install gets unless it says otherwise. From
+left to right, in three groups:
 
 | Button | Opens |
 |---|---|
@@ -271,6 +274,12 @@ three groups:
 | **Recall** (or double-click or Space on a row) | The recall window for the current row. **Ctrl+N** and **Ctrl+B** (Cmd on macOS) step to the next and previous row and recall it. |
 | **Export** | A data report (CSV or JSON) of the Selected analyses. See [Exporting](#exporting). |
 | **Publish** | The Publish dialog on a new release of the Selected analyses. See [Publishing a release](#publishing-a-release). Off without a database. |
+
+An install whose domain is `noble_gas` measures abundances and has no age, so
+its toolbar has **Time series**, **Isotope evolutions...**, **Blanks...**,
+**IC factors...**, **Recall** and **Publish**. It has no **Export** yet, no
+ideogram, spectrum or isochron, and no age column or age filter in the
+browser.
 
 ## Recall: one analysis in detail
 

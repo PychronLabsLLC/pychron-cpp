@@ -464,7 +464,8 @@ Compile-time exclusion of Ar-Ar (`-DPYCHRON_ARAR=OFF`); loadable plugins
 or Ne age or diffusion reduction (`noble_gas` is core only until the noble
 spec's items land); instrument side (plans, spectrometer, extraction line,
 conditionals, `compute_arar`); MassSpec; `libs/publish` beyond §5.6;
-EarthBank for any domain but Ar-Ar.
+EarthBank for any domain but Ar-Ar; translation of figure and exporter labels
+(they come from the domain as plain strings; no translations exist).
 
 ## 10. Rules (added to root `AGENTS.md` when step 2 lands)
 

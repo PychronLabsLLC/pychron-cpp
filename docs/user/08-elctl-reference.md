@@ -39,7 +39,7 @@ This page is a reference. For a first look at Pychron, start with
 ## Synopsis and global flags
 
 ```bash
-elctl [-c <extraction_line.toml> | --install <name>] [--sim] <command> [args...]
+elctl [-c <extraction_line.toml> | --install <name>] [--domain <id>] [--sim] <command> [args...]
 elctl --version
 elctl --help
 ```
@@ -51,6 +51,7 @@ is the command; everything after it belongs to the command.
 |---|---|
 | `-c FILE`, `--config FILE` | The extraction-line config to use. Default: `extraction_line.toml` in the current folder (or the install's, see below). |
 | `--install NAME` | Use the files of the install of that name (see `doctor`) as defaults: its line config, spectrometer config, canvas, lab folder and data folder. An unknown name is an error. |
+| `--domain ID` | The kind of data reduction the command runs: `arar` or `noble_gas`. Default: the `domain` of the install's entry in the site file, else `arar`. `flux` needs `arar` and refuses under any other domain. |
 | `--sim` | Run every transport as `kind = "sim"`, whatever the config says. An install that was set up for simulation implies `--sim`. |
 | `--version` | Print the version, and where the shipped `profiles` and `examples` were found. |
 | `-h`, `--help` | Print the command summary and exit 0. |

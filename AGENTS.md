@@ -248,6 +248,7 @@ given it when it reads a file there; any other agent opens it itself).
 | `libs/sim`, `sim.toml`, simulator noise or gas | `libs/sim/AGENTS.md` |
 | `libs/metrics`, an exporter, a dashboard | `libs/metrics/AGENTS.md` |
 | `apps/pychron-ui` Preferences, the line's local override file | `apps/pychron-ui/AGENTS.md` |
+| `libs/processing` `domain.hpp`, data windows of `apps/pychron-ui` (browser, figure, recall), `elctl` export and flux | No file: new figure, exporter, derived quantity or recall section is a `Domain` entry, never a literal in a window. `libs/processing` names no isotope outside `domain_arar.cpp` until it moves. |
 | `packaging/`, signing, entitlements | `packaging/AGENTS.md` |
 
 A rule that is one component's goes in that file; one that every change must

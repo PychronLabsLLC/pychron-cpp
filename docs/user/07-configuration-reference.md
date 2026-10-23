@@ -102,6 +102,7 @@ list. The wizard writes it; `elctl doctor` checks it.
 | `[[installs]]` `name` | text | the install's name |
 | `kind` | `instrument` or `data_reduction` | |
 | `profile` | text | the setup profile it was made from |
+| `domain` | `arar` or `noble_gas` | the kind of data reduction the install does; default `arar` when absent. See below. |
 | `root` | path | its folder |
 | `line`, `canvas`, `spectrometer` | path relative to `root` | conventional: `extraction_line.toml`, `canvas.toml`, `spectrometer.toml` |
 | `data` | path relative to `root` | the data folder (`data`) |
@@ -111,6 +112,15 @@ list. The wizard writes it; `elctl doctor` checks it.
 The password for a `postgresql://` database is in
 `<root>/.pychron/credentials.toml` (see
 [Install files](#install-files-sitetoml-profiles-credentials)).
+
+`domain` says what the data windows and `elctl` offer for the install's
+analyses. `arar` is Ar/Ar geochronology: ages, J, flux, the age figures and
+the data report. Every install made before this key existed is `arar`, and
+so is an entry that leaves the key out. `noble_gas` is abundances with no
+age: time series, isotope evolutions, and blank and IC factor fits only.
+`elctl doctor` reports a value that is neither. `elctl --domain ID` chooses
+one for a single command (see the
+[elctl reference](08-elctl-reference.md)).
 
 ## Checking a file
 
