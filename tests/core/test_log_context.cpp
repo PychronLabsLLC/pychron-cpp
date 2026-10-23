@@ -56,3 +56,20 @@ TEST(LogContext, ThreadNumbersDiffer) {
   const std::uint32_t mine = LogContext::thread_number();
   EXPECT_EQ(LogContext::thread_number(), mine);
 }
+
+TEST(LogContext, PollingNests) {
+  std::thread worker([] {
+    EXPECT_FALSE(LogContext::polling());
+    {
+      const LogContext::Polling outer;
+      EXPECT_TRUE(LogContext::polling());
+      {
+        const LogContext::Polling inner;
+        EXPECT_TRUE(LogContext::polling());
+      }
+      EXPECT_TRUE(LogContext::polling());
+    }
+    EXPECT_FALSE(LogContext::polling());
+  });
+  worker.join();
+}

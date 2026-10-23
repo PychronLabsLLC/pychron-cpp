@@ -9,6 +9,8 @@ add_library(pychron_core
   src/signal_bus.cpp
   src/logger.cpp
   src/log_context.cpp
+  src/log_error.cpp
+  src/log_summary.cpp
   src/log_match.cpp
   src/log_hub.cpp
   src/scheduler.cpp

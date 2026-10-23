@@ -14,10 +14,12 @@ namespace {
 thread_local const std::string* t_tag = nullptr;
 thread_local const std::string* t_run = nullptr;
 thread_local std::uint32_t t_number = 0;
+thread_local int t_polling = 0;
 
 static_assert(std::is_trivially_destructible_v<decltype(t_tag)>);
 static_assert(std::is_trivially_destructible_v<decltype(t_run)>);
 static_assert(std::is_trivially_destructible_v<decltype(t_number)>);
+static_assert(std::is_trivially_destructible_v<decltype(t_polling)>);
 
 std::atomic<std::uint32_t> g_next_number{1};
 
@@ -28,6 +30,11 @@ Thread::~Thread() { t_tag = previous_; }
 
 Run::Run(std::string run_id) : value_(std::move(run_id)), previous_(std::exchange(t_run, &value_)) {}
 Run::~Run() { t_run = previous_; }
+
+Polling::Polling() noexcept { ++t_polling; }
+Polling::~Polling() { --t_polling; }
+
+bool polling() noexcept { return t_polling > 0; }
 
 std::string_view thread_tag() noexcept { return t_tag != nullptr ? std::string_view{*t_tag} : std::string_view{}; }
 std::string_view run_id() noexcept { return t_run != nullptr ? std::string_view{*t_run} : std::string_view{}; }

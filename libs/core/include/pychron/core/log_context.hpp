@@ -11,7 +11,8 @@
 namespace pychron::LogContext {
 
 // Names the current thread for the life of the scope; the previous tag comes
-// back when it ends.
+// back when it ends. Scopes are stack-like: destroyed in reverse order of
+// creation, on the thread that made them (the pointer scheme depends on it).
 class Thread {
  public:
   explicit Thread(std::string tag);
@@ -27,7 +28,9 @@ class Thread {
 };
 
 // Marks the records of the current thread as part of a run. Scopes nest: an
-// inner one replaces the id, and its end restores the outer one.
+// inner one replaces the id, and its end restores the outer one. Scopes are
+// stack-like: destroyed in reverse order of creation, on the thread that made
+// them (the pointer scheme depends on it).
 class Run {
  public:
   explicit Run(std::string run_id);
@@ -41,6 +44,22 @@ class Run {
   std::string value_;
   const std::string* previous_;
 };
+
+// Marks the current thread as polling (a periodic read, not a request): a
+// record that would repeat every tick may be left out while it is set. Scopes
+// nest; same stack-like rule as above, on the thread that made them.
+class Polling {
+ public:
+  Polling() noexcept;
+  ~Polling();
+  Polling(const Polling&) = delete;
+  Polling& operator=(const Polling&) = delete;
+  Polling(Polling&&) = delete;
+  Polling& operator=(Polling&&) = delete;
+};
+
+// True while a Polling scope is open on the current thread.
+[[nodiscard]] bool polling() noexcept;
 
 // The current thread's tag; empty when no Thread scope is open.
 [[nodiscard]] std::string_view thread_tag() noexcept;
