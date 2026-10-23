@@ -97,17 +97,18 @@ QDateTime CoreBridge::wall_now() const {
 
 void CoreBridge::actuate(const QString& qname, systems::SwitchOp op) {
   std::string name = qname.toStdString();
+  if (pending(name)) {
+    emit actuationFinished(qname, fail(ErrorKind::Cancelled, "actuation already pending", name));
+    return;
+  }
   {
+    // Only a command that is sent is an action: a refused second click is not.
     const auto known = state_.switches.find(name);
     const std::string_view kind = known != state_.switches.end() ? systems::to_string(known->second.kind) : "switch";
     const std::string_view verb = systems::to_string(op);
     log_action(QStringLiteral("%1 %2 %3")
                    .arg(QString::fromUtf8(verb.data(), static_cast<qsizetype>(verb.size())),
                         QString::fromUtf8(kind.data(), static_cast<qsizetype>(kind.size())), qname));
-  }
-  if (pending(name)) {
-    emit actuationFinished(qname, fail(ErrorKind::Cancelled, "actuation already pending", name));
-    return;
   }
   state_.pending.insert(name);
   emit actuationStarted(qname);

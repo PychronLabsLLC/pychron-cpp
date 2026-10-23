@@ -97,15 +97,18 @@ class TestCoreBridge : public QObject {
     QVERIFY(capture.ok());
     QVERIFY(line_->start().has_value());
     QTRY_VERIFY(bridge_->state().switches.contains("B"));  // the snapshot says what B is
-    std::optional<Result<void>> finished;
+    std::vector<Result<void>> finished;
     connect(bridge_.get(), &CoreBridge::actuationFinished, this,
-            [&](const QString&, const Result<void>& r) { finished = r; });
+            [&](const QString&, const Result<void>& r) { finished.push_back(r); });
     bridge_->actuate("B", SwitchOp::Open);
-    QTRY_VERIFY(finished.has_value());
+    // A second click while the first is pending is refused, not sent: not an action.
+    bridge_->actuate("B", SwitchOp::Open);
+    QTRY_COMPARE(finished.size(), std::size_t{2});
+    QCOMPARE(finished[0].error().kind, ErrorKind::Cancelled);
     const auto lines = capture.lines();
     std::string all;
     for (const auto& l : lines) all.append(l).push_back('\n');
-    QVERIFY2(std::ranges::find(lines, std::string("[info] ui.action: open valve B")) != lines.end(), all.c_str());
+    QVERIFY2(std::ranges::count(lines, std::string("[info] ui.action: open valve B")) == 1, all.c_str());
   }
 
   void interlockRejectionIsReported() {
