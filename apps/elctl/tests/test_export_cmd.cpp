@@ -97,6 +97,15 @@ TEST_F(ExportCmd, WritesTheCsvReportForTheUnknowns) {
   EXPECT_TRUE(contains(csv, "77000-1,FC-2,77000,sanidine,2,2,yes,"));
 }
 
+TEST_F(ExportCmd, ANobleGasInstallHasNoReportToWrite) {
+  const fs::path out = path("report.csv");
+  const Outcome o = run_raw({"--domain", "noble_gas", "export", "--db", db_, "--out", out.string()});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_EQ(o.err, "elctl export: needs domain arar (this install: noble_gas)\n");
+  EXPECT_TRUE(o.out.empty()) << o.out;
+  EXPECT_FALSE(fs::exists(out));
+}
+
 TEST_F(ExportCmd, JsonByExtensionAndFiltersThatMatchNothing) {
   const fs::path out = path("report.json");
   const Outcome o = export_({"--out", out.string(), "--type", "air", "--group-by", "identifier", "--sigma", "1"});

@@ -209,9 +209,7 @@ int fatal(Io io, const Error& error) { return fatal(io, error.what); }
 
 }  // namespace import_detail
 
-// The domain is threaded to the entry and not read yet: import's derive pass
-// (derive_after_import) is still the Ar-Ar age pass.
-int import_command(const std::vector<std::string>& args, const pychron::processing::Domain& /*domain*/, Io io) {
+int import_command(const std::vector<std::string>& args, const pychron::processing::Domain& domain, Io io) {
   using namespace import_detail;
   if (args.empty()) {
     io.err << kShortUsage;
@@ -247,7 +245,7 @@ int import_command(const std::vector<std::string>& args, const pychron::processi
   // No exception leaves a library, but std::filesystem and the standard
   // containers used here can throw: a fatal error like any other.
   try {
-    Context ctx{io, {}, nullptr, *db};
+    Context ctx{io, {}, nullptr, *db, &domain};
     const auto cache = flags->get("--cache");
     ctx.cache = cache ? fs::path(*cache) : default_cache_dir();
 

@@ -113,8 +113,13 @@ void print_paused(Io io, const std::string& name, int done, int total) {
 // 3): what `elctl db derive --quiet` does, on the same database. Here, not in
 // libs/ingest, so the importer stays free of reduction. Its failure is said
 // on stderr and is no verdict on the import: the caller's exit code stands.
+// A domain with nothing to derive (noble_gas) skips the pass.
 void derive_after_import(const Context& ctx) {
   namespace pp = pychron::processing;
+  if (ctx.domain->derived().empty()) {
+    ctx.io.out << "derive: nothing to derive under domain " << ctx.domain->id() << '\n';
+    return;
+  }
   auto source = pp::StoreSource::open(P::StoreConfig{ctx.url, false});
   if (!source) {
     ctx.io.err << "elctl import: derive: " << one_line(source.error().what) << '\n';

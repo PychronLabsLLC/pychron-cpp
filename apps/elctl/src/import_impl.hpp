@@ -19,6 +19,7 @@
 #include "pychron/ingest/verify.hpp"
 #include "pychron/ingest/writer.hpp"
 #include "pychron/persistence/store.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/reduction/arar_types.hpp"
 
 namespace elctl::import_detail {
@@ -118,6 +119,7 @@ struct Context {
   fs::path cache;
   std::unique_ptr<P::IStore> store;
   std::string url;  // of `store`: run's derive pass opens its own source on it
+  const pychron::processing::Domain* domain;  // the install's: run's derive pass asks it what to derive
 
   fs::path mirrors() const { return cache / "mirrors"; }
   fs::path scratch() const { return cache / "scratch"; }

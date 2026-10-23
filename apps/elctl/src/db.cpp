@@ -94,10 +94,8 @@ pychron::Result<std::string> install_url(const std::optional<std::string>& name,
 
 }  // namespace
 
-// The domain is threaded to the entry and not read yet: the derive pass is
-// still the Ar-Ar age pass (pp::derive_ages), whatever domain the install names.
 int db_command(const std::vector<std::string>& args, const std::optional<std::string>& install,
-               const pychron::processing::Domain& /*domain*/, Io io) {
+               const pychron::processing::Domain& domain, Io io) {
   if (args.empty() || args[0] == "help" || args[0] == "--help") {
     io.out << kShortUsage;
     return args.empty() ? kUsage : kOk;
@@ -136,7 +134,14 @@ int db_command(const std::vector<std::string>& args, const std::optional<std::st
                          (why_none.empty() ? std::string() : "; no install to use: " + why_none));
   }
   if (const std::string why = not_a_store(url); !why.empty()) return fatal(io, why);
-  if (what == "derive") return derive(url, all, limit, quiet, io);
+  if (what == "derive") {
+    // A domain with nothing to derive (noble_gas) writes no cache.
+    if (domain.derived().empty()) {
+      if (!quiet) io.out << "derive: nothing to derive under domain " << domain.id() << '\n';
+      return kOk;
+    }
+    return derive(url, all, limit, quiet, io);
+  }
 
   // As it is: this succeeds only when nothing is pending.
   auto current = ps::open_store(ps::StoreConfig{url, false});

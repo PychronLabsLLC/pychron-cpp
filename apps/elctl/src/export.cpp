@@ -3,6 +3,7 @@
 
 #include "export.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <ostream>
@@ -134,6 +135,10 @@ bool any_step(const pp::Dataset& d) {
 }
 
 int run(const Args& a, const pp::Domain& domain, Io io) {
+  // The report is the Ar-Ar one: a domain without that exporter has no report to write.
+  const auto exporters = domain.exporters();
+  if (std::none_of(exporters.begin(), exporters.end(), [](const pp::Exporter& e) { return e.id == "schaen"; }))
+    return fatal(io, "needs domain arar (this install: " + std::string(domain.id()) + ")");
   auto source = open_source(a.db);
   if (!source) return fatal(io, source.error());
 

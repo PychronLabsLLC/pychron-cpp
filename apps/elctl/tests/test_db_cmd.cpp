@@ -203,6 +203,28 @@ TEST_F(DbDerive, TheLimitIsHowManyAreWalked) {
     EXPECT_EQ(run_raw({"db", "derive", "--db", db_, "--limit", bad}).code, elctl::kUsage) << bad;
 }
 
+// A domain with nothing to derive (noble_gas) writes no cache of ages.
+TEST_F(DbDerive, ANobleGasInstallDerivesNothing) {
+  const Outcome o = run_raw({"--domain", "noble_gas", "db", "derive", "--db", db_});
+  EXPECT_EQ(o.code, elctl::kOk) << o.err;
+  EXPECT_EQ(o.out, "derive: nothing to derive under domain noble_gas\n");
+  EXPECT_TRUE(o.err.empty()) << o.err;
+  store_.reset();
+  qint64 rows = -1;
+  {
+    QSqlDatabase d = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("db-derive-none-test"));
+    d.setDatabaseName(QString::fromStdString(path("store.db").string()));
+    ASSERT_TRUE(d.open());
+    QSqlQuery q(d);
+    ASSERT_TRUE(q.exec(QStringLiteral("SELECT count(*) FROM derived_value")));
+    ASSERT_TRUE(q.next());
+    rows = q.value(0).toLongLong();
+    d.close();
+  }
+  QSqlDatabase::removeDatabase(QStringLiteral("db-derive-none-test"));
+  EXPECT_EQ(rows, 0);
+}
+
 TEST_F(DbDerive, AStoreBehindItsMigrationsIsRefused) {
   store_.reset();
   {
