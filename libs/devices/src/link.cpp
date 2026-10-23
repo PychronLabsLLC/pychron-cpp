@@ -4,6 +4,8 @@
 #include <mutex>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_error.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/signal_bus.hpp"
 
 namespace pychron {
@@ -19,7 +21,12 @@ LinkPolicy link_policy(const config::RecoveryConfig& recovery, const LinkPolicy&
 }
 
 Link::Link(Transport& transport, const Clock& clock, LinkPolicy policy, SignalBus* bus)
-    : transport_(transport), clock_(clock), policy_(policy), bus_(bus), mutex_(clock) {
+    : transport_(transport),
+      clock_(clock),
+      policy_(policy),
+      bus_(bus),
+      log_(process_logger("device." + transport.name())),
+      mutex_(clock) {
   // A zero backoff would retry a dead link without letting time pass.
   policy_.backoff_min = std::max(policy_.backoff_min, Duration(std::chrono::milliseconds(1)));
   policy_.backoff_max = std::max(policy_.backoff_max, policy_.backoff_min);
@@ -79,6 +86,8 @@ Result<std::optional<Link::Back>> Link::reconnect_locked(std::uint64_t seen, Epi
       episode.failed_at.reset();
       return std::optional<Back>(back);
     }
+    // Handled: the backoff tries again, or the caller's call fails with it.
+    if (log_.enabled(LogLevel::Warn)) log_handled(log_, r.error(), "reconnect " + transport_.name());
     if (!transient(r.error().kind)) return fail(std::move(r).error());
     last = std::move(r).error();
   }

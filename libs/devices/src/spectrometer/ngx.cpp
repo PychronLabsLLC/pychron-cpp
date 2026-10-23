@@ -200,7 +200,7 @@ Result<std::string> NgxSpectrometer::ask(const std::string& command, Repeat repe
   if (!l) return fail(std::move(l).error());
   NgxLink& ngx = **l;
   // Not observed here: each caller observes its operation once.
-  return relay<std::string>(
+  return relay<std::string>("ask",
       [&](Resend) { return ngx.call<std::string>([&] { return ngx.ask(command); }, repeat); }, repeat);
 }
 
@@ -213,20 +213,22 @@ Result<void> NgxSpectrometer::stop_acq() {
 }
 
 Result<void> NgxSpectrometer::connect() {
+  const Operation op = begin("connect");
   auto l = link();
-  if (!l) return observe(Result<void>(fail(std::move(l).error())));
+  if (!l) return observe(op, Result<void>(fail(std::move(l).error())));
   NgxLink& ngx = **l;
   // The session handshake (banner, Login): Safe, as the reader repeats it.
-  if (auto c = relay<void>([&](Resend) { return ngx.call<void>([&] { return ngx.connect(); }, Repeat::Safe); },
-                           Repeat::Safe);
+  if (auto c = relay<void>(
+          "connect", [&](Resend) { return ngx.call<void>([&] { return ngx.connect(); }, Repeat::Safe); },
+          Repeat::Safe);
       !c) {
-    return observe(c);
+    return observe(op, c);
   }
-  if (auto s = stop_acq(); !s) return observe(s);
+  if (auto s = stop_acq(); !s) return observe(op, s);
   auto period = body(ngx::set_acq_period(1000, ""));
-  if (!period) return observe(Result<void>(fail(std::move(period).error())));
+  if (!period) return observe(op, Result<void>(fail(std::move(period).error())));
   auto r = ask(*period);
-  return observe(r ? Result<void>{} : Result<void>(fail(std::move(r).error())));
+  return observe(op, r ? Result<void>{} : Result<void>(fail(std::move(r).error())));
 }
 
 void NgxSpectrometer::abort_locked(const std::string& why) {
@@ -278,6 +280,7 @@ void NgxSpectrometer::on_event(const ngx::AcqFrame& frame, TimePoint at, std::ui
 }
 
 Result<void> NgxSpectrometer::configure(Duration integration) {
+  const Operation op = begin("configure");
   const double s = std::chrono::duration<double>(integration).count();
   if (!(s > 0)) return fail(ErrorKind::Config, "integration time must be positive");
   const auto& times = integration_times();
@@ -295,14 +298,15 @@ Result<void> NgxSpectrometer::configure(Duration integration) {
   if (!was_armed) return {};
   auto sent = stop_acq();
   stopped();
-  return observe(sent);
+  return observe(op, sent);
 }
 
 Result<void> NgxSpectrometer::start() {
-  if (auto s = stop_acq(); !s) return observe(s);
+  const Operation op = begin("start");
+  if (auto s = stop_acq(); !s) return observe(op, s);
   auto period = body(ngx::set_acq_period(1000, ""));
   if (!period) return fail(std::move(period).error());
-  if (auto r = ask(*period); !r) return observe(Result<void>(fail(std::move(r).error())));
+  if (auto r = ask(*period); !r) return observe(op, Result<void>(fail(std::move(r).error())));
   std::lock_guard lock(acq_mutex_);
   running_ = true;
   state_ = State::Idle;
@@ -311,6 +315,7 @@ Result<void> NgxSpectrometer::start() {
 }
 
 Result<void> NgxSpectrometer::stop() {
+  const Operation op = begin("stop");
   bool was_armed = false;
   {
     std::lock_guard lock(acq_mutex_);
@@ -320,11 +325,12 @@ Result<void> NgxSpectrometer::stop() {
     ready_.clear();
     clock_.notify_all(acq_cv_);
   }
-  if (was_armed) return observe(stop_acq());
+  if (was_armed) return observe(op, stop_acq());
   return {};
 }
 
 Result<void> NgxSpectrometer::trigger() {
+  const Operation op = begin("trigger");
   int seconds = 0;
   {
     std::unique_lock lock(acq_mutex_);
@@ -358,7 +364,7 @@ Result<void> NgxSpectrometer::trigger() {
   if (state_ != State::Arming) return {};  // stopped or moved meanwhile
   if (!r) {
     state_ = State::Idle;
-    return observe(Result<void>(fail(std::move(r).error())));
+    return observe(op, Result<void>(fail(std::move(r).error())));
   }
   state_ = State::Armed;
   arm_session_ = session;
@@ -368,9 +374,10 @@ Result<void> NgxSpectrometer::trigger() {
 }
 
 Result<std::optional<Frame>> NgxSpectrometer::next(Duration timeout) {
+  const Operation op = begin("next");
   using Next = Result<std::optional<Frame>>;
   std::unique_lock lock(acq_mutex_);
-  if (!running_) return observe(Next(fail(ErrorKind::Config, "acquirer not started")));
+  if (!running_) return observe(op, Next(fail(ErrorKind::Config, "acquirer not started")));
   const TimePoint deadline = clock_.now() + timeout;
   while (ready_.empty()) {
     if (!running_) return std::optional<Frame>{};
@@ -380,19 +387,17 @@ Result<std::optional<Frame>> NgxSpectrometer::next(Duration timeout) {
       lock.unlock();
       (void)stop_acq();
       stopped();
-      return observe(Next(fail(ErrorKind::Timeout, "NGX integration did not complete (no " +
-                                                       std::string(options_.completion == NgxOptions::Completion::AcqB
-                                                                       ? "ACQ.B"
-                                                                       : "final ACQ") +
-                                                       " event)")));
+      const char* awaited = options_.completion == NgxOptions::Completion::AcqB ? "ACQ.B" : "final ACQ";
+      return observe(op, Next(fail(ErrorKind::Timeout, "NGX integration did not complete (no " +
+                                                           std::string(awaited) + " event)")));
     }
     if (clock_.now() >= deadline) return std::optional<Frame>{};
     clock_.wait_until(acq_cv_, lock, clock_.now() + std::chrono::milliseconds(10));
   }
   auto front = std::move(ready_.front());
   ready_.pop_front();
-  if (!front) return observe(Next(fail(std::move(front).error())));
-  return observe(Next(std::optional<Frame>(std::move(*front))));
+  if (!front) return observe(op, Next(fail(std::move(front).error())));
+  return observe(op, Next(std::optional<Frame>(std::move(*front))));
 }
 
 NgxSpectrometer::AcqStats NgxSpectrometer::acq_stats() const {
@@ -401,6 +406,7 @@ NgxSpectrometer::AcqStats NgxSpectrometer::acq_stats() const {
 }
 
 Result<void> NgxSpectrometer::set(double mass) {
+  const Operation op = begin("set");
   if (!std::isfinite(mass) || mass < options_.limits.min || mass > options_.limits.max)
     return fail(ErrorKind::Config, "mass " + std::to_string(mass) + " is outside " + format_range(options_.limits));
   bool was_armed = false;
@@ -414,19 +420,20 @@ Result<void> NgxSpectrometer::set(double mass) {
   if (was_armed) {
     auto s = stop_acq();
     stopped();
-    if (!s) return observe(s);
+    if (!s) return observe(op, s);
   }
   const bool deflect = options_.deflect_threshold > 0 && previous && std::abs(mass - *previous) > options_.deflect_threshold;
   auto cmd = body(ngx::set_mass(mass, options_.settle_ms, deflect, ""));
   if (!cmd) return fail(std::move(cmd).error());
   auto r = ask(*cmd);
-  if (!r) return observe(Result<void>(fail(std::move(r).error())));
+  if (!r) return observe(op, Result<void>(fail(std::move(r).error())));
   std::lock_guard lock(acq_mutex_);
   mass_ = mass;
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<double> NgxSpectrometer::read() {
+  const Operation op = begin("read");
   {
     std::lock_guard lock(acq_mutex_);
     if (state_ != State::Idle) {
@@ -435,8 +442,8 @@ Result<double> NgxSpectrometer::read() {
     }
   }
   auto r = ask(*body(Result<codec::Command>(ngx::get_mass(""))));
-  if (!r) return observe(Result<double>(fail(std::move(r).error())));
-  return observe(ngx::decode_mass(to_bytes(*r + "\n")));
+  if (!r) return observe(op, Result<double>(fail(std::move(r).error())));
+  return observe(op, ngx::decode_mass(to_bytes(*r + "\n")));
 }
 
 namespace {
@@ -456,6 +463,7 @@ const ParamEntry* entry_for(const ParamId& id) {
 }  // namespace
 
 Result<void> NgxSpectrometer::set_param(const ParamId& id, double value) {
+  const Operation op = begin("set_param");
   const auto* e = entry_for(id);
   if (e == nullptr) return fail(ErrorKind::Config, "NGX has no source parameter " + to_string(id));
   if (!e->writable) return fail(ErrorKind::Config, to_string(id) + " is read-only on the NGX");
@@ -465,19 +473,20 @@ Result<void> NgxSpectrometer::set_param(const ParamId& id, double value) {
   auto cmd = body(ngx::set_source_param(e->param, value, ""));
   if (!cmd) return fail(std::move(cmd).error());
   auto r = ask(*cmd);
-  return observe(r ? Result<void>{} : Result<void>(fail(std::move(r).error())));
+  return observe(op, r ? Result<void>{} : Result<void>(fail(std::move(r).error())));
 }
 
 Result<Readback> NgxSpectrometer::read_param(const ParamId& id) {
+  const Operation op = begin("read_param");
   const auto* e = entry_for(id);
   if (e == nullptr) return fail(ErrorKind::Config, "NGX has no source parameter " + to_string(id));
   auto cmd = body(ngx::get_source_param(e->param, ""));
   if (!cmd) return fail(std::move(cmd).error());
   auto r = ask(*cmd);
-  if (!r) return observe(Result<Readback>(fail(std::move(r).error())));
+  if (!r) return observe(op, Result<Readback>(fail(std::move(r).error())));
   auto rb = ngx::decode_source_param(to_bytes(*r + "\n"));
-  if (!rb) return observe(Result<Readback>(fail(std::move(rb).error())));
-  return observe(Result<Readback>(Readback{rb->setpoint, rb->actual}));
+  if (!rb) return observe(op, Result<Readback>(fail(std::move(rb).error())));
+  return observe(op, Result<Readback>(Readback{rb->setpoint, rb->actual}));
 }
 
 Result<void> NgxSpectrometer::set_hv(double volts) { return set_param(SourceParam::HV, volts); }
@@ -521,17 +530,19 @@ Result<std::unique_ptr<NgxValves>> NgxValves::create(const DriverArgs& args) {
 }
 
 Result<void> NgxValves::connect() {
+  const Operation op = begin("connect");
   if (!link_.owner()) return {};
   auto l = link_.get();
-  if (!l) return observe(Result<void>(fail(std::move(l).error())));
+  if (!l) return observe(op, Result<void>(fail(std::move(l).error())));
   NgxLink& ngx = **l;
-  return call<void>([&](Resend) { return ngx.call<void>([&] { return ngx.connect(); }, Repeat::Safe); },
+  return call<void>("connect", [&](Resend) { return ngx.call<void>([&] { return ngx.connect(); }, Repeat::Safe); },
                     Repeat::Safe);
 }
 
 Result<void> NgxValves::actuate(const ValveAddress& address, bool open) {
+  const Operation op = begin("actuate");
   auto l = link_.get();
-  if (!l) return observe(Result<void>(fail(std::move(l).error())));
+  if (!l) return observe(op, Result<void>(fail(std::move(l).error())));
   auto cmd = body(open ? ngx::open_valve(address.value, "") : ngx::close_valve(address.value, ""));
   if (!cmd) return fail(std::move(cmd).error());
   auto sab_on = body(Result<codec::Command>(ngx::sab(true, "")));
@@ -551,15 +562,16 @@ Result<void> NgxValves::actuate(const ValveAddress& address, bool open) {
     if (!off) return fail(std::move(off).error());
     return {};
   };
-  return call<void>([&](Resend) { return ngx.call(bracket, Repeat::Safe); }, Repeat::Safe);
+  return call<void>("actuate", [&](Resend) { return ngx.call(bracket, Repeat::Safe); }, Repeat::Safe);
 }
 
 Result<void> NgxValves::open(const ValveAddress& address) { return actuate(address, true); }
 Result<void> NgxValves::close(const ValveAddress& address) { return actuate(address, false); }
 
 Result<ValveState> NgxValves::read(const ValveAddress& address) {
+  const Operation op = begin("read");
   auto l = link_.get();
-  if (!l) return observe(Result<ValveState>(fail(std::move(l).error())));
+  if (!l) return observe(op, Result<ValveState>(fail(std::move(l).error())));
   auto cmd = body(ngx::get_valve_status(address.value, ""));
   if (!cmd) return fail(std::move(cmd).error());
   NgxLink& ngx = **l;
@@ -575,7 +587,7 @@ Result<ValveState> NgxValves::read(const ValveAddress& address) {
       return fail(ErrorKind::Protocol, "NGX answered \"" + *reply + "\" to " + *cmd + " (expected OPEN or CLOSED)");
     }
   };
-  return call<ValveState>([&](Resend) { return ngx.call(status, Repeat::Safe); }, Repeat::Safe);
+  return call<ValveState>("read", [&](Resend) { return ngx.call(status, Repeat::Safe); }, Repeat::Safe);
 }
 
 REGISTER_DRIVER("isotopx_ngx", NgxSpectrometer);

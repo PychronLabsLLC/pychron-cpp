@@ -70,7 +70,8 @@ Result<std::unique_ptr<Plc2000Gauges>> Plc2000Gauges::create(const DriverArgs& a
 Result<double> Plc2000Gauges::read_pressure() { return read_pressure(options_.channels.front()); }
 
 Result<double> Plc2000Gauges::read_pressure(int channel) {
-  auto value = relay<double>([&](Resend resend) -> Result<double> {
+  const Operation op = begin("read_pressure");
+  auto value = relay<double>("read_pressure", [&](Resend resend) -> Result<double> {
     if (std::ranges::find(options_.channels, channel) == options_.channels.end())
       return fail(ErrorKind::Config, "channel " + std::to_string(channel) + " is not configured");
     const auto reg = static_cast<std::uint16_t>(channel + options_.register_offset);
@@ -86,7 +87,7 @@ Result<double> Plc2000Gauges::read_pressure(int channel) {
                                                                      " holds no pressure", *reply);
     return v;
   }, Repeat::Safe);
-  return observe(std::move(value));
+  return observe(op, std::move(value));
 }
 
 Result<Sample> Plc2000Gauges::sample() {

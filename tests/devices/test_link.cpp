@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "log_capture.hpp"
 #include "pychron/core/events.hpp"
 #include "pychron/devices/device.hpp"
 #include "pychron/core/signal_bus.hpp"
@@ -455,7 +456,7 @@ TEST_F(DeviceCall, AnUnsafeCallThatTimesOutIsSentOnceByEitherLayer) {
   ::pychron::Link link(*t, clock);
   Wired device("dev", DeviceOptions{&clock, 3, &link});
   t->drop_next(10);
-  const auto r = device.call(sends(*t), Repeat::Unsafe);
+  const auto r = device.call("send", sends(*t), Repeat::Unsafe);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Timeout);
   EXPECT_EQ(r.error().code, "outcome_unknown");
@@ -468,7 +469,7 @@ TEST_F(DeviceCall, ASafeCallMayBeResentByTheTransport) {
   ::pychron::Link link(*t, clock);
   Wired device("dev", DeviceOptions{&clock, 3, &link});
   t->drop_next(1);
-  const auto r = device.call(sends(*t), Repeat::Safe);
+  const auto r = device.call("send", sends(*t), Repeat::Safe);
   ASSERT_TRUE(r) << r.error().what;
   EXPECT_EQ(t->written().size(), 2u);
   EXPECT_EQ(link.reconnects(), 0u);  // the transport's resend was enough
@@ -480,10 +481,29 @@ TEST_F(DeviceCall, ASafeCallIsRepeatedThroughTheLink) {
   ::pychron::Link link(*t, clock);
   Wired device("dev", DeviceOptions{&clock, 3, &link});
   t->down_for(2s);
-  const auto r = device.call(sends(*t), Repeat::Safe);
+  const auto r = device.call("send", sends(*t), Repeat::Safe);
   ASSERT_TRUE(r) << r.error().what;
   EXPECT_EQ(link.repeats(), 1u);
   EXPECT_EQ(device.health().state, DeviceState::Ok);
+}
+
+TEST_F(DeviceCall, EachFailedReconnectAttemptIsAWarningAndTheCallOneRecord) {
+  testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  Wired device("dev", DeviceOptions{&clock, 3, &link});
+  t->down_for(2s);
+  const auto r = device.call("send", sends(*t), Repeat::Safe);
+  ASSERT_TRUE(r) << r.error().what;
+  std::size_t reconnects = 0;
+  std::size_t calls = 0;
+  for (const auto& line : log.lines()) {
+    if (line.starts_with("[warn] device." + t->name() + ": reconnect " + t->name() + ": ")) ++reconnects;
+    if (line.starts_with("[debug] device.dev: send ok in ")) ++calls;
+  }
+  EXPECT_GE(reconnects, 1u);
+  EXPECT_EQ(calls, 1u);
 }
 
 TEST_F(DeviceCall, WithoutALinkTheCallIsMadeOnceAndObserved) {
@@ -495,7 +515,7 @@ TEST_F(DeviceCall, WithoutALinkTheCallIsMadeOnceAndObserved) {
     given = resend;
     return fail(ErrorKind::Io, "dropped", "");
   };
-  const auto r = device.call(op, Repeat::Safe);
+  const auto r = device.call("send", op, Repeat::Safe);
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Io);
   EXPECT_TRUE(r.error().code.empty());
@@ -504,7 +524,7 @@ TEST_F(DeviceCall, WithoutALinkTheCallIsMadeOnceAndObserved) {
   EXPECT_EQ(given, Resend::Allowed);
   EXPECT_EQ(device.health().consecutive_failures, 1u);
 
-  const auto unsafe = device.call(op, Repeat::Unsafe);
+  const auto unsafe = device.call("send", op, Repeat::Unsafe);
   ASSERT_FALSE(unsafe);
   EXPECT_EQ(given, Resend::Never);
 }

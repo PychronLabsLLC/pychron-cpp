@@ -57,14 +57,15 @@ Result<std::unique_ptr<DacPositioner>> DacPositioner::create(const DriverArgs& a
 }
 
 Result<void> DacPositioner::set(double value) {
+  const Operation op = begin("set");
   if (!std::isfinite(value) || !limits_.contains(value)) {
-    return observe(Result<void>(fail(ErrorKind::Config, "dac " + std::to_string(value) + " is outside limits " +
-                                                            format_range(limits_))));
+    return observe(op, Result<void>(fail(ErrorKind::Config, "dac " + std::to_string(value) + " is outside limits " +
+                                                                format_range(limits_))));
   }
   auto written = output_->write(value);
-  if (!written) return observe(Result<void>(fail(std::move(written).error())));
+  if (!written) return observe(op, Result<void>(fail(std::move(written).error())));
   cached_.store(*written);
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<double> DacPositioner::read() { return cached_.load(); }

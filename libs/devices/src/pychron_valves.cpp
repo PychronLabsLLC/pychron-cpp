@@ -24,7 +24,7 @@ Result<std::unique_ptr<PychronValves>> PychronValves::create(const DriverArgs& a
 Result<Bytes> PychronValves::ask(const codec::Command& command) {
   // Every command is Safe: the connection and its one exchange are repeated
   // as a unit.
-  return relay<Bytes>(
+  return relay<Bytes>("ask",
       [&](Resend resend) {
         return transact(transport_, [&]() -> Result<Bytes> {
           transport_.close();  // the server hung up after the last reply
@@ -38,22 +38,25 @@ Result<Bytes> PychronValves::ask(const codec::Command& command) {
 }
 
 Result<void> PychronValves::open(const ValveAddress& address) {
+  const Operation op = begin("open");
   auto command = tx::open_valve(address.value);
-  if (!command) return observe(Result<void>(fail(std::move(command).error())));
+  if (!command) return observe(op, Result<void>(fail(std::move(command).error())));
   auto reply = ask(*command);
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(tx::decode_actuation(*reply));
+  if (!reply) return observe(op, Result<void>(fail(std::move(reply).error())));
+  return observe(op, tx::decode_actuation(*reply));
 }
 
 Result<void> PychronValves::close(const ValveAddress& address) {
+  const Operation op = begin("close");
   auto command = tx::close_valve(address.value);
-  if (!command) return observe(Result<void>(fail(std::move(command).error())));
+  if (!command) return observe(op, Result<void>(fail(std::move(command).error())));
   auto reply = ask(*command);
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(tx::decode_actuation(*reply));
+  if (!reply) return observe(op, Result<void>(fail(std::move(reply).error())));
+  return observe(op, tx::decode_actuation(*reply));
 }
 
 Result<ValveState> PychronValves::read(const ValveAddress& address) {
+  const Operation op = begin("read");
   auto state = [&]() -> Result<ValveState> {
     auto command = tx::get_valve_state(address.value);
     if (!command) return fail(std::move(command).error());
@@ -63,7 +66,7 @@ Result<ValveState> PychronValves::read(const ValveAddress& address) {
     if (!open) return fail(std::move(open).error());
     return *open ? ValveState::Open : ValveState::Closed;
   }();
-  return observe(std::move(state));
+  return observe(op, std::move(state));
 }
 
 }  // namespace pychron

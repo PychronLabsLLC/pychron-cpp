@@ -40,38 +40,42 @@ Result<std::unique_ptr<SerialHv>> SerialHv::create(const DriverArgs& args) {
 }
 
 Result<void> SerialHv::set_hv(double volts) {
+  const Operation op = begin("set_hv");
   const Range range = params_.front().range;
   if (!std::isfinite(volts) || !range.contains(volts)) {
-    return observe(Result<void>(fail(ErrorKind::Config, "serial_hv: " + std::to_string(volts) +
-                                                            " V is outside 0.." + std::to_string(range.max))));
+    return observe(op, Result<void>(fail(ErrorKind::Config, "serial_hv: " + std::to_string(volts) +
+                                                                " V is outside 0.." + std::to_string(range.max))));
   }
   auto cmd = hv::set_voltage(volts);
-  if (!cmd) return observe(Result<void>(fail(std::move(cmd).error())));
-  auto reply = relay<Bytes>(
+  if (!cmd) return observe(op, Result<void>(fail(std::move(cmd).error())));
+  auto reply = relay<Bytes>("set_hv",
       [&](Resend resend) { return transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend); },
       Repeat::Safe);
-  if (!reply) return observe(Result<void>(fail(std::move(reply).error())));
-  return observe(hv::decode_ok(*reply));
+  if (!reply) return observe(op, Result<void>(fail(std::move(reply).error())));
+  return observe(op, hv::decode_ok(*reply));
 }
 
 Result<double> SerialHv::read_hv() {
+  const Operation op = begin("read_hv");
   const auto cmd = hv::read_output();
-  auto reply = relay<Bytes>(
+  auto reply = relay<Bytes>("read_hv",
       [&](Resend resend) { return transport_.exchange(cmd.tx, *cmd.reply, Transport::kDefaultTimeout, resend); },
       Repeat::Safe);
-  if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
-  return observe(hv::decode_voltage(*reply));
+  if (!reply) return observe(op, Result<double>(fail(std::move(reply).error())));
+  return observe(op, hv::decode_voltage(*reply));
 }
 
 Result<void> SerialHv::set_param(const ParamId& id, double value) {
-  if (!is_hv(id)) return observe(Result<void>(fail(unsupported_param(id))));
+  const Operation op = begin("set_param");
+  if (!is_hv(id)) return observe(op, Result<void>(fail(unsupported_param(id))));
   return set_hv(value);
 }
 
 Result<Readback> SerialHv::read_param(const ParamId& id) {
-  if (!is_hv(id)) return observe(Result<Readback>(fail(unsupported_param(id))));
+  const Operation op = begin("read_param");
+  if (!is_hv(id)) return observe(op, Result<Readback>(fail(unsupported_param(id))));
   // Setpoint and output as one bus step so no other command interleaves.
-  auto rb = relay<Readback>(
+  auto rb = relay<Readback>("read_param",
       [&](Resend resend) {
         return transact(transport_, [&]() -> Result<Readback> {
           const auto set_cmd = hv::read_setpoint();
@@ -88,7 +92,7 @@ Result<Readback> SerialHv::read_param(const ParamId& id) {
         });
       },
       Repeat::Safe);
-  return observe(std::move(rb));
+  return observe(op, std::move(rb));
 }
 
 SimTransport::Hook hv_sim_hook(HvSimModel model) {

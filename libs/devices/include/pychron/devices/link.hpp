@@ -11,6 +11,7 @@
 #include "pychron/core/clock_mutex.hpp"
 #include "pychron/core/config/recovery_config.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/logger.hpp"
 #include "pychron/transport/transport.hpp"
 
 namespace pychron {
@@ -187,6 +188,7 @@ class Link {
   const Clock& clock_;
   LinkPolicy policy_;
   SignalBus* bus_;
+  Logger log_;  // device.<transport name>: each failed reconnect attempt
   Connect connect_;
   ClockMutex mutex_;  // the reconnect, across its backoff
   std::atomic<std::uint64_t> generation_{0};

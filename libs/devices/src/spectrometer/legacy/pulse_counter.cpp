@@ -32,7 +32,7 @@ Result<std::vector<double>> PulseCounter::sample() {
   const auto cmd = pc::read_counts();
   // Unsafe: the read clears the count. A lost reply costs that interval's
   // counts (outcome_unknown); the next poll does not ask for them again.
-  auto reply = relay<Bytes>(
+  auto reply = relay<Bytes>("sample",
       [&](Resend resend) { return transport_.exchange(cmd.tx, *cmd.reply, Transport::kDefaultTimeout, resend); },
       Repeat::Unsafe);
   if (!reply) return fail(std::move(reply).error());

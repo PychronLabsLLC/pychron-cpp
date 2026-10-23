@@ -157,12 +157,12 @@ Result<void> QtegraSpectrometer::handshake(Transport& transport) {
 }
 
 template <class T>
-Result<T> QtegraSpectrometer::command(Result<codec::Command> cmd,
+Result<T> QtegraSpectrometer::command(std::string_view what, Result<codec::Command> cmd,
                                       const std::function<Result<T>(const Bytes&)>& decode) {
-  if (!cmd) return observe(Result<T>(fail(std::move(cmd).error())));
+  if (!cmd) return observe(begin(what), Result<T>(fail(std::move(cmd).error())));
   const codec::Command& sent = *cmd;
   QtegraLink& link = *link_;
-  return call<T>(
+  return call<T>(what,
       &link.link(),
       [&](Resend resend) -> Result<T> {
         auto reply = link.exchange(sent, resend);
@@ -172,16 +172,16 @@ Result<T> QtegraSpectrometer::command(Result<codec::Command> cmd,
       Repeat::Safe);
 }
 
-Result<void> QtegraSpectrometer::command_ack(Result<codec::Command> cmd) {
-  return command<void>(std::move(cmd), [](const Bytes& reply) { return q::decode_ack(reply); });
+Result<void> QtegraSpectrometer::command_ack(std::string_view what, Result<codec::Command> cmd) {
+  return command<void>(what, std::move(cmd), [](const Bytes& reply) { return q::decode_ack(reply); });
 }
 
-Result<void> QtegraSpectrometer::command_ok(Result<codec::Command> cmd) {
-  return command<void>(std::move(cmd), [](const Bytes& reply) { return q::decode_ok(reply); });
+Result<void> QtegraSpectrometer::command_ok(std::string_view what, Result<codec::Command> cmd) {
+  return command<void>(what, std::move(cmd), [](const Bytes& reply) { return q::decode_ok(reply); });
 }
 
-Result<double> QtegraSpectrometer::query_number(Result<codec::Command> cmd) {
-  return command<double>(std::move(cmd), [](const Bytes& reply) { return q::decode_number(reply); });
+Result<double> QtegraSpectrometer::query_number(std::string_view what, Result<codec::Command> cmd) {
+  return command<double>(what, std::move(cmd), [](const Bytes& reply) { return q::decode_number(reply); });
 }
 
 Result<void> QtegraSpectrometer::check_channel(const ChannelId& channel) const {
@@ -189,54 +189,63 @@ Result<void> QtegraSpectrometer::check_channel(const ChannelId& channel) const {
   return fail(ErrorKind::Config, "thermo_qtegra: unknown channel \"" + channel + "\"");
 }
 
-Result<void> QtegraSpectrometer::connect() { return observe(link_->handshake()); }
+Result<void> QtegraSpectrometer::connect() {
+  const Operation op = begin("connect");
+  return observe(op, link_->handshake());
+}
 
 // --- IMassPositioner -----------------------------------------------------------
 
 Result<void> QtegraSpectrometer::set(double value) {
+  const Operation op = begin("set");
   if (!std::isfinite(value) || !options_.limits.contains(value)) {
-    return observe(Result<void>(fail(ErrorKind::Config, "dac " + std::to_string(value) + " is outside limits " +
-                                                            format_range(options_.limits))));
+    return observe(op, Result<void>(fail(ErrorKind::Config, "dac " + std::to_string(value) + " is outside limits " +
+                                                                format_range(options_.limits))));
   }
-  return command_ack(q::set_magnet_dac(value, options_.terminator));
+  return command_ack("set", q::set_magnet_dac(value, options_.terminator));
 }
 
-Result<double> QtegraSpectrometer::read() { return query_number(q::get_magnet_dac(options_.terminator)); }
+Result<double> QtegraSpectrometer::read() { return query_number("read", q::get_magnet_dac(options_.terminator)); }
 
 Result<bool> QtegraSpectrometer::moving() {
-  return command<bool>(q::get_magnet_moving(options_.terminator),
+  return command<bool>("moving", q::get_magnet_moving(options_.terminator),
                        [](const Bytes& reply) { return q::decode_bool(reply); });
 }
 
 // --- IBeamBlank ----------------------------------------------------------------
 
-Result<void> QtegraSpectrometer::blank(bool on) { return command_ack(q::blank_beam(on, options_.terminator)); }
+Result<void> QtegraSpectrometer::blank(bool on) { return command_ack("blank", q::blank_beam(on, options_.terminator)); }
 
 // --- IDetectorControl ----------------------------------------------------------
 
 Result<void> QtegraSpectrometer::protect(const ChannelId& channel, bool on) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return command_ack(q::protect_detector(channel, on, options_.terminator));
+  const Operation op = begin("protect");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return command_ack("protect", q::protect_detector(channel, on, options_.terminator));
 }
 
 Result<void> QtegraSpectrometer::set_deflection(const ChannelId& channel, double value) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return command_ack(q::set_deflection(channel, value, options_.terminator));
+  const Operation op = begin("set_deflection");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return command_ack("set_deflection", q::set_deflection(channel, value, options_.terminator));
 }
 
 Result<double> QtegraSpectrometer::read_deflection(const ChannelId& channel) {
-  if (auto ok = check_channel(channel); !ok) return observe(Result<double>(fail(std::move(ok).error())));
-  return query_number(q::get_deflection(channel, options_.terminator));
+  const Operation op = begin("read_deflection");
+  if (auto ok = check_channel(channel); !ok) return observe(op, Result<double>(fail(std::move(ok).error())));
+  return query_number("read_deflection", q::get_deflection(channel, options_.terminator));
 }
 
 Result<void> QtegraSpectrometer::set_gain(const ChannelId& channel, double value) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return command_ack(q::set_gain(channel, value, options_.terminator));
+  const Operation op = begin("set_gain");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return command_ack("set_gain", q::set_gain(channel, value, options_.terminator));
 }
 
 Result<double> QtegraSpectrometer::read_gain(const ChannelId& channel) {
-  if (auto ok = check_channel(channel); !ok) return observe(Result<double>(fail(std::move(ok).error())));
-  return query_number(q::get_gain(channel, options_.terminator));
+  const Operation op = begin("read_gain");
+  if (auto ok = check_channel(channel); !ok) return observe(op, Result<double>(fail(std::move(ok).error())));
+  return query_number("read_gain", q::get_gain(channel, options_.terminator));
 }
 
 // --- IBeamSource ---------------------------------------------------------------
@@ -261,43 +270,49 @@ Result<QtegraSpectrometer::ParamTarget> QtegraSpectrometer::param_target(const P
 }
 
 Result<void> QtegraSpectrometer::set_hv(double volts) {
+  const Operation op = begin("set_hv");
   if (!std::isfinite(volts) || !kHvRange.contains(volts)) {
-    return observe(Result<void>(out_of_range("hv", volts, kHvRange)));
+    return observe(op, Result<void>(out_of_range("hv", volts, kHvRange)));
   }
-  return command_ok(q::set_hv(volts, options_.terminator));
+  return command_ok("set_hv", q::set_hv(volts, options_.terminator));
 }
 
-Result<double> QtegraSpectrometer::read_hv() { return query_number(q::get_high_voltage(options_.terminator)); }
+Result<double> QtegraSpectrometer::read_hv() {
+  return query_number("read_hv", q::get_high_voltage(options_.terminator));
+}
 
 Result<void> QtegraSpectrometer::set_param(const ParamId& id, double value) {
+  const Operation op = begin("set_param");
   auto target = param_target(id);
-  if (!target) return observe(Result<void>(fail(std::move(target).error())));
+  if (!target) return observe(op, Result<void>(fail(std::move(target).error())));
   if (target->readback || !target->spec->writable) {
-    return observe(Result<void>(fail(ErrorKind::Config, "thermo_qtegra: \"" + target->hardware + "\" is read-only")));
+    return observe(op,
+                   Result<void>(fail(ErrorKind::Config, "thermo_qtegra: \"" + target->hardware + "\" is read-only")));
   }
   if (!std::isfinite(value) || !target->spec->range.contains(value)) {
-    return observe(Result<void>(out_of_range(to_string(id), value, target->spec->range)));
+    return observe(op, Result<void>(out_of_range(to_string(id), value, target->spec->range)));
   }
-  if (target->hv) return command_ok(q::set_hv(value, options_.terminator));
-  return command_ok(q::set_parameter(target->hardware, value, options_.terminator));
+  if (target->hv) return command_ok("set_param", q::set_hv(value, options_.terminator));
+  return command_ok("set_param", q::set_parameter(target->hardware, value, options_.terminator));
 }
 
 Result<Readback> QtegraSpectrometer::read_param(const ParamId& id) {
+  const Operation op = begin("read_param");
   auto target = param_target(id);
-  if (!target) return observe(Result<Readback>(fail(std::move(target).error())));
+  if (!target) return observe(op, Result<Readback>(fail(std::move(target).error())));
   if (target->hv) {
     // Qtegra has one HV read; it serves as both.
     auto volts = read_hv();
     if (!volts) return fail(std::move(volts).error());
     return Readback{*volts, *volts};
   }
-  auto setpoint = query_number(q::get_parameter(target->hardware, options_.terminator));
+  auto setpoint = query_number("read_param", q::get_parameter(target->hardware, options_.terminator));
   if (!setpoint) return fail(std::move(setpoint).error());
   Readback readback{*setpoint, std::nullopt};
   if (target->readback) return Readback{*setpoint, *setpoint};  // one read serves as both
   if (const auto* param = std::get_if<SourceParam>(&id)) {
     if (const auto name = q::readback_name(to_string(*param))) {
-      auto actual = query_number(q::get_parameter(*name, options_.terminator));
+      auto actual = query_number("read_param_actual", q::get_parameter(*name, options_.terminator));
       if (!actual) return fail(std::move(actual).error());
       readback.actual = *actual;
     }
@@ -310,8 +325,9 @@ Result<Readback> QtegraSpectrometer::read_param(const ParamId& id) {
 Duration QtegraSpectrometer::period() const { return to_duration(q::snap_integration_time(integration_s_.load())); }
 
 Result<void> QtegraSpectrometer::configure(Duration integration) {
+  const Operation op = begin("configure");
   if (integration <= Duration::zero()) {
-    return observe(Result<void>(fail(ErrorKind::Config, "integration time must be positive")));
+    return observe(op, Result<void>(fail(ErrorKind::Config, "integration time must be positive")));
   }
   const double snapped = q::snap_integration_time(std::chrono::duration<double>(integration).count());
   if (snapped == integration_s_.load()) return {};
@@ -324,7 +340,7 @@ Result<void> QtegraSpectrometer::configure(Duration integration) {
     previous_due = due_;
     due_ = TimePoint::max();
   }
-  auto sent = command_ack(q::set_integration_time(snapped, options_.terminator));
+  auto sent = command_ack("configure", q::set_integration_time(snapped, options_.terminator));
   {
     std::lock_guard lock(mutex_);
     if (sent) {
@@ -355,13 +371,14 @@ Result<void> QtegraSpectrometer::stop() {
 }
 
 Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
+  const Operation op = begin("next");
   using Next = Result<std::optional<Frame>>;
   Duration span{};
   std::uint64_t seq = 0;
   std::uint64_t run = 0;
   {
     std::unique_lock lock(mutex_);
-    if (!running_) return observe(Next(fail(ErrorKind::Config, "acquirer not started")));
+    if (!running_) return observe(op, Next(fail(ErrorKind::Config, "acquirer not started")));
     // Bounded by the clock's time alone.
     const TimePoint deadline = clock_.now() + timeout;
     while (running_ && clock_.now() < due_) {
@@ -380,7 +397,7 @@ Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
 
   // Outside the mutex: stop() must not wait for a transport timeout. The
   // frame is made inside the call, which observes its outcome once.
-  return command<std::optional<Frame>>(q::get_data(options_.terminator), [&](const Bytes& reply) -> Next {
+  return command<std::optional<Frame>>("next", q::get_data(options_.terminator), [&](const Bytes& reply) -> Next {
     auto data = q::decode_data(reply);
     if (!data) return fail(std::move(data).error());
 

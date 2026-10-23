@@ -59,18 +59,19 @@ std::vector<int> VarianXgs600::pressure_channels() const {
 Result<double> VarianXgs600::read_pressure() { return read_pressure(1); }
 
 Result<double> VarianXgs600::read_pressure(int channel) {
+  const Operation op = begin("read_pressure");
   if (channel < 1 || std::cmp_greater(channel, labels_.size())) {
-    return observe(Result<double>(fail(ErrorKind::Config, "channel " + std::to_string(channel) +
-                                                              " has no label (labels has " +
-                                                              std::to_string(labels_.size()) + ")")));
+    return observe(op, Result<double>(fail(ErrorKind::Config, "channel " + std::to_string(channel) +
+                                                                  " has no label (labels has " +
+                                                                  std::to_string(labels_.size()) + ")")));
   }
   auto cmd = xgs::read_pressure(address_, labels_[static_cast<std::size_t>(channel - 1)]);
-  if (!cmd) return observe(Result<double>(fail(std::move(cmd).error())));
-  auto reply = relay<Bytes>(
+  if (!cmd) return observe(op, Result<double>(fail(std::move(cmd).error())));
+  auto reply = relay<Bytes>("read_pressure",
       [&](Resend resend) { return transport_.exchange(cmd->tx, *cmd->reply, Transport::kDefaultTimeout, resend); },
       Repeat::Safe);
-  if (!reply) return observe(Result<double>(fail(std::move(reply).error())));
-  return observe(xgs::decode_pressure(*reply));
+  if (!reply) return observe(op, Result<double>(fail(std::move(reply).error())));
+  return observe(op, xgs::decode_pressure(*reply));
 }
 
 Result<Sample> VarianXgs600::sample() {

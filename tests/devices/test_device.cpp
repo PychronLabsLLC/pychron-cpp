@@ -2,6 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
+#include "log_capture.hpp"
+#include "pychron/core/log_context.hpp"
+
 using namespace pychron;
 using namespace std::chrono_literals;
 
@@ -10,8 +15,20 @@ namespace {
 class Plain : public Device {
  public:
   using Device::Device;
+  using Device::begin;
+  using Device::call;
   using Device::observe;
+
+  // One operation, observed without a name of its own in the test.
+  template <class T>
+  Result<T> observe(Result<T> result) {
+    return observe(begin("op"), std::move(result));
+  }
 };
+
+bool has_line(const std::vector<std::string>& lines, const std::string& wanted) {
+  return std::ranges::find(lines, wanted) != lines.end();
+}
 
 }  // namespace
 
@@ -87,4 +104,49 @@ TEST(Device, StateNames) {
   EXPECT_EQ(to_string(DeviceState::Ok), "ok");
   EXPECT_EQ(to_string(DeviceState::Degraded), "degraded");
   EXPECT_EQ(to_string(DeviceState::Faulted), "faulted");
+}
+
+// ---- the log ---------------------------------------------------------------
+
+TEST(DeviceLog, CallOkIsDebug) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  ManualClock clock;
+  Plain d("ig1", DeviceOptions{&clock, 3});
+  auto r = d.call<double>(
+      "read_pressure",
+      [&](Resend) -> Result<double> {
+        clock.advance(std::chrono::milliseconds(12));
+        return 1.5;
+      },
+      Repeat::Safe);
+  ASSERT_TRUE(r);
+  const auto lines = log.lines();
+  EXPECT_TRUE(has_line(lines, "[debug] device.ig1: read_pressure ok in 12 ms")) << ::testing::PrintToString(lines);
+}
+
+TEST(DeviceLog, FailureIsWarn) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  log.hub().set_levels(LogLevel::Warn, {});
+  Plain d("ig1");
+  auto r = d.call<double>(
+      "read_pressure", [](Resend) -> Result<double> { return fail(ErrorKind::Timeout, "no reply"); },
+      Repeat::Safe);
+  ASSERT_FALSE(r);
+  const auto lines = log.lines();
+  EXPECT_TRUE(has_line(lines, "[warn] device.ig1: read_pressure failed: timeout: no reply"))
+      << ::testing::PrintToString(lines);
+}
+
+TEST(DeviceLog, PollingIsTrace) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Plain d("ig1");
+  {
+    const LogContext::Polling polling;
+    auto r = d.call<double>("read_pressure", [](Resend) -> Result<double> { return 1.5; }, Repeat::Safe);
+    ASSERT_TRUE(r);
+  }
+  for (const auto& line : log.lines()) EXPECT_EQ(line.find("device.ig1"), std::string::npos) << line;
 }

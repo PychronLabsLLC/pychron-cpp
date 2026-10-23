@@ -121,7 +121,7 @@ Result<Bytes> Lakeshore::ask(const codec::Command& command, Resend resend) {
 
 Result<void> Lakeshore::connect() {
   // *CLS and *IDN?, repeated together.
-  return call<void>(
+  return call<void>("connect",
       [&](Resend resend) {
         return transact(transport_, [&]() -> Result<void> {
           if (auto sent = transport_.write(ls::clear_status().tx); !sent) return fail(std::move(sent).error());
@@ -140,7 +140,8 @@ Result<void> Lakeshore::connect() {
 }
 
 Result<double> Lakeshore::read_temperature(std::string_view input) {
-  auto value = relay<double>([&](Resend resend) -> Result<double> {
+  const Operation op = begin("read_temperature");
+  auto value = relay<double>("read_temperature", [&](Resend resend) -> Result<double> {
     if (std::find(options_.inputs.begin(), options_.inputs.end(), input) == options_.inputs.end())
       return fail(ErrorKind::Config, "input \"" + std::string(input) + "\" is not configured");
     auto cmd = ls::read_input(input[0], options_.units);
@@ -153,7 +154,7 @@ Result<double> Lakeshore::read_temperature(std::string_view input) {
     if (kelvin < 0) return codec::protocol_error("lakeshore: below absolute zero", *reply);
     return kelvin;
   }, Repeat::Safe);
-  return observe(std::move(value));
+  return observe(op, std::move(value));
 }
 
 Result<std::optional<int>> Lakeshore::range_for(int output, double kelvin) const {
@@ -172,7 +173,8 @@ Result<std::optional<int>> Lakeshore::range_for(int output, double kelvin) const
 }
 
 Result<void> Lakeshore::set_setpoint(int output, double kelvin) {
-  auto done = relay<void>([&](Resend resend) -> Result<void> {
+  const Operation op = begin("set_setpoint");
+  auto done = relay<void>("set_setpoint", [&](Resend resend) -> Result<void> {
     if (auto ok = check_output(output); !ok) return ok;
     auto range = range_for(output, kelvin);
     if (!range) return fail(std::move(range).error());
@@ -200,11 +202,12 @@ Result<void> Lakeshore::set_setpoint(int output, double kelvin) {
                                            std::to_string(last) + " K, not " + std::to_string(kelvin) + " K");
     });
   }, Repeat::Safe);
-  return observe(std::move(done));
+  return observe(op, std::move(done));
 }
 
 Result<double> Lakeshore::setpoint(int output) {
-  auto value = relay<double>([&](Resend resend) -> Result<double> {
+  const Operation op = begin("setpoint");
+  auto value = relay<double>("setpoint", [&](Resend resend) -> Result<double> {
     if (auto ok = check_output(output); !ok) return fail(std::move(ok).error());
     auto cmd = ls::query_setpoint(output);
     if (!cmd) return fail(std::move(cmd).error());
@@ -214,7 +217,7 @@ Result<double> Lakeshore::setpoint(int output) {
     if (!v) return fail(std::move(v).error());
     return from_wire(*v);
   }, Repeat::Safe);
-  return observe(std::move(value));
+  return observe(op, std::move(value));
 }
 
 Result<Sample> Lakeshore::sample() {

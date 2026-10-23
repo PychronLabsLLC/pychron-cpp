@@ -18,15 +18,24 @@ Result<std::unique_ptr<ProxrRelay>> ProxrRelay::create(const DriverArgs& args) {
   return std::make_unique<ProxrRelay>(args.name, args.transport, options);
 }
 
-Result<void> ProxrRelay::open(const ValveAddress& address) { return observe(actuate(address, true)); }
+Result<void> ProxrRelay::open(const ValveAddress& address) {
+  const Operation op = begin("open");
+  return observe(op, actuate(address, true));
+}
 
-Result<void> ProxrRelay::close(const ValveAddress& address) { return observe(actuate(address, false)); }
+Result<void> ProxrRelay::close(const ValveAddress& address) {
+  const Operation op = begin("close");
+  return observe(op, actuate(address, false));
+}
 
-Result<ValveState> ProxrRelay::read(const ValveAddress& address) { return observe(query(address)); }
+Result<ValveState> ProxrRelay::read(const ValveAddress& address) {
+  const Operation op = begin("read");
+  return observe(op, query(address));
+}
 
 Result<void> ProxrRelay::actuate(const ValveAddress& address, bool energize) {
   // Bank select and relay command are one transaction, repeated whole.
-  return relay<void>(
+  return relay<void>("actuate",
       [&](Resend resend) {
         return transact(transport_, [&]() -> Result<void> {
           auto which = select(address, resend);
@@ -42,7 +51,7 @@ Result<void> ProxrRelay::actuate(const ValveAddress& address, bool energize) {
 }
 
 Result<ValveState> ProxrRelay::query(const ValveAddress& address) {
-  return relay<ValveState>(
+  return relay<ValveState>("query",
       [&](Resend resend) {
         return transact(transport_, [&]() -> Result<ValveState> {
           auto which = select(address, resend);

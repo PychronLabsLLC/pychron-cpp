@@ -74,17 +74,18 @@ std::vector<int> QtegraGauges::pressure_channels() const {
 Result<double> QtegraGauges::read_pressure() { return read_pressure(1); }
 
 Result<double> QtegraGauges::read_pressure(int channel) {
+  const Operation op = begin("read_pressure");
   if (channel < 1 || std::cmp_greater(channel, parameters_.size())) {
-    return observe(Result<double>(fail(ErrorKind::Config, "channel " + std::to_string(channel) +
-                                                              " has no parameter (parameters has " +
-                                                              std::to_string(parameters_.size()) + ")")));
+    return observe(op, Result<double>(fail(ErrorKind::Config, "channel " + std::to_string(channel) +
+                                                                  " has no parameter (parameters has " +
+                                                                  std::to_string(parameters_.size()) + ")")));
   }
   auto link = link_.get();
-  if (!link) return observe(Result<double>(fail(std::move(link).error())));
+  if (!link) return observe(op, Result<double>(fail(std::move(link).error())));
   QtegraLink& shared = **link;
   auto command = q::get_parameter(parameters_[static_cast<std::size_t>(channel - 1)], shared.terminator());
-  if (!command) return observe(Result<double>(fail(std::move(command).error())));
-  return call<double>(
+  if (!command) return observe(op, Result<double>(fail(std::move(command).error())));
+  return call<double>("read_pressure",
       &shared.link(),
       [&](Resend resend) -> Result<double> {
         auto reply = shared.exchange(*command, resend);

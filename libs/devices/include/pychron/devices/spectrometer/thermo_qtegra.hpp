@@ -141,12 +141,13 @@ class QtegraSpectrometer final : public Device,
   // One command as a Safe Device::call through the link; `decode` turns its
   // reply into the result inside the call, so the call is observed once.
   template <class T>
-  Result<T> command(Result<codec::Command> cmd, const std::function<Result<T>(const Bytes&)>& decode);
+  Result<T> command(std::string_view what, Result<codec::Command> cmd,
+                    const std::function<Result<T>(const Bytes&)>& decode);
   // For the setters whose reply pychron ignores: any reply but ERROR is success.
-  Result<void> command_ack(Result<codec::Command> cmd);
+  Result<void> command_ack(std::string_view what, Result<codec::Command> cmd);
   // For SetHV / SetParameter: the reply must be "OK".
-  Result<void> command_ok(Result<codec::Command> cmd);
-  Result<double> query_number(Result<codec::Command> cmd);
+  Result<void> command_ok(std::string_view what, Result<codec::Command> cmd);
+  Result<double> query_number(std::string_view what, Result<codec::Command> cmd);
   // How `id` is written and read; Config when the id is not supported.
   struct ParamTarget {
     std::string hardware;             // name sent with SetParameter / GetParameter

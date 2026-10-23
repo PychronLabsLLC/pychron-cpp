@@ -78,8 +78,9 @@ Result<Plc2000HeaterOptions> Plc2000Heater::parse_options(const toml::table& o) 
 }
 
 Result<bool> Plc2000Heater::read_coil(const std::optional<std::uint16_t>& address, const char* what) {
+  const Operation op = begin("read_coil");
   if (!address) return fail(extraction::not_supported(std::string(what) + " (no address configured)", name()));
-  auto value = relay<bool>([&](Resend resend) -> Result<bool> {
+  auto value = relay<bool>("read_coil", [&](Resend resend) -> Result<bool> {
     const auto tid = next_modbus_transaction_id();
     auto cmd = mb::read_coils(tid, options_.unit, wire(*address), 1);
     if (!cmd) return fail(std::move(cmd).error());
@@ -89,24 +90,26 @@ Result<bool> Plc2000Heater::read_coil(const std::optional<std::uint16_t>& addres
     if (!coils) return fail(std::move(coils).error());
     return coils->front();
   }, Repeat::Safe);
-  return observe(std::move(value));
+  return observe(op, std::move(value));
 }
 
 Result<void> Plc2000Heater::write_coil(const std::optional<std::uint16_t>& address, const char* what, bool on) {
+  const Operation op = begin("write_coil");
   if (!address) return fail(extraction::not_supported(std::string(what) + " (no address configured)", name()));
-  auto done = relay<void>([&](Resend resend) -> Result<void> {
+  auto done = relay<void>("write_coil", [&](Resend resend) -> Result<void> {
     const auto tid = next_modbus_transaction_id();
     const auto cmd = mb::write_single_coil(tid, options_.unit, wire(*address), on);
     auto reply = transport_.exchange(cmd.tx, *cmd.reply, Transport::kDefaultTimeout, resend);
     if (!reply) return fail(std::move(reply).error());
     return mb::decode_write_single_coil(tid, options_.unit, wire(*address), on, *reply);
   }, Repeat::Safe);
-  return observe(std::move(done));
+  return observe(op, std::move(done));
 }
 
 Result<double> Plc2000Heater::read_float(const std::optional<std::uint16_t>& address, const char* what) {
+  const Operation op = begin("read_float");
   if (!address) return fail(extraction::not_supported(std::string(what) + " (no address configured)", name()));
-  auto value = relay<double>([&](Resend resend) -> Result<double> {
+  auto value = relay<double>("read_float", [&](Resend resend) -> Result<double> {
     const auto tid = next_modbus_transaction_id();
     auto cmd = mb::read_input_registers(tid, options_.unit, wire(*address), 2);
     if (!cmd) return fail(std::move(cmd).error());
@@ -120,7 +123,7 @@ Result<double> Plc2000Heater::read_float(const std::optional<std::uint16_t>& add
     }
     return v;
   }, Repeat::Safe);
-  return observe(std::move(value));
+  return observe(op, std::move(value));
 }
 
 Result<void> Plc2000Heater::set_enabled(bool on) { return write_coil(options_.enable, "enable", on); }
@@ -131,6 +134,7 @@ Result<double> Plc2000Heater::setpoint() { return read_float(options_.setpoint, 
 Result<double> Plc2000Heater::readback() { return read_float(options_.readback, "readback"); }
 
 Result<void> Plc2000Heater::set_setpoint(double value) {
+  const Operation op = begin("set_setpoint");
   if (!options_.setpoint) return fail(extraction::not_supported("setpoint (no address configured)", name()));
   std::array<std::uint16_t, 2> words{};
   if (options_.setpoint_write_format == SetpointWriteFormat::Int32) {
@@ -144,7 +148,7 @@ Result<void> Plc2000Heater::set_setpoint(double value) {
     if (!std::isfinite(value)) return fail(ErrorKind::Config, "setpoint is not a number", name());
     words = mb::encode_float(static_cast<float>(value), options_.word_order);
   }
-  auto done = relay<void>([&](Resend resend) -> Result<void> {
+  auto done = relay<void>("set_setpoint", [&](Resend resend) -> Result<void> {
     const auto tid = next_modbus_transaction_id();
     const auto start = wire(*options_.setpoint);
     auto cmd = mb::write_multiple_registers(tid, options_.unit, start, {words[0], words[1]});
@@ -153,7 +157,7 @@ Result<void> Plc2000Heater::set_setpoint(double value) {
     if (!reply) return fail(std::move(reply).error());
     return mb::decode_write_multiple_registers(tid, options_.unit, start, 2, *reply);
   }, Repeat::Safe);
-  return observe(std::move(done));
+  return observe(op, std::move(done));
 }
 
 // --- sim ------------------------------------------------------------------------

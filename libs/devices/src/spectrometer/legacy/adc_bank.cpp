@@ -51,7 +51,7 @@ Result<std::unique_ptr<AdcBank>> AdcBank::create(const DriverArgs& args) {
 
 Result<std::vector<double>> AdcBank::sample() {
   // A register read: Safe.
-  return relay<std::vector<double>>(
+  return relay<std::vector<double>>("sample",
       [&](Resend resend) -> Result<std::vector<double>> {
         const auto tid = static_cast<std::uint16_t>(tid_.fetch_add(1) + 1);
         const auto n = channels().size();

@@ -199,15 +199,19 @@ Result<std::unique_ptr<SimIntegrated>> SimIntegrated::create(const DriverArgs& a
 }
 
 Result<void> SimIntegrated::set(double value) {
+  const Operation op = begin("set");
   auto ok = check_limits(options_.limits, value);
-  if (!ok) return observe(std::move(ok));
+  if (!ok) return observe(op, std::move(ok));
   beam_->set_magnet(value);
   std::scoped_lock lock(mutex_);
   moving_until_ = beam_->clock().now() + options_.move_time;
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
-Result<double> SimIntegrated::read() { return observe(Result<double>(beam_->magnet())); }
+Result<double> SimIntegrated::read() {
+  const Operation op = begin("read");
+  return observe(op, Result<double>(beam_->magnet()));
+}
 
 Result<bool> SimIntegrated::moving() {
   std::scoped_lock lock(mutex_);
@@ -220,8 +224,9 @@ Duration SimIntegrated::integration() const {
 }
 
 Result<void> SimIntegrated::configure(Duration integration) {
+  const Operation op = begin("configure");
   if (integration <= Duration::zero()) {
-    return observe(Result<void>(fail(ErrorKind::Config, "integration must be positive")));
+    return observe(op, Result<void>(fail(ErrorKind::Config, "integration must be positive")));
   }
   auto steps = std::max<std::int64_t>(1, std::llround(seconds(integration) / seconds(kSimIntegrationQuantum)));
   Duration snapped = steps * kSimIntegrationQuantum;
@@ -230,35 +235,38 @@ Result<void> SimIntegrated::configure(Duration integration) {
     integration_ = snapped;
   }
   if (pacer_.running()) pacer_.start(snapped);
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<void> SimIntegrated::start() {
+  const Operation op = begin("start");
   pacer_.start(integration());
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<void> SimIntegrated::stop() {
+  const Operation op = begin("stop");
   pacer_.stop();
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<std::optional<Frame>> SimIntegrated::next(Duration timeout) {
+  const Operation op = begin("next");
   if (!pacer_.running()) {
-    return observe(Result<std::optional<Frame>>(fail(ErrorKind::NotConnected, "acquisition not started")));
+    return observe(op, Result<std::optional<Frame>>(fail(ErrorKind::NotConnected, "acquisition not started")));
   }
   Frame frame;
   auto ts = pacer_.wait(timeout, frame.seq);
-  if (!ts) return observe(Result<std::optional<Frame>>(std::optional<Frame>{}));
+  if (!ts) return observe(op, Result<std::optional<Frame>>(std::optional<Frame>{}));
   frame.ts = *ts;
   frame.integrated = true;
   frame.span = pacer_.period();
   for (const auto& c : options_.channels) {
     auto sample = beam_->intensity(c, *ts, frame.span);
-    if (!sample) return observe(Result<std::optional<Frame>>(fail(std::move(sample).error())));
+    if (!sample) return observe(op, Result<std::optional<Frame>>(fail(std::move(sample).error())));
     frame.values.emplace_back(c, sample->value);
   }
-  return observe(Result<std::optional<Frame>>(std::optional<Frame>(std::move(frame))));
+  return observe(op, Result<std::optional<Frame>>(std::optional<Frame>(std::move(frame))));
 }
 
 Caps SimIntegrated::caps() const {
@@ -273,52 +281,61 @@ Result<void> SimIntegrated::check_channel(const ChannelId& channel) const {
 }
 
 Result<void> SimIntegrated::protect(const ChannelId& channel, bool on) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return observe(beam_->protect(channel, on));
+  const Operation op = begin("protect");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return observe(op, beam_->protect(channel, on));
 }
 
 Result<void> SimIntegrated::set_deflection(const ChannelId& channel, double value) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return observe(beam_->set_deflection(channel, value));
+  const Operation op = begin("set_deflection");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return observe(op, beam_->set_deflection(channel, value));
 }
 
 Result<double> SimIntegrated::read_deflection(const ChannelId& channel) {
-  if (auto ok = check_channel(channel); !ok) return observe(Result<double>(fail(std::move(ok).error())));
+  const Operation op = begin("read_deflection");
+  if (auto ok = check_channel(channel); !ok) return observe(op, Result<double>(fail(std::move(ok).error())));
   auto d = beam_->detector(channel);
-  if (!d) return observe(Result<double>(fail(std::move(d).error())));
-  return observe(Result<double>(d->deflection));
+  if (!d) return observe(op, Result<double>(fail(std::move(d).error())));
+  return observe(op, Result<double>(d->deflection));
 }
 
 Result<void> SimIntegrated::set_gain(const ChannelId& channel, double value) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return observe(beam_->set_gain(channel, value));
+  const Operation op = begin("set_gain");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return observe(op, beam_->set_gain(channel, value));
 }
 
 Result<double> SimIntegrated::read_gain(const ChannelId& channel) {
-  if (auto ok = check_channel(channel); !ok) return observe(Result<double>(fail(std::move(ok).error())));
+  const Operation op = begin("read_gain");
+  if (auto ok = check_channel(channel); !ok) return observe(op, Result<double>(fail(std::move(ok).error())));
   auto d = beam_->detector(channel);
-  if (!d) return observe(Result<double>(fail(std::move(d).error())));
-  return observe(Result<double>(d->gain));
+  if (!d) return observe(op, Result<double>(fail(std::move(d).error())));
+  return observe(op, Result<double>(d->gain));
 }
 
 Result<void> SimIntegrated::set_cdd_voltage(const ChannelId& channel, double volts) {
-  if (auto ok = check_channel(channel); !ok) return observe(std::move(ok));
-  return observe(beam_->set_cdd_voltage(channel, volts));
+  const Operation op = begin("set_cdd_voltage");
+  if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
+  return observe(op, beam_->set_cdd_voltage(channel, volts));
 }
 
 Result<void> SimIntegrated::blank(bool on) {
+  const Operation op = begin("blank");
   beam_->blank(on);
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<void> SimIntegrated::apply_optics(const std::string& name, const spectrometer::OpticsParams& /*params*/) {
+  const Operation op = begin("apply_optics");
   beam_->set_optics(name);
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<void> SimIntegrated::set_source_output(bool on) {
+  const Operation op = begin("set_source_output");
   beam_->set_source_output(on);
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 REGISTER_DRIVER("sim_integrated", SimIntegrated);
@@ -350,12 +367,13 @@ Result<std::unique_ptr<SimDacPositioner>> SimDacPositioner::create(const DriverA
 }
 
 Result<void> SimDacPositioner::set(double value) {
+  const Operation op = begin("set");
   auto ok = check_limits(options_.limits, value);
-  if (!ok) return observe(std::move(ok));
+  if (!ok) return observe(op, std::move(ok));
   beam_->set_magnet(value);
   std::scoped_lock lock(mutex_);
   cached_ = value;
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<double> SimDacPositioner::read() {
@@ -379,39 +397,43 @@ SimRawAcquirer::SimRawAcquirer(std::string name, std::shared_ptr<BeamModel> beam
 }
 
 Result<void> SimRawAcquirer::configure(Duration integration) {
+  const Operation op = begin("configure");
   if (integration <= Duration::zero()) {
-    return observe(Result<void>(fail(ErrorKind::Config, "integration must be positive")));
+    return observe(op, Result<void>(fail(ErrorKind::Config, "integration must be positive")));
   }
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<void> SimRawAcquirer::start() {
+  const Operation op = begin("start");
   pacer_.start(period_);
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<void> SimRawAcquirer::stop() {
+  const Operation op = begin("stop");
   pacer_.stop();
-  return observe(Result<void>{});
+  return observe(op, Result<void>{});
 }
 
 Result<std::optional<Frame>> SimRawAcquirer::next(Duration timeout) {
+  const Operation op = begin("next");
   if (!pacer_.running()) {
-    return observe(Result<std::optional<Frame>>(fail(ErrorKind::NotConnected, "acquisition not started")));
+    return observe(op, Result<std::optional<Frame>>(fail(ErrorKind::NotConnected, "acquisition not started")));
   }
   Frame frame;
   auto ts = pacer_.wait(timeout, frame.seq);
-  if (!ts) return observe(Result<std::optional<Frame>>(std::optional<Frame>{}));
+  if (!ts) return observe(op, Result<std::optional<Frame>>(std::optional<Frame>{}));
   frame.ts = *ts;
   frame.integrated = false;
   frame.span = period_;
   for (const auto& c : channels_) {
     auto sample = beam_->intensity(c, *ts, period_);
-    if (!sample) return observe(Result<std::optional<Frame>>(fail(std::move(sample).error())));
+    if (!sample) return observe(op, Result<std::optional<Frame>>(fail(std::move(sample).error())));
     double v = counts_ ? std::round(sample->value * seconds(period_)) : sample->value;
     frame.values.emplace_back(c, v);
   }
-  return observe(Result<std::optional<Frame>>(std::optional<Frame>(std::move(frame))));
+  return observe(op, Result<std::optional<Frame>>(std::optional<Frame>(std::move(frame))));
 }
 
 DriverSchema SimAdcBank::schema() {
