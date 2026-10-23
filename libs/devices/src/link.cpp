@@ -4,6 +4,7 @@
 #include <mutex>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/core/log_error.hpp"
 #include "pychron/core/process_log.hpp"
 #include "pychron/core/signal_bus.hpp"
@@ -84,10 +85,15 @@ Result<std::optional<Link::Back>> Link::reconnect_locked(std::uint64_t seen, Epi
       Back back{episode.attempts, now - episode.failed_at.value_or(now), now};
       episode.attempts = 0;
       episode.failed_at.reset();
+      reconnect_failing_ = false;  // the outage is over
       return std::optional<Back>(back);
     }
     // Handled: the backoff tries again, or the caller's call fails with it.
-    if (log_.enabled(LogLevel::Warn)) log_handled(log_, r.error(), "reconnect " + transport_.name());
+    // A poll (a scan) tries a dead link every few seconds: only the first
+    // failed attempt of the outage warns, the rest are trace.
+    const LogLevel level = reconnect_failing_ && LogContext::polling() ? LogLevel::Trace : LogLevel::Warn;
+    reconnect_failing_ = true;
+    if (log_.enabled(level)) log_handled(log_, level, r.error(), "reconnect " + transport_.name());
     if (!transient(r.error().kind)) return fail(std::move(r).error());
     last = std::move(r).error();
   }

@@ -16,6 +16,9 @@ void log_error(const Logger& logger, const Error& error, std::string_view attemp
 // The same record at warn, for an error that was handled (retry, fallback)
 // and not shown to anyone.
 void log_handled(const Logger& logger, const Error& error, std::string_view attempted);
+// The same record at `level`: a handled error said once already (a poll that
+// keeps failing) goes on at trace.
+void log_handled(const Logger& logger, LogLevel level, const Error& error, std::string_view attempted);
 
 // A line for the log file and, once, for the dock. `logger` is the process
 // logger of `source`. With a process hub the line goes through it (file, and

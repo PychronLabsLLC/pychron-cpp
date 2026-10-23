@@ -188,9 +188,11 @@ class Link {
   const Clock& clock_;
   LinkPolicy policy_;
   SignalBus* bus_;
-  Logger log_;  // device.<transport name>: each failed reconnect attempt
+  Logger log_;  // device.<transport name>: failed reconnect attempts
   Connect connect_;
   ClockMutex mutex_;  // the reconnect, across its backoff
+  // A reconnect attempt has failed since the link was last back. Under mutex_.
+  bool reconnect_failing_ = false;
   std::atomic<std::uint64_t> generation_{0};
   std::atomic<std::uint64_t> reconnects_{0};
   std::atomic<std::uint64_t> repeats_{0};

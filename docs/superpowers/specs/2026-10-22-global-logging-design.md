@@ -267,7 +267,9 @@ dropped at cost of one atomic load.
   sampler or scheduler) at `trace`. Cancelled call: `debug` (`trace` while
   polling), not warn. While polling only first failure of a streak warns;
   repeats at `trace`. Link reconnect failure: `warn` on
-  `device.<transport name>`, one per attempt.
+  `device.<transport name>`, one per attempt; while polling only first
+  failed attempt of outage warns, repeats at `trace`. Outage ends at a
+  successful reconnect.
 - Store and spool (`libs/experiment` persist, `libs/experiment/adapters/store`):
   logger `store` per save: `StorePersister` `save <runid>: start` /
   `save <runid>: done in <ms> ms`; records folder (`FilePersister`, `elctl

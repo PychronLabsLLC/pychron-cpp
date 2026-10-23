@@ -15,6 +15,7 @@
 
 #include "log_capture.hpp"
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_context.hpp"
 #include "pychron/devices/device.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/core/virtual_clock.hpp"
@@ -504,6 +505,73 @@ TEST_F(DeviceCall, EachFailedReconnectAttemptIsAWarningAndTheCallOneRecord) {
   }
   EXPECT_GE(reconnects, 1u);
   EXPECT_EQ(calls, 1u);
+}
+
+namespace {
+
+struct ReconnectLines {
+  std::size_t warn = 0;
+  std::size_t trace = 0;
+};
+
+ReconnectLines reconnect_lines(const testing::LogCapture& log, const std::string& name) {
+  ReconnectLines n;
+  const std::string tail = "device." + name + ": reconnect " + name + ": ";
+  for (const auto& line : log.lines()) {
+    if (line.starts_with("[warn] " + tail)) ++n.warn;
+    if (line.starts_with("[trace] " + tail)) ++n.trace;
+  }
+  return n;
+}
+
+}  // namespace
+
+// A scanned link that is down is tried every few seconds for as long as it is
+// down: while polling, only its first failed attempt warns, the rest are
+// trace, until a reconnect succeeds and ends the outage.
+TEST_F(DeviceCall, WhilePollingOnlyTheFirstFailedReconnectOfAnOutageWarns) {
+  testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  log.hub().set_levels(LogLevel::Trace, {});
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  Wired device("dev", DeviceOptions{&clock, 3, &link});
+  t->set_down(true);
+  {
+    const LogContext::Polling polling;
+    EXPECT_FALSE(device.call("send", sends(*t), Repeat::Safe));
+    EXPECT_FALSE(device.call("send", sends(*t), Repeat::Safe));
+  }
+  auto n = reconnect_lines(log, t->name());
+  EXPECT_EQ(n.warn, 1u);
+  EXPECT_GE(n.trace, 2u);
+
+  // Back, then down again: a new outage, a new warning.
+  t->set_down(false);
+  {
+    const LogContext::Polling polling;
+    ASSERT_TRUE(device.call("send", sends(*t), Repeat::Safe));
+  }
+  t->set_down(true);
+  {
+    const LogContext::Polling polling;
+    EXPECT_FALSE(device.call("send", sends(*t), Repeat::Safe));
+  }
+  n = reconnect_lines(log, t->name());
+  EXPECT_EQ(n.warn, 2u);
+}
+
+TEST_F(DeviceCall, OutsidePollingEachFailedReconnectWarns) {
+  testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  auto t = sim();
+  ::pychron::Link link(*t, clock);
+  Wired device("dev", DeviceOptions{&clock, 3, &link});
+  t->set_down(true);
+  EXPECT_FALSE(device.call("send", sends(*t), Repeat::Safe));
+  const auto n = reconnect_lines(log, t->name());
+  EXPECT_GE(n.warn, 2u);
+  EXPECT_EQ(n.trace, 0u);
 }
 
 TEST_F(DeviceCall, WithoutALinkTheCallIsMadeOnceAndObserved) {

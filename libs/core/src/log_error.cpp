@@ -27,6 +27,10 @@ void log_handled(const Logger& logger, const Error& error, std::string_view atte
   write(logger, LogLevel::Warn, error, attempted);
 }
 
+void log_handled(const Logger& logger, LogLevel level, const Error& error, std::string_view attempted) {
+  write(logger, level, error, attempted);
+}
+
 void log_and_publish(const Logger& logger, SignalBus* bus, std::string_view source, LogLevel level,
                      std::string message, TimePoint ts) {
   if (const auto hub = process_log_hub()) {
