@@ -1,4 +1,5 @@
 #include "canvas_view.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 
 #include <QDateTime>
@@ -412,6 +413,7 @@ bool CanvasView::request_lock(const std::string& name, bool locked) {
     return false;
   }
   if (auto result = bridge_->set_locked(qname, locked); !result) {
+    log_shown("line", locked ? tr("lock %1").arg(qname) : tr("unlock %1").arg(qname), result.error());
     item->flash(QString::fromStdString(result.error().what));
     return false;
   }

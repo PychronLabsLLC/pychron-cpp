@@ -5,6 +5,7 @@
 #include <QWidget>
 
 #include "entry_bridge.hpp"
+#include "error_report.hpp"
 #include "menu_hub.hpp"
 #include "publish_dialog.hpp"
 #include "publish_window.hpp"
@@ -24,7 +25,7 @@ PublishActions::PublishActions(QWidget* owner, std::string store_url, std::funct
       selection_(std::move(selection)),
       earthbank_(EarthbankSetup::system()),
       action_(new QAction(tr("Publish…"), this)) {
-  report_error_ = [this](const QString& text) { QMessageBox::critical(owner_, tr("Publish"), text); };
+  report_error_ = [this](const QString& text) { show_error(owner_, "publish", tr("Publish"), text); };
   connect(action_, &QAction::triggered, this, [this] { show_window(); });
   MenuHub::instance().contribute(owner_, MenuHub::Menu::View, {action_}, MenuHub::Scope::App);
 }

@@ -1,5 +1,6 @@
 #include "experiment_window.hpp"
 
+#include "error_report.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
 
@@ -233,7 +234,13 @@ ExperimentWindow::ExperimentWindow(ExperimentBridge& bridge, bool simulation, st
 
   build_actions();
 
-  connect(&model_, &QueueTableModel::edited, this, [this] { set_modified(true); });
+  connect(&model_, &QueueTableModel::edited, this, [this] {
+    log_action(QStringLiteral("edit queue %1: %2 rows%3")
+                   .arg(path_ ? QString::fromStdString(path_->string()) : QStringLiteral("(unsaved)"))
+                   .arg(model_.rowCount())
+                   .arg(model_.live() ? QStringLiteral(", running") : QString()));
+    set_modified(true);
+  });
   connect(&model_, &QueueTableModel::validated, this, [this] { update_state(); });
   connect(pane_, &ExecutorPane::startRequested, this, [this] { start(); });
   connect(&model_, &QueueTableModel::executedChanged, this, [this] { on_executed_changed(); });
@@ -415,7 +422,7 @@ void ExperimentWindow::build_actions() {
       return;
     }
     QString error;
-    if (!save(&error)) QMessageBox::warning(this, tr("Save"), error);
+    if (!save(&error)) show_warning(this, "experiment", tr("Save"), error);
   });
   save_as_ = file_action(MenuHub::FileRole::SaveAs, tr("Save &As..."), [this] { save_as_dialog(); });
   revalidate_ = add(file, tr("&Revalidate"), [this] { model_.revalidate(); });
@@ -552,7 +559,7 @@ void ExperimentWindow::open_recent(const QString& file) {
   }
   QString error;
   if (!load_queue(std::filesystem::path(file.toStdU16String()), &error) && error != tr("cancelled"))
-    QMessageBox::warning(this, tr("Open"), error);
+    show_warning(this, "experiment", tr("Open"), error);
 }
 
 // Source rows of the Queue table's selection: the rows row actions act on.
@@ -854,7 +861,7 @@ bool ExperimentWindow::resolve_unsaved() {
       }
       QString error;
       if (save(&error)) return true;
-      QMessageBox::warning(this, tr("Save"), error);
+      show_warning(this, "experiment", tr("Save"), error);
       return false;
     }
     case Unsaved::Discard: return true;
@@ -907,6 +914,7 @@ bool ExperimentWindow::save(QString* error) {
 }
 
 bool ExperimentWindow::save_as(const std::filesystem::path& path, QString* error) {
+  log_action(QStringLiteral("save queue %1").arg(QString::fromStdString(path.string())));
   if (auto r = experiment::save_queue_file(path.string(), model_.queue()); !r) {
     if (error) *error = QString::fromStdString(r.error().what);
     return false;
@@ -944,7 +952,7 @@ void ExperimentWindow::open_dialog() {
   if (file.isEmpty()) return;
   QString error;
   if (!load_queue(file.toStdString(), &error)) {
-    if (error != tr("cancelled")) QMessageBox::warning(this, tr("Open"), error);
+    if (error != tr("cancelled")) show_warning(this, "experiment", tr("Open"), error);
     return;
   }
   offer_resume();
@@ -967,7 +975,7 @@ void ExperimentWindow::save_as_dialog() {
   const QString file = pick_save_file_(start);
   if (file.isEmpty()) return;
   QString error;
-  if (!save_as(file.toStdString(), &error)) QMessageBox::warning(this, tr("Save"), error);
+  if (!save_as(file.toStdString(), &error)) show_warning(this, "experiment", tr("Save"), error);
 }
 
 void ExperimentWindow::start() {
@@ -979,6 +987,9 @@ void ExperimentWindow::start() {
   // The first row of the Queue table (queue-tables design 3): the executed
   // rows keep their statuses.
   const std::size_t from = model_.executed_rows();
+  log_action(QStringLiteral("start queue %1 from row %2")
+                 .arg(path_ ? QString::fromStdString(path_->string()) : QStringLiteral("(unsaved)"))
+                 .arg(static_cast<qulonglong>(from)));
   auto r = bridge_.start(model_.queue(), from);
   if (!r) {
     pane_->show_error(QString::fromStdString(r.error().what));

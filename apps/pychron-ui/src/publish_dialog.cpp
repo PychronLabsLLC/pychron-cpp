@@ -29,6 +29,7 @@
 
 #include "earthbank_publish_panel.hpp"
 #include "entry_bridge.hpp"
+#include "error_report.hpp"
 #include "release_dialog.hpp"
 #include "theme.hpp"
 
@@ -366,6 +367,7 @@ void PublishDialog::load_releases() {
       },
       [this](Result<std::vector<ps::ReleaseRow>> rows) {
         if (!rows) {
+          log_shown("publish", tr("Read releases"), rows.error());
           check_error_ = tr("The releases could not be read: %1").arg(qs(rows.error().what));
           show_refusals();
           return;
@@ -411,6 +413,7 @@ void PublishDialog::count_embargoed() {
       [this, generation](Result<std::size_t> embargoed) {
         if (generation != selection_generation_) return;
         if (!embargoed) {
+          log_shown("publish", tr("Read embargoes"), embargoed.error());
           members_->setText(tr("%1; the embargoes could not be read: %2")
                                 .arg(counted_analyses(selection_.size()), qs(embargoed.error().what)));
           return;
@@ -527,6 +530,7 @@ void PublishDialog::load_dataset() {
         dataset_loading_ = false;
         if (!analyses) {
           dataset_for_.clear();
+          log_shown("publish", tr("Read release analyses"), analyses.error());
           earthbank_note_->setText(tr("The release's analyses could not be read: %1").arg(qs(analyses.error().what)));
           earthbank_note_->show();
           if (running_ != nullptr && running_->earthbank == Run::EarthBank::Waiting) {
@@ -571,6 +575,7 @@ void PublishDialog::check() {
         checked_ = true;
         if (!refused) {
           refusals_list_.clear();
+          log_shown("publish", tr("Check plan"), refused.error());
           check_error_ = tr("The plan could not be checked: %1").arg(qs(refused.error().what));
         } else {
           check_error_.clear();
@@ -667,6 +672,7 @@ void PublishDialog::run() {
         if (!current(id)) return;
         Run& r = *running_;
         if (!created) {
+          log_shown("publish", tr("Make release"), created.error());
           const std::string why = created.error().what;
           if (r.order.empty()) {
             set_row(0, tr("Release"), pb::StepState::Failed, qs(why));
@@ -769,6 +775,7 @@ void PublishDialog::settle(pb::StepState state, const std::string& message) {
   pb::StepResult& result = r.results[r.next];
   result.state = state;
   result.message = message;
+  if (state == pb::StepState::Failed) log_shown("publish", name_of(result.destination), qs(message));
   set_row(static_cast<int>(r.next), name_of(result.destination), state, qs(message));
   ++r.next;
 }

@@ -31,6 +31,7 @@
 #include "earthbank_package_dialog.hpp"
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/earthbank/xlsx.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -163,6 +164,7 @@ EarthbankPublishPanel::EarthbankPublishPanel(std::vector<processing::AnalysisPtr
   if (auto file = eb::load_profiles(setup_.profiles_file)) {
     profiles_ = std::move(*file);
   } else {
+    log_shown("earthbank", tr("Read EarthBank profiles"), file.error());
     say(tr("The EarthBank profiles could not be read. %1").arg(qs(file.error().what)));
   }
   for (const eb::Profile& p : profiles_.profiles) profile_->addItem(qs(p.name));
@@ -313,6 +315,7 @@ EarthbankPublishPanel::EarthbankPublishPanel(std::vector<processing::AnalysisPtr
   connect(worker_, &EarthbankWorker::outstanding_changed, this, [this] { update_controls(); });
   connect(worker_, &EarthbankWorker::failed, this, [this](const QString& profile, const QString& what) {
     if (!running_) return;
+    log_shown("earthbank", profile.isEmpty() ? tr("EarthBank") : profile, what);
     say(profile.isEmpty() ? what : tr("%1: %2").arg(profile, what));
     end_run(false);
   });

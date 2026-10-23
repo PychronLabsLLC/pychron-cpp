@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <QDockWidget>
 #include <QString>
@@ -29,6 +30,7 @@ class QToolButton;
 
 namespace pychron {
 class LogHub;
+class SignalBus;
 }
 
 namespace pychron::ui {
@@ -49,7 +51,15 @@ class LogDock : public QDockWidget {
 
   void append_log(const Log& log);
   // Parses a leading "LEVEL [logger] " prefix; otherwise an info record from "ui".
+  // An ERROR line is also written to the log, on `ui.<logger>` (a source already `ui` or `ui.*` kept).
   void append_line(const QString& line);
+  // An error shown on this dock is also in the log file (spec 2.4): written at
+  // error on `ui.<area>` as "<title>: <text>". When the process hub publishes
+  // on the bus this dock is fed from (set_fed_by), that is how the line
+  // arrives here, once; otherwise it is appended here as well.
+  void append_error(std::string_view area, const QString& title, const QString& text);
+  // The bus whose Log events reach this dock (the line's, through CoreBridge).
+  void set_fed_by(const SignalBus* bus) noexcept { fed_by_ = bus; }
 
   // Visible (filtered) rows. When not paused, buffered records are flushed
   // first so the answer reflects everything appended so far.
@@ -99,6 +109,9 @@ class LogDock : public QDockWidget {
 
  private:
   void enqueue(LogRecord record);
+  // An error line: written at error on `logger`, and shown here unless it
+  // comes back through the bus this dock is fed from.
+  void error_line(const QString& logger, const QString& message);
   // The flush itself; const so line_count()/text() can make their answer
   // current (only the mutable pending buffer and the owned model change).
   void flush_now() const;
@@ -122,6 +135,7 @@ class LogDock : public QDockWidget {
   mutable std::deque<LogRecord> pending_;
   bool paused_ = false;
   LevelCallback level_callback_;
+  const SignalBus* fed_by_ = nullptr;
 };
 
 // The callback main() gives the dock: sets the level on `hub` and, when

@@ -18,6 +18,7 @@
 #include <QHeaderView>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "pychron/processing/revisions.hpp"
@@ -183,6 +184,7 @@ bool ReferenceFitWindow::find_references() {
   q.same_extract_device = same_device_->isChecked();
   auto found = pp::find_references(bridge_.source(), unknowns, q);
   if (!found) {
+    log_shown("reference_fit", tr("Find references"), found.error());
     status_->setText(tr("Finding references failed: %1").arg(qs(found.error().what)));
     return false;
   }
@@ -211,6 +213,7 @@ void ReferenceFitWindow::on_result(const PipelineResult& r) {
   fill_table();
   if (r.outputs.empty() || !r.outputs[0]) {
     const QString what = r.outputs.empty() ? tr("nothing computed") : qs(to_string(r.outputs[0].error()));
+    log_shown("reference_fit", tr("Compute"), what);
     status_->setText(tr("Error: %1").arg(what));
     view_->set_scene(nullptr);
     fits_.reset();
@@ -326,6 +329,7 @@ bool ReferenceFitWindow::save() {
   }
   auto outcome = revisions->save_reference_fits(*fits_);
   if (!outcome) {
+    log_shown("reference_fit", tr("Save"), outcome.error());
     status_->setText(tr("Save failed: %1").arg(qs(outcome.error().what)));
     return false;
   }

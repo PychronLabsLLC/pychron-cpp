@@ -21,6 +21,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "spectrometer_bridge.hpp"
 
 namespace pychron::ui {
@@ -59,6 +60,7 @@ PeakCenterPanel::PeakCenterPanel(SpectrometerBridge& bridge, QWidget* parent) : 
       status_ = tr("Written to field table %1").arg(bridge_.active_table());
     } else {
       applied_ = false;  // nothing was written: Apply may be tried again
+      log_shown("peak_center", tr("Apply peak center"), r.error());
       status_ = QString::fromStdString(r.error().what);
     }
     show_result();
@@ -70,6 +72,7 @@ PeakCenterPanel::PeakCenterPanel(SpectrometerBridge& bridge, QWidget* parent) : 
   });
   connect(&bridge_, &SpectrometerBridge::peakCenterSetSaved, this, [this](const QString& name, const Result<void>& r) {
     if (!r) {
+      log_shown("peak_center", tr("Save peak center set %1").arg(name), r.error());
       status_ = QString::fromStdString(r.error().what);
       show_result();
       return;
@@ -292,6 +295,7 @@ void PeakCenterPanel::on_finished(const Result<jobs::PeakCenterResult>& result) 
     for (const auto& n : result->notes) notes_.append(QString::fromStdString(n));
   } else {
     result_.reset();
+    log_shown("peak_center", tr("Peak center"), result.error());
     status_ = QString::fromStdString(result.error().what);
   }
   show_result();
@@ -378,6 +382,7 @@ void PeakCenterPanel::set_file(const std::filesystem::path& file) {
     if (parsed) {
       sets_ = std::move(*parsed);
     } else {
+      log_shown("peak_center", tr("Read %1").arg(QString::fromStdString(file.string())), parsed.error());
       banner_error_ = QString::fromStdString(parsed.error().what);
     }
   }

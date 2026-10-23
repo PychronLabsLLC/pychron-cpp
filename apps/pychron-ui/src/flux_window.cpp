@@ -35,6 +35,7 @@
 #include <QVBoxLayout>
 
 #include "brand.hpp"
+#include "error_report.hpp"
 #include "flux_analysis_model.hpp"
 #include "flux_monitor_model.hpp"
 #include "flux_unknown_model.hpp"
@@ -388,6 +389,7 @@ bool FluxWindow::busy() const noexcept { return busy_ > 0 || fit_timer_->isActiv
 QString FluxWindow::status() const { return status_->text(); }
 
 void FluxWindow::set_status(const QString& text, bool error, const QStringList& warnings) {
+  if (error) log_shown("flux", windowTitle(), text);
   warnings_ = warnings;
   status_error_ = error;
   status_text_ = warnings.isEmpty()       ? text
@@ -399,6 +401,7 @@ void FluxWindow::set_status(const QString& text, bool error, const QStringList& 
 }
 
 void FluxWindow::say(const QString& text, bool error) {
+  if (error) log_shown("flux", windowTitle(), text);
   status_error_ = error;
   status_text_ = text;
   style::set_tone(status_, error ? style::Tone::Error : style::Tone::Normal);
@@ -1245,7 +1248,7 @@ void FluxWindow::export_asked() {
       this, tr("Export CSV"), QStringLiteral("flux_%1_%2.csv").arg(irradiation_, level_), tr("CSV files (*.csv)"));
   if (path.isEmpty()) return;
   if (auto written = export_csv(path); !written)
-    QMessageBox::warning(this, windowTitle(), QString::fromStdString(written.error().what));
+    show_error(this, "flux", windowTitle(), written.error());
 }
 
 void FluxWindow::closeEvent(QCloseEvent* event) {

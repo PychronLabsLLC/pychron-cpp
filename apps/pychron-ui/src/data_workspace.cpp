@@ -55,9 +55,13 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
       if (browser_) browser_->show_message(text);
       if (log_) log_(QStringLiteral("[ui] ") + text);
     };
+    const auto fail = [this](const QString& text) {
+      if (browser_) browser_->show_message(text);
+      if (log_) log_(QStringLiteral("ERROR [ui.data] ") + text);  // the dock writes it to the log file too
+    };
     if (r.outputs.size() < 2 || !r.outputs[0] || !r.outputs[1]) {
       const auto& bad = r.outputs.empty() ? Error{} : (!r.outputs[0] ? r.outputs[0].error() : r.outputs[1].error());
-      say(tr("Export failed: %1").arg(QString::fromStdString(bad.what)));
+      fail(tr("Export failed: %1").arg(QString::fromStdString(bad.what)));
       return;
     }
     const auto& by_aliquot = std::get<processing::DatasetPtr>(r.outputs[0]->at(0));
@@ -67,7 +71,7 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
     const processing::Dataset& dataset = steps ? *by_aliquot : *by_identifier;
     const auto report = processing::make_report(dataset, processing::ReportOptions{});
     if (auto saved = processing::save_report(report, std::filesystem::path(path.toStdString())); !saved) {
-      say(tr("Export failed: %1").arg(QString::fromStdString(saved.error().what)));
+      fail(tr("Export failed: %1").arg(QString::fromStdString(saved.error().what)));
       return;
     }
     say(tr("Wrote %1: %n analyses, %2 groups", nullptr, static_cast<int>(report.analyses.rows.size()))
@@ -139,7 +143,7 @@ QWidget* DataWorkspace::open_recall(const QString& uuid) {
   if (source_ == nullptr) return nullptr;
   auto* w = new RecallWindow(*source_, owner_);
   w->setAttribute(Qt::WA_DeleteOnClose);
-  if (!w->show_analysis(uuid) && log_) log_(QStringLiteral("ERROR [ui] recall failed: ") + uuid);
+  if (!w->show_analysis(uuid) && log_) log_(QStringLiteral("ERROR [ui.data] recall failed: ") + uuid);
   children_.append(w);
   w->show();
   return w;

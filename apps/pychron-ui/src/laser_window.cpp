@@ -24,6 +24,7 @@
 
 #include "camera_view.hpp"
 #include "pychron/laser/pattern.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 #include "tray_view.hpp"
 
@@ -598,6 +599,7 @@ void LaserWindow::on_finished(const QString& what, const Result<void>& result) {
     status_->setText(tr("%1: stopped").arg(name));
     style::set_tone(status_, style::Tone::Warning);
   } else {
+    log_shown("laser", name, result.error());
     status_->setText(tr("%1: %2").arg(name, QString::fromStdString(result.error().what)));
     style::set_tone(status_, style::Tone::Error);
   }

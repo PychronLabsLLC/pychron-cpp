@@ -22,6 +22,7 @@
 #include "canvas_view.hpp"
 #include "code_editor.hpp"
 #include "pychron/experiment/lab/scripts.hpp"
+#include "error_report.hpp"
 #include "script_highlighter.hpp"
 #include "shortcuts.hpp"
 #include "theme.hpp"
@@ -333,6 +334,7 @@ void RehearsalWindow::set_script(scripting::ScriptKind kind, QString name, QStri
 
 void RehearsalWindow::start() {
   if (!loaded_) return;
+  log_action(tr("start rehearsal %1").arg(name_));
   end_runner();
   log_->setRowCount(0);
   source_->setPlainText(text_);
@@ -351,6 +353,7 @@ void RehearsalWindow::start() {
   // diagnostics are listed as the editor's Problems are.
   auto check = host_.check(script, env);
   if (!check) {
+    log_shown("rehearsal", tr("Check script"), check.error());
     add_row({}, {}, {}, q(check.error().what), true);
     update_actions();
     return;
@@ -484,6 +487,7 @@ void RehearsalWindow::on_finished(unsigned run, const Result<scripting::ScriptRe
   if (result) {
     add_row({}, {}, {}, tr("finished"), false);
   } else if (result.error().kind != ErrorKind::Cancelled) {
+    log_shown("rehearsal", tr("Rehearse script"), result.error());
     add_row({}, {}, {}, q(result.error().what), true);
   }
   end_runner();  // the thread has returned from its last call

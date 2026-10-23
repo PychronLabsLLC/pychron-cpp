@@ -29,6 +29,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "holder_view.hpp"
 #include "level_sheet_pdf.hpp"
 #include "package_dialogs.hpp"
@@ -376,6 +377,7 @@ void PackagesWindow::build_docks() {
 QString PackagesWindow::message() const { return message_->text(); }
 
 void PackagesWindow::show_message(const QString& text, bool error) {
+  if (error) log_shown("packages", windowTitle(), text);
   message_->setText(text);
   style::set_tone(message_, error ? style::Tone::Error : style::Tone::Normal);
 }

@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include "pychron/entry/names.hpp"
+#include "error_report.hpp"
 #include "sample_import_dialog.hpp"
 #include "theme.hpp"
 
@@ -147,6 +148,7 @@ SamplesWindow::SamplesWindow(EntryBridge& bridge, QWidget* parent)
 QString SamplesWindow::message() const { return message_->text(); }
 
 void SamplesWindow::show_message(const QString& text, bool error) {
+  if (error) log_shown("samples", windowTitle(), text);
   message_->setText(text);
   style::set_tone(message_, error ? style::Tone::Error : style::Tone::Normal);
 }

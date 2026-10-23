@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "pychron/processing/derived.hpp"
+#include "error_report.hpp"
 #include "scene_view.hpp"
 #include "theme.hpp"
 
@@ -278,6 +279,7 @@ bool RecallWindow::show_analysis(const QString& uuid) {
   if (!a) {
     analysis_.reset();
     shown_.reset();
+    log_shown("recall", tr("Load %1").arg(uuid), a.error());
     title_->setText(tr("Cannot load %1: %2").arg(uuid, qs(a.error().what)));
     setWindowTitle(tr("Recall"));
     update_edit_state();
@@ -491,6 +493,7 @@ void RecallWindow::recompute() {
   for (const auto& [_, e] : edits_) list.push_back(e);
   auto result = pp::apply_fit_edits(*analysis_, raw_, list);
   if (!result) {
+    log_shown("recall", tr("Refit"), result.error());
     edit_status_->setText(tr("Cannot refit: %1").arg(qs(result.error().what)));
     update_edit_state();
     return;
@@ -537,6 +540,7 @@ bool RecallWindow::save_edits() {
   const std::string message = pp::describe_fit_edits(*analysis_, edited_);
   auto outcome = revisions->save_fits(analysis_->uuid, analysis_->heads, edited_, message);
   if (!outcome) {
+    log_shown("recall", tr("Save"), outcome.error());
     edit_status_->setText(tr("Save failed: %1").arg(qs(outcome.error().what)));
     return false;
   }
@@ -587,6 +591,7 @@ void RecallWindow::fill_history() {
   const auto kind = static_cast<pp::RevisionKind>(history_kind_->currentData().toInt());
   auto list = revisions->history(analysis_->uuid, kind);
   if (!list) {
+    log_shown("recall", tr("Read history"), list.error());
     history_note_->setText(tr("Cannot read the history: %1").arg(qs(list.error().what)));
     return;
   }
@@ -631,6 +636,7 @@ void RecallWindow::show_revisions() {
   if (rows.size() == 1) {
     auto t = table_of(rows[0]);
     if (!t) {
+      log_shown("recall", tr("Read revision"), t.error());
       history_note_->setText(tr("Cannot read the revision: %1").arg(qs(t.error().what)));
       return;
     }
@@ -734,6 +740,7 @@ bool RecallWindow::restore_selected(bool confirm) {
   auto outcome = source_.revisions()->restore_revision(analysis_->uuid, target.kind, analysis_->heads.at(kind), target.id,
                                                        message);
   if (!outcome) {
+    log_shown("recall", tr("Restore"), outcome.error());
     history_note_->setText(tr("Restore failed: %1").arg(qs(outcome.error().what)));
     return false;
   }

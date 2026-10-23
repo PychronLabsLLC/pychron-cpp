@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 
 #include "earthbank_worker.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -92,6 +93,7 @@ EarthbankPackageDialog::EarthbankPackageDialog(EarthbankWorker& worker, eb::Prof
             if (of != mine) return;
             // A list that failed says nothing of a Create that is still out.
             if (creating) creating_ = false;
+            log_shown("earthbank", creating ? tr("Create package") : tr("List packages"), what);
             say(what, true);
             update_buttons();
           });

@@ -20,6 +20,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "menu_hub.hpp"
 #include "pychron/experiment/conditionals/validate.hpp"
 #include "pychron/experiment/model/identifiers.hpp"
@@ -166,7 +167,7 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   MenuHub::instance().set_file_action(this, MenuHub::FileRole::Save, save_action, tr("Conditionals"));
   connect(save_action, &QAction::triggered, this, [this] {
     QString error;
-    if (!save(&error) && !error.isEmpty()) QMessageBox::warning(this, tr("Save"), error);
+    if (!save(&error) && !error.isEmpty()) show_warning(this, "conditionals", tr("Save"), error);
   });
 
   ask_unsaved_ = [this](const QString& name) {
@@ -198,7 +199,7 @@ ConditionalsEditorWindow::ConditionalsEditorWindow(const experiment::lab::Lab& l
   connect(delete_button, &QToolButton::clicked, this, [this] {
     QString error;
     if (!current_.isEmpty() && !delete_file(current_, &error) && !error.isEmpty())
-      QMessageBox::warning(this, tr("Delete"), error);
+      show_warning(this, "conditionals", tr("Delete"), error);
   });
   connect(remove_button, &QToolButton::clicked, this, [this] {
     const int row = current_row();
@@ -330,6 +331,7 @@ void ConditionalsEditorWindow::load(const QString& name) {
     status_->setText(QString::fromStdString(lab_.condition_files->path(name.toStdString()).string()));
     show_diagnostics(true);
   } else {
+    log_shown("conditionals", tr("Open %1").arg(name), load_error_);
     status_->setText(tr("%1 cannot be edited: %2").arg(name, load_error_));
     auto* item = new QListWidgetItem(tr("error: %1").arg(load_error_), diagnostics_);
     item->setForeground(theme().error_text);
@@ -374,7 +376,7 @@ void ConditionalsEditorWindow::new_dialog() {
   const QString name =
       QInputDialog::getText(this, tr("New conditionals file"), tr("Name"), QLineEdit::Normal, QString(), &ok);
   QString error;
-  if (ok && !new_file(name.trimmed(), &error) && !error.isEmpty()) QMessageBox::warning(this, tr("New file"), error);
+  if (ok && !new_file(name.trimmed(), &error) && !error.isEmpty()) show_warning(this, "conditionals", tr("New file"), error);
 }
 
 bool ConditionalsEditorWindow::open_picked() {

@@ -17,6 +17,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "pychron/processing/time_series.hpp"
@@ -196,6 +197,7 @@ void ReferenceSeriesDock::on_result(ReferenceKind kind, const PipelineResult& r)
   if (r.outputs.empty() || !r.outputs[0]) {
     // The last figure stays; the header says why there is no newer one.
     t.error = r.outputs.empty() ? tr("nothing computed") : qs(r.outputs[0].error().what);
+    log_shown("reference_fit", tr("Compute"), *t.error);
   } else if (const auto* scene = std::get_if<pp::ScenePtr>(&r.outputs[0]->at(0)); scene && *scene) {
     // The channel's runner gives back the scene it drew before when nothing
     // it reads has changed: then nothing is drawn again.

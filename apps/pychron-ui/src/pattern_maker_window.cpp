@@ -19,6 +19,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "plot_style.hpp"
 #include "theme.hpp"
 
@@ -377,6 +378,7 @@ void PatternMakerWindow::save() {
   const bool replaced = library_.find(p.name) != nullptr;
   const auto file = laser::save_pattern(dir_, p);
   if (!file) {
+    log_shown("laser", tr("Save pattern"), file.error());
     problem_->setText(QString::fromStdString(file.error().what));
     return;
   }

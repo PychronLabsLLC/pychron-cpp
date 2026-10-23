@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 
 #include "earthbank_package_dialog.hpp"
+#include "error_report.hpp"
 #include "preferences_dialog.hpp"
 #include "pychron/core/error.hpp"
 #include "theme.hpp"
@@ -315,6 +316,7 @@ QString EarthbankPreferencesPage::apply() {
 }
 
 void EarthbankPreferencesPage::say(const QString& what, bool wrong) {
+  if (wrong) log_shown("earthbank", tr("EarthBank preferences"), what);
   status_->setText(what);
   style::set_tone(status_, wrong ? style::Tone::Error : style::Tone::Normal);
 }

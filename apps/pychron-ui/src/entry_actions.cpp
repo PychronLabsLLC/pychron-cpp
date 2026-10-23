@@ -4,6 +4,7 @@
 #include <QMessageBox>
 
 #include "entry_bridge.hpp"
+#include "error_report.hpp"
 #include "menu_hub.hpp"
 #include "package_dialogs.hpp"
 #include "packages_window.hpp"
@@ -72,7 +73,7 @@ Result<void> EntryActions::open_bridge() {
 bool EntryActions::ensure_bridge() {
   const auto opened = open_bridge();
   if (!opened) {
-    QMessageBox::critical(owner_, tr("Entry"),
+    show_error(owner_, "entry", tr("Entry"),
                           tr("The store could not be opened for entry:\n%1").arg(QString::fromStdString(to_string(opened.error()))));
   }
   return opened.has_value();

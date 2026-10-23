@@ -1,4 +1,5 @@
 #include "spectrometer_window.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 
 #include <array>
@@ -623,6 +624,7 @@ void SpectrometerWindow::on_command_finished(const QString& what, const Result<v
     move_pending_ = false;
     apply_->setEnabled(!bridge_.peak_center_running());
   }
+  if (!result) log_shown("spectrometer", what, result.error());
   command_error_ = result ? QString() : QStringLiteral("%1: %2").arg(what, QString::fromStdString(result.error().what));
   update_banner();
 }

@@ -5,6 +5,8 @@
 
 #include <QMetaObject>
 
+#include "error_report.hpp"
+
 namespace pychron::ui {
 
 namespace exec = experiment::executor;
@@ -91,12 +93,30 @@ Result<std::uint64_t> ExperimentBridge::edit(std::uint64_t base, const experimen
   return session_.edit(base, queue);
 }
 
-void ExperimentBridge::stop() { session_.stop(); }
-void ExperimentBridge::cancel() { session_.cancel(); }
-void ExperimentBridge::abort() { session_.abort(); }
-void ExperimentBridge::truncate(bool quick) { session_.truncate(quick); }
-void ExperimentBridge::resume() { session_.resume(); }
-Result<void> ExperimentBridge::skip() { return session_.skip(); }
+void ExperimentBridge::stop() {
+  log_action("stop queue");
+  session_.stop();
+}
+void ExperimentBridge::cancel() {
+  log_action("cancel queue");
+  session_.cancel();
+}
+void ExperimentBridge::abort() {
+  log_action("abort run");
+  session_.abort();
+}
+void ExperimentBridge::truncate(bool quick) {
+  log_action(quick ? "truncate run (quick)" : "truncate run");
+  session_.truncate(quick);
+}
+void ExperimentBridge::resume() {
+  log_action("resume queue");
+  session_.resume();
+}
+Result<void> ExperimentBridge::skip() {
+  log_action("skip run");
+  return session_.skip();
+}
 bool ExperimentBridge::running() const { return session_.running(); }
 
 void ExperimentBridge::flush_series() {

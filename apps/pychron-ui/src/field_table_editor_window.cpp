@@ -28,6 +28,7 @@
 #include <QUndoStack>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "field_table_dialogs.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
@@ -215,8 +216,9 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
     return b == QMessageBox::Save ? Unsaved::Save : b == QMessageBox::Discard ? Unsaved::Discard : Unsaved::Cancel;
   };
   ask_conflict_ = [this](const QString& now) {
-    QMessageBox box(QMessageBox::Warning, tr("Field table"), tr("table changed since you opened it (now %1)").arg(now),
-                    QMessageBox::NoButton, this);
+    const QString text = tr("table changed since you opened it (now %1)").arg(now);
+    log_shown("field_table", tr("Field table"), text);
+    QMessageBox box(QMessageBox::Warning, tr("Field table"), text, QMessageBox::NoButton, this);
     auto* reload = box.addButton(tr("Reload"), QMessageBox::DestructiveRole);
     auto* anyway = box.addButton(tr("Save Anyway"), QMessageBox::AcceptRole);
     box.addButton(QMessageBox::Cancel);
@@ -228,7 +230,7 @@ FieldTableEditorWindow::FieldTableEditorWindow(SpectrometerBridge* bridge, fs::p
   confirm_ = [this](const QString& question) {
     return QMessageBox::question(this, tr("Field table"), question) == QMessageBox::Yes;
   };
-  show_error_ = [this](const QString& error) { QMessageBox::warning(this, tr("Field table"), error); };
+  show_error_ = [this](const QString& error) { show_warning(this, "field_table", tr("Field table"), error); };
   pick_csv_ = [this]() -> std::optional<fs::path> {
     const QString path =
         QFileDialog::getOpenFileName(this, tr("Import legacy mftable"), QString(), tr("mftable (*.csv);;All files (*)"));
@@ -393,6 +395,7 @@ void FieldTableEditorWindow::load_current(const QString& name) {
   if (!current) {
     load_version(name, QString());
     load_error_ = q(current.error().what);
+    log_shown("field_table", tr("Open %1").arg(name), current.error());
     load_error_label_->setText(load_error_);
     load_error_label_->show();
     update_actions();
@@ -434,6 +437,7 @@ void FieldTableEditorWindow::load_version(const QString& name, const QString& ve
     model_.set_table(sp::FieldTable{});
     model_.set_read_only(true);
     load_error_ = q(parsed.error().what);
+    log_shown("field_table", tr("Read version"), parsed.error());
     load_error_label_->setText(tr("version does not parse: %1").arg(load_error_));
     load_error_label_->show();
   }

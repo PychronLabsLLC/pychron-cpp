@@ -19,6 +19,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "pychron/processing/isotope_classifier.hpp"
@@ -194,6 +195,7 @@ void IsotopeEvolutionWindow::on_result(const PipelineResult& r) {
   if (r.outputs.size() >= 2 && r.outputs[1]) dataset_ = std::get<pp::DatasetPtr>(r.outputs[1]->at(0));
   if (r.outputs.empty() || !r.outputs[0]) {
     const QString what = r.outputs.empty() ? tr("nothing computed") : qs(to_string(r.outputs[0].error()));
+    log_shown("evolution", tr("Compute"), what);
     status_->setText(tr("Error: %1").arg(what));
     view_->set_scene(nullptr);
     fits_.reset();
@@ -279,6 +281,7 @@ bool IsotopeEvolutionWindow::preview(const QString& uuid) {
   }
   auto raw = bridge_.source().load_raw(uuid.toStdString());
   if (!raw) {
+    log_shown("evolution", tr("Preview"), raw.error());
     status_->setText(tr("Preview: %1").arg(qs(raw.error().what)));
     preview_->set_scene(nullptr);
     return false;
@@ -352,6 +355,7 @@ bool IsotopeEvolutionWindow::save() {
                           chosen.analyses.end());
   auto outcome = revisions->save_isotope_fits(chosen);
   if (!outcome) {
+    log_shown("evolution", tr("Save"), outcome.error());
     status_->setText(tr("Save failed: %1").arg(qs(outcome.error().what)));
     return false;
   }
@@ -397,11 +401,13 @@ bool IsotopeEvolutionWindow::train(const QString& key, int klass) {
   }
   auto raw = bridge_.source().load_raw(previewed_.toStdString());
   if (!raw) {
+    log_shown("evolution", tr("Train"), raw.error());
     status_->setText(tr("Train: %1").arg(qs(raw.error().what)));
     return false;
   }
   auto classifier = pp::IsotopeClassifier::load(classifier_file_);
   if (!classifier) {
+    log_shown("evolution", tr("Train"), classifier.error());
     status_->setText(tr("Train: %1").arg(qs(classifier.error().what)));
     return false;
   }
@@ -410,6 +416,7 @@ bool IsotopeEvolutionWindow::train(const QString& key, int klass) {
   sample.runid = r->runid;
   classifier->add(std::move(sample));
   if (auto ok = classifier->save(classifier_file_); !ok) {
+    log_shown("evolution", tr("Train"), ok.error());
     status_->setText(tr("Train: %1").arg(qs(ok.error().what)));
     return false;
   }

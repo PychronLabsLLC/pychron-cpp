@@ -1,4 +1,5 @@
 #include "run_factory_panel.hpp"
+#include "error_report.hpp"
 #include "shortcuts.hpp"
 #include "theme.hpp"
 
@@ -611,6 +612,7 @@ void RunFactoryPanel::load_packages() {
     if (serial != packages_serial_) return;
     if (!answer) {
       const QString why = QString::fromStdString(to_string(answer.error()));
+      log_shown("experiment", tr("List packages"), answer.error());
       package_->setToolTip(why);
       // Before the first list the Package row is hidden: the reason goes on
       // the field that is there, and the next showing of the panel asks again.

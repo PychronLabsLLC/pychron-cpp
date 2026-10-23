@@ -78,6 +78,7 @@
 #include "data_main_window.hpp"
 #include "data_source_page.hpp"
 #include "database_choice.hpp"
+#include "error_report.hpp"
 #include "experiment_bridge.hpp"
 #include "installations_dialog.hpp"
 #include "laser_bridge.hpp"
@@ -142,7 +143,7 @@ namespace setup = pychron::setup;
 
 int fatal(const std::string& what) {
   std::fprintf(stderr, "pychron-ui: %s\n", what.c_str());
-  QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QString::fromStdString(what));
+  pychron::ui::show_error(nullptr, "startup", QStringLiteral("pychron-ui"), QString::fromStdString(what));
   return 1;
 }
 
@@ -219,7 +220,7 @@ std::function<void()> installations_handler(QWidget* window, const setup::Resour
     if (dialog.exec() != QDialog::Accepted || !dialog.to_open() || *dialog.to_open() == current) return;
     if (!window->close()) return;  // e.g. unsaved queue edits, and the user chose Cancel
     if (!pychron::ui::start_install(*dialog.to_open())) {
-      QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QStringLiteral("could not start pychron-ui"));
+      pychron::ui::show_error(nullptr, "startup", QStringLiteral("pychron-ui"), QStringLiteral("could not start pychron-ui"));
     }
   };
 }
@@ -257,7 +258,7 @@ std::function<void()> reopen_on(QWidget* window, std::string name) {
     QTimer::singleShot(0, window, [window, name] {
       if (!window->close()) return;
       if (!pychron::ui::start_install(name)) {
-        QMessageBox::critical(nullptr, QStringLiteral("pychron-ui"), QStringLiteral("could not start pychron-ui"));
+        pychron::ui::show_error(nullptr, "startup", QStringLiteral("pychron-ui"), QStringLiteral("could not start pychron-ui"));
       }
     });
   };
@@ -750,10 +751,10 @@ int main(int argc, char** argv) {
           QStringLiteral("The database could not be opened: ") + QString::fromStdString(*database_error);
       window.set_data_unavailable(why + QStringLiteral("\nShowing the records folder %1.")
                                             .arg(QString::fromStdString((data_dir / "records").string())));
-      window.log_dock()->append_line(QStringLiteral("ERROR [ui] ") + why);
+      window.log_dock()->append_error("startup", QStringLiteral("database"), why);
     } else if (no_database) {
       // It can be read, and not written to: said here, and again to whoever starts a queue.
-      window.log_dock()->append_line(QStringLiteral("ERROR [ui] ") + QString::fromStdString(no_database->why()));
+      window.log_dock()->append_error("startup", QStringLiteral("database"), QString::fromStdString(no_database->why()));
     }
     if (!run_saving_note.empty()) {
       window.log_dock()->append_line(QStringLiteral("INFO [ui] ") + QString::fromStdString(run_saving_note));
@@ -765,8 +766,8 @@ int main(int argc, char** argv) {
 #endif
     window.show();
     if (spectrometer_error) {
-      window.log_dock()->append_line(QStringLiteral("ERROR [ui] spectrometer not loaded: ") +
-                                     QString::fromStdString(*spectrometer_error));
+      window.log_dock()->append_error("startup", QStringLiteral("spectrometer not loaded"),
+                                      QString::fromStdString(*spectrometer_error));
     }
     // After the window, so the checker goes first. The line's wall clock, so
     // a simulated session's last check is in simulated time.
@@ -815,8 +816,8 @@ int main(int argc, char** argv) {
     splash.status(QStringLiteral("Starting the extraction line"));
     const auto started = (*line)->start();
     if (!started) {
-      window.log_dock()->append_line(QStringLiteral("ERROR [ui] start failed: ") +
-                                     QString::fromStdString(pychron::to_string(started.error())));
+      window.log_dock()->append_error("startup", QStringLiteral("start failed"),
+                                      QString::fromStdString(pychron::to_string(started.error())));
     }
     // The spectrometer polls on the line's scheduler, which only runs once the
     // line has started. Without it a scan would report success and never

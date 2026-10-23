@@ -35,6 +35,7 @@
 #include <QVBoxLayout>
 
 #include "data_icons.hpp"
+#include "error_report.hpp"
 #include "shortcuts.hpp"
 #include "theme.hpp"
 
@@ -524,7 +525,10 @@ bool DataBrowserWindow::select_again(const Place& was) {
 
 void DataBrowserWindow::refresh() {
   const Place was = place();
-  if (auto ok = source_.refresh(); !ok) status_->setText(tr("Rescan failed: %1").arg(qs(ok.error().what)));
+  if (auto ok = source_.refresh(); !ok) {
+    log_shown("data", tr("Rescan"), ok.error());
+    status_->setText(tr("Rescan failed: %1").arg(qs(ok.error().what)));
+  }
   reload();
   if (select_again(was)) table_->verticalScrollBar()->setValue(was.scroll);
   refetch_selected();  // last: its status is the newer news
@@ -560,6 +564,7 @@ void DataBrowserWindow::reload_changed() {
   q.limit = std::max(page_size_, was.analyses);
   auto page = source_.browse(q);
   if (!page) {
+    log_shown("data", tr("Browse"), page.error());
     status_->setText(tr("Error: %1").arg(qs(page.error().what)));
     return;  // what was shown stays
   }
@@ -605,6 +610,7 @@ void DataBrowserWindow::refetch_selected() {
   q.limit = static_cast<int>(q.uuids.size());
   auto page = source_.browse(q);
   if (!page) {
+    log_shown("data", tr("Browse"), page.error());
     status_->setText(tr("Error: %1").arg(qs(page.error().what)));
     return;  // what was held stays
   }
@@ -673,6 +679,7 @@ void DataBrowserWindow::reload() {
   auto page = source_.browse(query());
   if (!page) {
     model_->set_rows({});
+    log_shown("data", tr("Browse"), page.error());
     status_->setText(tr("Error: %1").arg(qs(page.error().what)));
     more_->setEnabled(false);
     return;
@@ -692,6 +699,7 @@ void DataBrowserWindow::load_more() {
   q.after = next_;
   auto page = source_.browse(q);
   if (!page) {
+    log_shown("data", tr("Browse"), page.error());
     status_->setText(tr("Error: %1").arg(qs(page.error().what)));
     return;
   }
@@ -763,7 +771,10 @@ void DataBrowserWindow::add_all() {
     q.after = page->next;
   }
   add_to_selected(std::move(rows));
-  if (failure) status_->setText(tr("Error: %1").arg(*failure));
+  if (failure) {
+    log_shown("data", tr("Add all"), *failure);
+    status_->setText(tr("Error: %1").arg(*failure));
+  }
 }
 
 void DataBrowserWindow::remove_highlighted() {

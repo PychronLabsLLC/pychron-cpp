@@ -21,6 +21,7 @@
 #include <QVBoxLayout>
 #include <utility>
 
+#include "error_report.hpp"
 #include "holder_view.hpp"
 #include "theme.hpp"
 
@@ -39,6 +40,7 @@ QDialogButtonBox* ok_cancel(QDialog* dialog, const QString& ok_text = {}) {
 }
 
 void say(QLabel* label, const QString& text, bool error) {
+  if (error) log_shown("packages", label->window()->windowTitle(), text);
   label->setText(text);
   style::set_tone(label, error ? style::Tone::Error : style::Tone::Normal);
 }

@@ -20,6 +20,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "pychron/core/user_file.hpp"
 
 namespace pychron::ui {
@@ -55,7 +56,7 @@ RValuesPanel::RValuesPanel(QWidget* parent) : QWidget(parent) {
     const QString path =
         QFileDialog::getSaveFileName(this, tr("Export R-values"), QStringLiteral("r_values.csv"), tr("CSV (*.csv)"));
     if (!path.isEmpty() && !export_csv(path))
-      QMessageBox::warning(this, tr("Export"), tr("Could not write %1").arg(path));
+      show_warning(this, "r_values", tr("Export"), tr("Could not write %1").arg(path));
   });
   buttons->addWidget(copy_button);
   buttons->addWidget(export_button);

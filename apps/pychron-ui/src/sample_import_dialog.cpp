@@ -18,6 +18,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {
@@ -112,6 +113,7 @@ SampleImportDialog::SampleImportDialog(EntryBridge& bridge, QWidget* parent) : Q
 QString SampleImportDialog::message() const { return message_->text(); }
 
 void SampleImportDialog::show_message(const QString& text, bool error) {
+  if (error) log_shown("samples", windowTitle(), text);
   message_->setText(text);
   style::set_tone(message_, error ? style::Tone::Error : style::Tone::Normal);
 }

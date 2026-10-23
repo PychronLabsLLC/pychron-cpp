@@ -1,5 +1,6 @@
 #include "script_editor_window.hpp"
 
+#include "error_report.hpp"
 #include "menu_hub.hpp"
 #include "shortcuts.hpp"
 #include "theme.hpp"
@@ -144,7 +145,7 @@ ScriptEditorWindow::ScriptEditorWindow(const experiment::lab::Lab& lab, std::uni
   QList<QAction*> of_file;
   save_ = add(of_file, tr("&Save"), {}, [this] {
     QString error;
-    if (current() != nullptr && !save(&error)) QMessageBox::warning(this, tr("Save"), error);
+    if (current() != nullptr && !save(&error)) show_warning(this, "script", tr("Save"), error);
   });
   add(file, tr("&Close Tab"), key(Shortcut::CloseScriptTab), [this] { close_current(); });
   add(code, tr("&Check Now"), key(Shortcut::CheckScript), [this] { check_now(); });
@@ -220,7 +221,7 @@ void ScriptEditorWindow::new_dialog() {
   if (!ok || name.trimmed().isEmpty()) return;
   QString error;
   if (!new_script(kKinds[std::max<qsizetype>(0, kinds.indexOf(kind))], name.trimmed(), &error))
-    QMessageBox::warning(this, tr("New script"), error);
+    show_warning(this, "script", tr("New script"), error);
 }
 
 bool ScriptEditorWindow::open_picked() {
@@ -385,7 +386,7 @@ bool ScriptEditorWindow::resolve_unsaved(Document& doc) {
         if (docs_[i].get() == &doc) tabs_->setCurrentIndex(static_cast<int>(i));
       QString error;
       if (save(&error)) return true;
-      QMessageBox::warning(this, tr("Save"), error);
+      show_warning(this, "script", tr("Save"), error);
       return false;
     }
     case Unsaved::Discard: return true;
@@ -408,6 +409,7 @@ bool ScriptEditorWindow::close_document(int index) {
 bool ScriptEditorWindow::rehearse_current() {
   const Document* d = current();
   if (d == nullptr || d->file.kind == ScriptKind::MeasurementHook) return false;
+  log_action(QStringLiteral("rehearse script %1").arg(tree_name(d->file)));
   emit rehearseRequested(d->file.kind, q(d->file.name), d->editor->toPlainText());
   return true;
 }

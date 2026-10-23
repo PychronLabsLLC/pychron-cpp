@@ -6,6 +6,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
+
 namespace pychron::ui {
 
 namespace pp = pychron::processing;
@@ -79,6 +81,7 @@ void PresetBar::reload(const QString& select_name) {
 bool PresetBar::select(const QString& name) {
   auto loaded_options = store_.load(schema_, name.toStdString());
   if (!loaded_options) {
+    log_shown("presets", tr("Load preset %1").arg(name), loaded_options.error());
     emit message(tr("Preset: %1").arg(qs(loaded_options.error().what)), {});
     if (!pinned_.isEmpty()) combo_->setCurrentIndex(0);  // nothing was loaded over it
     return false;
@@ -96,6 +99,7 @@ bool PresetBar::save(bool as) {
   if (as || name.isEmpty() || pinned_selected()) name = ask_name ? ask_name() : QString();
   if (name.isEmpty() || !current) return false;
   if (auto ok = store_.save(name.toStdString(), current()); !ok) {
+    log_shown("presets", tr("Save preset %1").arg(name), ok.error());
     emit message(tr("Save failed: %1").arg(qs(ok.error().what)), {});
     return false;
   }
@@ -111,6 +115,7 @@ bool PresetBar::remove() {
     return false;
   }
   if (auto ok = store_.remove(schema_, name.toStdString()); !ok) {
+    log_shown("presets", tr("Remove preset %1").arg(name), ok.error());
     emit message(qs(ok.error().what), {});
     return false;
   }

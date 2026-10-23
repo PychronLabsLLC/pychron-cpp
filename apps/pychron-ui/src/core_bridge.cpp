@@ -8,6 +8,8 @@
 #include <QPointer>
 #include <QSemaphore>
 
+#include "error_report.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -95,6 +97,14 @@ QDateTime CoreBridge::wall_now() const {
 
 void CoreBridge::actuate(const QString& qname, systems::SwitchOp op) {
   std::string name = qname.toStdString();
+  {
+    const auto known = state_.switches.find(name);
+    const std::string_view kind = known != state_.switches.end() ? systems::to_string(known->second.kind) : "switch";
+    const std::string_view verb = systems::to_string(op);
+    log_action(QStringLiteral("%1 %2 %3")
+                   .arg(QString::fromUtf8(verb.data(), static_cast<qsizetype>(verb.size())),
+                        QString::fromUtf8(kind.data(), static_cast<qsizetype>(kind.size())), qname));
+  }
   if (pending(name)) {
     emit actuationFinished(qname, fail(ErrorKind::Cancelled, "actuation already pending", name));
     return;
@@ -123,6 +133,7 @@ void CoreBridge::actuate(const QString& qname, systems::SwitchOp op) {
 }
 
 Result<void> CoreBridge::set_locked(const QString& name, bool locked) {
+  log_action((locked ? QStringLiteral("lock %1") : QStringLiteral("unlock %1")).arg(name));
   return line_.set_locked(name.toStdString(), locked);
 }
 
@@ -136,7 +147,10 @@ int CoreBridge::cryo_outputs() const {
   return cryostat ? cryostat->outputs() : 0;
 }
 
-void CoreBridge::set_cryo_setpoint(int output, double kelvin) { cryo_command(output, kelvin); }
+void CoreBridge::set_cryo_setpoint(int output, double kelvin) {
+  log_action(QStringLiteral("set cryo setpoint %1 %2 K").arg(output).arg(kelvin));
+  cryo_command(output, kelvin);
+}
 
 void CoreBridge::read_cryo_setpoint(int output) { cryo_command(output, std::nullopt); }
 
@@ -162,15 +176,18 @@ void CoreBridge::cryo_command(int output, std::optional<double> kelvin) {
 }
 
 void CoreBridge::set_heater_enabled(const QString& name, bool on) {
+  log_action((on ? QStringLiteral("enable heater %1") : QStringLiteral("disable heater %1")).arg(name));
   heater_command(name, [n = name.toStdString(), on](systems::ExtractionLine& l) { return l.set_heater_enabled(n, on); });
 }
 
 void CoreBridge::set_heater_setpoint(const QString& name, double value) {
+  log_action(QStringLiteral("set heater %1 setpoint %2").arg(name).arg(value));
   heater_command(name,
                  [n = name.toStdString(), value](systems::ExtractionLine& l) { return l.set_heater_setpoint(n, value); });
 }
 
 void CoreBridge::set_heater_pid(const QString& name, bool on) {
+  log_action((on ? QStringLiteral("heater %1 pid on") : QStringLiteral("heater %1 pid off")).arg(name));
   heater_command(name, [n = name.toStdString(), on](systems::ExtractionLine& l) { return l.set_heater_pid(n, on); });
 }
 

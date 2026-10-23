@@ -74,6 +74,8 @@ class CoreBridge : public QObject {
   // main thread at any time.
   QDateTime wall_now() const;
   TimePoint now() const { return line_.clock().now(); }
+  // The line's bus, whose Log events this bridge relays (logLine).
+  const SignalBus* bus() const noexcept { return &line_.bus(); }
 
   // Non-blocking. A second request for a valve already pending is rejected
   // at once with a Cancelled result.

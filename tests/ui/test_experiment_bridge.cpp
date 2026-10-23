@@ -1,6 +1,7 @@
 // ExperimentBridge on the sim lab: the example queue runs end to end and every
 // event reaches the GUI thread, in order.
 
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <string>
@@ -12,6 +13,7 @@
 
 #include "experiment_bridge.hpp"
 #include "experiment_fixture.hpp"
+#include "log_capture.hpp"
 
 using pychron::ui::ExperimentBridge;
 namespace exec = pychron::experiment::executor;
@@ -124,6 +126,22 @@ class TestExperimentBridge : public QObject {
     QVERIFY(!r);
     QVERIFY(QString::fromStdString(r.error().what).contains(QStringLiteral("runs[0]")));
     QVERIFY(!bridge.running());
+  }
+
+  // ExperimentBridgeLog: the operator's commands are on ui.action at info.
+  void stopIsLoggedAsAction() {
+    const pychron::testing::LogCapture capture;
+    QVERIFY(capture.ok());
+    pychron::ui::test::SimLab sim;
+    ExperimentBridge bridge(*sim.session, sim.line->bus());
+    bridge.stop();
+    bridge.truncate(true);
+    const auto lines = capture.lines();
+    std::string all;
+    for (const auto& l : lines) all.append(l).push_back('\n');
+    QVERIFY2(std::ranges::find(lines, std::string("[info] ui.action: stop queue")) != lines.end(), all.c_str());
+    QVERIFY2(std::ranges::find(lines, std::string("[info] ui.action: truncate run (quick)")) != lines.end(),
+             all.c_str());
   }
 };
 

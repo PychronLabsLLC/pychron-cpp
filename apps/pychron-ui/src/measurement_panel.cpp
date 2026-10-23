@@ -1,4 +1,5 @@
 #include "measurement_panel.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -296,6 +297,7 @@ void MeasurementPanel::update_marks() {
     auto loaded = lab_.plans->load(shown_.plan, shown_.overrides, plan::LoadOptions{shown_.advanced});
     status_ok_ = loaded.has_value();
     if (!loaded) {
+      log_shown("experiment", tr("Measurement plan"), loaded.error());
       status_->setText(q(loaded.error().what));
     } else {
       const auto d = lab_.plans->plan_duration(shown_.plan, shown_.overrides, shown_.advanced);

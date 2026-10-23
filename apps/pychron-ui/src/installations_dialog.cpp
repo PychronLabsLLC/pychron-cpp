@@ -10,6 +10,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -76,6 +78,7 @@ void InstallationsDialog::reload() {
   list_->clear();
   auto site = setup::load_site(site_path_);
   if (!site) {
+    log_shown("installations", tr("Installations"), site.error());
     message_->setText(qs(site.error().what));
     update_buttons();
     return;
@@ -110,9 +113,15 @@ void InstallationsDialog::update_buttons() {
 
 void InstallationsDialog::make_default() {
   auto site = setup::load_site(site_path_);
-  if (!site) return message_->setText(qs(site.error().what));
+  if (!site) {
+    log_shown("installations", tr("Installations"), site.error());
+    return message_->setText(qs(site.error().what));
+  }
   site->default_install = selected();
-  if (auto saved = setup::save_site(*site, site_path_); !saved) return message_->setText(qs(saved.error().what));
+  if (auto saved = setup::save_site(*site, site_path_); !saved) {
+    log_shown("installations", tr("Save installations"), saved.error());
+    return message_->setText(qs(saved.error().what));
+  }
   message_->setText(tr("Pychron opens %1 when started without --install.").arg(qs(selected())));
   reload();
 }
@@ -120,12 +129,18 @@ void InstallationsDialog::make_default() {
 void InstallationsDialog::remove_selected() {
   const std::string name = selected();
   auto site = setup::load_site(site_path_);
-  if (!site) return message_->setText(qs(site.error().what));
+  if (!site) {
+    log_shown("installations", tr("Installations"), site.error());
+    return message_->setText(qs(site.error().what));
+  }
   const auto* entry = site->find(name);
   if (entry == nullptr) return;
   const QString root = qs(entry->root.string());
   site->remove(name);
-  if (auto saved = setup::save_site(*site, site_path_); !saved) return message_->setText(qs(saved.error().what));
+  if (auto saved = setup::save_site(*site, site_path_); !saved) {
+    log_shown("installations", tr("Save installations"), saved.error());
+    return message_->setText(qs(saved.error().what));
+  }
   message_->setText(tr("Removed %1 from the list. Its folder %2 is still there.").arg(qs(name), root));
   reload();
 }

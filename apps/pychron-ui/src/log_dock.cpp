@@ -26,7 +26,9 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/process_log.hpp"
 
 namespace pychron::ui {
 
@@ -216,10 +218,33 @@ void LogDock::append_line(const QString& line) {
   const auto now = std::chrono::steady_clock::now();
   const auto m = prefix.match(line);
   if (m.hasMatch()) {
-    enqueue(LogRecord{now, parse_level(m.captured(1)), m.captured(2), line.mid(m.capturedLength(0)), false});
+    const LogLevel level = parse_level(m.captured(1));
+    if (level == LogLevel::Error) {
+      // An error shown here is also in the log file, on ui.<source> (spec 2.4).
+      QString source = m.captured(2);
+      source.replace(QLatin1Char(' '), QLatin1Char('.'));
+      const bool ui = source == QStringLiteral("ui") || source.startsWith(QStringLiteral("ui."));
+      return error_line(ui ? source : QStringLiteral("ui.") + source, line.mid(m.capturedLength(0)));
+    }
+    enqueue(LogRecord{now, level, m.captured(2), line.mid(m.capturedLength(0)), false});
   } else {
     enqueue(LogRecord{now, LogLevel::Info, QStringLiteral("ui"), line, false});
   }
+}
+
+void LogDock::append_error(std::string_view area, const QString& title, const QString& text) {
+  error_line(QStringLiteral("ui.") + QString::fromUtf8(area.data(), static_cast<qsizetype>(area.size())),
+             title + QStringLiteral(": ") + text);
+}
+
+void LogDock::error_line(const QString& logger, const QString& message) {
+  const Logger log = process_logger(logger.toStdString());
+  if (log.enabled(LogLevel::Error)) log.error(message.toStdString());
+  // With the process hub publishing on the bus this dock is fed from, the
+  // record comes back through it: shown once.
+  const auto hub = process_log_hub();
+  if (hub && fed_by_ != nullptr && hub->bus() == fed_by_ && log.enabled(LogLevel::Error)) return;
+  enqueue(LogRecord{std::chrono::steady_clock::now(), LogLevel::Error, logger, message, false});
 }
 
 void LogDock::enqueue(LogRecord record) {
@@ -406,7 +431,7 @@ void LogDock::save_with_dialog() {
   const QString path = QFileDialog::getSaveFileName(this, tr("Save log"), QStringLiteral("pychron-log.txt"),
                                                     tr("Text files (*.txt *.log);;All files (*)"));
   if (path.isEmpty()) return;
-  if (!save_visible(path)) QMessageBox::warning(this, tr("Save log"), tr("Could not write %1").arg(path));
+  if (!save_visible(path)) show_warning(this, "log", tr("Save log"), tr("Could not write %1").arg(path));
 }
 
 }  // namespace pychron::ui

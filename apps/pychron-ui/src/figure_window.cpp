@@ -20,6 +20,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "error_report.hpp"
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "r_values_panel.hpp"
@@ -125,12 +126,12 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   tools->addAction(tr("Reset view"), view_, &SceneView::reset_view);
   tools->addAction(tr("Export..."), this, [this] {
     const QString path = QFileDialog::getSaveFileName(this, tr("Export figure"), QString(), tr("PDF (*.pdf);;PNG (*.png)"));
-    if (!path.isEmpty() && !export_figure(path)) QMessageBox::warning(this, tr("Export"), tr("Could not write %1").arg(path));
+    if (!path.isEmpty() && !export_figure(path)) show_warning(this, "figure", tr("Export"), tr("Could not write %1").arg(path));
   });
   auto* table = tools->addAction(tr("Export table..."), this, [this] {
     const QString path = QFileDialog::getSaveFileName(this, tr("Export data report"), QStringLiteral("report.csv"),
                                                       tr("CSV report (*.csv);;JSON report (*.json)"));
-    if (!path.isEmpty() && !export_report(path)) QMessageBox::warning(this, tr("Export"), tr("Could not write %1").arg(path));
+    if (!path.isEmpty() && !export_report(path)) show_warning(this, "figure", tr("Export"), tr("Could not write %1").arg(path));
   });
   table->setToolTip(tr("Write these analyses as a 40Ar/39Ar data report after Schaen et al. (2021)"));
 
@@ -246,6 +247,7 @@ void FigureWindow::on_result(const PipelineResult& r) {
   }
   if (r.outputs.empty() || !r.outputs[0]) {
     const QString what = r.outputs.empty() ? tr("nothing computed") : qs(to_string(r.outputs[0].error()));
+    log_shown("figure", tr("Compute"), what);
     status_->setText(tr("Error: %1").arg(what));
     view_->set_scene(nullptr);
     if (r_values_dock_) r_values_dock_->hide();
@@ -474,6 +476,7 @@ bool FigureWindow::export_report(const QString& path) {
   const auto report = pp::make_report(*dataset_, options);
   auto saved = pp::save_report(report, std::filesystem::path(path.toStdString()));
   if (!saved) {
+    log_shown("figure", tr("Export"), saved.error());
     status_->setText(tr("Export failed: %1").arg(qs(saved.error().what)));
     return false;
   }

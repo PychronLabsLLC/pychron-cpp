@@ -31,6 +31,7 @@
 #include <QWidget>
 
 #include "entry_bridge.hpp"
+#include "error_report.hpp"
 #include "release_dialog.hpp"
 #include "theme.hpp"
 
@@ -222,7 +223,7 @@ PublishWindow::PublishWindow(EntryBridge& bridge, processing::StoreSource& sourc
   confirm_ = [this](const QString& question) {
     return QMessageBox::question(this, tr("Publish"), question) == QMessageBox::Yes;
   };
-  report_ = [this](const QString& text) { QMessageBox::warning(this, tr("Verify"), text); };
+  report_ = [this](const QString& text) { show_warning(this, "publish", tr("Verify"), text); };
   ask_embargo_ = [this] { return ask_embargo_dialog(this); };
 
   // The Embargoes dock.
@@ -363,6 +364,7 @@ void PublishWindow::change(const QString& done,
         end_job();
         // Refreshed either way: a failed step may still have changed the
         // release (a read after a committed publish), and the buttons follow.
+        if (!r) log_shown("publish", tr("Release"), r.error());
         say(r ? done : qs(r.error().what));
         refresh();
       });
@@ -389,6 +391,7 @@ void PublishWindow::verify() {
       [this, dir](Result<pb::StoreVerify> checked) {
         end_job();
         if (!checked) {
+          log_shown("publish", tr("Verify"), checked.error());
           say(tr("Verify could not run: %1").arg(qs(checked.error().what)));
           return;
         }
@@ -541,6 +544,7 @@ void PublishWindow::build() {
         end_job();
         if (!built) {
           progress_->setVisible(false);
+          log_shown("publish", tr("Build release"), built.error());
           say(tr("The release was not built: %1").arg(qs(built.error().what)));
           return;
         }
@@ -581,6 +585,7 @@ void PublishWindow::new_release() {
       [this, analyses](Result<std::size_t> embargoed) {
         end_job();
         if (!embargoed) {
+          log_shown("publish", tr("Read embargoes"), embargoed.error());
           say(tr("The embargoes could not be read: %1").arg(qs(embargoed.error().what)));
           return;
         }
@@ -603,6 +608,7 @@ void PublishWindow::new_release() {
             [this, name](Result<pb::ReleaseCreated> created) {
               end_job();
               if (!created) {
+                log_shown("publish", tr("Make release"), created.error());
                 say(tr("The release was not made: %1").arg(qs(created.error().what)));
                 return;
               }
@@ -641,6 +647,7 @@ void PublishWindow::refresh() {
         const QString chosen = pending_select_.isEmpty() ? keep : pending_select_;
         pending_select_.clear();
         if (!listing) {
+          log_shown("publish", tr("Read releases"), listing.error());
           say(tr("The releases could not be read: %1").arg(qs(listing.error().what)));
           return;
         }

@@ -1,6 +1,7 @@
 #include "menu_hub.hpp"
 
 #include "dock_layouts.hpp"
+#include "error_report.hpp"
 #include "shortcuts.hpp"
 
 #include <algorithm>
@@ -310,6 +311,7 @@ void MenuHub::apply_arrangement(const QString& name) {
   const Result<void> applied = layouts->apply(name);
   if (applied) return;
   constexpr int kShownMs = 5000;
+  log_shown("layout", tr("Apply arrangement %1").arg(name), applied.error());
   layouts->window()->statusBar()->showMessage(
       tr("arrangement “%1” not applied: %2").arg(name, QString::fromStdString(applied.error().what)), kShownMs);
 }
@@ -333,9 +335,10 @@ void MenuHub::save_arrangement() {
   const auto refuse = [&](const std::string& why) {
     const QString text = QString::fromStdString(why);
     if (asks_.refuse) {
+      log_shown("layout", title, text);
       asks_.refuse(over, text);
     } else {
-      QMessageBox::warning(over, title, text);
+      show_warning(over, "layout", title, text);
     }
   };
   while (true) {

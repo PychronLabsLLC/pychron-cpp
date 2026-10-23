@@ -20,6 +20,7 @@
 
 #include "pychron/setup/connection.hpp"
 #include "pychron/setup/installer.hpp"
+#include "error_report.hpp"
 #include "question_editor.hpp"
 #include "theme.hpp"
 
@@ -486,9 +487,15 @@ void SetupWizard::prepare_ready() {
   }
   const std::string name = ss(name_->text().trimmed());
   auto answers = complete_answers(*profile_, *given, builtin_answers(name, root()));
-  if (!answers) return fail_with(answers.error().what);
+  if (!answers) {
+    log_shown("setup", tr("Plan install"), answers.error());
+    return fail_with(answers.error().what);
+  }
   auto plan = plan_install(library_, *profile_, *answers, root(), PlanOptions{reconfigure, keep_secrets});
-  if (!plan) return fail_with(plan.error().what);
+  if (!plan) {
+    log_shown("setup", tr("Plan install"), plan.error());
+    return fail_with(plan.error().what);
+  }
 
   html += QStringLiteral("<p><b>%1</b> — %2</p>").arg(escaped(profile_->top.title), escaped(profile_->top.summary));
   html += QStringLiteral("<p>%1 <b>%2</b><br>%3 <code>%4</code></p>")
@@ -549,6 +556,7 @@ void SetupWizard::prepare_ready() {
 bool SetupWizard::install() {
   if (!plan_) return false;
   auto show_error = [this](const std::string& what) {
+    log_shown("setup", tr("Install"), qs(what));
     ready_error_->setText(qs(what));
     ready_error_->setVisible(true);
     return false;
@@ -632,7 +640,10 @@ void SetupWizard::test_instrument() {
                                             : test_instrument_connection(library_, *profile_, *complete);
   QApplication::restoreOverrideCursor();
   if (connected) show(true, *connected);
-  else show(false, connected.error().what);
+  else {
+    log_shown("setup", tr("Test instrument"), connected.error());
+    show(false, connected.error().what);
+  }
 }
 
 void SetupWizard::test_connection() {
@@ -650,6 +661,7 @@ void SetupWizard::test_connection() {
     test_result_->setText(tr("Connected (%1)").arg(qs(*opened)));
   } else {
     style::set_tone(test_result_, style::Tone::Error);
+    log_shown("setup", tr("Test database connection"), opened.error());
     std::string what = opened.error().what;
     if (const auto nl = what.find('\n'); nl != std::string::npos) what.resize(nl);
     test_result_->setText(qs(what));

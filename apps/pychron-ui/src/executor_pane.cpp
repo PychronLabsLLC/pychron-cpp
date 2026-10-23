@@ -1,4 +1,5 @@
 #include "executor_pane.hpp"
+#include "error_report.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -318,6 +319,7 @@ void ExecutorPane::set_running(bool running) {
 }
 
 void ExecutorPane::show_error(const QString& message) {
+  if (!message.isEmpty()) log_shown("experiment", tr("Queue"), message);
   banner_label_->setText(message);
   banner_->setVisible(!message.isEmpty());
 }
@@ -370,6 +372,7 @@ void ExecutorPane::request_skip() {
     return;
   }
   if (auto r = bridge_.skip(); !r) {
+    log_shown("experiment", tr("Skip"), r.error());
     add_event(tr("skip refused: %1").arg(q(r.error().what)));
     return;
   }

@@ -11,6 +11,7 @@
 
 #include <QMetaObject>
 
+#include "error_report.hpp"
 #include "pychron/core/log_context.hpp"
 #include "pychron/core/process.hpp"
 
@@ -156,7 +157,10 @@ void LaserBridge::show() {
       }
     } else if (seen.error().what != failed) {
       failed = seen.error().what;
-      post([this, why = QString::fromStdString(failed)] { emit viewFailed(why); });
+      post([this, why = QString::fromStdString(failed)] {
+        log_shown("laser", tr("Camera"), why);
+        emit viewFailed(why);
+      });
     }
     std::unique_lock lock(v.mutex);
     const TimePoint next = began + deps_.video;

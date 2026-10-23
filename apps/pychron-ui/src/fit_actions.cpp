@@ -5,6 +5,7 @@
 
 #include "entry_actions.hpp"
 #include "entry_bridge.hpp"
+#include "error_report.hpp"
 #include "flux_window.hpp"
 #include "menu_hub.hpp"
 #include "packages_window.hpp"
@@ -26,7 +27,7 @@ FitActions::FitActions(QWidget* owner, std::string store_url, EntryActions& entr
       presets_(presets),
       open_recall_(std::move(open_recall)),
       flux_action_(new QAction(tr("Flux…"), this)) {
-  report_error_ = [this](const QString& text) { QMessageBox::critical(owner_, tr("Flux"), text); };
+  report_error_ = [this](const QString& text) { show_error(owner_, "fit", tr("Flux"), text); };
   connect(flux_action_, &QAction::triggered, this, [this] { show_flux(); });
   connect(&entry, &EntryActions::flux_requested, this, &FitActions::open_flux);
   // The bridge is about to go: the window on it goes first.

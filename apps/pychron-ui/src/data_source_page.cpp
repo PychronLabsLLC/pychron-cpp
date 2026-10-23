@@ -21,6 +21,7 @@
 #include "pychron/setup/doctor.hpp"
 #include "pychron/setup/installer.hpp"
 #include "pychron/setup/template.hpp"
+#include "error_report.hpp"
 #include "question_editor.hpp"
 #include "theme.hpp"
 
@@ -243,6 +244,7 @@ bool DataSourcePage::changed() const {
 void DataSourcePage::say(const std::vector<std::string>& lines, bool ok) {
   QStringList text;
   for (const auto& l : lines) text << qs(l);
+  if (!ok) log_shown("preferences", tr("Data source"), text.join(QStringLiteral("; ")));
   style::set_tone(result_, ok ? style::Tone::Accent : style::Tone::Error);
   result_->setText(text.join(QLatin1Char('\n')));
 }

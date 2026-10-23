@@ -171,6 +171,7 @@ class PreferencesDialog : public QDialog {
   Apply apply_;
   LineSave line_save_;
   std::optional<LineSettings> line_;  // as given: what is shared, and the endpoint's status
+  Values committed_;                  // the pages as last applied: what a commit names as changed
   QListWidget* pages_;
   QStackedWidget* stack_;
   QSpinBox* font_;

@@ -19,6 +19,7 @@
 
 #include "earthbank_preferences_page.hpp"
 #include "earthbank_worker.hpp"
+#include "error_report.hpp"
 #include "logging_page.hpp"
 #include "metrics_page.hpp"
 #include "spectrometer_window.hpp"
@@ -46,6 +47,37 @@ QSpinBox* font_field() {
 
 int font_value(const QSpinBox* spin) { return spin->value() < Preferences::kMinFontPt ? 0 : spin->value(); }
 void set_font_value(QSpinBox* spin, int pt) { spin->setValue(pt < Preferences::kMinFontPt ? spin->minimum() : pt); }
+
+bool same(const config::LoggingConfig& a, const config::LoggingConfig& b) {
+  return a.dir == b.dir && a.max_size_mb == b.max_size_mb && a.max_files == b.max_files &&
+         a.default_level == b.default_level && a.dock_level == b.dock_level && a.levels == b.levels &&
+         a.echo_stderr == b.echo_stderr;
+}
+
+bool same(const config::MetricsConfig& a, const config::MetricsConfig& b) {
+  return a.enabled == b.enabled && a.bind == b.bind && a.port == b.port;
+}
+
+// The names of the pages whose values differ, for the log: names only, never
+// a value (the EarthBank page holds a password).
+QStringList changed_pages(const PreferencesDialog::Values& was, const PreferencesDialog::Values& now) {
+  QStringList pages;
+  const Preferences& a = was.preferences;
+  const Preferences& b = now.preferences;
+  if (a.font_pt != b.font_pt || a.code_font_pt != b.code_font_pt) pages << QStringLiteral("Appearance");
+  if (a.browser_page_size != b.browser_page_size || a.browser_gap_hours != b.browser_gap_hours ||
+      a.browser_type_colors != b.browser_type_colors)
+    pages << QStringLiteral("Data");
+  if (a.plot_background != b.plot_background || a.plot_series_colors != b.plot_series_colors)
+    pages << QStringLiteral("Plots");
+  if (was.confirm_move_amu != now.confirm_move_amu) pages << QStringLiteral("Spectrometer");
+  if (was.line && now.line) {
+    if (!same(was.line->logging, now.line->logging)) pages << QStringLiteral("Logging");
+    if (!same(was.line->metrics, now.line->metrics)) pages << QStringLiteral("Metrics");
+  }
+  if (a.check_for_updates != b.check_for_updates) pages << QStringLiteral("Updates");
+  return pages;
+}
 
 }  // namespace
 
@@ -236,6 +268,7 @@ PreferencesDialog::PreferencesDialog(const Values& current, Apply apply, QWidget
           [this] { restore_defaults(); });
 
   set_values(current);
+  committed_ = values();
 }
 
 QWidget* PreferencesDialog::make_plots_page() {
@@ -321,10 +354,15 @@ bool PreferencesDialog::commit(bool check_data_source) {
   // is to change when it does.
   if (v.line && line_save_) {
     if (const QString failed = line_save_(*v.line); !failed.isEmpty()) {
+      log_shown("preferences", tr("Save logging and metrics"), failed);
       complain(tr("Logging and metrics were not saved. %1").arg(failed), nullptr);
       return false;
     }
   }
+  QStringList changed = changed_pages(committed_, v);
+  if (source_written_) changed << QStringLiteral("Data source");
+  if (!changed.isEmpty()) log_action(QStringLiteral("preferences changed: %1").arg(changed.join(QStringLiteral(", "))));
+  committed_ = v;
   if (apply_) apply_(v);
   // Last: reopening closes the window this dialog belongs to.
   if (std::exchange(source_written_, false) && reopen_ && ask_reopen_ && ask_reopen_()) reopen_();

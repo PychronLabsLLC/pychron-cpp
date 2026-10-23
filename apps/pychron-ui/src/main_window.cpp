@@ -193,6 +193,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
   setWindowTitle(QStringLiteral("pychron — %1").arg(QString::fromStdString(line.config().system.name)));
   resize(kDefaultSize);  // the saved geometry, if any, wins below
   setCentralWidget(canvas_);
+  log_->set_fed_by(bridge_.bus());
   if (bridge_.cryo_outputs() > 0 || !bridge_.cryo_inputs().empty()) {
     cryo_ = new CryoDock(bridge_, this);
     connect(cryo_, &CryoDock::cryoFailed, log_,
@@ -360,7 +361,7 @@ MainWindow::MainWindow(systems::ExtractionLine& line, std::unique_ptr<QSettings>
 
   connect(&bridge_, &CoreBridge::actuationFinished, log_, [this](const QString& name, const Result<void>& r) {
     if (!r) {
-      log_->append_line(QStringLiteral("ERROR [ui] %1 rejected: %2").arg(name, QString::fromStdString(to_string(r.error()))));
+      log_->append_error("line", tr("%1 rejected").arg(name), QString::fromStdString(to_string(r.error())));
     }
   });
 }
@@ -660,7 +661,7 @@ LaserWindow* MainWindow::open_laser(const QString& device) {
       // a queue's errors are in the log; so are a laser's
       connect(bridge, &LaserBridge::commandFinished, window, [this, device](const QString& what, const Result<void>& r) {
         if (!r && r.error().kind != ErrorKind::Cancelled) {
-          log_->append_line(QStringLiteral("ERROR [laser %1] %2: %3").arg(device, what, QString::fromStdString(r.error().what)));
+          log_->append_error("laser", QStringLiteral("%1 %2").arg(device, what), QString::fromStdString(r.error().what));
         }
       });
       laser_windows_.emplace(device, window);
