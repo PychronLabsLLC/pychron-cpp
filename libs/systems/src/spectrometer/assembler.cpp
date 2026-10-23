@@ -245,7 +245,8 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
 
   std::map<std::string, FieldTable> tables;
   for (const auto& [name, tf] : data.tables) tables.emplace(name, to_field_table(tf));
-  if (options.spectrometer.data_root.empty()) options.spectrometer.data_root = data.root;
+  if (options.spectrometer.data_root.empty())
+    options.spectrometer.data_root = data.table_root.empty() ? data.root : data.table_root;
   auto spectrometer = Spectrometer::create(std::move(data.config), MolecularWeights(std::move(data.weights)),
                                            std::move(tables), std::move(*roles), context,
                                            std::move(options.spectrometer));

@@ -99,7 +99,7 @@ Lab load_lab(const LabPaths& paths) {
     }
   }
   if (!paths.spectrometer.empty()) {
-    auto data = spectrometer::cfg::load_spectrometer(paths.spectrometer);
+    auto data = spectrometer::cfg::load_spectrometer(paths.spectrometer, paths.spectrometer_tables);
     if (data) lab.spectrometer = std::move(*data);
     else lab.problems.push_back(data.error().what);
   }

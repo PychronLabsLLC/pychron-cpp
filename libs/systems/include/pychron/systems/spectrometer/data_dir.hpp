@@ -95,6 +95,10 @@ WeightsLoadReport load_molecular_weights_from_string(std::string_view toml, std:
 // Everything the assembler needs, fully validated.
 struct SpectrometerData {
   std::filesystem::path root;
+  // Where the field tables are read from and saved to (<table_root>/tables);
+  // empty: root. The shipped examples keep theirs elsewhere
+  // (setup::field_table_root).
+  std::filesystem::path table_root;
   SpectrometerConfig config;
   MolecularWeights weights;
   std::map<std::string, TableFile> tables;  // current version of each referenced table
@@ -109,8 +113,11 @@ struct DataLoadReport {
 // Loads `config_file` (and its *.local.toml), molecular_weights.toml (defaults
 // if missing) and the current version of every table the config references,
 // all relative to config_file's directory, then runs every assembler rule.
-// All problems are collected.
-DataLoadReport load_spectrometer_data(const std::filesystem::path& config_file);
-Result<SpectrometerData> load_spectrometer(const std::filesystem::path& config_file);
+// All problems are collected. The tables are read under `table_root` instead
+// when it is given (SpectrometerData::table_root).
+DataLoadReport load_spectrometer_data(const std::filesystem::path& config_file,
+                                      const std::filesystem::path& table_root = {});
+Result<SpectrometerData> load_spectrometer(const std::filesystem::path& config_file,
+                                           const std::filesystem::path& table_root = {});
 
 }  // namespace pychron::spectrometer::cfg

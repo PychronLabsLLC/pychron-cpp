@@ -56,6 +56,30 @@ fs::path lab_state_dir(const fs::path& lab, const fs::path& examples, const fs::
   return rel == "." ? base : base / rel;
 }
 
+Result<fs::path> field_table_root(const fs::path& root, const fs::path& examples, const fs::path& user_dir) {
+  const fs::path where = root.empty() ? fs::path(".") : root;
+  fs::path state = lab_state_dir(where, examples, user_dir);
+  if (state == where) return state;
+  std::error_code ec;
+  if (!fs::is_directory(where / "tables", ec)) return state;
+  std::error_code listing;
+  for (const auto& table : fs::directory_iterator(where / "tables", listing)) {
+    if (!table.is_directory(ec)) continue;
+    const fs::path name = table.path().filename();
+    if (!fs::exists(table.path() / "current", ec) || fs::exists(state / "tables" / name / "current", ec)) continue;
+    fs::create_directories(state / "tables" / name, ec);
+    if (!ec)
+      fs::copy(table.path(), state / "tables" / name, fs::copy_options::recursive | fs::copy_options::overwrite_existing,
+               ec);
+    if (ec) {
+      return fail(ErrorKind::Io, "cannot copy field table " + table.path().string() + " to " +
+                                     (state / "tables" / name).string() + ": " + ec.message());
+    }
+  }
+  if (listing) return fail(ErrorKind::Io, "cannot read " + (where / "tables").string() + ": " + listing.message());
+  return state;
+}
+
 fs::path home_dir() {
 #ifdef _WIN32
   if (auto h = env_var("USERPROFILE"); h && !h->empty()) return *h;

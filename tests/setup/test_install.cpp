@@ -422,6 +422,33 @@ TEST(Installer, TheExamplesKeepTheirStateInTheUserFolderFromARelativePath) {
   EXPECT_EQ(lab_state_dir(relative, examples, "/u"), fs::path("/u"));
 }
 
+TEST(Installer, TheExamplesFieldTablesAreCopiedOnceToTheUserFolder) {
+  Tmp tmp;
+  const fs::path examples = tmp.dir / "examples";
+  tmp.write("examples/tables/argon/current", "v1.toml\n");
+  tmp.write("examples/tables/argon/v1.toml", "shipped");
+  tmp.write("examples/tables/empty/notes.txt", "no current: not a table");
+  const fs::path user = tmp.dir / "user";
+  auto root = field_table_root(examples, examples, user);
+  ASSERT_TRUE(root) << root.error().what;
+  EXPECT_EQ(*root, user);
+  EXPECT_EQ(tmp.read("user/tables/argon/v1.toml"), "shipped");
+  EXPECT_FALSE(fs::exists(user / "tables" / "empty"));
+  // A session saved a version: a later start keeps it, whatever was shipped since.
+  tmp.write("user/tables/argon/v2.toml", "saved");
+  tmp.write("user/tables/argon/current", "v2.toml\n");
+  tmp.write("examples/tables/argon/v3.toml", "shipped later");
+  tmp.write("examples/tables/argon/current", "v3.toml\n");
+  ASSERT_TRUE(field_table_root(examples, examples, user));
+  EXPECT_EQ(tmp.read("user/tables/argon/current"), "v2.toml\n");
+  EXPECT_FALSE(fs::exists(user / "tables" / "argon" / "v3.toml"));
+  // Any other spectrometer folder keeps its tables where they are.
+  tmp.write("lab/tables/argon/current", "v1.toml\n");
+  auto own = field_table_root(tmp.dir / "lab", examples, user);
+  ASSERT_TRUE(own);
+  EXPECT_EQ(*own, tmp.dir / "lab");
+}
+
 TEST(Installer, ChoiceLabelsMatchTheChoices) {
   Tmp profiles, examples;
   profiles.write("c/profile.toml", R"(

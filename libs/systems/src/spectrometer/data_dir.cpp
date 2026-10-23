@@ -194,10 +194,12 @@ void append(std::vector<config::Diagnostic>& out, std::vector<config::Diagnostic
 
 }  // namespace
 
-DataLoadReport load_spectrometer_data(const fs::path& config_file) {
+DataLoadReport load_spectrometer_data(const fs::path& config_file, const fs::path& table_root) {
   DataLoadReport report;
   SpectrometerData data;
   data.root = config_file.parent_path();
+  data.table_root = table_root;
+  const fs::path& tables_in = table_root.empty() ? data.root : table_root;
 
   auto parsed = parse_config(config_file);
   append(report.diagnostics, std::move(parsed.diagnostics));
@@ -227,10 +229,10 @@ DataLoadReport load_spectrometer_data(const fs::path& config_file) {
   std::set<std::string> names{data.config.magnet.field_table};
   if (!data.config.magnet.hv_table.empty()) names.insert(data.config.magnet.hv_table);
   for (const auto& name : names) {
-    if (!fs::exists(table_current_pointer(data.root, name), ec)) continue;
-    auto file = resolve_current_table(data.root, name);
+    if (!fs::exists(table_current_pointer(tables_in, name), ec)) continue;
+    auto file = resolve_current_table(tables_in, name);
     if (!file) {
-      report.diagnostics.push_back({config::SourceLoc{table_current_pointer(data.root, name).generic_string(), 0, 0},
+      report.diagnostics.push_back({config::SourceLoc{table_current_pointer(tables_in, name).generic_string(), 0, 0},
                                     "tables." + name, file.error().what});
       continue;
     }
@@ -244,8 +246,8 @@ DataLoadReport load_spectrometer_data(const fs::path& config_file) {
   return report;
 }
 
-Result<SpectrometerData> load_spectrometer(const fs::path& config_file) {
-  auto report = load_spectrometer_data(config_file);
+Result<SpectrometerData> load_spectrometer(const fs::path& config_file, const fs::path& table_root) {
+  auto report = load_spectrometer_data(config_file, table_root);
   if (!report.ok()) return fail(config::to_error(report.diagnostics));
   return std::move(*report.data);
 }

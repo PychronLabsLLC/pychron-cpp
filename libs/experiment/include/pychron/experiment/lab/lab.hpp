@@ -66,6 +66,9 @@ struct LabPaths {
   // camera scales, snapshots. Empty: `dir`. The shipped examples keep theirs
   // elsewhere (setup::lab_state_dir).
   std::filesystem::path state_dir{};
+  // Where the spectrometer's field tables are read and saved; empty: beside
+  // its config (cfg::SpectrometerData::table_root).
+  std::filesystem::path spectrometer_tables{};
 
   [[nodiscard]] const std::filesystem::path& state() const { return state_dir.empty() ? dir : state_dir; }
 

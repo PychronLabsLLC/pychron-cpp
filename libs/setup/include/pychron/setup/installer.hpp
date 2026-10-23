@@ -36,6 +36,17 @@ Resources find_resources(const std::filesystem::path& executable_dir);
                                                   const std::filesystem::path& examples,
                                                   const std::filesystem::path& user_dir);
 
+// Where the field tables of a spectrometer whose config is in `root` are read
+// and saved (spectrometer::cfg::SpectrometerData::table_root):
+// lab_state_dir(root, ...). When that is not `root` (the shipped examples),
+// each table under <root>/tables is first copied there, unless the state
+// folder already has that table (its `current`): what a session saved is
+// kept, and a version shipped later is not seen until that copy is removed.
+// Io error when a table cannot be copied.
+[[nodiscard]] Result<std::filesystem::path> field_table_root(const std::filesystem::path& root,
+                                                             const std::filesystem::path& examples,
+                                                             const std::filesystem::path& user_dir);
+
 // The pychron version these programs were built as ("0.2.0").
 std::string_view version() noexcept;
 
