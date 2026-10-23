@@ -251,6 +251,8 @@ TEST_F(ElctlExpTest, ExecutionSequenceIsLogged) {
   const std::string name = m[1].str();
   EXPECT_EQ(name, "bu-01") << started;
   EXPECT_EQ(parsed[script_start].run, name) << all;
+  // The save is named as the run= field names the run (the file keeps its own name).
+  EXPECT_TRUE(parsed[saved].message.starts_with("save " + name + ": wrote ")) << lines[saved];
   const auto first_finished = find(run_started, logger_is("trace.RunFinished"));
   for (std::size_t i = run_started; i < first_finished; ++i) {
     if (parsed[i].thread.starts_with("run")) {

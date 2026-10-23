@@ -275,7 +275,9 @@ dropped at cost of one atomic load.
   `save <runid>: done in <ms> ms`; records folder (`FilePersister`, `elctl
   exp run --data`) `save <run name>: wrote <path> in <ms> ms`. Save failure:
   `error` on each failed attempt (each attempt one occurrence; flush cadence
-  5-30 min). Logger `spool`: `put`, `remove`, `hand-off <uuid>: sent`,
+  5-30 min). Run named in this text as `run=` names it
+  (`format_runid`, `bu-01`); file names keep their own spelling
+  (`bu-1.json`). Logger `spool`: `put <run name> (<uuid>)`, `remove`, `hand-off <uuid>: sent`,
   `flush: sent <n>, <m> pending`; hand-off failure `warn` once per record per
   attempt; flush `warn` only for failures not from a hand-off.
 - UI actions (`apps/pychron-ui`): each user command that changes state or

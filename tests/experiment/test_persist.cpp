@@ -648,9 +648,24 @@ TEST_F(PersistTest, SpoolLogSaysWhatIsSpooledAndHandedOver) {
   const auto has = [&](const std::string& prefix) {
     return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.starts_with(prefix); });
   };
-  EXPECT_TRUE(has("[debug] spool: put 12345-1 (a)")) << ::testing::PrintToString(lines);
+  // The run's name as the run= field and the queue spell it.
+  EXPECT_TRUE(has("[debug] spool: put 12345-01 (a)")) << ::testing::PrintToString(lines);
   EXPECT_TRUE(has("[debug] spool: hand-off a: sent")) << ::testing::PrintToString(lines);
   EXPECT_TRUE(has("[debug] spool: remove a")) << ::testing::PrintToString(lines);
+}
+
+// The log names the run as run= does; the file keeps its name.
+TEST_F(PersistTest, FilePersisterLogNamesTheRunAsTheRunFieldDoes) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  FilePersister p(dir_ / "records");
+  ASSERT_TRUE(p.begin_run(RunIdentity{"12345", 5, "A"}, QueueSpec{}));
+  ASSERT_TRUE(p.save_analysis(rec("u1", "12345", 5, "A")));
+  EXPECT_TRUE(fs::exists(dir_ / "records" / "12345" / "12345-5A.json"));
+  const auto lines = log.lines();
+  EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) {
+    return l.starts_with("[debug] store: save 12345-05A: wrote ") && l.find("12345-5A.json in ") != std::string::npos;
+  })) << ::testing::PrintToString(lines);
 }
 
 TEST_F(PersistTest, SpoolLogAHandOffThatFailsIsAWarning) {

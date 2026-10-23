@@ -776,7 +776,7 @@ TEST_P(AcquisitionTest, ARecordWithTextThatIsNotUtf8IsSavedAndTheWorkerLives) {
 TEST_P(StorePersisterTest, PersisterLogSaveWritesStartEndWithRunId) {
   ASSERT_TRUE(log.ok());
   ASSERT_TRUE(persister_->save_analysis(numbered()));
-  const std::string runid = ps::make_runid("66573", 1, -1);
+  const std::string runid = "66573-01";  // the run= field's spelling (format_runid)
   std::vector<std::string> mine;
   for (const auto& l : log.lines())
     if (l.find("] store: ") != std::string::npos) mine.push_back(l);
@@ -789,7 +789,7 @@ TEST_P(StorePersisterTest, PersisterLogStoreFailureIsErrorWithContext) {
   ASSERT_TRUE(log.ok());
   failing_->fail_ingest(10);
   (void)save_error(numbered());
-  const std::string expected = "[error] store: save " + ps::make_runid("66573", 1, -1) + ": io: ingest failed (test)";
+  const std::string expected = "[error] store: save 66573-01: io: ingest failed (test)";
   const auto lines = log.lines();
   EXPECT_NE(std::find(lines.begin(), lines.end(), expected), lines.end()) << ::testing::PrintToString(lines);
 }

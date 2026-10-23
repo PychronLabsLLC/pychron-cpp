@@ -82,9 +82,14 @@ std::optional<LastRun> parse_run_name(std::string_view name, std::string_view pr
   return run;
 }
 
+// The record's file name stem (`12345-5A`). A file format: never changed.
 std::string run_name(const record::Identity& id) {
   return id.identifier + "-" + std::to_string(id.aliquot) + id.step;
 }
+
+// The run's name in log text, as the run= field and the queue spell it
+// (`12345-05A`), so one grep finds every line of a run.
+std::string log_name(const record::Identity& id) { return format_runid(id.identifier, id.aliquot, id.step); }
 
 }  // namespace
 
@@ -159,7 +164,7 @@ Result<void> FilePersister::save_analysis(const record::AnalysisRecord& r) {
   if (!safe_name(r.identity.identifier)) return fail(ErrorKind::Config, "bad identifier");
   // As StorePersister says it: may run outside the run's scope, so the line
   // names the run; the duration is real time (a read, never a wait).
-  const std::string attempted = "save " + run_name(r.identity);
+  const std::string attempted = "save " + log_name(r.identity);
   const auto began = std::chrono::steady_clock::now();
   const fs::path path = analysis_path(r);
   auto written = write_atomic(path, record::to_json(r));
@@ -183,7 +188,7 @@ Result<void> FilePersister::save_artifact(const std::string& uuid, const std::st
 Result<void> Spool::put(const record::AnalysisRecord& r) {
   if (!safe_name(r.identity.uuid)) return fail(ErrorKind::Config, "record uuid missing or not plain");
   auto written = write_atomic(dir_ / (r.identity.uuid + ".json"), record::to_json(r));
-  if (written) log_.debug("put " + run_name(r.identity) + " (" + r.identity.uuid + ")");
+  if (written) log_.debug("put " + log_name(r.identity) + " (" + r.identity.uuid + ")");
   return written;
 }
 

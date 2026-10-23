@@ -249,8 +249,8 @@ Both programs write a log file as they run, with no setup.
   2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 script.extraction/sim_extract.py: close(name=C) -> ok in 0 ms
   2026-10-23T10:21:22.317Z [debug] [run] run=bu-01 script.extraction/sim_extract.py: sleep(seconds=2) -> ok in 2000 ms
   ...
-  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 spool: put bu-1 (f60b5d8f-9a15-432a-9f4d-fe730a3f857d)
-  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 store: save bu-1: wrote .../records/bu/bu-1.json in 0 ms
+  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 spool: put bu-01 (f60b5d8f-9a15-432a-9f4d-fe730a3f857d)
+  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 store: save bu-01: wrote .../records/bu/bu-1.json in 0 ms
   2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 spool: hand-off f60b5d8f-9a15-432a-9f4d-fe730a3f857d: sent
   2026-10-23T10:25:08.917Z [debug] [queue] trace.RunFinished: row=0, identifier=bu, run_id=f60b5d8f-9a15-432a-9f4d-fe730a3f857d, aliquot=1, step=, state=success, truncated=false, save_error=false, status=complete
   2026-10-23T10:32:55.717Z [info] [queue] trace.QueueEnded: end=completed, reason=, runs=3

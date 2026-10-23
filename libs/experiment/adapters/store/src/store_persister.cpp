@@ -134,9 +134,8 @@ Result<void> StorePersister::save_analysis(const record::AnalysisRecord& record)
   // May run on the spool's thread, outside the run's scope: the record names
   // its run. A real write takes real time, so the duration is steady_clock's
   // (a read, never a wait).
-  const std::string runid = ps::make_runid(record.identity.identifier, record.identity.aliquot,
-                                           increment_of(record.identity.step).value_or(-1));
-  const std::string attempted = "save " + runid;
+  const std::string attempted =
+      "save " + format_runid(record.identity.identifier, record.identity.aliquot, record.identity.step);
   log_.debug(attempted + ": start");
   const auto began = std::chrono::steady_clock::now();
   auto saved = [&]() -> Result<void> {
