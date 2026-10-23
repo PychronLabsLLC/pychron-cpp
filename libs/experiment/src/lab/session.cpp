@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_error.hpp"
 #include "pychron/core/log_context.hpp"
 #include "pychron/experiment/executor/links.hpp"
 #include "pychron/experiment/lab/script_actor.hpp"
@@ -331,8 +332,8 @@ void LabSession::run(QueueSpec spec, std::size_t from_row) {
   auto& bus = hardware_.line.bus();
   if (paused_here) {
     if (auto r = scan->resume(); !r) {
-      bus.publish(Log{LogLevel::Warn, "experiment", "scan did not resume: " + to_string(r.error()),
-                      hardware_.line.clock().now()});
+      log_and_publish(log_, &bus, "experiment", LogLevel::Warn, "scan did not resume: " + to_string(r.error()),
+                      hardware_.line.clock().now());
     }
   }
   {

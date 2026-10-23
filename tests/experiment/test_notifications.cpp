@@ -2,6 +2,7 @@
 // command invocation (through a fake process runner), and the Notifier.
 
 #include <gtest/gtest.h>
+#include "log_capture.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -889,4 +890,26 @@ TEST(NotifierOutbox, TheThreadSendsWhatWasLeftAtOnce) {
   notifier.wait_idle();
   EXPECT_EQ(fake.calls.size(), 1u);
   EXPECT_TRUE(out.files().empty());
+}
+
+TEST(NotifierLog, AGivenUpNotificationIsInTheLogFileToo) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  OutboxDir out;
+  SignalBus bus;
+  Heard heard(bus);
+  FakeRunner fake;
+  fake.exit_code = 7;
+  Notifier notifier(bus, config_of("[[command]]\nargv = [\"notify-lab\"]\n"), options(fake.runner(), out.dir, false));
+  notifier.post(run_failed_notification("q1", failed_run()));
+  std::optional<WallTime> at = kT0;
+  while (at) at = notifier.deliver_due(*at);
+  int in_file = 0;
+  for (const auto& l : log.lines())
+    if (l.starts_with("[warn] notifications:") && l.find("given up") != std::string::npos) ++in_file;
+  EXPECT_EQ(in_file, 1) << ::testing::PrintToString(log.lines());
+  int on_bus = 0;
+  for (const auto& l : heard.logs)
+    if (l.message.find("given up") != std::string::npos) ++on_bus;
+  EXPECT_EQ(on_bus, 1);
 }

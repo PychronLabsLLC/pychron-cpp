@@ -751,7 +751,6 @@ Result<void> MeasurementEngine::peak_center_on(PeakCenterRequest req, double min
         skipped.message = "signal " + plain(mean) + " below min_signal " + plain(min_signal);
         skipped.finished = ctx_.clock.now();
         publish_log(LogLevel::Info, std::string(to_string(block)) + " skipped: " + skipped.message);
-        log_.debug("peak center " + target + " skipped: " + skipped.message);
         result_.peak_centers.push_back(std::move(skipped));
         return {};
       }
@@ -767,7 +766,6 @@ Result<void> MeasurementEngine::peak_center_on(PeakCenterRequest req, double min
   }
   if (rep->ok && rep->center) log_.debug("peak center done: " + target + ": center " + plain(*rep->center));
   else if (rep->ok) log_.debug("peak center done: " + target);
-  else log_.warn("peak center failed: " + target + ": " + rep->message);
   if (!rep->ok) {
     publish_log(LogLevel::Warn, std::string(to_string(block)) + " failed: " + rep->message + "; continuing");
     // The IC data is still worth having (legacy generate_ic_mftable): what
@@ -1503,9 +1501,6 @@ bool MeasurementEngine::sniff_reading() {
 void MeasurementEngine::handle_trip(const Trip& trip) {
   using T = ActionSpec::Type;
   if (ctx_.bus != nullptr) ctx_.bus->publish(ConditionalTripped{in_.run_id, trip});
-  // The event (trace) has the trip; this says it fired, where, and on what.
-  log_.info("conditional '" + trip.name + "' (" + std::string(to_string(trip.kind)) + ") tripped at reading " +
-            std::to_string(trip.reading) + ": " + trip.check);
   publish_log(LogLevel::Info, "conditional '" + trip.name + "' tripped (" + std::string(to_string(trip.kind)) + "): " +
                                   trip.check);
   switch (trip.kind) {
@@ -1572,7 +1567,7 @@ bool MeasurementEngine::wait(double seconds) {
 bool MeasurementEngine::stopping() const { return token_->requested() || stop_ != Stop::None; }
 
 void MeasurementEngine::publish_log(LogLevel level, std::string message) {
-  if (ctx_.bus != nullptr) ctx_.bus->publish(Log{level, "measurement", std::move(message), ctx_.clock.now()});
+  log_and_publish(measurement_log_, ctx_.bus, "measurement", level, std::move(message), ctx_.clock.now());
 }
 
 int MeasurementEngine::scaled(int counts) const {

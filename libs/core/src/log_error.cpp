@@ -2,6 +2,9 @@
 
 #include <string>
 
+#include "pychron/core/events.hpp"
+#include "pychron/core/process_log.hpp"
+
 namespace pychron {
 namespace {
 
@@ -22,6 +25,16 @@ void log_error(const Logger& logger, const Error& error, std::string_view attemp
 
 void log_handled(const Logger& logger, const Error& error, std::string_view attempted) {
   write(logger, LogLevel::Warn, error, attempted);
+}
+
+void log_and_publish(const Logger& logger, SignalBus* bus, std::string_view source, LogLevel level,
+                     std::string message, TimePoint ts) {
+  if (const auto hub = process_log_hub()) {
+    if (!logger.enabled(level)) return;
+    logger.log(level, message);  // publishes on the hub's bus
+    if (bus == nullptr || bus == hub->bus()) return;
+  }
+  if (bus != nullptr) bus->publish(Log{level, std::string(source), std::move(message), ts});
 }
 
 }  // namespace pychron

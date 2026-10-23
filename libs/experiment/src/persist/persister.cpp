@@ -254,7 +254,10 @@ Result<Saved> SavePipeline::save(const record::AnalysisRecord& record) {
 
 Result<std::size_t> SavePipeline::flush() {
   auto uuids = spool_.pending();
-  if (!uuids) return fail(uuids.error());
+  if (!uuids) {
+    log_handled(log_, uuids.error(), "flush");
+    return fail(uuids.error());
+  }
   std::size_t done = 0;
   std::optional<Error> first;
   for (const auto& u : *uuids) {
@@ -264,7 +267,10 @@ Result<std::size_t> SavePipeline::flush() {
       ++done;
     }
   }
-  if (auto r = persister_.flush(); !r && !first) first = r.error();
+  if (auto r = persister_.flush(); !r) {
+    log_handled(log_, r.error(), "flush");
+    if (!first) first = r.error();
+  }
   if (done == 0 && first) return fail(*first);
   return done;
 }
@@ -345,8 +351,8 @@ void SpoolFlusher::run(std::uint64_t seq) {
   }
   const auto flushed = pipeline_.flush();
   SpoolStatus now{pipeline_.pending(), pipeline_.last_error()};
+  // A failure was said where it happened (hand_off, or flush above).
   if (flushed) log_.debug("flush: sent " + std::to_string(*flushed) + ", " + std::to_string(now.pending) + " pending");
-  else log_handled(log_, flushed.error(), "flush");
   if (!flushed && !now.last_error) now.last_error = flushed.error().what;  // the spool or the persister's flush
   bool changed = false;
   {

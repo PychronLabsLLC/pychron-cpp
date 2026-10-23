@@ -793,3 +793,18 @@ TEST_P(StorePersisterTest, PersisterLogStoreFailureIsErrorWithContext) {
   const auto lines = log.lines();
   EXPECT_NE(std::find(lines.begin(), lines.end(), expected), lines.end()) << ::testing::PrintToString(lines);
 }
+
+TEST_P(StorePersisterTest, PersisterLogAFailedHandOffIsOneSpoolWarningAndOneStoreError) {
+  ASSERT_TRUE(log.ok());
+  persist::Spool spool(data_ / "spool");
+  persist::SavePipeline pipeline(spool, *persister_);
+  failing_->fail_ingest(10);
+  ASSERT_TRUE(pipeline.save(numbered()));
+  int spool_warns = 0, store_errors = 0;
+  for (const auto& l : log.lines()) {
+    if (l.starts_with("[warn] spool:")) ++spool_warns;
+    if (l.starts_with("[error] store:")) ++store_errors;
+  }
+  EXPECT_EQ(spool_warns, 1) << ::testing::PrintToString(log.lines());
+  EXPECT_EQ(store_errors, 1);
+}

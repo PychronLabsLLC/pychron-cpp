@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/experiment/lab/notifications.hpp"
 
@@ -135,6 +136,7 @@ class Notifier {
   void say_outbox();  // not under mutex_: publishes NotificationOutbox, under say_mutex_
   void work();
 
+  Logger log_ = process_logger("notifications");
   SignalBus& bus_;
   const NotificationConfig config_;
   NotifierOptions options_;

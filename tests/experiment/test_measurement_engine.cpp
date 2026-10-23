@@ -1775,6 +1775,27 @@ TEST_F(EngineTest, PositionFailureFails) {
   EXPECT_TRUE(valves_.log.empty());
 }
 
+// What the dock shows from the engine is in the file too, once.
+TEST_F(EngineTest, EngineLogPeakCenterFailureReachesTheFileOnce) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  auto p = multicollect(3);
+  p.sniff.enabled = false;
+  p.peak_center = {true, false, "AX", "Ar39", "default", 0};
+  peak_.ok = false;
+  std::vector<std::string> warnings;
+  auto sub = bus_.subscribe<Log>([&](const Log& l) {
+    if (l.level == LogLevel::Warn) warnings.push_back(l.message);
+  });
+  auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Completed);
+  EXPECT_EQ(warnings.size(), 1u);  // the dock
+  int in_file = 0;
+  for (const auto& l : log.lines())
+    if (l.starts_with("[warn] measurement:") && l.find("no peak") != std::string::npos) ++in_file;
+  EXPECT_EQ(in_file, 1) << ::testing::PrintToString(log.lines());
+}
+
 TEST_F(EngineTest, FailedPeakCenterIsReportedAndForcesARepositioning) {
   auto p = multicollect(3);
   p.sniff.enabled = false;

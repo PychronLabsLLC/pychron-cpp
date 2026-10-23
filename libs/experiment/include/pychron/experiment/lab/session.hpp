@@ -19,6 +19,7 @@
 // Each delivery is published as NotificationSent.
 
 #include <condition_variable>
+#include "pychron/core/process_log.hpp"
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -167,6 +168,7 @@ class LabSession {
   // what it would not save refuses the queue, one line each.
   Result<void> check_saves(const QueueSpec& will_run);
 
+  Logger log_ = process_logger("experiment");
   const Lab& lab_;
   // The lab's named peak-center configs as of the last queue start (the file
   // can change between queues); under mutex_.

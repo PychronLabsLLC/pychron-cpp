@@ -10,6 +10,7 @@
 #include <toml++/toml.hpp>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_error.hpp"
 #include "pychron/core/log_context.hpp"
 
 namespace pychron::experiment::lab {
@@ -300,8 +301,8 @@ void Notifier::drop(const Entry& e) {
 }
 
 void Notifier::log_warn(std::string message) {
-  bus_.publish(Log{LogLevel::Warn, "notifications", std::move(message),
-                   options_.clock != nullptr ? options_.clock->now() : TimePoint{}});
+  log_and_publish(log_, &bus_, "notifications", LogLevel::Warn, std::move(message),
+                  options_.clock != nullptr ? options_.clock->now() : TimePoint{});
 }
 
 std::optional<WallTime> Notifier::deliver_due(WallTime now) {

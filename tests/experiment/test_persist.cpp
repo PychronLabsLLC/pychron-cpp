@@ -678,6 +678,9 @@ TEST_F(SpoolFlusherTest, SpoolLogRetryResult) {
   w.clock.sleep_for(10min);  // the retry at 5 min sends it
   const auto lines = log.lines();
   const auto has = [&](const std::string& line) { return std::find(lines.begin(), lines.end(), line) != lines.end(); };
-  EXPECT_TRUE(has("[warn] spool: flush: io: database down")) << ::testing::PrintToString(lines);
+  // The failed hand-off said why once; the flush adds no second warning for it.
+  EXPECT_EQ(std::count_if(lines.begin(), lines.end(), [](const std::string& l) { return l.starts_with("[warn] spool:"); }), 1)
+      << ::testing::PrintToString(lines);
+  EXPECT_TRUE(has("[warn] spool: hand-off u1: io: database down")) << ::testing::PrintToString(lines);
   EXPECT_TRUE(has("[debug] spool: flush: sent 1, 0 pending")) << ::testing::PrintToString(lines);
 }

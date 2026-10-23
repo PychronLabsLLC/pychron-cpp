@@ -427,6 +427,7 @@ class MeasurementEngine {
   void cleanup(bool abnormal);
 
   Logger log_ = process_logger("experiment.engine");
+  Logger measurement_log_ = process_logger("measurement");  // what the dock shows as source "measurement"
   EngineContext ctx_;
   MeasurementInputs in_;
   EngineOptions options_;
