@@ -32,6 +32,11 @@
 #include "menu_hub.hpp"
 #include "peak_center_panel.hpp"
 #include "peak_center_window.hpp"
+#include "pychron/core/clock.hpp"
+#include "pychron/core/config/logging_config.hpp"
+#include "pychron/core/log_hub.hpp"
+#include "pychron/core/logger.hpp"
+#include "pychron/core/signal_bus.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "spectrometer_window.hpp"
 #include "spectrometer_fixture.hpp"
@@ -208,8 +213,9 @@ class TestDocks : public QObject {
     QVERIFY(dock.level_action() != nullptr);
     QVERIFY(!dock.level_action()->isVisible());
     std::vector<std::pair<std::string, LogLevel>> calls;
-    dock.set_level_callback([&calls](std::string pattern, LogLevel level) {
+    dock.set_level_callback([&calls](std::string pattern, LogLevel level) -> std::optional<LogLevel> {
       calls.emplace_back(std::move(pattern), level);
+      return std::nullopt;
     });
     QVERIFY(dock.level_action()->isVisible());
     dock.apply_level(QStringLiteral("transport.serial.*"), LogLevel::Trace);
@@ -221,10 +227,108 @@ class TestDocks : public QObject {
   void levelActionRejectsEmptyPattern() {
     LogDock dock;
     int calls = 0;
-    dock.set_level_callback([&calls](std::string, LogLevel) { ++calls; });
+    dock.set_level_callback([&calls](const std::string&, LogLevel) -> std::optional<LogLevel> {
+      ++calls;
+      return std::nullopt;
+    });
     dock.apply_level(QString{}, LogLevel::Debug);
     dock.apply_level(QStringLiteral("   "), LogLevel::Debug);
     QCOMPARE(calls, 0);
+  }
+
+  // "Set logger level..." below the hub's dock level: the records asked for
+  // would reach the file and never the panel, so the dock level comes down
+  // with it (and the panel's own filter), and the panel says so.
+  void levelBelowTheDockLevelLowersIt() {
+    SteadyClock clock;
+    SignalBus bus;
+    config::LoggingConfig cfg;  // no file
+    cfg.dock_level = LogLevel::Info;
+    auto created = LogHub::create(cfg, clock, &bus);
+    QVERIFY(created.has_value());
+    const std::shared_ptr<LogHub>& hub = *created;
+
+    LogDock dock;
+    auto sub = bus.subscribe<Log>([&dock](const Log& e) { dock.append_log(e); });
+    dock.set_level_callback(pychron::ui::hub_level_callback(hub));
+    dock.set_min_level(LogLevel::Warn);
+    dock.apply_level(QStringLiteral("*.wire"), LogLevel::Trace);
+    QCOMPARE(hub->dock_level(), LogLevel::Trace);
+    hub->logger("gnet.wire").trace("-> 0x01");
+    dock.flush_pending();
+    QVERIFY2(dock.text().contains(QStringLiteral("[gnet.wire] -> 0x01")), qPrintable(dock.text()));
+    QVERIFY2(dock.text().contains(QStringLiteral("the Log panel now shows TRACE and up")), qPrintable(dock.text()));
+    QCOMPARE(hub->logger("x").enabled(LogLevel::Trace), false);  // only the pattern's loggers
+
+    // At or above the dock level: nothing more to say, nothing moved.
+    dock.clear();
+    dock.apply_level(QStringLiteral("scheduler"), LogLevel::Debug);
+    QCOMPARE(hub->dock_level(), LogLevel::Trace);
+    QVERIFY(!dock.text().contains(QStringLiteral("now shows")));
+  }
+
+  // Save and Copy carry the thread and run, where the file line has them;
+  // the text filter finds them.
+  void rowsCarryThreadAndRun() {
+    LogDock dock;
+    dock.append_log(Log{LogLevel::Info, "experiment.run", "start", {}, "executor", "12345-01A"});
+    dock.append_log(Log{LogLevel::Info, "scanner", "tick", {}, "t3", ""});
+    dock.append_log(Log{LogLevel::Info, "ui", "plain", {}});
+    dock.flush_pending();
+    const QString text = dock.text();
+    QVERIFY2(text.contains(QStringLiteral("INFO [executor] run=12345-01A [experiment.run] start")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("INFO [t3] [scanner] tick")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("INFO [ui] plain")), qPrintable(text));
+
+    dock.set_text_filter(QStringLiteral("12345-01"));
+    QCOMPARE(dock.line_count(), 1);
+    dock.set_text_filter(QStringLiteral("EXECUTOR"));
+    QCOMPARE(dock.line_count(), 1);
+    dock.set_text_filter(QStringLiteral("t3"));
+    QCOMPARE(dock.line_count(), 1);
+    dock.set_text_filter({});
+    QCOMPARE(dock.line_count(), 3);
+  }
+
+  // History is what the panel would have shown: lines below the dock level
+  // are left in the file, and the last lines at the level are what is loaded.
+  void historyLeavesOutLinesBelowTheMinimumLevel() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("pychron.log"));
+    {
+      QFile f(path);
+      QVERIFY(f.open(QIODevice::WriteOnly));
+      f.write("not a log line\n");
+      f.write("2026-10-22T14:03:22.481Z [debug] [t1] a: quiet\n");
+      f.write("  continuation of quiet\n");
+      f.write("2026-10-22T14:03:22.482Z [info] [t1] a: said\n");
+      f.write("2026-10-22T14:03:22.483Z [warn] [t1] a: loud\n");
+      f.write("  continuation of loud\n");
+      f.write("2026-10-22T14:03:22.484Z [trace] [t1] a.wire: bytes\n");
+    }
+    LogDock dock;
+    QCOMPARE(dock.load_history(path.toStdString(), 1000, LogLevel::Info), 4);
+    const LogModel* m = dock.model();
+    QCOMPARE(m->record(0).message, QStringLiteral("not a log line"));
+    QCOMPARE(m->record(1).message, QStringLiteral("said"));
+    QCOMPARE(m->record(2).message, QStringLiteral("loud"));
+    QCOMPARE(m->record(3).message, QStringLiteral("  continuation of loud"));
+
+    // Fifty info lines under two thousand debug ones: the ten last info lines.
+    const QString busy = dir.filePath(QStringLiteral("busy.log"));
+    {
+      QFile f(busy);
+      QVERIFY(f.open(QIODevice::WriteOnly));
+      for (int i = 0; i < 50; ++i)
+        f.write(QStringLiteral("2026-10-22T14:03:22.481Z [info] [t1] a: info %1\n").arg(i).toUtf8());
+      for (int i = 0; i < 2000; ++i)
+        f.write(QStringLiteral("2026-10-22T14:03:23.481Z [debug] [t1] a.wire: debug %1\n").arg(i).toUtf8());
+    }
+    LogDock dock2;
+    QCOMPARE(dock2.load_history(busy.toStdString(), 10, LogLevel::Info), 10);
+    QCOMPARE(dock2.model()->record(0).message, QStringLiteral("info 40"));
+    QCOMPARE(dock2.model()->record(9).message, QStringLiteral("info 49"));
   }
 
   void loadHistoryReadsTailAsHistory() {

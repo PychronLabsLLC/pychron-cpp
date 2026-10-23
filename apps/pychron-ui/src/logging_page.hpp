@@ -11,6 +11,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
@@ -25,6 +26,11 @@ class LoggingPage : public QWidget {
   explicit LoggingPage(QWidget* parent = nullptr);
 
   void set(const config::LoggingConfig& logging);
+  // Why the install's logging files are not read (empty: they are); shown
+  // at the top of the page while not empty. `saved` false: changes here are
+  // not written until the file is mended.
+  void set_problem(const QString& problem, bool saved = true);
+  QLabel* problem() const noexcept { return problem_; }
   // What the fields hold. A row with no pattern is not a level; of two rows
   // with one pattern the lower wins.
   config::LoggingConfig value() const;
@@ -55,6 +61,7 @@ class LoggingPage : public QWidget {
   QSpinBox* max_files_;
   QCheckBox* echo_;
   QCheckBox* no_file_;
+  QLabel* problem_;
 };
 
 }  // namespace pychron::ui

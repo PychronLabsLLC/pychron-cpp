@@ -42,7 +42,10 @@ bool LogFilterProxy::filterAcceptsRow(int source_row, const QModelIndex& source_
   const LogRecord& r = model->record(source_row);
   if (static_cast<int>(r.level) < static_cast<int>(min_level_)) return false;
   if (!logger_pattern_.empty() && !log_name_matches(logger_pattern_, r.logger.toStdString())) return false;
-  if (!text_.isEmpty() && !r.message.contains(text_, Qt::CaseInsensitive)) return false;
+  if (!text_.isEmpty() && !r.message.contains(text_, Qt::CaseInsensitive) &&
+      !r.thread.contains(text_, Qt::CaseInsensitive) && !r.run.contains(text_, Qt::CaseInsensitive)) {
+    return false;
+  }
   return true;
 }
 

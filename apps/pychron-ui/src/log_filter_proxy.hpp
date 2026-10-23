@@ -1,6 +1,7 @@
 #pragma once
 
-// LogFilterProxy: level / logger-pattern / message-text filter over LogModel.
+// LogFilterProxy: level / logger-pattern / text filter over LogModel (the
+// text is looked for in the message, the thread and the run id).
 
 #include <string>
 

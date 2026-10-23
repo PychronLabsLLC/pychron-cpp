@@ -26,6 +26,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "pychron/core/log_hub.hpp"
+
 namespace pychron::ui {
 
 namespace {
@@ -145,7 +147,7 @@ LogDock::LogDock(QWidget* parent)
   level_combo_->setToolTip(tr("Minimum level"));
   logger_edit_->setPlaceholderText(tr("logger (prefix or glob)"));
   logger_edit_->setClearButtonEnabled(true);
-  text_edit_->setPlaceholderText(tr("message contains"));
+  text_edit_->setPlaceholderText(tr("text contains"));
   text_edit_->setClearButtonEnabled(true);
   pause_button_->setText(tr("Pause"));
   pause_button_->setCheckable(true);
@@ -286,8 +288,10 @@ int LogDock::line_count() const {
 
 QString LogDock::format_row(int proxy_row) const {
   const LogRecord& r = model_->record(proxy_->mapToSource(proxy_->index(proxy_row, 0)).row());
-  return log_wall_time(r.ts).toString(QStringLiteral("HH:mm:ss ")) + log_level_name(r.level) + QStringLiteral(" [") +
-         r.logger + QStringLiteral("] ") + r.message;
+  QString row = log_wall_time(r.ts).toString(QStringLiteral("HH:mm:ss ")) + log_level_name(r.level);
+  if (!r.thread.isEmpty()) row += QStringLiteral(" [") + r.thread + QLatin1Char(']');
+  if (!r.run.isEmpty()) row += QStringLiteral(" run=") + r.run;
+  return row + QStringLiteral(" [") + r.logger + QStringLiteral("] ") + r.message;
 }
 
 QString LogDock::text() const {
@@ -318,9 +322,13 @@ void LogDock::set_level_callback(LevelCallback callback) {
 void LogDock::apply_level(const QString& pattern, LogLevel level) {
   const QString p = pattern.trimmed();
   if (p.isEmpty() || !level_callback_) return;
-  level_callback_(p.toStdString(), level);
-  enqueue(LogRecord{std::chrono::steady_clock::now(), LogLevel::Info, QStringLiteral("ui"),
-                    tr("logger level for '%1' set to %2").arg(p, log_level_name(level)), false});
+  const std::optional<LogLevel> lowered = level_callback_(p.toStdString(), level);
+  QString said = tr("logger level for '%1' set to %2").arg(p, log_level_name(level));
+  if (lowered) {
+    said += tr("; the Log panel now shows %1 and up").arg(log_level_name(*lowered));
+    if (level_index(*lowered) < level_combo_->currentIndex()) set_min_level(*lowered);
+  }
+  enqueue(LogRecord{std::chrono::steady_clock::now(), LogLevel::Info, QStringLiteral("ui"), said, false});
 }
 
 void LogDock::level_with_dialog() {
@@ -337,20 +345,23 @@ void LogDock::level_with_dialog() {
   apply_level(pattern, parse_level(name));
 }
 
-int LogDock::load_history(const std::filesystem::path& log_file, int max_lines) {
+int LogDock::load_history(const std::filesystem::path& log_file, int max_lines, LogLevel min_level) {
   // `2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: msg`, or
   // the older `2026-10-01T14:03:22.481Z [warn] transport.serial.ig1: msg`. Thread
   // and run are read when the line has them.
   static const QRegularExpression re(QStringLiteral(
       R"(^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[(trace|debug|info|warn|error)\] (?:\[([^\]]*)\] )?(?:run=(\S+) )?(\S+): (.*)$)"));
-  const auto lines = read_tail_lines(log_file, std::min(max_lines, LogModel::kCapacity),
-                                     static_cast<std::size_t>(kMaxHistoryLineBytes));
-  if (lines.empty()) return 0;
+  const int wanted = std::min(max_lines, LogModel::kCapacity);
+  // With a level, lines below it are skipped: read further back for `wanted` of the rest.
+  const int scanned = min_level == LogLevel::Trace ? wanted : LogModel::kCapacity;
+  const auto lines = read_tail_lines(log_file, scanned, static_cast<std::size_t>(kMaxHistoryLineBytes));
+  if (lines.empty() || wanted <= 0) return 0;
 
   std::vector<LogRecord> records;
   records.reserve(lines.size());
   TimePoint last_ts = std::chrono::steady_clock::now();
   bool have_ts = false;
+  bool keep = static_cast<int>(LogLevel::Info) >= static_cast<int>(min_level);  // a line before any record
   for (const std::string& raw : lines) {
     const QString line = QString::fromUtf8(raw.data(), static_cast<qsizetype>(raw.size()));
     const auto m = re.match(line);
@@ -359,18 +370,36 @@ int LogDock::load_history(const std::filesystem::path& log_file, int max_lines) 
       if (wall.isValid()) {
         last_ts = log_steady_time(wall);
         have_ts = true;
-        records.push_back(LogRecord{last_ts, parse_file_level(m.captured(2)), m.captured(5), m.captured(6), true,
+        const LogLevel level = parse_file_level(m.captured(2));
+        keep = static_cast<int>(level) >= static_cast<int>(min_level);
+        if (!keep) continue;
+        records.push_back(LogRecord{last_ts, level, m.captured(5), m.captured(6), true,
                                     m.captured(3), m.captured(4)});
         continue;
       }
     }
-    // Continuation or foreign line: keep it, next to its neighbour in time.
+    // Continuation or foreign line: with the record before it, next to it in time.
+    if (!keep) continue;
     records.push_back(LogRecord{have_ts ? last_ts : std::chrono::steady_clock::now(), LogLevel::Info,
                                 QStringLiteral("file"), line, true});
+  }
+  if (std::cmp_greater(records.size(), wanted)) {
+    records.erase(records.begin(), records.end() - wanted);
   }
   const int count = static_cast<int>(records.size());
   model_->append(std::move(records));
   return count;
+}
+
+LogDock::LevelCallback hub_level_callback(std::weak_ptr<LogHub> hub) {
+  return [weak = std::move(hub)](const std::string& pattern, LogLevel level) -> std::optional<LogLevel> {
+    const auto h = weak.lock();
+    if (!h) return std::nullopt;
+    h->set_level(pattern, level);
+    if (static_cast<int>(level) >= static_cast<int>(h->dock_level())) return std::nullopt;
+    h->set_dock_level(level);
+    return level;
+  };
 }
 
 void LogDock::save_with_dialog() {

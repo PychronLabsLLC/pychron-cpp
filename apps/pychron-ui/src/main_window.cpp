@@ -832,16 +832,19 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
         const QString failed = save_line_settings(line_config_file_, wanted);
         if (!failed.isEmpty()) return failed;
         // Saved. Where the log file goes and the metrics endpoint are read
-        // at the next start; the levels are in force from now, when they
-        // are what changed. An Apply about something else leaves the hub
-        // alone, and with it a level set for the session from the log panel.
+        // at the next start; the levels and the Log panel's level are in
+        // force from now, when they are what changed. An Apply about
+        // something else leaves the hub alone, and with it a level set for
+        // the session from the log panel.
         const auto levels = [](const config::LoggingConfig& l) {
           return std::map<std::string, LogLevel>(l.levels.begin(), l.levels.end());
         };
         const bool changed = !before || before->logging.default_level != wanted.logging.default_level ||
                              levels(before->logging) != levels(wanted.logging);
-        if (changed) {
-          if (const auto hub = log_hub_.lock()) hub->set_levels(wanted.logging.default_level, wanted.logging.levels);
+        const bool dock_changed = !before || before->logging.dock_level != wanted.logging.dock_level;
+        if (const auto hub = log_hub_.lock()) {
+          if (changed) hub->set_levels(wanted.logging.default_level, wanted.logging.levels);
+          if (dock_changed) hub->set_dock_level(wanted.logging.dock_level);
         }
         return QString();
       });

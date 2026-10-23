@@ -411,6 +411,7 @@ void PreferencesDialog::set_values(const Values& values) {
   if (values.line && logging_ != nullptr && metrics_ != nullptr) {
     line_ = values.line;
     logging_->set(values.line->logging);
+    logging_->set_problem(values.line->logging_problem, values.line->logging_writable);
     metrics_->set(values.line->metrics, values.line->metrics_status);
   }
 }

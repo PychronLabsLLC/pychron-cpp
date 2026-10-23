@@ -7,6 +7,8 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 
 #include <QDockWidget>
@@ -25,6 +27,10 @@ class QTableView;
 class QTimer;
 class QToolButton;
 
+namespace pychron {
+class LogHub;
+}
+
 namespace pychron::ui {
 
 class LogDock : public QDockWidget {
@@ -34,7 +40,9 @@ class LogDock : public QDockWidget {
   static constexpr int kMaxLines = LogModel::kCapacity;
   static constexpr int kFlushIntervalMs = 33;  // ~30 Hz
 
-  using LevelCallback = std::function<void(std::string pattern, LogLevel level)>;
+  // Sets `level` for loggers matching `pattern`; returns the level the panel
+  // now receives from, when it had to come down for `level` to be seen.
+  using LevelCallback = std::function<std::optional<LogLevel>(std::string pattern, LogLevel level)>;
   static constexpr int kMaxHistoryLineBytes = 4096;
 
   explicit LogDock(QWidget* parent = nullptr);
@@ -46,7 +54,9 @@ class LogDock : public QDockWidget {
   // Visible (filtered) rows. When not paused, buffered records are flushed
   // first so the answer reflects everything appended so far.
   int line_count() const;
-  // Visible rows as "HH:mm:ss LEVEL [logger] message", newline separated.
+  // Visible rows as "HH:mm:ss LEVEL [thread] run=<id> [logger] message",
+  // newline separated: thread and run as the file line has them, each left
+  // out when the record has none.
   QString text() const;
 
   void set_min_level(LogLevel level);
@@ -66,15 +76,24 @@ class LogDock : public QDockWidget {
   void set_level_callback(LevelCallback callback);
   QAction* level_action() const noexcept { return level_action_; }
   // Testable core of the level dialog: forwards (trimmed pattern, level) to
-  // the callback. An empty pattern (or no callback) is ignored.
+  // the callback and says so in one info record. When the callback lowered
+  // the panel's level, the record says that too and the minimum-level filter
+  // comes down to `level` if it is above. An empty pattern (or no callback)
+  // is ignored.
   void apply_level(const QString& pattern, LogLevel level);
 
-  // Loads the last `max_lines` lines of `log_file` (the LogHub file format,
-  // UTC timestamps) as dimmed history records, inserted directly into the
-  // model. Reads only a bounded tail of the file; lines are capped at
-  // kMaxHistoryLineBytes. Unparseable lines become info records from logger
-  // "file". Returns the number of records added; 0 if the file is missing.
-  int load_history(const std::filesystem::path& log_file, int max_lines = 1000);
+  // Loads the last `max_lines` records at `min_level` and up of `log_file`
+  // (the LogHub file format, UTC timestamps) as dimmed history records,
+  // inserted directly into the model; the caller passes the hub's dock level,
+  // so history is what the panel would have shown. Reads only a bounded tail
+  // of the file (max_lines lines; kMaxLines when `min_level` is above trace,
+  // since lines below it are skipped);
+  // lines are capped at kMaxHistoryLineBytes. Unparseable lines become info
+  // records from logger "file", kept or left out with the line before them
+  // (info when there is none). Returns the number of records added; 0 if the
+  // file is missing.
+  int load_history(const std::filesystem::path& log_file, int max_lines = 1000,
+                   LogLevel min_level = LogLevel::Trace);
 
   const LogModel* model() const noexcept { return model_; }
 
@@ -104,5 +123,10 @@ class LogDock : public QDockWidget {
   bool paused_ = false;
   LevelCallback level_callback_;
 };
+
+// The callback main() gives the dock: sets the level on `hub` and, when
+// `level` is below its dock level, lowers that to `level` (and returns it),
+// so what was asked for reaches the panel. Does nothing once the hub is gone.
+LogDock::LevelCallback hub_level_callback(std::weak_ptr<LogHub> hub);
 
 }  // namespace pychron::ui

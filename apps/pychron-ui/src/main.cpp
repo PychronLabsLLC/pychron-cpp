@@ -465,8 +465,9 @@ int main(int argc, char** argv) {
     std::snprintf(speed.data(), speed.size(), "%g", cli->sim_speed);
     clock_name = std::string("virtual x") + speed.data();
   }
-  const std::shared_ptr<pychron::LogHub> hub = pychron::ui::open_process_log(
+  const pychron::ui::ProcessLog process_log = pychron::ui::open_process_log(
       install, log_line_config, process_clock, sim, pychron::host_os(), pychron::process_env(), clock_name);
+  const std::shared_ptr<pychron::LogHub> hub = process_log.hub;
   pychron::set_process_log_hub(hub);
   struct ProcessHubGuard {
     ~ProcessHubGuard() { pychron::set_process_log_hub(nullptr); }
@@ -696,12 +697,16 @@ int main(int argc, char** argv) {
     // Runtime level changes go to the process hub; without one (creation
     // failed) the "Set logger level..." action stays hidden.
     if (hub) {
-      window.log_dock()->set_level_callback(
-          [weak = std::weak_ptr<pychron::LogHub>(hub)](std::string pattern, pychron::LogLevel level) {
-            if (auto h = weak.lock()) h->set_level(pattern, level);
-          });
+      window.log_dock()->set_level_callback(pychron::ui::hub_level_callback(hub));
       hub->flush();  // records from load() are on disk before history is read
-      if (const auto path = hub->file_path(); !path.empty()) window.log_dock()->load_history(path);
+      if (const auto path = hub->file_path(); !path.empty()) {
+        window.log_dock()->load_history(path, 1000, hub->dock_level());
+      }
+    }
+    // What logging had to say before there was a window (a logging.toml that
+    // does not load, no folder for the file): once, in the panel.
+    for (const auto& [level, text] : process_log.notices) {
+      window.log_dock()->append_log(pychron::Log{level, "logging", text, {}});
     }
     // The experiment window shows the recent references only when what the
     // data window reads is where the session saves its runs: the store, with

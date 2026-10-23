@@ -2,7 +2,7 @@
 
 // What File > Preferences shows on its Logging and Metrics pages: the line's
 // `[logging]` and `[metrics]` as they are in force on this computer, and as
-// the shared config alone has them.
+// everything beneath the local file has them.
 //
 // These are not QSettings like the other preferences. They belong to the
 // line, and elctl must log and publish the same way the window does, so they
@@ -26,24 +26,34 @@ namespace pychron::ui {
 struct LineSettings {
   config::LoggingConfig logging;         // in force here: the shared file with the local one over it
   config::MetricsConfig metrics;
-  config::LoggingConfig shared_logging;  // the shared file alone: what Restore Defaults goes back to
+  config::LoggingConfig shared_logging;  // everything beneath the local file: what Restore Defaults goes back to
   config::MetricsConfig shared_metrics;
   QString metrics_status;                // what the endpoint is doing now, for the Metrics page
   // The install the line belongs to: its logging is read from and written to
   // the install's logging files. Unset (examples, files given): the line's own
   // `[logging]`.
   std::optional<std::filesystem::path> install_root;
+  // An install's logging file that does not load: why, for the Logging page.
+  // The program then runs on the built-in defaults, and so do `logging` and
+  // `shared_logging`. Empty when they load.
+  QString logging_problem;
+  // False when it is logging.local.toml that does not load: a save leaves it
+  // (and logging.toml) as it is, for the user to mend.
+  bool logging_writable = true;
 };
 
 // From `main_file` and its local override (and `install_root`'s logging files).
-// Nullopt when any cannot be loaded: the pages are then left out.
+// Nullopt when the line's files cannot be loaded: the pages are then left
+// out. An install logging file that does not load is not that: see
+// LineSettings::logging_problem.
 std::optional<LineSettings> load_line_settings(const std::filesystem::path& main_file,
                                                const std::optional<std::filesystem::path>& install_root = std::nullopt);
 
 // Writes `wanted`'s metrics into `main_file`'s local override and its logging
 // into that or, with an install root, `logging.local.toml`, as far as they
-// differ from the shared file; what does not differ is taken
-// out of it. Empty when it is done, else what to tell the user (the file is
+// differ from everything beneath; what does not differ is taken out of it.
+// logging.toml is never written; logging.local.toml not while it does not
+// load (`logging_writable`). Empty when it is done, else what to tell the user (the file is
 // then as it was).
 QString save_line_settings(const std::filesystem::path& main_file, const LineSettings& wanted);
 

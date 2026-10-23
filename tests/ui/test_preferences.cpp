@@ -1085,6 +1085,68 @@ class TestPreferences : public QObject {
     QVERIFY(page->folder()->text().isEmpty());
   }
 
+  // The Log panel's level is in force from Apply, as the levels are.
+  void main_window_applies_the_dock_level_at_once() {
+    auto line = ui::test::make_example_line();
+    const std::shared_ptr<LogHub> hub = line->log_hub();
+    QVERIFY(hub != nullptr);
+    hub->set_dock_level(LogLevel::Info);
+    hub->set_level("transport", LogLevel::Trace);  // a level set for the session stays
+
+    ui::MainWindow window(*line);
+    window.set_preferences_settings(factory());
+    window.set_line_config_file(main_file_);
+    PreferencesDialog* d = window.open_preferences();
+    d->logging_page()->dock_level()->setCurrentText(QStringLiteral("warn"));
+    click(d->buttons(), QDialogButtonBox::Apply);
+    QVERIFY(!d->problem()->isVisibleTo(d));
+    QCOMPARE(hub->dock_level(), LogLevel::Warn);
+    QVERIFY(hub->logger("transport").enabled(LogLevel::Trace));
+    click(d->buttons(), QDialogButtonBox::Cancel);
+  }
+
+  // A logging.toml that does not load: the page is there, on the built-in
+  // defaults (what the program runs on), says why, and a save leaves
+  // logging.toml as it is.
+  void a_broken_logging_toml_shows_the_built_in_defaults() {
+    const fs::path root = make_install_root();
+    write_file(root / "logging.toml", "colour = 1\n");
+    auto s = ui::load_line_settings(main_file_, root);
+    QVERIFY(s.has_value());
+    QCOMPARE(s->logging.default_level, LogLevel::Debug);  // not the line's legacy warn
+    QCOMPARE(s->shared_logging.default_level, LogLevel::Debug);
+    QVERIFY(s->logging.levels.empty());
+    QVERIFY2(s->logging_problem.contains(QStringLiteral("colour")), qPrintable(s->logging_problem));
+
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    ui::LoggingPage* page = d.logging_page();
+    QVERIFY(page->problem()->isVisibleTo(page));
+    QVERIFY(page->problem()->text().contains(QStringLiteral("colour")));
+    page->dock_level()->setCurrentText(QStringLiteral("warn"));
+    QCOMPARE(ui::save_line_settings(main_file_, *d.values().line), QString());
+    QCOMPARE(read_file(root / "logging.toml"), std::string("colour = 1\n"));
+    QCOMPARE(read_file(root / "logging.local.toml"), std::string("dock_level = \"warn\"\n"));
+
+    // A broken logging.local.toml: the same, and the save leaves it for the user to mend.
+    write_file(root / "logging.toml", "default_level = \"error\"\n");
+    write_file(root / "logging.local.toml", "default_level = 3\n");
+    auto broken_local = ui::load_line_settings(main_file_, root);
+    QVERIFY(broken_local.has_value());
+    QCOMPARE(broken_local->logging.default_level, LogLevel::Debug);
+    QVERIFY(broken_local->logging_problem.contains(QStringLiteral("logging.local.toml")));
+    QVERIFY(!broken_local->logging_writable);
+    QCOMPARE(ui::save_line_settings(main_file_, *broken_local), QString());
+    QCOMPARE(read_file(root / "logging.local.toml"), std::string("default_level = 3\n"));
+    QCOMPARE(read_file(root / "logging.toml"), std::string("default_level = \"error\"\n"));
+
+    // Nothing wrong: no problem shown.
+    auto fine = ui::load_line_settings(main_file_, std::nullopt);
+    QVERIFY(fine.has_value());
+    QVERIFY(fine->logging_problem.isEmpty());
+    PreferencesDialog ok({Preferences{}, std::nullopt, *fine}, {});
+    QVERIFY(!ok.logging_page()->problem()->isVisibleTo(ok.logging_page()));
+  }
+
   // Every window here was given its settings: none fell back to the application's.
   void cleanupTestCase() { QCOMPARE(app_settings_.keys(), QStringList()); }
 };

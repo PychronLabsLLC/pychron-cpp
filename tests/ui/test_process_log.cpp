@@ -81,7 +81,7 @@ class TestProcessLog : public QObject {
       return std::nullopt;
     };
     pychron::SteadyClock clock;
-    const auto hub = pychron::ui::open_process_log(install, std::nullopt, clock, false, pychron::HostOs::Mac, env);
+    const auto hub = pychron::ui::open_process_log(install, std::nullopt, clock, false, pychron::HostOs::Mac, env).hub;
     QVERIFY(hub != nullptr);
     hub->flush();
     QVERIFY(fs::exists(install.root / "logs" / "pychron.log"));
@@ -95,13 +95,59 @@ class TestProcessLog : public QObject {
       return std::nullopt;
     };
     pychron::SteadyClock clock;
-    const auto hub = pychron::ui::open_process_log(std::nullopt, std::nullopt, clock, true, pychron::HostOs::Mac, env,
-                                                   "virtual x10");
+    const auto opened = pychron::ui::open_process_log(std::nullopt, std::nullopt, clock, true, pychron::HostOs::Mac,
+                                                      env, "virtual x10");
+    QVERIFY(opened.notices.empty());
+    const auto& hub = opened.hub;
     QVERIFY(hub != nullptr);
     hub->flush();
     const fs::path expected = fs::path(tmp.path().toStdString()) / "Library" / "Logs" / "pychron" / "pychron.log";
     QVERIFY(fs::exists(expected));
     QVERIFY(slurp(expected).find("virtual x10") != std::string::npos);
+  }
+
+  // A logging.toml that does not load: the built-in defaults in the install's
+  // folder, the reason as the first error record (logger `logging`) and as a
+  // notice for the Log dock.
+  void badLoggingTomlFallsBackToDefaults() {
+    QTemporaryDir tmp;
+    pychron::setup::SiteInstall install;
+    install.name = "lab";
+    install.kind = "instrument";
+    install.root = fs::path(tmp.path().toStdString());
+    {
+      std::ofstream out(install.root / "logging.toml");
+      out << "colour = 1\n";
+    }
+    const pychron::EnvLookup env = [](std::string_view) -> std::optional<std::string> { return std::nullopt; };
+    pychron::SteadyClock clock;
+    const auto opened = pychron::ui::open_process_log(install, std::nullopt, clock, false, pychron::HostOs::Mac, env);
+    QVERIFY(opened.hub != nullptr);
+    QCOMPARE(opened.hub->file_path(), install.root / "logs" / "pychron.log");
+    QCOMPARE(opened.notices.size(), std::size_t{1});
+    QCOMPARE(opened.notices[0].first, pychron::LogLevel::Error);
+    QVERIFY2(opened.notices[0].second.find("colour") != std::string::npos, opened.notices[0].second.c_str());
+    opened.hub->flush();
+    const std::string text = slurp(opened.hub->file_path());
+    const auto at = text.find("[error]");
+    QVERIFY2(at != std::string::npos, text.c_str());
+    const std::string first_error = text.substr(at, text.find('\n', at) - at);
+    QVERIFY2(first_error.find("] logging: ") != std::string::npos, first_error.c_str());
+    QVERIFY2(first_error.find("colour") != std::string::npos, first_error.c_str());
+    QVERIFY2(text.find("default_level=debug") != std::string::npos, text.c_str());
+  }
+
+  // No HOME and no install: no folder for the file, said once.
+  void noHomeIsANoticeAndNoFile() {
+    const pychron::EnvLookup env = [](std::string_view) -> std::optional<std::string> { return std::nullopt; };
+    pychron::SteadyClock clock;
+    const auto opened =
+        pychron::ui::open_process_log(std::nullopt, std::nullopt, clock, false, pychron::HostOs::Linux, env);
+    QVERIFY(opened.hub != nullptr);
+    QVERIFY(opened.hub->file_path().empty());
+    QCOMPARE(opened.notices.size(), std::size_t{1});
+    QCOMPARE(opened.notices[0].first, pychron::LogLevel::Warn);
+    QCOMPARE(opened.notices[0].second, std::string("no log folder: HOME is not set"));
   }
 };
 

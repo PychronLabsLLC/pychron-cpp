@@ -51,7 +51,11 @@ LoggingPage::LoggingPage(QWidget* parent)
       max_size_(new QSpinBox),
       max_files_(new QSpinBox),
       echo_(new QCheckBox(tr("Also print to the terminal"))),
-      no_file_(new QCheckBox(tr("No log file"))) {
+      no_file_(new QCheckBox(tr("No log file"))),
+      problem_(new QLabel) {
+  problem_->setWordWrap(true);
+  problem_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  problem_->setVisible(false);
   levels_->setHorizontalHeaderLabels({tr("Logger"), tr("Level")});
   levels_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
   levels_->verticalHeader()->hide();
@@ -113,8 +117,21 @@ LoggingPage::LoggingPage(QWidget* parent)
          "in logging.toml, remove \"dir\" from that file.")));
 
   auto* layout = new QVBoxLayout(this);
+  layout->addWidget(problem_);
   layout->addWidget(now, 1);  // the table takes what room there is
   layout->addWidget(file);
+}
+
+void LoggingPage::set_problem(const QString& problem, bool saved) {
+  if (problem.isEmpty()) {
+    problem_->clear();
+    problem_->setVisible(false);
+    return;
+  }
+  QString text = tr("Not read: %1. Logging runs on the built-in defaults, shown here.").arg(problem);
+  if (!saved) text += tr(" Changes here are not saved until that file is mended or removed.");
+  problem_->setText(text);
+  problem_->setVisible(true);
 }
 
 QComboBox* LoggingPage::level_at(int row) const { return qobject_cast<QComboBox*>(levels_->cellWidget(row, 1)); }
