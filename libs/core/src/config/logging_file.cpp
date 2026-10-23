@@ -36,7 +36,8 @@ Result<void> apply_logging_toml(std::string_view toml, std::string_view name, Lo
 }
 
 Result<LoggingSources> load_logging_config(const std::optional<std::filesystem::path>& install_root,
-                                           const std::optional<std::filesystem::path>& line_config) {
+                                           const std::optional<std::filesystem::path>& line_config,
+                                           bool include_local_file) {
   LoggingSources out;
   std::optional<std::filesystem::path> legacy_path;
   if (line_config) {
@@ -57,6 +58,7 @@ Result<LoggingSources> load_logging_config(const std::optional<std::filesystem::
   bool overridden = false;
   if (install_root) {
     for (const auto& file : {logging_file(*install_root), logging_local_file(*install_root)}) {
+      if (!include_local_file && file == logging_local_file(*install_root)) continue;
       if (!is_file(file)) continue;
       auto text = slurp(file);
       if (!text) return fail(text.error());

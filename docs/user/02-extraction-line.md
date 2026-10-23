@@ -357,6 +357,12 @@ The file records at `default_level`, which is `debug` unless you change it;
 the Log panel shows only `dock_level` and above. A `[logging]` table in
 `extraction_line.toml` (and its `.local.toml`) is still read, with
 `logging.toml` over it, so an older install keeps working until you move it.
+Layers are read in this order, the later one winning: the built-in defaults,
+`extraction_line.toml`'s `[logging]`, its `.local.toml`'s `[logging]`,
+`logging.toml`, `logging.local.toml`. The Logging page writes only what you
+changed into `logging.local.toml`, so editing a lower file later still
+takes effect. There is no way to say "unset" in a file: to go back to the
+default folder after a lower layer set `dir`, remove `dir` from that file.
 
 Lines look like
 `2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: message`:
@@ -494,8 +500,8 @@ The file has one section per kind of thing. Here is the shipped example
 name = "example"            # shown in the window title
 scan_interval_ms = 1000     # how often gauges/heaters/cryo are read
 
-[logging]                   # optional
-# dir = "~/pychron-logs"    # no dir = no log file
+[logging]                   # optional; older place, see "The log file"
+# dir = "~/pychron-logs"    # no dir = the default log folder; dir = "" = no file
 default_level = "info"      # trace|debug|info|warn|error
 # [logging.levels]
 # "*.wire" = "trace"        # per-logger overrides, glob on logger name

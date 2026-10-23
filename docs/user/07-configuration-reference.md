@@ -162,12 +162,19 @@ else at top level is an error): `[system]`, `[logging]`, `[transports.*]`,
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `dir` | path | none | folder for log files; with none there is no file log. `~` is your home folder |
-| `max_size_mb` | whole number >= 1 | 10 | size at which a log file rolls over |
-| `max_files` | whole number >= 1 | 5 | log files kept |
-| `default_level` | `trace`, `debug`, `info`, `warn`, `error` | `info` | |
+| `dir` | path | the default log folder | folder for log files; `""` writes no file. `~` is your home folder |
+| `max_size_mb` | whole number >= 1 | 50 | size at which a log file rolls over |
+| `max_files` | whole number >= 1 | 10 | log files kept |
+| `default_level` | `trace`, `debug`, `info`, `warn`, `error` | `debug` | the level for loggers not named below |
+| `dock_level` | same | `info` | what the Log panel shows |
 | `echo_stderr` | true/false | false | also print to the terminal |
 | `[logging.levels]` | text = level | none | per-logger overrides by name pattern: `"*.wire" = "trace"` shows every transport's bytes; each transport logs to `<name>.wire`. `"scheduler"` and `"extraction_line"` are the line's own loggers |
+
+This table is the older place for logging. The same keys, at the top level and
+with the per-logger table named `[levels]`, go in `logging.toml` in the install
+folder (and `logging.local.toml` for this computer only), which are read over
+this table; File > Preferences > Logging writes the second. See the extraction
+line chapter, "The log file".
 
 ### [metrics] (optional)
 

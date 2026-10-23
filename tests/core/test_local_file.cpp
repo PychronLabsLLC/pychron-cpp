@@ -363,3 +363,16 @@ TEST_F(LocalFile, LoggingReplacementKeepsOtherTablesAndCommentsWhenNothingLeft) 
   ASSERT_TRUE(replace_local_logging(local, ""));
   EXPECT_EQ(read(local), "# keep\n[other]\nx = 1\n");
 }
+
+TEST_F(LocalFile, LoggingKeysInAFileWithOnlyAHeaderCommentGoBelowIt) {
+  write(local, "# this install's logging\n");
+  ASSERT_TRUE(replace_local_logging(local, "dock_level = \"warn\"\n"));
+  EXPECT_EQ(read(local), "# this install's logging\ndock_level = \"warn\"\n");
+}
+
+TEST_F(LocalFile, LoggingKeysKeepWindowsLineEndings) {
+  write(local, "# mine\r\nmax_files = 4\r\n\r\n[other]\r\nx = 1\r\n");
+  ASSERT_TRUE(replace_local_logging(local, "dock_level = \"warn\"\n\n[levels]\nscheduler = \"debug\"\n"));
+  EXPECT_EQ(read(local),
+            "# mine\r\ndock_level = \"warn\"\r\n\r\n[other]\r\nx = 1\r\n\r\n[levels]\r\nscheduler = \"debug\"\r\n");
+}

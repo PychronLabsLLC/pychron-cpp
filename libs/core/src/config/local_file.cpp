@@ -1,8 +1,8 @@
 #include "pychron/core/config/local_file.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <array>
+#include <cstdio>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -280,7 +280,8 @@ Result<void> replace_local_logging(const fs::path& file, std::string_view toml) 
   std::string before;
   if (auto r = read_local_file(file, toml, exists, before); !r) return r;
 
-  static constexpr std::array<std::string_view, 6> kKeys = {"dir", "max_size_mb", "max_files", "default_level", "dock_level", "echo_stderr"};
+  static constexpr std::array<std::string_view, 6> kKeys = {"dir",           "max_size_mb", "max_files",
+                                                              "default_level", "dock_level",  "echo_stderr"};
   const bool crlf = [&] {
     const auto nl = before.find('\n');
     return nl != std::string::npos && nl > 0 && before[nl - 1] == '\r';
@@ -325,29 +326,35 @@ Result<void> replace_local_logging(const fs::path& file, std::string_view toml) 
       break;
     }
   }
+  // The new keys go after the file's own top-level lines. When a table follows,
+  // the comments directly above it belong to that table and the blank lines
+  // before them are left in place, so the keys go above both; in a file with
+  // no table the keys go at the end, below any header comment.
   std::size_t at = table_at;
-  while (at > 0 && (is_comment(kept[at - 1]) || is_blank(kept[at - 1]))) --at;
-  // A comment block at the very top of a file with no keys is the file's own.
-  std::string keys_text;
-  std::string levels_text;
+  if (at < kept.size()) {
+    while (at > 0 && is_comment(kept[at - 1])) --at;
+    while (at > 0 && is_blank(kept[at - 1])) --at;
+  }
+
   const std::string_view body = toml;
   const auto split = body.find("\n[");
   const bool starts_table = body.starts_with('[');
-  const std::string_view keys = starts_table ? std::string_view() : body.substr(0, split == std::string_view::npos ? body.size() : split + 1);
-  const std::string_view tables = starts_table ? body : (split == std::string_view::npos ? std::string_view() : body.substr(split + 1));
-  {
-    const auto last = keys.find_last_not_of('\n');
-    std::string k(keys.substr(0, last == std::string_view::npos ? 0 : last + 1));
-    if (!k.empty()) k += '\n';
-    keys_text = in_eol(k);
-  }
-  levels_text = in_eol(trimmed(tables).empty() ? std::string_view() : tables);
+  const std::string_view keys =
+      starts_table ? std::string_view() : body.substr(0, split == std::string_view::npos ? body.size() : split + 1);
+  const std::string_view tables =
+      starts_table ? body : (split == std::string_view::npos ? std::string_view() : body.substr(split + 1));
+  const auto last_key_char = keys.find_last_not_of('\n');
+  const std::string keys_text = last_key_char == std::string_view::npos
+                                    ? std::string()
+                                    : in_eol(std::string(keys.substr(0, last_key_char + 1)) + "\n");
+  const std::string levels_text = in_eol(trimmed(tables).empty() ? std::string_view() : tables);
 
   std::string after;
   for (std::size_t i = 0; i < at; ++i) after += kept[i];
   if (!keys_text.empty()) {
+    if (!after.empty() && !after.ends_with('\n')) after += eol;
     after += keys_text;
-    if (at < kept.size()) after += eol;  // a blank line before what follows
+    if (at < kept.size() && !is_blank(kept[at])) after += eol;  // a blank line before what follows
   }
   for (std::size_t i = at; i < kept.size(); ++i) after += kept[i];
   if (!levels_text.empty()) {

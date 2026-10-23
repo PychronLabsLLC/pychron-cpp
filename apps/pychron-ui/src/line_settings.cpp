@@ -1,33 +1,10 @@
 #include "line_settings.hpp"
 
-#include <fstream>
-#include <sstream>
-#include <system_error>
-
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/config/logging_file.hpp"
 #include "pychron/core/config/local_file.hpp"
 
 namespace pychron::ui {
-
-namespace {
-
-// What <root>/logging.toml says over the built-in defaults: what Restore
-// Defaults goes back to. Nullopt when the file is there and does not parse.
-std::optional<config::LoggingConfig> shared_install_logging(const std::filesystem::path& root) {
-  config::LoggingConfig out;
-  const auto file = config::logging_file(root);
-  std::error_code ec;
-  if (!std::filesystem::is_regular_file(file, ec)) return out;
-  std::ifstream in(file, std::ios::binary);
-  if (!in) return std::nullopt;
-  std::ostringstream text;
-  text << in.rdbuf();
-  if (!config::apply_logging_toml(text.str(), file.generic_string(), out)) return std::nullopt;
-  return out;
-}
-
-}  // namespace
 
 std::optional<LineSettings> load_line_settings(const std::filesystem::path& main_file,
                                                const std::optional<std::filesystem::path>& install_root) {
@@ -41,10 +18,12 @@ std::optional<LineSettings> load_line_settings(const std::filesystem::path& main
   s.shared_metrics = shared->metrics;
   if (install_root) {
     const auto sources = config::load_logging_config(install_root, main_file);
-    const auto shared_logging = shared_install_logging(*install_root);
-    if (!sources || !shared_logging) return std::nullopt;
+    // Everything beneath logging.local.toml: what a preference is compared
+    // with and what Restore Defaults goes back to.
+    const auto below = config::load_logging_config(install_root, main_file, false);
+    if (!sources || !below) return std::nullopt;
     s.logging = sources->config;
-    s.shared_logging = *shared_logging;
+    s.shared_logging = below->config;
     s.install_root = install_root;
   }
   return s;

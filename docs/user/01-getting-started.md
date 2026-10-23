@@ -554,7 +554,7 @@ local file then holds nothing about them.
 |---|---|---|
 | Logging | **Everything else** | The level for any logger not listed below: `trace`, `debug`, `info`, `warn` or `error`. At once. |
 | Logging | **Logger / Level** table | A level for one logger or a family of them. A logger is named like `scheduler` or `transport.serial`; `*` stands for any part, so `*.wire` at `trace` shows every byte sent and received. **Add** and **Remove** change the list. At once. |
-| Logging | **Folder** | Where log files go; empty for no log file. Next start. |
+| Logging | **Folder** | Where log files go; empty for the default folder, or tick **No log file**. To return to the default after a folder was set in `logging.toml`, remove `dir` there. Next start. |
 | Logging | **Start a new file at**, **Files kept** | The size at which a log file rolls over, and how many old ones are kept. Next start. |
 | Logging | **Also print to the terminal** | Next start. |
 | Metrics | **Now** | What the endpoint is doing: listening and where, off, or why it could not start. |

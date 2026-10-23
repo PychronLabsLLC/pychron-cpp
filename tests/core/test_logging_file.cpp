@@ -70,6 +70,17 @@ TEST_F(LoggingFile, PrecedenceLowestFirst) {
   EXPECT_EQ(r->files, want);
 }
 
+TEST_F(LoggingFile, CanLeaveOutTheLocalFile) {
+  write_line("[logging]\nmax_files = 3\n");
+  write(logging_file(dir), "max_files = 5\n");
+  write(logging_local_file(dir), "max_files = 6\n");
+  const auto r = load_logging_config(dir, line, false);
+  ASSERT_TRUE(r) << r.error().what;
+  EXPECT_EQ(r->config.max_files, 5);
+  const std::vector<fs::path> want{line, logging_file(dir)};
+  EXPECT_EQ(r->files, want);
+}
+
 TEST_F(LoggingFile, LegacyDirBeatsDefaultFolder) {
   const auto old = (dir / "old").generic_string();
   write_line("[logging]\ndir = \"" + old + "\"\n");

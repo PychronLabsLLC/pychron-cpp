@@ -992,9 +992,8 @@ class TestPreferences : public QObject {
     const LineSettings wanted = *d.values().line;
     QCOMPARE(ui::save_line_settings(main_file_, wanted), QString());
 
-    // (the line's own [logging] has a scheduler level that logging.toml does not: it is kept)
-    QCOMPARE(read_file(root / "logging.local.toml"),
-             std::string("dock_level = \"warn\"\n\n[levels]\n\"scheduler\" = \"debug\"\n"));
+    // only what the user changed: the line's legacy [logging] (scheduler level, max_files) stays where it is
+    QCOMPARE(read_file(root / "logging.local.toml"), std::string("dock_level = \"warn\"\n"));
     // the line's own local file gets no [logging]
     QVERIFY(!QString::fromStdString(read_file(local_file_)).contains(QStringLiteral("logging")));
     QVERIFY(QString::fromStdString(read_file(local_file_)).contains(QStringLiteral("9600")));
@@ -1019,14 +1018,43 @@ class TestPreferences : public QObject {
     QVERIFY(!fs::exists(root / "logging.local.toml"));
   }
 
-  void restore_defaults_without_logging_toml_is_the_built_in_defaults() {
+  void restore_defaults_goes_to_the_legacy_table_without_logging_toml() {
     const fs::path root = make_install_root();
+    write_file(root / "logging.local.toml", "default_level = \"error\"\n");
+    auto s = ui::load_line_settings(main_file_, root);  // the line's [logging] says warn
+    QVERIFY(s.has_value());
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    click(d.buttons(), QDialogButtonBox::RestoreDefaults);
+    QCOMPARE(d.logging_page()->default_level()->currentText(), QStringLiteral("warn"));
+  }
+
+  void restore_defaults_with_nothing_beneath_is_the_built_in_defaults() {
+    const fs::path root = make_install_root();
+    write_file(main_file_, "[system]\nname = \"t\"\n");
     write_file(root / "logging.local.toml", "default_level = \"error\"\n");
     auto s = ui::load_line_settings(main_file_, root);
     QVERIFY(s.has_value());
     PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
     click(d.buttons(), QDialogButtonBox::RestoreDefaults);
     QCOMPARE(d.logging_page()->default_level()->currentText(), QStringLiteral("debug"));
+  }
+
+  // The line's legacy table alone: a change of dock_level writes dock_level and nothing it
+  // merely inherits, so a later edit of the legacy table still takes effect.
+  void changing_only_dock_level_writes_only_dock_level() {
+    const fs::path root = make_install_root();
+    auto s = ui::load_line_settings(main_file_, root);
+    QVERIFY(s.has_value());
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    d.logging_page()->dock_level()->setCurrentText(QStringLiteral("error"));
+    QCOMPARE(ui::save_line_settings(main_file_, *d.values().line), QString());
+    QCOMPARE(read_file(root / "logging.local.toml"), std::string("dock_level = \"error\"\n"));
+    // the legacy table changes later: the install follows it
+    write_file(main_file_, "[system]\nname = \"t\"\n\n[logging]\ndefault_level = \"trace\"\n");
+    const auto again = config::load_logging_config(root, main_file_);
+    QVERIFY(again.has_value());
+    QCOMPARE(again->config.default_level, LogLevel::Trace);
+    QCOMPARE(again->config.dock_level, LogLevel::Error);
   }
 
   void no_log_file_checkbox_is_an_empty_dir() {

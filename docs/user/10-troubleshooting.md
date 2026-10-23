@@ -209,7 +209,10 @@ Both programs write a log file as they run, with no setup.
   (the examples, or config files given on the command line) the file is in
   `~/Library/Logs/pychron` on macOS, `$XDG_STATE_HOME/pychron/logs` (or
   `~/.local/state/pychron/logs`) on Linux and `%LOCALAPPDATA%\pychron\logs` on
-  Windows. File > Preferences > Logging can move it or turn it off.
+  Windows. File > Preferences > Logging can move it or turn it off. To go back
+  to the default folder after a `dir` was set, remove `dir` from
+  `logging.toml` (or the `[logging]` table of `extraction_line.toml`): a file
+  cannot say "unset".
 - **Old files.** A file is closed at 50 MB and the last ten are kept
   (`pychron.1.log`, `pychron.2.log`, and so on).
 - **Two copies running.** Only one program writes a given file. A second copy

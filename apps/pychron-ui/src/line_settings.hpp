@@ -9,8 +9,9 @@
 // are kept where the line reads them: in the local override file beside its
 // config (extraction_line.local.toml), which holds only what differs from
 // the shared file. An install's logging is the exception: it is kept per
-// install, in `<root>/logging.local.toml` over `<root>/logging.toml`, which is
-// what Restore Defaults goes back to (built-in defaults when there is none).
+// install, in `<root>/logging.local.toml`, over everything beneath it (built-in
+// defaults, the line's legacy `[logging]`, `<root>/logging.toml`): that is what
+// Restore Defaults goes back to and what only the differences are written against.
 
 #include <filesystem>
 #include <optional>

@@ -108,7 +108,9 @@ LoggingPage::LoggingPage(QWidget* parent)
   file_form->addRow(tr("Start a new file at:"), max_size_);
   file_form->addRow(tr("Files kept:"), max_files_);
   file_form->addRow(echo_);
-  file_form->addRow(preferences_note(tr("These take effect the next time pychron starts.")));
+  file_form->addRow(preferences_note(
+      tr("These take effect the next time pychron starts. To go back to the default folder after a folder was set "
+         "in logging.toml, remove \"dir\" from that file.")));
 
   auto* layout = new QVBoxLayout(this);
   layout->addWidget(now, 1);  // the table takes what room there is
