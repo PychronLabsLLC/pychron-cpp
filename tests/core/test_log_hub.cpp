@@ -667,6 +667,11 @@ TEST(LogHub, ConcurrentWriteAndSetLevel) {
       hub->set_level("core", (i % 2 == 0) ? LogLevel::Trace : LogLevel::Error);
     }
   });
+  // The dock level moves under the writers too; error records reach the bus whatever it is.
+  threads.emplace_back([&] {
+    while (!go.load()) std::this_thread::yield();
+    for (int i = 0; i < 1000; ++i) hub->set_dock_level((i % 2 == 0) ? LogLevel::Trace : LogLevel::Error);
+  });
   go.store(true);
   for (auto& th : threads) th.join();
   hub->flush();
@@ -720,6 +725,45 @@ TEST(LogHub, DockLevelFiltersBusNotFile) {
   const auto text = read_bare_file(tmp.path() / "pychron.log");
   EXPECT_NE(text.find("[debug] core: quiet"), std::string::npos) << text;
   EXPECT_NE(text.find("[info] core: loud"), std::string::npos) << text;
+}
+
+TEST(LogHub, SetDockLevelChangesWhatTheBusGetsAtOnce) {
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  config::LoggingConfig cfg;  // no file: the bus alone
+  cfg.default_level = LogLevel::Trace;
+  cfg.dock_level = LogLevel::Info;
+  auto hub = make_hub(cfg, clock, &bus);
+  ASSERT_TRUE(hub);
+  EXPECT_EQ(hub->dock_level(), LogLevel::Info);
+
+  const Logger wire = hub->logger("transport.serial.ig1.wire");
+  wire.trace("before");
+  hub->set_dock_level(LogLevel::Trace);
+  EXPECT_EQ(hub->dock_level(), LogLevel::Trace);
+  wire.trace("after");
+  hub->set_dock_level(LogLevel::Warn);
+  wire.info("quiet again");
+  wire.warn("loud");
+
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].message, "after");
+  EXPECT_EQ(got[1].message, "loud");
+}
+
+TEST(LogHub, SessionLineSaysTheDockLevelInForce) {
+  TempDir tmp;
+  SteadyClock clock;
+  {
+    auto hub = make_hub(config_for(tmp.path()), clock);
+    ASSERT_TRUE(hub);
+    hub->set_dock_level(LogLevel::Debug);
+    hub->begin_session(SessionInfo{"test", "0", std::nullopt, "", false, "steady"});
+  }
+  const auto text = read_file(tmp.path() / "pychron.log");
+  EXPECT_NE(text.find("dock_level=debug"), std::string::npos) << text;
 }
 
 TEST(LogHub, AttachBusLater) {

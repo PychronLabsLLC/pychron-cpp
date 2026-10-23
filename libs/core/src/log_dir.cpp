@@ -48,6 +48,8 @@ fs::path default_log_dir(const std::optional<fs::path>& install_root, HostOs os,
   return {};
 }
 
+const char* log_dir_env_name(HostOs os) noexcept { return os == HostOs::Windows ? "LOCALAPPDATA" : "HOME"; }
+
 void resolve_log_dir(config::LoggingConfig& config, const std::optional<fs::path>& install_root, HostOs os,
                      const EnvLookup& env) {
   if (!config.dir) config.dir = default_log_dir(install_root, os, env);

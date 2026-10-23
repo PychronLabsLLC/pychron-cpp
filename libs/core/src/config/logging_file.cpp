@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <system_error>
+#include <vector>
 
 #include "pychron/core/config/loader.hpp"
 
@@ -55,7 +56,7 @@ Result<LoggingSources> load_logging_config(const std::optional<std::filesystem::
     }
   }
 
-  bool overridden = false;
+  std::vector<std::string> overriding;  // names of the install's files that were read
   if (install_root) {
     for (const auto& file : {logging_file(*install_root), logging_local_file(*install_root)}) {
       if (!include_local_file && file == logging_local_file(*install_root)) continue;
@@ -66,14 +67,16 @@ Result<LoggingSources> load_logging_config(const std::optional<std::filesystem::
         return fail(applied.error());
       }
       out.files.push_back(file);
-      overridden = true;
+      overriding.push_back(file.filename().generic_string());
     }
   }
 
   if (legacy_path) {
-    if (overridden) {
+    if (!overriding.empty()) {
+      std::string by = overriding.front();
+      for (std::size_t i = 1; i < overriding.size(); ++i) by += " and " + overriding[i];
       out.notes.emplace_back(LogLevel::Warn, "the [logging] table of " + legacy_path->generic_string() +
-                                                 " is overridden by logging.toml in the install folder");
+                                                 " is overridden by " + by + " in the install folder");
     } else {
       out.notes.emplace_back(LogLevel::Info, "the [logging] table of " + legacy_path->generic_string() +
                                                  " is still read; move it to <install>/logging.toml");

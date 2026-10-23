@@ -222,7 +222,7 @@ struct LogHub::Impl {
   SignalBus* base_bus = nullptr;
   SignalBus::Subscription bus_failures;  // handlers of the create() bus that threw
   bool echo_stderr = false;
-  LogLevel dock_level = LogLevel::Info;
+  std::atomic<LogLevel> dock_level{LogLevel::Info};  // set_dock_level() may move it at any time
   std::mutex echo_mutex;
 
   // Attachments. `route_mutex` guards the members below it; it is never held
@@ -447,7 +447,7 @@ struct LogHub::Impl {
       }
     }
 
-    if (route.bus != nullptr && level >= dock_level) {
+    if (route.bus != nullptr && level >= dock_level.load(std::memory_order_relaxed)) {
       try {
         route.bus->publish(Log{level, std::string(name), std::string(message), clock.now(),
                                std::move(thread), std::move(run)});
@@ -779,7 +779,7 @@ Result<std::shared_ptr<LogHub>> LogHub::create(const config::LoggingConfig& conf
   impl->bus_ref = impl->base_bus_ref;
   if (bus != nullptr) impl->bus_failures = subscribe_failures(*bus, impl);
   impl->echo_stderr = config.echo_stderr;
-  impl->dock_level = config.dock_level;
+  impl->dock_level.store(config.dock_level);
   impl->default_level = config.default_level;
   for (const auto& [pattern, level] : config.levels) impl->put_rule(pattern, level);
 
@@ -953,7 +953,7 @@ void LogHub::begin_session(const SessionInfo& info) {
       levels += session_level_name(level);
     }
   }
-  append_field(line, "dock_level", session_level_name(impl_->dock_level));
+  append_field(line, "dock_level", session_level_name(impl_->dock_level.load()));
   append_field(line, "levels", levels.empty() ? "none" : levels);
   impl_->session_begun.store(true);
   impl_->write(LogLevel::Info, "pychron", line);
@@ -973,6 +973,10 @@ void LogHub::write(LogLevel level, std::string_view logger, std::string_view mes
 }
 
 Logger LogHub::logger(std::string name) { return Logger(std::move(name), impl_); }
+
+void LogHub::set_dock_level(LogLevel level) noexcept { impl_->dock_level.store(level); }
+
+LogLevel LogHub::dock_level() const noexcept { return impl_->dock_level.load(); }
 
 SignalBus* LogHub::bus() const noexcept {
   try {

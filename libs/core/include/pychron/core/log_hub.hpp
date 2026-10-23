@@ -48,7 +48,8 @@ struct SessionInfo {
 //
 // Every record written also goes, on the calling thread, to stderr (when
 // `echo_stderr`) as `[level] name: message`, and, when its level is
-// `dock_level` or above, to the bus (if any) as a `Log` event stamped with
+// `dock_level` or above (the hub's, which set_dock_level moves), to the bus
+// (if any) as a `Log` event stamped with
 // `clock.now()`. File lines are stamped with `clock.wall_now()`. Bus and clock
 // are those attached (attach_bus, attach_clock) while an attachment lives,
 // else the ones given to create().
@@ -80,6 +81,12 @@ class LogHub {
   // `levels` no longer applies. Explicitly set loggers keep their level, as
   // with set_level. Thread-safe.
   void set_levels(LogLevel default_level, const std::vector<std::pair<std::string, LogLevel>>& levels);
+
+  // The lowest level that goes to the bus (the Log dock); records below it
+  // still go to the file. Starts at the config's `dock_level`; a change is
+  // in force for the next write on any thread. Thread-safe.
+  void set_dock_level(LogLevel level) noexcept;
+  [[nodiscard]] LogLevel dock_level() const noexcept;
 
   // Logs one info record on logger `pychron`: `session start` and `key=value`
   // fields (app, version, os, install, profiles, sim, clock, default_level,
@@ -156,7 +163,7 @@ class LogHub {
   // - std::terminate: logs the active exception text at `error` on logger
   //   `pychron`, flushes (bounded wait), then calls the previous handler.
   // - POSIX SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL: writes `fatal signal N` with
-  //   write(2) to stderr and to a descriptor on that hub's pychron.log (moved
+  //   write(2) to stderr and to a descriptor on that hub's log file (moved
   //   onto the live file within about 1 s of a rotation), then restores the
   //   default action and re-raises. No flush (signal-unsafe):
   //   records below `error` younger than about 1 s may be lost.

@@ -31,6 +31,11 @@ using EnvLookup = std::function<std::optional<std::string>(std::string_view)>;
 [[nodiscard]] std::filesystem::path default_log_dir(const std::optional<std::filesystem::path>& install_root,
                                                     HostOs os, const EnvLookup& env);
 
+// The variable the OS folder cannot be found without: "LOCALAPPDATA" on
+// Windows, else "HOME". For the note an app writes when default_log_dir is
+// empty.
+[[nodiscard]] const char* log_dir_env_name(HostOs os) noexcept;
+
 // Sets config.dir to default_log_dir(...) when it is nullopt; leaves a given
 // dir (empty included) alone.
 void resolve_log_dir(config::LoggingConfig& config, const std::optional<std::filesystem::path>& install_root,

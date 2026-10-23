@@ -85,3 +85,9 @@ TEST(LogDir, ProcessEnvReadsTheRealEnvironment) {
   const auto env = process_env();
   EXPECT_FALSE(env("PYCHRON_NO_SUCH_VARIABLE_FOR_TEST").has_value());
 }
+
+TEST(LogDir, EnvNameIsTheVariableTheOsFolderNeeds) {
+  EXPECT_STREQ(log_dir_env_name(HostOs::Mac), "HOME");
+  EXPECT_STREQ(log_dir_env_name(HostOs::Linux), "HOME");
+  EXPECT_STREQ(log_dir_env_name(HostOs::Windows), "LOCALAPPDATA");
+}

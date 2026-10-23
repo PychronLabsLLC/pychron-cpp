@@ -29,7 +29,8 @@ struct LoggingSources {
 // install_root: <root>/logging.toml and <root>/logging.local.toml.
 // line_config: extraction_line.toml whose [logging] (and local) is the legacy
 // table. A line config that does not load is not an error here: its table is
-// skipped and a warn note says why. A logging.toml that does not parse is.
+// skipped and a warn note says why. A logging.toml (or logging.local.toml)
+// that does not load is; the apps then run on the built-in defaults.
 //
 // include_local_file false leaves out <root>/logging.local.toml: everything
 // beneath it, which is what File > Preferences compares with and what Restore
