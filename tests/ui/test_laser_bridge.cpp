@@ -4,18 +4,26 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <sstream>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 #include <QCoreApplication>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "laser_fixture.hpp"
 #include "pychron/core/clock.hpp"
+#include "pychron/core/log_hub.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/virtual_clock.hpp"
 
 using namespace pychron;
@@ -339,15 +347,8 @@ class LaserBridgeTest : public QObject {
   // came up short on one whose timed waits overrun. The finder is not run on
   // the picture: that is for a centering or a dragonfly, while one runs.
   void the_picture_is_shown_as_video() {
-    heard_.reset();
-    bridge_.reset();
-    video_clock_ = std::make_unique<VirtualClock>();
-    on_video_clock_.emplace(*video_clock_, "test");
-    auto deps = lab_->deps();
-    deps.video_clock = video_clock_.get();
-    const auto period = deps.video;
-    bridge_ = std::make_unique<LaserBridge>(std::move(deps));
-    heard_ = std::make_unique<Heard>(*bridge_);
+    const auto period = on_a_video_clock();
+    bridge_->add_viewer();  // a window shows it
 
     int frames = 0, with_target = 0;
     std::uint64_t last_seq = 0;
@@ -362,21 +363,12 @@ class LaserBridgeTest : public QObject {
     });
     // Every frame taken so far is shown: the video thread is asleep in the
     // clock again (waited for in real time), and what it posted is delivered.
-    const auto shown = [&] {
-      const bool asleep = QTest::qWaitFor([&] { return video_clock_->waiters() == 1; }, 20000);
-      QCoreApplication::processEvents();
-      return asleep;
-    };
-    // The frames of one second of the video clock, a period at a time as the
-    // window's event loop would see them; -1 if the video thread stopped.
     const auto a_second = [&] {
       const int before = frames;
-      for (auto t = std::chrono::milliseconds(0); t < std::chrono::seconds(1); t += period) {
-        video_clock_->sleep_for(period);
-        if (!shown()) return -1;
-      }
+      if (!video_second(period)) return -1;
       return frames - before;
     };
+    const auto shown = [this] { return video_shown(); };
     const int every_second = static_cast<int>(std::chrono::seconds(1) / period);
     QCOMPARE(every_second, 25);
 
@@ -401,7 +393,87 @@ class LaserBridgeTest : public QObject {
     QCOMPARE(with_target, 0);
   }
 
+  // No laser view open: the video thread takes no frames, so the camera
+  // never reads the stage for one and the log is not filled with it.
+  void noFramesWithoutAViewer() {
+    QTemporaryDir tmp;
+    const auto hub = log_hub(tmp, LogLevel::Trace);
+    const ProcessLogScope scope(hub);
+    rebuild_lab();  // its devices take their loggers from the hub above
+    const auto period = on_a_video_clock();
+    QVERIFY(video_second(period));
+    QCOMPARE(heard_->views, 0);
+    hub->flush();
+    const std::string log = slurp(hub->file_path());
+    QCOMPARE(count_lines(log, "[laser.video] device."), 0);
+  }
+
+  // Frames flow while a view is open, at the configured rate; the first at
+  // once, not a period later. Closed, they stop.
+  void framesWhileAViewerIsOpen() {
+    const auto period = on_a_video_clock();
+    const int every_second = static_cast<int>(std::chrono::seconds(1) / period);
+    QVERIFY(video_shown());
+    QCOMPARE(heard_->views, 0);
+    bridge_->add_viewer();
+    QVERIFY(video_shown());
+    QCOMPARE(heard_->views, 1);  // no time has passed
+    int before = heard_->views;
+    QVERIFY(video_second(period));
+    QCOMPARE(heard_->views - before, every_second);
+    bridge_->remove_viewer();
+    before = heard_->views;
+    QVERIFY(video_second(period));
+    QCOMPARE(heard_->views - before, 0);
+    // and open again: at once
+    bridge_->add_viewer();
+    QVERIFY(video_shown());
+    QCOMPARE(heard_->views - before, 1);
+    QVERIFY(video_second(period));
+    QCOMPARE(heard_->views - before, 1 + every_second);
+    bridge_->remove_viewer();
+  }
+
+  // Frames are polling: their device calls are logged at trace, so a log at
+  // debug does not get 25 lines a second from them.
+  void videoDeviceCallsAreTrace() {
+    QTemporaryDir tmp;
+    const auto hub = log_hub(tmp, LogLevel::Debug);
+    const ProcessLogScope scope(hub);
+    rebuild_lab();
+    const auto period = on_a_video_clock();
+    bridge_->add_viewer();
+    QVERIFY(video_second(period));
+    QVERIFY(heard_->views > 0);
+    hub->flush();
+    QCOMPARE(count_lines(slurp(hub->file_path()), "[debug] [laser.video] device."), 0);
+    // They are there at trace: what was left out above was there to leave out.
+    hub->set_level("device", LogLevel::Trace);
+    QVERIFY(video_second(period));
+    hub->flush();
+    QVERIFY(count_lines(slurp(hub->file_path()), "[trace] [laser.video] device.co2: position") > 0);
+    bridge_->remove_viewer();
+  }
+
+  // A bridge whose video thread waits for a viewer goes at once, on either
+  // clock.
+  void destroyedWhilePausedReturnsPromptly() {
+    const auto bound = std::chrono::seconds(5);
+    QTest::qWait(100);  // the video thread (real time) is waiting for a viewer
+    auto started = std::chrono::steady_clock::now();
+    heard_.reset();
+    bridge_.reset();
+    QVERIFY(std::chrono::steady_clock::now() - started < bound);
+    (void)on_a_video_clock();
+    QVERIFY(video_shown());
+    started = std::chrono::steady_clock::now();
+    heard_.reset();
+    bridge_.reset();
+    QVERIFY(std::chrono::steady_clock::now() - started < bound);
+  }
+
   void publishes_snapshots_and_views() {
+    bridge_->add_viewer();
     QTRY_VERIFY(heard_->snapshots.size() >= 3);
     QTRY_VERIFY(heard_->views >= 3);
     QCOMPARE(heard_->snapshots.back().device, std::string("co2"));
@@ -545,6 +617,68 @@ class LaserBridgeTest : public QObject {
   }
 
  private:
+  // The lab again, from scratch (after a process log hub is set).
+  void rebuild_lab() {
+    cleanup();
+    lab_ = std::make_unique<test::SimLaserLab>(50);
+    bridge_ = std::make_unique<LaserBridge>(lab_->deps([this] { ++aborts_; }));
+    heard_ = std::make_unique<Heard>(*bridge_);
+  }
+  // The bridge again, its video thread on a clock of the test's own which
+  // this thread takes part in. Returns the video period.
+  std::chrono::milliseconds on_a_video_clock() {
+    heard_.reset();
+    bridge_.reset();
+    on_video_clock_.reset();
+    video_clock_ = std::make_unique<VirtualClock>();
+    on_video_clock_.emplace(*video_clock_, "test");
+    auto deps = lab_->deps();
+    deps.video_clock = video_clock_.get();
+    const auto period = deps.video;
+    bridge_ = std::make_unique<LaserBridge>(std::move(deps));
+    heard_ = std::make_unique<Heard>(*bridge_);
+    return period;
+  }
+  // Every frame taken so far is shown: the video thread is asleep in the
+  // clock again (waited for in real time), and what it posted is delivered.
+  bool video_shown() {
+    const bool asleep = QTest::qWaitFor([this] { return video_clock_->waiters() == 1; }, 20000);
+    QCoreApplication::processEvents();
+    return asleep;
+  }
+  // One second of the video clock, a period at a time as the window's event
+  // loop would see it; false if the video thread stopped.
+  bool video_second(std::chrono::milliseconds period) {
+    for (auto t = std::chrono::milliseconds(0); t < std::chrono::seconds(1); t += period) {
+      video_clock_->sleep_for(period);
+      if (!video_shown()) return false;
+    }
+    return true;
+  }
+  static std::shared_ptr<LogHub> log_hub(const QTemporaryDir& dir, LogLevel level) {
+    config::LoggingConfig cfg;
+    cfg.dir = std::filesystem::path(dir.path().toStdString());
+    cfg.default_level = level;
+    auto created = LogHub::create(cfg, steady_);
+    if (!created) qFatal("no log hub: %s", to_string(created.error()).c_str());
+    return std::move(*created);
+  }
+  static std::string slurp(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
+  }
+  static int count_lines(const std::string& text, std::string_view needle) {
+    int n = 0;
+    std::istringstream in(text);
+    for (std::string line; std::getline(in, line);) {
+      if (line.find(needle) != std::string::npos) ++n;
+    }
+    return n;
+  }
+
+  static inline SteadyClock steady_;
   std::unique_ptr<test::SimLaserLab> lab_;
   // A clock for a bridge's video thread, and this thread's part in it: after
   // the bridge in cleanup(), which waits for that thread through it.

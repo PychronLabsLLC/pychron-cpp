@@ -230,6 +230,29 @@ class LaserWindowTest : public QObject {
     QCOMPARE(lab_->sim().output(), 8.0);
   }
 
+  // The picture is taken only while the window is on screen: shown, it is a
+  // viewer of the bridge and frames come; hidden, closed or destroyed, it is
+  // not, and the bridge's video thread waits.
+  void showing_the_window_makes_frames_flow_and_hiding_it_stops_them() {
+    int views = 0;
+    QObject::connect(bridge_.get(), &LaserBridge::view, [&views](const laser::CameraView&) { ++views; });
+    QCOMPARE(bridge_->viewers(), 1);
+    QTRY_VERIFY(views >= 3);
+    window_->hide();
+    QCOMPARE(bridge_->viewers(), 0);
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+    QCOMPARE(bridge_->viewers(), 1);  // shown once, counted once
+    views = 0;
+    QTRY_VERIFY(views >= 3);
+    window_->close();
+    QCOMPARE(bridge_->viewers(), 0);
+    window_->show();
+    QCOMPARE(bridge_->viewers(), 1);
+    window_.reset();  // destroyed while shown
+    QCOMPARE(bridge_->viewers(), 0);
+  }
+
   // A window closed with the beam on closes the beam: there is then nothing
   // on screen to close it with.
   void closing_the_window_closes_the_beam() {

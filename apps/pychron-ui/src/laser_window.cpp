@@ -10,10 +10,12 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
@@ -580,6 +582,30 @@ void LaserWindow::refresh_enabled() {
   pattern_run_->setToolTip(by_eye ? tr("A dragonfly follows the glow of a heated sample: it runs from a queue")
                                   : tr("Run the pattern about where the stage is now"));
   pattern_stop_->setEnabled(!watching);
+}
+
+// Qt's own destructor hides a window still shown, but this one's hideEvent
+// is gone by then: the count is put right here.
+LaserWindow::~LaserWindow() { set_viewing(false); }
+
+void LaserWindow::set_viewing(bool on) {
+  if (on == viewing_) return;
+  viewing_ = on;
+  if (on) {
+    bridge_.add_viewer();
+  } else {
+    bridge_.remove_viewer();
+  }
+}
+
+void LaserWindow::showEvent(QShowEvent* event) {
+  QMainWindow::showEvent(event);
+  set_viewing(true);
+}
+
+void LaserWindow::hideEvent(QHideEvent* event) {
+  QMainWindow::hideEvent(event);
+  set_viewing(false);
 }
 
 void LaserWindow::closeEvent(QCloseEvent* event) {

@@ -119,6 +119,12 @@ class LaserBridge : public QObject {
   void emergency_stop();
   void reset_stop();  // refused while a queue still holds the lasers
 
+  // A view of the picture is open; while none is, the video thread takes no
+  // frames. Main thread; balanced calls.
+  void add_viewer();
+  void remove_viewer();
+  int viewers() const;  // how many are open; main thread
+
   // Blocks until every command issued has finished; their signals are still
   // to be delivered by the event loop.
   void drain();

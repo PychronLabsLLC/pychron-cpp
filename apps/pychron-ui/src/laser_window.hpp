@@ -35,6 +35,11 @@ class LaserWindow : public QMainWindow {
  public:
   // `bridge` must outlive the window.
   LaserWindow(LaserBridge& bridge, bool simulation, QWidget* parent = nullptr);
+  ~LaserWindow() override;
+  LaserWindow(const LaserWindow&) = delete;
+  LaserWindow& operator=(const LaserWindow&) = delete;
+  LaserWindow(LaserWindow&&) = delete;
+  LaserWindow& operator=(LaserWindow&&) = delete;
 
   // Shows a "Pattern maker..." button that calls `open`.
   void set_pattern_maker(std::function<void()> open);
@@ -47,6 +52,10 @@ class LaserWindow : public QMainWindow {
   // A beam opened here is closed when the window goes: there would be
   // nothing on screen to close it with.
   void closeEvent(QCloseEvent* event) override;
+  // On screen, the window is a viewer of the bridge's picture: while no
+  // window is, the bridge takes no frames.
+  void showEvent(QShowEvent* event) override;
+  void hideEvent(QHideEvent* event) override;
 
  public:
   CameraView* camera_view() const noexcept { return camera_; }
@@ -62,9 +71,11 @@ class LaserWindow : public QMainWindow {
   void refresh_enabled();
   void jog(double dx, double dy, double dz);
   QString selected_pattern() const;
+  void set_viewing(bool on);  // as a viewer of the bridge; balanced
 
   LaserBridge& bridge_;
   bool simulation_;
+  bool viewing_ = false;  // counted among the bridge's viewers
   QString last_snapshot_;
   QString shown_tray_;  // what the tray view and the calibration tab show
   std::function<void()> open_pattern_maker_;

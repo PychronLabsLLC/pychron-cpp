@@ -59,12 +59,13 @@ struct LaserBridge::Worker {
 };
 
 // The newest picture waiting for the main thread: a slow repaint drops
-// frames, it does not queue them.
+// frames, it does not queue them. With no viewer the thread waits, untimed.
 struct LaserBridge::Video {
   std::mutex mutex;
   std::condition_variable wake;  // waited on and notified through the video clock
   bool quit = false;
   bool done = false;  // the thread has said it is finished
+  int viewers = 0;    // laser views open
   std::optional<laser::CameraView> pending;
   bool posted = false;
 };
@@ -121,6 +122,24 @@ void LaserBridge::show() {
   std::string shown_trouble, failed;
   int shown_age_s = -1;
   for (;;) {
+    {
+      // Nobody is looking: no frames. Back with a viewer, the first is taken
+      // at once and shown whatever the last one before the pause was.
+      std::unique_lock lock(v.mutex);
+      if (v.viewers == 0 && !v.quit) {
+        while (v.viewers == 0 && !v.quit) video_clock_.wait(v.wake, lock);
+        target.reset();
+        targets.clear();
+        found_at = TimePoint{};
+        shown_seq = 0;
+        shown_trouble.clear();
+        shown_age_s = -1;
+        failed.clear();
+      }
+      if (v.quit) return;
+    }
+    // A frame is a periodic read: its device calls are logged at trace.
+    const LogContext::Polling polling;
     const TimePoint began = video_clock_.now();
     // The finder runs only while the device itself is looking for something.
     const bool looking = system_.looking();
@@ -167,6 +186,27 @@ void LaserBridge::show() {
     while (!v.quit && video_clock_.now() < next) video_clock_.wait_until(v.wake, lock, next);
     if (v.quit) return;
   }
+}
+
+void LaserBridge::add_viewer() {
+  {
+    const std::lock_guard lock(video_->mutex);
+    ++video_->viewers;
+  }
+  video_clock_.notify_all(video_->wake);
+}
+
+void LaserBridge::remove_viewer() {
+  {
+    const std::lock_guard lock(video_->mutex);
+    if (video_->viewers > 0) --video_->viewers;
+  }
+  video_clock_.notify_all(video_->wake);
+}
+
+int LaserBridge::viewers() const {
+  const std::lock_guard lock(video_->mutex);
+  return video_->viewers;
 }
 
 void LaserBridge::deliver_view() {
