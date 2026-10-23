@@ -5,6 +5,7 @@
 
 
 #include "internal.hpp"
+#include "host_call_trace.hpp"
 #include "pychron/scripting/vocabulary.hpp"
 
 namespace pychron::scripting::python {
@@ -70,7 +71,19 @@ std::optional<ErrorKind> kind_from_string(std::string_view s) {
   return std::nullopt;
 }
 
+// A number for a call's summary.
+template <class T>
+std::string tx(const T& v) {
+  return HostCallTrace::text(v);
+}
+
 }  // namespace
+
+// First thing in a host function: one record of the call when it ends. The
+// argument pairs are built only when the script's logger is at debug.
+#define PYCHRON_TRACE(call, ...)                                                   \
+  HostCallTrace trace_(log_, clock(), call, [&] { return HostCallTrace::Args{__VA_ARGS__}; }, \
+                       &active_trace_)
 
 HostState::HostState(const ScriptEnvironment& env, CancelToken& token, Mode mode, ScriptKind kind,
                      DurationAccumulator* accumulator, IRehearsal* rehearsal)
@@ -226,6 +239,7 @@ void HostState::raise(const Error& error) {
     exc = rt.hardware(std::string(to_string(error.kind)), error.what, error.device);
   last_error_ = error;
   last_exception_ = exc;
+  if (active_trace_) active_trace_->failed(error);
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): CPython's own idiom: a type object is an object
   PyErr_SetObject(reinterpret_cast<PyObject*>(Py_TYPE(exc.ptr())), exc.ptr());
   throw py::error_already_set();
@@ -395,34 +409,41 @@ void HostState::require(const std::string& capability) {
   if (estimating()) return fallback; \
   guard(); \
   auto& svc = service; \
-  return unwrap(nogil([&] { return svc.call; }))
+  return trace_.run([&] { return unwrap(nogil([&] { return svc.call; })); })
 
 void HostState::open(const std::string& n) {
+  PYCHRON_TRACE("open", {"name", n});
   if (rehearsing()) return rehearse_void("open", {Value(n)});
   PYCHRON_HW(, valves(), open(n));
 }
 void HostState::close(const std::string& n) {
+  PYCHRON_TRACE("close", {"name", n});
   if (rehearsing()) return rehearse_void("close", {Value(n)});
   PYCHRON_HW(, valves(), close(n));
 }
 void HostState::lock(const std::string& n) {
+  PYCHRON_TRACE("lock", {"name", n});
   if (rehearsing()) return rehearse_void("lock", {Value(n)});
   PYCHRON_HW(, valves(), lock(n));
 }
 void HostState::unlock(const std::string& n) {
+  PYCHRON_TRACE("unlock", {"name", n});
   if (rehearsing()) return rehearse_void("unlock", {Value(n)});
   PYCHRON_HW(, valves(), unlock(n));
 }
 bool HostState::is_open(const std::string& n) {
+  PYCHRON_TRACE("is_open", {"name", n});
   if (rehearsing()) return step_bool("is_open", n);
   PYCHRON_HW(false, valves(), is_open(n));
 }
 bool HostState::is_closed(const std::string& n) {
+  PYCHRON_TRACE("is_closed", {"name", n});
   if (rehearsing()) return step_bool("is_closed", n);
   PYCHRON_HW(false, valves(), is_closed(n));
 }
 
 void HostState::extract(double value, const std::string& units) {
+  PYCHRON_TRACE("extract", {"value", tx(value)}, {"units", units});
   if (rehearsing()) return rehearse_void("extract", {Value(value), Value(units)});
   if (estimating()) return;
   guard();
@@ -433,23 +454,28 @@ void HostState::extract(double value, const std::string& units) {
 }
 
 void HostState::end_extract() {
+  PYCHRON_TRACE("end_extract");
   if (rehearsing()) return rehearse_void("end_extract", {});
   PYCHRON_HW(, device(), end_extract());
 }
 void HostState::enable() {
+  PYCHRON_TRACE("enable");
   if (rehearsing()) return rehearse_void("enable", {});
   PYCHRON_HW(, device(), enable());
 }
 void HostState::disable() {
+  PYCHRON_TRACE("disable");
   if (rehearsing()) return rehearse_void("disable", {});
   PYCHRON_HW(, device(), disable());
 }
 void HostState::prepare() {
+  PYCHRON_TRACE("prepare");
   if (rehearsing()) return rehearse_void("prepare", {});
   PYCHRON_HW(, device(), prepare());
 }
 
 void HostState::fire_laser() {
+  PYCHRON_TRACE("fire_laser");
   if (rehearsing()) return rehearse_void("fire_laser", {});
   if (estimating()) return;
   guard();
@@ -459,6 +485,7 @@ void HostState::fire_laser() {
 }
 
 void HostState::warmup() {
+  PYCHRON_TRACE("warmup");
   if (rehearsing()) return rehearse_void("warmup", {});
   if (estimating()) return;
   guard();
@@ -468,21 +495,24 @@ void HostState::warmup() {
 }
 
 DeviceHandle HostState::get_device(const std::string& name) {
+  PYCHRON_TRACE("get_device", {"name", name});
   if (!estimating() && !rehearsing() && !name.empty() && device().device_name() != name)
     raise(Error{ErrorKind::Config, "no device '" + name + "' in this run", {}});
   return DeviceHandle{this};
 }
 
 bool HostState::device_is_enabled() {
+  PYCHRON_TRACE("is_enabled");
   if (estimating()) return false;
   if (rehearsing()) return rehearse_bool("is_enabled", {});
-  return unwrap(device().is_enabled());
+  return trace_.run([&] { return unwrap(device().is_enabled()); });
 }
 
 double HostState::device_output() {
+  PYCHRON_TRACE("output");
   if (estimating()) return 0.0;
   if (rehearsing()) return rehearse_double("output", {});
-  return unwrap(device().output());
+  return trace_.run([&] { return unwrap(device().output()); });
 }
 
 namespace {
@@ -503,6 +533,7 @@ std::function<void()> HostState::stop_stage(extraction::IStage* stage) {
 }
 
 void HostState::move_to_position(const std::string& position, bool autocenter, bool block) {
+  PYCHRON_TRACE("move_to_position", {"position", position}, {"autocenter", tx(autocenter)}, {"block", tx(block)});
   if (rehearsing())
     return rehearse_void("move_to_position", {Value(position)}, {{"autocenter", Value(autocenter)}, {"block", Value(block)}});
   if (estimating()) return;
@@ -527,6 +558,7 @@ void HostState::move_to_position(const std::string& position, bool autocenter, b
 }
 
 void HostState::set_axis(const std::string& axis, double value, bool block) {
+  PYCHRON_TRACE("set_" + axis, {"value", tx(value)}, {"block", tx(block)});
   if (rehearsing()) return rehearse_void("set_" + axis, {Value(value)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
@@ -539,6 +571,7 @@ void HostState::set_axis(const std::string& axis, double value, bool block) {
 }
 
 void HostState::set_xy(double x, double y, bool block) {
+  PYCHRON_TRACE("set_xy", {"x", tx(x)}, {"y", tx(y)}, {"block", tx(block)});
   if (rehearsing()) return rehearse_void("set_xy", {Value(x), Value(y)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
@@ -549,6 +582,7 @@ void HostState::set_xy(double x, double y, bool block) {
 }
 
 void HostState::set_tray(const std::string& tray) {
+  PYCHRON_TRACE("set_tray", {"tray", tray});
   if (rehearsing()) return rehearse_void("set_tray", {Value(tray)});
   if (estimating()) return;
   guard();
@@ -557,6 +591,7 @@ void HostState::set_tray(const std::string& tray) {
 }
 
 void HostState::execute_pattern(const std::string& pattern, bool block, double duration_s) {
+  PYCHRON_TRACE("execute_pattern", {"pattern", pattern}, {"block", tx(block)}, {"duration", tx(duration_s)});
   if (rehearsing())
     return rehearse_void("execute_pattern", {Value(pattern)}, {{"block", Value(block)}, {"duration", Value(duration_s)}});
   if (estimating()) return;
@@ -582,6 +617,7 @@ void HostState::execute_pattern(const std::string& pattern, bool block, double d
 }
 
 void HostState::dump_sample() {
+  PYCHRON_TRACE("dump_sample");
   if (rehearsing()) return rehearse_void("dump_sample", {});
   if (estimating()) return;
   guard();
@@ -590,6 +626,7 @@ void HostState::dump_sample() {
 }
 
 void HostState::drop_sample(const std::string& position) {
+  PYCHRON_TRACE("drop_sample", {"position", position});
   if (rehearsing()) return rehearse_void("drop_sample", {Value(position)});
   if (estimating()) return;
   guard();
@@ -598,6 +635,7 @@ void HostState::drop_sample(const std::string& position) {
 }
 
 void HostState::set_pid_parameters(double value) {
+  PYCHRON_TRACE("set_pid_parameters", {"value", tx(value)});
   if (rehearsing()) return rehearse_void("set_pid_parameters", {Value(value)});
   if (estimating()) return;
   guard();
@@ -606,6 +644,7 @@ void HostState::set_pid_parameters(double value) {
 }
 
 void HostState::load_pipette(const std::string& name) {
+  PYCHRON_TRACE("load_pipette", {"name", name});
   if (rehearsing()) return rehearse_void("load_pipette", {Value(name)});
   if (estimating()) return;
   guard();
@@ -614,6 +653,7 @@ void HostState::load_pipette(const std::string& name) {
 }
 
 void HostState::extract_pipette(const std::string& name) {
+  PYCHRON_TRACE("extract_pipette", {"name", name});
   if (rehearsing()) return rehearse_void("extract_pipette", {Value(name)});
   if (estimating()) return;
   guard();
@@ -622,6 +662,7 @@ void HostState::extract_pipette(const std::string& name) {
 }
 
 void HostState::set_motor(const std::string& name, double value, bool block) {
+  PYCHRON_TRACE("set_motor", {"name", name}, {"value", tx(value)}, {"block", tx(block)});
   if (rehearsing()) return rehearse_void("set_motor", {Value(name), Value(value)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
@@ -631,11 +672,12 @@ void HostState::set_motor(const std::string& name, double value, bool block) {
 }
 
 double HostState::get_value(const std::string& name) {
+  PYCHRON_TRACE("get_value", {"name", name});
   if (rehearsing()) return rehearse_double("get_value", {Value(name)});
   if (estimating()) return 0.0;
   guard();
   auto* m = feature(*this, &extraction::IExtractionDevice::motors, Capability::Motor);
-  return unwrap(nogil([&] { return m->get_value(name); }));
+  return trace_.run([&] { return unwrap(nogil([&] { return m->get_value(name); })); });
 }
 
 extraction::ICryo& HostState::cryo() {
@@ -645,6 +687,7 @@ extraction::ICryo& HostState::cryo() {
 }
 
 void HostState::set_cryo(double value, bool block) {
+  PYCHRON_TRACE("set_cryo", {"value", tx(value)}, {"block", tx(block)});
   if (rehearsing()) return rehearse_void("set_cryo", {Value(value)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
@@ -654,6 +697,7 @@ void HostState::set_cryo(double value, bool block) {
 }
 
 void HostState::set_cryo_named(const std::string& name, bool block) {
+  PYCHRON_TRACE("set_cryo", {"name", name}, {"block", tx(block)});
   if (rehearsing()) return rehearse_void("set_cryo", {Value(name)}, {{"block", Value(block)}});
   if (estimating()) return;
   guard();
@@ -663,22 +707,25 @@ void HostState::set_cryo_named(const std::string& name, bool block) {
 }
 
 double HostState::get_cryo_temp(int channel) {
+  PYCHRON_TRACE("get_cryo_temp", {"channel", tx(channel)});
   if (rehearsing()) return rehearse_double("get_cryo_temp", {Value(std::int64_t{channel})});
   if (estimating()) return 0.0;
   guard();
   auto& c = cryo();
-  return unwrap(nogil([&] { return c.get_cryo_temp(channel); }));
+  return trace_.run([&] { return unwrap(nogil([&] { return c.get_cryo_temp(channel); })); });
 }
 
 std::string HostState::snapshot(const std::string& name) {
+  PYCHRON_TRACE("snapshot", {"name", name});
   if (rehearsing()) return rehearse_string("snapshot", {Value(name)});
   if (estimating()) return {};
   guard();
   auto* im = feature(*this, &extraction::IExtractionDevice::imaging, Capability::Imaging);
-  return unwrap(nogil([&] { return im->snapshot(name); }));
+  return trace_.run([&] { return unwrap(nogil([&] { return im->snapshot(name); })); });
 }
 
 void HostState::video_start(const std::string& name) {
+  PYCHRON_TRACE("video_start", {"name", name});
   if (rehearsing()) return rehearse_void("video_start", {Value(name)});
   if (estimating()) return;
   guard();
@@ -687,6 +734,7 @@ void HostState::video_start(const std::string& name) {
 }
 
 void HostState::video_stop() {
+  PYCHRON_TRACE("video_stop");
   if (rehearsing()) return rehearse_void("video_stop", {});
   if (estimating()) return;
   guard();
@@ -695,11 +743,13 @@ void HostState::video_stop() {
 }
 
 double HostState::get_pressure(const std::string& controller, const std::string& gauge) {
+  PYCHRON_TRACE("get_pressure", {"controller", controller}, {"gauge", gauge});
   if (rehearsing()) return rehearse_double("get_pressure", {Value(controller), Value(gauge)});
   PYCHRON_HW(0.0, pressure(), get_pressure(controller, gauge));
 }
 
 double HostState::get_manometer_pressure(const std::string& name) {
+  PYCHRON_TRACE("get_manometer_pressure", {"name", name});
   if (rehearsing()) return rehearse_double("get_manometer_pressure", {Value(name)});
   PYCHRON_HW(0.0, pressure(), get_manometer_pressure(name));
 }
@@ -707,6 +757,7 @@ double HostState::get_manometer_pressure(const std::string& name) {
 #undef PYCHRON_HW
 
 void HostState::sleep(double s, const std::string& command) {
+  PYCHRON_TRACE(command, {"seconds", tx(s)});
   if (rehearsing()) {
     // One step, however long: no clock wait.
     check_requested(command);
@@ -719,6 +770,7 @@ void HostState::sleep(double s, const std::string& command) {
 }
 
 void HostState::pause(double s) {
+  PYCHRON_TRACE("pause", {"seconds", tx(s)});
   if (rehearsing()) {
     // With or without a duration: one step, which the operator ends.
     check_requested("pause");
@@ -741,6 +793,7 @@ void HostState::pause(double s) {
 }
 
 void HostState::wake() {
+  PYCHRON_TRACE("wake");
   if (!estimating()) token_.wake();
 }
 
@@ -752,6 +805,7 @@ void HostState::estimate_wait(const std::string& command, double timeout) {
 }
 
 void HostState::acquire(const std::string& name) {
+  PYCHRON_TRACE("acquire", {"name", name});
   if (rehearsing()) return rehearse_void("acquire", {Value(name)});
   if (estimating()) return;
   guard();
@@ -760,6 +814,7 @@ void HostState::acquire(const std::string& name) {
 }
 
 void HostState::wait_resource(const std::string& name, double value) {
+  PYCHRON_TRACE("wait", {"name", name}, {"value", tx(value)});
   if (rehearsing()) return rehearse_void("wait", {Value(name), Value(value)});
   if (estimating()) return;
   guard();
@@ -769,6 +824,7 @@ void HostState::wait_resource(const std::string& name, double value) {
 }
 
 void HostState::release(const std::string& name) {
+  PYCHRON_TRACE("release", {"name", name});
   if (rehearsing()) return rehearse_void("release", {Value(name)});
   if (estimating()) return;
   guard();
@@ -776,6 +832,7 @@ void HostState::release(const std::string& name) {
 }
 
 void HostState::set_resource(const std::string& name, double value) {
+  PYCHRON_TRACE("set_resource", {"name", name}, {"value", tx(value)});
   if (rehearsing()) return rehearse_void("set_resource", {Value(name), Value(value)});
   if (estimating()) return;
   guard();
@@ -783,13 +840,24 @@ void HostState::set_resource(const std::string& name, double value) {
 }
 
 double HostState::get_resource_value(const std::string& name) {
+  PYCHRON_TRACE("get_resource_value", {"name", name});
   if (rehearsing()) return rehearse_double("get_resource_value", {Value(name)});
   if (estimating()) return 0.0;
   guard();
-  return unwrap(resources().get_value(name));
+  return trace_.run([&] { return unwrap(resources().get_value(name)); });
 }
 
 void HostState::gosub(const std::string& name, py::dict kwargs) {
+  // Each override is its own pair, so a secret among them is redacted by key.
+  HostCallTrace trace_(
+      log_, clock(), "gosub",
+      [&] {
+        HostCallTrace::Args args{{"name", name}};
+        for (auto item : kwargs)
+          args.emplace_back(py::str(item.first).cast<std::string>(), py::str(item.second).cast<std::string>());
+        return args;
+      },
+      &active_trace_);
   if (gosub_depth_ >= env_.limits.max_gosub_depth)
     raise(Error{ErrorKind::Config, "gosub depth limit reached at '" + name + "'", {}});
   if (!env_.resolver) raise(Error{ErrorKind::Config, "gosub '" + name + "': no resolver", {}});
@@ -809,14 +877,16 @@ void HostState::gosub(const std::string& name, py::dict kwargs) {
 }
 
 double HostState::get_intensity(const std::string& key) {
+  PYCHRON_TRACE("get_intensity", {"isotope", key});
   if (rehearsing()) return rehearse_double("get_intensity", {Value(key)});
   if (estimating()) return 0.0;
   guard();
   if (!env_.intensity) raise(not_supported("get_intensity"));
-  return unwrap(nogil([&] { return env_.intensity->intensity(key); }));
+  return trace_.run([&] { return unwrap(nogil([&] { return env_.intensity->intensity(key); })); });
 }
 
 void HostState::signal_pump_time_start() {
+  PYCHRON_TRACE("signal_pump_time_start");
   if (rehearsing()) return rehearse_void("signal_pump_time_start", {});
   if (estimating()) return;
   if (env_.on_pump_time_start) env_.on_pump_time_start();

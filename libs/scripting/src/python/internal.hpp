@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "pychron/core/logger.hpp"
 #include "pychron/scripting/script_host.hpp"
 
 namespace pychron::scripting::python {
@@ -40,6 +41,7 @@ void ensure_interpreter();
 Runtime& runtime();
 
 class HostState;
+class HostCallTrace;
 
 // Measurement-hook `api` and get_device() handles; both hold the state that
 // created them.
@@ -69,6 +71,10 @@ class HostState {
   void run_main(const Script& script, const ValueMap& overrides = {});
   // Runs `body` under the line tracer; converts Python exceptions.
   Result<void> guarded(const std::function<void()>& body);
+
+  // Where this execution's host calls are logged (`script.<name>`); the
+  // default writes nothing.
+  void set_log(const Logger& log) { log_ = log; }
 
   const std::vector<std::string>& messages() const noexcept { return messages_; }
   py::object hook_api();
@@ -195,6 +201,8 @@ class HostState {
   IRehearsal* rehearsal_;
   Duration rehearsed_{};  // Rehearse: stepped waits so far (what now() reports)
   SteadyClock steady_;
+  Logger log_ = Logger::disabled("script");
+  HostCallTrace* active_trace_ = nullptr;  // the host call being made, for raise()
 
   std::vector<std::string> messages_;
   std::vector<py::dict> namespaces_;  // cleared on destruction to drop `_h`
