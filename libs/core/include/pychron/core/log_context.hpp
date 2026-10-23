@@ -22,7 +22,8 @@ class Thread {
   Thread& operator=(Thread&&) = delete;
 
  private:
-  std::string previous_;
+  std::string value_;
+  const std::string* previous_;
 };
 
 // Marks the records of the current thread as part of a run. Scopes nest: an
@@ -37,7 +38,8 @@ class Run {
   Run& operator=(Run&&) = delete;
 
  private:
-  std::string previous_;
+  std::string value_;
+  const std::string* previous_;
 };
 
 // The current thread's tag; empty when no Thread scope is open.
