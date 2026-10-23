@@ -53,6 +53,15 @@ struct ExpGlobals {
   bool database_not_built = false;
 };
 
+// Where what elctl writes while working in `folder` (a lab, a line config's
+// folder) is kept: the folder itself, or, for the shipped examples, the
+// user's examples folder (setup::lab_state_dir). Said once in the process
+// log when it is not the folder.
+std::filesystem::path state_dir_for(const std::filesystem::path& folder);
+// The line's state file for `config`: <stem>.state.toml in
+// state_dir_for(its folder).
+std::filesystem::path line_state_file(const std::filesystem::path& config);
+
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);
 
 // Incremented by main()'s SIGINT handler; `exp run` escalates on each.

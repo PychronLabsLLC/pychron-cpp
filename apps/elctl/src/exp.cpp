@@ -18,6 +18,7 @@
 #include "exp_store.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/event_recorder.hpp"
+#include "pychron/core/log_dir.hpp"
 #include "pychron/core/process.hpp"
 #include "pychron/core/process_log.hpp"
 #include "pychron/core/virtual_clock.hpp"
@@ -36,6 +37,7 @@
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
+#include "pychron/setup/installer.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 
 namespace elctl {
@@ -153,6 +155,8 @@ struct ExpArgs {
   std::optional<std::size_t> from;
   bool resume = false, dry_run = false;
   double sim_speed = 0;  // 0: real time; infinity: --sim-speed max
+  fs::path state;        // where corrections, scales and default data go (state_dir_for(lab))
+  fs::path spectrometer_tables;  // setup::field_table_root of the spectrometer's folder
 };
 
 class Exp {
@@ -160,7 +164,7 @@ class Exp {
   Exp(ExpArgs args, ExpGlobals globals, Io io) : a_(std::move(args)), g_(std::move(globals)), io_(io) {}
 
   int run() {
-    lab_ = lab::load_lab({a_.lab, g_.config, a_.spectrometer});
+    lab_ = lab::load_lab({a_.lab, g_.config, a_.spectrometer, a_.state, a_.spectrometer_tables});
     if (a_.verb == "notify") return notify();
     auto q = load_queue_file(a_.queue_file.string(), lab_.ids);
     if (!q) {
@@ -335,6 +339,7 @@ class Exp {
     systems::ExtractionLine::Options line_options;
     line_options.clock = sim_clock.get();
     line_options.force_sim = g_.sim;
+    line_options.state_file = line_state_file(g_.config);
     line_options.log_hub = process_log_hub();  // null without one: the line builds its own
     line_options.link_defaults = lab_.executor.link_defaults();  // executor.toml [links]
     std::optional<fs::path> canvas;
@@ -574,6 +579,36 @@ class Exp {
 
 }  // namespace
 
+namespace {
+
+// The shipped examples and the user's folder for what running them writes.
+struct ExampleDirs {
+  fs::path examples, user;
+};
+ExampleDirs example_dirs() {
+  return {pychron::setup::find_resources().examples,
+          pychron::default_examples_state_dir(pychron::host_os(), pychron::process_env())};
+}
+
+}  // namespace
+
+fs::path state_dir_for(const fs::path& folder) {
+  const fs::path where = folder.empty() ? fs::path(".") : folder;
+  const ExampleDirs dirs = example_dirs();
+  fs::path state = pychron::setup::lab_state_dir(where, dirs.examples, dirs.user);
+  if (state != where) {
+    static std::once_flag said;
+    std::call_once(said, [&state] {
+      if (const auto hub = process_log_hub()) hub->logger("pychron").info("examples: runtime state in " + state.string());
+    });
+  }
+  return state;
+}
+
+fs::path line_state_file(const fs::path& config) {
+  return state_dir_for(config.parent_path()) / config.filename().replace_extension(".state.toml");
+}
+
 int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io) {
   if (args.empty() || (args[0] != "run" && args[0] != "validate" && args[0] != "notify")) {
     io.err << kExpUsage;
@@ -644,6 +679,7 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
   if (a.verb == "notify") {
     if (!a.queue_file.empty()) return usage("notify takes no experiment.toml");
     if (a.lab.empty()) a.lab = ".";
+    a.state = state_dir_for(a.lab);
     return Exp(std::move(a), globals, io).run();
   }
   if (a.queue_file.empty()) return usage("needs an experiment.toml");
@@ -653,8 +689,18 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
   if (a.resume && a.from) return usage("--from and --resume are exclusive");
   if (a.sim_speed > 0 && !globals.sim) return usage("--sim-speed needs --sim");
   if (a.lab.empty()) a.lab = lab::lab_for_queue(a.queue_file);
-  if (a.data.empty()) a.data = a.lab / "data";
+  a.state = state_dir_for(a.lab);
+  if (a.data.empty()) a.data = a.state / "data";
   if (a.spectrometer.empty() && fs::exists(a.lab / "spectrometer.toml")) a.spectrometer = a.lab / "spectrometer.toml";
+  if (!a.spectrometer.empty()) {
+    const ExampleDirs dirs = example_dirs();
+    auto tables = pychron::setup::field_table_root(a.spectrometer.parent_path(), dirs.examples, dirs.user);
+    if (!tables) {
+      io.err << "error: " << tables.error().what << '\n';
+      return kFailed;
+    }
+    a.spectrometer_tables = *tables;
+  }
   return Exp(std::move(a), globals, io).run();
 }
 

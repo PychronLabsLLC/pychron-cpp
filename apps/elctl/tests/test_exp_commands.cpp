@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -21,6 +22,7 @@
 #include "log_capture.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_dir.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/process_log.hpp"
 #include "pychron/experiment/executor/executor.hpp"
@@ -676,6 +678,78 @@ TEST_F(ElctlExpTest, ItsDataGoesToTheLabNotTheQueuesDirectory) {
   ASSERT_EQ(o.code, 0) << o.out << o.err;
   EXPECT_TRUE(fs::exists(q / "data" / "records"));
   EXPECT_FALSE(fs::exists(q / "queues" / "data"));
+}
+
+// An environment variable set for one test, as it was afterwards.
+class ScopedEnv {
+ public:
+  ScopedEnv(std::string name, const std::string& value) : name_(std::move(name)) {
+    if (const char* old = std::getenv(name_.c_str())) old_ = old;  // NOLINT(concurrency-mt-unsafe): tests set it alone
+    set(value);
+  }
+  ~ScopedEnv() { set(old_.value_or("")); }
+  ScopedEnv(const ScopedEnv&) = delete;
+  ScopedEnv& operator=(const ScopedEnv&) = delete;
+  ScopedEnv(ScopedEnv&&) = delete;
+  ScopedEnv& operator=(ScopedEnv&&) = delete;
+
+ private:
+  void set(const std::string& value) const {
+#ifdef _WIN32
+    _putenv_s(name_.c_str(), value.c_str());
+#else
+    if (value.empty() && !old_) unsetenv(name_.c_str());
+    else setenv(name_.c_str(), value.c_str(), 1);
+#endif
+  }
+  std::string name_;
+  std::optional<std::string> old_;
+};
+
+// Every file under `dir` and what it holds.
+std::map<fs::path, std::string> files_under(const fs::path& dir) {
+  std::map<fs::path, std::string> files;
+  for (const auto& e : fs::recursive_directory_iterator(dir)) {
+    if (!e.is_regular_file()) continue;
+    std::ifstream in(e.path(), std::ios::binary);
+    files[fs::relative(e.path(), dir)] = std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  return files;
+}
+
+// The shipped examples are never written to: run on them, the line's state,
+// the holes autocenter found and the records go to the user's examples folder.
+TEST_F(ElctlExpTest, TheShippedExamplesAreLeftAsTheyAre) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const fs::path examples = dir_ / "lab";
+  const fs::path user = dir_ / "user";
+  const ScopedEnv shipped("PYCHRON_EXAMPLES_DIR", examples.string());
+  const ScopedEnv home("HOME", user.string());
+  const ScopedEnv xdg("XDG_STATE_HOME", (user / "state").string());
+  const ScopedEnv local("LOCALAPPDATA", user.string());
+  const fs::path state = pychron::default_examples_state_dir(pychron::host_os(), pychron::process_env());
+  ASSERT_FALSE(state.empty());
+  const auto before = files_under(examples);
+
+  auto o = exp({"run", lab("queues/experiment.laser.toml"), "--spectrometer", lab("spectrometer.sim-integrated.toml"),
+                "--sim-speed", "max"},
+               true);
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  const auto after = files_under(examples);
+  std::string changed;
+  for (const auto& [file, text] : after) {
+    const auto was = before.find(file);
+    if (was == before.end() || was->second != text) changed += " " + file.generic_string();
+  }
+  for (const auto& [file, text] : before)
+    if (!after.contains(file)) changed += " -" + file.generic_string();
+  EXPECT_EQ(changed, "") << "written to in the examples";
+  EXPECT_TRUE(fs::exists(state / "extraction_line.state.toml")) << state;
+  EXPECT_TRUE(fs::exists(state / "stage_corrections" / "co2.example-9.toml")) << state;
+  EXPECT_TRUE(fs::exists(state / "data" / "records" / "66001" / "66001-1.json")) << state;
+  // The field table peak centering saved, beside the copy of what was shipped.
+  EXPECT_TRUE(fs::exists(state / "tables" / "argon" / "2026-09-30T000000.toml")) << state;
+  EXPECT_NE(files_under(state / "tables" / "argon").size(), 2U) << state;
 }
 
 // An install's queue named by its file name alone is found at the install's

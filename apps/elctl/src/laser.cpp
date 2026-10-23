@@ -89,6 +89,7 @@ std::string describe(const laser::Solution& s) {
 struct Args {
   std::vector<std::string> words;  // everything that is not an option
   fs::path lab;
+  fs::path state;  // state_dir_for(lab): corrections, scales, snapshots
   std::optional<double> x, y, timeout, step;
   std::optional<std::string> tray;  // --tray, for look
   bool dry_run = false;
@@ -97,7 +98,7 @@ struct Args {
 class Laser {
  public:
   Laser(Args args, const ExpGlobals& globals, Io io) : a_(std::move(args)), g_(globals), io_(io) {
-    lab_ = lab::load_lab({a_.lab, g_.config, {}});
+    lab_ = lab::load_lab({a_.lab, g_.config, {}, a_.state});
   }
 
   int trays() {
@@ -354,7 +355,7 @@ class Laser {
     if (!opened) return failed(opened.error().what);
     laser::LaserSystem system(device_, **opened, lab_.trays, *lab_.calibrations, nullptr, &line_->clock());
     if (!look_through(system)) return kFailed;
-    system.set_snapshot_dir(a_.lab / "snapshots" / device_);
+    system.set_snapshot_dir(a_.state / "snapshots" / device_);
     // A live camera has only just been opened: its first picture is waited for.
     if (auto first = system.view(true); !first) return failed(first.error().what);
     const auto saved = system.snapshot(a_.words.size() > 2 ? a_.words[2] : std::string{});
@@ -743,6 +744,7 @@ class Laser {
   Result<extraction::IExtractionDevice*> open() {
     systems::ExtractionLine::Options options;
     options.force_sim = g_.sim;
+    options.state_file = line_state_file(g_.config);
     auto line = systems::ExtractionLine::load(g_.config, std::nullopt, options);
     if (!line) return fail(line.error());
     line_ = std::move(*line);
@@ -831,6 +833,7 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
   if (a.x.has_value() != a.y.has_value()) return usage("--x and --y go together");
   if (a.lab.empty()) a.lab = !globals.lab.empty() ? globals.lab : globals.config.parent_path();
   if (a.lab.empty()) a.lab = ".";
+  a.state = state_dir_for(a.lab);
 
   const std::string verb = a.words[0];
   if (a.dry_run && verb != "pattern") return usage("--dry-run goes with pattern");
