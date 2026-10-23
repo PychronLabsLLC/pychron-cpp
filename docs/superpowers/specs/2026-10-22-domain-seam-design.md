@@ -145,7 +145,12 @@ quantity eval did, so a hand-typed `age_w_j/j` keeps its sigma;
 isotopes to reduce"), unknown stored number ("not reducible: no stored
 ..."), no extension ("no Ar-Ar reference data for this analysis"), a
 `reduce()` error. Diagnostic "N analyses did not reduce". Values
-bit-identical to before: same signals, same `reduce()`. The cache write
+identical per analysis (same signals, same `reduce()`). Sum across analyses
+(integrated age, isochron) agrees with pre-split pipeline to 1e-12
+relative, not bit for bit: `reduce` now mints every analysis's signals
+before `arar_reduce` mints production, J and constants, so variable ids
+interleave differently and `UFloat::variance()` sums in another order
+(`tests/arar/test_group_ages_run.cpp`). The cache write
 that `ReduceUnit` made (through `RunContext::source->derived()`) moved
 into `arar_reduce`, through `ctx.domain->derive()`: the unit that makes
 the derived values writes them; core `reduce` writes nothing.
