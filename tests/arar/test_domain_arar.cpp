@@ -106,7 +106,7 @@ std::string exported(const pp::Exporter& exporter, const std::vector<pp::Reduced
 TEST(ArArDomain, HoldsTheFigureUnitsAndCoreDoesNot) {
   const auto domain = pychron::arar::make_domain();
   EXPECT_NE(domain->units().find("ideogram"), nullptr);
-  EXPECT_EQ(pp::UnitRegistry::builtin().find("ideogram"), nullptr);
+  EXPECT_EQ(pp::UnitRegistry::core("age").find("ideogram"), nullptr);
 }
 
 TEST(Domain, RegistryFindsByIdAndListsIdsSorted) {

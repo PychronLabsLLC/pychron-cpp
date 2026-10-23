@@ -79,7 +79,7 @@ TEST(Domain, NobleGasHasNoAgeNoExportNoRecallExtras) {
   EXPECT_TRUE(domain->quantities().empty());
   auto a = make_unknown(0);
   a->input_fingerprint = kFingerprint;
-  const auto reduced = pp::reduce_analysis(a, pp::ReductionSettings{});
+  const auto reduced = pp::reduce_analysis(a);
   EXPECT_FALSE(domain->derive(*reduced).has_value());
   EXPECT_TRUE(domain->recall_sections(*reduced).empty());
   EXPECT_TRUE(domain->error_budget(*reduced).empty());

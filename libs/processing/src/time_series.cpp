@@ -220,7 +220,7 @@ const SchemaPtr& time_series_schema() {
   return s;
 }
 
-Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) {
+Result<Scene> build_time_series(const Dataset& d, const Options& o, double now, const Domain* domain) {
   Scene scene;
   scene.kind = "time_series";
   apply_common_style(o, scene);
@@ -244,7 +244,7 @@ Result<Scene> build_time_series(const Dataset& d, const Options& o, double now) 
     for (const auto& row : o.rows("panels")) {
       const std::size_t idx = i++;
       if (!row.get_bool("enabled")) continue;
-      auto q = Quantity::parse(row.get_string("quantity"));
+      auto q = Quantity::parse(row.get_string("quantity"), domain);
       if (!q) {
         scene.warnings.push_back("panel " + std::to_string(idx + 1) + ": " + q.error().what);
         continue;
@@ -465,7 +465,7 @@ class TimeSeriesUnit final : public Unit {
                                          RunContext& ctx) const override {
     const double now = ctx.now.value_or(
         std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
-    auto scene = build_time_series(*std::get<DatasetPtr>(in.at(0)), o, now);
+    auto scene = build_time_series(*std::get<DatasetPtr>(in.at(0)), o, now, ctx.domain);
     if (!scene) return fail(scene.error());
     return std::vector<PortValue>{PortValue(std::make_shared<const Scene>(std::move(*scene)))};
   }

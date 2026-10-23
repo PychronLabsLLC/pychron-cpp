@@ -143,7 +143,7 @@ class ReduceUnit final : public Unit {
     Dataset d = *dataset_in(in);
     for (auto& item : d.mutable_items()) {
       if (ctx.cancelled()) return fail(ErrorKind::Cancelled, "reduce: cancelled");
-      item.analysis = reduce_analysis(item.analysis->analysis, ReductionSettings{});
+      item.analysis = reduce_analysis(item.analysis->analysis);
     }
     d.reduction_tag = ctx.domain ? std::string(ctx.domain->reduction_version()) : std::string("core");
     return one(make_dataset(std::move(d)));
@@ -155,24 +155,23 @@ class ReduceUnit final : public Unit {
 
 // ---------------------------------------------------------------- filter
 
-SchemaPtr filter_rule_schema() {
-  static const SchemaPtr s = make_schema(
+SchemaPtr filter_rule_schema(const std::string& default_quantity) {
+  return make_schema(
       "unit.filter.rule", "Rule",
-      {quantity("quantity", "Quantity", "Rule", "age"),
+      {quantity("quantity", "Quantity", "Rule", default_quantity),
        choice("comparator", "Comparator", "Rule", {"<", "<=", ">", ">=", "==", "!=", "between", "outside"}, ">"),
        number("value", "Value", "Rule", 0.0, -1e300, 1e300), optional_number("value2", "Second value", "Rule"),
        choice("chain", "Combine with previous", "Rule", {"and", "or"})});
-  return s;
 }
 
 class FilterUnit final : public Unit {
  public:
-  FilterUnit() {
+  explicit FilterUnit(const std::string& default_quantity) {
     ListSpec rules;
     rules.key = "rules";
     rules.label = "Rules";
     rules.section = "Filter";
-    rules.row = filter_rule_schema();
+    rules.row = filter_rule_schema(default_quantity);
     rules.max_rows = 16;
     schema_ = make_schema("unit.filter", "Filter",
                           {choice("mode", "Analyses failing the rules are", "Filter", {"omitted", "removed"}),
@@ -187,7 +186,7 @@ class FilterUnit final : public Unit {
   std::vector<PortSpec> outputs() const override { return {{"filtered", PortType::Dataset}}; }
 
   Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& o,
-                                         RunContext&) const override {
+                                         RunContext& ctx) const override {
     struct Rule {
       Quantity q;
       std::string cmp;
@@ -197,7 +196,7 @@ class FilterUnit final : public Unit {
     };
     std::vector<Rule> rules;
     for (const auto& r : o.rows("rules")) {
-      auto q = Quantity::parse(r.get_string("quantity"));
+      auto q = Quantity::parse(r.get_string("quantity"), ctx.domain);
       if (!q) return fail(q.error());
       rules.push_back({*q, r.get_string("comparator"), r.get_double("value"), r.get_optional_double("value2"),
                        r.get_string("chain") == "or"});
@@ -371,9 +370,9 @@ class EditsUnit final : public Unit {
 
 class GroupStatsUnit final : public Unit {
  public:
-  GroupStatsUnit()
+  explicit GroupStatsUnit(const std::string& default_quantity)
       : schema_(make_schema("unit.group_stats", "Group statistics",
-                            {quantity("quantity", "Quantity", "Statistics", "age"),
+                            {quantity("quantity", "Quantity", "Statistics", default_quantity),
                              choice("mean", "Mean", "Statistics", {"weighted", "arithmetic"}),
                              choice("error_kind", "Error", "Statistics", {"msem", "sem", "sd"})})) {}
 
@@ -384,8 +383,8 @@ class GroupStatsUnit final : public Unit {
   std::vector<PortSpec> outputs() const override { return {{"results", PortType::GroupResults}}; }
 
   Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& o,
-                                         RunContext&) const override {
-    auto q = Quantity::parse(o.get_string("quantity"));
+                                         RunContext& ctx) const override {
+    auto q = Quantity::parse(o.get_string("quantity"), ctx.domain);
     if (!q) return fail(q.error());
     const auto kind = reduction::parse_mean_error_kind(o.get_string("error_kind")).value_or(reduction::MeanErrorKind::Msem);
     const bool weighted = o.get_string("mean") == "weighted";
@@ -425,53 +424,19 @@ class GroupStatsUnit final : public Unit {
 
 }  // namespace
 
-const UnitRegistry& UnitRegistry::builtin() {
-  static const UnitRegistry registry = [] {
-    UnitRegistry r;
-    r.add(std::make_unique<SelectUnit>());
-    r.add(std::make_unique<ReduceUnit>());
-    r.add(std::make_unique<FilterUnit>());
-    r.add(std::make_unique<GroupUnit>());
-    r.add(std::make_unique<EditsUnit>());
-    r.add(std::make_unique<GroupStatsUnit>());
-    r.add(make_time_series_unit());
-    r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
-    r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
-    r.add(make_isotope_evolution_fit_unit());
-    return r;
-  }();
-  return registry;
-}
-
-namespace {
-
-// One of builtin()'s units in another registry: the same unit, so the same
-// schema, and a pipeline built against builtin() runs on that registry too
-// (a node's options are checked against its unit's schema by identity).
-class BuiltinUnit final : public Unit {
- public:
-  explicit BuiltinUnit(const Unit& unit) : unit_(unit) {}
-  std::string_view kind() const override { return unit_.kind(); }
-  std::string_view title() const override { return unit_.title(); }
-  const SchemaPtr& schema() const override { return unit_.schema(); }
-  std::vector<PortSpec> inputs() const override { return unit_.inputs(); }
-  std::vector<PortSpec> outputs() const override { return unit_.outputs(); }
-  bool reads_source() const override { return unit_.reads_source(); }
-  bool uses_time(const Options& options) const override { return unit_.uses_time(options); }
-  Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& options,
-                                         RunContext& context) const override {
-    return unit_.execute(in, options, context);
-  }
-
- private:
-  const Unit& unit_;  // builtin()'s, which lives for the whole process
-};
-
-}  // namespace
-
-void add_builtin_units(UnitRegistry& registry) {
-  const UnitRegistry& core = UnitRegistry::builtin();
-  for (const auto& kind : core.kinds()) registry.add(std::make_unique<BuiltinUnit>(*core.find(kind)));
+UnitRegistry UnitRegistry::core(const std::string& default_quantity) {
+  UnitRegistry r;
+  r.add(std::make_unique<SelectUnit>());
+  r.add(std::make_unique<ReduceUnit>());
+  r.add(std::make_unique<FilterUnit>(default_quantity));
+  r.add(std::make_unique<GroupUnit>());
+  r.add(std::make_unique<EditsUnit>());
+  r.add(std::make_unique<GroupStatsUnit>(default_quantity));
+  r.add(make_time_series_unit());
+  r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
+  r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
+  r.add(make_isotope_evolution_fit_unit());
+  return r;
 }
 
 }  // namespace pychron::processing

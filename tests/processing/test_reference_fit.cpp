@@ -166,7 +166,7 @@ Dataset blanks_dataset(bool exclude_first = false) {
   Dataset d;
   for (int i : {0, 4}) {
     auto a = test::make_air(i, 295.5 + i, "blank_unknown", "bu");
-    DatasetItem item{reduce_analysis(a, {}), {}, {}};
+    DatasetItem item{reduce_analysis(a), {}, {}};
     if (i == 0 && exclude_first) item.exclusion.user = true;
     d.mutable_items().push_back(item);
   }
@@ -179,7 +179,7 @@ Dataset unknowns_dataset() {
     auto a = test::make_unknown(i);
     a->heads = {{"blanks", "bk-" + a->uuid}, {"icfactors", "ic-" + a->uuid}};
     a->isotopes[0].blank = {0.5, 0.05};
-    d.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+    d.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   }
   d.mutable_items()[2].exclusion.user = true;  // not fitted
   return d;
@@ -257,7 +257,7 @@ TEST(ReferenceFigure, IcFactorsFromAirRatios) {
   Dataset airs;
   for (int i : {0, 4}) {
     auto a = test::make_air(i, i == 0 ? 295.5 : 300.0);
-    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   }
   Options o(icfactor_fit_schema());
   auto fig = build_reference_figure(ReferenceFitTarget::IcFactors, unknowns_dataset(), airs, o);
@@ -286,7 +286,7 @@ TEST(ReferenceFigure, SourceCorrectionGivesIcFactorsByMass) {
   Dataset airs;
   for (int i : {0, 4}) {
     auto a = test::make_air(i, i == 0 ? 295.5 : 300.0);
-    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   }
   Options o(icfactor_fit_schema());
   auto rows = o.rows("ratios");
@@ -314,7 +314,7 @@ TEST(ReferenceFigure, SkipReviewedKeepsReviewedValues) {
   Dataset unknowns = unknowns_dataset();
   auto reviewed = std::make_shared<Analysis>(*unknowns.items()[0].analysis->analysis);
   reviewed->isotopes[0].blank_reviewed = true;  // Ar40
-  unknowns.mutable_items()[0].analysis = reduce_analysis(reviewed, {});
+  unknowns.mutable_items()[0].analysis = reduce_analysis(reviewed);
   Options o(blank_fit_schema());
   auto all = build_reference_figure(ReferenceFitTarget::Blanks, unknowns, blanks_dataset(), o);
   ASSERT_TRUE(all);
@@ -345,7 +345,7 @@ TEST(ReferenceFitUnits, RunInAPipeline) {
     ref_ids.push_back(a->uuid);
     src.add(a);
   }
-  const auto& reg = UnitRegistry::builtin();
+  const UnitRegistry reg = UnitRegistry::core("");
   Pipeline p;
   auto& u = p.add(reg, "unknowns", "select");
   ASSERT_TRUE(u.options.set("uuids", unknown_ids));
@@ -452,7 +452,7 @@ Dataset airs_dataset() {
   Dataset airs;
   for (int i : {0, 4}) {
     auto a = test::make_air(i, i == 0 ? 295.5 : 300.0);
-    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+    airs.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   }
   return airs;
 }

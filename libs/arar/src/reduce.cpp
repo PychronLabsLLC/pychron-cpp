@@ -7,6 +7,8 @@
 #include <limits>
 #include <utility>
 
+#include "pychron/arar/quantities.hpp"
+
 namespace pychron::arar {
 
 namespace r = pychron::reduction;
@@ -32,25 +34,6 @@ void add_unknown(std::string& out, const pp::IsotopeData& iso, std::string_view 
   add_unknown(out, iso.key + " " + std::string(what), v.value, v.error);
 }
 
-struct NamedValue {
-  std::string_view name;
-  std::string_view units;
-};
-
-// The values named() answers for, in the order names() lists them, with
-// their units (quantity.cpp's table).
-constexpr std::array<NamedValue, 12> kNamed{{
-    {"age", "Ma"}, {"age_w_j", "Ma"}, {"age_w_position", "Ma"}, {"F", ""},     {"kca", ""},  {"cak", ""},
-    {"kcl", ""},   {"clk", ""},       {"radiogenic_yield", "%"}, {"rad40", "fA"}, {"k39", "fA"}, {"j", ""},
-}};
-
-// The two aliases quantity.cpp has always accepted.
-std::string_view canonical(std::string_view name) {
-  if (name == "f") return "F";
-  if (name == "rad40_percent") return "radiogenic_yield";
-  return name;
-}
-
 }  // namespace
 
 std::optional<r::UFloat> ArArReduced::stage(std::string_view label, std::string_view stage) const {
@@ -68,7 +51,7 @@ std::optional<r::UFloat> ArArReduced::stage(std::string_view label, std::string_
 }
 
 std::optional<r::UFloat> ArArReduced::named(std::string_view raw) const {
-  const std::string_view name = canonical(raw);
+  const std::string_view name = canonical_name(raw);
   if (name == "age") return arar.ages ? std::optional<r::UFloat>(arar.ages->age) : std::nullopt;
   if (name == "age_w_j") return arar.ages ? std::optional<r::UFloat>(arar.ages->age_w_j_err) : std::nullopt;
   if (name == "age_w_position") return arar.ages ? std::optional<r::UFloat>(arar.ages->age_w_position_err) : std::nullopt;
@@ -86,19 +69,7 @@ std::optional<r::UFloat> ArArReduced::named(std::string_view raw) const {
   return std::nullopt;
 }
 
-std::string ArArReduced::units(std::string_view raw) const {
-  const std::string_view name = canonical(raw);
-  for (const auto& n : kNamed)
-    if (n.name == name) return std::string(n.units);
-  return {};
-}
-
-std::vector<std::string> ArArReduced::names() const {
-  std::vector<std::string> out;
-  out.reserve(kNamed.size());
-  for (const auto& n : kNamed) out.emplace_back(n.name);
-  return out;
-}
+std::vector<std::string> ArArReduced::names() const { return value_names(); }
 
 const ArArReduced* reduced_of(const pp::ReducedAnalysis& reduced) noexcept {
   return dynamic_cast<const ArArReduced*>(reduced.domain.get());
@@ -208,7 +179,7 @@ Result<std::shared_ptr<const ArArReduced>> reduce_arar(const pp::ReducedAnalysis
 }
 
 pp::ReducedPtr reduce_with_arar(pp::AnalysisPtr analysis, const ArArSettings& settings) {
-  pp::ReducedPtr core = pp::reduce_analysis(std::move(analysis), {});
+  pp::ReducedPtr core = pp::reduce_analysis(std::move(analysis));
   if (!core->analysis) return core;
   auto out = std::make_shared<pp::ReducedAnalysis>(*core);
   if (auto arar = reduce_arar(*core, settings)) {

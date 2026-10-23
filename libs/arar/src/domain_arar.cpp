@@ -6,11 +6,14 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/derived.hpp"
+#include "pychron/arar/quantities.hpp"
 #include "pychron/arar/reduce.hpp"
 #include "pychron/arar/report.hpp"
 #include "pychron/processing/domain.hpp"
@@ -55,7 +58,7 @@ Result<void> write_schaen(const std::filesystem::path& path, const std::vector<s
   }
   dataset.reduction_tag = std::string(reduction::kReductionVersion) + "/default/d0e0";
 
-  const Unit* group_unit = UnitRegistry::builtin().find("group");
+  const Unit* group_unit = arar::shared_domain().units().find("group");
   if (group_unit == nullptr) return fail(ErrorKind::Config, "export: no group unit");
   Options options(group_unit->schema());
   if (auto set = options.set("key", std::string(steps ? "aliquot" : "identifier")); !set) return fail(set.error());
@@ -152,15 +155,17 @@ std::vector<RecallErrorComponent> arar_budget(const ReducedAnalysis& ra) {
   return out;
 }
 
+constexpr std::string_view kDefaultQuantity = "age";
+
 class ArArDomain final : public Domain {
  public:
   std::string_view id() const override { return "arar"; }
   std::string_view title() const override { return "40Ar/39Ar"; }
-  // Core's units and the four Ar-Ar figures, built once.
+  // Core's units (group_stats and filter on `age`), arar_reduce and the four
+  // Ar-Ar figures, built once.
   const UnitRegistry& units() const override {
     static const UnitRegistry registry = [] {
-      UnitRegistry r;
-      add_builtin_units(r);
+      UnitRegistry r = UnitRegistry::core(std::string(kDefaultQuantity));
       r.add(arar::make_arar_reduce_unit());
       r.add(make_ideogram_unit());
       r.add(make_spectrum_unit());
@@ -190,14 +195,15 @@ class ArArDomain final : public Domain {
     };
   }
 
-  // The values quantity.cpp computes from reduce() (`reduced` in its table),
+  // ArArReduced's values (but `j`, which the completion list never offered),
   // and the two stages of it that core does not know.
   std::vector<std::string> quantities() const override {
     return {"age",     "age_w_j", "age_w_position", "F",  "kca",
             "cak",     "kcl",     "clk",            "radiogenic_yield",
             "rad40",   "k39",     "decay_corrected", "interference_corrected"};
   }
-  std::string default_quantity() const override { return "age"; }
+  std::optional<QuantityInfo> quantity_info(std::string_view name) const override { return arar::quantity_info(name); }
+  std::string default_quantity() const override { return std::string(kDefaultQuantity); }
 
   std::vector<DerivedQuantity> derived() const override {
     return {{"age", "Age (Ma)", "Ma", true}, {"age_w_j", "Age with J error (Ma)", "Ma", false}, {"kca", "K/Ca", "", false}};
@@ -229,5 +235,10 @@ class ArArDomain final : public Domain {
 namespace pychron::arar {
 
 std::unique_ptr<processing::Domain> make_domain() { return std::make_unique<processing::ArArDomain>(); }
+
+const processing::Domain& shared_domain() {
+  static const processing::ArArDomain domain;
+  return domain;
+}
 
 }  // namespace pychron::arar

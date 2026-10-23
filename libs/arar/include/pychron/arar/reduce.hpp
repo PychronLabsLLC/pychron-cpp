@@ -18,7 +18,7 @@
 
 namespace pychron::arar {
 
-// The arar_reduce unit's options (what core's ReductionSettings had).
+// The arar_reduce unit's options.
 struct ArArSettings {
   reduction::ConstantsPreset preset = reduction::ConstantsPreset::Default;
   bool include_decay_error = false;
@@ -52,7 +52,6 @@ struct ArArReduced final : processing::DomainReduced {
   // radiogenic_yield (or rad40_percent), rad40, k39, j. `j` is a new variable
   // with `j`'s value and error on every call, independent of the ages' J.
   std::optional<reduction::UFloat> named(std::string_view name) const override;
-  std::string units(std::string_view name) const override;
   std::vector<std::string> stages() const override { return {"decay_corrected", "interference_corrected"}; }
   std::vector<std::string> names() const override;
   std::string_view error() const override { return reduction_error; }

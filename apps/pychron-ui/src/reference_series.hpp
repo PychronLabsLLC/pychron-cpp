@@ -33,7 +33,9 @@ inline constexpr const char* kReferenceFigure = "figure";
 // The time-series preset a tab starts on: "Blanks" or "Air monitor".
 [[nodiscard]] std::string_view starting_preset(ReferenceKind kind);
 // select (the query) -> reduce -> group (key = analysis_type) -> time_series
-// (with `figure` as its options).
-[[nodiscard]] processing::Pipeline reference_pipeline(const ReferenceQuery& query, const processing::Options& figure);
+// (with `figure` as its options), from `registry`: the one it runs on (the
+// bridge's domain's units).
+[[nodiscard]] processing::Pipeline reference_pipeline(const processing::UnitRegistry& registry,
+                                                      const ReferenceQuery& query, const processing::Options& figure);
 
 }  // namespace pychron::ui

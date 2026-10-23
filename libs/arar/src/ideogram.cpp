@@ -7,6 +7,7 @@
 #include "figure_common.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/arar_groups.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/units.hpp"
 #include "schema_builder.hpp"
@@ -126,7 +127,7 @@ const SchemaPtr& ideogram_schema() {
 }
 
 Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
-  auto q = Quantity::parse(o.get_string("quantity"));
+  auto q = Quantity::parse(o.get_string("quantity"), &arar::shared_domain());
   if (!q) return fail(q.error());
   Scene scene;
   scene.kind = "ideogram";
@@ -407,7 +408,7 @@ Result<Scene> build_ideogram(const Dataset& d, const Options& o) {
           if (!t.lines.empty()) p.layers.emplace_back(std::move(t));
         }
       } else {  // value
-        auto vq = Quantity::parse(row.get_string("quantity"));
+        auto vq = Quantity::parse(row.get_string("quantity"), &arar::shared_domain());
         if (!vq) {
           scene.warnings.push_back("panel " + std::to_string(pi + 1) + ": " + vq.error().what);
           continue;

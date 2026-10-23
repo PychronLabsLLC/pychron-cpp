@@ -182,7 +182,9 @@ Result<std::vector<pp::AnalysisPtr>> load_selection(const Selection& selection, 
                                                     std::vector<std::string>& warnings) {
   auto source = open_source(db_url);
   if (!source) return fail(source.error());
-  const auto& registry = pp::UnitRegistry::builtin();
+  // select only: core's units, built here and run here (a pipeline is built
+  // from the registry it runs on).
+  const pp::UnitRegistry registry = pp::UnitRegistry::core("");
   pp::Pipeline pipeline;
   pipeline.name = "selection";
   if (auto added = add_select(pipeline, registry, selection); !added) return fail(added.error());

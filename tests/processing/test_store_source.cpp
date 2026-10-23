@@ -1446,7 +1446,7 @@ TEST_F(StoreSourceTest, BatchIsotopeRefitsSaveInOneChangeset) {
   auto& src = source();
   Dataset d;
   for (const auto& id : {unknown_, air_})
-    d.mutable_items().push_back(DatasetItem{reduce_analysis(*src.load(id.str()), {}), {}, {}});
+    d.mutable_items().push_back(DatasetItem{reduce_analysis(*src.load(id.str())), {}, {}});
   Options o(isotope_evolution_fit_schema());
   auto rows = o.rows("isotopes");
   ASSERT_TRUE(rows[0].set("fit", std::string("average")));
@@ -1487,7 +1487,7 @@ TEST_F(StoreSourceTest, BatchBaselineRefitsSaveBaselinesRevisions) {
   ASSERT_TRUE(store_->ingest(ps::IngestItem{ps::Uuid::v7(), {}, acq_, ps::BlobIngest{"f32le-tv/1", tv(0), 5}}));
   auto& src = source();
   Dataset d;
-  d.mutable_items().push_back(DatasetItem{reduce_analysis(*src.load(unknown_.str()), {}), {}, {}});
+  d.mutable_items().push_back(DatasetItem{reduce_analysis(*src.load(unknown_.str())), {}, {}});
   Options o(isotope_evolution_fit_schema());
   auto rows = o.rows("isotopes");
   rows.resize(2);

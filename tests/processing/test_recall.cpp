@@ -23,7 +23,7 @@ const pp::RecallRow* row(const pp::RecallSection& s, const std::string& name) {
 // The computed values, ratios and error budget are the domain's (tests/arar
 // test_recall_arar.cpp).
 TEST(Recall, UnknownHasItsCoreStagesAndIdentity) {
-  auto ra = pp::reduce_analysis(make_unknown(0), {});
+  auto ra = pp::reduce_analysis(make_unknown(0));
   const auto m = pp::make_recall_model(*ra);
   EXPECT_EQ(m.title, "U1-01  air  unknown");
   ASSERT_EQ(m.isotopes.size(), 5u);
@@ -36,7 +36,7 @@ TEST(Recall, UnknownHasItsCoreStagesAndIdentity) {
 }
 
 TEST(Recall, AirHasItsExtractionAndSpectrometer) {
-  auto ra = pp::reduce_analysis(make_air(0), {});
+  auto ra = pp::reduce_analysis(make_air(0));
   const auto m = pp::make_recall_model(*ra);
   ASSERT_NE(row(m.extraction, "Extract value"), nullptr);
   EXPECT_EQ(row(m.extraction, "Extract value")->units, "W");
@@ -47,14 +47,14 @@ TEST(Recall, CryoTemperaturesAreShownWhenRecorded) {
   auto a = make_air(0);
   a->extraction.cryo_temperature = 77.0;
   a->extraction.cryo_measured = {{"A", 77.4}, {"B", 81.0}};
-  auto ra = pp::reduce_analysis(a, {});
+  auto ra = pp::reduce_analysis(a);
   const auto m = pp::make_recall_model(*ra);
   ASSERT_NE(row(m.extraction, "Cryo setpoint"), nullptr);
   EXPECT_EQ(row(m.extraction, "Cryo setpoint")->units, "K");
   ASSERT_NE(row(m.extraction, "Cryo A"), nullptr);
   EXPECT_DOUBLE_EQ(row(m.extraction, "Cryo B")->value->value, 81.0);
   // Without a cryostat there are no cryo rows.
-  const auto plain = pp::make_recall_model(*pp::reduce_analysis(make_air(0), {}));
+  const auto plain = pp::make_recall_model(*pp::reduce_analysis(make_air(0)));
   EXPECT_EQ(row(plain.extraction, "Cryo setpoint"), nullptr);
 }
 

@@ -184,7 +184,7 @@ void ReferenceSeriesDock::submit(Tab& t) {
   const QPointer<ReferenceSeriesDock> self(this);
   const ReferenceKind kind = t.kind;
   deps_.bridge->submit(
-      t.channel, reference_pipeline(query, t.figure), {kReferenceFigure},
+      t.channel, reference_pipeline(deps_.bridge->domain().units(), query, t.figure), {kReferenceFigure},
       [self, kind](const PipelineResult& r) {
         if (self) self->on_result(kind, r);
       },

@@ -146,7 +146,7 @@ double time_tab(StoreSource& source, const Tab& tab, const std::string& spectrom
     return browse_s;
   }
 
-  const auto& reg = UnitRegistry::builtin();
+  const UnitRegistry reg = UnitRegistry::core("");
   Pipeline p;
   auto& select = p.add(reg, "select", "select");
   for (auto set : {select.options.set("analysis_types", tab.types),

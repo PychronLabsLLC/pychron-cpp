@@ -1,10 +1,18 @@
 #include "pychron/processing/quantity.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
+#include <charconv>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <set>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "pychron/processing/domain.hpp"
 
 namespace pychron::processing {
 
@@ -16,29 +24,17 @@ struct NamedInfo {
   Named named;
   std::string_view name;
   std::string_view label;
-  bool reduced;  // the domain's: DomainReduced::named(name)
+  std::string_view units;
 };
 
 constexpr NamedInfo kNamed[] = {
-    {Named::Age, "age", "Age", true},
-    {Named::AgeWithJ, "age_w_j", "Age (with J error)", true},
-    {Named::AgeWithPosition, "age_w_position", "Age (with position error)", true},
-    {Named::F, "F", "40Ar*/39ArK", true},
-    {Named::KCa, "kca", "K/Ca", true},
-    {Named::CaK, "cak", "Ca/K", true},
-    {Named::KCl, "kcl", "K/Cl", true},
-    {Named::ClK, "clk", "Cl/K", true},
-    {Named::RadiogenicYield, "radiogenic_yield", "%40Ar*", true},
-    {Named::Rad40, "rad40", "40Ar*", true},
-    {Named::K39, "k39", "39ArK", true},
-    {Named::J, "j", "J", true},
-    {Named::Timestamp, "timestamp", "Time", false},
-    {Named::Aliquot, "aliquot", "Aliquot", false},
-    {Named::StepIndex, "step_index", "Step", false},
-    {Named::ExtractValue, "extract_value", "Extract value", false},
-    {Named::ExtractDuration, "extract_duration", "Extract duration (s)", false},
-    {Named::CleanupDuration, "cleanup_duration", "Cleanup (s)", false},
-    {Named::Weight, "weight", "Weight", false},
+    {Named::Timestamp, "timestamp", "Time", ""},
+    {Named::Aliquot, "aliquot", "Aliquot", ""},
+    {Named::StepIndex, "step_index", "Step", ""},
+    {Named::ExtractValue, "extract_value", "Extract value", ""},
+    {Named::ExtractDuration, "extract_duration", "Extract duration (s)", "s"},
+    {Named::CleanupDuration, "cleanup_duration", "Cleanup (s)", "s"},
+    {Named::Weight, "weight", "Weight", ""},
 };
 
 struct FamilyInfo {
@@ -54,24 +50,6 @@ constexpr FamilyInfo kFamilies[] = {
     {Family::Environmental, "env", ""},
     {Family::PeakCenter, "peak_center", "peak center"},
 };
-
-// Stages a domain's reduction adds (DomainReduced::stage), by the names a
-// quantity has always used for them.
-struct DomainStageInfo {
-  std::string_view name;
-  std::string_view label;
-};
-
-constexpr std::array<DomainStageInfo, 2> kDomainStages{{
-    {"decay_corrected", "decay corrected"},
-    {"interference_corrected", "interference corrected"},
-}};
-
-const DomainStageInfo* domain_stage_info(std::string_view name) {
-  for (const auto& i : kDomainStages)
-    if (i.name == name) return &i;
-  return nullptr;
-}
 
 const NamedInfo* named_info(Named n) {
   for (const auto& i : kNamed)
@@ -118,13 +96,55 @@ bool is_isotope_key(std::string_view s) {
   return is_identifier(s.substr(0, colon)) && is_isotope_name(s.substr(colon + 1));
 }
 
-Result<Term> parse_term(std::string_view raw) {
+// A domain's name: [A-Za-z_][A-Za-z0-9_]*.
+bool is_name(std::string_view s) {
+  if (s.empty() || (!std::isalpha(static_cast<unsigned char>(s.front())) && s.front() != '_')) return false;
+  return std::all_of(s.begin(), s.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
+}
+
+// `key` at a stage core does not have: the domain's, when it knows it.
+Result<Term> domain_stage_term(const std::string& s, const std::string& key, const std::string& stage,
+                               const Domain* domain) {
+  if (!is_name(stage)) return fail(ErrorKind::Config, "quantity: unknown stage '" + stage + "' in '" + s + "'");
+  Term t;
+  t.kind = Term::Kind::Domain;
+  t.key = key;
+  t.domain_stage = stage;
+  t.label = stage;
+  if (domain) {
+    const auto info = domain->quantity_info(stage);
+    if (!info || !info->stage)
+      return fail(ErrorKind::Config, "quantity: unknown stage '" + stage + "' in '" + s + "' (domain " +
+                                         std::string(domain->id()) + ")");
+    t.domain_stage = info->name;
+    t.label = info->label;
+    t.units = info->units;
+  }
+  return t;
+}
+
+// A bare name core does not have: the domain's value of that name.
+Term domain_name_term(const std::string& name, const Domain* domain) {
+  Term t;
+  t.kind = Term::Kind::Domain;
+  t.name = name;
+  t.label = name;
+  if (domain) {
+    if (const auto info = domain->quantity_info(name); info && !info->stage) {
+      t.name = info->name;
+      t.label = info->label;
+      t.units = info->units;
+    }
+  }
+  return t;
+}
+
+Result<Term> parse_term(std::string_view raw, const Domain* domain) {
   const std::string s = trim(raw);
   if (s.empty()) return fail(ErrorKind::Config, "quantity: empty term");
   Term t;
   for (const auto& n : kNamed) {
-    if (s == n.name || (n.named == Named::F && s == "f") ||
-        (n.named == Named::RadiogenicYield && s == "rad40_percent")) {
+    if (s == n.name) {
       t.kind = Term::Kind::Named;
       t.named = n.named;
       return t;
@@ -143,22 +163,21 @@ Result<Term> parse_term(std::string_view raw) {
       }
     }
     if (!is_isotope_key(head)) return fail(ErrorKind::Config, "quantity: unknown term '" + s + "'");
+    const auto stage = parse_stage(tail);
+    if (!stage) return domain_stage_term(s, head, tail, domain);
     t.kind = Term::Kind::Isotope;
     t.key = head;
-    if (const auto* domain = domain_stage_info(tail)) {
-      t.domain_stage = std::string(domain->name);
-      return t;
-    }
-    const auto stage = parse_stage(tail);
-    if (!stage) return fail(ErrorKind::Config, "quantity: unknown stage '" + tail + "' in '" + s + "'");
     t.stage = *stage;
     return t;
   }
-  if (!is_isotope_key(s)) return fail(ErrorKind::Config, "quantity: unknown term '" + s + "'");
-  t.kind = Term::Kind::Isotope;
-  t.key = s;
-  t.stage = Stage::IcCorrected;
-  return t;
+  if (is_isotope_key(s)) {
+    t.kind = Term::Kind::Isotope;
+    t.key = s;
+    t.stage = Stage::IcCorrected;
+    return t;
+  }
+  if (!is_name(s)) return fail(ErrorKind::Config, "quantity: unknown term '" + s + "'");
+  return domain_name_term(s, domain);
 }
 
 std::string term_text(const Term& t) {
@@ -168,9 +187,10 @@ std::string term_text(const Term& t) {
     case Term::Kind::Family:
       return std::string(family_info(t.family)->name) + "." + t.key;
     case Term::Kind::Isotope:
-      if (!t.domain_stage.empty()) return t.key + "." + t.domain_stage;
       if (t.stage == Stage::IcCorrected) return t.key;
       return t.key + "." + std::string(to_string(t.stage));
+    case Term::Kind::Domain:
+      return t.key.empty() ? t.name : t.key + "." + t.domain_stage;
   }
   return {};
 }
@@ -205,10 +225,11 @@ std::string term_label(const Term& t) {
       return t.key + " " + std::string(f->label);
     }
     case Term::Kind::Isotope: {
-      const std::string st =
-          t.domain_stage.empty() ? stage_label(t.stage) : std::string(domain_stage_info(t.domain_stage)->label);
+      const std::string st = stage_label(t.stage);
       return st.empty() ? t.key : t.key + " " + st;
     }
+    case Term::Kind::Domain:
+      return t.key.empty() ? t.label : t.key + " " + t.label;
   }
   return {};
 }
@@ -229,8 +250,11 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
   if (!a) return std::nullopt;
   switch (t.kind) {
     case Term::Kind::Isotope:
-      if (!t.domain_stage.empty()) return ra.domain ? ra.domain->stage(t.key, t.domain_stage) : std::nullopt;
       return ra.stage(t.key, t.stage);
+    case Term::Kind::Domain:
+      // The domain's values: what its reduction made, under the quantity's name.
+      if (!ra.domain) return std::nullopt;
+      return t.key.empty() ? ra.domain->named(t.name) : ra.domain->stage(t.key, t.domain_stage);
     case Term::Kind::Family:
       switch (t.family) {
         case Family::Gain:
@@ -247,10 +271,7 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
           return std::nullopt;
       }
       return std::nullopt;
-    case Term::Kind::Named: {
-      // The domain's values: what its reduction made, under the quantity's name.
-      if (const auto* info = named_info(t.named); info->reduced)
-        return ra.domain ? ra.domain->named(info->name) : std::nullopt;
+    case Term::Kind::Named:
       switch (t.named) {
         case Named::Timestamp:
           return r::UFloat(a->timestamp);
@@ -267,56 +288,41 @@ std::optional<r::UFloat> eval_term(const Term& t, const ReducedAnalysis& ra) {
           return exact(a->extraction.cleanup);
         case Named::Weight:
           return exact(a->extraction.weight);
-        default:  // the domain's, above
-          return std::nullopt;
       }
-    }
+      return std::nullopt;
   }
   return std::nullopt;
 }
 
-bool term_needs_reduction(const Term& t) {
-  if (t.kind == Term::Kind::Named) return named_info(t.named)->reduced;
-  if (t.kind == Term::Kind::Isotope) return !t.domain_stage.empty();
-  return false;
-}
+bool term_needs_reduction(const Term& t) { return t.kind == Term::Kind::Domain; }
 
 std::string term_units(const Term& t) {
-  if (t.kind == Term::Kind::Isotope) return t.stage == Stage::IcFactor ? "" : "fA";
-  if (t.kind == Term::Kind::Named) {
-    switch (t.named) {
-      case Named::Age:
-      case Named::AgeWithJ:
-      case Named::AgeWithPosition:
-        return "Ma";
-      case Named::RadiogenicYield:
-        return "%";
-      case Named::Rad40:
-      case Named::K39:
-        return "fA";
-      case Named::ExtractDuration:
-      case Named::CleanupDuration:
-        return "s";
-      default:
-        return "";
-    }
+  switch (t.kind) {
+    case Term::Kind::Isotope:
+      return t.stage == Stage::IcFactor ? "" : "fA";
+    case Term::Kind::Named:
+      return std::string(named_info(t.named)->units);
+    case Term::Kind::Domain:
+      return t.units;
+    case Term::Kind::Family:
+      return "";
   }
   return "";
 }
 
 }  // namespace
 
-Result<Quantity> Quantity::parse(std::string_view text) {
+Result<Quantity> Quantity::parse(std::string_view text, const Domain* domain) {
   Quantity q;
   const auto slash = text.find('/');
-  auto num = parse_term(text.substr(0, slash));
+  auto num = parse_term(text.substr(0, slash), domain);
   if (!num) return fail(num.error());
   q.numerator_ = *num;
   if (slash != std::string_view::npos) {
     const auto rest = text.substr(slash + 1);
     if (rest.find('/') != std::string_view::npos)
       return fail(ErrorKind::Config, "quantity: at most one '/' in '" + std::string(text) + "'");
-    auto den = parse_term(rest);
+    auto den = parse_term(rest, domain);
     if (!den) return fail(den.error());
     q.denominator_ = *den;
   }
@@ -354,9 +360,30 @@ std::optional<Value> Quantity::eval(const ReducedAnalysis& a) const {
   return Value{v.nominal(), std::isfinite(e) ? e : 0.0};
 }
 
-std::vector<std::string> available_quantities(const std::vector<ReducedPtr>& analyses) {
+namespace {
+
+struct IsotopeName {
+  std::string element;
+  int mass = 0;
+  std::string text;
+};
+
+// "Ar40" -> {"Ar", 40}; nullopt for a detector key ("H1:Ar40") or a non-isotope.
+std::optional<IsotopeName> isotope_name(const std::string& key) {
+  if (!is_isotope_name(key)) return std::nullopt;
+  const auto digits = key.find_first_of("0123456789");
+  IsotopeName out{key.substr(0, digits), 0, key};
+  if (std::from_chars(key.data() + digits, key.data() + key.size(), out.mass).ec != std::errc{}) return std::nullopt;
+  return out;
+}
+
+}  // namespace
+
+std::vector<std::string> available_quantities(const std::vector<ReducedPtr>& analyses,
+                                              const std::vector<std::string>& domain_quantities) {
   std::set<std::string> isotopes, detectors, envs, peaks;
-  bool reduced = false, ages = false, extract = false;
+  bool extract = false;
+  std::vector<const DomainReduced*> domains;
   for (const auto& ra : analyses) {
     if (!ra || !ra->analysis) continue;
     const Analysis& a = *ra->analysis;
@@ -364,24 +391,39 @@ std::vector<std::string> available_quantities(const std::vector<ReducedPtr>& ana
     for (const auto& [d, _] : a.gains) detectors.insert(d);
     for (const auto& [k, _] : a.environmentals) envs.insert(k);
     for (const auto& pc : a.peak_centers) peaks.insert(pc.detector);
-    if (ra->domain) reduced = true;
-    if (ra->domain && ra->domain->named("age")) ages = true;
+    if (ra->domain) domains.push_back(ra->domain.get());
     if (a.extraction.value) extract = true;
   }
   std::vector<std::string> out;
-  if (ages) {
-    out.insert(out.end(), {"age", "age_w_j"});
-  }
-  if (reduced) out.insert(out.end(), {"F", "kca", "kcl", "radiogenic_yield", "rad40", "k39"});
+  // The domain's names some analysis has a value for (its stages below).
+  for (const auto& name : domain_quantities)
+    if (std::any_of(domains.begin(), domains.end(), [&](const DomainReduced* d) { return d->named(name).has_value(); }))
+      out.push_back(name);
   for (const auto& i : isotopes) out.push_back(i);
-  const char* kArgon[] = {"Ar40", "Ar39", "Ar38", "Ar37", "Ar36"};
-  for (std::size_t i = 0; i < 5; ++i)
-    for (std::size_t j = i + 1; j < 5; ++j)
-      if (isotopes.contains(kArgon[i]) && isotopes.contains(kArgon[j]))
-        out.push_back(std::string(kArgon[i]) + "/" + kArgon[j]);
+  // Ratios within an element, heavier over lighter.
+  std::map<std::string, std::vector<IsotopeName>> by_element;
+  for (const auto& i : isotopes)
+    if (auto n = isotope_name(i)) by_element[n->element].push_back(std::move(*n));
+  for (auto& [element, names] : by_element) {
+    std::sort(names.begin(), names.end(), [](const IsotopeName& x, const IsotopeName& y) { return x.mass > y.mass; });
+    for (std::size_t i = 0; i < names.size(); ++i)
+      for (std::size_t j = i + 1; j < names.size(); ++j) {
+        std::string ratio = names[i].text;
+        ratio.append("/").append(names[j].text);
+        out.push_back(std::move(ratio));
+      }
+  }
   for (const auto& i : isotopes)
     for (const char* st : {"intercept", "baseline", "blank", "ic_factor", "bs_corrected", "bk_corrected"})
       out.push_back(i + "." + st);
+  for (const auto& i : isotopes)
+    for (const auto& stage : domain_quantities)
+      if (std::any_of(domains.begin(), domains.end(),
+                      [&](const DomainReduced* d) { return d->stage(i, stage).has_value(); })) {
+        std::string text = i;
+        text.append(".").append(stage);
+        out.push_back(std::move(text));
+      }
   for (const auto& d : detectors) out.push_back("gain." + d);
   for (const auto& d : peaks) out.push_back("peak_center." + d);
   for (const auto& e : envs) out.push_back("env." + e);

@@ -65,7 +65,14 @@ namespace {
 
 constexpr double kT0 = 1'700'000'000.0;
 
-const pp::UnitRegistry& reg() { return pp::UnitRegistry::builtin(); }
+// The Ar-Ar domain, made once for every bridge of the file.
+const pychron::processing::Domain& arar_domain() {
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::arar::make_domain();
+  return *domain;
+}
+
+// The bridge's registry: a pipeline is built from the registry it runs on.
+const pp::UnitRegistry& reg() { return arar_domain().units(); }
 
 // An analysis of `type` on `spectrometer` at `time`; its uuid is `uuid`.
 pp::AnalysisPtr analysis(const std::string& uuid, const std::string& type, double time,
@@ -106,8 +113,8 @@ struct Drawn {
 
 Drawn run(pp::IAnalysisSource& src, const ReferenceQuery& q, const pp::Options& figure) {
   Drawn out;
-  const auto pipeline = reference_pipeline(q, figure);
-  pp::Runner runner(reg(), &src);
+  const auto pipeline = reference_pipeline(reg(), q, figure);
+  pp::Runner runner(reg(), &src, &arar_domain());
   auto data = runner.run(pipeline, "group");
   if (!data) {
     out.error = data.error().what;
@@ -229,12 +236,6 @@ class DockSource : public pp::MemorySource {
   pp::AnalysisPtr late_;
   int late_at_ = 0;
 };
-
-// The Ar-Ar domain, made once for every bridge of the file.
-const pychron::processing::Domain& arar_domain() {
-  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::arar::make_domain();
-  return *domain;
-}
 
 // What a dock needs. Declared in the order they must be made: the source
 // before the bridge, the bridge before any dock (a test's dock is a local
@@ -427,7 +428,7 @@ class TestReferenceSeries : public QObject {
   }
 
   void thePipelineIsTheFourUnitsWithTheFigureLast() {
-    const auto p = reference_pipeline(query(ReferenceKind::Airs, 7), figure_of(ReferenceKind::Airs));
+    const auto p = reference_pipeline(reg(), query(ReferenceKind::Airs, 7), figure_of(ReferenceKind::Airs));
     QVERIFY(p.validate(reg()).has_value());
     std::vector<std::string> kinds;
     kinds.reserve(p.nodes.size());

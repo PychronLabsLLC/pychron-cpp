@@ -1,6 +1,8 @@
 #include "pychron/processing/domain.hpp"
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace pychron::processing {
@@ -36,13 +38,18 @@ std::vector<std::string> DomainRegistry::ids() const {
 
 namespace {
 
+// A placeholder until the noble-gas spec names its quantities; group_stats needs a string.
+constexpr std::string_view kDefaultQuantity = "Ar40";
+
 // Core only: the reduction every analysis gets, the figures that name no
 // isotope system, and nothing cached, recalled or exported beyond the neutral.
 class NobleGasDomain final : public Domain {
  public:
+  NobleGasDomain() : units_(UnitRegistry::core(std::string(kDefaultQuantity))) {}
+
   std::string_view id() const override { return "noble_gas"; }
   std::string_view title() const override { return "Noble gas"; }
-  const UnitRegistry& units() const override { return UnitRegistry::builtin(); }
+  const UnitRegistry& units() const override { return units_; }
   std::vector<std::string> reduction_chain() const override { return {"reduce"}; }
 
   std::vector<FigureEntry> figures() const override {
@@ -82,14 +89,17 @@ class NobleGasDomain final : public Domain {
   }
 
   std::vector<std::string> quantities() const override { return {}; }
-  // A placeholder until the noble-gas spec names its quantities; group_stats needs a string.
-  std::string default_quantity() const override { return "Ar40"; }
+  std::optional<QuantityInfo> quantity_info(std::string_view) const override { return std::nullopt; }
+  std::string default_quantity() const override { return std::string(kDefaultQuantity); }
   std::vector<DerivedQuantity> derived() const override { return {}; }
   std::optional<DerivedValues> derive(const ReducedAnalysis&) const override { return std::nullopt; }
   std::string_view reduction_version() const override { return "noble-1"; }
   std::vector<RecallSection> recall_sections(const ReducedAnalysis&) const override { return {}; }
   std::vector<RecallErrorComponent> error_budget(const ReducedAnalysis&) const override { return {}; }
   std::vector<Exporter> exporters() const override { return {}; }
+
+ private:
+  UnitRegistry units_;  // core's, built once with this domain's default quantity
 };
 
 }  // namespace

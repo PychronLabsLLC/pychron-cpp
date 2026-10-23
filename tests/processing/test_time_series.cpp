@@ -21,7 +21,7 @@ pp::Dataset airs(int groups = 1) {
   pp::Dataset d;
   for (int i = 0; i < 6; ++i) {
     pp::DatasetItem item;
-    item.analysis = pp::reduce_analysis(make_air(i, 295.0 + i), {});
+    item.analysis = pp::reduce_analysis(make_air(i, 295.0 + i));
     item.path.group = i % groups;
     d.mutable_items().push_back(item);
   }
@@ -209,7 +209,8 @@ pp::Options hours_from_now() {
 }
 
 std::vector<double> unit_x(const pp::Options& o, std::optional<double> now) {
-  const pp::Unit* unit = pp::UnitRegistry::builtin().find("time_series");
+  const pp::UnitRegistry registry = pp::UnitRegistry::core("");
+  const pp::Unit* unit = registry.find("time_series");
   pp::RunContext ctx;
   ctx.now = now;
   auto out = unit->execute({pp::PortValue(std::make_shared<const pp::Dataset>(airs()))}, o, ctx);

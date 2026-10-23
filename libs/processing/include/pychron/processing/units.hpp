@@ -77,19 +77,18 @@ class UnitRegistry {
   void add(std::unique_ptr<Unit> unit);  // replaces a unit of the same kind
   const Unit* find(std::string_view kind) const;
   std::vector<std::string> kinds() const;
-  // Every built-in unit (select, reduce, filter, group, edits, group_stats,
-  // time_series, blank_fit, icfactor_fit, isotope_evolution_fit). A domain's
-  // own units (the Ar-Ar figures) are in its registry, not here.
-  static const UnitRegistry& builtin();
+  // A fresh registry of core's units, new instances each call (select,
+  // reduce, filter, group, edits, group_stats, time_series, blank_fit,
+  // icfactor_fit, isotope_evolution_fit); filter's rules and group_stats
+  // default to `default_quantity` (the domain's). A domain builds one, once,
+  // and adds its own units. A pipeline is built from the registry it runs on:
+  // a node's options are checked against its unit's schema by identity, and
+  // filter's and group_stats' schemas are this registry's own.
+  [[nodiscard]] static UnitRegistry core(const std::string& default_quantity);
 
  private:
   std::map<std::string, std::unique_ptr<Unit>, std::less<>> units_;
 };
-
-// Adds the units builtin() holds to `registry`, as the same units (same
-// schemas): a domain's registry is these plus its own, and a pipeline built
-// against builtin() runs on it.
-void add_builtin_units(UnitRegistry& registry);
 
 struct NodeSpec {
   std::string id;

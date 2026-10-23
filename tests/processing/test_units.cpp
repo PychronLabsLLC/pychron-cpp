@@ -25,7 +25,13 @@ std::unique_ptr<pp::MemorySource> source() {
   return s;
 }
 
-const pp::UnitRegistry& reg() { return pp::UnitRegistry::builtin(); }
+// One registry for building and running: a pipeline is built from the
+// registry it runs on. Its group_stats and filter default to a quantity core
+// evaluates.
+const pp::UnitRegistry& reg() {
+  static const pp::UnitRegistry registry = pp::UnitRegistry::core("Ar40");
+  return registry;
+}
 
 pp::Pipeline air_pipeline() {
   pp::Pipeline p;
@@ -44,6 +50,24 @@ const pp::Dataset& dataset(const std::vector<pp::PortValue>& v) { return *std::g
 TEST(Units, BuiltinsRegistered) {
   for (const char* k : {"select", "reduce", "filter", "group", "edits", "group_stats", "time_series"})
     EXPECT_NE(reg().find(k), nullptr) << k;
+}
+
+// group_stats' and a filter rule's default quantity is the domain's default.
+TEST(Units, CoreRegistryTakesTheDefaultQuantity) {
+  const pp::UnitRegistry he = pp::UnitRegistry::core("He4");
+  const pp::Unit* stats = he.find("group_stats");
+  ASSERT_NE(stats, nullptr);
+  const pp::FieldSpec* field = stats->schema()->field("quantity");
+  ASSERT_NE(field, nullptr);
+  EXPECT_EQ(std::get<std::string>(field->default_value), "He4");
+  const pp::Unit* filter = he.find("filter");
+  ASSERT_NE(filter, nullptr);
+  const pp::ListSpec* rules = filter->schema()->list("rules");
+  ASSERT_NE(rules, nullptr);
+  EXPECT_EQ(std::get<std::string>(rules->row->field("quantity")->default_value), "He4");
+  // A fresh registry each time: its own units, its own schemas.
+  const pp::UnitRegistry other = pp::UnitRegistry::core("He4");
+  EXPECT_NE(other.find("group_stats"), stats);
 }
 
 TEST(Units, ValidateNamesTheProblem) {
@@ -220,7 +244,7 @@ TEST(Units, ReduceHasNoOptionsAndNoDomain) {
   const pp::Unit* reduce = reg().find("reduce");
   ASSERT_NE(reduce, nullptr);
   EXPECT_TRUE(reduce->schema()->fields.empty());
-  const auto reduced = pp::reduce_analysis(make_unknown(0), {});
+  const auto reduced = pp::reduce_analysis(make_unknown(0));
   EXPECT_EQ(reduced->domain, nullptr);
   EXPECT_TRUE(reduced->reduction_error.empty());
   ASSERT_EQ(reduced->isotopes.size(), 5u);

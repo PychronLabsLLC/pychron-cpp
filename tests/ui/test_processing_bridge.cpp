@@ -71,7 +71,14 @@ class LoggingSource : public pp::MemorySource {
   std::vector<Call> calls_;
 };
 
-const pp::UnitRegistry& reg() { return pp::UnitRegistry::builtin(); }
+// The Ar-Ar domain, made once for every bridge of the file.
+const pychron::processing::Domain& arar_domain() {
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::arar::make_domain();
+  return *domain;
+}
+
+// The bridge's registry: a pipeline is built from the registry it runs on.
+const pp::UnitRegistry& reg() { return arar_domain().units(); }
 
 // Six airs a figure of Ar40 against hours from now.
 pp::Pipeline now_pipeline() {
@@ -111,12 +118,6 @@ SubmitOptions refreshing() {
 }
 
 constexpr double kFirstAir = 1'700'000'000.0;  // make_air's first timestamp
-
-// The Ar-Ar domain, made once for every bridge of the file.
-const pychron::processing::Domain& arar_domain() {
-  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::arar::make_domain();
-  return *domain;
-}
 
 }  // namespace
 

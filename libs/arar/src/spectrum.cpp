@@ -8,6 +8,7 @@
 #include "figure_common.hpp"
 #include "pychron/arar/arar_figures.hpp"
 #include "pychron/arar/arar_groups.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/units.hpp"
 #include "schema_builder.hpp"
@@ -99,9 +100,9 @@ const SchemaPtr& spectrum_schema() {
 }
 
 Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
-  auto q = Quantity::parse(o.get_string("quantity"));
+  auto q = Quantity::parse(o.get_string("quantity"), &arar::shared_domain());
   if (!q) return fail(q.error());
-  auto gq = Quantity::parse(o.get_string("gas"));
+  auto gq = Quantity::parse(o.get_string("gas"), &arar::shared_domain());
   if (!gq) return fail(gq.error());
   Scene scene;
   scene.kind = "spectrum";
@@ -264,7 +265,7 @@ Result<Scene> build_spectrum(const Dataset& d, const Options& o) {
       const bool age_panel = row.get_string("kind") == "age_spectrum";
       std::optional<Quantity> vq;
       if (!age_panel) {
-        auto parsed = Quantity::parse(row.get_string("quantity"));
+        auto parsed = Quantity::parse(row.get_string("quantity"), &arar::shared_domain());
         if (!parsed) {
           scene.warnings.push_back("panel " + std::to_string(pi + 1) + ": " + parsed.error().what);
           continue;

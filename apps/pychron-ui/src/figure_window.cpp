@@ -251,7 +251,7 @@ void FigureWindow::on_result(const PipelineResult& r) {
       std::vector<pp::ReducedPtr> v;
       for (const auto& it : dataset_->items()) v.push_back(it.analysis);
       QStringList q;
-      for (const auto& s : pp::available_quantities(v)) q << qs(s);
+      for (const auto& s : pp::available_quantities(v, bridge_.domain().quantities())) q << qs(s);
       editor_->set_quantity_choices(q);
       quantities_set_ = true;
     }

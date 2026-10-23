@@ -198,8 +198,6 @@ TEST(ArArReduceUnit, StagesShareVariablesWithTheCoreStages) {
   EXPECT_EQ(ra.domain->stages(), (std::vector<std::string>{"decay_corrected", "interference_corrected"}));
   EXPECT_FALSE(ra.domain->stage("Ar39", "ic_corrected"));
   EXPECT_FALSE(ra.domain->named("no_such_value"));
-  EXPECT_EQ(ra.domain->units("age"), "Ma");
-  EXPECT_EQ(ra.domain->units("kca"), "");
 }
 
 // No argon, no Ar-Ar result: the analysis keeps its core stages and says why.

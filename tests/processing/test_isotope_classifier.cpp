@@ -151,7 +151,7 @@ RefitFixture refit_fixture(bool noisy_sniff) {
   }
   raw.series.push_back(sniff);
   f.raw[a->uuid] = raw;
-  f.dataset.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+  f.dataset.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   return f;
 }
 

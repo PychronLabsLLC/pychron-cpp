@@ -41,6 +41,15 @@ struct DerivedQuantity {
   bool filterable = true;  // browser's from/to filter
 };
 
+// How a quantity term of the domain reads (Quantity::parse asks, and keeps
+// the answer: a label takes no analysis).
+struct QuantityInfo {
+  std::string name;   // canonical spelling: what Quantity::text() writes ("F" for "f")
+  std::string label;  // axis title without units ("Age", "40Ar*/39ArK"); a stage's reads after the isotope
+  std::string units;  // "Ma", "%", "fA"; "" for a ratio
+  bool stage = false;  // an isotope's stage ("decay_corrected"), not a value of its own
+};
+
 struct Exporter {
   std::string id, label, tip;
   std::string filters;  // file dialog filter ("CSV report (*.csv);;JSON report (*.json)")
@@ -64,6 +73,8 @@ class Domain {
   virtual std::vector<std::string> reduction_chain() const = 0;
   virtual std::vector<FigureEntry> figures() const = 0;     // toolbar order
   virtual std::vector<std::string> quantities() const = 0;  // names and stages Quantity may use beyond core's
+  // One of those names or stages (or an alias of one); nullopt: not this domain's.
+  virtual std::optional<QuantityInfo> quantity_info(std::string_view name) const = 0;
   virtual std::string default_quantity() const = 0;
   // Browser column and filter; empty: no column, no filter, no cache join.
   // The first entry is the marker row: written for every derived analysis,

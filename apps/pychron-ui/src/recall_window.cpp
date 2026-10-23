@@ -309,7 +309,7 @@ void RecallWindow::display() {
   auto chain = pp::run_reduction_chain(domain_, pp::make_dataset(std::move(one)), context);
   if (!chain) log_shown("recall", tr("Reduce %1").arg(qs(shown_->runid)), chain.error());
   const pp::ReducedPtr reduced = chain && !(*chain)->empty() ? (*chain)->items().front().analysis
-                                                              : pp::reduce_analysis(shown_, {});
+                                                              : pp::reduce_analysis(shown_);
   model_ = pp::make_recall_model(*reduced);
 
   setWindowTitle(tr("Recall — %1").arg(qs(shown_->runid)) + (edits_.empty() ? QString() : QStringLiteral(" *")));

@@ -32,12 +32,6 @@ enum class Stage {
 std::string_view to_string(Stage stage) noexcept;  // "intercept", "bs_corrected", ...
 std::optional<Stage> parse_stage(std::string_view text) noexcept;
 
-// Core's reduction has nothing to choose yet; a domain's options are its own
-// units' (Ar-Ar: arar_reduce).
-struct ReductionSettings {
-  friend bool operator==(const ReductionSettings&, const ReductionSettings&) = default;
-};
-
 struct IsotopeStages {
   std::string key;
   std::map<Stage, reduction::UFloat> values;
@@ -60,8 +54,6 @@ class DomainReduced {
   virtual std::optional<reduction::UFloat> stage(std::string_view label, std::string_view stage) const = 0;
   // A named value ("age", "kca"); nullopt: not one of its.
   virtual std::optional<reduction::UFloat> named(std::string_view name) const = 0;
-  // Units of a named value ("Ma"; "" for a ratio or an unknown name).
-  virtual std::string units(std::string_view name) const = 0;
   virtual std::vector<std::string> stages() const = 0;  // names, in order after IcCorrected
   virtual std::vector<std::string> names() const = 0;
   virtual std::string_view error() const = 0;  // why some values are missing; empty when none are
@@ -91,7 +83,9 @@ using ReducedPtr = std::shared_ptr<const ReducedAnalysis>;
 
 // Never fails, and sets no reduction_error: an isotope whose intercept,
 // baseline, blank or IC factor is unknown (Value::known() false) has NaN
-// stages. The core stages of every isotope, from one signal each.
-ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& settings);
+// stages. The core stages of every isotope, from one signal each. Core's
+// reduction has nothing to choose; a domain's options are its own units'
+// (Ar-Ar: arar_reduce).
+ReducedPtr reduce_analysis(AnalysisPtr analysis);
 
 }  // namespace pychron::processing

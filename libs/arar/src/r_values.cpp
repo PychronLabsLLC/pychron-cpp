@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "figure_common.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/arar/report.hpp"
 
@@ -106,7 +107,7 @@ std::string r_values_csv(const std::vector<RValueMatrix>& matrices, const Option
 }
 
 Result<std::vector<RValueMatrix>> r_value_matrices(const Dataset& dataset, const Options& ideogram_options) {
-  auto f = Quantity::parse("F");
+  auto f = Quantity::parse("F", &arar::shared_domain());
   if (!f) return fail(f.error());
   std::vector<RValueMatrix> out;
   for (int graph : dataset.graphs()) {

@@ -52,7 +52,7 @@ Fixture make(int n, bool rising = false) {
     auto a = test::make_air(i);
     a->heads = {{"intercepts", "int-" + a->uuid}};
     f.raw[a->uuid] = raw_for(*a, rising);
-    f.dataset.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+    f.dataset.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   }
   return f;
 }
@@ -102,7 +102,7 @@ TEST(IsotopeEvolutionFits, KeepsLeftOutPointsUnlessToldNot) {
   auto f = make(1);
   auto a = std::make_shared<Analysis>(*f.dataset.items()[0].analysis->analysis);
   a->isotopes[0].user_excluded = {7};  // the wild point
-  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a);
   Options o = with_row([](Options& row) { (void)row.set("isotope", std::string("Ar40")); });
   auto kept = build_isotope_evolution_fits(f.dataset, o, f.loader());
   ASSERT_TRUE(kept);
@@ -153,7 +153,7 @@ TEST(IsotopeEvolutionFits, ReviewedMissingAndCancelled) {
   auto f = make(2);
   auto a = std::make_shared<Analysis>(*f.dataset.items()[0].analysis->analysis);
   a->isotopes[0].intercept_reviewed = true;
-  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a);
   Options o(isotope_evolution_fit_schema());
   ASSERT_TRUE(o.set("skip_reviewed", true));
   auto fig = build_isotope_evolution_fits(f.dataset, o, f.loader());
@@ -183,7 +183,7 @@ TEST(IsotopeEvolutionFits, KeysAndNames) {
   RawData raw = f.raw.begin()->second;
   raw.series[1].key = "AX:Ar39";
   f.raw.begin()->second = raw;
-  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a);
   auto by_name = build_isotope_evolution_fits(
       f.dataset, with_row([](Options& row) { (void)row.set("isotope", std::string("Ar39")); }), f.loader());
   ASSERT_TRUE(by_name);
@@ -267,7 +267,7 @@ TEST(IsotopeEvolutionGoodness, RemainingChecks) {
   a->isotopes[0].baseline = {0.01, 100.0};  // a baseline error of ~1.7% of the signal
   a->isotopes[0].blank = {600.0, 1.0};      // ~10% of the signal
   Dataset d;
-  d.mutable_items().push_back(DatasetItem{reduce_analysis(a, {}), {}, {}});
+  d.mutable_items().push_back(DatasetItem{reduce_analysis(a), {}, {}});
   EXPECT_EQ(flagged(
                 [](Options& r) {
                   (void)r.set("signal_to_baseline", 1.0);
@@ -291,7 +291,7 @@ TEST(IsotopeEvolutionFits, BaselineRowsRefitTheDetectorsBaseline) {
   auto a = std::make_shared<Analysis>(*f.dataset.items()[0].analysis->analysis);
   a->isotopes[2].detector = "H1";  // Ar38 shares Ar40's detector
   a->isotopes[0].baseline_user_excluded = {3};
-  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a);
   RawSeries bs;
   bs.kind = SeriesKind::Baseline;
   bs.key = "H1";
@@ -325,7 +325,7 @@ TEST(IsotopeEvolutionFits, BaselineRowsRefitTheDetectorsBaseline) {
 
   // Reviewed baselines are kept; an unknown detector refits nothing.
   a->isotopes[0].baseline_reviewed = true;
-  f.dataset.mutable_items()[0].analysis = reduce_analysis(a, {});
+  f.dataset.mutable_items()[0].analysis = reduce_analysis(a);
   ASSERT_TRUE(o.set("skip_reviewed", true));
   auto kept = build_isotope_evolution_fits(f.dataset, o, f.loader());
   ASSERT_TRUE(kept);
@@ -348,7 +348,7 @@ TEST(IsotopeEvolutionFits, UnitReadsRawFromTheSource) {
     ids.push_back(a->uuid);
     src.add(a, raw_for(*a));
   }
-  const auto& reg = UnitRegistry::builtin();
+  const UnitRegistry reg = UnitRegistry::core("");
   Pipeline p;
   auto& sel = p.add(reg, "select", "select");
   ASSERT_TRUE(sel.options.set("uuids", ids));

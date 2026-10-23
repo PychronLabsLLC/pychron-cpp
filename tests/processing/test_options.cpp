@@ -62,7 +62,10 @@ TEST(Options, SetValidates) {
   auto row = o.new_row("panels");
   EXPECT_TRUE(row.set("quantity", std::string("Ar40.ic_corrected")));
   EXPECT_EQ(row.get_string("quantity"), "Ar40");  // canonical form
-  EXPECT_FALSE(row.set("quantity", std::string("Ar40.bad")));
+  // Malformed: options know no domain, so a stage that is a name parses (as
+  // a domain's) and only text that is no quantity is refused.
+  EXPECT_FALSE(row.set("quantity", std::string("Ar40.b ad")));
+  EXPECT_FALSE(row.set("quantity", std::string("Ar40/Ar36/Ar38")));
   EXPECT_TRUE(o.set_rows("panels", {row, row}));
   EXPECT_EQ(o.rows("panels").size(), 2u);
   EXPECT_FALSE(o.set_rows("panels", {}));  // at least one panel
@@ -214,9 +217,11 @@ TEST(Options, FactoryPresetsAreClean) {
     ASSERT_TRUE(f) << name;
     EXPECT_TRUE(f->warnings.empty()) << name;  // legacy W4: factory sets naming missing fields
   }
-  // Every unit's schema defaults are valid values.
-  for (const auto& kind : pp::UnitRegistry::builtin().kinds()) {
-    const auto& schema = pp::UnitRegistry::builtin().find(kind)->schema();
+  // Every unit's schema defaults are valid values (with a default quantity
+  // that is one).
+  const pp::UnitRegistry registry = pp::UnitRegistry::core("Ar40");
+  for (const auto& kind : registry.kinds()) {
+    const auto& schema = registry.find(kind)->schema();
     for (const auto& field : schema->fields) {
       if (std::holds_alternative<std::monostate>(field.default_value)) continue;
       EXPECT_TRUE(pp::validate(field, field.default_value)) << kind << "." << field.key;

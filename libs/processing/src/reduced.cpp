@@ -60,7 +60,7 @@ std::optional<r::UFloat> ReducedAnalysis::stage(std::string_view key, Stage stag
   return it->second;
 }
 
-ReducedPtr reduce_analysis(AnalysisPtr analysis, const ReductionSettings& /*settings*/) {
+ReducedPtr reduce_analysis(AnalysisPtr analysis) {
   auto out = std::make_shared<ReducedAnalysis>();
   out->analysis = std::move(analysis);
   if (!out->analysis) return out;

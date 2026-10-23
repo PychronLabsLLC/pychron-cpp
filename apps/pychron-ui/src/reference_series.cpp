@@ -15,8 +15,7 @@ std::vector<std::string> analysis_types(ReferenceKind kind) {
 
 std::string_view starting_preset(ReferenceKind kind) { return kind == ReferenceKind::Airs ? "Air monitor" : "Blanks"; }
 
-pp::Pipeline reference_pipeline(const ReferenceQuery& query, const pp::Options& figure) {
-  const auto& reg = pp::UnitRegistry::builtin();
+pp::Pipeline reference_pipeline(const pp::UnitRegistry& reg, const ReferenceQuery& query, const pp::Options& figure) {
   pp::Pipeline pipeline;
   pipeline.name = query.kind == ReferenceKind::Airs ? "reference series: airs" : "reference series: blanks";
 

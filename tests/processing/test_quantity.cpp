@@ -24,8 +24,6 @@ TEST(Quantity, ParsesAndCanonicalizes) {
   EXPECT_EQ(q("Ar40.bs").text(), "Ar40.baseline");
   EXPECT_EQ(q("Ar40/Ar36").text(), "Ar40/Ar36");
   EXPECT_EQ(q("H1:Ar40.intercept").text(), "H1:Ar40.intercept");
-  EXPECT_EQ(q("f").text(), "F");
-  EXPECT_EQ(q("rad40_percent").text(), "radiogenic_yield");
   EXPECT_EQ(q("gain.H1").text(), "gain.H1");
   EXPECT_EQ(q("env.lab_temperature").text(), "env.lab_temperature");
   EXPECT_TRUE(q("Ar40/Ar36").is_ratio());
@@ -33,21 +31,24 @@ TEST(Quantity, ParsesAndCanonicalizes) {
   EXPECT_FALSE(q("Ar40.intercept").needs_reduction());
 }
 
+// Malformed text, an isotope's stage that is not a name, or a family key that
+// is not one. A bare name is a domain's (tests/arar: a domain's stage it does
+// not know is refused when parse is given the domain).
 TEST(Quantity, RejectsBadText) {
-  for (const char* bad : {"", "Ar", "Ar40.nope", "foo", "Ar40/Ar36/Ar38", "gain.", "40Ar", "gain.H 1"})
+  for (const char* bad : {"", "Ar40/Ar36/Ar38", "gain.", "40Ar", "gain.H 1", "Ar40.", "Ar40.no pe", "x.decay_corrected",
+                          "age/"})
     EXPECT_FALSE(pp::Quantity::parse(bad)) << bad;
 }
 
 TEST(Quantity, LabelsAndUnits) {
   EXPECT_EQ(q("Ar40").label(), "Ar40 (fA)");
   EXPECT_EQ(q("Ar40/Ar36").label(), "Ar40/Ar36");
-  EXPECT_EQ(q("age").label(), "Age (Ma)");
   EXPECT_EQ(q("Ar40.intercept").label(), "Ar40 intercept (fA)");
   EXPECT_EQ(q("gain.H1").label(), "H1 gain");
 }
 
 TEST(Quantity, IsotopeStages) {
-  auto ra = pp::reduce_analysis(make_air(0), {});
+  auto ra = pp::reduce_analysis(make_air(0));
   const auto i = q("Ar40.intercept").eval(*ra);
   ASSERT_TRUE(i);
   EXPECT_DOUBLE_EQ(i->value, 2955.01);
@@ -61,7 +62,7 @@ TEST(Quantity, IsotopeStages) {
 }
 
 TEST(Quantity, RatioPropagatesLikeUFloat) {
-  auto ra = pp::reduce_analysis(make_air(0), {});
+  auto ra = pp::reduce_analysis(make_air(0));
   const auto ratio = q("Ar40/Ar36").eval(*ra);
   ASSERT_TRUE(ratio);
   EXPECT_NEAR(ratio->value, 295.5, 1e-9);
@@ -76,7 +77,7 @@ TEST(Quantity, RatioPropagatesLikeUFloat) {
 
 // Without a domain's reduction there are no domain values or stages, and no crash.
 TEST(Quantity, DomainTermsHaveNoValueWithoutTheDomainsReduction) {
-  auto unk = pp::reduce_analysis(make_unknown(0), {});
+  auto unk = pp::reduce_analysis(make_unknown(0));
   EXPECT_EQ(unk->domain, nullptr);
   EXPECT_FALSE(q("age").eval(*unk));
   EXPECT_FALSE(q("j").eval(*unk));
@@ -84,11 +85,45 @@ TEST(Quantity, DomainTermsHaveNoValueWithoutTheDomainsReduction) {
   EXPECT_FALSE(q("Ar36.interference_corrected/Ar36").eval(*unk));
   EXPECT_TRUE(q("Ar39.decay_corrected").needs_reduction());
   EXPECT_EQ(q("Ar39.decay_corrected").text(), "Ar39.decay_corrected");
-  EXPECT_EQ(q("Ar39.decay_corrected").label(), "Ar39 decay corrected (fA)");
+  // Without the domain at parse, a domain's term reads as written.
+  EXPECT_EQ(q("Ar39.decay_corrected").label(), "Ar39 decay_corrected");
+  EXPECT_EQ(q("age").label(), "age");
+  EXPECT_EQ(q("age").units(), "");
+}
+
+// A bare name that is not core's is a domain's: it parses, and without the
+// domain's reduction it has no value.
+TEST(Quantity, ADomainNameHasNoValueWithoutADomain) {
+  const auto age = pp::Quantity::parse("age");
+  ASSERT_TRUE(age) << age.error().what;
+  EXPECT_EQ(age->numerator().kind, pp::Term::Kind::Domain);
+  EXPECT_EQ(age->numerator().name, "age");
+  EXPECT_EQ(age->text(), "age");
+  EXPECT_TRUE(age->needs_reduction());
+  const auto core_only = pp::reduce_analysis(make_unknown(0));
+  ASSERT_EQ(core_only->domain, nullptr);
+  EXPECT_FALSE(age->eval(*core_only));
+  EXPECT_FALSE(q("foo").eval(*core_only));
+  EXPECT_FALSE(q("age/Ar39").eval(*core_only));
+}
+
+// An isotope with a stage core does not have is a domain's stage.
+TEST(Quantity, ADomainStageParses) {
+  const auto stage = pp::Quantity::parse("Ar40.interference_corrected");
+  ASSERT_TRUE(stage) << stage.error().what;
+  const pp::Term& t = stage->numerator();
+  EXPECT_EQ(t.kind, pp::Term::Kind::Domain);
+  EXPECT_EQ(t.key, "Ar40");
+  EXPECT_EQ(t.domain_stage, "interference_corrected");
+  EXPECT_TRUE(stage->needs_reduction());
+  EXPECT_EQ(stage->text(), "Ar40.interference_corrected");
+  // A core stage is not a domain's.
+  EXPECT_EQ(q("Ar40.bs_corrected").numerator().kind, pp::Term::Kind::Isotope);
+  EXPECT_FALSE(q("Ar40.bs_corrected").needs_reduction());
 }
 
 TEST(Quantity, MetadataAndMissing) {
-  auto ra = pp::reduce_analysis(make_air(2), {});
+  auto ra = pp::reduce_analysis(make_air(2));
   EXPECT_DOUBLE_EQ(q("extract_value").eval(*ra)->value, 7.0);
   EXPECT_DOUBLE_EQ(q("aliquot").eval(*ra)->value, 3.0);
   EXPECT_DOUBLE_EQ(q("gain.H1").eval(*ra)->value, 1.01);
@@ -99,8 +134,8 @@ TEST(Quantity, MetadataAndMissing) {
 }
 
 TEST(Quantity, Available) {
-  std::vector<pp::ReducedPtr> v{pp::reduce_analysis(make_air(0), {}), pp::reduce_analysis(make_unknown(1), {})};
-  const auto names = pp::available_quantities(v);
+  std::vector<pp::ReducedPtr> v{pp::reduce_analysis(make_air(0)), pp::reduce_analysis(make_unknown(1))};
+  const auto names = pp::available_quantities(v, {});
   auto has = [&](const char* n) { return std::find(names.begin(), names.end(), n) != names.end(); };
   EXPECT_FALSE(has("age"));  // no domain's reduction: tests/arar test_quantity_arar.cpp has it
   EXPECT_TRUE(has("Ar40/Ar36"));
@@ -108,6 +143,10 @@ TEST(Quantity, Available) {
   EXPECT_FALSE(has("Ar36/Ar40"));
   EXPECT_TRUE(has("gain.H1"));
   EXPECT_TRUE(has("Ar36.intercept"));
+  EXPECT_TRUE(has("Ar37/Ar36"));
+  EXPECT_FALSE(has("Ar36/Ar37"));
+  // A domain's names are listed only when an analysis has a value for them.
+  EXPECT_EQ(pp::available_quantities(v, {"age", "decay_corrected"}), names);
   for (const auto& n : names) EXPECT_TRUE(pp::Quantity::parse(n)) << n;
 }
 
