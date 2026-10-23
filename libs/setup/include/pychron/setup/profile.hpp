@@ -10,6 +10,7 @@
 //   title = "Thermo Argus VI"
 //   kind = "instrument"          # instrument | data_reduction | fragment
 //   summary = "..."
+//   domain = "arar"              # optional: the install's domain (default arar)
 //   version = 1
 //   includes = ["lab-common"]
 //   groups = ["Simulation", "Instrument connection", "Detectors"]
@@ -84,6 +85,7 @@ struct FileSpec {
 
 struct Profile {
   std::string name, title, summary;
+  std::string domain = "arar";  // the install's domain; a question with id `domain` overrides it
   ProfileKind kind = ProfileKind::Fragment;
   std::int64_t version = 1;
   std::vector<std::string> includes;

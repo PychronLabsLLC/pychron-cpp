@@ -1,12 +1,23 @@
 name = "data-reduction"
 title = "Data reduction"
 kind = "data_reduction"
+domain = "arar"
 summary = "Browse, reduce and plot Ar/Ar data from a database on this computer or your lab's server"
 version = 1
 includes = ["store-common"]
 
 [values]
 instrument = ""
+
+[[questions]]
+id = "domain"
+prompt = "What kind of data is this?"
+type = "choice"
+choices = ["arar", "noble_gas"]
+labels = ["Ar/Ar geochronology", "Noble gas (abundances, no age)"]
+default = "arar"
+group = "Data"
+help = "Ar/Ar geochronology calculates ages; noble gas reports gas abundances and no age."
 
 [[files]]
 template = "references.toml"

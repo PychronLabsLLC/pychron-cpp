@@ -229,6 +229,15 @@ std::vector<Check> doctor(const SiteInstall& install, const DoctorOptions& optio
     }
   }
 
+  const auto& known = known_domains();
+  if (std::find(known.begin(), known.end(), install.domain) == known.end()) {
+    std::string list;
+    for (const auto& d : known) list += (list.empty() ? "" : ", ") + d;
+    out.push_back(failed("domain", "unknown domain '" + install.domain + "'; known: " + list, reconfigure_hint(install)));
+  } else {
+    out.push_back(ok("domain", install.domain));
+  }
+
   if (install.kind == "data_reduction") {
     check_data_reduction(out, install, options);
     check_writable(out, "data folder", install.path(install.data.empty() ? "data" : install.data));
@@ -244,11 +253,13 @@ SiteInstall site_install(const InstallPlan& plan, const std::string& name) {
   SiteInstall s;
   s.name = name;
   s.profile = plan.profile.top.name;
+  s.domain = plan.profile.top.domain;
   s.root = plan.root;
   auto text = [&](const char* id) {
     auto it = plan.answers.find(id);
     return it == plan.answers.end() ? std::string{} : to_text(it->second);
   };
+  if (const std::string domain = text("domain"); !domain.empty()) s.domain = domain;
   s.data = text("data_folder");
   if (s.data.empty()) s.data = "data";
   // Every install has a database: the catalog (samples, packages) and, for

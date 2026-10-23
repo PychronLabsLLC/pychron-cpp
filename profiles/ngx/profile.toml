@@ -1,6 +1,7 @@
 name = "ngx"
 title = "Isotopx NGX"
 kind = "instrument"
+domain = "arar"
 summary = "NGX over its controller's ASCII protocol: nine Faradays and an ion counter"
 version = 2
 includes = ["instrument-common"]

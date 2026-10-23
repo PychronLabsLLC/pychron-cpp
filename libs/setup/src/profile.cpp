@@ -113,6 +113,7 @@ Result<Profile> load_profile(const fs::path& dir) {
   if (p.name != dir.filename().string()) err("name", "must match the directory name '" + dir.filename().string() + "'");
   p.title = t["title"].value_or(p.name);
   p.summary = t["summary"].value_or(std::string{});
+  p.domain = t["domain"].value_or(std::string("arar"));
   p.version = t["version"].value_or(std::int64_t{1});
   const std::string kind = t["kind"].value_or(std::string("fragment"));
   if (kind == "instrument") p.kind = ProfileKind::Instrument;
@@ -132,7 +133,7 @@ Result<Profile> load_profile(const fs::path& dir) {
     }
   }
   for (const auto& [k, v] : t) {
-    static const std::set<std::string> known{"name",     "title",     "summary", "version", "kind",
+    static const std::set<std::string> known{"name",     "title",     "summary", "version", "kind",   "domain",
                                              "includes", "questions", "files",   "values", "groups"};
     if (!known.contains(std::string(k.str()))) err(std::string(k.str()), "unknown key");
   }

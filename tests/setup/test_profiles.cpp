@@ -680,6 +680,31 @@ TEST(Profiles, StoreCommonAsksForTheFileAndTheDataFolder) {
   EXPECT_EQ(folder->help, "Where run records are kept");
 }
 
+TEST(Profiles, EveryShippedProfileWritesADomain) {
+  const auto lib = library();
+  for (const char* name : {"argus", "helix", "ngx", "data-reduction"}) {
+    const auto site = install(lib, name, {}, scratch(std::string("domain-") + name));
+    EXPECT_EQ(site.domain, "arar") << name;
+  }
+}
+
+TEST(Profiles, DataReductionAsksForTheDomainAndTheAnswerWins) {
+  const auto lib = library();
+  auto resolved = lib.resolve("data-reduction");
+  ASSERT_TRUE(resolved) << resolved.error().what;
+  const auto it = std::find_if(resolved->questions.begin(), resolved->questions.end(),
+                               [](const Question& q) { return q.id == "domain"; });
+  ASSERT_NE(it, resolved->questions.end());
+  EXPECT_EQ(it->choices, (std::vector<std::string>{"arar", "noble_gas"}));
+  EXPECT_EQ(it->labels, (std::vector<std::string>{"Ar/Ar geochronology", "Noble gas (abundances, no age)"}));
+  EXPECT_EQ(it->group, "Data");
+  ASSERT_TRUE(it->default_value.has_value());
+  EXPECT_EQ(*it->default_value, Value{std::string("arar")});
+  const auto site = install(lib, "data-reduction", {{"domain", Value{std::string("noble_gas")}}}, scratch("domain-noble"));
+  EXPECT_EQ(site.domain, "noble_gas");
+  expect_no_failures(site);
+}
+
 TEST(Profiles, ADataFolderAnswerIsTheSiteEntrysData) {
   const auto lib = library();
   auto resolved = lib.resolve("data-reduction");

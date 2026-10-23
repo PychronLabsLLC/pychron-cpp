@@ -36,6 +36,9 @@ struct SiteInstall {
   std::string line, canvas, spectrometer, data;
   std::string database;
   bool simulation = false;
+  // Which kind of science the install does (processing::Domain id). Absent
+  // from site.toml reads as "arar"; save_site always writes it.
+  std::string domain = "arar";
 
   // root / relative, or empty when the relative part is.
   std::filesystem::path path(const std::string& relative) const;
@@ -52,6 +55,10 @@ struct SiteConfig {
   void upsert(SiteInstall install);
   bool remove(const std::string& name);  // the entry only, never files
 };
+
+// The domain ids an install may name (the ids processing::DomainRegistry
+// registers; libs/setup does not link processing, so they are listed here).
+const std::vector<std::string>& known_domains();
 
 std::filesystem::path default_site_path();
 // A missing file is an empty config.

@@ -1,6 +1,7 @@
 name = "argus"
 title = "Thermo Argus VI"
 kind = "instrument"
+domain = "arar"
 summary = "Argus VI over Qtegra RemoteControlServer: five Faradays and a CDD"
 version = 1
 includes = ["qtegra"]

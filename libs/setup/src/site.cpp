@@ -59,6 +59,11 @@ fs::path default_site_path() {
 #endif
 }
 
+const std::vector<std::string>& known_domains() {
+  static const std::vector<std::string> ids{"arar", "noble_gas"};
+  return ids;
+}
+
 Result<SiteConfig> load_site(const fs::path& path) {
   std::error_code ec;
   if (!fs::exists(path, ec)) return SiteConfig{};
@@ -85,6 +90,7 @@ Result<SiteConfig> load_site(const fs::path& path) {
       s.data = (*i)["data"].value_or(std::string{});
       s.database = (*i)["database"].value_or(std::string{});
       s.simulation = (*i)["simulation"].value_or(false);
+      s.domain = (*i)["domain"].value_or(std::string("arar"));
       if (s.name.empty() || s.root.empty())
         return fail(ErrorKind::Config, path.string() + ": an install needs a name and a root");
       site.installs.push_back(std::move(s));
@@ -108,6 +114,7 @@ Result<void> save_site(const SiteConfig& site, const fs::path& path) {
              {"database", &s.database}}) {
       if (!v->empty()) i.insert(k, *v);
     }
+    i.insert("domain", s.domain);
     if (s.simulation) i.insert("simulation", true);
     installs.push_back(std::move(i));
   }

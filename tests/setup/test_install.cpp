@@ -257,6 +257,60 @@ TEST(Site, SavesLoadsAndPicks) {
   EXPECT_TRUE(loaded->default_install.empty());
 }
 
+TEST(Site, DomainRoundTripsAndDefaultsToArAr) {
+  Tmp tmp;
+  const fs::path path = tmp.dir / "site.toml";
+  SiteInstall named;
+  named.name = "noble";
+  named.root = tmp.dir / "noble";
+  named.domain = "noble_gas";
+  SiteInstall plain;
+  plain.name = "plain";
+  plain.root = tmp.dir / "plain";
+  SiteConfig site;
+  site.upsert(named);
+  site.upsert(plain);
+  ASSERT_TRUE(save_site(site, path));
+  auto loaded = load_site(path);
+  ASSERT_TRUE(loaded) << loaded.error().what;
+  EXPECT_EQ(loaded->find("noble")->domain, "noble_gas");
+  EXPECT_EQ(loaded->find("plain")->domain, "arar");
+
+  // An entry written before the key existed.
+  {
+    std::ofstream out(path, std::ios::trunc);
+    out << "[[installs]]\nname = \"old\"\nroot = \"" << (tmp.dir / "old").generic_string() << "\"\n";
+  }
+  auto old = load_site(path);
+  ASSERT_TRUE(old) << old.error().what;
+  EXPECT_EQ(old->find("old")->domain, "arar");
+}
+
+TEST(Doctor, RefusesAnUnknownDomain) {
+  Tmp tmp;
+  SiteInstall site;
+  site.name = "x";
+  site.kind = "data_reduction";
+  site.root = tmp.dir;
+  auto domain_check = [](const SiteInstall& s) {
+    for (const auto& c : doctor(s))
+      if (c.name == "domain") return c;
+    ADD_FAILURE() << "no domain check";
+    return Check{};
+  };
+  site.domain = "u_pb";
+  const auto bad = domain_check(site);
+  EXPECT_EQ(bad.status, Check::Status::Fail);
+  EXPECT_NE(bad.detail.find("unknown domain 'u_pb'"), std::string::npos) << bad.detail;
+  EXPECT_NE(bad.detail.find("arar"), std::string::npos) << bad.detail;
+  EXPECT_NE(bad.detail.find("noble_gas"), std::string::npos) << bad.detail;
+  EXPECT_NE(bad.hint.find("--reconfigure"), std::string::npos) << bad.hint;
+  for (const char* id : {"arar", "noble_gas"}) {
+    site.domain = id;
+    EXPECT_EQ(domain_check(site).status, Check::Status::Ok) << id;
+  }
+}
+
 TEST(Site, TheLocationCanBeOverridden) {
 #ifdef _WIN32
   _putenv_s("PYCHRON_SITE_CONFIG", "C:/somewhere/site.toml");
