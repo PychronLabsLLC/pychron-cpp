@@ -1,6 +1,8 @@
 #include "data_workspace.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,6 +83,12 @@ bool DataWorkspace::export_report(const QString& path, const QStringList& uuids)
   return true;
 }
 
+const processing::Domain& DataWorkspace::fallback_domain() {
+  // Phase 1 scaffolding: Task 3c passes the install's domain.
+  static const std::unique_ptr<processing::Domain> domain = processing::make_arar_domain();
+  return *domain;
+}
+
 void DataWorkspace::set_publish_handler(std::function<void(const QStringList&)> handler) {
   publish_handler_ = std::move(handler);
   if (browser_ != nullptr) browser_->set_publish_available(static_cast<bool>(publish_handler_));
@@ -90,7 +98,7 @@ void DataWorkspace::set_source(processing::IAnalysisSource* source, processing::
   clear();
   source_ = source;
   presets_ = presets;
-  if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source);
+  if (source != nullptr && presets != nullptr) processing_ = std::make_unique<ProcessingBridge>(*source, *domain_);
 }
 
 namespace {
@@ -151,7 +159,10 @@ QWidget* DataWorkspace::open_recall(const QString& uuid) {
 
 QWidget* DataWorkspace::open_figure(const QString& kind, const QStringList& uuids) {
   if (!processing_ || presets_ == nullptr) return nullptr;
-  if (processing::UnitRegistry::builtin().find(kind.toStdString()) == nullptr) return nullptr;
+  const std::string kind_id = kind.toStdString();
+  const auto figures = domain_->figures();
+  const auto entry = std::find_if(figures.begin(), figures.end(), [&](const processing::FigureEntry& e) { return e.kind == kind_id; });
+  if (entry == figures.end()) return nullptr;
   if (kind == QLatin1String(IsotopeEvolutionWindow::kKind)) {
     auto* e = new IsotopeEvolutionWindow(*processing_, *presets_, uuids, owner_);
     e->setAttribute(Qt::WA_DeleteOnClose);
@@ -159,14 +170,14 @@ QWidget* DataWorkspace::open_figure(const QString& kind, const QStringList& uuid
     e->show();
     return e;
   }
-  if (ReferenceFitWindow::handles(kind.toStdString())) {
-    auto* r = new ReferenceFitWindow(*processing_, *presets_, kind.toStdString(), uuids, owner_);
+  if (ReferenceFitWindow::handles(kind_id)) {
+    auto* r = new ReferenceFitWindow(*processing_, *presets_, kind_id, uuids, owner_);
     r->setAttribute(Qt::WA_DeleteOnClose);
     children_.append(r);
     r->show();
     return r;
   }
-  auto* w = new FigureWindow(*processing_, *presets_, kind.toStdString(), uuids, owner_);
+  auto* w = new FigureWindow(*processing_, *presets_, *entry, uuids, owner_);
   w->setAttribute(Qt::WA_DeleteOnClose);
   connect(w, &FigureWindow::recall_requested, this, [this](const QString& id) { open_recall(id); });
   children_.append(w);

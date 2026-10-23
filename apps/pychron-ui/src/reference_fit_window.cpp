@@ -51,7 +51,7 @@ ReferenceFitWindow::ReferenceFitWindow(ProcessingBridge& bridge, pp::PresetStore
       store_(presets),
       kind_(std::move(kind)),
       target_(kind_ == "icfactor_fit" ? pp::ReferenceFitTarget::IcFactors : pp::ReferenceFitTarget::Blanks),
-      schema_(pp::UnitRegistry::builtin().find(kind_)->schema()),
+      schema_(bridge.domain().units().find(kind_)->schema()),
       unknowns_(std::move(unknowns)),
       channel_(bridge.new_channel()) {
   const bool blanks = target_ == pp::ReferenceFitTarget::Blanks;
@@ -59,18 +59,28 @@ ReferenceFitWindow::ReferenceFitWindow(ProcessingBridge& bridge, pp::PresetStore
                      .arg(blanks ? tr("Blanks") : tr("IC factors")));
   resize(1200, 820);
 
-  const auto& reg = pp::UnitRegistry::builtin();
+  const auto& reg = bridge.domain().units();
+  const auto chain = bridge.domain().reduction_chain();
+  // The domain's reduction chain after `from`, each unit fed by the one before
+  // it; a node is named for its kind and `suffix`. Gives the last node's id.
+  const auto add_chain = [&](std::string from, const std::string& suffix) {
+    for (const auto& chain_kind : chain) {
+      pipeline_.add(reg, chain_kind + suffix, chain_kind, {from});
+      from = chain_kind + suffix;
+    }
+    return from;
+  };
   auto& u = pipeline_.add(reg, "unknowns", "select");
   (void)u.options.set("uuids", to_std(unknowns_));
   (void)u.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
-  pipeline_.add(reg, "reduce_unknowns", "reduce", {"unknowns"});
+  const std::string reduced_unknowns = add_chain("unknowns", "_unknowns");
   // No uuids yet: a type no analysis has, so the select is empty rather than
   // the whole source.
   auto& refs = pipeline_.add(reg, kReferences, "select");
   (void)refs.options.set("analysis_types", std::vector<std::string>{"-"});
-  pipeline_.add(reg, "reduce_references", "reduce", {kReferences});
-  pipeline_.add(reg, kEdits, "edits", {"reduce_references"});
-  auto& fit = pipeline_.add(reg, kFit, kind_, {"reduce_unknowns", kEdits});
+  const std::string reduced_references = add_chain(kReferences, "_references");
+  pipeline_.add(reg, kEdits, "edits", {reduced_references});
+  auto& fit = pipeline_.add(reg, kFit, kind_, {reduced_unknowns, kEdits});
   fit.options = store_.defaults(schema_);
   fit.preset = "Default";
 

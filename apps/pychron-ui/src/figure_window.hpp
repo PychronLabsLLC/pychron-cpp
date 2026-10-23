@@ -41,18 +41,16 @@ class FigureWindow : public QMainWindow {
   Q_OBJECT
 
  public:
-  // `bridge` and `presets` must outlive the window. `kind` is a figure unit
-  // kind: time_series, ideogram, spectrum, inverse_isochron or spectrum_isochron.
-  FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, std::string kind, QStringList uuids,
-               QWidget* parent = nullptr);
-  // A time series.
-  FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, QStringList uuids,
+  // `bridge` and `presets` must outlive the window. `entry` is one of the
+  // bridge's domain's figures(): its kind is a figure unit kind, and its group
+  // key the one a new window starts with. The window keeps a copy.
+  FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, const processing::FigureEntry& entry,
+               const QStringList& uuids, QWidget* parent = nullptr);
+  // A time series (the domain's time_series entry).
+  FigureWindow(ProcessingBridge& bridge, processing::PresetStore& presets, const QStringList& uuids,
                QWidget* parent = nullptr);
 
   const std::string& kind() const noexcept { return kind_; }
-  // Group key a new window of `kind` starts with (aliquot for spectra and
-  // isochrons, identifier for ideograms, none for time series).
-  static QString default_group_key(const std::string& kind);
   ~FigureWindow() override;
 
   const processing::Pipeline& pipeline() const noexcept { return pipeline_; }

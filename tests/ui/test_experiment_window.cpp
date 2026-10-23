@@ -34,6 +34,7 @@
 
 #include "conditionals_editor_window.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
 #include "reference_series_dock.hpp"
@@ -143,11 +144,17 @@ class RefreshCountingSource : public pychron::processing::MemorySource {
   int held_ = 0;
 };
 
+// The Ar-Ar domain, made once for every bridge of the file.
+const pychron::processing::Domain& arar_domain() {
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::processing::make_arar_domain();
+  return *domain;
+}
+
 // What set_references is given, declared before any window that is given it.
 struct References {
   QTemporaryDir dir;
   RefreshCountingSource source;
-  std::unique_ptr<pychron::ui::ProcessingBridge> bridge = std::make_unique<pychron::ui::ProcessingBridge>(source);
+  std::unique_ptr<pychron::ui::ProcessingBridge> bridge = std::make_unique<pychron::ui::ProcessingBridge>(source, arar_domain());
   pychron::processing::PresetStore presets{(dir.path() + QStringLiteral("/presets")).toStdString()};
 };
 

@@ -6,12 +6,14 @@
 // Recall edits fits (pending until saved, saved through a revision source,
 // conflicts reported) and shows revision history and diffs.
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -50,6 +52,7 @@
 #include "options_editor.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/processing/arar_figures.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
 #include "isotope_evolution_window.hpp"
@@ -578,6 +581,27 @@ bool wait_runs(ReferenceFitWindow& w, ProcessingBridge& bridge, int runs) {
 
 class TestDataWindows : public QObject {
   Q_OBJECT
+
+ private:
+  static pp::DomainRegistry make_domains() {
+    pp::DomainRegistry domains;
+    domains.add(pp::make_noble_gas_domain());
+    domains.add(pp::make_arar_domain());
+    return domains;
+  }
+
+  pp::DomainRegistry domains_ = make_domains();
+  const pp::Domain& arar_ = *domains_.find("arar");
+
+  std::vector<pp::FigureEntry> figures_ = arar_.figures();
+
+  // The Ar-Ar domain's toolbar entry of a figure kind.
+  const pp::FigureEntry& entry(const char* kind) const {
+    const auto it =
+        std::find_if(figures_.begin(), figures_.end(), [&](const pp::FigureEntry& e) { return e.kind == kind; });
+    if (it == figures_.end()) qFatal("no figure entry %s", kind);
+    return *it;
+  }
 
  private slots:
   void browser_lists_filters_and_pages() {
@@ -1885,7 +1909,7 @@ class TestDataWindows : public QObject {
     // rest airs. Unknowns 5 (jan) and 6 (obama).
     RevisionMemorySource src(10);
     QTemporaryDir dir;
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     ReferenceFitWindow w(bridge, presets, "blank_fit", {QStringLiteral("uuid-5"), QStringLiteral("uuid-6")});
     QVERIFY(wait_runs(w, bridge, 1));
@@ -1971,7 +1995,7 @@ class TestDataWindows : public QObject {
   void icfactor_fits_from_airs() {
     RevisionMemorySource src(10);
     QTemporaryDir dir;
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     // Blank 4 (obama) as the unknown; the obama airs 0, 2, 6, 8 within 10 h.
     ReferenceFitWindow w(bridge, presets, "icfactor_fit", {QStringLiteral("uuid-4")});
@@ -1992,7 +2016,7 @@ class TestDataWindows : public QObject {
 
     // Without revisions there is nothing to save to.
     auto plain = make_source(10);
-    ProcessingBridge plain_bridge(*plain);
+    ProcessingBridge plain_bridge(*plain, arar_);
     ReferenceFitWindow v(plain_bridge, presets, "blank_fit", {QStringLiteral("uuid-5")});
     QVERIFY(wait_runs(v, plain_bridge, 1));
     QVERIFY(!v.save_button()->isEnabled());
@@ -2005,7 +2029,7 @@ class TestDataWindows : public QObject {
     // average gives I - 0.095.
     RevisionMemorySource src(4);
     QTemporaryDir dir;
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     IsotopeEvolutionWindow w(bridge, presets,
                              {QStringLiteral("uuid-0"), QStringLiteral("uuid-1"), QStringLiteral("uuid-2")});
@@ -2065,7 +2089,7 @@ class TestDataWindows : public QObject {
 
     // Without revisions there is nothing to save to.
     auto plain = make_source(3);
-    ProcessingBridge plain_bridge(*plain);
+    ProcessingBridge plain_bridge(*plain, arar_);
     IsotopeEvolutionWindow v(plain_bridge, presets, {QStringLiteral("uuid-0")});
     QVERIFY(wait_runs(v, plain_bridge, 1));
     QCOMPARE(v.fits()->analyses.size(), std::size_t{1});
@@ -2077,7 +2101,7 @@ class TestDataWindows : public QObject {
     // Baselines are 0.01 + 0.001 k (k = 0..9) on every detector.
     RevisionMemorySource src(2);
     QTemporaryDir dir;
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     IsotopeEvolutionWindow w(bridge, presets, {QStringLiteral("uuid-0")});
     QVERIFY(wait_runs(w, bridge, 1));
@@ -2128,7 +2152,7 @@ class TestDataWindows : public QObject {
       src.add(a, raw);
     }
     QTemporaryDir dir;
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     IsotopeEvolutionWindow w(bridge, presets, {QStringLiteral("uuid-0"), QStringLiteral("uuid-1")});
     const auto file = std::filesystem::path(dir.path().toStdString()) / "classifier" / "isotope.toml";
@@ -2187,7 +2211,7 @@ class TestDataWindows : public QObject {
   void figure_computes_and_click_excludes() {
     QTemporaryDir dir;
     auto src = make_source(12);
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 12; ++i)
@@ -2237,7 +2261,7 @@ class TestDataWindows : public QObject {
   void figure_options_presets_and_export() {
     QTemporaryDir dir;
     auto src = make_source(12);
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets((dir.path() + QStringLiteral("/presets")).toStdString());
     QStringList ids;
     for (int i = 0; i < 12; ++i) ids << QStringLiteral("uuid-%1").arg(i);
@@ -2284,11 +2308,11 @@ class TestDataWindows : public QObject {
   void graph_by_puts_groups_on_graphs() {
     QTemporaryDir dir;
     auto src = make_aliquots();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
-    FigureWindow w(bridge, presets, "ideogram", ids);
+    FigureWindow w(bridge, presets, entry("ideogram"), ids);
     w.resize(1200, 900);
     w.show();
     int runs = 0;
@@ -2367,11 +2391,11 @@ class TestDataWindows : public QObject {
   void analyses_show_their_groups_colour() {
     QTemporaryDir dir;
     auto src = make_aliquots();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
-    FigureWindow w(bridge, presets, "ideogram", ids);
+    FigureWindow w(bridge, presets, entry("ideogram"), ids);
     w.show();
     QVERIFY(wait_runs(w, bridge, 1));
     auto* table = w.analyses_table();
@@ -2407,11 +2431,11 @@ class TestDataWindows : public QObject {
   void ideogram_r_values_panel() {
     QTemporaryDir dir;
     auto src = make_aliquots();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
-    FigureWindow w(bridge, presets, "ideogram", ids);
+    FigureWindow w(bridge, presets, entry("ideogram"), ids);
     w.resize(1200, 900);
     w.show();
     int runs = 0;
@@ -2486,11 +2510,11 @@ class TestDataWindows : public QObject {
   void a_typed_limit_shows_in_a_zoomed_figure() {
     QTemporaryDir dir;
     auto src = make_aliquots();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
-    FigureWindow w(bridge, presets, "ideogram", ids);
+    FigureWindow w(bridge, presets, entry("ideogram"), ids);
     w.resize(1200, 900);
     w.show();
     int runs = 0;
@@ -2557,11 +2581,11 @@ class TestDataWindows : public QObject {
   void the_view_on_show_becomes_the_figures_limits() {
     QTemporaryDir dir;
     auto src = make_aliquots();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 24; ++i) ids << QStringLiteral("al-%1").arg(i);
-    FigureWindow w(bridge, presets, "ideogram", ids);
+    FigureWindow w(bridge, presets, entry("ideogram"), ids);
     w.resize(1200, 900);
     w.show();
     int runs = 0;
@@ -2644,11 +2668,11 @@ class TestDataWindows : public QObject {
   void a_figure_without_limit_fields_takes_none() {
     QTemporaryDir dir;
     auto src = make_steps();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
-    FigureWindow w(bridge, presets, "spectrum_isochron", ids);
+    FigureWindow w(bridge, presets, entry("spectrum_isochron"), ids);
     w.resize(1200, 600);
     w.show();
     QVERIFY(wait_runs(w, bridge, 1));
@@ -2663,11 +2687,11 @@ class TestDataWindows : public QObject {
   void spectrum_and_isochron_open_as_one_figure() {
     QTemporaryDir dir;
     auto src = make_steps();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
-    FigureWindow w(bridge, presets, "spectrum_isochron", ids);
+    FigureWindow w(bridge, presets, entry("spectrum_isochron"), ids);
     w.resize(1200, 600);
     w.show();
     QVERIFY(wait_runs(w, bridge, 1));
@@ -2699,25 +2723,37 @@ class TestDataWindows : public QObject {
     QVERIFY(!QString::fromUtf8(file.readAll()).contains(QStringLiteral(",A-H,8,")));  // eight steps cannot make nine
   }
 
+  void figure_pipeline_follows_the_domains_reduction_chain() {
+    QTemporaryDir dir;
+    auto src = make_steps();
+    ProcessingBridge bridge(*src, arar_);
+    pp::PresetStore presets(dir.path().toStdString());
+    FigureWindow w(bridge, presets, entry("ideogram"), {QStringLiteral("step-0")});
+    std::vector<std::string> kinds;
+    for (const auto& node : w.pipeline().nodes) kinds.push_back(node.kind);
+    QCOMPARE(kinds, (std::vector<std::string>{"select", "reduce", "group", "group", "edits", "ideogram"}));
+    QCOMPARE(w.pipeline().find("group")->options.get_string("key"), std::string("identifier"));
+  }
+
   void arar_figures_open_and_steps_are_clickable() {
     QTemporaryDir dir;
     auto src = make_steps();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
     for (const char* kind : {"ideogram", "inverse_isochron"}) {
-      FigureWindow w(bridge, presets, kind, ids);
+      FigureWindow w(bridge, presets, entry(kind), ids);
       w.resize(900, 700);
       w.show();
       QVERIFY(wait_runs(w, bridge, 1));
       QVERIFY2(w.view()->scene(), qPrintable(w.status_label()->text()));
       QCOMPARE(QString::fromStdString(w.view()->scene()->kind), QString::fromLatin1(kind));
       QVERIFY(w.view()->scene()->warnings.empty());
-      QCOMPARE(w.group_combo()->currentText(), FigureWindow::default_group_key(kind));
+      QCOMPARE(w.group_combo()->currentText(), QString::fromStdString(entry(kind).group_key));
     }
 
-    FigureWindow w(bridge, presets, "spectrum", ids);
+    FigureWindow w(bridge, presets, entry("spectrum"), ids);
     w.resize(1000, 700);
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
@@ -2884,11 +2920,11 @@ class TestDataWindows : public QObject {
   void figure_export_report_uses_the_figures_grouping_and_plateau() {
     QTemporaryDir dir;
     auto src = make_steps();
-    ProcessingBridge bridge(*src);
+    ProcessingBridge bridge(*src, arar_);
     pp::PresetStore presets(dir.path().toStdString());
     QStringList ids;
     for (int i = 0; i < 8; ++i) ids << QStringLiteral("step-%1").arg(i);
-    FigureWindow w(bridge, presets, "spectrum", ids);
+    FigureWindow w(bridge, presets, entry("spectrum"), ids);
     QVERIFY(!w.export_report(dir.path() + QStringLiteral("/early.csv")));  // nothing computed yet
     w.show();
     QVERIFY(wait_runs(w, bridge, 1));

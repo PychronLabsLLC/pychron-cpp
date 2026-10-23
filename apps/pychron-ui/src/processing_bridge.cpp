@@ -15,8 +15,8 @@ namespace pychron::ui {
 
 namespace pp = pychron::processing;
 
-ProcessingBridge::ProcessingBridge(pp::IAnalysisSource& source, QObject* parent)
-    : QObject(parent), source_(source), worker_([this] {
+ProcessingBridge::ProcessingBridge(pp::IAnalysisSource& source, const pp::Domain& domain, QObject* parent)
+    : QObject(parent), source_(source), domain_(domain), worker_([this] {
         const LogContext::Thread log_thread("processing");
         loop();
       }) {}
@@ -101,7 +101,7 @@ void ProcessingBridge::loop() {
       running_cancel_ = cancel;
       running_channel_ = job.channel;
       auto& r = runners_[job.channel];
-      if (!r) r = std::make_unique<pp::Runner>(pp::UnitRegistry::builtin(), &source_);
+      if (!r) r = std::make_unique<pp::Runner>(domain_.units(), &source_, &domain_);
       runner = r.get();
     }
     const auto start = std::chrono::steady_clock::now();

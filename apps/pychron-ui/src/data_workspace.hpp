@@ -17,6 +17,7 @@
 
 #include "data_browser_window.hpp"
 #include "preferences.hpp"
+#include "pychron/processing/domain.hpp"
 #include "processing_bridge.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -68,11 +69,14 @@ class DataWorkspace : public QObject {
 
  private:
   void clear();
+  // The Ar-Ar domain, until the workspace is given the install's.
+  static const processing::Domain& fallback_domain();
 
   QWidget* owner_;
   std::function<void(const QString&)> log_;
   processing::IAnalysisSource* source_ = nullptr;
   processing::PresetStore* presets_ = nullptr;
+  const processing::Domain* domain_ = &fallback_domain();  // Phase 1 scaffolding: Task 3c passes the install's domain.
   std::unique_ptr<ProcessingBridge> processing_;
   DataBrowserWindow* browser_ = nullptr;
   Preferences preferences_;

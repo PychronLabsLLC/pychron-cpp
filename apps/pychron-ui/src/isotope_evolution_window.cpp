@@ -64,12 +64,16 @@ IsotopeEvolutionWindow::IsotopeEvolutionWindow(ProcessingBridge& bridge, pp::Pre
   setWindowTitle(tr("Isotope evolutions — %n analyses", nullptr, static_cast<int>(uuids.size())));
   resize(1250, 860);
 
-  const auto& reg = pp::UnitRegistry::builtin();
+  const auto& reg = bridge.domain().units();
   auto& select = pipeline_.add(reg, "select", "select");
   (void)select.options.set("uuids", to_std(uuids));
   (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
-  pipeline_.add(reg, "reduce", "reduce", {"select"});
-  pipeline_.add(reg, kEdits, "edits", {"reduce"});
+  std::string last = "select";
+  for (const auto& chain_kind : bridge.domain().reduction_chain()) {
+    pipeline_.add(reg, chain_kind, chain_kind, {last});
+    last = chain_kind;
+  }
+  pipeline_.add(reg, kEdits, "edits", {last});
   auto& fit = pipeline_.add(reg, kFit, kKind, {kEdits});
   fit.options = store_.defaults(schema_);
   fit.preset = "Default";

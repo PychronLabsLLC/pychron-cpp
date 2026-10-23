@@ -15,6 +15,7 @@
 
 #include "fixtures.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
 
@@ -109,6 +110,12 @@ SubmitOptions refreshing() {
 
 constexpr double kFirstAir = 1'700'000'000.0;  // make_air's first timestamp
 
+// The Ar-Ar domain, made once for every bridge of the file.
+const pychron::processing::Domain& arar_domain() {
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::processing::make_arar_domain();
+  return *domain;
+}
+
 }  // namespace
 
 class TestProcessingBridge : public QObject {
@@ -118,7 +125,7 @@ class TestProcessingBridge : public QObject {
   void refreshIsCalledOnTheWorkerBeforeTheRun() {
     LoggingSource src;
     fill(src);
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_domain());
     std::optional<PipelineResult> got;
     bridge.submit(bridge.new_channel(), now_pipeline(), {"figure"}, [&](const PipelineResult& r) { got = r; },
                   refreshing());
@@ -136,7 +143,7 @@ class TestProcessingBridge : public QObject {
   void withoutTheOptionRefreshIsNotCalled() {
     LoggingSource src;
     fill(src);
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_domain());
     bool done = false;
     bridge.submit(bridge.new_channel(), now_pipeline(), {"figure"}, [&](const PipelineResult&) { done = true; });
     QVERIFY(bridge.wait_idle());
@@ -149,7 +156,7 @@ class TestProcessingBridge : public QObject {
     LoggingSource src;
     fill(src);
     src.fail_refresh = true;
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_domain());
     std::optional<PipelineResult> got;
     bridge.submit(bridge.new_channel(), now_pipeline(), {"figure", "edits"},
                   [&](const PipelineResult& r) { got = r; }, refreshing());
@@ -166,7 +173,7 @@ class TestProcessingBridge : public QObject {
   void theRunsTimeReachesTheUnits() {
     LoggingSource src;
     fill(src);
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_domain());
     const int channel = bridge.new_channel();
     std::vector<double> x;
     SubmitOptions first;
@@ -185,7 +192,7 @@ class TestProcessingBridge : public QObject {
   void anUnchangedSourceIsNotReadAgain() {
     LoggingSource src;
     fill(src);
-    ProcessingBridge bridge(src);
+    ProcessingBridge bridge(src, arar_domain());
     const int channel = bridge.new_channel();
     SubmitOptions o = refreshing();
     o.now = kFirstAir;

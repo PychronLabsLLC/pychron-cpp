@@ -20,6 +20,7 @@
 
 #include <QObject>
 
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/units.hpp"
 
 namespace pychron::ui {
@@ -47,11 +48,13 @@ class ProcessingBridge : public QObject {
   Q_OBJECT
 
  public:
-  // `source` must outlive the bridge; it is used from the worker thread.
-  explicit ProcessingBridge(processing::IAnalysisSource& source, QObject* parent = nullptr);
+  // `source` and `domain` must outlive the bridge; the source is used from the
+  // worker thread, and the domain's unit registry runs every pipeline.
+  ProcessingBridge(processing::IAnalysisSource& source, const processing::Domain& domain, QObject* parent = nullptr);
   ~ProcessingBridge() override;
 
   processing::IAnalysisSource& source() noexcept { return source_; }
+  const processing::Domain& domain() const noexcept { return domain_; }
 
   using Callback = std::function<void(const PipelineResult&)>;
   // Channels: one per window (new_channel()). The callback runs on the GUI
@@ -82,6 +85,7 @@ class ProcessingBridge : public QObject {
   void loop();
 
   processing::IAnalysisSource& source_;
+  const processing::Domain& domain_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;
   std::deque<Job> queue_;

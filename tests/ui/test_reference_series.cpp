@@ -39,6 +39,7 @@
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
@@ -228,13 +229,19 @@ class DockSource : public pp::MemorySource {
   int late_at_ = 0;
 };
 
+// The Ar-Ar domain, made once for every bridge of the file.
+const pychron::processing::Domain& arar_domain() {
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::processing::make_arar_domain();
+  return *domain;
+}
+
 // What a dock needs. Declared in the order they must be made: the source
 // before the bridge, the bridge before any dock (a test's dock is a local
 // declared after its Rig).
 struct Rig {
   QTemporaryDir dir;
   DockSource src;
-  ProcessingBridge bridge{src};
+  ProcessingBridge bridge{src, arar_domain()};
   pp::PresetStore presets{(dir.path() + QStringLiteral("/presets")).toStdString()};
   QSettings settings{dir.path() + QStringLiteral("/ui.ini"), QSettings::IniFormat};
   double wall = kT0 + 100'000.0;
@@ -761,7 +768,7 @@ class TestReferenceSeries : public QObject {
     // The folder the session writes its records to.
     pp::RecordDirectorySource records(sim.dir / "data" / "records");
     pp::PresetStore presets((dir.path() + QStringLiteral("/presets")).toStdString());
-    ProcessingBridge processing(records);
+    ProcessingBridge processing(records, arar_domain());
     pychron::ui::ExperimentBridge bridge(*sim.session, sim.line->bus());
     pychron::ui::ExperimentWindow window(
         bridge, true, std::make_unique<QSettings>(dir.path() + QStringLiteral("/ui.ini"), QSettings::IniFormat));

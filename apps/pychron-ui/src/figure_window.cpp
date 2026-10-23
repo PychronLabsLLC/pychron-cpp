@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -55,26 +57,35 @@ enum Column : int { kRunIdCol, kTypeCol, kGroupCol, kColorCol, kIncludedCol, kCo
 
 }  // namespace
 
-QString FigureWindow::default_group_key(const std::string& kind) {
-  if (kind == "ideogram") return QStringLiteral("identifier");
-  if (kind == "spectrum" || kind == "inverse_isochron" || kind == "spectrum_isochron") return QStringLiteral("aliquot");
-  return QStringLiteral("none");
-}
-
 QString FigureWindow::same_as_group() { return QStringLiteral("same as group"); }
 
-FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, QStringList uuids, QWidget* parent)
-    : FigureWindow(bridge, presets, "time_series", std::move(uuids), parent) {}
+namespace {
 
-FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, std::string kind, QStringList uuids,
-                           QWidget* parent)
+// The domain's time_series figure; a domain without one is a mistake in the
+// calling code.
+pp::FigureEntry time_series_entry(const pp::Domain& domain) {
+  const auto figures = domain.figures();
+  const auto it =
+      std::find_if(figures.begin(), figures.end(), [](const pp::FigureEntry& e) { return e.kind == "time_series"; });
+  if (it == figures.end()) throw std::logic_error("domain " + std::string(domain.id()) + " has no time_series figure");
+  return *it;
+}
+
+}  // namespace
+
+FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, const QStringList& uuids, QWidget* parent)
+    : FigureWindow(bridge, presets, time_series_entry(bridge.domain()), uuids, parent) {}
+
+FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, const pp::FigureEntry& entry,
+                           const QStringList& uuids, QWidget* parent)
     : QMainWindow(parent),
       bridge_(bridge),
       store_(presets),
-      kind_(std::move(kind)),
-      schema_(pp::UnitRegistry::builtin().find(kind_)->schema()),
+      kind_(entry.kind),
+      schema_(bridge.domain().units().find(kind_)->schema()),
       channel_(bridge.new_channel()) {
-  const auto* unit = pp::UnitRegistry::builtin().find(kind_);
+  const auto& reg = bridge.domain().units();
+  const auto* unit = reg.find(kind_);
   setWindowTitle(qs(std::string(unit->title())));  // update_title() adds what is on it
   resize(1200, 800);
   ask_preset_name = [this] {
@@ -83,16 +94,19 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
     return ok ? name.trimmed() : QString();
   };
 
-  const auto& reg = pp::UnitRegistry::builtin();
   auto& select = pipeline_.add(reg, "select", "select");
   (void)select.options.set("uuids", to_std(uuids));
   (void)select.options.set("remove_tags", std::vector<std::string>{});  // the user picked these
-  pipeline_.add(reg, "reduce", "reduce", {"select"});
-  pipeline_.add(reg, kGroup, "group", {"reduce"});
+  std::string last = "select";
+  for (const auto& chain_kind : bridge.domain().reduction_chain()) {
+    pipeline_.add(reg, chain_kind, chain_kind, {last});
+    last = chain_kind;
+  }
+  pipeline_.add(reg, kGroup, "group", {last});
   auto& graph = pipeline_.add(reg, kGraph, "group", {kGroup});
   (void)graph.options.set("level", std::string("graph"));
   pipeline_.add(reg, kEdits, "edits", {kGraph});
-  (void)pipeline_.find(kGroup)->options.set("key", default_group_key(kind_).toStdString());
+  (void)pipeline_.find(kGroup)->options.set("key", entry.group_key);
   auto& fig = pipeline_.add(reg, kFigure, kind_, {kEdits});
   fig.options = store_.defaults(schema_);
   fig.preset = "Default";
@@ -109,7 +123,7 @@ FigureWindow::FigureWindow(ProcessingBridge& bridge, pp::PresetStore& presets, s
   tools->addWidget(new QLabel(tr(" Group by ")));
   group_ = new QComboBox;
   for (const auto& c : reg.find("group")->schema()->field("key")->choices) group_->addItem(qs(c));
-  group_->setCurrentText(default_group_key(kind_));
+  group_->setCurrentText(qs(entry.group_key));
   tools->addWidget(group_);
   connect(group_, &QComboBox::currentTextChanged, this, [this](const QString& k) { set_group_key(k); });
   tools->addWidget(new QLabel(tr("  Graph by ")));
@@ -293,7 +307,7 @@ void FigureWindow::update_r_values() {
 // "<plot type> — <sample> (<identifier>)", and how many more identifiers
 // there are when the figure holds several.
 void FigureWindow::update_title() {
-  const QString kind = qs(std::string(pp::UnitRegistry::builtin().find(kind_)->title()));
+  const QString kind = qs(std::string(bridge_.domain().units().find(kind_)->title()));
   QStringList names;
   if (dataset_) {
     for (const auto& it : dataset_->items()) {
