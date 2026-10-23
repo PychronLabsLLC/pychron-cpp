@@ -80,6 +80,7 @@
 #include "data_main_window.hpp"
 #include "data_source_page.hpp"
 #include "database_choice.hpp"
+#include "domain_choice.hpp"
 #include "error_report.hpp"
 #include "experiment_bridge.hpp"
 #include "installations_dialog.hpp"
@@ -148,30 +149,6 @@ int fatal(const std::string& what) {
   std::fprintf(stderr, "pychron-ui: %s\n", what.c_str());
   pychron::ui::show_error(nullptr, "startup", QStringLiteral("pychron-ui"), QString::fromStdString(what));
   return 1;
-}
-
-// Registers the domains this build links and gives the one named `id` (an
-// install's `domain`; "arar" without an install). An id no domain has is the
-// install file's mistake and ends the program; a registry that disagrees with
-// setup::known_domains() is this program's own, and does too.
-const pychron::processing::Domain& choose_domain(pychron::processing::DomainRegistry& registry, std::string_view id) {
-  registry.add(pychron::processing::make_noble_gas_domain());
-  registry.add(pychron::processing::make_arar_domain());
-  const auto join = [](const std::vector<std::string>& ids) {
-    std::string text;
-    for (const auto& name : ids) text += (text.empty() ? "" : ", ") + name;
-    return text;
-  };
-  auto known = setup::known_domains();
-  auto registered = registry.ids();  // sorted
-  std::sort(known.begin(), known.end());
-  if (known != registered) {
-    // NOLINTNEXTLINE(concurrency-mt-unsafe): start-up, before any thread of ours
-    std::exit(fatal("setup::known_domains() lists " + join(known) + " but the registry holds " + join(registered)));
-  }
-  if (const auto* domain = registry.find(id)) return *domain;
-  // NOLINTNEXTLINE(concurrency-mt-unsafe): start-up, before any thread of ours
-  std::exit(fatal("unknown domain '" + std::string(id) + "'; known: " + join(registered)));
 }
 
 // The update check of `window` (update check spec 2.3): its indicator and
@@ -511,7 +488,11 @@ int main(int argc, char** argv) {
 
   // The domain every data window of this run reduces in; the registry outlives the windows.
   pychron::processing::DomainRegistry domains;
-  const pychron::processing::Domain& domain = choose_domain(domains, install ? install->domain : std::string("arar"));
+  std::string domain_error;
+  const pychron::processing::Domain* chosen_domain =
+      pychron::ui::choose_domain(domains, install ? install->domain : std::string("arar"), domain_error);
+  if (chosen_domain == nullptr) return fatal(domain_error);
+  const pychron::processing::Domain& domain = *chosen_domain;
   if (install && install->kind == "data_reduction") return run_data_reduction(*install, domain, *cli, resources);
 
   std::optional<fs::path> spectrometer_file = cli->spectrometer_file;

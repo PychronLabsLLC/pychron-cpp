@@ -14,6 +14,7 @@ add_library(pychron_ui_lib STATIC
   src/database_choice.cpp
   src/process_log.cpp
   src/qt_log_handler.cpp
+  src/domain_choice.cpp
   src/core_bridge.cpp
   src/cryo_dock.cpp
   src/heater_dock.cpp
@@ -118,6 +119,7 @@ add_library(pychron_ui_lib STATIC
   src/database_choice.hpp
   src/process_log.hpp
   src/qt_log_handler.hpp
+  src/domain_choice.hpp
   src/core_bridge.hpp
   src/cryo_dock.hpp
   src/heater_dock.hpp

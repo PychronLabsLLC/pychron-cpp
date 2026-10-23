@@ -3,6 +3,7 @@
 // it, and the run's time handed to the units.
 
 #include <algorithm>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>

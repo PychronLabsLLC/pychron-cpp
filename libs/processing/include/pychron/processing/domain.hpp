@@ -50,6 +50,9 @@ struct Exporter {
   std::function<Result<void>(const std::filesystem::path&, const std::vector<std::vector<ReducedPtr>>&)> write;
 };
 
+// Const methods are called from any thread: the bridge's worker calls
+// `derive()` while the GUI thread calls `figures()`, `recall_sections()` and
+// `exporters()`; a domain keeps no mutable state.
 class Domain {
  public:
   virtual ~Domain() = default;

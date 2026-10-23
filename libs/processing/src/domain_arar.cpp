@@ -41,6 +41,7 @@ Result<void> write_schaen(const std::filesystem::path& path, const std::vector<s
       DatasetItem item;
       item.analysis = reduced;
       // The select unit's default: these tags are kept, but out of the statistics.
+      // Same list as `omit_tags` in units_builtin.cpp (SelectUnit): change both together.
       const std::string& tag = reduced->analysis->tag;
       item.exclusion.tag = tag == "omit" || tag == "outlier";
       dataset.mutable_items().push_back(std::move(item));
