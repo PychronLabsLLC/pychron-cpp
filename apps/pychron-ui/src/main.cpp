@@ -43,6 +43,7 @@
 // File > Preferences… sets the font sizes, the data browser page size and the
 // spectrometer's large-move threshold; they are kept in the user's settings.
 
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -91,7 +92,11 @@
 #include "pychron/setup/site.hpp"
 #include "setup_support.hpp"
 #include "setup_wizard.hpp"
+#include "pychron/core/log_dir.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/process_log.hpp"
+#include "process_log.hpp"
+#include "qt_log_handler.hpp"
 #include "pychron/core/virtual_clock.hpp"
 #include "pychron/experiment/lab/executor_config.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
@@ -423,6 +428,52 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: --sim-speed needs --sim\n");
     return 2;
   }
+  // The process log hub, before anything that can say something: on the
+  // simulated clock when there is one (made here, so the hub is on it from its
+  // first record), else the computer's. Declared before the line and
+  // everything else that is given the clock or the hub, so they are the last
+  // to go; the guard clears the process hub first of all.
+  const pychron::SteadyClock steady_clock;
+  // Simulated time: a VirtualClock paced to the speed asked for, starting at
+  // the real time of day. The line's threads take part in it; this one (the
+  // UI's) does not, so time never waits for the event loop.
+  std::unique_ptr<pychron::VirtualClock> sim_clock;
+  const bool reduction = install && install->kind == "data_reduction";
+  if (cli->sim_speed > 0 && !reduction) {
+    pychron::VirtualClock::Options clock_options;
+    clock_options.speed = cli->sim_speed;
+    clock_options.epoch = std::chrono::system_clock::now();
+    // The hub is cleared before this clock goes, so a stall report is also in the log.
+    clock_options.on_stall = [](const std::string& report) {
+      std::fprintf(stderr, "pychron-ui: %s\n", report.c_str());
+      pychron::process_logger("clock").warn(report);
+    };
+    sim_clock = std::make_unique<pychron::VirtualClock>(std::move(clock_options));
+  }
+  const pychron::Clock& process_clock = sim_clock ? static_cast<const pychron::Clock&>(*sim_clock) : steady_clock;
+  std::optional<fs::path> log_line_config;
+  if (install) {
+    if (!install->line.empty()) log_line_config = install->path(install->line);
+  } else if (cli->files.empty()) {
+    log_line_config = examples / "extraction_line.toml";
+  } else {
+    log_line_config = cli->files[0];
+  }
+  std::string clock_name = "steady";
+  if (sim_clock) {
+    std::array<char, 32> speed{};
+    std::snprintf(speed.data(), speed.size(), "%g", cli->sim_speed);
+    clock_name = std::string("virtual x") + speed.data();
+  }
+  const std::shared_ptr<pychron::LogHub> hub = pychron::ui::open_process_log(
+      install, log_line_config, process_clock, sim, pychron::host_os(), pychron::process_env(), clock_name);
+  pychron::set_process_log_hub(hub);
+  struct ProcessHubGuard {
+    ~ProcessHubGuard() { pychron::set_process_log_hub(nullptr); }
+  } const hub_guard;
+  std::optional<pychron::ui::QtLogHandler> qt_log;
+  if (hub) qt_log.emplace(*hub);
+
   if (install && install->kind == "data_reduction") return run_data_reduction(*install, *cli, resources);
 
   std::optional<fs::path> spectrometer_file = cli->spectrometer_file;
@@ -440,20 +491,8 @@ int main(int argc, char** argv) {
 
   pychron::systems::ExtractionLine::Options options;
   options.force_sim = sim;
-  // Simulated time: a VirtualClock paced to the speed asked for, starting at
-  // the real time of day. The line's threads take part in it; this one (the
-  // UI's) does not, so time never waits for the event loop. Declared before
-  // the line and everything else that is given it, so it is the last to go.
-  std::unique_ptr<pychron::VirtualClock> sim_clock;
-  if (cli->sim_speed > 0) {
-    pychron::VirtualClock::Options clock_options;
-    clock_options.speed = cli->sim_speed;
-    clock_options.epoch = std::chrono::system_clock::now();
-    // The line's log hub does not exist yet and goes before this clock does.
-    clock_options.on_stall = [](std::string report) { std::fprintf(stderr, "pychron-ui: %s\n", report.c_str()); };
-    sim_clock = std::make_unique<pychron::VirtualClock>(std::move(clock_options));
-    options.clock = sim_clock.get();
-  }
+  options.log_hub = hub;
+  if (sim_clock) options.clock = sim_clock.get();
   const std::vector<fs::path>& files = cli->files;
 
   fs::path system_file;
@@ -653,17 +692,15 @@ int main(int argc, char** argv) {
     // Not for the examples that come with the application: no install to change.
     if (install) window.set_data_source(data_source_deps(install->name, resources, cli->db), reopen_on(&window, install->name));
 
-    // Runtime level changes go to the line's LogHub; without one (creation
+    // Runtime level changes go to the process hub; without one (creation
     // failed) the "Set logger level..." action stays hidden.
-    if (const std::shared_ptr<pychron::LogHub> hub = (*line)->log_hub()) {
+    if (hub) {
       window.log_dock()->set_level_callback(
           [weak = std::weak_ptr<pychron::LogHub>(hub)](std::string pattern, pychron::LogLevel level) {
             if (auto h = weak.lock()) h->set_level(pattern, level);
           });
       hub->flush();  // records from load() are on disk before history is read
-    }
-    if (const auto& dir = (*line)->config().logging.dir; dir && !dir->empty()) {
-      window.log_dock()->load_history(*dir / (*line)->config().logging.file_name);
+      if (const auto path = hub->file_path(); !path.empty()) window.log_dock()->load_history(path);
     }
     // The experiment window shows the recent references only when what the
     // data window reads is where the session saves its runs: the store, with

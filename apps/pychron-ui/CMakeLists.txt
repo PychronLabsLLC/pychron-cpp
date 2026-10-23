@@ -12,6 +12,8 @@ set(CMAKE_AUTOMOC ON)
 add_library(pychron_ui_lib STATIC
   src/command_line.cpp
   src/database_choice.cpp
+  src/process_log.cpp
+  src/qt_log_handler.cpp
   src/core_bridge.cpp
   src/cryo_dock.cpp
   src/heater_dock.cpp
@@ -112,6 +114,8 @@ add_library(pychron_ui_lib STATIC
   src/pattern_maker_window.cpp
   src/command_line.hpp
   src/database_choice.hpp
+  src/process_log.hpp
+  src/qt_log_handler.hpp
   src/core_bridge.hpp
   src/cryo_dock.hpp
   src/heater_dock.hpp
