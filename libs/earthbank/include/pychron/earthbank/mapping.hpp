@@ -90,7 +90,7 @@
 #include "pychron/earthbank/vocab.hpp"
 #include "pychron/processing/model.hpp"
 #include "pychron/processing/reduced.hpp"
-#include "pychron/processing/report.hpp"
+#include "pychron/arar/report.hpp"
 
 namespace pychron::earthbank {
 

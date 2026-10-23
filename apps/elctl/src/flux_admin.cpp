@@ -18,9 +18,9 @@
 
 #include "flux.hpp"
 #include "pychron/persistence/store.hpp"
-#include "pychron/processing/flux_fit.hpp"
-#include "pychron/processing/flux_view.hpp"
-#include "pychron/processing/flux_store.hpp"
+#include "pychron/arar/flux_fit.hpp"
+#include "pychron/arar/flux_view.hpp"
+#include "pychron/arar/flux_store.hpp"
 #include "pychron/processing/store_source.hpp"
 
 namespace elctl {

@@ -11,7 +11,7 @@
 #include <QWidget>
 
 #include "pychron/processing/options.hpp"
-#include "pychron/processing/r_values.hpp"
+#include "pychron/arar/r_values.hpp"
 
 class QLabel;
 class QTableWidget;

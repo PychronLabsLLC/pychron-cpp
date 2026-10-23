@@ -49,7 +49,7 @@ struct RunContext {
   // reads the system clock.
   std::optional<double> now;
   // The domain the run reduces for, when the caller names one: what the cache
-  // of derived values holds is its to say. Null: the Ar-Ar values, as before.
+  // of derived values holds is its to say. Null: nothing is cached.
   const Domain* domain = nullptr;
   bool cancelled() const noexcept { return cancel && cancel->load(); }
 };
@@ -78,13 +78,18 @@ class UnitRegistry {
   const Unit* find(std::string_view kind) const;
   std::vector<std::string> kinds() const;
   // Every built-in unit (select, reduce, filter, group, edits, group_stats,
-  // time_series, ideogram, spectrum, inverse_isochron, spectrum_isochron,
-  // blank_fit, icfactor_fit, isotope_evolution_fit).
+  // time_series, blank_fit, icfactor_fit, isotope_evolution_fit). A domain's
+  // own units (the Ar-Ar figures) are in its registry, not here.
   static const UnitRegistry& builtin();
 
  private:
   std::map<std::string, std::unique_ptr<Unit>, std::less<>> units_;
 };
+
+// Adds the units builtin() holds to `registry`, as the same units (same
+// schemas): a domain's registry is these plus its own, and a pipeline built
+// against builtin() runs on it.
+void add_builtin_units(UnitRegistry& registry);
 
 struct NodeSpec {
   std::string id;

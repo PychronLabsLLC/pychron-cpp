@@ -6,8 +6,6 @@
 #include <map>
 #include <utility>
 
-#include "pychron/processing/arar_figures.hpp"
-#include "pychron/processing/derived.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
 #include "pychron/processing/quantity.hpp"
@@ -162,14 +160,12 @@ class ReduceUnit final : public Unit {
     // cache, when it has one (age cache spec 4.5); the sink drops the current.
     // The analyses here carry their stored fits: one with unsaved fit edits
     // keeps the stored input fingerprint and must never reach this unit.
-    // With a domain the cache is the domain's to derive; a run without one
-    // writes the Ar-Ar ages as it always has. A reduction made under other than
-    // the default settings is no cached one (derived_age, likewise).
-    if (IDerivedSink* sink = ctx.source ? ctx.source->derived() : nullptr) {
+    // The cache is the domain's to derive; a run without one writes nothing.
+    // A reduction made under other than the default settings is no cached one.
+    if (IDerivedSink* sink = ctx.source && ctx.domain ? ctx.source->derived() : nullptr) {
       std::vector<DerivedValues> values;
       for (const auto& item : d.items()) {
-        auto derived = ctx.domain ? (s == ReductionSettings{} ? ctx.domain->derive(*item.analysis) : std::nullopt)
-                                  : derived_age(*item.analysis, s);
+        auto derived = s == ReductionSettings{} ? ctx.domain->derive(*item.analysis) : std::nullopt;
         if (derived) values.push_back(std::move(*derived));
       }
       if (!values.empty()) sink->put(std::move(values));
@@ -465,16 +461,43 @@ const UnitRegistry& UnitRegistry::builtin() {
     r.add(std::make_unique<EditsUnit>());
     r.add(std::make_unique<GroupStatsUnit>());
     r.add(make_time_series_unit());
-    r.add(make_ideogram_unit());
-    r.add(make_spectrum_unit());
-    r.add(make_isochron_unit());
-    r.add(make_spectrum_isochron_unit());
     r.add(make_reference_fit_unit(ReferenceFitTarget::Blanks));
     r.add(make_reference_fit_unit(ReferenceFitTarget::IcFactors));
     r.add(make_isotope_evolution_fit_unit());
     return r;
   }();
   return registry;
+}
+
+namespace {
+
+// One of builtin()'s units in another registry: the same unit, so the same
+// schema, and a pipeline built against builtin() runs on that registry too
+// (a node's options are checked against its unit's schema by identity).
+class BuiltinUnit final : public Unit {
+ public:
+  explicit BuiltinUnit(const Unit& unit) : unit_(unit) {}
+  std::string_view kind() const override { return unit_.kind(); }
+  std::string_view title() const override { return unit_.title(); }
+  const SchemaPtr& schema() const override { return unit_.schema(); }
+  std::vector<PortSpec> inputs() const override { return unit_.inputs(); }
+  std::vector<PortSpec> outputs() const override { return unit_.outputs(); }
+  bool reads_source() const override { return unit_.reads_source(); }
+  bool uses_time(const Options& options) const override { return unit_.uses_time(options); }
+  Result<std::vector<PortValue>> execute(const std::vector<PortValue>& in, const Options& options,
+                                         RunContext& context) const override {
+    return unit_.execute(in, options, context);
+  }
+
+ private:
+  const Unit& unit_;  // builtin()'s, which lives for the whole process
+};
+
+}  // namespace
+
+void add_builtin_units(UnitRegistry& registry) {
+  const UnitRegistry& core = UnitRegistry::builtin();
+  for (const auto& kind : core.kinds()) registry.add(std::make_unique<BuiltinUnit>(*core.find(kind)));
 }
 
 }  // namespace pychron::processing

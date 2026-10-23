@@ -15,10 +15,11 @@ foreach(src IN LISTS PYCHRON_UI_TESTS)
   get_filename_component(name ${src} NAME_WE)
   set(target pychron_ui_${name})
   add_executable(${target} ${src} ui_fixture.hpp)
-  # tests/processing: flux_seed.hpp, the seeded level of the flux tests;
+  # tests/processing: fixtures.hpp, the analyses of the processing tests;
+  # tests/arar: flux_seed.hpp, the seeded level of the flux tests;
   # tests/support: temp_path.hpp, the fixtures' scratch names
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/processing
-    ${PROJECT_SOURCE_DIR}/tests/support)
+    ${PROJECT_SOURCE_DIR}/tests/arar ${PROJECT_SOURCE_DIR}/tests/support)
   target_link_libraries(${target} PRIVATE pychron::ui Qt6::Test)
   # the EarthBank suites, and the Publish dialog's EarthBank step, talk to the
   # service in memory (tests/earthbank)

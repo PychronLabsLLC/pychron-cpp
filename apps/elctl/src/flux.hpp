@@ -57,7 +57,7 @@
 
 #include "pychron/core/error.hpp"
 #include "pychron/persistence/store.hpp"
-#include "pychron/processing/flux_store.hpp"
+#include "pychron/arar/flux_store.hpp"
 #endif
 
 namespace elctl {

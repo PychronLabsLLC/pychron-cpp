@@ -13,8 +13,9 @@
 #include <random>
 #include <thread>
 
+#include "pychron/arar/derived.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/derive.hpp"
-#include "pychron/processing/derived.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/recall.hpp"
 #include "pychron/processing/reduced.hpp"
@@ -806,7 +807,8 @@ Pipeline reduce_pipeline(const std::vector<std::string>& uuids, const std::strin
 
 TEST_F(StoreSourceTest, ReducingThroughAUnitFillsTheCache) {
   auto& src = source();
-  Runner runner(UnitRegistry::builtin(), &src);
+  const auto domain = arar::make_domain();
+  Runner runner(UnitRegistry::builtin(), &src, domain.get());
   auto out = runner.run(reduce_pipeline({unknown_.str(), air_.str()}), "reduce");
   ASSERT_TRUE(out) << to_string(out.error());
   const auto done = src.flush_derived();
@@ -819,7 +821,7 @@ TEST_F(StoreSourceTest, ReducingThroughAUnitFillsTheCache) {
   EXPECT_EQ(cached(air_).size(), 1u);  // an air: a null age
 
   // The same figure again on a fresh runner: one read, no write.
-  Runner again(UnitRegistry::builtin(), &src);
+  Runner again(UnitRegistry::builtin(), &src, domain.get());
   ASSERT_TRUE(again.run(reduce_pipeline({unknown_.str(), air_.str()}), "reduce"));
   const auto second = src.flush_derived();
   EXPECT_EQ(second.written, 0u);
@@ -833,9 +835,10 @@ TEST_F(StoreSourceTest, AUnitWithOtherSettingsWritesNothing) {
     EXPECT_TRUE(p.find("reduce")->options.set(key, std::move(value)));
     return p;
   };
+  const auto domain = arar::make_domain();
   for (const auto& p : {reduce_pipeline({unknown_.str()}, "legacy"), other("include_decay_error", true),
                         other("use_irradiation_endtime", true)}) {
-    Runner runner(UnitRegistry::builtin(), &src);
+    Runner runner(UnitRegistry::builtin(), &src, domain.get());
     ASSERT_TRUE(runner.run(p, "reduce"));
     const auto done = src.flush_derived();
     EXPECT_EQ(done.written + done.current + done.failed, 0u);
@@ -940,8 +943,14 @@ TEST_F(StoreSourceTest, ARefreshWhileOtherThreadsReadIsSafe) {
 
 bool always(const DeriveStats&) { return true; }
 
+// The domain whose derive pass the backfill runs.
+const Domain& arar_domain() {
+  static const std::unique_ptr<Domain> domain = arar::make_domain();
+  return *domain;
+}
+
 TEST_F(StoreSourceTest, TheBackfillFillsAnEmptyCache) {
-  auto stats = derive_ages(source(), {}, always);
+  auto stats = derive_ages(source(), arar_domain(), {}, always);
   ASSERT_TRUE(stats) << to_string(stats.error());
   EXPECT_EQ(stats->seen, 2);
   EXPECT_EQ(stats->written, 2);
@@ -956,8 +965,8 @@ TEST_F(StoreSourceTest, TheBackfillFillsAnEmptyCache) {
 }
 
 TEST_F(StoreSourceTest, ASecondBackfillFindsEverythingCurrent) {
-  ASSERT_TRUE(derive_ages(source(), {}, always));
-  auto again = derive_ages(source(), {}, always);
+  ASSERT_TRUE(derive_ages(source(), arar_domain(), {}, always));
+  auto again = derive_ages(source(), arar_domain(), {}, always);
   ASSERT_TRUE(again) << to_string(again.error());
   EXPECT_EQ(again->seen, 2);
   EXPECT_EQ(again->current, 2);  // the air's null age too
@@ -965,7 +974,7 @@ TEST_F(StoreSourceTest, ASecondBackfillFindsEverythingCurrent) {
 }
 
 TEST_F(StoreSourceTest, AfterAFluxChangeTheBackfillWritesOnlyWhatItChanged) {
-  ASSERT_TRUE(derive_ages(source(), {}, always));
+  ASSERT_TRUE(derive_ages(source(), arar_domain(), {}, always));
   ps::FluxValue flux;
   flux.j = 0.002;
   flux.j_err = 2e-6;
@@ -976,7 +985,7 @@ TEST_F(StoreSourceTest, AfterAFluxChangeTheBackfillWritesOnlyWhatItChanged) {
   flux.monitor_age_err = 0.023;
   publish(flux_object_, flux);
   ASSERT_TRUE(source().refresh());
-  auto stats = derive_ages(source(), {}, always);
+  auto stats = derive_ages(source(), arar_domain(), {}, always);
   ASSERT_TRUE(stats) << to_string(stats.error());
   EXPECT_EQ(stats->written, 1);  // the unknown of that position
   EXPECT_EQ(stats->current, 1);  // the air
@@ -986,10 +995,10 @@ TEST_F(StoreSourceTest, AfterAFluxChangeTheBackfillWritesOnlyWhatItChanged) {
 }
 
 TEST_F(StoreSourceTest, AllWritesWhatIsCurrentToo) {
-  ASSERT_TRUE(derive_ages(source(), {}, always));
+  ASSERT_TRUE(derive_ages(source(), arar_domain(), {}, always));
   DeriveOptions all;
   all.all = true;
-  auto stats = derive_ages(source(), all, always);
+  auto stats = derive_ages(source(), arar_domain(), all, always);
   ASSERT_TRUE(stats) << to_string(stats.error());
   EXPECT_EQ(stats->written, 2);
   EXPECT_EQ(stats->current, 0);
@@ -998,7 +1007,7 @@ TEST_F(StoreSourceTest, AllWritesWhatIsCurrentToo) {
 TEST_F(StoreSourceTest, TheBackfillWalksNoFurtherThanItsLimit) {
   DeriveOptions one;
   one.limit = 1;
-  auto stats = derive_ages(source(), one, always);
+  auto stats = derive_ages(source(), arar_domain(), one, always);
   ASSERT_TRUE(stats) << to_string(stats.error());
   EXPECT_EQ(stats->seen, 1);
   EXPECT_EQ(cached(air_).size(), 1u);  // the newest
@@ -1010,7 +1019,7 @@ TEST_F(StoreSourceTest, TheBackfillWalksInvalidAnalysesToo) {
   ASSERT_TRUE(uow->add_revision(unknown_, ps::Kind::Tags, ps::TagValue{"invalid", std::nullopt, std::nullopt},
                                 *store_->head(unknown_, ps::Kind::Tags)));
   ASSERT_TRUE(uow->commit(ps::ChangesetKind::Reduction, "tag"));
-  auto stats = derive_ages(source(), {}, always);
+  auto stats = derive_ages(source(), arar_domain(), {}, always);
   ASSERT_TRUE(stats) << to_string(stats.error());
   EXPECT_EQ(stats->seen, 2);
   EXPECT_EQ(cached(unknown_).size(), 3u);
@@ -1021,7 +1030,7 @@ TEST_F(StoreSourceTest, TheBackfillWalksPageAfterPage) {
   DeriveOptions pages;
   pages.page_size = 1;
   std::vector<int> seen_after;
-  auto stats = derive_ages(source(), pages, [&](const DeriveStats& so_far) {
+  auto stats = derive_ages(source(), arar_domain(), pages, [&](const DeriveStats& so_far) {
     seen_after.push_back(so_far.seen);
     return true;
   });
@@ -1032,7 +1041,7 @@ TEST_F(StoreSourceTest, TheBackfillWalksPageAfterPage) {
   DeriveOptions two = pages;
   two.limit = 2;
   two.all = true;
-  auto limited = derive_ages(source(), two, always);
+  auto limited = derive_ages(source(), arar_domain(), two, always);
   ASSERT_TRUE(limited);
   EXPECT_EQ(limited->seen, 2);
 }
@@ -1041,7 +1050,7 @@ TEST_F(StoreSourceTest, TheBackfillStopsWhenToldTo) {
   DeriveOptions pages;
   pages.page_size = 1;
   int asked = 0;
-  auto stats = derive_ages(source(), pages, [&](const DeriveStats&) {
+  auto stats = derive_ages(source(), arar_domain(), pages, [&](const DeriveStats&) {
     ++asked;
     return false;
   });
@@ -1098,7 +1107,7 @@ TEST_F(StoreSourceTest, ARefusedWriteStopsTheWalk) {
   RefusesWrites src(source());
   DeriveOptions pages;
   pages.page_size = 1;
-  auto stats = derive_ages(src, pages, always);
+  auto stats = derive_ages(src, arar_domain(), pages, always);
   ASSERT_FALSE(stats);
   EXPECT_EQ(stats.error().what, "disk full");
   EXPECT_EQ(src.writes, 1);
@@ -1106,7 +1115,7 @@ TEST_F(StoreSourceTest, ARefusedWriteStopsTheWalk) {
 
 TEST_F(StoreSourceTest, AFailingLoadIsCountedNamedAndPassedOver) {
   OneFailsToLoad src(source(), unknown_.str());
-  auto stats = derive_ages(src, {}, always);
+  auto stats = derive_ages(src, arar_domain(), {}, always);
   ASSERT_TRUE(stats) << to_string(stats.error());
   EXPECT_EQ(stats->failed, 1);
   ASSERT_EQ(stats->failures.size(), 1u);

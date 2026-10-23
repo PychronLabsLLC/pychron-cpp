@@ -1,6 +1,6 @@
 #include "flux_unknown_model.hpp"
 
-#include "pychron/processing/flux_view.hpp"
+#include "pychron/arar/flux_view.hpp"
 
 namespace pychron::ui {
 

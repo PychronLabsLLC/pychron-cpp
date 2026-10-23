@@ -47,13 +47,14 @@
 #include "theme.hpp"
 #include "data_workspace.hpp"
 #include "figure_window.hpp"
-#include "pychron/processing/r_values.hpp"
+#include "pychron/arar/r_values.hpp"
 #include "r_values_panel.hpp"
 #include "main_window.hpp"
 #include "options_editor.hpp"
 #include "processing_bridge.hpp"
-#include "pychron/processing/arar_figures.hpp"
-#include "pychron/processing/report.hpp"
+#include "pychron/arar/arar_figures.hpp"
+#include "pychron/arar/report.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/time_series.hpp"
 #include "recall_window.hpp"
@@ -601,7 +602,7 @@ class TestDataWindows : public QObject {
   static pp::DomainRegistry make_domains() {
     pp::DomainRegistry domains;
     domains.add(pp::make_noble_gas_domain());
-    domains.add(pp::make_arar_domain());
+    domains.add(pychron::arar::make_domain());
     return domains;
   }
 

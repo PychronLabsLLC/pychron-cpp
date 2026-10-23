@@ -223,8 +223,8 @@ add_library(pychron_ui_lib STATIC
 add_library(pychron::ui ALIAS pychron_ui_lib)
 
 target_include_directories(pychron_ui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::processing_records Qt6::Widgets
-  qcustomplot)
+target_link_libraries(pychron_ui_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::processing_records
+  pychron::arar Qt6::Widgets qcustomplot)
 # Publishing to EarthBank: libs/earthbank says what to ask, libs/earthbank_qt
 # asks it over HTTPS. Without Qt6 Network there is no client
 # (src/earthbank_no_network.cpp) and the EarthBank pages say so.
@@ -241,7 +241,7 @@ pychron_set_warnings(pychron_ui_lib)
 target_compile_definitions(pychron_ui_lib PRIVATE PYCHRON_VERSION="${PROJECT_VERSION}")
 # --db browses the DVC store; it needs the persistence library.
 if(TARGET pychron_processing_store)
-  target_link_libraries(pychron_ui_lib PUBLIC pychron::processing_store)
+  target_link_libraries(pychron_ui_lib PUBLIC pychron::processing_store pychron::arar_store)
   target_compile_definitions(pychron_ui_lib PUBLIC PYCHRON_UI_HAS_STORE=1)
   # Sample and package entry (entry spec, section 9) writes the same store.
   target_sources(pychron_ui_lib PRIVATE

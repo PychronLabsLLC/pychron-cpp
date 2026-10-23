@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "pychron/arar/domain.hpp"
 #include "pychron/setup/site.hpp"
 
 namespace elctl {
@@ -22,7 +23,7 @@ std::string join(const std::vector<std::string>& ids) {
 const pychron::processing::Domain* choose_domain(pychron::processing::DomainRegistry& registry, std::string_view id,
                                                  std::ostream& err) {
   registry.add(pychron::processing::make_noble_gas_domain());
-  registry.add(pychron::processing::make_arar_domain());
+  registry.add(pychron::arar::make_domain());
   auto known = pychron::setup::known_domains();
   const auto registered = registry.ids();  // sorted
   std::sort(known.begin(), known.end());

@@ -29,7 +29,7 @@ target_include_directories(pychron_earthbank_tests PRIVATE ${PROJECT_SOURCE_DIR}
 target_compile_definitions(pychron_earthbank_tests PRIVATE
   PYCHRON_EARTHBANK_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/libs/earthbank/templates"
   PYCHRON_EARTHBANK_REPO_DIR="${PROJECT_SOURCE_DIR}")
-target_link_libraries(pychron_earthbank_tests PRIVATE pychron::earthbank_fake pychron::earthbank pychron::processing
+target_link_libraries(pychron_earthbank_tests PRIVATE pychron::earthbank_fake pychron::earthbank pychron::arar pychron::processing
                                                       pychron::reduction GTest::gtest_main)
 pychron_set_warnings(pychron_earthbank_tests)
 gtest_discover_tests(pychron_earthbank_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 60)

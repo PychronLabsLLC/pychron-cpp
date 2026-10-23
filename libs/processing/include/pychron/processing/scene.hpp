@@ -28,6 +28,14 @@ std::string color_hex(const Color& c);  // "#rrggbb" or "#rrggbbaa" when a != 25
 // default_palette()[index] cycled; a negative index wraps from the end.
 Color palette_color(int index);
 
+class Options;
+// The colour a figure draws group `group` in: the figure's groups table row
+// for it when that sets one, else the palette's. Any figure whose options
+// have a groups table (the Ar-Ar figures and the time series); otherwise the
+// palette's. A time series panel's own marker colour, which an only group
+// takes there, is the panel's, not the group's, and is not this.
+Color group_color(const Options& figure, int group);
+
 enum class MarkerShape { Circle, Square, Diamond, Triangle, Cross, Plus, Star };
 std::string_view to_string(MarkerShape s) noexcept;
 std::optional<MarkerShape> parse_marker(std::string_view text) noexcept;

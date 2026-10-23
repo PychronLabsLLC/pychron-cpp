@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "pychron/processing/derived.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/reduced.hpp"
 
 namespace pychron::processing {
@@ -30,7 +30,7 @@ std::string run_id(const AnalysisSummary& row) { return row.runid.empty() ? row.
 
 }  // namespace
 
-Result<DeriveStats> derive_ages(IDeriveSource& source, const DeriveOptions& options,
+Result<DeriveStats> derive_ages(IDeriveSource& source, const Domain& domain, const DeriveOptions& options,
                                 const std::function<bool(const DeriveStats&)>& keep_going) {
   DeriveStats stats;
   BrowseQuery query;
@@ -74,7 +74,7 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const DeriveOptions& opti
       // The age is of the fingerprint the analysis was loaded with, which is
       // the one compared above unless a reference changed in between: then a
       // correct row is written and counted as written.
-      auto age = derived_age(*reduce_analysis(*analysis, settings), settings);
+      auto age = domain.derive(*reduce_analysis(*analysis, settings));
       if (!age) {
         ++stats.failed;
         stats.failures.push_back(run_id(row) + ": no input fingerprint");
@@ -101,10 +101,10 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const DeriveOptions& opti
   return stats;
 }
 
-Result<DeriveStats> derive_ages(StoreSource& source, const DeriveOptions& options,
+Result<DeriveStats> derive_ages(StoreSource& source, const Domain& domain, const DeriveOptions& options,
                                 const std::function<bool(const DeriveStats&)>& keep_going) {
   StoreDeriveSource adapter(source);
-  return derive_ages(adapter, options, keep_going);
+  return derive_ages(adapter, domain, options, keep_going);
 }
 
 }  // namespace pychron::processing

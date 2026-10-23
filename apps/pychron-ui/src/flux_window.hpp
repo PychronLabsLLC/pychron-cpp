@@ -28,7 +28,7 @@
 
 #include "entry_bridge.hpp"
 #include "pychron/core/error.hpp"
-#include "pychron/processing/flux_fit.hpp"
+#include "pychron/arar/flux_fit.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
 

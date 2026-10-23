@@ -35,6 +35,7 @@
 #include "earthbank_publish_panel.hpp"
 #include "earthbank_worker.hpp"
 #include "pychron/processing/options.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "settings_guard.hpp"
@@ -52,7 +53,7 @@ namespace {
 
 // The Ar-Ar domain: what a browser's toolbar is built from.
 const pp::Domain& arar_domain() {
-  static const std::unique_ptr<pp::Domain> domain = pp::make_arar_domain();
+  static const std::unique_ptr<pp::Domain> domain = pychron::arar::make_domain();
   return *domain;
 }
 

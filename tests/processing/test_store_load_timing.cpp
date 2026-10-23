@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/store_source.hpp"
 #include "pychron/processing/units.hpp"
 
@@ -68,7 +69,8 @@ TEST(StoreLoadTiming, FigurePipeline) {
   }
   std::printf("  %zu analyses in %d groups\n", uuids.size(), groups);
 
-  const auto& reg = UnitRegistry::builtin();
+  const auto domain = arar::make_domain();
+  const auto& reg = domain->units();
   Pipeline p;
   auto& select = p.add(reg, "select", "select");
   (void)select.options.set("uuids", uuids);
@@ -81,7 +83,7 @@ TEST(StoreLoadTiming, FigurePipeline) {
   (void)p.find("group")->options.set("key", std::string("identifier"));
   p.add(reg, "figure", "ideogram", {"edits"});
 
-  Runner runner(reg, &source);
+  Runner runner(reg, &source, domain.get());
   double total = 0;
   for (const char* node : {"select", "reduce", "group", "graph", "edits", "figure"}) {
     t0 = now_s();
@@ -92,7 +94,7 @@ TEST(StoreLoadTiming, FigurePipeline) {
   }
   std::printf("total (%zu analyses)  %8.3f s\n", uuids.size(), total);
   // again, with the source's cache warm and the runner's cold
-  Runner again(reg, &source);
+  Runner again(reg, &source, domain.get());
   t0 = now_s();
   (void)again.run(p, "figure");
   std::printf("second window        %8.3f s\n", now_s() - t0);

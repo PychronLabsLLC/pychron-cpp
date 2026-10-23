@@ -16,6 +16,7 @@
 
 #include "fixtures.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
@@ -113,7 +114,7 @@ constexpr double kFirstAir = 1'700'000'000.0;  // make_air's first timestamp
 
 // The Ar-Ar domain, made once for every bridge of the file.
 const pychron::processing::Domain& arar_domain() {
-  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::processing::make_arar_domain();
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::arar::make_domain();
   return *domain;
 }
 

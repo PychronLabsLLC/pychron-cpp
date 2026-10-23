@@ -19,7 +19,7 @@ target_include_directories(pychron_publish PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_compile_features(pychron_publish PUBLIC cxx_std_20)
-target_link_libraries(pychron_publish PUBLIC pychron::persistence pychron::processing pychron::processing_store
+target_link_libraries(pychron_publish PUBLIC pychron::persistence pychron::arar pychron::processing pychron::processing_store
                                             pychron::reduction pychron::core nlohmann_json::nlohmann_json)
 pychron_set_warnings(pychron_publish)
 # Arrow (PychronDependencies.cmake): parquet_writer.cpp alone sees it; without

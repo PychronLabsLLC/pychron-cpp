@@ -24,6 +24,7 @@
 
 #include "data_main_window.hpp"
 #include "installations_dialog.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/record_source.hpp"
 #include "pychron/setup/installer.hpp"
@@ -539,7 +540,7 @@ class TestSetupWizard : public QObject {
     fs::create_directories(dir("records"));
     processing::RecordDirectorySource records(dir("records"));
     processing::PresetStore presets(dir("presets"), dir("lab-presets"));
-    const auto domain = processing::make_arar_domain();
+    const auto domain = pychron::arar::make_domain();
     DataMainWindow w(records, presets, *domain, QStringLiteral("data-reduction"));
     QVERIFY(w.browser() != nullptr);
     QCOMPARE(w.centralWidget(), static_cast<QWidget*>(w.browser()));

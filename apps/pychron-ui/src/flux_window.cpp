@@ -42,14 +42,14 @@
 #include "options_editor.hpp"
 #include "preset_bar.hpp"
 #include "pychron/core/user_file.hpp"
-#include "pychron/processing/flux_view.hpp"
+#include "pychron/arar/flux_view.hpp"
 #include "scene_view.hpp"
 #include "theme.hpp"
 
 // Qt's `signals` keyword macro would rewrite persistence::CollectionRoots::signals.
 #pragma push_macro("signals")
 #undef signals
-#include "pychron/processing/flux_store.hpp"
+#include "pychron/arar/flux_store.hpp"
 #pragma pop_macro("signals")
 
 namespace pychron::ui {

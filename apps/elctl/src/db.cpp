@@ -12,6 +12,7 @@
 #include "setup.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/derive.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/store_source.hpp"
 
 namespace elctl {
@@ -60,14 +61,14 @@ void print_schema(std::ostream& out, const std::vector<ps::AppliedMigration>& ap
 namespace pp = pychron::processing;
 
 // elctl db derive: the backfill of the cache of ages (age cache spec 4.5).
-int derive(const std::string& url, bool all, std::optional<int> limit, bool quiet, Io io) {
+int derive(const std::string& url, const pp::Domain& domain, bool all, std::optional<int> limit, bool quiet, Io io) {
   // As it is: a store behind its migrations is refused, never migrated here.
   auto source = pp::StoreSource::open(pychron::persistence::StoreConfig{url, false});
   if (!source) return fatal(io, source.error().what);
   pp::DeriveOptions options;
   options.all = all;
   options.limit = limit;
-  auto stats = pp::derive_ages(**source, options, [&](const pp::DeriveStats& so_far) {
+  auto stats = pp::derive_ages(**source, domain, options, [&](const pp::DeriveStats& so_far) {
     if (!quiet) io.out << "  " << derive_counts(so_far) << '\n' << std::flush;
     return true;
   });
@@ -140,7 +141,7 @@ int db_command(const std::vector<std::string>& args, const std::optional<std::st
       if (!quiet) io.out << "derive: nothing to derive under domain " << domain.id() << '\n';
       return kOk;
     }
-    return derive(url, all, limit, quiet, io);
+    return derive(url, domain, all, limit, quiet, io);
   }
 
   // As it is: this succeeds only when nothing is pending.

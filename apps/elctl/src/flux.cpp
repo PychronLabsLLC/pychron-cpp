@@ -23,10 +23,10 @@
 #include "pychron/core/error.hpp"
 #include "pychron/core/user_file.hpp"
 #include "pychron/persistence/store.hpp"
-#include "pychron/processing/flux_fit.hpp"
-#include "pychron/processing/flux_view.hpp"
-#include "pychron/processing/flux_store.hpp"
-#include "pychron/processing/report.hpp"
+#include "pychron/arar/flux_fit.hpp"
+#include "pychron/arar/flux_view.hpp"
+#include "pychron/arar/flux_store.hpp"
+#include "pychron/arar/report.hpp"
 #include "pychron/processing/store_source.hpp"
 
 namespace elctl {

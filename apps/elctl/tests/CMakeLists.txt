@@ -18,7 +18,7 @@ if(TARGET pychron_persistence)
   # own reader, "ooxml.hpp" in its src/, as the earthbank tests do.
   target_include_directories(pychron_elctl_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/tests/dvc"
-    "${PROJECT_SOURCE_DIR}/tests/processing"
+    "${PROJECT_SOURCE_DIR}/tests/arar"
     "${PROJECT_SOURCE_DIR}/libs/persistence/src"
     "${PROJECT_SOURCE_DIR}/libs/earthbank/src"
     $<TARGET_PROPERTY:TinyOrm::TinyOrm,INTERFACE_INCLUDE_DIRECTORIES>)

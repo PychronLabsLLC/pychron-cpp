@@ -1,11 +1,11 @@
 #include "figure_common.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <string_view>
 
-#include "pychron/processing/arar_figures.hpp"
 #include "schema_builder.hpp"
 
 namespace pychron::processing::detail {
@@ -27,9 +27,9 @@ Result<reduction::Mean> group_mean(std::span<const double> values, std::span<con
 }
 
 std::string format_sig(double v, int sig) {
-  char buf[64];
-  std::snprintf(buf, sizeof buf, "%.*g", std::max(1, sig), v);
-  return buf;
+  std::array<char, 64> buf{};
+  std::snprintf(buf.data(), buf.size(), "%.*g", std::max(1, sig), v);
+  return buf.data();
 }
 
 std::string format_utc(double t) {
@@ -40,9 +40,9 @@ std::string format_utc(double t) {
 #else
   gmtime_r(&tt, &tm);
 #endif
-  char buf[32];
-  std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &tm);
-  return std::string(buf) + "Z";
+  std::array<char, 32> buf{};
+  std::strftime(buf.data(), buf.size(), "%Y-%m-%d %H:%M:%S", &tm);
+  return std::string(buf.data()) + "Z";
 }
 
 Color with_alpha(Color c, std::uint8_t a) {

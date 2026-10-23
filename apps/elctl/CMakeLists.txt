@@ -49,16 +49,18 @@ endif()
 add_library(pychron_elctl_lib STATIC ${PYCHRON_ELCTL_SOURCES})
 target_include_directories(pychron_elctl_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(pychron_elctl_lib PUBLIC cxx_std_20)
-# processing: the domain every command runs on (src/domain.cpp), in every build.
+# processing and arar: the domains every command runs on (src/domain.cpp), in
+# every build.
 target_link_libraries(pychron_elctl_lib PUBLIC pychron::setup pychron::experiment pychron::systems pychron::devices
-  pychron::processing pychron::transport pychron::update pychron::core)
+  pychron::processing pychron::arar pychron::transport pychron::update pychron::core)
 if(TARGET pychron_persistence)
   # A data reduction install's local database is created with the DVC store.
   # processing_store: the reduction `import verify` compares legacy ages with,
-  # and the source `export` and `earthbank` read. earthbank: the submissions
-  # and the workbooks; it has no network code.
+  # and the source `export` and `earthbank` read. arar_store: the flux store
+  # `flux` reads and writes. earthbank: the submissions and the workbooks; it
+  # has no network code.
   target_link_libraries(pychron_elctl_lib PUBLIC pychron_persistence pychron::dvc pychron::ingest pychron::entry
-    pychron::processing_store pychron::experiment_store pychron::earthbank pychron::publish
+    pychron::processing_store pychron::arar_store pychron::experiment_store pychron::earthbank pychron::publish
     PRIVATE nlohmann_json::nlohmann_json)
   target_compile_definitions(pychron_elctl_lib PUBLIC PYCHRON_ELCTL_HAS_STORE=1 PYCHRON_ELCTL_IMPORT
     PRIVATE PYCHRON_ELCTL_VERSION="${PROJECT_VERSION}")

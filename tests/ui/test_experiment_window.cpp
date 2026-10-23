@@ -34,6 +34,7 @@
 
 #include "conditionals_editor_window.hpp"
 #include "processing_bridge.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/options.hpp"
 #include "pychron/processing/source.hpp"
@@ -146,7 +147,7 @@ class RefreshCountingSource : public pychron::processing::MemorySource {
 
 // The Ar-Ar domain, made once for every bridge of the file.
 const pychron::processing::Domain& arar_domain() {
-  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::processing::make_arar_domain();
+  static const std::unique_ptr<pychron::processing::Domain> domain = pychron::arar::make_domain();
   return *domain;
 }
 

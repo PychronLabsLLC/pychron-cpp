@@ -6,8 +6,6 @@
 #include <fstream>
 #include <functional>
 
-#include "pychron/processing/arar_figures.hpp"
-#include "pychron/processing/flux_view.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
 #include "pychron/processing/reference_fit.hpp"
 #include "pychron/processing/time_series.hpp"
@@ -188,7 +186,7 @@ TEST(Options, MigrationsRunFromTheFileVersion) {
 
 // The program writes "color" (as the data browser's "Color by" and the
 // detector table's "Color" do): no label, help text or message of an options
-// schema says "colour".
+// schema says "colour". The Ar-Ar schemas: tests/arar/test_options_arar.cpp.
 TEST(Options, EverySchemaSaysColor) {
   const std::function<void(const pp::Schema&, const std::string&)> check = [&](const pp::Schema& schema,
                                                                                const std::string& where) {
@@ -202,32 +200,11 @@ TEST(Options, EverySchemaSaysColor) {
       if (l.row) check(*l.row, where + " " + l.key);
     }
   };
-  for (const pp::SchemaPtr& schema :
-       {pp::time_series_schema(), pp::ideogram_schema(), pp::spectrum_schema(), pp::isochron_schema(),
-        pp::spectrum_isochron_schema(), pp::blank_fit_schema(), pp::icfactor_fit_schema(),
-        pp::isotope_evolution_fit_schema(), pp::flux_options_schema()}) {
+  for (const pp::SchemaPtr& schema : {pp::time_series_schema(), pp::blank_fit_schema(), pp::icfactor_fit_schema(),
+                                      pp::isotope_evolution_fit_schema()}) {
     ASSERT_TRUE(schema);
     check(*schema, schema->kind);
   }
-  // the ideogram's group rows are where an analyst sets a group's color
-  bool found = false;
-  for (const auto& l : pp::ideogram_schema()->lists) {
-    if (!l.row) continue;
-    for (const auto& f : l.row->fields) {
-      if (f.key == "color") {
-        found = true;
-        EXPECT_EQ(f.label, "Color");
-      }
-    }
-  }
-  EXPECT_TRUE(found);
-}
-
-TEST(Options, AValueThatIsNoColorIsRefusedInThoseWords) {
-  pp::Options o(pp::ideogram_schema());
-  auto set = o.set("background", std::string("not a color"));
-  ASSERT_FALSE(set);
-  EXPECT_NE(set.error().what.find("expected a color ("), std::string::npos) << set.error().what;
 }
 
 TEST(Options, FactoryPresetsAreClean) {

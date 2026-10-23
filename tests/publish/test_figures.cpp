@@ -9,7 +9,7 @@
 #include <set>
 
 #include "processing/fixtures.hpp"
-#include "pychron/processing/arar_figures.hpp"
+#include "pychron/arar/arar_figures.hpp"
 #include "pychron/processing/reduced.hpp"
 #include "pychron/publish/figures.hpp"
 

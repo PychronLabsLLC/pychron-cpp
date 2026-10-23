@@ -60,7 +60,7 @@ target_include_directories(pychron_earthbank PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_compile_features(pychron_earthbank PUBLIC cxx_std_20)
-target_link_libraries(pychron_earthbank PUBLIC pychron::processing pychron::reduction pychron::core
+target_link_libraries(pychron_earthbank PUBLIC pychron::arar pychron::processing pychron::reduction pychron::core
                                             nlohmann_json::nlohmann_json
                                      PRIVATE miniz::miniz pugixml::pugixml
                                              ${PYCHRON_EARTHBANK_SECRET_STORE_LIBS})

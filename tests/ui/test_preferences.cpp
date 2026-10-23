@@ -51,6 +51,7 @@
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/config/logging_file.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "spectrometer_bridge.hpp"
@@ -72,7 +73,7 @@ namespace {
 
 // The Ar-Ar domain: what a browser's toolbar is built from.
 const pp::Domain& arar_domain() {
-  static const std::unique_ptr<pp::Domain> domain = pp::make_arar_domain();
+  static const std::unique_ptr<pp::Domain> domain = pychron::arar::make_domain();
   return *domain;
 }
 

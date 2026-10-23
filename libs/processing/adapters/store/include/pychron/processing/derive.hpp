@@ -18,6 +18,8 @@
 
 namespace pychron::processing {
 
+class Domain;
+
 struct DeriveOptions {
   bool all = false;          // reduce and write every analysis, current or not
   std::optional<int> limit;  // walk no more than this many analyses
@@ -48,14 +50,14 @@ class IDeriveSource {
 // Walks by pages (`page_size`, 200) through browse, with no filter. A page's cached
 // fingerprints are read in one statement; only an analysis whose two
 // fingerprints differ (or every one, with `all`) is loaded, reduced with the
-// default settings and written, in one write a page. A load that fails is
-// counted and named, and the walk goes on. `keep_going` is asked after each
-// page with the counts so far; false ends the walk there. An error is what
-// stopped the walk itself: a page that could not be read or written (what
-// earlier pages wrote stays).
-Result<DeriveStats> derive_ages(IDeriveSource& source, const DeriveOptions& options,
+// default settings, derived by `domain` (Domain::derive) and written, in one
+// write a page. A load that fails is counted and named, and the walk goes
+// on. `keep_going` is asked after each page with the counts so far; false
+// ends the walk there. An error is what stopped the walk itself: a page that
+// could not be read or written (what earlier pages wrote stays).
+Result<DeriveStats> derive_ages(IDeriveSource& source, const Domain& domain, const DeriveOptions& options,
                                 const std::function<bool(const DeriveStats&)>& keep_going);
-Result<DeriveStats> derive_ages(StoreSource& source, const DeriveOptions& options,
+Result<DeriveStats> derive_ages(StoreSource& source, const Domain& domain, const DeriveOptions& options,
                                 const std::function<bool(const DeriveStats&)>& keep_going);
 
 }  // namespace pychron::processing

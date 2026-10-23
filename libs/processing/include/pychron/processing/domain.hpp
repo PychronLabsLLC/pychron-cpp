@@ -94,8 +94,4 @@ class DomainRegistry {
 
 std::unique_ptr<Domain> make_noble_gas_domain();  // core only
 
-// The Ar-Ar domain over today's code. Moves to libs/arar (`pychron/arar/domain.hpp`)
-// when the domain seam splits that library out.
-std::unique_ptr<Domain> make_arar_domain();
-
 }  // namespace pychron::processing

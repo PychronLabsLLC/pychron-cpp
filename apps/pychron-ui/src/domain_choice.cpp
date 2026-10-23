@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <vector>
 
+#include "pychron/arar/domain.hpp"
 #include "pychron/setup/site.hpp"
 
 namespace pychron::ui {
@@ -20,7 +21,7 @@ std::string join(const std::vector<std::string>& ids) {
 const processing::Domain* choose_domain(processing::DomainRegistry& registry, std::string_view id,
                                         std::string& error) {
   registry.add(processing::make_noble_gas_domain());
-  registry.add(processing::make_arar_domain());
+  registry.add(pychron::arar::make_domain());
   auto known = setup::known_domains();
   const auto registered = registry.ids();  // sorted
   std::sort(known.begin(), known.end());

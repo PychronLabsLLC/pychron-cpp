@@ -65,7 +65,7 @@ class FluxWindowTest : public QObject {
 #include "options_editor.hpp"
 #include "packages_window.hpp"
 #include "preset_bar.hpp"
-#include "pychron/processing/flux_view.hpp"
+#include "pychron/arar/flux_view.hpp"
 #include "pychron/processing/options.hpp"
 #include "scene_view.hpp"
 
@@ -73,7 +73,7 @@ class FluxWindowTest : public QObject {
 #pragma push_macro("signals")
 #undef signals
 #include "flux_seed.hpp"
-#include "pychron/processing/flux_store.hpp"
+#include "pychron/arar/flux_store.hpp"
 #include "pychron/processing/store_source.hpp"
 #pragma pop_macro("signals")
 

@@ -25,7 +25,7 @@
 #include "pychron/persistence/publish.hpp"
 #include "pychron/persistence/store.hpp"
 #include "pychron/processing/dataset.hpp"
-#include "pychron/processing/report.hpp"
+#include "pychron/arar/report.hpp"
 
 namespace pychron::publish {
 

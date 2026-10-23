@@ -14,7 +14,7 @@
 #include "pychron/core/env.hpp"
 #include "pychron/core/process.hpp"
 #include "pychron/core/user_file.hpp"
-#include "pychron/processing/report.hpp"
+#include "pychron/arar/report.hpp"
 #include "pychron/processing/source.hpp"
 #include "pychron/processing/units.hpp"
 #include "pychron/publish/figures.hpp"

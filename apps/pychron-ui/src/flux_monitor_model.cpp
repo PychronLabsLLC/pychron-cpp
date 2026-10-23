@@ -4,7 +4,7 @@
 
 #include <QBrush>
 
-#include "pychron/processing/flux_view.hpp"
+#include "pychron/arar/flux_view.hpp"
 #include "theme.hpp"
 
 namespace pychron::ui {

@@ -1,6 +1,6 @@
 // elctl flux fit: a level's J fitted from its monitors, driven through
 // elctl::run against a file-backed SQLite store holding the seeded level
-// NM-300 A of tests/processing/flux_seed.hpp.
+// NM-300 A of tests/arar/flux_seed.hpp.
 
 #include <gtest/gtest.h>
 
@@ -33,7 +33,7 @@ TEST(FluxCmd, StubWithoutPersistence) {
 #include "flux_seed.hpp"
 #include "pychron/core/sha256.hpp"
 #include "pychron/persistence/store.hpp"
-#include "pychron/processing/flux_view.hpp"
+#include "pychron/arar/flux_view.hpp"
 
 namespace {
 

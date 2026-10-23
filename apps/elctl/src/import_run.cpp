@@ -125,7 +125,7 @@ void derive_after_import(const Context& ctx) {
     ctx.io.err << "elctl import: derive: " << one_line(source.error().what) << '\n';
     return;
   }
-  auto stats = pp::derive_ages(**source, pp::DeriveOptions{},
+  auto stats = pp::derive_ages(**source, *ctx.domain, pp::DeriveOptions{},
                                [](const pp::DeriveStats&) { return !g_interrupted.load(); });
   if (!stats) {
     ctx.io.err << "elctl import: derive: " << one_line(stats.error().what) << '\n';

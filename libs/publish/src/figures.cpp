@@ -8,7 +8,7 @@
 #include <set>
 #include <utility>
 
-#include "pychron/processing/arar_figures.hpp"
+#include "pychron/arar/arar_figures.hpp"
 #include "pychron/processing/scene_pdf.hpp"
 #include "pychron/processing/scene_svg.hpp"
 #include "pychron/publish/tables.hpp"
