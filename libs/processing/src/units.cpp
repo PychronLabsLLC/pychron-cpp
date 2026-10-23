@@ -297,7 +297,7 @@ Result<std::vector<PortValue>> Runner::run(const Pipeline& pipeline, std::string
       last_.push_back(std::move(nr));
       continue;
     }
-    RunContext ctx{source_, cancel, {}, now};
+    RunContext ctx{source_, cancel, {}, now, domain_};
     auto out = u.execute(inputs, n.options, ctx);
     ++executions_;
     nr.executed = true;

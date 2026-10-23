@@ -33,6 +33,12 @@ ps::Bytes tv(float offset, int n = 5) {
   return ps::encode_tv(p);
 }
 
+// The value of `name` in `d`, when it has one.
+std::optional<reduction::UFloat> dv(const DerivedValues& d, std::string_view name) {
+  const DerivedValue* v = find_derived(d, name);
+  return v ? v->value : std::nullopt;
+}
+
 class StoreSourceTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -220,13 +226,13 @@ class StoreSourceTest : public ::testing::Test {
   ps::Uuid acq_, red_, reducer_, ms_, irr_, level_, position_, unknown_, air_, project_, material_, flux_object_;
 
   // What a reduction of `uuid` with the default settings gives the cache.
-  DerivedAge derived_of(const ps::Uuid& uuid) {
+  DerivedValues derived_of(const ps::Uuid& uuid) {
     auto loaded = source().load(uuid.str());
     EXPECT_TRUE(loaded) << (loaded ? "" : to_string(loaded.error()));
     if (!loaded) return {};
     auto d = derived_age(*reduce_analysis(*loaded, ReductionSettings{}), ReductionSettings{});
     EXPECT_TRUE(d);
-    return d ? *d : DerivedAge{};
+    return d ? *d : DerivedValues{};
   }
 
   // The cached rows of `uuid` by name, when they are of its current inputs.
@@ -593,8 +599,8 @@ TEST_F(StoreSourceTest, TheSinkFillsTheCache) {
   auto& src = source();
   ASSERT_NE(src.derived(), nullptr);
   EXPECT_TRUE(cached(unknown_).empty());
-  const DerivedAge d = derived_of(unknown_);
-  ASSERT_TRUE(d.age && d.age_w_j && d.kca);
+  const DerivedValues d = derived_of(unknown_);
+  ASSERT_TRUE(dv(d, "age") && dv(d, "age_w_j") && dv(d, "kca"));
 
   src.derived()->put({d});
   const auto done = src.flush_derived();
@@ -604,14 +610,14 @@ TEST_F(StoreSourceTest, TheSinkFillsTheCache) {
 
   const auto rows = cached(unknown_);
   ASSERT_EQ(rows.size(), 3u);
-  EXPECT_DOUBLE_EQ(*rows.at("age").value, d.age->nominal());
-  EXPECT_DOUBLE_EQ(*rows.at("age").error, d.age->std_dev());
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, dv(d, "age")->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age").error, dv(d, "age")->std_dev());
   EXPECT_EQ(rows.at("age").units, "Ma");
-  EXPECT_DOUBLE_EQ(*rows.at("age_w_j").value, d.age_w_j->nominal());
-  EXPECT_DOUBLE_EQ(*rows.at("age_w_j").error, d.age_w_j->std_dev());
+  EXPECT_DOUBLE_EQ(*rows.at("age_w_j").value, dv(d, "age_w_j")->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age_w_j").error, dv(d, "age_w_j")->std_dev());
   EXPECT_EQ(rows.at("age_w_j").units, "Ma");
-  EXPECT_DOUBLE_EQ(*rows.at("kca").value, d.kca->nominal());
-  EXPECT_DOUBLE_EQ(*rows.at("kca").error, d.kca->std_dev());
+  EXPECT_DOUBLE_EQ(*rows.at("kca").value, dv(d, "kca")->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("kca").error, dv(d, "kca")->std_dev());
   EXPECT_FALSE(rows.at("kca").units);
   // nothing was queued since: a flush has nothing to say
   const auto idle = src.flush_derived();
@@ -621,8 +627,8 @@ TEST_F(StoreSourceTest, TheSinkFillsTheCache) {
 // What the sink wrote is what browse shows, and what an age range finds.
 TEST_F(StoreSourceTest, ASummaryCarriesTheAgeTheSinkWrote) {
   auto& src = source();
-  const DerivedAge d = derived_of(unknown_);
-  ASSERT_TRUE(d.age);
+  const DerivedValues d = derived_of(unknown_);
+  ASSERT_TRUE(dv(d, "age"));
   src.derived()->put({d, derived_of(air_)});
   ASSERT_EQ(src.flush_derived().failed, 0u);
 
@@ -636,16 +642,16 @@ TEST_F(StoreSourceTest, ASummaryCarriesTheAgeTheSinkWrote) {
   const AnalysisSummary* unknown = summary(unknown_);
   ASSERT_NE(unknown, nullptr);
   ASSERT_TRUE(unknown->age);
-  EXPECT_DOUBLE_EQ(*unknown->age, d.age->nominal());
+  EXPECT_DOUBLE_EQ(*unknown->age, dv(d, "age")->nominal());
   ASSERT_TRUE(unknown->age_err);
-  EXPECT_DOUBLE_EQ(*unknown->age_err, d.age->std_dev());
+  EXPECT_DOUBLE_EQ(*unknown->age_err, dv(d, "age")->std_dev());
   const AnalysisSummary* air = summary(air_);
   ASSERT_NE(air, nullptr);
   EXPECT_FALSE(air->age) << "an air is cached as having no age";
 
   BrowseQuery around;
-  around.age_min = d.age->nominal() - 1e-6;
-  around.age_max = d.age->nominal() + 1e-6;
+  around.age_min = dv(d, "age")->nominal() - 1e-6;
+  around.age_max = dv(d, "age")->nominal() + 1e-6;
   auto found = src.browse(around);
   ASSERT_TRUE(found) << to_string(found.error());
   ASSERT_EQ(found->rows.size(), 1u);
@@ -655,7 +661,7 @@ TEST_F(StoreSourceTest, ASummaryCarriesTheAgeTheSinkWrote) {
   ASSERT_TRUE(types) << to_string(types.error());
   EXPECT_EQ(*types, (std::vector<std::string>{"unknown"}));
   BrowseQuery above;
-  above.age_min = d.age->nominal() + 1.0;
+  above.age_min = dv(d, "age")->nominal() + 1.0;
   auto none = src.browse(above);
   ASSERT_TRUE(none) << to_string(none.error());
   EXPECT_TRUE(none->rows.empty());
@@ -664,8 +670,8 @@ TEST_F(StoreSourceTest, ASummaryCarriesTheAgeTheSinkWrote) {
 // Opening a figure of analyses whose ages are current costs one read and no write.
 TEST_F(StoreSourceTest, ACurrentAgeIsNotWrittenAgain) {
   auto& src = source();
-  const DerivedAge unknown = derived_of(unknown_);
-  const DerivedAge air = derived_of(air_);
+  const DerivedValues unknown = derived_of(unknown_);
+  const DerivedValues air = derived_of(air_);
   src.derived()->put({unknown});
   EXPECT_EQ(src.flush_derived().written, 1u);
 
@@ -682,7 +688,7 @@ TEST_F(StoreSourceTest, ACurrentAgeIsNotWrittenAgain) {
   EXPECT_EQ(done.failed, 0u) << done.last_error;
   // an analysis given twice in one batch is one write
   auto third = ingest("77000", 2, "unknown", "2026-10-02T12:00:00Z");
-  const DerivedAge d3 = derived_of(third);
+  const DerivedValues d3 = derived_of(third);
   src.derived()->put({d3, d3});
   done = src.flush_derived();
   EXPECT_EQ(done.written, 1u);
@@ -696,7 +702,7 @@ TEST_F(StoreSourceTest, ACurrentAgeIsNotWrittenAgain) {
 
 TEST_F(StoreSourceTest, AChangedFluxReplacesTheAge) {
   auto& src = source();
-  const DerivedAge before = derived_of(unknown_);
+  const DerivedValues before = derived_of(unknown_);
   src.derived()->put({before});
   ASSERT_EQ(src.flush_derived().written, 1u);
   ASSERT_EQ(cached(unknown_).size(), 3u);
@@ -714,17 +720,17 @@ TEST_F(StoreSourceTest, AChangedFluxReplacesTheAge) {
   EXPECT_TRUE(cached(unknown_).empty());
 
   ASSERT_TRUE(src.refresh());
-  const DerivedAge after = derived_of(unknown_);
+  const DerivedValues after = derived_of(unknown_);
   ASSERT_NE(after.input_fingerprint, before.input_fingerprint);
-  ASSERT_TRUE(after.age);
-  EXPECT_GT(after.age->nominal(), 1.5 * before.age->nominal());
+  ASSERT_TRUE(dv(after, "age"));
+  EXPECT_GT(dv(after, "age")->nominal(), 1.5 * dv(before, "age")->nominal());
   src.derived()->put({after});
   const auto done = src.flush_derived();
   EXPECT_EQ(done.written, 1u);
   EXPECT_EQ(done.failed, 0u) << done.last_error;
   const auto rows = cached(unknown_);
   ASSERT_EQ(rows.size(), 3u);
-  EXPECT_DOUBLE_EQ(*rows.at("age").value, after.age->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, dv(after, "age")->nominal());
   // one fingerprint an analysis: the old rows are gone, not beside the new
   const auto fingerprints = store_->derived_fingerprints(std::vector<ps::Uuid>{unknown_});
   ASSERT_TRUE(fingerprints);
@@ -739,8 +745,8 @@ TEST_F(StoreSourceTest, AChangedFluxReplacesTheAge) {
 
 TEST_F(StoreSourceTest, AnAnalysisWithNoAgeGetsANullAge) {
   auto& src = source();
-  const DerivedAge air = derived_of(air_);
-  ASSERT_FALSE(air.age);
+  const DerivedValues air = derived_of(air_);
+  ASSERT_FALSE(dv(air, "age"));
   src.derived()->put({air});
   const auto done = src.flush_derived();
   EXPECT_EQ(done.written, 1u);
@@ -758,11 +764,11 @@ TEST_F(StoreSourceTest, AnAnalysisWithNoAgeGetsANullAge) {
 // and so is a whole batch the store refuses (it is one transaction).
 TEST_F(StoreSourceTest, WhatTheSinkCannotWriteIsDroppedAndCounted) {
   auto& src = source();
-  DerivedAge no_such = derived_of(unknown_);
+  DerivedValues no_such = derived_of(unknown_);
   no_such.uuid = ps::Uuid::v7().str();  // no analysis of the store
-  DerivedAge bad_uuid = derived_of(unknown_);
+  DerivedValues bad_uuid = derived_of(unknown_);
   bad_uuid.uuid = "not a uuid";
-  DerivedAge bad_fingerprint = derived_of(unknown_);
+  DerivedValues bad_fingerprint = derived_of(unknown_);
   bad_fingerprint.input_fingerprint = "zz";
   src.derived()->put({bad_uuid, bad_fingerprint});
   auto done = src.flush_derived();
@@ -806,10 +812,10 @@ TEST_F(StoreSourceTest, ReducingThroughAUnitFillsTheCache) {
   const auto done = src.flush_derived();
   EXPECT_EQ(done.written, 2u);
   EXPECT_EQ(done.failed, 0u) << done.last_error;
-  const DerivedAge d = derived_of(unknown_);
+  const DerivedValues d = derived_of(unknown_);
   const auto rows = cached(unknown_);
   ASSERT_EQ(rows.size(), 3u);
-  EXPECT_DOUBLE_EQ(*rows.at("age").value, d.age->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, dv(d, "age")->nominal());
   EXPECT_EQ(cached(air_).size(), 1u);  // an air: a null age
 
   // The same figure again on a fresh runner: one read, no write.
@@ -840,8 +846,8 @@ TEST_F(StoreSourceTest, AUnitWithOtherSettingsWritesNothing) {
 // Queued writes are done before the source closes: nothing is lost by
 // closing a window right after a figure was drawn.
 TEST_F(StoreSourceTest, ClosingTheSourceFinishesTheQueuedWrites) {
-  const DerivedAge unknown = derived_of(unknown_);
-  const DerivedAge air = derived_of(air_);
+  const DerivedValues unknown = derived_of(unknown_);
+  const DerivedValues air = derived_of(air_);
   for (int i = 0; i < 20; ++i) source().derived()->put({unknown, air});
   source_.reset();
   EXPECT_EQ(cached(unknown_).size(), 3u);
@@ -944,7 +950,7 @@ TEST_F(StoreSourceTest, TheBackfillFillsAnEmptyCache) {
   EXPECT_EQ(stats->failed, 0);
   const auto rows = cached(unknown_);
   ASSERT_EQ(rows.size(), 3u);
-  EXPECT_DOUBLE_EQ(*rows.at("age").value, derived_of(unknown_).age->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, dv(derived_of(unknown_), "age")->nominal());
   ASSERT_EQ(cached(air_).size(), 1u);
   EXPECT_FALSE(cached(air_).at("age").value);
 }
@@ -976,7 +982,7 @@ TEST_F(StoreSourceTest, AfterAFluxChangeTheBackfillWritesOnlyWhatItChanged) {
   EXPECT_EQ(stats->current, 1);  // the air
   const auto rows = cached(unknown_);
   ASSERT_EQ(rows.size(), 3u);
-  EXPECT_DOUBLE_EQ(*rows.at("age").value, derived_of(unknown_).age->nominal());
+  EXPECT_DOUBLE_EQ(*rows.at("age").value, dv(derived_of(unknown_), "age")->nominal());
 }
 
 TEST_F(StoreSourceTest, AllWritesWhatIsCurrentToo) {
@@ -1059,7 +1065,7 @@ class OneFailsToLoad final : public IDeriveSource {
     if (uuid == broken_) return fail(ErrorKind::Protocol, "a payload that does not parse", "store");
     return source_.load(uuid);
   }
-  Result<std::size_t> write(const std::vector<DerivedAge>& ages) override { return source_.write_derived_now(ages); }
+  Result<std::size_t> write(const std::vector<DerivedValues>& ages) override { return source_.write_derived_now(ages); }
   void drop_loaded(const std::vector<std::string>& analyses) override { source_.drop_loaded(analyses); }
 
  private:
@@ -1077,7 +1083,7 @@ class RefusesWrites final : public IDeriveSource {
     return source_.fingerprints(analyses);
   }
   Result<AnalysisPtr> load(const std::string& uuid) override { return source_.load(uuid); }
-  Result<std::size_t> write(const std::vector<DerivedAge>&) override {
+  Result<std::size_t> write(const std::vector<DerivedValues>&) override {
     ++writes;
     return fail(ErrorKind::Io, "disk full", "store");
   }

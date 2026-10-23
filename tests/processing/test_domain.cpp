@@ -1,0 +1,342 @@
+// The Domain interface over today's code (domain seam spec 4): the registry,
+// the Ar-Ar domain answering what the application hard-codes, and the core-only
+// noble-gas domain running the neutral units on data with no argon.
+
+#include "pychron/processing/domain.hpp"
+
+#include <gtest/gtest.h>
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <set>
+#include <sstream>
+
+#include "fixtures.hpp"
+#include "pychron/processing/derived.hpp"
+#include "pychron/processing/report.hpp"
+#include "pychron/processing/time_series.hpp"
+
+namespace pp = pychron::processing;
+using pp::test::make_air;
+using pp::test::make_step;
+using pp::test::make_unknown;
+
+namespace {
+
+const std::string kFingerprint(64, 'a');
+
+std::vector<std::string> kinds_of(const std::vector<pp::FigureEntry>& figures) {
+  std::vector<std::string> out;
+  out.reserve(figures.size());
+  for (const auto& f : figures) out.push_back(f.kind);
+  return out;
+}
+
+std::vector<std::string> names_of(const pp::DerivedValues& d) {
+  std::vector<std::string> out;
+  out.reserve(d.values.size());
+  for (const auto& v : d.values) out.push_back(v.name);
+  return out;
+}
+
+// A memory source with an age cache that records what it is given.
+struct SinkSource : pp::MemorySource, pp::IDerivedSink {
+  pp::IDerivedSink* derived() noexcept override { return this; }
+  void put(std::vector<pp::DerivedValues> values) override { puts.push_back(std::move(values)); }
+  std::vector<std::vector<pp::DerivedValues>> puts;
+};
+
+pp::Pipeline reduce_pipeline(const pp::Domain& domain) {
+  pp::Pipeline p;
+  const auto& reg = domain.units();
+  p.add(reg, "select", "select");
+  std::string previous = "select";
+  for (const auto& kind : domain.reduction_chain()) {
+    p.add(reg, kind, kind, {previous});
+    previous = kind;
+  }
+  return p;
+}
+
+// An analysis of the noble gases and no argon at all.
+std::shared_ptr<pp::Analysis> noble_analysis(int index, const std::string& type) {
+  auto a = std::make_shared<pp::Analysis>();
+  a->uuid = "noble-" + std::to_string(index);
+  a->identifier = "N1";
+  a->aliquot = index + 1;
+  a->runid = pp::make_runid(a->identifier, a->aliquot, -1);
+  a->analysis_type = type;
+  a->timestamp = 1'700'000'000.0 + 3600.0 * index;
+  a->mass_spectrometer = "noble";
+  double v = 1.0;
+  for (const char* name : {"He3", "He4", "Ne20", "Ne21", "Ne22"}) {
+    pp::IsotopeData d;
+    d.key = name;
+    d.isotope = name;
+    d.detector = "H1";
+    d.intercept = {v * (index + 1), 0.01};
+    d.baseline = {0.001, 0.0001};
+    d.blank = {0.0, 0.0};
+    d.n = 50;
+    a->isotopes.push_back(d);
+    v += 1.0;
+  }
+  return a;
+}
+
+}  // namespace
+
+TEST(Domain, RegistryFindsByIdAndListsIdsSorted) {
+  pp::DomainRegistry registry;
+  registry.add(pp::make_noble_gas_domain());
+  registry.add(pp::make_arar_domain());
+  ASSERT_NE(registry.find("arar"), nullptr);
+  EXPECT_EQ(registry.find("arar")->id(), "arar");
+  EXPECT_EQ(registry.find("noble_gas")->id(), "noble_gas");
+  EXPECT_EQ(registry.find("u_pb"), nullptr);
+  EXPECT_EQ(registry.ids(), (std::vector<std::string>{"arar", "noble_gas"}));
+
+  const pp::Domain* before = registry.find("arar");
+  registry.add(pp::make_arar_domain());  // the same id: replaced
+  EXPECT_EQ(registry.ids().size(), 2u);
+  EXPECT_NE(registry.find("arar"), nullptr);
+  (void)before;
+}
+
+TEST(Domain, ArArFiguresAreTodaysToolbarInOrder) {
+  const auto domain = pp::make_arar_domain();
+  const auto figures = domain->figures();
+  EXPECT_EQ(kinds_of(figures),
+            (std::vector<std::string>{"time_series", "ideogram", "spectrum", "inverse_isochron", "spectrum_isochron",
+                                      "isotope_evolution_fit", "blank_fit", "icfactor_fit"}));
+  std::map<std::string, pp::FigureEntry> by_kind;
+  for (const auto& f : figures) {
+    by_kind[f.kind] = f;
+    EXPECT_EQ(f.separator_before, f.kind == "isotope_evolution_fit") << f.kind;
+    EXPECT_FALSE(f.label.empty()) << f.kind;
+    EXPECT_FALSE(f.tip.empty()) << f.kind;
+  }
+  EXPECT_EQ(by_kind["ideogram"].group_key, "identifier");
+  EXPECT_EQ(by_kind["spectrum"].group_key, "aliquot");
+  EXPECT_EQ(by_kind["inverse_isochron"].group_key, "aliquot");
+  EXPECT_EQ(by_kind["spectrum_isochron"].group_key, "aliquot");
+  EXPECT_EQ(by_kind["time_series"].group_key, "none");
+  EXPECT_EQ(by_kind["blank_fit"].window, pp::FigureEntry::Window::ReferenceFit);
+  EXPECT_EQ(by_kind["icfactor_fit"].window, pp::FigureEntry::Window::ReferenceFit);
+  EXPECT_EQ(by_kind["isotope_evolution_fit"].window, pp::FigureEntry::Window::IsotopeEvolution);
+  EXPECT_EQ(by_kind["ideogram"].window, pp::FigureEntry::Window::Figure);
+}
+
+TEST(Domain, ArArAnswersWhatTheApplicationHardCodesToday) {
+  const auto domain = pp::make_arar_domain();
+  EXPECT_EQ(domain->reduction_chain(), std::vector<std::string>{"reduce"});
+  EXPECT_EQ(domain->default_quantity(), "age");
+  EXPECT_EQ(domain->reduction_version(), "arar-1");
+  const auto derived = domain->derived();
+  ASSERT_EQ(derived.size(), 3u);
+  EXPECT_EQ(derived[0].name, "age");
+  EXPECT_EQ(derived[0].label, "Age (Ma)");
+  EXPECT_EQ(derived[0].units, "Ma");
+  EXPECT_TRUE(derived[0].filterable);
+  EXPECT_EQ(derived[1].name, "age_w_j");
+  EXPECT_EQ(derived[2].name, "kca");
+  EXPECT_FALSE(derived[1].filterable);
+  EXPECT_FALSE(derived[2].filterable);
+  const auto quantities = domain->quantities();
+  for (const char* q : {"age", "kca", "kcl", "rad40", "decay_corrected", "interference_corrected"})
+    EXPECT_NE(std::find(quantities.begin(), quantities.end(), q), quantities.end()) << q;
+
+  // The recall window's rows are the model's, whatever the domain moves.
+  auto a = make_unknown(0);
+  const auto reduced = pp::reduce_analysis(a, pp::ReductionSettings{});
+  const auto model = pp::make_recall_model(*reduced);
+  const auto sections = domain->recall_sections(*reduced);
+  ASSERT_EQ(sections.size(), 2u);
+  EXPECT_EQ(sections[0].title, model.computed.title);
+  EXPECT_EQ(sections[0].rows.size(), model.computed.rows.size());
+  EXPECT_EQ(sections[1].rows.size(), model.ratios.rows.size());
+  EXPECT_EQ(domain->error_budget(*reduced).size(), model.error_budget.size());
+}
+
+TEST(Domain, NobleGasHasNoAgeNoExportNoRecallExtras) {
+  const auto domain = pp::make_noble_gas_domain();
+  EXPECT_EQ(kinds_of(domain->figures()),
+            (std::vector<std::string>{"time_series", "isotope_evolution_fit", "blank_fit", "icfactor_fit"}));
+  EXPECT_TRUE(domain->derived().empty());
+  EXPECT_TRUE(domain->exporters().empty());
+  EXPECT_TRUE(domain->quantities().empty());
+  auto a = make_unknown(0);
+  a->input_fingerprint = kFingerprint;
+  const auto reduced = pp::reduce_analysis(a, pp::ReductionSettings{});
+  EXPECT_FALSE(domain->derive(*reduced).has_value());
+  EXPECT_TRUE(domain->recall_sections(*reduced).empty());
+  EXPECT_TRUE(domain->error_budget(*reduced).empty());
+  EXPECT_EQ(domain->reduction_version(), "noble-1");
+}
+
+TEST(Domain, ArArDerivesTheSameRowsAsDerivedAge) {
+  const auto domain = pp::make_arar_domain();
+  auto a = make_unknown(0);
+  a->input_fingerprint = kFingerprint;
+  const auto reduced = pp::reduce_analysis(a, pp::ReductionSettings{});
+  const auto derived = domain->derive(*reduced);
+  const auto expected = pp::derived_age(*reduced, pp::ReductionSettings{});
+  ASSERT_TRUE(derived && expected);
+  EXPECT_EQ(derived->uuid, a->uuid);
+  EXPECT_EQ(derived->input_fingerprint, kFingerprint);
+  EXPECT_EQ(names_of(*derived), (std::vector<std::string>{"age", "age_w_j", "kca"}));
+  EXPECT_EQ(derived->values[0].units, "Ma");
+  EXPECT_EQ(derived->values[1].units, "Ma");
+  EXPECT_EQ(derived->values[2].units, "");
+  ASSERT_TRUE(derived->values[0].value && expected->values[0].value);
+  EXPECT_DOUBLE_EQ(derived->values[0].value->nominal(), expected->values[0].value->nominal());
+  EXPECT_DOUBLE_EQ(derived->values[0].value->nominal(), reduced->arar->ages->age.nominal());
+
+  // Nothing to cache without a fingerprint.
+  auto bare = make_unknown(1);
+  EXPECT_FALSE(domain->derive(*pp::reduce_analysis(bare, pp::ReductionSettings{})).has_value());
+}
+
+TEST(Domain, ArArMarkerRowIsValuelessWithoutAnAge) {
+  const auto domain = pp::make_arar_domain();
+  auto air = make_air(0);
+  air->input_fingerprint = kFingerprint;
+  const auto derived = domain->derive(*pp::reduce_analysis(air, pp::ReductionSettings{}));
+  ASSERT_TRUE(derived);
+  ASSERT_EQ(derived->values.size(), 1u);
+  EXPECT_EQ(derived->values[0].name, "age");
+  EXPECT_FALSE(derived->values[0].value.has_value());
+  EXPECT_EQ(derived->values[0].units, "Ma");
+}
+
+TEST(Domain, EveryFigureKindIsInTheDomainsRegistry) {
+  for (const auto& domain : {pp::make_noble_gas_domain(), pp::make_arar_domain()})
+    for (const auto& entry : domain->figures())
+      EXPECT_NE(domain->units().find(entry.kind), nullptr) << domain->id() << ": " << entry.kind;
+}
+
+TEST(Domain, NobleGasRunsEveryCoreUnitOnAnArgonFreeFixture) {
+  const auto domain = pp::make_noble_gas_domain();
+  SinkSource source;
+  auto first = noble_analysis(0, "unknown");
+  first->input_fingerprint = kFingerprint;
+  auto blank = noble_analysis(1, "blank_unknown");
+  blank->input_fingerprint = std::string(64, 'b');
+  source.add(first);
+  source.add(blank);
+
+  pp::Runner runner(domain->units(), &source, domain.get());
+  const auto& reg = domain->units();
+
+  // select -> reduce -> filter -> group -> edits -> group_stats
+  pp::Pipeline stats = reduce_pipeline(*domain);
+  stats.add(reg, "filter", "filter", {"reduce"});
+  stats.add(reg, "group", "group", {"filter"});
+  stats.add(reg, "edits", "edits", {"group"});
+  stats.add(reg, "stats", "group_stats", {"edits"});
+  ASSERT_TRUE(stats.find("stats")->options.set("quantity", domain->default_quantity()));
+  auto out = runner.run(stats, "stats");
+  ASSERT_TRUE(out) << out.error().what;
+  const auto& results = *std::get<pp::GroupResultsPtr>(out->at(0));
+  ASSERT_FALSE(results.rows.empty());
+  for (const auto& row : results.rows) {
+    EXPECT_EQ(row.n_included, 0u);
+    EXPECT_FALSE(row.error.empty());
+  }
+
+  // select -> reduce -> group -> graph -> edits -> time_series
+  pp::Pipeline series = reduce_pipeline(*domain);
+  series.add(reg, "group", "group", {"reduce"});
+  series.add(reg, "graph", "group", {"group"});
+  ASSERT_TRUE(series.find("graph")->options.set("level", std::string("graph")));
+  series.add(reg, "edits", "edits", {"graph"});
+  series.add(reg, "figure", "time_series", {"edits"});
+  std::vector<pp::Options> panels;
+  for (const char* isotope : {"He3", "He4", "Ne20", "Ne21", "Ne22"}) {
+    auto row = series.find("figure")->options.new_row("panels");
+    ASSERT_TRUE(row.set("quantity", std::string(isotope)));
+    panels.push_back(row);
+  }
+  ASSERT_TRUE(series.find("figure")->options.set_rows("panels", panels));
+  out = runner.run(series, "figure");
+  ASSERT_TRUE(out) << out.error().what;
+  const auto& scene = *std::get<pp::ScenePtr>(out->at(0));
+  ASSERT_EQ(scene.graphs.size(), 1u);
+  ASSERT_EQ(scene.graphs[0].panels.size(), 5u);
+  for (const auto& panel : scene.graphs[0].panels) {
+    std::size_t points = 0;
+    for (const auto& layer : panel.layers)
+      if (const auto* p = std::get_if<pp::PointLayer>(&layer)) points += p->y.size();
+    EXPECT_EQ(points, 2u) << panel.quantity;
+  }
+
+  EXPECT_TRUE(source.puts.empty());  // no domain value, so nothing for the cache
+}
+
+TEST(Domain, ReduceWritesThroughTheRunnersDomain) {
+  SinkSource source;
+  auto a = make_unknown(0);
+  a->input_fingerprint = kFingerprint;
+  source.add(a);
+
+  const auto arar = pp::make_arar_domain();
+  pp::Runner with_domain(arar->units(), &source, arar.get());
+  const auto pipeline = reduce_pipeline(*arar);
+  ASSERT_TRUE(with_domain.run(pipeline, "reduce"));
+  ASSERT_EQ(source.puts.size(), 1u);
+  ASSERT_EQ(source.puts[0].size(), 1u);
+  EXPECT_EQ(names_of(source.puts[0][0]), (std::vector<std::string>{"age", "age_w_j", "kca"}));
+
+  // Another reduction setting is no cached one, with a domain as without.
+  source.puts.clear();
+  pp::Pipeline other = reduce_pipeline(*arar);
+  ASSERT_TRUE(other.find("reduce")->options.set("include_decay_error", true));
+  ASSERT_TRUE(with_domain.run(other, "reduce"));
+  EXPECT_TRUE(source.puts.empty());
+
+  // Without a domain the Ar-Ar ages go to the cache as they always did.
+  pp::Runner without(pp::UnitRegistry::builtin(), &source);
+  ASSERT_TRUE(without.run(pipeline, "reduce"));
+  ASSERT_EQ(source.puts.size(), 1u);
+  EXPECT_EQ(names_of(source.puts[0][0]), (std::vector<std::string>{"age", "age_w_j", "kca"}));
+}
+
+TEST(Domain, ArArExporterWritesTheReportOfTheGroupingThatFits) {
+  const auto domain = pp::make_arar_domain();
+  const auto exporters = domain->exporters();
+  ASSERT_EQ(exporters.size(), 1u);
+  EXPECT_EQ(exporters[0].id, "schaen");
+  EXPECT_EQ(exporters[0].filters, "CSV report (*.csv);;JSON report (*.json)");
+  ASSERT_TRUE(exporters[0].write);
+
+  // The report the export pipeline of the data workspace writes: select,
+  // reduce, group by aliquot, then make_report.
+  pp::MemorySource source;
+  for (int i = 0; i < 4; ++i) source.add(make_step(i, 5.0 + i, 0.1));
+  pp::Runner runner(pp::UnitRegistry::builtin(), &source);
+  pp::Pipeline pipeline;
+  const auto& reg = pp::UnitRegistry::builtin();
+  pipeline.add(reg, "select", "select");
+  pipeline.add(reg, "reduce", "reduce", {"select"});
+  pipeline.add(reg, "by_aliquot", "group", {"reduce"});
+  ASSERT_TRUE(pipeline.find("by_aliquot")->options.set("key", std::string("aliquot")));
+  auto ran = runner.run(pipeline, "by_aliquot");
+  ASSERT_TRUE(ran) << ran.error().what;
+  const auto dataset = std::get<pp::DatasetPtr>(ran->at(0));
+  const std::string expected = pp::report_csv(pp::make_report(*dataset, pp::ReportOptions{}));
+
+  std::vector<pp::ReducedPtr> steps;
+  for (const auto& item : dataset->items()) steps.push_back(pp::reduce_analysis(item.analysis->analysis, pp::ReductionSettings{}));
+  const auto dir = std::filesystem::temp_directory_path() / "pychron_domain_export_test";
+  std::filesystem::create_directories(dir);
+  const auto path = dir / "report.csv";
+  const auto written = exporters[0].write(path, {steps});
+  ASSERT_TRUE(written) << written.error().what;
+  std::ifstream in(path);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_EQ(text, expected);
+  EXPECT_NE(text.find("arar-1/default/d0e0"), std::string::npos);
+  std::filesystem::remove_all(dir);
+}

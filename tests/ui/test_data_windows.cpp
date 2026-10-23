@@ -208,8 +208,8 @@ struct SinkSource : pp::MemorySource, pp::IDerivedSink {
     }
   }
   pp::IDerivedSink* derived() noexcept override { return this; }
-  void put(std::vector<pp::DerivedAge> ages) override { puts.push_back(std::move(ages)); }
-  std::vector<std::vector<pp::DerivedAge>> puts;
+  void put(std::vector<pp::DerivedValues> ages) override { puts.push_back(std::move(ages)); }
+  std::vector<std::vector<pp::DerivedValues>> puts;
 };
 
 // Eight concordant heating steps (Ar40 = 10 Ar39 + 298.56 Ar36) with a J.

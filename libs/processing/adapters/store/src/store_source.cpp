@@ -579,7 +579,7 @@ struct StoreSource::Impl {
   std::size_t derived_pending = 0;
   DerivedFlush derived_done;
 
-  void write_derived(ps::IStore& s, const std::vector<DerivedAge>& ages);
+  void write_derived(ps::IStore& s, const std::vector<DerivedValues>& ages);
 
   // Who saves edits; registered on the first save.
   std::string user, hostname;
@@ -664,20 +664,26 @@ std::optional<Sha256Digest> digest_from_hex(std::string_view hex) {
   return out;
 }
 
-// The rows of spec 4.1. No age: one `age` row without value, which says
-// "current, and there is no age".
-std::vector<ps::DerivedRow> derived_rows(const DerivedAge& d) {
-  const std::string ma = "Ma";
-  if (!d.age) return {{"age", std::nullopt, std::nullopt, ma}};
-  std::vector<ps::DerivedRow> rows{{"age", d.age->nominal(), d.age->std_dev(), ma}};
-  if (d.age_w_j) rows.push_back({"age_w_j", d.age_w_j->nominal(), d.age_w_j->std_dev(), ma});
-  if (d.kca) rows.push_back({"kca", d.kca->nominal(), d.kca->std_dev(), std::nullopt});
+// The rows of spec 4.1: one a value, valueless when the domain has none for
+// it (the Ar-Ar `age` of an analysis that reduces to no age says "current, and
+// there is no age").
+std::vector<ps::DerivedRow> derived_rows(const DerivedValues& d) {
+  std::vector<ps::DerivedRow> rows;
+  rows.reserve(d.values.size());
+  for (const auto& v : d.values) {
+    std::optional<std::string> units;
+    if (!v.units.empty()) units = v.units;
+    if (v.value)
+      rows.push_back({v.name, v.value->nominal(), v.value->std_dev(), std::move(units)});
+    else
+      rows.push_back({v.name, std::nullopt, std::nullopt, std::move(units)});
+  }
   return rows;
 }
 
 }  // namespace
 
-void StoreSource::Impl::write_derived(ps::IStore& s, const std::vector<DerivedAge>& ages) {
+void StoreSource::Impl::write_derived(ps::IStore& s, const std::vector<DerivedValues>& ages) {
   DerivedFlush done;
   // One put an analysis: the last of a batch that names one twice.
   std::map<ps::Uuid, ps::DerivedPut> wanted;
@@ -731,7 +737,7 @@ void StoreSource::Impl::write_derived(ps::IStore& s, const std::vector<DerivedAg
   derived_cv.notify_all();
 }
 
-void StoreSource::put(std::vector<DerivedAge> ages) {
+void StoreSource::put(std::vector<DerivedValues> ages) {
   if (ages.empty()) return;
   Impl* impl = impl_.get();
   {
@@ -780,7 +786,7 @@ Result<std::map<std::string, StoreSource::Fingerprints>> StoreSource::fingerprin
       });
 }
 
-Result<std::size_t> StoreSource::write_derived_now(const std::vector<DerivedAge>& ages) {
+Result<std::size_t> StoreSource::write_derived_now(const std::vector<DerivedValues>& ages) {
   std::map<ps::Uuid, ps::DerivedPut> wanted;
   for (const auto& d : ages) {
     const auto id = parse_uuid(d.uuid);

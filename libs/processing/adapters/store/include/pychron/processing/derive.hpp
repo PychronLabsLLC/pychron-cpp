@@ -41,7 +41,7 @@ class IDeriveSource {
   virtual Result<std::map<std::string, StoreSource::Fingerprints>> fingerprints(
       const std::vector<std::string>& analyses) = 0;
   virtual Result<AnalysisPtr> load(const std::string& uuid) = 0;
-  virtual Result<std::size_t> write(const std::vector<DerivedAge>& ages) = 0;
+  virtual Result<std::size_t> write(const std::vector<DerivedValues>& ages) = 0;
   virtual void drop_loaded(const std::vector<std::string>& analyses) = 0;
 };
 

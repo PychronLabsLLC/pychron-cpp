@@ -38,6 +38,8 @@ struct PortSpec {
   PortType type = PortType::Dataset;
 };
 
+class Domain;  // domain.hpp
+
 struct RunContext {
   IAnalysisSource* source = nullptr;
   const std::atomic<bool>* cancel = nullptr;
@@ -46,6 +48,9 @@ struct RunContext {
   // a simulated session's clock. Without it a unit that draws against "now"
   // reads the system clock.
   std::optional<double> now;
+  // The domain the run reduces for, when the caller names one: what the cache
+  // of derived values holds is its to say. Null: the Ar-Ar values, as before.
+  const Domain* domain = nullptr;
   bool cancelled() const noexcept { return cancel && cancel->load(); }
 };
 
@@ -121,7 +126,10 @@ struct NodeRun {
 // and may be read from any thread.
 class Runner {
  public:
-  Runner(const UnitRegistry& registry, IAnalysisSource* source) : registry_(registry), source_(source) {}
+  // `domain` (not owned, outliving the runner) is handed to every unit as
+  // RunContext::domain.
+  Runner(const UnitRegistry& registry, IAnalysisSource* source, const Domain* domain = nullptr)
+      : registry_(registry), source_(source), domain_(domain) {}
 
   // Evaluates `target` and what it depends on. A failing node's error is
   // returned for every node depending on it. `now` is the time the run is
@@ -144,6 +152,7 @@ class Runner {
 
   const UnitRegistry& registry_;
   IAnalysisSource* source_;
+  const Domain* domain_;
   std::map<std::string, Entry> cache_;
   std::vector<NodeRun> last_;
   std::vector<std::string> diagnostics_;

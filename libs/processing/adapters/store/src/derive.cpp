@@ -19,7 +19,7 @@ class StoreDeriveSource final : public IDeriveSource {
     return source_.fingerprints(analyses);
   }
   Result<AnalysisPtr> load(const std::string& uuid) override { return source_.load(uuid); }
-  Result<std::size_t> write(const std::vector<DerivedAge>& ages) override { return source_.write_derived_now(ages); }
+  Result<std::size_t> write(const std::vector<DerivedValues>& ages) override { return source_.write_derived_now(ages); }
   void drop_loaded(const std::vector<std::string>& analyses) override { source_.drop_loaded(analyses); }
 
  private:
@@ -54,7 +54,7 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const DeriveOptions& opti
     auto prints = source.fingerprints(uuids);
     if (!prints) return fail(prints.error());
 
-    std::vector<DerivedAge> ages;
+    std::vector<DerivedValues> ages;
     int without_age = 0;
     for (const auto& row : page->rows) {
       ++stats.seen;
@@ -80,7 +80,7 @@ Result<DeriveStats> derive_ages(IDeriveSource& source, const DeriveOptions& opti
         stats.failures.push_back(run_id(row) + ": no input fingerprint");
         continue;
       }
-      if (!age->age) ++without_age;
+      if (const auto* marker = age->values.empty() ? nullptr : &age->values.front(); !marker || !marker->value) ++without_age;
       ages.push_back(std::move(*age));
     }
     if (!ages.empty()) {

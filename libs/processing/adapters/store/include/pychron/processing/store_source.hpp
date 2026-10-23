@@ -71,7 +71,7 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource, public
   // for an analysis that has none. A batch the store refuses is dropped: it
   // is a cache, and the next reduction or the backfill fills it. What is
   // queued when the source closes is written first.
-  void put(std::vector<DerivedAge> ages) override;
+  void put(std::vector<DerivedValues> ages) override;
   // Returns when every write queued so far is done, with what became of
   // them since the last flush. For tests and for elctl.
   DerivedFlush flush_derived();
@@ -88,7 +88,7 @@ class StoreSource final : public IAnalysisSource, public IRevisionSource, public
   // Writes the ages now, in one transaction, whatever is cached (the
   // backfill's --all); how many were written. A malformed id or fingerprint
   // is a Config error and nothing is written.
-  Result<std::size_t> write_derived_now(const std::vector<DerivedAge>& ages);
+  Result<std::size_t> write_derived_now(const std::vector<DerivedValues>& ages);
   // Forgets loaded analyses without moving the generation: a walk over a
   // whole store holds no more than a page of them.
   void drop_loaded(const std::vector<std::string>& analyses);

@@ -8,6 +8,7 @@
 
 #include "pychron/processing/arar_figures.hpp"
 #include "pychron/processing/derived.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/isotope_evolution_fit.hpp"
 #include "pychron/processing/quantity.hpp"
 #include "pychron/processing/reference_fit.hpp"
@@ -161,11 +162,17 @@ class ReduceUnit final : public Unit {
     // cache, when it has one (age cache spec 4.5); the sink drops the current.
     // The analyses here carry their stored fits: one with unsaved fit edits
     // keeps the stored input fingerprint and must never reach this unit.
+    // With a domain the cache is the domain's to derive; a run without one
+    // writes the Ar-Ar ages as it always has. A reduction made under other than
+    // the default settings is no cached one (derived_age, likewise).
     if (IDerivedSink* sink = ctx.source ? ctx.source->derived() : nullptr) {
-      std::vector<DerivedAge> ages;
-      for (const auto& item : d.items())
-        if (auto age = derived_age(*item.analysis, s)) ages.push_back(std::move(*age));
-      if (!ages.empty()) sink->put(std::move(ages));
+      std::vector<DerivedValues> values;
+      for (const auto& item : d.items()) {
+        auto derived = ctx.domain ? (s == ReductionSettings{} ? ctx.domain->derive(*item.analysis) : std::nullopt)
+                                  : derived_age(*item.analysis, s);
+        if (derived) values.push_back(std::move(*derived));
+      }
+      if (!values.empty()) sink->put(std::move(values));
     }
     d.reduction_tag = std::string(reduction::kReductionVersion) + "/" + c + "/" + (s.include_decay_error ? "d1" : "d0") +
                       (s.use_irradiation_endtime ? "e1" : "e0");

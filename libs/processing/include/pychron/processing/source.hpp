@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -83,21 +84,38 @@ std::string facet_value(const AnalysisSummary& s, Facet f);
 
 class IRevisionSource;  // revisions.hpp
 
-// What one reduction of one analysis gives the cache of ages (age cache spec
-// 4.1, 4.4). Ages are in Ma whatever units a lab displays in. `age` absent:
-// the analysis reduces to no age (a blank, an air, an unknown without flux),
-// which is cached as such.
-struct DerivedAge {
-  std::string uuid, input_fingerprint;
-  std::optional<reduction::UFloat> age, age_w_j, kca;
+// One value a domain derives from a reduction and the cache keeps: a name
+// ("age"), the value with its error, and the units of both (empty: none).
+// `value` absent: the analysis has none, which is cached as such.
+struct DerivedValue {
+  std::string name;
+  std::optional<reduction::UFloat> value;
+  std::string units;
 };
+
+// What one reduction of one analysis gives the cache of derived values (age
+// cache spec 4.1, 4.4): one value per name the domain derives. The first is
+// the marker row, written for every derived analysis, valueless when there is
+// no value (the Ar-Ar domain: `age`, "the analysis reduces to no age: a
+// blank, an air, an unknown without flux").
+struct DerivedValues {
+  std::string uuid, input_fingerprint;
+  std::vector<DerivedValue> values;
+};
+
+// The value called `name`, or null.
+[[nodiscard]] inline const DerivedValue* find_derived(const DerivedValues& d, std::string_view name) noexcept {
+  for (const auto& v : d.values)
+    if (v.name == name) return &v;
+  return nullptr;
+}
 
 class IDerivedSink {
  public:
   virtual ~IDerivedSink() = default;
-  // Queues the ages and returns at once: no caller waits on a cache. A write
+  // Queues the values and returns at once: no caller waits on a cache. A write
   // that fails is the sink's to report; the next reduction fills it.
-  virtual void put(std::vector<DerivedAge> ages) = 0;
+  virtual void put(std::vector<DerivedValues> values) = 0;
 };
 
 class IAnalysisSource {
