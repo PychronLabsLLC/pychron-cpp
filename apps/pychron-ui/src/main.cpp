@@ -329,7 +329,7 @@ int run_data_reduction(const setup::SiteInstall& install, const pychron::process
 // laser PC. The line is loaded as usual (its drivers are the laser's), with
 // no spectrometer and no experiment session: nothing here runs a queue.
 int run_laser(pychron::systems::ExtractionLine& line, const pychron::ui::CommandLine& cli, const fs::path& lab_dir,
-              const fs::path& system_file, pychron::ui::SplashScreen& splash) {
+              const fs::path& lab_state, const fs::path& system_file, pychron::ui::SplashScreen& splash) {
   namespace lab = pychron::experiment::lab;
   splash.status(QStringLiteral("Starting the extraction line"));
   if (const auto started = line.start(); !started) {
@@ -337,7 +337,7 @@ int run_laser(pychron::systems::ExtractionLine& line, const pychron::ui::Command
     return fatal("the extraction line did not start: " + pychron::to_string(started.error()));
   }
   splash.status(QStringLiteral("Loading the lab: %1").arg(QString::fromStdString(lab_dir.string())));
-  lab::Lab the_lab = lab::load_lab({lab_dir, system_file, fs::path()});
+  lab::Lab the_lab = lab::load_lab({lab_dir, system_file, fs::path(), lab_state});
   for (const auto& problem : the_lab.problems) std::fprintf(stderr, "pychron-ui: lab: %s\n", problem.c_str());
   lab::Lasers lasers(the_lab, line);
   for (const auto& problem : lasers.problems()) std::fprintf(stderr, "pychron-ui: laser: %s\n", problem.c_str());
@@ -534,6 +534,20 @@ int main(int argc, char** argv) {
   const pychron::LinkPolicy link_defaults =
       executor_config ? executor_config->link_defaults() : pychron::LinkPolicy{};
   options.link_defaults = link_defaults;
+  // What running writes (the line's state, holes found, camera scales,
+  // snapshots, the default data folder) is kept beside the lab, except for
+  // the shipped examples, which are never written to (setup::lab_state_dir).
+  const fs::path user_examples = pychron::default_examples_state_dir(pychron::host_os(), pychron::process_env());
+  const fs::path line_folder = system_file.parent_path().empty() ? fs::path(".") : system_file.parent_path();
+  const fs::path line_state = setup::lab_state_dir(line_folder, examples, user_examples);
+  const fs::path lab_folder = lab_dir.empty() ? fs::path(".") : lab_dir;
+  const fs::path lab_state = setup::lab_state_dir(lab_folder, examples, user_examples);
+  options.state_file = line_state / fs::path(system_file.filename()).replace_extension(".state.toml");
+  if (lab_state != lab_folder) {
+    pychron::process_logger("pychron").info("examples: runtime state in " + lab_state.string());
+  } else if (line_state != line_folder) {
+    pychron::process_logger("pychron").info("examples: runtime state in " + line_state.string());
+  }
 
   splash.status(QStringLiteral("Loading the extraction line: %1").arg(QString::fromStdString(system_file.filename().string())));
   auto line = pychron::systems::ExtractionLine::load(system_file, canvas_file, options);
@@ -562,20 +576,27 @@ int main(int argc, char** argv) {
   bool simulation = false;
   // The experiment session is built once the line has started (below).
   if (cli->laser) {
-    const int laser_rc = run_laser(**line, *cli, lab_dir, system_file, splash);
+    const int laser_rc = run_laser(**line, *cli, lab_dir, lab_state, system_file, splash);
     (*line)->stop();
     return laser_rc;
   }
 
   const fs::path spectrometer_config =
       spectrometer_file ? *spectrometer_file : sim ? examples / "spectrometer.sim-integrated.toml" : fs::path();
+  // Where its field tables are read and saved: beside it, except for the
+  // shipped examples' (setup::field_table_root).
+  const pychron::Result<fs::path> table_root =
+      spectrometer_config.empty() ? pychron::Result<fs::path>(fs::path())
+                                  : setup::field_table_root(spectrometer_config.parent_path(), examples, user_examples);
+  const fs::path spectrometer_tables = table_root ? *table_root : fs::path();
   if (!spectrometer_config.empty()) {
     const fs::path& file = spectrometer_config;
     splash.status(QStringLiteral("Bringing up the spectrometer: %1").arg(QString::fromStdString(file.filename().string())));
     // Written only when a simulated beam was fed from a simulated line.
     auto fed = pychron::spectrometer::BeamFeed::LineGas;
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
-      auto data = pychron::spectrometer::cfg::load_spectrometer(file);
+      if (!table_root) return pychron::fail(table_root.error());
+      auto data = pychron::spectrometer::cfg::load_spectrometer(file, spectrometer_tables);
       if (!data) return pychron::fail(data.error());
       simulation = pychron::spectrometer::is_simulated(*data);
       return pychron::spectrometer::load_spectrometer_for_app(
@@ -628,7 +649,7 @@ int main(int argc, char** argv) {
   // Data browsing: the records the experiment writes, and figure presets.
   const fs::path data_dir = cli->data            ? *cli->data
                             : install && !install->data.empty() ? install->path(install->data)
-                                                                : lab_dir / "data";
+                                                                : lab_state / "data";
   pychron::processing::RecordDirectorySource records(data_dir / "records");
   std::unique_ptr<pychron::processing::IAnalysisSource> store_source;
 #ifdef PYCHRON_UI_HAS_STORE
@@ -847,7 +868,7 @@ int main(int argc, char** argv) {
     if (started) {
       splash.status(QStringLiteral("Loading the lab: %1").arg(QString::fromStdString(lab_dir.string())));
       lab = std::make_unique<pychron::experiment::lab::Lab>(pychron::experiment::lab::load_lab(
-          {lab_dir, system_file, spectrometer ? spectrometer_config : fs::path()}));
+          {lab_dir, system_file, spectrometer ? spectrometer_config : fs::path(), lab_state, spectrometer_tables}));
       for (const auto& problem : lab->problems) {
         window.log_dock()->append_line(QStringLiteral("WARN [ui] lab: ") + QString::fromStdString(problem));
       }
