@@ -92,6 +92,79 @@ TEST_F(ProcessLog, InstallWritesToRootLogs) {
   EXPECT_FALSE(fs::exists(path("home")));
 }
 
+// The config notes are on logger `logging` (spec 1.1), as the lock notice is.
+TEST_F(ProcessLog, ConfigNotesAreOnLoggerLogging) {
+  const auto root = make_install();  // its extraction_line.toml is not there: a warn note says so
+  std::ostringstream err;
+  {
+    auto hub = open_process_log({"--install", "lab", "version"}, clock_, pychron::HostOs::Mac, home_env(), err);
+    ASSERT_NE(hub, nullptr) << err.str();
+  }
+  const std::string text = slurp(root / "logs" / "elctl.log");
+  EXPECT_TRUE(contains(text, "] logging: the [logging] table of")) << text;
+}
+
+// A logging.toml that does not load leaves the built-in defaults in force, in
+// the install's folder, and the first error in the file says why.
+TEST_F(ProcessLog, BadLoggingTomlFallsBackToDefaults) {
+  const auto root = make_install();
+  write("lab/logging.toml", "colour = 1\n");
+  std::ostringstream err;
+  {
+    auto hub = open_process_log({"--install", "lab", "version"}, clock_, pychron::HostOs::Mac, home_env(), err);
+    ASSERT_NE(hub, nullptr) << err.str();
+    EXPECT_EQ(hub->file_path(), root / "logs" / "elctl.log");
+  }
+  EXPECT_TRUE(contains(err.str(), "colour")) << err.str();
+  const std::string text = slurp(root / "logs" / "elctl.log");
+  const auto error_at = text.find("[error]");
+  ASSERT_NE(error_at, std::string::npos) << text;
+  const std::string first_error = text.substr(error_at, text.find('\n', error_at) - error_at);
+  EXPECT_TRUE(contains(first_error, "] logging: ")) << first_error;
+  EXPECT_TRUE(contains(first_error, "logging.toml")) << first_error;
+  EXPECT_TRUE(contains(first_error, "colour")) << first_error;
+  EXPECT_TRUE(contains(text, "default_level=debug")) << text;
+}
+
+TEST_F(ProcessLog, BadLoggingLocalTomlFallsBackToDefaults) {
+  const auto root = make_install();
+  write("lab/logging.toml", "default_level = \"warn\"\n");
+  write("lab/logging.local.toml", "default_level = 3\n");
+  std::ostringstream err;
+  {
+    auto hub = open_process_log({"--install", "lab", "version"}, clock_, pychron::HostOs::Mac, home_env(), err);
+    ASSERT_NE(hub, nullptr) << err.str();
+  }
+  const std::string text = slurp(root / "logs" / "elctl.log");
+  EXPECT_TRUE(contains(text, "logging.local.toml")) << text;
+  EXPECT_TRUE(contains(text, "default_level=debug")) << text;  // the defaults, not logging.toml's warn
+}
+
+// No HOME: nowhere for the OS folder. Said once, and the command goes on.
+TEST_F(ProcessLog, NoHomeSaysThereIsNoLogFolder) {
+  const pychron::EnvLookup none = [](std::string_view) -> std::optional<std::string> { return std::nullopt; };
+  std::ostringstream err;
+  auto hub = open_process_log({"version"}, clock_, pychron::HostOs::Linux, none, err);
+  ASSERT_NE(hub, nullptr) << err.str();
+  EXPECT_TRUE(hub->file_path().empty());
+  EXPECT_TRUE(contains(err.str(), "no log folder: HOME is not set")) << err.str();
+
+  std::ostringstream werr;
+  auto whub = open_process_log({"version"}, clock_, pychron::HostOs::Windows, none, werr);
+  ASSERT_NE(whub, nullptr) << werr.str();
+  EXPECT_TRUE(contains(werr.str(), "no log folder: LOCALAPPDATA is not set")) << werr.str();
+}
+
+// "No log file" asked for is not a missing folder.
+TEST_F(ProcessLog, NoFileAskedForSaysNothing) {
+  make_install();
+  write("lab/logging.toml", "dir = \"\"\n");
+  std::ostringstream err;
+  auto hub = open_process_log({"--install", "lab", "version"}, clock_, pychron::HostOs::Mac, home_env(), err);
+  ASSERT_NE(hub, nullptr) << err.str();
+  EXPECT_FALSE(contains(err.str(), "no log folder")) << err.str();
+}
+
 TEST_F(ProcessLog, UnwritableInstallLogsDegrades) {
   make_install();
   write("lab/logs", "a file, not a folder");

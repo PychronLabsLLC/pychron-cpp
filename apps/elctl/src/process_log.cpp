@@ -63,14 +63,24 @@ std::shared_ptr<pychron::LogHub> open_process_log(const std::vector<std::string>
     root = std::move(install->root);
   }
 
+  // A config that does not load leaves the built-in defaults (and the default
+  // folder) in force: the log is where it is looked for, and says why.
   auto sources = pychron::config::load_logging_config(root, line_config);
+  std::string config_error;
   if (!sources) {
-    err << "elctl: logging disabled: " << sources.error().what << '\n';
-    return nullptr;
+    config_error = sources.error().what + "; logging runs on the built-in defaults";
+    err << "elctl: " << config_error << '\n';
+    sources = pychron::config::LoggingSources{};
   }
   pychron::config::LoggingConfig cfg = std::move(sources->config);
   cfg.file_name = "elctl.log";
+  const bool dir_unset = !cfg.dir.has_value();
   pychron::resolve_log_dir(cfg, root, os, env);
+  std::string no_folder;
+  if (dir_unset && cfg.dir->empty()) {
+    no_folder = std::string("no log folder: ") + pychron::log_dir_env_name(os) + " is not set";
+    if (!cfg.echo_stderr) err << "elctl: " << no_folder << '\n';
+  }
 
   std::shared_ptr<pychron::LogHub> hub;
   {
@@ -83,7 +93,9 @@ std::shared_ptr<pychron::LogHub> open_process_log(const std::vector<std::string>
     hub = std::move(*created);
   }
 
-  const auto notes = hub->logger("pychron");
+  const auto notes = hub->logger("logging");
+  if (!config_error.empty()) notes.error(config_error);
+  if (!no_folder.empty()) notes.warn(no_folder);
   for (const auto& [level, text] : sources->notes) notes.log(level, text);
 
   pychron::SessionInfo info;
