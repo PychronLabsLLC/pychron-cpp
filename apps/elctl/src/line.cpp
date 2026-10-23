@@ -81,6 +81,9 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
   } else {
     std::fprintf(stderr, "elctl: logging disabled: %s\n", hub.error().what.c_str());
   }
+  line->core_events_.emplace(line->bus_);
+  line->systems_events_.emplace(line->bus_);
+  line->experiment_events_.emplace(line->bus_);
 
   if (options.trace.enabled()) {
     std::error_code ec;

@@ -22,11 +22,14 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/event_recorder.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/device.hpp"
 #include "pychron/devices/heater.hpp"
+#include "pychron/experiment/event_log.hpp"
+#include "pychron/systems/event_log.hpp"
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/switch_manager.hpp"
 #include "pychron/transport/transport.hpp"
@@ -92,6 +95,11 @@ class Line {
   std::shared_ptr<pychron::LogHub> log_hub_;
   // The process hub's bus attachment: declared after bus_, so it goes first.
   std::optional<pychron::LogHub::BusAttachment> bus_attachment_;
+  // The bus's events to the process log (spec 2.1): made once the process hub
+  // is known, declared after bus_ so they go before it.
+  std::optional<pychron::EventRecorder> core_events_;
+  std::optional<pychron::systems::SystemsEventRecorder> systems_events_;
+  std::optional<pychron::experiment::ExperimentEventRecorder> experiment_events_;
   std::unique_ptr<Sims> sims_;
   std::vector<std::pair<std::string, std::unique_ptr<pychron::Transport>>> transports_;
   std::vector<std::pair<std::string, std::unique_ptr<pychron::Device>>> devices_;

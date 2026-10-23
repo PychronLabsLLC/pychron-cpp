@@ -94,10 +94,12 @@
 #include "setup_wizard.hpp"
 #include "pychron/core/log_dir.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/core/event_recorder.hpp"
 #include "pychron/core/process_log.hpp"
 #include "process_log.hpp"
 #include "qt_log_handler.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "pychron/experiment/event_log.hpp"
 #include "pychron/experiment/lab/executor_config.hpp"
 #include "pychron/experiment/lab/lasers.hpp"
 #include "pychron/experiment/lab/session.hpp"
@@ -119,6 +121,7 @@
 #include "store_identifier_source.hpp"
 #endif
 #include "pychron/sim/spectrometer/beam_model.hpp"
+#include "pychron/systems/event_log.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
@@ -525,6 +528,12 @@ int main(int argc, char** argv) {
     splash.close();  // it would sit over the message box
     return fatal(what);
   }
+  // The line's bus carries the spectrometer's and the session's events too:
+  // one recorder of each kind, declared after the line so they go before its
+  // bus (the line is destroyed on return).
+  const pychron::EventRecorder core_events((*line)->bus());
+  const pychron::systems::SystemsEventRecorder systems_events((*line)->bus());
+  const pychron::experiment::ExperimentEventRecorder experiment_events((*line)->bus());
 
   // The spectrometer shares the line's clock, scheduler and bus. None of these
   // is left to declaration order: the teardown after the event loop resets

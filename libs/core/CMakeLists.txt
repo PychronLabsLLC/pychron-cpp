@@ -25,6 +25,7 @@ add_library(pychron_core
   src/config/logging_file.cpp
   src/log_dir.cpp
   src/process_log.cpp
+  src/event_recorder.cpp
   src/config/local_file.cpp
   src/config/validate.cpp
 )

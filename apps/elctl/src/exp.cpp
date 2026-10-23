@@ -17,9 +17,11 @@
 
 #include "exp_store.hpp"
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/event_recorder.hpp"
 #include "pychron/core/process.hpp"
 #include "pychron/core/process_log.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "pychron/experiment/event_log.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/lab/lab.hpp"
 #include "pychron/experiment/lab/session.hpp"
@@ -30,6 +32,7 @@
 #include "pychron/experiment/model/queue_validation.hpp"
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
+#include "pychron/systems/event_log.hpp"
 #include "pychron/systems/extraction_line.hpp"
 #include "pychron/systems/spectrometer/assembler.hpp"
 #include "pychron/systems/spectrometer/bringup.hpp"
@@ -342,6 +345,11 @@ class Exp {
       complain("error: " + line.error().what);
       return kFailed;
     }
+    // The line's bus carries the spectrometer's and the session's events too:
+    // one recorder of each kind, after the line so they go before its bus.
+    const EventRecorder core_events((*line)->bus());
+    const systems::SystemsEventRecorder systems_events((*line)->bus());
+    const ExperimentEventRecorder experiment_events((*line)->bus());
     const Clock& clock = (*line)->clock();
     // A spectrometer is simulated when --sim says so or when its own file
     // is (every transport and driver a simulator's), as the line is when its

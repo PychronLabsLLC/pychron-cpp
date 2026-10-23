@@ -24,6 +24,9 @@
 #include "pychron/vision/finder.hpp"
 #include "pychron/laser/tray_map.hpp"
 #include "pychron/sim/sim_system.hpp"
+#include "pychron/core/event_recorder.hpp"
+#include "pychron/experiment/event_log.hpp"
+#include "pychron/systems/event_log.hpp"
 #include "pychron/systems/extraction_line.hpp"
 
 namespace elctl {
@@ -743,6 +746,9 @@ class Laser {
     auto line = systems::ExtractionLine::load(g_.config, std::nullopt, options);
     if (!line) return fail(line.error());
     line_ = std::move(*line);
+    core_events_.emplace(line_->bus());
+    systems_events_.emplace(line_->bus());
+    experiment_events_.emplace(line_->bus());
     if (auto r = line_->start(); !r) return fail(r.error());
     auto* device = dynamic_cast<extraction::IExtractionDevice*>(line_->device(device_));
     if (device == nullptr) return fail(ErrorKind::Config, device_ + " is not an extraction device");
@@ -759,6 +765,10 @@ class Laser {
   std::optional<laser::CameraConfig> described_;  // camera(), once asked
   const laser::TrayMap* map_ = nullptr;
   std::unique_ptr<systems::ExtractionLine> line_;
+  // Its bus's events to the process log; after line_, so they go before it.
+  std::optional<EventRecorder> core_events_;
+  std::optional<systems::SystemsEventRecorder> systems_events_;
+  std::optional<experiment::ExperimentEventRecorder> experiment_events_;
 };
 
 }  // namespace
