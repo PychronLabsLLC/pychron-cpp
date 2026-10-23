@@ -62,8 +62,9 @@ TEST_F(ExperimentEventLogTest, ExecutorStateChanged) {
 }
 
 TEST_F(ExperimentEventLogTest, RunStarted) {
-  bus.publish(executor::RunStarted{2, "12345-01A", "12345", {}});
-  EXPECT_EQ(log.trace_lines(), (Lines{"[debug] trace.RunStarted: row=2, run_id=12345-01A, identifier=12345"}));
+  bus.publish(executor::RunStarted{2, "6f1c2b9e-uuid", "12345", "12345-01A", {}});
+  EXPECT_EQ(log.trace_lines(),
+            (Lines{"[debug] trace.RunStarted: row=2, run=12345-01A, run_id=6f1c2b9e-uuid, identifier=12345"}));
 }
 
 TEST_F(ExperimentEventLogTest, RunFinishedIsInfoWhenTheRunFailed) {

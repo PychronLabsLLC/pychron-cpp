@@ -20,6 +20,7 @@
 #include "pychron/core/log_context.hpp"
 #include "pychron/core/log_error.hpp"
 #include "pychron/devices/link.hpp"
+#include "pychron/experiment/factory/increments.hpp"
 #include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/measurement/results.hpp"
 #include "pychron/experiment/record/builder.hpp"
@@ -121,6 +122,7 @@ Run::Run(RunSpec spec, const QueueSpec& queue, RunServices services, RunHooks ho
       sm_(run_id_, s_.clock ? *s_.clock : default_clock(), s_.bus) {
   if (s_.clock == nullptr) s_.clock = &default_clock();
   result_.uuid = run_id_;
+  name_ = spec_.id.identifier;
 }
 
 RunResult Run::execute(RunControl& control) {
@@ -225,6 +227,24 @@ Result<scripting::Script> Run::resolve(const std::string& name, scripting::Scrip
   return s_.resolver->resolve(name, kind);
 }
 
+void Run::assign_aliquot() {
+  assigned_ = true;
+  assign_error_.reset();
+  if (s_.aliquots != nullptr) {
+    auto a = s_.aliquots->allocate(spec_.id);
+    if (!a) {
+      assign_error_ = a.error();
+      return;
+    }
+    result_.aliquot = a->aliquot;
+    result_.step = a->step;
+  } else {
+    result_.aliquot = spec_.id.aliquot.value_or(1);
+    result_.step = spec_.id.step;
+  }
+  name_ = format_runid(spec_.id.identifier, result_.aliquot, result_.step);
+}
+
 Result<void> Run::prepare() {
   timestamp_ = s_.timestamp ? s_.timestamp() : utc(s_.clock->wall_now());
   // This run's extraction device: the one set directly, else the lab's by
@@ -244,15 +264,11 @@ Result<void> Run::prepare() {
       if (!r && !queue_.tray.empty()) return fail(r.error());
     }
   }
-  if (s_.aliquots != nullptr) {
-    auto a = s_.aliquots->allocate(spec_.id);
-    if (!a) return fail(a.error());
-    result_.aliquot = a->aliquot;
-    result_.step = a->step;
-  } else {
-    result_.aliquot = spec_.id.aliquot.value_or(1);
-    result_.step = spec_.id.step;
-  }
+  // Given before the run began (the executor), or now. Used once: a run
+  // executed again is given its aliquot again.
+  if (!assigned_) assign_aliquot();
+  assigned_ = false;
+  if (assign_error_) return fail(*assign_error_);
 
   if (!spec_.measurement.plan.empty()) {
     if (s_.plans == nullptr) return fail(ErrorKind::Config, "no plan library for '" + spec_.measurement.plan + "'");
@@ -565,7 +581,7 @@ void Run::build_engine(RunControl& control) {
       post_eq_thread_ = std::thread([&control, this, hold]() mutable {
         Clock::Participant participant(*s_.clock, "run.post_eq");
         const LogContext::Thread log_thread("run.post-eq");
-        const LogContext::Run log_run(id());
+        const LogContext::Run log_run(name());
         hold.reset();
         if (auto r = run_script(*post_eq_, scripting::ScriptKind::PostEquilibration, control); !r)
           note("post-equilibration failed: " + r.error().what);
@@ -622,7 +638,7 @@ Result<void> Run::extract(RunControl& control) {
     phase_thread_ = std::thread([this, hold]() mutable {
       Clock::Participant participant(*s_.clock, "run.during_extraction");
       const LogContext::Thread log_thread("run.phase");
-      const LogContext::Run log_run(id());
+      const LogContext::Run log_run(name());
       hold.reset();
       auto r = engine_->run_phase(plan::When::DuringExtraction, phase_token_);
       // Said while this thread is still a participant.

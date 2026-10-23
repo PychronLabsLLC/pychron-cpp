@@ -72,7 +72,7 @@ ExperimentEventRecorder::ExperimentEventRecorder(SignalBus& bus) {
         l.word("from", executor::to_string(e.from)).word("to", executor::to_string(e.to)).text("reason", e.reason);
       }));
   subs.push_back(record_event<RunStarted>(bus, "RunStarted", kDebug, [](const RunStarted& e, EventLine& l) {
-    l.count("row", e.row).text("run_id", e.run_id).text("identifier", e.identifier);
+    l.count("row", e.row).text("run", e.name).text("run_id", e.run_id).text("identifier", e.identifier);
   }));
   // The summary, flattened to how the run ended: its queue changes and
   // messages are left out (QueueEdited and RunNote say them).

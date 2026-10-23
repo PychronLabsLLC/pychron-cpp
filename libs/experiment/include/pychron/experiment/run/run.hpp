@@ -221,6 +221,14 @@ class Run {
   const RunSpec& spec() const noexcept { return spec_; }
   RunState state() const { return sm_.state(); }
   const std::string& id() const noexcept { return run_id_; }
+  // Gives the run its aliquot (and step) now, as prepare() would: the executor
+  // calls it before it says the run started, so the run's name is known from
+  // its first record. Calling it is optional; prepare() then does it. An
+  // allocation that fails is reported by prepare(), which fails the run.
+  void assign_aliquot();
+  // The run's name, `<identifier>-<aliquot:02><step>` (format_runid): what its
+  // log records carry as run=. The identifier alone until an aliquot is given.
+  const std::string& name() const noexcept { return name_; }
 
  private:
   Result<void> prepare();
@@ -272,6 +280,9 @@ class Run {
   int run_index_;
   std::size_t row_;
   std::string run_id_;
+  std::string name_;
+  bool assigned_ = false;              // assign_aliquot() ran and prepare() has not used it yet
+  std::optional<Error> assign_error_;  // why it could not give an aliquot
   RunStateMachine sm_;
   RunResult result_;
 

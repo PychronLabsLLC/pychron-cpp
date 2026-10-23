@@ -25,6 +25,7 @@
 #include "pychron/core/process_log.hpp"
 #include "pychron/experiment/executor/executor.hpp"
 #include "pychron/experiment/executor/links.hpp"
+#include "pychron/experiment/factory/increments.hpp"
 #include "pychron/transport/sim_transport.hpp"
 #include "run_fakes.hpp"
 #include "virtual_time.hpp"
@@ -999,14 +1000,16 @@ TEST_F(ExecutorVirtual, RunThreadCarriesRunScope) {
   Executor ex(w.context(), w.options());
   const auto r = ex.execute(q);
   ASSERT_EQ(r.end, QueueEnd::Completed) << r.reason;
-  const std::string id = w.run_id("12345");
-  ASSERT_FALSE(id.empty());
+  ASSERT_EQ(r.runs.size(), 1u);
+  // The run's name, not its uuid: what an operator knows the run by.
+  const std::string name = format_runid("12345", r.runs[0].aliquot, r.runs[0].step);
+  EXPECT_EQ(name, "12345-01");
 
   const auto lines = log.raw_lines();
   const auto it = std::find_if(lines.begin(), lines.end(),
                                [](const std::string& l) { return l.find(" t: from the script") != std::string::npos; });
   ASSERT_NE(it, lines.end());
-  EXPECT_NE(it->find(" [run] run=" + id + " t: from the script"), std::string::npos) << *it;
+  EXPECT_NE(it->find(" [run] run=" + name + " t: from the script"), std::string::npos) << *it;
 }
 
 TEST_F(ExecutorVirtual, QueueOfThreeRunsTakesNoRealTime) {

@@ -108,6 +108,7 @@ struct ExecutorStateChanged {
 struct RunStarted {
   std::size_t row = 0;
   std::string run_id, identifier;
+  std::string name;  // `<identifier>-<aliquot:02><step>`: what the run's log records carry as run=
   TimePoint ts{};  // the services clock when the run started
 };
 struct RunSummary {

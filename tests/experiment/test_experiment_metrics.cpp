@@ -118,7 +118,7 @@ TEST_F(ExperimentMetricsTest, QueueProgress) {
 }
 
 TEST_F(ExperimentMetricsTest, RunsByOutcome) {
-  for (int i = 0; i < 6; ++i) bus.publish(executor::RunStarted{static_cast<std::size_t>(i), "r", "12345-01A", at(i)});
+  for (int i = 0; i < 6; ++i) bus.publish(executor::RunStarted{static_cast<std::size_t>(i), "r", "12345-01A", "12345-01A", at(i)});
   finished(RunState::Success);
   finished(RunState::Success, true);
   finished(RunState::Failed);
@@ -358,7 +358,7 @@ TEST_F(ExperimentMetricsTest, TheAgeOfTheLastRunIsRealTimeSinceItFinished) {
 
 TEST_F(ExperimentMetricsTest, RunIdsAndIdentifiersAreNeverRendered) {
   bus.publish(lab::QueueStarted{2, 0});
-  bus.publish(executor::RunStarted{0, "run-77777-09B", "77777-09B", at(0)});
+  bus.publish(executor::RunStarted{0, "run-77777-09B", "77777-09B", "77777-09B", at(0)});
   walk_to_measuring("run-77777-09B", 0);
   bus.publish(measurement::BlockFinished{"run-77777-09B", measurement::Block::Main, true, "", -1});
   bus.publish(executor::ExecutorWaiting{"minimum pump time", {}, at(0), "run-77777-09B"});
@@ -420,6 +420,6 @@ TEST_F(ExperimentMetricsTest, EveryFamilyIsNamedBeforeItsFirstEvent) {
 
 TEST_F(ExperimentMetricsTest, StopsListeningWhenDestroyed) {
   metrics.reset();
-  bus.publish(executor::RunStarted{0, "r", "i", at(0)});
+  bus.publish(executor::RunStarted{0, "r", "i", "i-01", at(0)});
   EXPECT_DOUBLE_EQ(value(text(), "pychron_runs_started_total"), 0.0);
 }

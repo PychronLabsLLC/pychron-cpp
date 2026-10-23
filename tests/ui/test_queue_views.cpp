@@ -100,7 +100,7 @@ class TestQueueViews : public QObject {
     }
     QSignalSpy changed(&executed, &QAbstractItemModel::dataChanged);
 
-    m->on_run_started(exec::RunStarted{0, "uuid-0", "bu", {}});
+    m->on_run_started(exec::RunStarted{0, "uuid-0", "bu", "bu-01", {}});
     exec::RunSummary s;
     s.row = 0;
     s.run_id = "uuid-0";

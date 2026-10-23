@@ -39,18 +39,18 @@ class TestTimeline : public QObject {
   // A queue wait, run A, run B overlapping A, then run C reusing A's lane.
   static void feed(TimelineModel& m) {
     m.on_waiting({"delay before 66001", std::chrono::duration<double>(5), at(0), {}});
-    m.on_run_started({0, "A", "66001", at(5)});
+    m.on_run_started({0, "A", "66001", "66001-01", at(5)});
     m.on_state(state("A", RunState::Pending, RunState::Preparing, 5));
     m.on_state(state("A", RunState::Preparing, RunState::Extracting, 6));
     m.on_state(state("A", RunState::Extracting, RunState::Measuring, 20));
     // B starts while A measures (overlap) and waits for the extraction device.
-    m.on_run_started({1, "B", "66002", at(30)});
+    m.on_run_started({1, "B", "66002", "66002-01", at(30)});
     m.on_state(state("B", RunState::Pending, RunState::Preparing, 30));
     m.on_waiting({"extraction device", {}, at(31), "B"});
     m.on_state(state("B", RunState::Preparing, RunState::Extracting, 33));
     m.on_state(state("A", RunState::Measuring, RunState::PostMeasuring, 40));
     m.on_state(state("A", RunState::PostMeasuring, RunState::Success, 45));
-    m.on_run_started({2, "C", "66003", at(70)});
+    m.on_run_started({2, "C", "66003", "66003-01", at(70)});
     m.on_state(state("C", RunState::Pending, RunState::Preparing, 70));
   }
 
@@ -61,7 +61,7 @@ class TestTimeline : public QObject {
       const double b = i * 1500.0;
       const std::string id = "r" + std::to_string(i);
       m.on_waiting({"delay between analyses", std::chrono::duration<double>(10), at(b), {}});
-      m.on_run_started({static_cast<std::size_t>(i), id, "66001", at(b + 10)});
+      m.on_run_started({static_cast<std::size_t>(i), id, "66001", "66001-01", at(b + 10)});
       m.on_state(state(id.c_str(), RunState::Pending, RunState::Preparing, b + 10));
       m.on_state(state(id.c_str(), RunState::Preparing, RunState::Extracting, b + 20));
       m.on_waiting({"minimum pump time", std::chrono::duration<double>(30), at(b + 100), id});
@@ -137,7 +137,7 @@ class TestTimeline : public QObject {
   // Events that arrive out of order are still found.
   void visibleSurvivesAStartThatGoesBackwards() {
     TimelineModel m;
-    m.on_run_started({0, "A", "66001", at(50)});
+    m.on_run_started({0, "A", "66001", "66001-01", at(50)});
     m.on_state(state("A", RunState::Pending, RunState::Preparing, 50));
     m.on_waiting({"late", std::chrono::duration<double>(5), at(10), {}});
     m.on_queue_ended(at(100));
@@ -236,7 +236,7 @@ class TestTimeline : public QObject {
     m.on_state(state("C", RunState::Preparing, RunState::Failed, 90));
     QCOMPARE(m.active_since(), std::optional<double>());
     QCOMPARE(v.time_window().first, 70.0);  // nothing in progress: the run that started last
-    m.on_run_started({3, "D", "66004", at(120)});
+    m.on_run_started({3, "D", "66004", "66004-01", at(120)});
     m.on_queue_ended(at(130));
     QCOMPARE(m.active_since(), std::optional<double>());
     m.clear();

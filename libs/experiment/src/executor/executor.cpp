@@ -360,14 +360,16 @@ std::unique_ptr<Executor::Slot> Executor::launch(std::size_t row, RunSpec spec, 
     if (end_ == QueueEnd::Cancelled) s->control.cancel();
     if (end_ == QueueEnd::Aborted) s->control.abort();
   }
+  // Its aliquot now, so that RunStarted and every record of the run name it.
+  s->run->assign_aliquot();
   if (ctx_.services.bus != nullptr)
-    ctx_.services.bus->publish(RunStarted{row, s->run->id(), s->spec.id.identifier, clock_.now()});
+    ctx_.services.bus->publish(RunStarted{row, s->run->id(), s->spec.id.identifier, s->run->name(), clock_.now()});
   // Time does not move on between the thread's start and its Participant.
   auto hold = std::make_shared<Clock::Hold>(clock_);
   s->thread = std::thread([this, s, hold]() mutable {
     Clock::Participant participant(clock_, "executor.slot." + std::to_string(s->row));
     const LogContext::Thread log_thread("run");
-    const LogContext::Run log_run(s->run->id());
+    const LogContext::Run log_run(s->run->name());
     hold.reset();
     s->result = s->run->execute(s->control);
     // Said while this thread is still a participant.

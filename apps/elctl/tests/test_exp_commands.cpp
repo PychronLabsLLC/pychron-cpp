@@ -242,14 +242,19 @@ TEST_F(ElctlExpTest, ExecutionSequenceIsLogged) {
   const auto queue_ended = find(run_finished, logger_is("trace.QueueEnded"));
   ASSERT_LT(queue_ended, parsed.size()) << all;
 
-  // The run thread names the run on every line it wrote while the run was on.
-  const auto& first = parsed[script_start];
-  ASSERT_FALSE(first.run.empty()) << all;
-  EXPECT_EQ(first.thread, "run") << all;
+  // Every line the run's threads (run, run.post-eq, run.phase) wrote while the
+  // run was on names the run as trace.RunStarted names it: run=<identifier>-<aliquot><step>.
+  const auto& started = parsed[run_started].message;
+  static const std::regex named(R"(\brun=([^,]+),)");
+  std::smatch m;
+  ASSERT_TRUE(std::regex_search(started, m, named)) << started;
+  const std::string name = m[1].str();
+  EXPECT_EQ(name, "bu-01") << started;
+  EXPECT_EQ(parsed[script_start].run, name) << all;
   const auto first_finished = find(run_started, logger_is("trace.RunFinished"));
   for (std::size_t i = run_started; i < first_finished; ++i) {
-    if (parsed[i].thread == "run") {
-      EXPECT_EQ(parsed[i].run, first.run) << lines[i] << "\n" << all;
+    if (parsed[i].thread.starts_with("run")) {
+      EXPECT_EQ(parsed[i].run, name) << lines[i] << "\n" << all;
     }
   }
 }

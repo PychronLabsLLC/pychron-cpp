@@ -97,7 +97,7 @@ class TestEvolutionsView : public QObject {
  private slots:
   void drawsFitsToTimeZeroAndListsIntercepts() {
     EvolutionsView view({{"H1", QColor(Qt::red)}});
-    view.on_run_started({0, "uuid", "66001", {}});
+    view.on_run_started({0, "uuid", "66001", "66001-01", {}});
     const SeriesKey ar40 = skey("Ar40", "H1", kSignal);
     // y = 100 + 2 (t - 10), one outlier at t = 13.
     reduction::Series s;
@@ -160,7 +160,7 @@ class TestEvolutionsView : public QObject {
     QCOMPARE(view.panel_titles(), (QStringList{"Ar40 H1", "Ar39 H2"}));
 
     // A new run clears the fits.
-    view.on_run_started({1, "uuid2", "66002", {}});
+    view.on_run_started({1, "uuid2", "66002", "66002-01", {}});
     QVERIFY(!view.fit_of(ar40).has_value());
     QCOMPARE(view.fit_curve_count(), 0);
   }
@@ -290,7 +290,7 @@ class TestEvolutionsView : public QObject {
     EvolutionsView view;
     view.on_series(readings(skey("Ar40", "H1", kSignal), {{1, 10}}));
     view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
-    view.on_run_started({1, "uuid", "66002", {}});
+    view.on_run_started({1, "uuid", "66002", "66002-01", {}});
     QCOMPARE(view.graph_count(), 0);
     QVERIFY(view.panel_titles().isEmpty());
     view.on_series(readings(skey("Ar36", "CDD", kSignal), {{1, 1}}));
@@ -501,7 +501,7 @@ class TestEvolutionsView : public QObject {
   void aRunStartingKeepsTheGraphAndItsKeptResults() {
     EvolutionsView view;
     view.on_peak_center(done(5.1));
-    view.on_run_started({1, "uuid", "66002", {}});
+    view.on_run_started({1, "uuid", "66002", "66002-01", {}});
     QVERIFY(view.peak_centers().isEmpty());  // the list is the run's
     QCOMPARE(view.peak_center_view()->kept(), 1);
     QVERIFY(!view.peak_center_view()->series().empty());
@@ -512,7 +512,7 @@ class TestEvolutionsView : public QObject {
     EvolutionsView view;
     view.on_peak_center_try(try_started(0));
     view.on_peak_center_point({0, sweep_point(5.0, 10)});
-    view.on_run_started({1, "uuid", "66002", {}});
+    view.on_run_started({1, "uuid", "66002", "66002-01", {}});
     QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1, try 1 of 2: not finished"));
     QCOMPARE(view.peak_center_view()->kept(), 0);
   }
@@ -521,13 +521,13 @@ class TestEvolutionsView : public QObject {
     EvolutionsView view;
     view.set_kind(kSniff);
     view.on_peak_center_try(try_started(0));
-    view.on_run_started({1, "uuid", "66002", {}});
+    view.on_run_started({1, "uuid", "66002", "66002-01", {}});
     QCOMPARE(tab_bar(view)->currentIndex(), 0);
     QVERIFY(view.kind() == kSignal);
     QVERIFY(kind_page_shown(view));
     // From another kind's tab too.
     tab_bar(view)->setCurrentIndex(2);
-    view.on_run_started({2, "uuid2", "66003", {}});
+    view.on_run_started({2, "uuid2", "66003", "66003-01", {}});
     QCOMPARE(tab_bar(view)->currentIndex(), 0);
     QVERIFY(view.kind() == kSignal);
   }
@@ -574,13 +574,13 @@ class TestEvolutionsView : public QObject {
     view.show();
     QVERIFY(QTest::qWaitForWindowExposed(&view));
     view.on_peak_center(done(5.1));
-    view.on_run_started({1, "uuid", "66002", {}});
+    view.on_run_started({1, "uuid", "66002", "66002-01", {}});
     view.on_peak_center(done(5.2));
     view.on_peak_center(done(5.3));
     click_row(peak_list(view), 0);  // this run's first: the queue's second
     QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.200000"));
     view.clear_peak_centers();
-    view.on_run_started({2, "uuid2", "66003", {}});
+    view.on_run_started({2, "uuid2", "66003", "66003-01", {}});
     view.on_peak_center(done(5.4));
     click_row(peak_list(view), 0);
     QCOMPARE(view.peak_center_view()->title(), QStringLiteral("Ar40 on H1: center 5.400000"));
