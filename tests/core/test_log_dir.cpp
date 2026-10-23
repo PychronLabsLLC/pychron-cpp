@@ -91,3 +91,22 @@ TEST(LogDir, EnvNameIsTheVariableTheOsFolderNeeds) {
   EXPECT_STREQ(log_dir_env_name(HostOs::Linux), "HOME");
   EXPECT_STREQ(log_dir_env_name(HostOs::Windows), "LOCALAPPDATA");
 }
+
+TEST(ExamplesStateDir, EachOsFolder) {
+  const auto env = env_of({{"HOME", "/h"}, {"XDG_STATE_HOME", "/s"}, {"LOCALAPPDATA", "C:/L"}});
+  EXPECT_EQ(generic(default_examples_state_dir(HostOs::Mac, env)), "/h/Library/Application Support/Pychron/examples");
+  EXPECT_EQ(generic(default_examples_state_dir(HostOs::Linux, env)), "/s/pychron/examples");
+  EXPECT_EQ(generic(default_examples_state_dir(HostOs::Windows, env)), "C:/L/pychron/examples");
+}
+
+TEST(ExamplesStateDir, LinuxEmptyXdgCountsAsUnset) {
+  const auto env = env_of({{"XDG_STATE_HOME", ""}, {"HOME", "/h"}});
+  EXPECT_EQ(generic(default_examples_state_dir(HostOs::Linux, env)), "/h/.local/state/pychron/examples");
+}
+
+TEST(ExamplesStateDir, NoHomeGivesEmpty) {
+  const auto none = env_of({{"HOME", ""}});
+  EXPECT_TRUE(default_examples_state_dir(HostOs::Mac, none).empty());
+  EXPECT_TRUE(default_examples_state_dir(HostOs::Linux, none).empty());
+  EXPECT_TRUE(default_examples_state_dir(HostOs::Windows, none).empty());
+}

@@ -25,6 +25,17 @@ struct Resources {
 Resources find_resources();
 Resources find_resources(const std::filesystem::path& executable_dir);
 
+// The folder a program keeps a lab's runtime state in (line state, autocenter
+// corrections, camera scales, snapshots, default data): `lab` itself, unless
+// `lab` is `examples` or a folder under it; then the same place under
+// `user_dir` (pychron::default_examples_state_dir), since the shipped
+// examples are never written to. Compared after weakly_canonical, so a
+// relative or linked path to the examples is still the examples. An empty
+// `user_dir` is <temp>/pychron/examples.
+[[nodiscard]] std::filesystem::path lab_state_dir(const std::filesystem::path& lab,
+                                                  const std::filesystem::path& examples,
+                                                  const std::filesystem::path& user_dir);
+
 // The pychron version these programs were built as ("0.2.0").
 std::string_view version() noexcept;
 

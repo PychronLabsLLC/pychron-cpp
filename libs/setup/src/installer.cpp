@@ -39,6 +39,23 @@ Resources find_resources(const fs::path& exe) {
   return r;
 }
 
+fs::path lab_state_dir(const fs::path& lab, const fs::path& examples, const fs::path& user_dir) {
+  if (examples.empty()) return lab;
+  const auto canonical = [](const fs::path& p) {
+    std::error_code ec;
+    fs::path c = fs::weakly_canonical(p, ec);
+    return ec ? fs::absolute(p, ec).lexically_normal() : c;
+  };
+  const fs::path rel = canonical(lab).lexically_relative(canonical(examples));
+  if (rel.empty() || *rel.begin() == "..") return lab;
+  fs::path base = user_dir;
+  if (base.empty()) {
+    std::error_code ec;
+    base = fs::temp_directory_path(ec) / "pychron" / "examples";
+  }
+  return rel == "." ? base : base / rel;
+}
+
 fs::path home_dir() {
 #ifdef _WIN32
   if (auto h = env_var("USERPROFILE"); h && !h->empty()) return *h;

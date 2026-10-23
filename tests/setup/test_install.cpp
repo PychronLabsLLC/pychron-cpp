@@ -391,6 +391,37 @@ TEST(Installer, TheShippedProfilesAreFoundAndEnvironmentWins) {
   EXPECT_EQ(find_resources(tmp.dir / "bin").profiles, fs::weakly_canonical(tmp.dir / "share" / "pychron") / "profiles");
 }
 
+TEST(Installer, TheExamplesKeepTheirStateInTheUserFolder) {
+  Tmp tmp;
+  const fs::path examples = tmp.dir / "res" / "examples";
+  fs::create_directories(examples / "nmgrl");
+  const fs::path user = tmp.dir / "user";
+  EXPECT_EQ(lab_state_dir(examples, examples, user), user);
+  EXPECT_EQ(lab_state_dir(examples / "nmgrl", examples, user), user / "nmgrl");
+  // Spelled another way, it is still the examples.
+  EXPECT_EQ(lab_state_dir(examples / "nmgrl" / ".." / ".", examples, user), user);
+  std::error_code ec;  // Windows makes a link only with developer mode or as administrator
+  fs::create_directory_symlink(examples, tmp.dir / "link", ec);
+  if (!ec) {
+    EXPECT_EQ(lab_state_dir(tmp.dir / "link" / "nmgrl", examples, user), user / "nmgrl");
+  }
+  // Any other lab keeps its state beside it, one beside the examples included.
+  fs::create_directories(tmp.dir / "res" / "examples-copy");
+  EXPECT_EQ(lab_state_dir(tmp.dir / "res" / "examples-copy", examples, user), tmp.dir / "res" / "examples-copy");
+  EXPECT_EQ(lab_state_dir(tmp.dir / "lab", examples, user), tmp.dir / "lab");
+  EXPECT_EQ(lab_state_dir(tmp.dir / "lab", fs::path(), user), tmp.dir / "lab");
+  // No user folder: the system's temporary one, never the examples.
+  EXPECT_EQ(lab_state_dir(examples / "nmgrl", examples, fs::path()),
+            fs::temp_directory_path() / "pychron" / "examples" / "nmgrl");
+}
+
+TEST(Installer, TheExamplesKeepTheirStateInTheUserFolderFromARelativePath) {
+  // The working directory's examples, named relative to it.
+  const fs::path examples = find_resources().examples;
+  const fs::path relative = fs::relative(examples);
+  EXPECT_EQ(lab_state_dir(relative, examples, "/u"), fs::path("/u"));
+}
+
 TEST(Installer, ChoiceLabelsMatchTheChoices) {
   Tmp profiles, examples;
   profiles.write("c/profile.toml", R"(

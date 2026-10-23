@@ -48,6 +48,23 @@ fs::path default_log_dir(const std::optional<fs::path>& install_root, HostOs os,
   return {};
 }
 
+fs::path default_examples_state_dir(HostOs os, const EnvLookup& env) {
+  switch (os) {
+    case HostOs::Mac:
+      // Beside the site file (setup's site.toml).
+      if (const auto home = non_empty(env, "HOME")) return *home / "Library" / "Application Support" / "Pychron" / "examples";
+      break;
+    case HostOs::Linux:
+      if (const auto state = non_empty(env, "XDG_STATE_HOME")) return *state / "pychron" / "examples";
+      if (const auto home = non_empty(env, "HOME")) return *home / ".local" / "state" / "pychron" / "examples";
+      break;
+    case HostOs::Windows:
+      if (const auto local = non_empty(env, "LOCALAPPDATA")) return *local / "pychron" / "examples";
+      break;
+  }
+  return {};
+}
+
 const char* log_dir_env_name(HostOs os) noexcept { return os == HostOs::Windows ? "LOCALAPPDATA" : "HOME"; }
 
 void resolve_log_dir(config::LoggingConfig& config, const std::optional<fs::path>& install_root, HostOs os,
