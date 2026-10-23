@@ -49,7 +49,8 @@ struct ArArReduced final : processing::DomainReduced {
   // `label` is an isotope key ("H1:Ar40") or name ("Ar40": the first isotope with it).
   std::optional<reduction::UFloat> stage(std::string_view label, std::string_view stage) const override;
   // age, age_w_j, age_w_position, F (or f), kca, cak, kcl, clk,
-  // radiogenic_yield (or rad40_percent), rad40, k39, j.
+  // radiogenic_yield (or rad40_percent), rad40, k39, j. `j` is a new variable
+  // with `j`'s value and error on every call, independent of the ages' J.
   std::optional<reduction::UFloat> named(std::string_view name) const override;
   std::string units(std::string_view name) const override;
   std::vector<std::string> stages() const override { return {"decay_corrected", "interference_corrected"}; }

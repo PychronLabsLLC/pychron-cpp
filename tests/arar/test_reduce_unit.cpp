@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -16,6 +17,7 @@
 #include "fixtures.hpp"
 #include "pychron/arar/domain.hpp"
 #include "pychron/processing/domain.hpp"
+#include "pychron/processing/quantity.hpp"
 #include "pychron/processing/units.hpp"
 #include "reduce_golden.hpp"
 
@@ -269,4 +271,45 @@ TEST(ArArReduceUnit, WritesTheCacheOnceWithTheArArVersion) {
   ASSERT_TRUE(other.find("arar_reduce")->options.set("include_decay_error", true));
   ASSERT_TRUE(runner.run(other, "arar_reduce"));
   EXPECT_TRUE(source.puts.empty());
+}
+
+// The j quantity is a J of its own, as it was before the domain seam: a ratio
+// of an age to it does not cancel the age's J, which ArArReduced::j (the
+// variable the ages used, for group ages) would.
+TEST(ArArReduceUnit, TheJQuantityIsAnIndependentVariable) {
+  pp::MemorySource source;
+  source.add(decayed_unknown());
+  const auto domain = pychron::arar::make_domain();
+  const Ran ran = run_chain(source, *domain);
+  ASSERT_TRUE(ran.dataset);
+  ASSERT_EQ(ran.dataset->items().size(), 1u);
+  const pp::ReducedAnalysis& ra = *ran.dataset->items()[0].analysis;
+  const auto* arar = pychron::arar::reduced_of(ra);
+  ASSERT_NE(arar, nullptr) << ra.reduction_error;
+  ASSERT_TRUE(arar->j && arar->arar.ages);
+
+  // `age` carries J without its error, so it shares no J variable either way;
+  // `age_w_j` does, and tells the two apart.
+  const auto q = pp::Quantity::parse("age_w_j/j");
+  ASSERT_TRUE(q) << q.error().what;
+  const auto ratio = q->eval(ra);
+  ASSERT_TRUE(ratio);
+  const r::UFloat& age = arar->arar.ages->age_w_j_err;
+  const r::UFloat independent = age / r::UFloat::variable(arar->j->nominal(), arar->j->std_dev(), "J");
+  const r::UFloat correlated = age / *arar->j;
+  EXPECT_EQ(ratio->value, independent.nominal());
+  EXPECT_NEAR(ratio->error, independent.std_dev(), 1e-15 * independent.std_dev());
+  EXPECT_GT(std::abs(ratio->error - correlated.std_dev()), 1e-3 * independent.std_dev());
+
+  // age/j: the old formula as well.
+  const auto plain = pp::Quantity::parse("age/j")->eval(ra);
+  ASSERT_TRUE(plain);
+  const r::UFloat old = arar->arar.ages->age / r::UFloat::variable(arar->j->nominal(), arar->j->std_dev(), "J");
+  EXPECT_NEAR(plain->error, old.std_dev(), 1e-15 * old.std_dev());
+
+  // And `j` alone is the J the ages used, in value and error.
+  const auto j = pp::Quantity::parse("j")->eval(ra);
+  ASSERT_TRUE(j);
+  EXPECT_EQ(j->value, arar->j->nominal());
+  EXPECT_EQ(j->error, arar->j->std_dev());
 }

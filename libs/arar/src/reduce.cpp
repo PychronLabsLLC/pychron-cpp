@@ -80,7 +80,9 @@ std::optional<r::UFloat> ArArReduced::named(std::string_view raw) const {
   if (name == "radiogenic_yield") return arar.f.radiogenic_yield;
   if (name == "rad40") return arar.f.rad40;
   if (name == "k39") return arar.f.interference_corrected[r::index(r::ArgonIsotope::Ar39)];
-  if (name == "j") return j;
+  // A J of its own each time, as the quantity always gave it: a ratio with an
+  // age does not share the age's J variable (`j`, which the group ages use).
+  if (name == "j") return j ? std::optional<r::UFloat>(r::UFloat::variable(j->nominal(), j->std_dev(), "J")) : std::nullopt;
   return std::nullopt;
 }
 
