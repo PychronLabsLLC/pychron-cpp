@@ -688,6 +688,7 @@ int main(int argc, char** argv) {
     // for the examples that come with the application: they are part of it
     // (inside the bundle on macOS), and nothing is written there.
     if (install || !files.empty()) window.set_line_config_file(system_file);
+    if (install) window.set_install_root(install->root);
     window.set_installations_handler(installations_handler(&window, resources, install ? install->name : std::string{}));
     // Not for the examples that come with the application: no install to change.
     if (install) window.set_data_source(data_source_deps(install->name, resources, cli->db), reopen_on(&window, install->name));

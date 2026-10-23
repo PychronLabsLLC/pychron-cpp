@@ -203,6 +203,9 @@ class MainWindow : public QMainWindow {
   // pages, kept in that file's local override (line_settings.hpp); without
   // it (the default) it has neither.
   void set_line_config_file(std::filesystem::path main_file);
+  // The install the line belongs to: File > Preferences then keeps the
+  // logging in <root>/logging.local.toml. Not set for the examples.
+  void set_install_root(std::filesystem::path root);
   // What the metrics endpoint is doing, for the Metrics page.
   void set_metrics_status(QString status);
   // Fonts (application wide) and the data browser's page size.
@@ -310,6 +313,7 @@ class MainWindow : public QMainWindow {
   DataSourceDepsFactory data_source_deps_;
   PreferencesDialog::Reopen data_source_reopen_;
   std::filesystem::path line_config_file_;
+  std::optional<std::filesystem::path> install_root_;
   QString metrics_status_;
   GaugePopup* gauge_popup_ = nullptr;
   std::map<QString, GaugeWindow*> gauge_windows_;

@@ -1,7 +1,7 @@
 #pragma once
 
 // LogModel: bounded ring of log records (columns Time, Level, Logger,
-// Message) for the log view. Qt::UserRole on any cell yields the level (int);
+// Message, Thread, Run) for the log view. Qt::UserRole on any cell yields the level (int);
 // history records (loaded from pychron.log at start-up) are drawn dimmed.
 
 #include <vector>
@@ -30,6 +30,8 @@ struct LogRecord {
   QString logger;
   QString message;
   bool history = false;
+  QString thread{};  // thread tag (`executor`, `t3`); empty when unknown
+  QString run{};  // run id; empty outside a run
 };
 
 class LogModel : public QAbstractTableModel {
@@ -37,7 +39,7 @@ class LogModel : public QAbstractTableModel {
 
  public:
   static constexpr int kCapacity = 10000;
-  enum Column { TimeCol = 0, LevelCol, LoggerCol, MessageCol, ColumnCount };
+  enum Column { TimeCol = 0, LevelCol, LoggerCol, MessageCol, ThreadCol, RunCol, ColumnCount };
 
   explicit LogModel(int capacity = kCapacity, QObject* parent = nullptr);
 

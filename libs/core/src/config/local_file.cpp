@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <array>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -169,6 +170,19 @@ std::string logging_override_toml(const LoggingConfig& wanted, const LoggingConf
   return out;
 }
 
+std::string logging_local_toml(const LoggingConfig& wanted, const LoggingConfig& main) {
+  std::string text = logging_override_toml(wanted, main);
+  constexpr std::string_view kTable = "[logging]\n";
+  constexpr std::string_view kLevels = "[logging.levels]\n";
+  if (text.starts_with(kTable)) text.erase(0, kTable.size());
+  if (text.starts_with(kLevels)) {
+    text.replace(0, kLevels.size(), "[levels]\n");
+  } else if (const auto at = text.find("\n" + std::string(kLevels)); at != std::string::npos) {
+    text.replace(at + 1, kLevels.size(), "[levels]\n");
+  }
+  return text;
+}
+
 std::string metrics_override_toml(const MetricsConfig& wanted, const MetricsConfig& main) {
   std::string keys;
   if (wanted.enabled != main.enabled) keys += std::string("enabled = ") + (wanted.enabled ? "true" : "false") + "\n";
@@ -259,6 +273,97 @@ Result<void> replace_local_table(const fs::path& local_file, std::string_view ta
     if (after.back() != '\n') after += '\n';
   }
   return write_local_file(local_file, exists, before, after);
+}
+
+Result<void> replace_local_logging(const fs::path& file, std::string_view toml) {
+  bool exists = false;
+  std::string before;
+  if (auto r = read_local_file(file, toml, exists, before); !r) return r;
+
+  static constexpr std::array<std::string_view, 6> kKeys = {"dir", "max_size_mb", "max_files", "default_level", "dock_level", "echo_stderr"};
+  const bool crlf = [&] {
+    const auto nl = before.find('\n');
+    return nl != std::string::npos && nl > 0 && before[nl - 1] == '\r';
+  }();
+  const std::string eol = crlf ? "\r\n" : "\n";
+  const auto in_eol = [&](std::string_view s) {
+    std::string out;
+    for (const char c : s) {
+      if (c == '\n') out += eol;
+      else out += c;
+    }
+    return out;
+  };
+
+  // The old levels table out first; then the top-level keys of the preamble.
+  const std::string no_levels = without_table(before, "levels");
+  const std::vector<std::string_view> lines = lines_of(no_levels);
+  std::size_t first_table = lines.size();
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (!header_name(lines[i]).empty()) {
+      first_table = i;
+      break;
+    }
+  }
+  std::vector<std::string_view> kept;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i < first_table) {
+      const std::string_view t = trimmed(lines[i]);
+      const auto eq = t.find('=');
+      if (eq != std::string_view::npos && !is_comment(lines[i])) {
+        const std::string_view key = trimmed(t.substr(0, eq));
+        if (std::ranges::find(kKeys, key) != kKeys.end()) continue;
+      }
+    }
+    kept.push_back(lines[i]);
+  }
+  // Where the preamble ends: before the comments and blank lines that sit on the first table.
+  std::size_t table_at = kept.size();
+  for (std::size_t i = 0; i < kept.size(); ++i) {
+    if (!header_name(kept[i]).empty()) {
+      table_at = i;
+      break;
+    }
+  }
+  std::size_t at = table_at;
+  while (at > 0 && (is_comment(kept[at - 1]) || is_blank(kept[at - 1]))) --at;
+  // A comment block at the very top of a file with no keys is the file's own.
+  std::string keys_text;
+  std::string levels_text;
+  const std::string_view body = toml;
+  const auto split = body.find("\n[");
+  const bool starts_table = body.starts_with('[');
+  const std::string_view keys = starts_table ? std::string_view() : body.substr(0, split == std::string_view::npos ? body.size() : split + 1);
+  const std::string_view tables = starts_table ? body : (split == std::string_view::npos ? std::string_view() : body.substr(split + 1));
+  {
+    const auto last = keys.find_last_not_of('\n');
+    std::string k(keys.substr(0, last == std::string_view::npos ? 0 : last + 1));
+    if (!k.empty()) k += '\n';
+    keys_text = in_eol(k);
+  }
+  levels_text = in_eol(trimmed(tables).empty() ? std::string_view() : tables);
+
+  std::string after;
+  for (std::size_t i = 0; i < at; ++i) after += kept[i];
+  if (!keys_text.empty()) {
+    after += keys_text;
+    if (at < kept.size()) after += eol;  // a blank line before what follows
+  }
+  for (std::size_t i = at; i < kept.size(); ++i) after += kept[i];
+  if (!levels_text.empty()) {
+    if (!trimmed(after).empty()) {
+      if (!after.ends_with('\n')) after += eol;
+      after += eol;
+    }
+    after += levels_text;
+  }
+  // Removing the keys must not leave blank lines at the top that were not there before.
+  while (!before.starts_with('\n') && !before.starts_with("\r\n") && (after.starts_with('\n') || after.starts_with("\r\n"))) {
+    after.erase(0, after.find('\n') + 1);
+  }
+  if (trimmed(after).empty()) after.clear();
+  else if (!after.ends_with('\n')) after += eol;
+  return write_local_file(file, exists, before, after);
 }
 
 Result<void> set_local_table(const fs::path& file, std::string_view table, std::string_view toml) {

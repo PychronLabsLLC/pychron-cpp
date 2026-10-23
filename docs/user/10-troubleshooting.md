@@ -200,6 +200,29 @@ See [data analysis](06-data-analysis.md) and the
 - `elctl open`, `close`, `state`, `scan` print `warning: transport X: ...` and
   carry on when a transport will not open.
 
+## Logs
+
+Both programs write a log file as they run, with no setup.
+
+- **Where it is.** An install keeps its logs in `<install>/logs`:
+  `pychron.log` for the window, `elctl.log` for `elctl`. Without an install
+  (the examples, or config files given on the command line) the file is in
+  `~/Library/Logs/pychron` on macOS, `$XDG_STATE_HOME/pychron/logs` (or
+  `~/.local/state/pychron/logs`) on Linux and `%LOCALAPPDATA%\pychron\logs` on
+  Windows. File > Preferences > Logging can move it or turn it off.
+- **Old files.** A file is closed at 50 MB and the last ten are kept
+  (`pychron.1.log`, `pychron.2.log`, and so on).
+- **Two copies running.** Only one program writes a given file. A second copy
+  writes `pychron-<pid>.log` (the number is its process id) beside it.
+- **What to send with a problem report.** `pychron.log`, or `elctl.log` for a
+  command line problem, from the time of the problem, plus the one before it
+  if the program was restarted. For a device that does not answer, set
+  `"*.wire" = "trace"` first (see the extraction line chapter) and repeat.
+- **Reading a line.** Each line is `time [level] [thread] run=<id> logger:
+  message`. The thread says what was working (`executor`, or `t3` for a
+  thread with no name). `run=` is present only while a run is measured, so
+  `grep run=12345-01A pychron.log` gives one analysis.
+
 ## Still stuck
 
 Collect `elctl doctor` output and the Log dock text, and see

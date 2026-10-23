@@ -8,7 +8,9 @@
 // line, and elctl must log and publish the same way the window does, so they
 // are kept where the line reads them: in the local override file beside its
 // config (extraction_line.local.toml), which holds only what differs from
-// the shared file.
+// the shared file. An install's logging is the exception: it is kept per
+// install, in `<root>/logging.local.toml` over `<root>/logging.toml`, which is
+// what Restore Defaults goes back to (built-in defaults when there is none).
 
 #include <filesystem>
 #include <optional>
@@ -26,14 +28,20 @@ struct LineSettings {
   config::LoggingConfig shared_logging;  // the shared file alone: what Restore Defaults goes back to
   config::MetricsConfig shared_metrics;
   QString metrics_status;                // what the endpoint is doing now, for the Metrics page
+  // The install the line belongs to: its logging is read from and written to
+  // the install's logging files. Unset (examples, files given): the line's own
+  // `[logging]`.
+  std::optional<std::filesystem::path> install_root;
 };
 
-// From `main_file` and its local override. Nullopt when either cannot be
-// loaded: the pages are then left out.
-std::optional<LineSettings> load_line_settings(const std::filesystem::path& main_file);
+// From `main_file` and its local override (and `install_root`'s logging files).
+// Nullopt when any cannot be loaded: the pages are then left out.
+std::optional<LineSettings> load_line_settings(const std::filesystem::path& main_file,
+                                               const std::optional<std::filesystem::path>& install_root = std::nullopt);
 
-// Writes `wanted`'s logging and metrics into `main_file`'s local override,
-// as far as they differ from the shared file; what does not differ is taken
+// Writes `wanted`'s metrics into `main_file`'s local override and its logging
+// into that or, with an install root, `logging.local.toml`, as far as they
+// differ from the shared file; what does not differ is taken
 // out of it. Empty when it is done, else what to tell the user (the file is
 // then as it was).
 QString save_line_settings(const std::filesystem::path& main_file, const LineSettings& wanted);

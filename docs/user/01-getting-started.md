@@ -227,7 +227,7 @@ appear as a message box and on stderr.
 | Figure presets | the user's application config folder under `presets`, plus lab presets in `<lab>/figures` |
 | Finished runs | the install's database (by default `<install>/data/pychron.db`); with no database, `<data folder>/records` |
 | Runs waiting to be saved | `<data folder>/spool` |
-| Log file | the `dir` set in `[logging]` in `extraction_line.toml` (`pychron.log`); no file is written if `dir` is not set |
+| Log files | an install: `<install>/logs/pychron.log` (`elctl.log` for `elctl`); otherwise the log folder of your system (see Troubleshooting, Logs). Set in `logging.toml` in the install folder, or File > Preferences > Logging |
 
 ## 4. Command-line flags of pychron-ui
 

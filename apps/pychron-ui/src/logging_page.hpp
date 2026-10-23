@@ -1,6 +1,7 @@
 #pragma once
 
-// File > Preferences, Logging: the line's `[logging]` on this computer. The
+// File > Preferences, Logging: logging on this computer (an install's
+// logging.local.toml, else the line's `[logging]`). The
 // levels take effect when applied; where the log file goes and how it is
 // kept are read when the application starts.
 
@@ -29,6 +30,8 @@ class LoggingPage : public QWidget {
   config::LoggingConfig value() const;
 
   QComboBox* default_level() const noexcept { return default_level_; }
+  QComboBox* dock_level() const noexcept { return dock_level_; }
+  QCheckBox* no_file() const noexcept { return no_file_; }
   QTableWidget* levels() const noexcept { return levels_; }  // pattern, level
   QComboBox* level_at(int row) const;
   QPushButton* add_level() const noexcept { return add_; }
@@ -43,6 +46,7 @@ class LoggingPage : public QWidget {
 
   config::LoggingConfig base_;  // what set() was given: the fields overwrite a copy of it
   QComboBox* default_level_;
+  QComboBox* dock_level_;
   QTableWidget* levels_;
   QPushButton* add_;
   QPushButton* remove_;
@@ -50,6 +54,7 @@ class LoggingPage : public QWidget {
   QSpinBox* max_size_;
   QSpinBox* max_files_;
   QCheckBox* echo_;
+  QCheckBox* no_file_;
 };
 
 }  // namespace pychron::ui

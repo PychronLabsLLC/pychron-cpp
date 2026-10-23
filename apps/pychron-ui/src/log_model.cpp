@@ -107,6 +107,10 @@ QVariant LogModel::data(const QModelIndex& index, int role) const {
       return r.logger;
     case MessageCol:
       return r.message;
+    case ThreadCol:
+      return r.thread;
+    case RunCol:
+      return r.run;
     default:
       return {};
   }
@@ -123,6 +127,10 @@ QVariant LogModel::headerData(int section, Qt::Orientation orientation, int role
       return tr("Logger");
     case MessageCol:
       return tr("Message");
+    case ThreadCol:
+      return tr("Thread");
+    case RunCol:
+      return tr("Run");
     default:
       return {};
   }

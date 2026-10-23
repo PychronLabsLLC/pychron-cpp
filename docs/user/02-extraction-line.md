@@ -330,17 +330,45 @@ here too (`ERROR [ui] spectrometer not loaded: ...`).
 
 ### The log file
 
-If `extraction_line.toml` has `[logging] dir = "..."`, every record is also
-written to `pychron.log` in that folder, rotated at `max_size_mb` (default
-10) keeping `max_files` files (default 5). Lines look like
-`2026-10-01T14:03:22.481Z [warn] valve_bus: message`. When the program
-starts it reads the tail of that file back into the dock (up to 10 000
-lines), so you see what happened before the last restart. With no `dir`
-there is no file and the dock starts empty.
+Every record is also written to a log file, `pychron.log` for the window and
+`elctl.log` for `elctl`, whether or not a line is open. The file is kept by
+default: for an install it is `<install>/logs`; without one it is
+`~/Library/Logs/pychron` on macOS, `$XDG_STATE_HOME/pychron/logs` (or
+`~/.local/state/pychron/logs`) on Linux and `%LOCALAPPDATA%\pychron\logs` on
+Windows.
 
-For hardware faults, set `"*.wire" = "trace"` under `[logging.levels]` or
-use **Set logger level...** and send the log (or a `trace` capture,
-below) along with the problem report.
+How it is kept is set in `logging.toml` in the install folder, and
+`logging.local.toml` beside it for this computer only. File > Preferences >
+Logging writes the second. Both hold plain keys at the top level:
+
+```toml
+default_level = "debug"   # everything not named below; debug when not set
+dock_level = "info"       # what the Log panel shows
+max_size_mb = 50          # start a new file at this size
+max_files = 10            # files kept
+dir = "D:/pychron-logs"   # another folder; dir = "" writes no file
+echo_stderr = false       # also print to the terminal
+
+[levels]
+"*.wire" = "trace"        # per logger, * stands for any part
+```
+
+The file records at `default_level`, which is `debug` unless you change it;
+the Log panel shows only `dock_level` and above. A `[logging]` table in
+`extraction_line.toml` (and its `.local.toml`) is still read, with
+`logging.toml` over it, so an older install keeps working until you move it.
+
+Lines look like
+`2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: message`:
+time (UTC), level, the thread, the run being measured (left out when there is
+none) and the logger. The Log panel has the same thread and run in its Thread
+and Run columns. When the program starts it reads the tail of the file back
+into the panel (up to 10 000 lines), old lines in the earlier format too, so
+you see what happened before the last restart.
+
+For hardware faults, set `"*.wire" = "trace"` under `[levels]` or use
+**Set logger level...** and send the log (or a `trace` capture, below) along
+with the problem report.
 
 ## Panels and arrangements
 

@@ -782,6 +782,8 @@ void MainWindow::set_preferences_settings(PreferencesDialog::SettingsFactory set
 
 void MainWindow::set_line_config_file(std::filesystem::path main_file) { line_config_file_ = std::move(main_file); }
 
+void MainWindow::set_install_root(std::filesystem::path root) { install_root_ = std::move(root); }
+
 void MainWindow::set_metrics_status(QString status) { metrics_status_ = std::move(status); }
 
 // The spectrometer's move threshold goes through its window when one is open
@@ -809,7 +811,7 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
   // was applied a moment ago is in them, not in the config the line loaded.
   std::optional<LineSettings> line;
   if (!line_config_file_.empty()) {
-    line = load_line_settings(line_config_file_);
+    line = load_line_settings(line_config_file_, install_root_);
     if (line) line->metrics_status = metrics_status_;
   }
   PreferencesDialog* dialog = PreferencesDialog::show_for(
@@ -826,7 +828,7 @@ PreferencesDialog* MainWindow::open_preferences(QWidget* over) {
       },
       std::move(line),
       [this](const LineSettings& wanted) {
-        const std::optional<LineSettings> before = load_line_settings(line_config_file_);
+        const std::optional<LineSettings> before = load_line_settings(line_config_file_, install_root_);
         const QString failed = save_line_settings(line_config_file_, wanted);
         if (!failed.isEmpty()) return failed;
         // Saved. Where the log file goes and the metrics endpoint are read

@@ -10,6 +10,7 @@
 #include <string>
 
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/config/logging_file.hpp"
 
 using namespace pychron;
 using namespace pychron::config;
@@ -311,4 +312,54 @@ TEST_F(LocalFile, TheMainFileAloneSaysWhatTheSharedConfigIs) {
   const auto effective = load_system_config(main_file);
   ASSERT_TRUE(effective);
   EXPECT_EQ(effective->logging.default_level, LogLevel::Trace);
+}
+
+// ---- logging.local.toml: the logging keys at the top level -------------------
+
+TEST(LoggingLocalText, TopLevelKeysAndALevelsTable) {
+  LoggingConfig wanted;
+  wanted.default_level = LogLevel::Warn;
+  wanted.dock_level = LogLevel::Error;
+  wanted.levels = {{"*.wire", LogLevel::Trace}};
+  const std::string text = logging_local_toml(wanted, LoggingConfig{});
+  EXPECT_EQ(text, "default_level = \"warn\"\ndock_level = \"error\"\n\n[levels]\n\"*.wire\" = \"trace\"\n");
+  LoggingConfig back;
+  ASSERT_TRUE(apply_logging_toml(text, "logging.local.toml", back));
+  EXPECT_EQ(back.default_level, LogLevel::Warn);
+  EXPECT_EQ(back.dock_level, LogLevel::Error);
+  ASSERT_EQ(back.levels.size(), 1u);
+}
+
+TEST(LoggingLocalText, NothingWhenNothingDiffers) {
+  EXPECT_EQ(logging_local_toml(LoggingConfig{}, LoggingConfig{}), "");
+}
+
+TEST_F(LocalFile, LoggingKeysReplaceTheOldOnesAndKeepTheRest) {
+  write(local, "# this install\ndefault_level = \"info\"\nmax_files = 4  # kept few\nfoo_comment_key = 1\n\n"
+               "# my levels\n[levels]\nold = \"debug\"\n\n# other\n[other]\nx = 1\n");
+  ASSERT_TRUE(replace_local_logging(local, "default_level = \"warn\"\n\n[levels]\nnew = \"trace\"\n"));
+  const std::string got = read(local);
+  EXPECT_NE(got.find("# this install"), std::string::npos);
+  EXPECT_NE(got.find("foo_comment_key = 1"), std::string::npos);
+  EXPECT_NE(got.find("[other]\nx = 1"), std::string::npos);
+  EXPECT_NE(got.find("default_level = \"warn\""), std::string::npos);
+  EXPECT_EQ(got.find("\"info\""), std::string::npos);
+  EXPECT_EQ(got.find("max_files"), std::string::npos);
+  EXPECT_EQ(got.find("old ="), std::string::npos);
+  EXPECT_NE(got.find("new = \"trace\""), std::string::npos);
+  // the keys come before the first table
+  EXPECT_LT(got.find("default_level"), got.find('['));
+}
+
+TEST_F(LocalFile, LoggingFileIsMadeAndRemovedWhenEmpty) {
+  ASSERT_TRUE(replace_local_logging(local, "dock_level = \"warn\"\n"));
+  EXPECT_EQ(read(local), "dock_level = \"warn\"\n");
+  ASSERT_TRUE(replace_local_logging(local, ""));
+  EXPECT_FALSE(fs::exists(local));
+}
+
+TEST_F(LocalFile, LoggingReplacementKeepsOtherTablesAndCommentsWhenNothingLeft) {
+  write(local, "dock_level = \"warn\"\n\n# keep\n[other]\nx = 1\n");
+  ASSERT_TRUE(replace_local_logging(local, ""));
+  EXPECT_EQ(read(local), "# keep\n[other]\nx = 1\n");
 }

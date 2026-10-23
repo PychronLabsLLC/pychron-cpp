@@ -21,6 +21,9 @@ namespace pychron::config {
 // does. Levels are a whole list (the loader takes a local levels table as
 // the list, not as additions), written when they differ in any way.
 std::string logging_override_toml(const LoggingConfig& wanted, const LoggingConfig& main);
+// The same as logging_override_toml, in the form of `<install>/logging.local.toml`:
+// the keys at the top level and the levels in a `[levels]` table.
+std::string logging_local_toml(const LoggingConfig& wanted, const LoggingConfig& main);
 std::string metrics_override_toml(const MetricsConfig& wanted, const MetricsConfig& main);
 
 // Replaces `[table]` and every `[table.*]` in `local_file` with `toml` (the
@@ -35,6 +38,14 @@ std::string metrics_override_toml(const MetricsConfig& wanted, const MetricsConf
 // as it was.
 Result<void> replace_local_table(const std::filesystem::path& local_file, std::string_view table,
                                  std::string_view toml);
+
+// Replaces the logging keys of a `logging.local.toml` (top-level `dir`,
+// `max_size_mb`, `max_files`, `default_level`, `dock_level`, `echo_stderr`, and
+// the `[levels]` table) with `toml`, in the form logging_local_toml gives ("" to
+// remove them). Everything else in the file, comments included, is left as it
+// was; the new keys go before the file's first table. Made, checked and written
+// as replace_local_table does, and removed when nothing is left.
+Result<void> replace_local_logging(const std::filesystem::path& file, std::string_view toml);
 
 // Like replace_local_table, but the table is replaced where it stands: the
 // comments directly above it, its place among the other tables, the blank

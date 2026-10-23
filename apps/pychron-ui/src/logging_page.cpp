@@ -42,14 +42,16 @@ LogLevel level_in(const QComboBox* box) {
 
 LoggingPage::LoggingPage(QWidget* parent)
     : QWidget(parent),
-      default_level_(level_box(LogLevel::Info)),
+      default_level_(level_box(LogLevel::Debug)),
+      dock_level_(level_box(LogLevel::Info)),
       levels_(new QTableWidget(0, 2)),
       add_(new QPushButton(tr("Add"))),
       remove_(new QPushButton(tr("Remove"))),
       folder_(new QLineEdit),
       max_size_(new QSpinBox),
       max_files_(new QSpinBox),
-      echo_(new QCheckBox(tr("Also print to the terminal"))) {
+      echo_(new QCheckBox(tr("Also print to the terminal"))),
+      no_file_(new QCheckBox(tr("No log file"))) {
   levels_->setHorizontalHeaderLabels({tr("Logger"), tr("Level")});
   levels_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
   levels_->verticalHeader()->hide();
@@ -71,6 +73,7 @@ LoggingPage::LoggingPage(QWidget* parent)
   auto* now = new QGroupBox(tr("Levels"));
   auto* now_form = new QFormLayout(now);
   now_form->addRow(tr("Everything else:"), default_level_);
+  now_form->addRow(tr("Shown in the Log panel:"), dock_level_);
   auto* row_buttons = new QVBoxLayout;
   row_buttons->addWidget(add_);
   row_buttons->addWidget(remove_);
@@ -83,7 +86,8 @@ LoggingPage::LoggingPage(QWidget* parent)
       tr("A logger is named like transport.serial or scheduler; * stands for any part. \"*.wire\" at trace shows "
          "every byte sent and received. Levels change as soon as they are applied.")));
 
-  folder_->setPlaceholderText(tr("None: no log file"));
+  folder_->setPlaceholderText(tr("Default folder"));
+  connect(no_file_, &QCheckBox::toggled, this, [this](bool off) { folder_->setEnabled(!off); });
   folder_->setClearButtonEnabled(true);
   auto* browse = new QPushButton(tr("Browse…"));
   connect(browse, &QPushButton::clicked, this, [this] {
@@ -99,6 +103,7 @@ LoggingPage::LoggingPage(QWidget* parent)
 
   auto* file = new QGroupBox(tr("Log file"));
   auto* file_form = new QFormLayout(file);
+  file_form->addRow(no_file_);
   file_form->addRow(tr("Folder:"), folder_row);
   file_form->addRow(tr("Start a new file at:"), max_size_);
   file_form->addRow(tr("Files kept:"), max_files_);
@@ -122,11 +127,15 @@ void LoggingPage::add_row(const QString& pattern, LogLevel level) {
 void LoggingPage::set(const config::LoggingConfig& logging) {
   base_ = logging;
   default_level_->setCurrentIndex(static_cast<int>(logging.default_level));
+  dock_level_->setCurrentIndex(static_cast<int>(logging.dock_level));
   levels_->setRowCount(0);
   // By name, so the table reads the same however the file listed them.
   const std::map<std::string, LogLevel> sorted(logging.levels.begin(), logging.levels.end());
   for (const auto& [pattern, level] : sorted) add_row(QString::fromStdString(pattern), level);
-  folder_->setText(QString::fromStdString(logging.dir.value_or(std::filesystem::path{}).string()));
+  // An empty path is "no file"; unset is the application's default folder.
+  const bool off = logging.dir && logging.dir->empty();
+  no_file_->setChecked(off);
+  folder_->setText(logging.dir && !off ? QString::fromStdString(logging.dir->string()) : QString());
   max_size_->setValue(static_cast<int>(logging.max_size_mb));
   max_files_->setValue(static_cast<int>(logging.max_files));
   echo_->setChecked(logging.echo_stderr);
@@ -135,6 +144,7 @@ void LoggingPage::set(const config::LoggingConfig& logging) {
 config::LoggingConfig LoggingPage::value() const {
   config::LoggingConfig out = base_;
   out.default_level = level_in(default_level_);
+  out.dock_level = level_in(dock_level_);
   out.levels.clear();
   for (int row = 0; row < levels_->rowCount(); ++row) {
     const QTableWidgetItem* item = levels_->item(row, 0);
@@ -150,9 +160,12 @@ config::LoggingConfig LoggingPage::value() const {
     }
     if (!replaced) out.levels.emplace_back(pattern, level);
   }
-  // An empty field is the app's default folder, what set() showed for an unset dir.
+  // "No log file" is an empty path; an empty field is the app's default folder,
+  // what set() showed for an unset dir.
   const std::string folder = folder_->text().trimmed().toStdString();
-  if (folder.empty()) {
+  if (no_file_->isChecked()) {
+    out.dir = std::filesystem::path{};
+  } else if (folder.empty()) {
     out.dir = std::nullopt;
   } else {
     out.dir = folder;

@@ -313,6 +313,35 @@ class TestDocks : public QObject {
     QCOMPARE(dock2.model()->record(0).message, QStringLiteral("end"));
   }
 
+  void historyParsesNewAndOldFormat() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("pychron.log"));
+    {
+      QFile f(path);
+      QVERIFY(f.open(QIODevice::WriteOnly));
+      f.write("2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: new with run\n");
+      f.write("2026-10-22T14:03:22.482Z [warn] [t3] transport.serial: new without run\n");
+      f.write("2026-10-01T14:03:22.483Z [error] scheduler: old format\n");
+    }
+    LogDock dock;
+    QCOMPARE(dock.load_history(path.toStdString()), 3);
+    const LogModel* m = dock.model();
+    QCOMPARE(m->record(0).level, LogLevel::Debug);
+    QCOMPARE(m->record(0).logger, QStringLiteral("experiment.run"));
+    QCOMPARE(m->record(0).message, QStringLiteral("new with run"));
+    QCOMPARE(m->record(0).thread, QStringLiteral("executor"));
+    QCOMPARE(m->record(0).run, QStringLiteral("12345-01A"));
+    QCOMPARE(m->record(1).level, LogLevel::Warn);
+    QCOMPARE(m->record(1).thread, QStringLiteral("t3"));
+    QCOMPARE(m->record(1).run, QString());
+    QCOMPARE(m->record(2).level, LogLevel::Error);
+    QCOMPARE(m->record(2).logger, QStringLiteral("scheduler"));
+    QCOMPARE(m->record(2).message, QStringLiteral("old format"));
+    QCOMPARE(m->record(2).thread, QString());
+    QCOMPARE(m->record(2).run, QString());
+  }
+
   void alarmDockKeepsOneRowPerSourceAndAcks() {
     AlarmDock dock;
     dock.add_alarm(Alarm{"IG1", AlarmSeverity::Critical, "high", {}});

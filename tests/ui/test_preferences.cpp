@@ -47,6 +47,7 @@
 #include "preferences.hpp"
 #include "preferences_dialog.hpp"
 #include "pychron/core/config/loader.hpp"
+#include "pychron/core/config/logging_file.hpp"
 #include "pychron/core/log_hub.hpp"
 #include "pychron/processing/source.hpp"
 #include "spectrometer_bridge.hpp"
@@ -965,6 +966,95 @@ class TestPreferences : public QObject {
     d->logging_page()->default_level()->setCurrentText(QStringLiteral("error"));
     click(d->buttons(), QDialogButtonBox::Ok);
     QVERIFY(!transport.enabled(LogLevel::Trace));
+  }
+
+  // ---- an install keeps its logging in <root>/logging.local.toml -------------------
+
+  fs::path make_install_root() {
+    const fs::path root = config_dir_ / "install";
+    fs::create_directories(root);
+    return root;
+  }
+
+  void logging_saved_to_install_local_file() {
+    const fs::path root = make_install_root();
+    write_file(root / "logging.toml", "default_level = \"warn\"\nmax_files = 7\n");
+    write_file(local_file_, "# untouched\n[metrics]\nport = 9600\n");
+
+    auto s = ui::load_line_settings(main_file_, root);
+    QVERIFY(s.has_value());
+    QCOMPARE(s->logging.default_level, LogLevel::Warn);
+    QCOMPARE(s->logging.max_files, std::int64_t{7});
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    ui::LoggingPage* page = d.logging_page();
+    QCOMPARE(page->dock_level()->currentText(), QStringLiteral("info"));
+    page->dock_level()->setCurrentText(QStringLiteral("warn"));
+    const LineSettings wanted = *d.values().line;
+    QCOMPARE(ui::save_line_settings(main_file_, wanted), QString());
+
+    // (the line's own [logging] has a scheduler level that logging.toml does not: it is kept)
+    QCOMPARE(read_file(root / "logging.local.toml"),
+             std::string("dock_level = \"warn\"\n\n[levels]\n\"scheduler\" = \"debug\"\n"));
+    // the line's own local file gets no [logging]
+    QVERIFY(!QString::fromStdString(read_file(local_file_)).contains(QStringLiteral("logging")));
+    QVERIFY(QString::fromStdString(read_file(local_file_)).contains(QStringLiteral("9600")));
+    const auto sources = config::load_logging_config(root, main_file_);
+    QVERIFY(sources.has_value());
+    QCOMPARE(sources->config.dock_level, LogLevel::Warn);
+  }
+
+  void restore_defaults_goes_to_logging_toml() {
+    const fs::path root = make_install_root();
+    write_file(root / "logging.toml", "default_level = \"error\"\n");
+    write_file(root / "logging.local.toml", "default_level = \"debug\"\n");
+    auto s = ui::load_line_settings(main_file_, root);
+    QVERIFY(s.has_value());
+    QCOMPARE(s->logging.default_level, LogLevel::Debug);
+    QCOMPARE(s->shared_logging.default_level, LogLevel::Error);
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    QCOMPARE(d.logging_page()->default_level()->currentText(), QStringLiteral("debug"));
+    click(d.buttons(), QDialogButtonBox::RestoreDefaults);
+    QCOMPARE(d.logging_page()->default_level()->currentText(), QStringLiteral("error"));
+    QCOMPARE(ui::save_line_settings(main_file_, *d.values().line), QString());
+    QVERIFY(!fs::exists(root / "logging.local.toml"));
+  }
+
+  void restore_defaults_without_logging_toml_is_the_built_in_defaults() {
+    const fs::path root = make_install_root();
+    write_file(root / "logging.local.toml", "default_level = \"error\"\n");
+    auto s = ui::load_line_settings(main_file_, root);
+    QVERIFY(s.has_value());
+    PreferencesDialog d({Preferences{}, std::nullopt, *s}, {});
+    click(d.buttons(), QDialogButtonBox::RestoreDefaults);
+    QCOMPARE(d.logging_page()->default_level()->currentText(), QStringLiteral("debug"));
+  }
+
+  void no_log_file_checkbox_is_an_empty_dir() {
+    PreferencesDialog d({Preferences{}, std::nullopt, line_settings()}, {});
+    ui::LoggingPage* page = d.logging_page();
+    QVERIFY(!page->no_file()->isChecked());
+    QVERIFY(!page->value().dir.has_value());
+
+    page->no_file()->setChecked(true);
+    QVERIFY(!page->folder()->isEnabled());
+    QVERIFY(page->value().dir.has_value());
+    QVERIFY(page->value().dir->empty());
+
+    page->no_file()->setChecked(false);
+    QVERIFY(page->folder()->isEnabled());
+    QVERIFY(!page->value().dir.has_value());  // unchecked and empty: the default folder
+    page->folder()->setText(QStringLiteral("/tmp/x"));
+    QCOMPARE(page->value().dir, fs::path("/tmp/x"));
+
+    config::LoggingConfig off;
+    off.dir = fs::path{};
+    page->set(off);
+    QVERIFY(page->no_file()->isChecked());
+    QVERIFY(page->folder()->text().isEmpty());
+    config::LoggingConfig dflt;
+    page->set(dflt);
+    QVERIFY(!page->no_file()->isChecked());
+    QVERIFY(page->folder()->text().isEmpty());
   }
 
   // Every window here was given its settings: none fell back to the application's.

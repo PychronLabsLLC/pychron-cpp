@@ -176,10 +176,13 @@ LogDock::LogDock(QWidget* parent)
   table_->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
   table_->verticalHeader()->setDefaultSectionSize(table_->fontMetrics().height() + 4);
   table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-  table_->horizontalHeader()->setStretchLastSection(true);
+  table_->horizontalHeader()->setStretchLastSection(false);
+  table_->horizontalHeader()->setSectionResizeMode(LogModel::MessageCol, QHeaderView::Stretch);
   table_->setColumnWidth(LogModel::TimeCol, 100);
   table_->setColumnWidth(LogModel::LevelCol, 60);
   table_->setColumnWidth(LogModel::LoggerCol, 140);
+  table_->setColumnWidth(LogModel::ThreadCol, 80);
+  table_->setColumnWidth(LogModel::RunCol, 90);
 
   auto* container = new QWidget;
   auto* layout = new QVBoxLayout(container);
@@ -202,7 +205,8 @@ LogDock::LogDock(QWidget* parent)
 
 void LogDock::append_log(const Log& log) {
   enqueue(LogRecord{stamp_or_now(log.ts), log.level, QString::fromStdString(log.logger),
-                    QString::fromStdString(log.message), false});
+                    QString::fromStdString(log.message), false, QString::fromStdString(log.thread),
+                    QString::fromStdString(log.run)});
 }
 
 void LogDock::append_line(const QString& line) {
@@ -336,9 +340,9 @@ void LogDock::level_with_dialog() {
 int LogDock::load_history(const std::filesystem::path& log_file, int max_lines) {
   // `2026-10-22T14:03:22.481Z [debug] [executor] run=12345-01A experiment.run: msg`, or
   // the older `2026-10-01T14:03:22.481Z [warn] transport.serial.ig1: msg`. Thread
-  // and run are skipped here: the model has no columns for them yet.
+  // and run are read when the line has them.
   static const QRegularExpression re(QStringLiteral(
-      R"(^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[(trace|debug|info|warn|error)\] (?:\[[^\]]*\] )?(?:run=\S+ )?(\S+): (.*)$)"));
+      R"(^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[(trace|debug|info|warn|error)\] (?:\[([^\]]*)\] )?(?:run=(\S+) )?(\S+): (.*)$)"));
   const auto lines = read_tail_lines(log_file, std::min(max_lines, LogModel::kCapacity),
                                      static_cast<std::size_t>(kMaxHistoryLineBytes));
   if (lines.empty()) return 0;
@@ -355,7 +359,8 @@ int LogDock::load_history(const std::filesystem::path& log_file, int max_lines) 
       if (wall.isValid()) {
         last_ts = log_steady_time(wall);
         have_ts = true;
-        records.push_back(LogRecord{last_ts, parse_file_level(m.captured(2)), m.captured(3), m.captured(4), true});
+        records.push_back(LogRecord{last_ts, parse_file_level(m.captured(2)), m.captured(5), m.captured(6), true,
+                                    m.captured(3), m.captured(4)});
         continue;
       }
     }

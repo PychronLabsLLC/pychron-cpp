@@ -39,6 +39,20 @@ class TestLogModel : public QObject {
     QCOMPARE(messages(model), (QStringList{"4", "5", "6"}));
   }
 
+  void threadAndRunColumns() {
+    LogModel model;
+    LogRecord r = rec(LogLevel::Info, "experiment.run", "started");
+    r.thread = QStringLiteral("executor");
+    r.run = QStringLiteral("1-01");
+    model.append({r, rec(LogLevel::Info, "a", "plain")});
+    QCOMPARE(model.columnCount(), 6);
+    QCOMPARE(model.headerData(LogModel::ThreadCol, Qt::Horizontal).toString(), QStringLiteral("Thread"));
+    QCOMPARE(model.headerData(LogModel::RunCol, Qt::Horizontal).toString(), QStringLiteral("Run"));
+    QCOMPARE(model.index(0, LogModel::ThreadCol).data().toString(), QStringLiteral("executor"));
+    QCOMPARE(model.index(0, LogModel::RunCol).data().toString(), QStringLiteral("1-01"));
+    QCOMPARE(model.index(1, LogModel::RunCol).data().toString(), QString());
+  }
+
   void clearEmpties() {
     LogModel model;
     model.append({rec(LogLevel::Info, "a", "x")});
