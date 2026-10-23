@@ -51,6 +51,7 @@
 #include "pychron/core/config/loader.hpp"
 #include "pychron/core/config/logging_file.hpp"
 #include "pychron/core/log_hub.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "spectrometer_bridge.hpp"
 #include "spectrometer_fixture.hpp"
@@ -68,6 +69,12 @@ using pychron::ui::PreferencesDialog;
 using pychron::ui::SpectrometerWindow;
 
 namespace {
+
+// The Ar-Ar domain: what a browser's toolbar is built from.
+const pp::Domain& arar_domain() {
+  static const std::unique_ptr<pp::Domain> domain = pp::make_arar_domain();
+  return *domain;
+}
 
 std::unique_ptr<pp::MemorySource> make_source(int n) {
   auto src = std::make_unique<pp::MemorySource>();
@@ -474,7 +481,7 @@ class TestPreferences : public QObject {
 
   void the_browser_pages_by_the_preference() {
     auto src = make_source(260);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_domain());
     QCOMPARE(w.model()->rowCount(), Preferences::kDefaultPageSize);
     w.set_page_size(50);
     QCOMPARE(w.page_size(), 50);

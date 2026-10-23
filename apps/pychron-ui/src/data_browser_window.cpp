@@ -101,9 +101,10 @@ QDoubleSpinBox* age_edit() {
 
 }  // namespace
 
-DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* parent)
+DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, const pp::Domain& domain, QWidget* parent)
     : QWidget(parent, Qt::Window),
       source_(source),
+      domain_(domain),
       model_(new AnalysisTableModel(this)),
       selected_model_(new AnalysisTableModel(this)),
       type_colors_(default_type_colors(theme())) {
@@ -231,35 +232,31 @@ DataBrowserWindow::DataBrowserWindow(pp::IAnalysisSource& source, QWidget* paren
   toolbar_->setObjectName(QStringLiteral("data_toolbar"));
   toolbar_->setIconSize(QSize(18, 18));
   toolbar_->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-  auto plot = [this](const char* kind, const QString& label, const QString& tip) {
-    const QString k = QString::fromLatin1(kind);
-    QAction* a = toolbar_->addAction(data_icon(k), label, this, [this, k] { request_figure(k); });
-    a->setData(k);
-    a->setToolTip(tip);
-  };
-  plot("time_series", tr("Time series"), tr("Time series of the selected analyses"));
-  plot("ideogram", tr("Ideogram"), tr("Ideogram of the selected analyses"));
-  plot("spectrum", tr("Age spectrum"), tr("Age spectrum of the selected analyses"));
-  plot("inverse_isochron", tr("Inverse isochron"), tr("Inverse isochron of the selected analyses"));
-  plot("spectrum_isochron", tr("Spectrum + isochron"),
-       tr("Age spectrum and inverse isochron of the selected analyses, side by side"));
-  toolbar_->addSeparator();
-  plot("isotope_evolution_fit", tr("Isotope evolutions..."), tr("Refit the selected analyses' isotope evolutions"));
-  plot("blank_fit", tr("Blanks..."), tr("Blanks: fit the selected unknowns' values from reference analyses"));
-  plot("icfactor_fit", tr("IC factors..."), tr("IC factors: fit the selected unknowns' values from reference analyses"));
+  for (const pp::FigureEntry& entry : domain_.figures()) {
+    if (entry.separator_before) toolbar_->addSeparator();
+    const QString kind = qs(entry.kind);
+    QAction* a = toolbar_->addAction(data_icon(qs(entry.icon)), qs(entry.label), this,
+                                     [this, kind] { request_figure(kind); });
+    a->setData(kind);
+    a->setToolTip(qs(entry.tip));
+  }
   toolbar_->addSeparator();
   recall_ = toolbar_->addAction(data_icon(QStringLiteral("recall")), tr("Recall"), this, &DataBrowserWindow::recall_current);
   recall_->setToolTip(tr("Recall: open the current analysis"));
-  export_ = toolbar_->addAction(data_icon(QStringLiteral("export")), tr("Export"), this, &DataBrowserWindow::request_export);
-  export_->setToolTip(tr("Export: write the selected analyses (right list) as a 40Ar/39Ar data report after "
-                         "Schaen et al. (2021), CSV or JSON"));
+  for (const pp::Exporter& exporter : domain_.exporters()) {
+    const QString id = qs(exporter.id);
+    QAction* a = toolbar_->addAction(data_icon(QStringLiteral("export")), qs(exporter.label), this,
+                                     [this, id] { request_export(id); });
+    a->setData(id);
+    a->setToolTip(qs(exporter.tip));
+    exports_.push_back(a);
+  }
   publish_ = toolbar_->addAction(data_icon(QStringLiteral("publish")), tr("Publish"), this, [this] {
     if (const QStringList ids = selection_uuids(); !ids.isEmpty()) emit publish_requested(ids);
   });
   set_actions_enabled(false);
-  ask_export_path = [this](const QString& suggested) {
-    return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested,
-                                        tr("CSV report (*.csv);;JSON report (*.json)"));
+  ask_export_path = [this](const QString& suggested, const QString& accepted) {
+    return QFileDialog::getSaveFileName(this, tr("Export data report"), suggested, accepted);
   };
 
   confirm_add_all = [this](std::size_t count) {
@@ -792,7 +789,6 @@ void DataBrowserWindow::clear_selected() {
 void DataBrowserWindow::set_actions_enabled(bool on) {
   for (QAction* a : toolbar_->actions())
     if (!a->data().toString().isEmpty()) a->setEnabled(on);
-  export_->setEnabled(on);
   update_publish();
 }
 
@@ -855,7 +851,7 @@ void DataBrowserWindow::request_figure(const QString& kind) {
 
 void DataBrowserWindow::show_message(const QString& text) { status_->setText(text); }
 
-void DataBrowserWindow::request_export() {
+void DataBrowserWindow::request_export(const QString& exporter_id) {
   const QStringList ids = selection_uuids();
   if (ids.isEmpty()) {
     status_->setText(tr("Nothing to export"));
@@ -870,9 +866,12 @@ void DataBrowserWindow::request_export() {
     one_sample = row.sample == sample;
   }
   const QString stem = one_sample && !sample.empty() ? qs(sample) : QStringLiteral("analyses");
-  const QString path = ask_export_path ? ask_export_path(stem + QStringLiteral("-report.csv")) : QString();
+  QString filters;
+  for (const pp::Exporter& exporter : domain_.exporters())
+    if (qs(exporter.id) == exporter_id) filters = qs(exporter.filters);
+  const QString path = ask_export_path ? ask_export_path(stem + QStringLiteral("-report.csv"), filters) : QString();
   if (path.isEmpty()) return;
-  emit export_requested(path, ids);
+  emit export_requested(exporter_id, path, ids);
 }
 
 }  // namespace pychron::ui

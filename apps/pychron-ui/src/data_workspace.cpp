@@ -126,7 +126,7 @@ void DataWorkspace::set_unavailable(const QString& reason) {
 DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
   if (source_ == nullptr || processing_ == nullptr) return nullptr;
   if (browser_ == nullptr) {
-    browser_ = new DataBrowserWindow(*source_, owner_);
+    browser_ = new DataBrowserWindow(*source_, *domain_, owner_);
     apply_to(*browser_, preferences_);
     browser_->set_unavailable(unavailable_);
     const auto settings = [this] { return settings_ ? settings_() : std::make_unique<QSettings>(); };
@@ -138,7 +138,7 @@ DataBrowserWindow* DataWorkspace::browser(QWidget* embed_in) {
     connect(browser_, &DataBrowserWindow::figure_requested, this,
             [this](const QString& kind, const QStringList& ids) { open_figure(kind, ids); });
     connect(browser_, &DataBrowserWindow::export_requested, this,
-            [this](const QString& path, const QStringList& ids) { export_report(path, ids); });
+            [this](const QString&, const QString& path, const QStringList& ids) { export_report(path, ids); });
     browser_->set_publish_available(static_cast<bool>(publish_handler_));
     connect(browser_, &DataBrowserWindow::publish_requested, this, [this](const QStringList& ids) {
       if (publish_handler_) publish_handler_(ids);

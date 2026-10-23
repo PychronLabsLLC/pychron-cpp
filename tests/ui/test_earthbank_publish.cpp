@@ -35,6 +35,7 @@
 #include "earthbank_publish_panel.hpp"
 #include "earthbank_worker.hpp"
 #include "pychron/processing/options.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 #include "settings_guard.hpp"
 
@@ -48,6 +49,12 @@ using Action = pychron::ui::EarthbankPublishPanel::Action;
 using Column = pychron::ui::EarthbankPublishPanel::Column;
 
 namespace {
+
+// The Ar-Ar domain: what a browser's toolbar is built from.
+const pp::Domain& arar_domain() {
+  static const std::unique_ptr<pp::Domain> domain = pp::make_arar_domain();
+  return *domain;
+}
 
 // The two fixture samples with every term one the fake's lists hold: the
 // heated sample's stratigraphic unit is not, and is taken off.
@@ -117,7 +124,7 @@ class EarthbankPublishTest : public QObject {
  private slots:
   void the_action_is_enabled_only_with_a_selection() {
     pp::MemorySource source(eb::testing::both_samples());
-    DataBrowserWindow w(source);
+    DataBrowserWindow w(source, arar_domain());
     QVERIFY(w.publish_action() != nullptr);
     QVERIFY(!w.publish_action()->isEnabled());
     QSignalSpy asked(&w, &DataBrowserWindow::publish_requested);

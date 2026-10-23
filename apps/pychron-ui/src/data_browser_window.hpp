@@ -21,19 +21,22 @@
 //   Ctrl+N / Ctrl+B          select the next / previous row of the table with
 //                            focus and recall it
 //   toolbar, a figure        figure_requested(kind, Selected's uuids);
-//                            kind: time_series, ideogram, spectrum, inverse_isochron,
-//                            spectrum_isochron, then the fit windows isotope_evolution_fit, blank_fit,
-//                            icfactor_fit
+//                            one button per entry of the domain's figures(), in its order
+//                            (Ar-Ar: time_series, ideogram, spectrum, inverse_isochron,
+//                            spectrum_isochron, then the fit windows isotope_evolution_fit,
+//                            blank_fit, icfactor_fit)
 //   toolbar, Recall          recall_requested(uuid of the current row)
 //   toolbar, Publish         publish_requested(Selected's uuids): the Publish dialog
-//   toolbar, Export          export_requested(path, Selected's uuids): one
-//                            click asks for a file name and the workspace writes the
-//                            Schaen et al. (2021) data report there (.csv or .json)
+//   toolbar, an exporter     export_requested(exporter id, path, Selected's uuids): one
+//                            button per entry of the domain's exporters(); a click asks for
+//                            a file name (its filters) and the workspace writes there
+//                            (Ar-Ar: the Schaen et al. (2021) data report, .csv or .json)
 
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
+#include <vector>
 
 #include <QStringList>
 #include <QWidget>
@@ -42,6 +45,7 @@
 #include "facet_box.hpp"
 #include "preferences.hpp"
 #include "selection_list.hpp"
+#include "pychron/processing/domain.hpp"
 #include "pychron/processing/source.hpp"
 
 class QComboBox;
@@ -62,8 +66,9 @@ class DataBrowserWindow : public QWidget {
   Q_OBJECT
 
  public:
-  // `source` must outlive the window.
-  explicit DataBrowserWindow(processing::IAnalysisSource& source, QWidget* parent = nullptr);
+  // `source` and `domain` must outlive the window. The domain says which
+  // figures and exports the toolbar offers.
+  DataBrowserWindow(processing::IAnalysisSource& source, const processing::Domain& domain, QWidget* parent = nullptr);
 
   // Rescans the source and reloads the first page. The analyses selected and
   // the current one stay so when they are still listed, and the table then
@@ -127,7 +132,8 @@ class DataBrowserWindow : public QWidget {
   // The toolbar's action for a figure kind; null for a kind it does not offer.
   QAction* plot_action(const QString& kind) const;
   QAction* recall_action() const noexcept { return recall_; }
-  QAction* export_action() const noexcept { return export_; }
+  // The first exporter's action; null when the domain exports nothing.
+  QAction* export_action() const noexcept { return exports_.empty() ? nullptr : exports_.front(); }
   QAction* publish_action() const noexcept { return publish_; }  // enabled with a selection
   // Whether anything takes publish_requested (default true). Off: the button
   // stays disabled and says "Publishing needs a database".
@@ -136,8 +142,9 @@ class DataBrowserWindow : public QWidget {
   QLabel* unavailable() const noexcept { return unavailable_; }
   // A line for the status label (the workspace reports an export here).
   void show_message(const QString& text);
-  // The file name Export asks for; tests replace the dialog. Empty: cancelled.
-  std::function<QString(const QString& suggested)> ask_export_path;
+  // The file name an export asks for, given the exporter's file dialog filters;
+  // tests replace the dialog. Empty: cancelled.
+  std::function<QString(const QString& suggested, const QString& filters)> ask_export_path;
   // Asked before Add all adds more than 1000 analyses; tests replace the
   // dialog. False: nothing is added.
   std::function<bool(std::size_t count)> confirm_add_all;
@@ -169,7 +176,7 @@ class DataBrowserWindow : public QWidget {
  signals:
   void recall_requested(const QString& uuid);
   void figure_requested(const QString& kind, const QStringList& uuids);
-  void export_requested(const QString& path, const QStringList& uuids);
+  void export_requested(const QString& exporter_id, const QString& path, const QStringList& uuids);
   void publish_requested(const QStringList& uuids);
   void color_by_changed(pychron::ui::ColorBy by);
 
@@ -218,9 +225,10 @@ class DataBrowserWindow : public QWidget {
   void recall_in(const QTableView* view);
   void recall_step_in(QTableView* view, int delta);
   void request_figure(const QString& kind);
-  void request_export();
+  void request_export(const QString& exporter_id);
 
   processing::IAnalysisSource& source_;
+  const processing::Domain& domain_;
   AnalysisTableModel* model_;
   QTableView* table_;
   SelectionList selection_;
@@ -249,7 +257,7 @@ class DataBrowserWindow : public QWidget {
   QPushButton* more_;
   QToolBar* toolbar_;
   QAction* recall_;
-  QAction* export_;
+  std::vector<QAction*> exports_;  // one per exporter of the domain, in its order
   QAction* publish_;
   bool publish_available_ = true;
   void update_publish();

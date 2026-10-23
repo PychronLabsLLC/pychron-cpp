@@ -10,8 +10,9 @@
 namespace pychron::ui {
 
 // `name`: a figure kind (time_series, ideogram, spectrum, inverse_isochron,
-// spectrum_isochron, isotope_evolution_fit, blank_fit, icfactor_fit), "recall", "export" or "publish". A
-// null icon for any other name.
+// spectrum_isochron, isotope_evolution_fit, blank_fit, icfactor_fit), "recall", "export" or "publish". Any
+// other name (a figure of a domain without a glyph of its own) draws the
+// time_series glyph, the generic figure.
 QIcon data_icon(const QString& name);
 
 }  // namespace pychron::ui

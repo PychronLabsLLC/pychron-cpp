@@ -40,14 +40,7 @@ QIcon data_icon(const QString& name) {
   p.setPen(line);
   p.setBrush(Qt::NoBrush);
 
-  if (name == QLatin1String("time_series")) {
-    // values through time, each with its error bar
-    axes(p);
-    p.setPen(thin);
-    const std::initializer_list<QPointF> points{QPointF(5.5, 9), QPointF(8.5, 6), QPointF(11.5, 10.5), QPointF(14.5, 7)};
-    for (const QPointF& at : points) p.drawLine(at - QPointF(0, 2.8), at + QPointF(0, 2.8));
-    dots(p, points);
-  } else if (name == QLatin1String("ideogram")) {
+  if (name == QLatin1String("ideogram")) {
     // a probability density over the age axis
     QPainterPath bell(QPointF(1.5, 14.5));
     bell.cubicTo(QPointF(6.5, 14.5), QPointF(6.5, 3), QPointF(9, 3));
@@ -131,7 +124,13 @@ QIcon data_icon(const QString& name) {
     head.lineTo(12.4, 9.3);
     p.drawPath(head);
   } else {
-    return {};
+    // time_series, and the generic figure for a name drawn nowhere (a domain's
+    // own figure): values through time, each with its error bar
+    axes(p);
+    p.setPen(thin);
+    const std::initializer_list<QPointF> points{QPointF(5.5, 9), QPointF(8.5, 6), QPointF(11.5, 10.5), QPointF(14.5, 7)};
+    for (const QPointF& at : points) p.drawLine(at - QPointF(0, 2.8), at + QPointF(0, 2.8));
+    dots(p, points);
   }
   p.end();
   QIcon icon(pixmap);

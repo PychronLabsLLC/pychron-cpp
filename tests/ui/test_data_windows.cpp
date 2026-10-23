@@ -606,7 +606,7 @@ class TestDataWindows : public QObject {
  private slots:
   void browser_lists_filters_and_pages() {
     auto src = make_source(260);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QCOMPARE(w.model()->rowCount(), 200);  // first page
     QCOMPARE(w.model()->analysis_at(0)->uuid, std::string("uuid-259"));  // newest first
     QVERIFY(w.load_more_button()->isEnabled());
@@ -637,7 +637,7 @@ class TestDataWindows : public QObject {
 
   void browser_date_range() {
     auto src = make_source(260);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QVERIFY(w.date_range()->isHidden());
     w.date_preset()->setCurrentIndex(w.date_preset()->count() - 1);  // Range…
     QVERIFY(!w.date_range()->isHidden());
@@ -693,7 +693,7 @@ class TestDataWindows : public QObject {
     auto src = make_source(3);
     src->set_age("uuid-2", 28.20113, 0.04613);
     src->set_age("uuid-1", 1234.5678, 12.34);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     const auto* m = w.model();
     const int age = AnalysisTableModel::Age;
     QCOMPARE(age, static_cast<int>(AnalysisTableModel::Extract) + 1);
@@ -715,7 +715,7 @@ class TestDataWindows : public QObject {
   void browser_age_range() {
     auto src = make_source(10);
     for (int i = 0; i < 8; ++i) src->set_age("uuid-" + std::to_string(i), 10.0 * i, 0.5);  // uuid-8, 9: none
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QCOMPARE(w.model()->analysis_count(), 10);
     auto q = w.query();
     QVERIFY(!q.age_min && !q.age_max);
@@ -771,7 +771,7 @@ class TestDataWindows : public QObject {
 
   void browser_filters_by_irradiation_and_level() {
     auto src = make_source(60);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QVERIFY(!w.table()->isColumnHidden(ui::AnalysisTableModel::Irradiation));
     auto* irradiations = w.facet_list(pp::Facet::Irradiation);
     auto* levels = w.facet_list(pp::Facet::Level);
@@ -828,7 +828,7 @@ class TestDataWindows : public QObject {
 
   void browser_list_filter_survives_a_reload() {
     auto src = make_source(60);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     auto* box = w.facet_box(pp::Facet::Irradiation);
     QVERIFY(box);
     box->filter()->setText(QStringLiteral("300"));
@@ -847,7 +847,7 @@ class TestDataWindows : public QObject {
   // they were: the same analysis current and selected, the table not moved.
   void browser_refresh_keeps_the_selection_and_the_place() {
     auto src = make_source(60);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.resize(900, 300);
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
@@ -891,7 +891,7 @@ class TestDataWindows : public QObject {
   void browser_follows_a_run_only_when_there_is_something_new() {
     CountingSource src;
     for (int i = 0; i < 5; ++i) src.add(analysis(i), raw_for(*analysis(i)));
-    DataBrowserWindow w(src);
+    DataBrowserWindow w(src, arar_);
     QCOMPARE(w.model()->analysis_count(), 5);
     int refreshes = src.refreshes;
     int browses = src.browses;
@@ -942,7 +942,7 @@ class TestDataWindows : public QObject {
   // a later one, the place, the column widths.
   void browser_keeps_what_was_loaded_when_a_run_lands() {
     auto src = make_source(8);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.set_page_size(3);
     w.resize(900, 160);
     w.show();
@@ -997,7 +997,7 @@ class TestDataWindows : public QObject {
 
   void browser_says_why_it_is_empty() {
     auto src = make_source(0);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QVERIFY(w.unavailable()->isHidden());
     w.set_unavailable(QStringLiteral("The database could not be opened: x\nRun: elctl db migrate"));
     QVERIFY(!w.unavailable()->isHidden());
@@ -1031,7 +1031,7 @@ class TestDataWindows : public QObject {
     auto opened = pp::StoreSource::open(ps::StoreConfig{url, false});
     QVERIFY2(opened.has_value(), opened ? "" : to_string(opened.error()).c_str());
     {
-      DataBrowserWindow w(**opened);
+      DataBrowserWindow w(**opened, arar_);
       QCOMPARE(w.model()->analysis_count(), 0);
 
       auto first = pp::testing::seed_ingest_monitor(**store, lab, "66574", 1, 10.0, "2026-10-02T12:00:00Z");
@@ -1063,7 +1063,7 @@ class TestDataWindows : public QObject {
 
   void browser_colours_rows_by_the_choice() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     const auto tint = [&w](int r) {
       const QVariant v = w.model()->data(w.model()->index(r, 0), Qt::BackgroundRole);
       return v.isValid() ? v.value<QBrush>().color() : QColor();
@@ -1182,7 +1182,7 @@ class TestDataWindows : public QObject {
 
   void browser_marks_time_breaks() {
     auto src = make_sessions();
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     auto* m = w.model();
     QCOMPARE(m->rowCount(), 20);  // no threshold until one is set
     w.set_gap_hours(6.0);
@@ -1230,7 +1230,7 @@ class TestDataWindows : public QObject {
 
   void a_time_break_at_a_page_boundary_comes_with_the_next_page() {
     auto src = make_sessions();
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     auto* m = w.model();
     w.set_gap_hours(6.0);
     w.set_page_size(10);  // exactly the newer session
@@ -1265,7 +1265,7 @@ class TestDataWindows : public QObject {
 
   void browser_recall_and_time_series_signals() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QSignalSpy recall(&w, &DataBrowserWindow::recall_requested);
     QSignalSpy series(&w, &DataBrowserWindow::figure_requested);
     w.recall_step(1);
@@ -1291,7 +1291,7 @@ class TestDataWindows : public QObject {
 
   void browser_add_and_remove() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.select_rows({0, 2});
     QTest::mouseClick(w.add_button(), Qt::LeftButton);
     QCOMPARE(w.selection_uuids(), (QStringList{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")}));
@@ -1314,7 +1314,7 @@ class TestDataWindows : public QObject {
 
   void browser_selected_survives_a_filter_change() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.select_rows({0});
     w.add_highlighted();
     w.select_selected_rows({0});
@@ -1326,7 +1326,7 @@ class TestDataWindows : public QObject {
 
   void browser_selected_shows_a_new_tag() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.select_rows({0});
     w.add_highlighted();
     w.select_selected_rows({0});
@@ -1341,7 +1341,7 @@ class TestDataWindows : public QObject {
 
   void browser_selected_drops_a_removed_analysis() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.select_rows({0, 1});
     w.add_highlighted();
     src->remove("uuid-8");
@@ -1353,7 +1353,7 @@ class TestDataWindows : public QObject {
 
   void browser_selected_drops_a_removed_analysis_when_shown() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.select_rows({0, 1});
     w.add_highlighted();
     src->remove("uuid-8");
@@ -1367,7 +1367,7 @@ class TestDataWindows : public QObject {
 
   void browser_add_all_walks_every_page() {
     auto src = make_source(260);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QCOMPARE(w.model()->analysis_count(), 200);
     QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
     QCOMPARE(w.selection_uuids().size(), 260);
@@ -1377,7 +1377,7 @@ class TestDataWindows : public QObject {
   void browser_add_all_asks_above_1000() {
     {
       auto src = make_source(1001);
-      DataBrowserWindow w(*src);
+      DataBrowserWindow w(*src, arar_);
       std::size_t asked = 0;
       bool answer = false;
       w.confirm_add_all = [&](std::size_t count) {
@@ -1392,7 +1392,7 @@ class TestDataWindows : public QObject {
       QCOMPARE(w.selection_uuids().size(), 1001);
     }
     auto src = make_source(1000);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     bool called = false;
     w.confirm_add_all = [&](std::size_t) {
       called = true;
@@ -1415,7 +1415,7 @@ class TestDataWindows : public QObject {
       auto a = analysis(i);
       src.add(a, raw_for(*a));
     }
-    DataBrowserWindow w(src);
+    DataBrowserWindow w(src, arar_);
     QTest::mouseClick(w.add_all_button(), Qt::LeftButton);
     QCOMPARE(w.selection_uuids().size(), 200);
     QVERIFY(w.status()->text().startsWith(QStringLiteral("Error:")));
@@ -1423,7 +1423,7 @@ class TestDataWindows : public QObject {
 
   void browser_refetches_many_selected() {
     auto src = make_source(600);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     while (w.load_more_button()->isEnabled()) QTest::mouseClick(w.load_more_button(), Qt::LeftButton);
     QCOMPARE(w.model()->analysis_count(), 600);
     w.table()->selectAll();
@@ -1439,7 +1439,7 @@ class TestDataWindows : public QObject {
   void browser_selected_kept_when_refetch_fails() {
     UuidSource src;
     for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));
-    DataBrowserWindow w(src);
+    DataBrowserWindow w(src, arar_);
     w.select_rows({0});
     w.add_highlighted();
     src.fail_by_uuid = true;
@@ -1455,7 +1455,7 @@ class TestDataWindows : public QObject {
   void browser_filter_change_does_not_refetch_selected() {
     UuidSource src;
     for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));
-    DataBrowserWindow w(src);
+    DataBrowserWindow w(src, arar_);
     w.select_rows({0});
     w.add_highlighted();
     QCOMPARE(src.by_uuid, 0);
@@ -1468,7 +1468,7 @@ class TestDataWindows : public QObject {
 
   void browser_selected_follows_the_store_with_a_backwards_range() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
     w.select_rows({0});
@@ -1486,7 +1486,7 @@ class TestDataWindows : public QObject {
 
   void browser_selected_refetched_after_adding_stale_filtered_rows() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
     w.select_rows({1});  // uuid-8
@@ -1511,7 +1511,7 @@ class TestDataWindows : public QObject {
 
   void browser_add_all_with_a_backwards_range_says_so() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.date_preset()->setCurrentIndex(w.date_preset()->count() - 1);  // Range...
     w.from_edit()->setDateTime(utc_hour(20));
     emit w.from_edit()->editingFinished();
@@ -1523,7 +1523,7 @@ class TestDataWindows : public QObject {
   void browser_selected_follows_the_store_when_filtered_fails() {
     UuidSource src;
     for (int i = 0; i < 10; ++i) src.add(analysis(i), raw_for(*analysis(i)));
-    DataBrowserWindow w(src);
+    DataBrowserWindow w(src, arar_);
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
     w.select_rows({0});
@@ -1545,7 +1545,7 @@ class TestDataWindows : public QObject {
     // make_source: every fifth analysis (uuid-4, uuid-9) is a blank, "bu-NN";
     // the rest are airs, "air-NN": the two searches share nothing.
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.search()->setText(QStringLiteral("bu"));
     QCOMPARE(w.model()->analysis_count(), 2);
     w.select_rows({0, 1});
@@ -1563,7 +1563,7 @@ class TestDataWindows : public QObject {
 
   void browser_marks_selected_rows_in_filtered() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.set_page_size(5);
     auto* m = w.model();
     const auto marked = [m](int row) {
@@ -1595,7 +1595,7 @@ class TestDataWindows : public QObject {
 
   void browser_enter_adds_and_delete_removes() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QSignalSpy recall(&w, &DataBrowserWindow::recall_requested);
     for (const auto key : {Qt::Key_Return, Qt::Key_Enter}) {
       w.select_rows({0});
@@ -1634,7 +1634,7 @@ class TestDataWindows : public QObject {
 
   void browser_remove_skips_separators() {
     auto src = make_sessions();
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     w.set_gap_hours(6.0);
     w.table()->selectAll();
     w.add_highlighted();
@@ -1654,20 +1654,23 @@ class TestDataWindows : public QObject {
 
   void browser_toolbar_offers_every_figure_recall_and_export() {
     auto src = make_source(4);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QVERIFY(w.toolbar());
     // At the top: the layout's menu bar, above the filters and the table.
     QCOMPARE(w.layout()->menuBar(), static_cast<QWidget*>(w.toolbar()));
     // Each button names itself under its icon.
     QCOMPARE(w.toolbar()->toolButtonStyle(), Qt::ToolButtonTextUnderIcon);
     for (const QAction* a : w.toolbar()->actions()) QVERIFY(a->isSeparator() || !a->text().isEmpty());
-    // Five figures | three fit windows | recall, export, publish; an icon and a tip each.
-    const QStringList expected{QStringLiteral("time_series"), QStringLiteral("ideogram"), QStringLiteral("spectrum"),
-                               QStringLiteral("inverse_isochron"), QStringLiteral("spectrum_isochron"), QString(),
-                               QStringLiteral("isotope_evolution_fit"),
-                               QStringLiteral("blank_fit"), QStringLiteral("icfactor_fit"), QString()};
+    // The domain's figures (a separator before a flagged one) | recall, export, publish; an icon and a tip each.
+    QStringList expected;
+    for (const auto& f : figures_) {
+      if (f.separator_before) expected << QString();
+      expected << QString::fromStdString(f.kind);
+    }
+    expected << QString();
     const auto actions = w.toolbar()->actions();
     QCOMPARE(actions.size(), expected.size() + 3);
+    QCOMPARE(figures_.size(), std::size_t{8});
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
     w.select_rows({0, 1, 2, 3});
     w.add_highlighted();
@@ -1686,6 +1689,7 @@ class TestDataWindows : public QObject {
     }
     QCOMPARE(actions[expected.size()], w.recall_action());
     QCOMPARE(actions[expected.size() + 1], w.export_action());
+    QCOMPARE(w.export_action()->data().toString(), QStringLiteral("schaen"));
     QCOMPARE(actions[expected.size() + 2], w.publish_action());
     for (QAction* a : {w.recall_action(), w.export_action(), w.publish_action()}) {
       QVERIFY(!a->icon().isNull());
@@ -1695,6 +1699,57 @@ class TestDataWindows : public QObject {
     QVERIFY(!w.plot_action(QString()));
     // The buttons the toolbar replaced are gone from under the table.
     for (const auto* b : w.findChildren<QPushButton*>()) QVERIFY(b->text() != QStringLiteral("Recall") && b->text() != QStringLiteral("Export"));
+  }
+
+  void browser_toolbar_under_noble_gas_has_four_figures_and_no_export() {
+    auto src = make_source(4);
+    const pp::Domain& noble = *domains_.find("noble_gas");
+    DataBrowserWindow w(*src, noble);
+    QList<QAction*> buttons;
+    for (QAction* a : w.toolbar()->actions())
+      if (!a->isSeparator()) buttons << a;
+    QCOMPARE(buttons.size(), 6);
+    QStringList kinds;
+    for (int i = 0; i < 4; ++i) kinds << buttons[i]->data().toString();
+    QCOMPARE(kinds, (QStringList{QStringLiteral("time_series"), QStringLiteral("isotope_evolution_fit"),
+                                 QStringLiteral("blank_fit"), QStringLiteral("icfactor_fit")}));
+    QCOMPARE(buttons[4], w.recall_action());
+    QCOMPARE(buttons[5], w.publish_action());
+    QCOMPARE(w.export_action(), nullptr);
+    QVERIFY(w.recall_action() != nullptr);
+    QVERIFY(w.publish_action() != nullptr);
+    QVERIFY(!w.plot_action(QStringLiteral("ideogram")));
+    // Every figure is a real icon, the generic glyph for a name drawn nowhere.
+    for (const char* kind : {"time_series", "isotope_evolution_fit", "blank_fit", "icfactor_fit"})
+      QVERIFY2(!w.plot_action(QString::fromLatin1(kind))->icon().isNull(), kind);
+    // Selecting something enables the figures and leaves no export to enable.
+    w.select_rows({0});
+    w.add_highlighted();
+    QVERIFY(w.plot_action(QStringLiteral("time_series"))->isEnabled());
+    QVERIFY(w.publish_action()->isEnabled());
+  }
+
+  void browser_export_names_the_exporter() {
+    auto src = make_source(10);
+    DataBrowserWindow w(*src, arar_);
+    QSignalSpy exported(&w, &DataBrowserWindow::export_requested);
+    QString filters;
+    w.ask_export_path = [&filters](const QString&, const QString& f) {
+      filters = f;
+      return QStringLiteral("/tmp/x.csv");
+    };
+    w.select_rows({0, 2});
+    w.add_highlighted();
+    w.export_action()->trigger();
+    QCOMPARE(exported.count(), 1);
+    const auto args = exported.takeFirst();
+    QCOMPARE(args.at(0).toString(), QStringLiteral("schaen"));
+    QCOMPARE(args.at(1).toString(), QStringLiteral("/tmp/x.csv"));
+    QCOMPARE(args.at(2).toStringList(), (QStringList{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")}));
+    const auto exporters = arar_.exporters();
+    QCOMPARE(exporters.size(), std::size_t{1});
+    QCOMPARE(filters, QString::fromStdString(exporters.front().filters));
+    QCOMPARE(w.export_action()->data().toString(), QStringLiteral("schaen"));
   }
 
   void recall_shows_every_tab() {
@@ -2809,10 +2864,10 @@ class TestDataWindows : public QObject {
 
   void browser_actions_take_the_selected_list() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QSignalSpy figure(&w, &DataBrowserWindow::figure_requested);
     QSignalSpy exported(&w, &DataBrowserWindow::export_requested);
-    w.ask_export_path = [](const QString&) { return QStringLiteral("/tmp/out.csv"); };
+    w.ask_export_path = [](const QString&, const QString&) { return QStringLiteral("/tmp/out.csv"); };
     const auto all_enabled = [&w](bool on) {
       for (const char* kind : {"time_series", "ideogram", "spectrum", "inverse_isochron", "spectrum_isochron",
                                "isotope_evolution_fit", "blank_fit", "icfactor_fit"})
@@ -2832,7 +2887,7 @@ class TestDataWindows : public QObject {
     QCOMPARE(figure.takeFirst().at(1).toStringList(), chosen);
     w.export_action()->trigger();
     QCOMPARE(exported.count(), 1);
-    QCOMPARE(exported.takeFirst().at(1).toStringList(), chosen);
+    QCOMPARE(exported.takeFirst().at(2).toStringList(), chosen);
     // Other rows shown and highlighted: the actions still take Selected.
     w.search()->setText(QStringLiteral("bu"));
     w.select_rows({0});
@@ -2852,10 +2907,10 @@ class TestDataWindows : public QObject {
 
   void browser_export_button_asks_for_a_file_and_emits() {
     auto src = make_source(10);
-    DataBrowserWindow w(*src);
+    DataBrowserWindow w(*src, arar_);
     QSignalSpy exported(&w, &DataBrowserWindow::export_requested);
     QString suggested;
-    w.ask_export_path = [&suggested](const QString& s) {
+    w.ask_export_path = [&suggested](const QString& s, const QString&) {
       suggested = s;
       return QStringLiteral("/tmp/out.csv");
     };
@@ -2864,15 +2919,16 @@ class TestDataWindows : public QObject {
     w.export_action()->trigger();
     QCOMPARE(exported.count(), 1);
     auto args = exported.takeFirst();
-    QCOMPARE(args.at(0).toString(), QStringLiteral("/tmp/out.csv"));
-    QCOMPARE(args.at(1).toStringList(), (QStringList{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")}));
+    QCOMPARE(args.at(0).toString(), QStringLiteral("schaen"));
+    QCOMPARE(args.at(1).toString(), QStringLiteral("/tmp/out.csv"));
+    QCOMPARE(args.at(2).toStringList(), (QStringList{QStringLiteral("uuid-7"), QStringLiteral("uuid-9")}));
     QVERIFY2(suggested.endsWith(QStringLiteral("-report.csv")), qPrintable(suggested));
     // Nothing selected: the action is disabled. A cancelled dialog exports nothing.
     w.clear_selected();
     QVERIFY(!w.export_action()->isEnabled());
     w.select_rows({0});
     w.add_highlighted();
-    w.ask_export_path = [](const QString&) { return QString(); };
+    w.ask_export_path = [](const QString&, const QString&) { return QString(); };
     w.export_action()->trigger();
     QCOMPARE(exported.count(), 0);
   }
@@ -2902,7 +2958,7 @@ class TestDataWindows : public QObject {
     QVERIFY(csv.contains(QStringLiteral("S1-01A")));
     QVERIFY(csv.contains(QStringLiteral(",A-H,8,")));  // the plateau of eight concordant steps, grouped by aliquot
     // The browser's Export button goes the same way.
-    browser->ask_export_path = [&dir](const QString&) { return dir.path() + QStringLiteral("/again.json"); };
+    browser->ask_export_path = [&dir](const QString&, const QString&) { return dir.path() + QStringLiteral("/again.json"); };
     browser->select_rows({0});
     browser->add_highlighted();
     browser->export_action()->trigger();
