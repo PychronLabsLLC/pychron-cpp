@@ -393,8 +393,37 @@ TEST(LogHub, MessagesAreVerbatim) {
   }
   const std::string text = read_file(tmp.path() / "pychron.log");
   EXPECT_NE(text.find("v: " + fmt_like + "\n"), std::string::npos) << text;
-  EXPECT_NE(text.find("v: " + multiline + "\n"), std::string::npos) << text;
+  EXPECT_NE(text.find("v: line1 / line2\n"), std::string::npos) << text;  // one record, one line
   EXPECT_NE(text.find("v: " + high_byte + "\n"), std::string::npos) << text;
+}
+
+// A record is one line of the file, so that every line has its time, thread
+// and run: the line breaks of a message become " / ". The Log event (the
+// dock) keeps the message as it was.
+TEST(LogHub, AMultiLineMessageIsOneLineOfTheFile) {
+  TempDir tmp;
+  SteadyClock clock;
+  SignalBus bus;
+  std::vector<Log> got;
+  auto sub = bus.subscribe<Log>([&](const Log& e) { got.push_back(e); });
+  auto cfg = config_for(tmp.path());
+  cfg.echo_stderr = true;
+  {
+    auto hub = make_hub(cfg, clock, &bus);
+    ASSERT_TRUE(hub);
+    testing::internal::CaptureStderr();
+    hub->write(LogLevel::Warn, "v", "a\nb");
+    hub->write(LogLevel::Warn, "v", "c\r\nd\re\n");
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(err, "[warn] v: a / b\n[warn] v: c / d / e / \n");
+  }
+  const auto lines = read_bare_lines(tmp.path() / "pychron.log");
+  ASSERT_EQ(lines.size(), 2u) << ::testing::PrintToString(lines);
+  EXPECT_TRUE(lines[0].ends_with("[warn] v: a / b")) << lines[0];
+  EXPECT_TRUE(lines[1].ends_with("[warn] v: c / d / e / ")) << lines[1];
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].message, "a\nb");
+  EXPECT_EQ(got[1].message, "c\r\nd\re\n");
 }
 
 // ---- Task 4: hub-backed Logger -------------------------------------------

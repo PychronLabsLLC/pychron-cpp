@@ -229,7 +229,8 @@ Both programs write a log file as they run, with no setup.
   temperature polling, `transport.<name>` for a device link, `ui` for the
   window, `elctl` for the command line; a thread pychron did not name shows
   as a number (`t3`). `run=<id>` is there only on lines written while a run
-  is in progress.
+  is in progress. A message of several lines is written on one line, its
+  lines separated by ` / ` (the Log panel shows it as it was).
 - **What a run looks like.** With the default `debug` level the log holds
   the whole sequence of an experiment. Lines named `trace.<event>` are the
   events the programs pass between their parts, `script.<script>` the

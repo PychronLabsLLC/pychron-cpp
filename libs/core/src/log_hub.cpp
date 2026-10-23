@@ -70,6 +70,22 @@ void write_stderr(std::string_view text) noexcept {
   (void)std::fwrite(text.data(), 1, text.size(), stderr);
 }
 
+// Appends `message` with each line break ("\r\n", "\n" or "\r") written as
+// " / ": a record is one line of the file, so every line carries its time,
+// thread and run (grep for a run finds all of it). The Log event keeps the
+// message as it was.
+void append_one_line(std::string& out, std::string_view message) {
+  for (std::size_t i = 0; i < message.size(); ++i) {
+    const char c = message[i];
+    if (c == '\r' || c == '\n') {
+      if (c == '\r' && i + 1 < message.size() && message[i + 1] == '\n') ++i;
+      out.append(" / ");
+    } else {
+      out.push_back(c);
+    }
+  }
+}
+
 // Set on the spdlog writer thread; the crash route must never wait on it from
 // that thread (it would be waiting on itself).
 thread_local bool t_is_log_writer = false;
@@ -439,7 +455,8 @@ struct LogHub::Impl {
       payload.reserve(thread.size() + run.size() + name.size() + message.size() + 12);
       payload.append("[").append(thread).append("] ");
       if (!run.empty()) payload.append("run=").append(run).append(" ");
-      payload.append(name).append(": ").append(message);
+      payload.append(name).append(": ");
+      append_one_line(payload, message);
       // Raw string_view overload: the message is never a format string.
       logger->log(clock.wall_now(), spdlog::source_loc{}, to_spdlog(level),
                   spdlog::string_view_t(payload.data(), payload.size()));
@@ -454,7 +471,9 @@ struct LogHub::Impl {
         std::lock_guard lock(echo_mutex);
         std::string line;
         line.reserve(name.size() + message.size() + 12);
-        line.append("[").append(to_string(level)).append("] ").append(name).append(": ").append(message).append("\n");
+        line.append("[").append(to_string(level)).append("] ").append(name).append(": ");
+        append_one_line(line, message);
+        line.append("\n");
         write_stderr(line);
       } catch (...) {  // NOLINT(bugprone-empty-catch): stderr is gone; the file and the bus still have the line
       }
@@ -494,7 +513,7 @@ struct LogHub::Impl {
     try {
       // Same line shape as write(): a thread field, then logger and message.
       std::string payload = "[" + detail::thread_label() + "] pychron: ";
-      payload.append(text);
+      append_one_line(payload, text);
       // System time, not the hub's clock: a clock's wall_now() may take a
       // mutex (VirtualClock does), and terminate can be raised by the thread
       // that holds it.

@@ -181,6 +181,9 @@ File line format becomes:
   `prepare()`. Before an aliquot (allocation failed) name is identifier
   alone. `trace.RunStarted` carries name and uuid
   (`run=<name>, run_id=<uuid>`): map either way.
+- One record, one file line: line breaks in message (`\r\n`, `\n`, `\r`)
+  written ` / ` in file line and stderr echo, so every line has time, thread,
+  `run=`. `Log` bus event (dock) keeps message as given.
 - Context captured on calling thread in `LogHub::write` (before queue), so
   writer thread does not need it. `Log` bus event gains `std::string thread`
   and `std::string run` fields; Log dock shows them as two new columns,
