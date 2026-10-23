@@ -30,6 +30,7 @@
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/experiment/model/run_spec.hpp"
@@ -121,6 +122,7 @@ class Spool {
 
  private:
   std::filesystem::path dir_;
+  Logger log_ = process_logger("spool");
 };
 
 // What became of a record that was spooled.
@@ -160,6 +162,7 @@ class SavePipeline {
   // spool (sent by a flush or a save on another thread meanwhile).
   Result<bool> hand_off(const std::string& uuid);
 
+  Logger log_ = process_logger("spool");
   Spool& spool_;
   IAnalysisPersister& persister_;
   Post post_;
@@ -215,6 +218,7 @@ class SpoolFlusher {
 
   SavePipeline& pipeline_;
   Scheduler& scheduler_;
+  Logger log_ = process_logger("spool");
   const Clock& clock_;
   SignalBus* bus_;
   Options options_;

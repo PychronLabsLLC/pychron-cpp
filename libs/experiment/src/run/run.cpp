@@ -18,6 +18,7 @@
 #include <type_traits>
 
 #include "pychron/core/log_context.hpp"
+#include "pychron/core/log_error.hpp"
 #include "pychron/devices/link.hpp"
 #include "pychron/experiment/measurement/keep_trying.hpp"
 #include "pychron/experiment/measurement/results.hpp"
@@ -337,7 +338,16 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
   env.context = script_context();
   env.on_pump_time_start = std::move(on_pump_time_start);
   env.log = [this](std::string_view line) { note(std::string(line)); };
+  const std::string_view kind_name = scripting::to_string(kind);
+  log_.debug("script " + std::string(kind_name) + " start: " + script.name);
+  const TimePoint began = s_.clock->now();
   auto r = s_.scripts->run(script, env, control.token());
+  {
+    std::array<char, 32> took{};
+    std::snprintf(took.data(), took.size(), "%.1f s", std::chrono::duration<double>(s_.clock->now() - began).count());
+    if (r) log_.debug("script " + std::string(kind_name) + " end: ok (" + took.data() + ")");
+    else log_.warn("script " + std::string(kind_name) + " end: failed (" + took.data() + "): " + r.error().what);
+  }
   // The record names a run's own scripts; the safe state comes after it is saved.
   if (r && kind != scripting::ScriptKind::SafeState) {
     const char* ref = kind == scripting::ScriptKind::Extraction         ? "extraction"
@@ -350,6 +360,8 @@ Result<void> Run::run_script(const scripting::Script& script, scripting::ScriptK
 }
 
 void Run::advance(RunEvent e, std::string reason) {
+  // The state change is on trace.RunStateChanged; why a run was stopped is said where it is read.
+  if (e == RunEvent::Abort) log_.warn("aborted" + (reason.empty() ? std::string() : ": " + reason));
   // Never expected: said, so that a run whose states are out of step shows it.
   if (auto r = sm_.advance(e, std::move(reason)); !r) note(r.error().what);
 }
@@ -389,8 +401,11 @@ void Run::end_extraction() {
 
 SafeStateResult Run::make_safe() {
   SafeStateResult out;
+  log_.info("safe state: start");
   const auto step = [&](const std::string& name, const std::function<Result<void>()>& op) {
+    log_.info("safe state: " + name);
     if (auto r = keep_trying(name, op); !r) {
+      log_error(log_, r.error(), "safe state: " + name);
       out.failed_steps.push_back(name);
       note("safe state: " + name + " failed: " + r.error().what);
     }
@@ -449,6 +464,8 @@ SafeStateResult Run::make_safe() {
     result_.unsafe = true;
     result_.unsafe_steps.insert(result_.unsafe_steps.end(), out.failed_steps.begin(), out.failed_steps.end());
   }
+  if (out.failed_steps.empty()) log_.info("safe state: done");
+  else log_.error("safe state: done, " + std::to_string(out.failed_steps.size()) + " step(s) failed");
   return out;
 }
 

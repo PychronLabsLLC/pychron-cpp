@@ -92,6 +92,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/core/events.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/experiment/collect/collector.hpp"
 #include "pychron/experiment/conditionals/conditional.hpp"
@@ -425,6 +426,7 @@ class MeasurementEngine {
   void rebuild_conditionals();
   void cleanup(bool abnormal);
 
+  Logger log_ = process_logger("experiment.engine");
   EngineContext ctx_;
   MeasurementInputs in_;
   EngineOptions options_;

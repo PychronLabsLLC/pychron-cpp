@@ -1,6 +1,7 @@
 #include "pychron/experiment/store/store_persister.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cctype>
 #include <exception>
@@ -17,6 +18,7 @@
 #include <utility>
 
 #include "pychron/core/host_name.hpp"
+#include "pychron/core/log_error.hpp"
 #include "pychron/core/log_context.hpp"
 #include "pychron/experiment/factory/increments.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
@@ -129,11 +131,28 @@ Result<void> StorePersister::save_artifact(const std::string& uuid, const std::s
 }
 
 Result<void> StorePersister::save_analysis(const record::AnalysisRecord& record) {
-  auto items = to_ingest(record, client_);
-  if (!items) return fail(items.error());
-  for (const auto& blob : items->blobs)
-    if (auto r = ingest(store_, blob); !r) return r;
-  return ingest(store_, items->analysis);
+  // May run on the spool's thread, outside the run's scope: the record names
+  // its run. A real write takes real time, so the duration is steady_clock's
+  // (a read, never a wait).
+  const std::string runid = ps::make_runid(record.identity.identifier, record.identity.aliquot,
+                                           increment_of(record.identity.step).value_or(-1));
+  const std::string attempted = "save " + runid;
+  log_.debug(attempted + ": start");
+  const auto began = std::chrono::steady_clock::now();
+  auto saved = [&]() -> Result<void> {
+    auto items = to_ingest(record, client_);
+    if (!items) return fail(items.error());
+    for (const auto& blob : items->blobs)
+      if (auto r = ingest(store_, blob); !r) return r;
+    return ingest(store_, items->analysis);
+  }();
+  if (!saved) {
+    log_error(log_, saved.error(), attempted);
+  } else {
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+    log_.debug(attempted + ": done in " + std::to_string(ms.count()) + " ms");
+  }
+  return saved;
 }
 
 Result<std::vector<std::string>> StorePersister::check_queue(const QueueSpec& queue) {

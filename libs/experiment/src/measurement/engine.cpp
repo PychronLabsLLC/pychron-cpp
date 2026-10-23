@@ -11,6 +11,7 @@
 #include <variant>
 
 #include "pychron/core/events.hpp"
+#include "pychron/core/log_error.hpp"
 #include "pychron/devices/link.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
 #include "pychron/reduction/fits.hpp"
@@ -497,7 +498,17 @@ Result<void> MeasurementEngine::run_gas() {
     return enter_position(main, main.positions.front(), static_cast<int>(main_), 0);
   };
   if (auto r = block(Block::PositionFirstHop, -1, position_first); !r) return r;
-  if (auto r = block(Block::Equilibrate, -1, [&] { return equilibrate(); }); !r) return r;
+  const auto equilibrated = [&] {
+    log_.debug("equilibrate start: gas " + gas_->name);
+    const TimePoint began = ctx_.clock.now();
+    auto r = equilibrate();
+    std::array<char, 32> took{};
+    std::snprintf(took.data(), took.size(), "%.1f s", std::chrono::duration<double>(ctx_.clock.now() - began).count());
+    if (r) log_.debug("equilibrate end: gas " + gas_->name + " (" + took.data() + ")");
+    else log_error(log_, r.error(), "equilibrate gas " + gas_->name);
+    return r;
+  };
+  if (auto r = block(Block::Equilibrate, -1, equilibrated); !r) return r;
   if (!stopping()) {
     if (auto r = call_hook("before_main"); !r) return r;
   }
@@ -723,6 +734,7 @@ Result<void> MeasurementEngine::peak_center(const plan::PeakCenterStep& step) {
 
 Result<void> MeasurementEngine::peak_center_on(PeakCenterRequest req, double min_signal) {
   const Block block = block_;
+  const std::string target = req.isotope + "@" + req.detector;
   // A small peak (after a blank) still fits, and its centre would go into the
   // field table. Only signal readings say how much signal there is: with
   // none (before the gas is in) the step runs.
@@ -739,17 +751,23 @@ Result<void> MeasurementEngine::peak_center_on(PeakCenterRequest req, double min
         skipped.message = "signal " + plain(mean) + " below min_signal " + plain(min_signal);
         skipped.finished = ctx_.clock.now();
         publish_log(LogLevel::Info, std::string(to_string(block)) + " skipped: " + skipped.message);
+        log_.debug("peak center " + target + " skipped: " + skipped.message);
         result_.peak_centers.push_back(std::move(skipped));
         return {};
       }
     }
   }
+  log_.debug("peak center start: " + target + " (" + req.config + ")");
   auto rep = ctx_.peak_center->peak_center(req, *token_);
   position_.reset();  // the job leaves the magnet wherever it ended
   if (!rep) {
     if (token_->requested()) return {};
+    log_error(log_, rep.error(), "peak center " + target);
     return fail(rep.error());
   }
+  if (rep->ok && rep->center) log_.debug("peak center done: " + target + ": center " + plain(*rep->center));
+  else if (rep->ok) log_.debug("peak center done: " + target);
+  else log_.warn("peak center failed: " + target + ": " + rep->message);
   if (!rep->ok) {
     publish_log(LogLevel::Warn, std::string(to_string(block)) + " failed: " + rep->message + "; continuing");
     // The IC data is still worth having (legacy generate_ic_mftable): what
@@ -1459,7 +1477,10 @@ bool MeasurementEngine::main_reading(int /*count*/, double t) {
   ++main_count_;
   if (time_zero_.kind == plan::TimeZeroKind::OnFirstCount && !collector_.time_zero(gas_->name) && !time_zero_by_step_)
     collector_.set_time_zero(gas_->name, t);
-  if (auto trip = conditionals_->evaluate(kMeasurementOrder, collector_.metrics(), in_.variables, main_count_, t)) {
+  const auto trip = conditionals_->evaluate(kMeasurementOrder, collector_.metrics(), in_.variables, main_count_, t);
+  if (log_.enabled(LogLevel::Trace))
+    log_.trace("evaluate main reading " + std::to_string(main_count_) + ": " + (trip ? "tripped '" + trip->name + "'" : "none tripped"));
+  if (trip) {
     collector_.add_trips({*trip});
     handle_trip(*trip);
   }
@@ -1468,8 +1489,11 @@ bool MeasurementEngine::main_reading(int /*count*/, double t) {
 
 bool MeasurementEngine::sniff_reading() {
   const double t = collector_.seconds(ctx_.clock.now());
-  if (auto trip = conditionals_->evaluate(ConditionalKind::Equilibration, collector_.metrics(), in_.variables,
-                                          collector_.count(), t)) {
+  const auto trip = conditionals_->evaluate(ConditionalKind::Equilibration, collector_.metrics(), in_.variables,
+                                            collector_.count(), t);
+  if (log_.enabled(LogLevel::Trace))
+    log_.trace("evaluate sniff reading " + std::to_string(collector_.count()) + ": " + (trip ? "tripped '" + trip->name + "'" : "none tripped"));
+  if (trip) {
     collector_.add_trips({*trip});
     handle_trip(*trip);
   }
@@ -1479,6 +1503,9 @@ bool MeasurementEngine::sniff_reading() {
 void MeasurementEngine::handle_trip(const Trip& trip) {
   using T = ActionSpec::Type;
   if (ctx_.bus != nullptr) ctx_.bus->publish(ConditionalTripped{in_.run_id, trip});
+  // The event (trace) has the trip; this says it fired, where, and on what.
+  log_.info("conditional '" + trip.name + "' (" + std::string(to_string(trip.kind)) + ") tripped at reading " +
+            std::to_string(trip.reading) + ": " + trip.check);
   publish_log(LogLevel::Info, "conditional '" + trip.name + "' tripped (" + std::string(to_string(trip.kind)) + "): " +
                                   trip.check);
   switch (trip.kind) {
@@ -1524,6 +1551,7 @@ void MeasurementEngine::handle_trip(const Trip& trip) {
 void MeasurementEngine::truncate(bool quick) { request_truncate(quick ? 0.25 : 1.0); }
 
 void MeasurementEngine::request_truncate(double ratio) {
+  log_.info("truncate: ratio " + plain(ratio));
   std::lock_guard lock(truncate_mutex_);
   truncate_request_ = ratio;
   if (collecting_) collector_.truncate();

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include "pychron/core/scheduler.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "log_capture.hpp"
 #include "temp_path.hpp"
 #include "virtual_time.hpp"
 
@@ -632,3 +634,50 @@ TEST_F(SpoolFlusherTest, AFlushAskedForWhileATimedOneWaitsReplacesIt) {
 }
 
 }  // namespace
+
+// ---- the log ----------------------------------------------------------------------
+
+TEST_F(PersistTest, SpoolLogSaysWhatIsSpooledAndHandedOver) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Spool spool(dir_ / "spool");
+  FlakyPersister db;
+  SavePipeline pipe(spool, db);
+  ASSERT_TRUE(pipe.save(rec("a")));
+  const auto lines = log.lines();
+  const auto has = [&](const std::string& prefix) {
+    return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.starts_with(prefix); });
+  };
+  EXPECT_TRUE(has("[debug] spool: put 12345-1 (a)")) << ::testing::PrintToString(lines);
+  EXPECT_TRUE(has("[debug] spool: hand-off a: sent")) << ::testing::PrintToString(lines);
+  EXPECT_TRUE(has("[debug] spool: remove a")) << ::testing::PrintToString(lines);
+}
+
+TEST_F(PersistTest, SpoolLogAHandOffThatFailsIsAWarning) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  Spool spool(dir_ / "spool");
+  FlakyPersister db;
+  db.down = true;
+  SavePipeline pipe(spool, db);
+  ASSERT_TRUE(pipe.save(rec("b")));
+  const auto lines = log.lines();
+  EXPECT_NE(std::find(lines.begin(), lines.end(), "[warn] spool: hand-off b: io: database down"), lines.end())
+      << ::testing::PrintToString(lines);
+}
+
+TEST_F(SpoolFlusherTest, SpoolLogRetryResult) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  FlushWorld w(dir_);
+  ASSERT_TRUE(w.spool.put(rec("u1")));
+  w.db.set_down(true);
+  w.flusher.flush_now();
+  w.clock.sleep_for(1min);
+  w.db.set_down(false);
+  w.clock.sleep_for(10min);  // the retry at 5 min sends it
+  const auto lines = log.lines();
+  const auto has = [&](const std::string& line) { return std::find(lines.begin(), lines.end(), line) != lines.end(); };
+  EXPECT_TRUE(has("[warn] spool: flush: io: database down")) << ::testing::PrintToString(lines);
+  EXPECT_TRUE(has("[debug] spool: flush: sent 1, 0 pending")) << ::testing::PrintToString(lines);
+}

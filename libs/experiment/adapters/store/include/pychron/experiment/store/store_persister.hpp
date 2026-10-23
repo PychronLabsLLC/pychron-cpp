@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "pychron/core/error.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/persistence/store.hpp"
 
@@ -57,6 +58,7 @@ class StorePersister final : public persist::IAnalysisPersister {
   Result<std::vector<std::string>> check_queue(const QueueSpec& queue) override;
 
  private:
+  Logger log_ = process_logger("store");
   persistence::IStore& store_;
   persistence::Uuid client_;
   std::filesystem::path data_;

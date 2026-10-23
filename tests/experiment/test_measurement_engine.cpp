@@ -3,6 +3,7 @@
 // truncate/terminate/cancel/abort, safety on exit, hooks, and results.
 
 #include <gtest/gtest.h>
+#include "log_capture.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1473,6 +1474,40 @@ TEST_F(EngineTest, LiveEditCountsChangeOnlyTheRunningPosition) {
   EXPECT_EQ(points_in(r, 1), 5 * 2);
 }
 
+TEST_F(EngineTest, EngineLogPeakCenterStartAndResult) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  auto p = multicollect(12);
+  p.sniff.enabled = false;
+  p.peak_center.after = true;
+  p.peak_center.isotope = "Ar40";
+  auto r = run(p);
+  ASSERT_EQ(r.peak_centers.size(), 1u);
+  std::vector<std::string> mine;
+  for (const auto& l : log.lines())
+    if (l.find("experiment.engine: peak center") != std::string::npos) mine.push_back(l);
+  ASSERT_EQ(mine.size(), 2u) << ::testing::PrintToString(log.lines());
+  EXPECT_EQ(mine[0].rfind("[debug] experiment.engine: peak center start: Ar40@", 0), 0u) << mine[0];
+  EXPECT_EQ(mine[1].rfind("[debug] experiment.engine: peak center done: Ar40@", 0), 0u) << mine[1];
+  EXPECT_NE(mine[1].find("center 8"), std::string::npos) << mine[1];
+}
+
+TEST_F(EngineTest, EngineLogTruncateIsInfoWithRatio) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  auto p = multicollect(40, 3);
+  p.sniff.enabled = false;
+  spec_.on_reading = [&](int n) {
+    if (n == 5) engine_->truncate(true);
+  };
+  auto r = run(p);
+  ASSERT_EQ(r.outcome, MeasurementOutcome::Truncated);
+  bool found = false;
+  for (const auto& l : log.lines())
+    if (l.starts_with("[info] experiment.engine: truncate: ratio 0.25")) found = true;
+  EXPECT_TRUE(found) << ::testing::PrintToString(log.lines());
+}
+
 TEST_F(EngineTest, UserQuickTruncateScalesByAQuarter) {
   auto p = multicollect(40, 3);
   p.sniff.enabled = false;
@@ -1644,7 +1679,7 @@ TEST_F(EngineTest, WhiffRunRemainderPumpAbort) {
   auto r = run(p);
   ASSERT_EQ(r.outcome, MeasurementOutcome::Completed)
       << to_string(r.outcome) << " " << (r.error ? r.error->what : "") << " blocks=" << r.blocks.size()
-      << " notes=" << testing::PrintToString(r.notes);
+      << " notes=" << ::testing::PrintToString(r.notes);
   EXPECT_EQ(r.whiff, WhiffCheck::Action::RunRemainder);  // nothing matched
   EXPECT_EQ(hook_.whiff_result, "run_remainder");
   EXPECT_EQ(count(r, "Ar40", "H1", collect::kWhiff), 3);

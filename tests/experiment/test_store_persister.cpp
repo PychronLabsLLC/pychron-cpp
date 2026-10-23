@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <QCoreApplication>
@@ -12,6 +13,7 @@
 #include <utility>
 
 #include "failing_store.hpp"
+#include "log_capture.hpp"
 #include "pychron/experiment/persist/persister.hpp"
 #include "pychron/experiment/store/record_ingest.hpp"
 #include "pychron/experiment/store/store_persister.hpp"
@@ -120,6 +122,7 @@ class StorePersisterTest : public pt::StoreTest {
     return saved ? "" : saved.error().what;
   }
 
+  pychron::testing::LogCapture log;  // before the persister: it takes its logger when made
   fs::path data_;
   std::unique_ptr<FailingStore> failing_;
   std::unique_ptr<store::StorePersister> persister_;
@@ -769,3 +772,24 @@ TEST_P(AcquisitionTest, ARecordWithTextThatIsNotUtf8IsSavedAndTheWorkerLives) {
   EXPECT_EQ(*next, 2);
 }
 
+
+TEST_P(StorePersisterTest, PersisterLogSaveWritesStartEndWithRunId) {
+  ASSERT_TRUE(log.ok());
+  ASSERT_TRUE(persister_->save_analysis(numbered()));
+  const std::string runid = ps::make_runid("66573", 1, -1);
+  std::vector<std::string> mine;
+  for (const auto& l : log.lines())
+    if (l.find("] store: ") != std::string::npos) mine.push_back(l);
+  ASSERT_EQ(mine.size(), 2u) << ::testing::PrintToString(log.lines());
+  EXPECT_EQ(mine[0], "[debug] store: save " + runid + ": start");
+  EXPECT_EQ(mine[1].rfind("[debug] store: save " + runid + ": done in ", 0), 0u) << mine[1];
+}
+
+TEST_P(StorePersisterTest, PersisterLogStoreFailureIsErrorWithContext) {
+  ASSERT_TRUE(log.ok());
+  failing_->fail_ingest(10);
+  (void)save_error(numbered());
+  const std::string expected = "[error] store: save " + ps::make_runid("66573", 1, -1) + ": io: ingest failed (test)";
+  const auto lines = log.lines();
+  EXPECT_NE(std::find(lines.begin(), lines.end(), expected), lines.end()) << ::testing::PrintToString(lines);
+}

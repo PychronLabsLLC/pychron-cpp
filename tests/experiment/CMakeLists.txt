@@ -31,6 +31,7 @@ endif()
 
 if(TARGET pychron_experiment_store)
   add_executable(pychron_experiment_store_tests test_record_ingest.cpp test_store_persister.cpp)
+  target_include_directories(pychron_experiment_store_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
   # The persister suite runs on every engine the persistence tests do; their
   # database fixture (tests/persistence/store_fixture.hpp) makes a PostgreSQL
   # schema through persistence's own connection, so sees TinyORM and Qt.

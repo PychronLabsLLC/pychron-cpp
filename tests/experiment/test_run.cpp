@@ -8,6 +8,7 @@
 
 #include "pychron/experiment/record/serialize.hpp"
 #include "pychron/core/virtual_clock.hpp"
+#include "log_capture.hpp"
 #include "run_fakes.hpp"
 #include "virtual_time.hpp"
 
@@ -215,6 +216,33 @@ TEST_F(RunTest, FullRunSucceedsAndSaves) {
   RunControl c2;
   AutomatedRun second(unknown_run("12345"), queue_, services());
   EXPECT_EQ(second.execute(c2).aliquot, 2);
+}
+
+// The run's view of its scripts: which kind began and ended, one line each.
+TEST_F(RunTest, RunLogScriptStartEndAroundExtraction) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Success);
+  std::vector<std::string> mine;
+  for (const auto& l : log.lines())
+    if (l.find("experiment.run: script ") != std::string::npos) mine.push_back(l);
+  ASSERT_GE(mine.size(), 2u) << ::testing::PrintToString(log.lines());
+  EXPECT_EQ(mine[0].rfind("[debug] experiment.run: script extraction start", 0), 0u) << mine[0];
+  EXPECT_EQ(mine[1].rfind("[debug] experiment.run: script extraction end: ok", 0), 0u) << mine[1];
+}
+
+// An abort says why, at warn (the state change itself is on trace.RunStateChanged).
+TEST_F(RunTest, RunLogAbortReasonIsAWarning) {
+  pychron::testing::LogCapture log;
+  ASSERT_TRUE(log.ok());
+  control_.abort();
+  auto r = go(unknown_run("12345"));
+  ASSERT_EQ(r.state, RunState::Aborted);
+  bool found = false;
+  for (const auto& l : log.lines())
+    if (l.starts_with("[warn] experiment.run: aborted")) found = true;
+  EXPECT_TRUE(found) << ::testing::PrintToString(log.lines());
 }
 
 TEST_F(RunTest, TruncateSavesAsTruncatedSuccess) {

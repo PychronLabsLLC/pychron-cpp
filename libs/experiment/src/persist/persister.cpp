@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "pychron/core/log_error.hpp"
 #include "pychron/experiment/factory/increments.hpp"
 #include "pychron/experiment/record/serialize.hpp"
 
@@ -168,13 +169,16 @@ Result<void> FilePersister::save_artifact(const std::string& uuid, const std::st
 
 Result<void> Spool::put(const record::AnalysisRecord& r) {
   if (!safe_name(r.identity.uuid)) return fail(ErrorKind::Config, "record uuid missing or not plain");
-  return write_atomic(dir_ / (r.identity.uuid + ".json"), record::to_json(r));
+  auto written = write_atomic(dir_ / (r.identity.uuid + ".json"), record::to_json(r));
+  if (written) log_.debug("put " + run_name(r.identity) + " (" + r.identity.uuid + ")");
+  return written;
 }
 
 Result<void> Spool::remove(const std::string& uuid) {
   std::error_code ec;
   fs::remove(dir_ / (uuid + ".json"), ec);
   if (ec) return io("cannot remove spooled " + uuid + ": " + ec.message());
+  log_.debug("remove " + uuid);
   return {};
 }
 
@@ -225,6 +229,8 @@ Result<bool> SavePipeline::hand_off(const std::string& uuid) {
   if (!rec && !spool_.contains(uuid)) return false;
   Result<void> r = rec ? persister_.save_analysis(*rec) : Result<void>(fail(rec.error()));
   if (r) r = spool_.remove(uuid);
+  if (!r) log_handled(log_, r.error(), "hand-off " + uuid);  // the record stays in the spool
+  else log_.debug("hand-off " + uuid + ": sent");
   std::lock_guard lock(mutex_);
   if (!r) {
     last_error_ = std::make_pair(uuid, r.error().what);
@@ -339,6 +345,8 @@ void SpoolFlusher::run(std::uint64_t seq) {
   }
   const auto flushed = pipeline_.flush();
   SpoolStatus now{pipeline_.pending(), pipeline_.last_error()};
+  if (flushed) log_.debug("flush: sent " + std::to_string(*flushed) + ", " + std::to_string(now.pending) + " pending");
+  else log_handled(log_, flushed.error(), "flush");
   if (!flushed && !now.last_error) now.last_error = flushed.error().what;  // the spool or the persister's flush
   bool changed = false;
   {

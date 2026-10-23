@@ -40,6 +40,7 @@
 
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
+#include "pychron/core/process_log.hpp"
 #include "pychron/core/signal_bus.hpp"
 #include "pychron/devices/extraction/services.hpp"
 #include "pychron/experiment/conditionals/library.hpp"
@@ -262,6 +263,7 @@ class Run {
   void note(std::string message);  // thread-safe: scripts log from their own threads
   void finish(RunControl& control, Result<void> phase_result, RunEvent failure_event);
 
+  Logger log_ = process_logger("experiment.run");  // taken when the run is made
   RunSpec spec_;
   const QueueSpec& queue_;
   RunServices s_;
