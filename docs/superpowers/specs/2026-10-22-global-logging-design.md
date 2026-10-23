@@ -163,18 +163,24 @@ empty; dock's text filter matches message, thread, run.
 File line format becomes:
 
 ```
-2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 device.actuator1: close ok in 0 ms
+2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 device.actuator1: close ok in 0 ms
 ```
 
 - `[<thread tag>]`: from thread-local tag, set by RAII
   `pychron::LogContext::Thread tag{"run"}`; untagged thread shows
   `[t<n>]`, n = small id hub assigns per thread on first record.
-- `run=<run id>`: present only while thread-local run scope is set
-  (`LogContext::Run scope{run_id}`, set by executor around a run, and by
-  whatever thread works for that run). Absent otherwise; no empty field.
-  Value is executor's run id (uuid, as `run_id=` of `trace.RunStarted`), not
-  run name (`bu-1`): name not known before aliquot given. Name to id:
-  `trace.RunStarted` (identifier), `spool: put <name> (<id>)`.
+- `run=<runid>`: present only while thread-local run scope is set
+  (`LogContext::Run scope{runid}`, set by executor around a run, and by
+  whatever thread works for that run: `run`, `run.post-eq`, `run.phase`).
+  Absent otherwise; no empty field. Value is run name
+  `format_runid(identifier, aliquot, step)` (`libs/experiment`
+  `factory/increments.hpp`, `12345-01A`), `Run::name()`. Aliquot given at
+  launch: executor calls `Run::assign_aliquot()` before publishing
+  `RunStarted` (allocation error kept, reported by `prepare()`, which fails
+  run as before); run executed directly (no executor) gets it in
+  `prepare()`. Before an aliquot (allocation failed) name is identifier
+  alone. `trace.RunStarted` carries name and uuid
+  (`run=<name>, run_id=<uuid>`): map either way.
 - Context captured on calling thread in `LogHub::write` (before queue), so
   writer thread does not need it. `Log` bus event gains `std::string thread`
   and `std::string run` fields; Log dock shows them as two new columns,
@@ -353,7 +359,8 @@ with error kind, message, context and what was attempted.
   `trace.QueueStarted`, `trace.RunStarted`, `script.` `start`, a host call,
   `trace.RunStateChanged` `to=measuring`, `store` save line,
   `trace.RunFinished`, `trace.QueueEnded`; every line run thread wrote
-  between `RunStarted` and `RunFinished` is `[run] run=<that run's id>`.
+  between `RunStarted` and `RunFinished` on a thread tagged `run*` carries
+  `run=` name of `trace.RunStarted` (`bu-01`).
 - `elctl` tee (`apps/elctl/tests/test_log_tee.cpp`): error line is `error`
   record, other `warn`; partial line waits for newline, logged when tee
   goes; bytes pass through unchanged and at once; with `echo_stderr` and

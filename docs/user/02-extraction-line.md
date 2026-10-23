@@ -365,9 +365,10 @@ takes effect. There is no way to say "unset" in a file: to go back to the
 default folder after a lower layer set `dir`, remove `dir` from that file.
 
 Lines look like
-`2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 device.actuator1: close ok in 0 ms`:
+`2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 device.actuator1: close ok in 0 ms`:
 time (UTC), level, the thread that wrote it, the run in progress, and the
-logger. Threads have names (`run` for the thread that carries out a run,
+logger. The run is named as the queue shows it (`bu-01`: identifier,
+aliquot, step). Threads have names (`run` for the thread that carries out a run,
 `queue`, `scheduler`, `ui`, `transport.<name>` and so on); a thread without
 one shows as a number (`t3`). The `run=<id>` field is there only on lines
 written while a run is in progress. The Log panel has the thread in its

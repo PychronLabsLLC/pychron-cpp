@@ -239,27 +239,28 @@ Both programs write a log file as they run, with no setup.
   script calls left out):
 
   ```
-  2026-10-23T09:48:27.512Z [info] [queue] trace.QueueStarted: rows=3, from_row=0
-  2026-10-23T09:48:32.512Z [debug] [queue] trace.RunStarted: row=0, run_id=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670, identifier=bu
-  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 trace.RunStateChanged: run_id=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670, from=preparing, to=extracting, reason=
-  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 script.extraction/sim_extract.py: start extraction/sim_extract.py path=extraction/sim_extract.py sha=f062bc07dd7b0bb9627525100a62d1edeefbf18bc62a7f4b16340109559ce87a kind=extraction
-  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 device.actuator1: close ok in 0 ms
-  2026-10-23T09:48:32.512Z [info] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 switches: valve C closed
-  2026-10-23T09:48:32.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 script.extraction/sim_extract.py: close(name=C) -> ok in 0 ms
-  2026-10-23T09:48:34.512Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 script.extraction/sim_extract.py: sleep(seconds=2) -> ok in 2000 ms
+  2026-10-23T10:21:15.317Z [info] [queue] trace.QueueStarted: rows=3, from_row=0
+  2026-10-23T10:21:20.317Z [debug] [queue] trace.RunStarted: row=0, run=bu-01, run_id=f60b5d8f-9a15-432a-9f4d-fe730a3f857d, identifier=bu
+  2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 trace.RunStateChanged: run_id=f60b5d8f-9a15-432a-9f4d-fe730a3f857d, from=preparing, to=extracting, reason=
+  2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 script.extraction/sim_extract.py: start extraction/sim_extract.py path=extraction/sim_extract.py sha=f062bc07dd7b0bb9627525100a62d1edeefbf18bc62a7f4b16340109559ce87a kind=extraction
+  2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 device.actuator1: close ok in 0 ms
+  2026-10-23T10:21:20.317Z [info] [run] run=bu-01 switches: valve C closed
+  2026-10-23T10:21:20.317Z [debug] [run] run=bu-01 script.extraction/sim_extract.py: close(name=C) -> ok in 0 ms
+  2026-10-23T10:21:22.317Z [debug] [run] run=bu-01 script.extraction/sim_extract.py: sleep(seconds=2) -> ok in 2000 ms
   ...
-  2026-10-23T09:52:21.112Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 spool: put bu-1 (f0e1bcfa-bfaf-40d6-9ac0-7772913f2670)
-  2026-10-23T09:52:21.112Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 store: save bu-1: wrote .../records/bu/bu-1.json in 0 ms
-  2026-10-23T09:52:21.112Z [debug] [run] run=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670 spool: hand-off f0e1bcfa-bfaf-40d6-9ac0-7772913f2670: sent
-  2026-10-23T09:52:21.112Z [debug] [queue] trace.RunFinished: row=0, identifier=bu, run_id=f0e1bcfa-bfaf-40d6-9ac0-7772913f2670, aliquot=1, step=, state=success, truncated=false, save_error=false, status=complete
-  2026-10-23T10:00:07.912Z [info] [queue] trace.QueueEnded: end=completed, reason=, runs=3
+  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 spool: put bu-1 (f60b5d8f-9a15-432a-9f4d-fe730a3f857d)
+  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 store: save bu-1: wrote .../records/bu/bu-1.json in 0 ms
+  2026-10-23T10:25:08.917Z [debug] [run] run=bu-01 spool: hand-off f60b5d8f-9a15-432a-9f4d-fe730a3f857d: sent
+  2026-10-23T10:25:08.917Z [debug] [queue] trace.RunFinished: row=0, identifier=bu, run_id=f60b5d8f-9a15-432a-9f4d-fe730a3f857d, aliquot=1, step=, state=success, truncated=false, save_error=false, status=complete
+  2026-10-23T10:32:55.717Z [info] [queue] trace.QueueEnded: end=completed, reason=, runs=3
   ```
-- **Finding one run.** The `run=` field is the run's id (a long code), not
-  its name. Find the name once, in the `spool: put` or `trace.RunStarted`
-  line (`grep 'spool: put bu-1 '` gives `put bu-1 (<id>)`), then
-  `grep 'run=<id>'` gives every line written for that run, on whichever
-  thread wrote it. The Log panel shows the same id in its Run column, and
-  its filter box matches it.
+- **Finding one run.** The `run=` field is the run's name as the queue
+  shows it: identifier, two-digit aliquot and step (`bu-01`, `66001-02A`).
+  `grep 'run=66001-02A '` gives every line written for that run, on whichever
+  of its threads wrote it. The `trace.RunStarted` line gives both the name
+  (`run=`) and the run's internal id (`run_id=`, a long code), which the
+  `trace.RunStateChanged`, `trace.RunFinished` and `spool` lines use. The
+  Log panel shows the name in its Run column, and its filter box matches it.
 - **What `elctl` printed.** Everything `elctl` writes to the terminal's error
   output is also in `elctl.log`, under the logger `elctl`: a line starting
   `error` at `error`, any other at `warn`.
