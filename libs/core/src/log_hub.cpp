@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -23,6 +24,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <tuple>
@@ -59,6 +61,14 @@ constexpr auto kPeriodicFlush = std::chrono::seconds(1);
 constexpr auto kErrorReportInterval = std::chrono::seconds(10);
 constexpr std::size_t kSpdlogMaxRotated = 200000;  // spdlog's rotating_file_sink::MaxFiles
 constexpr auto kCrashFlushTimeout = std::chrono::seconds(2);
+
+// The echo and the writer's error reports go to the C stream, not through
+// std::cerr: a program that tees std::cerr into its log (elctl) would log every
+// echoed record again, and a report from the writer thread would wait on the
+// writer. std::cerr is synchronised with stdio, so the order of lines holds.
+void write_stderr(std::string_view text) noexcept {
+  (void)std::fwrite(text.data(), 1, text.size(), stderr);
+}
 
 // Set on the spdlog writer thread; the crash route must never wait on it from
 // that thread (it would be waiting on itself).
@@ -286,7 +296,7 @@ struct LogHub::Impl {
     if (last != std::numeric_limits<std::int64_t>::min() && now - last < interval) return;
     if (!last_error_report.compare_exchange_strong(last, now)) return;
     try {
-      std::cerr << "pychron logging error: " << what << '\n';
+      write_stderr("pychron logging error: " + what + '\n');
     } catch (...) {  // NOLINT(bugprone-empty-catch): nowhere left to report that reporting failed
     }
   }
@@ -442,7 +452,10 @@ struct LogHub::Impl {
     if (echo_stderr) {
       try {
         std::lock_guard lock(echo_mutex);
-        std::cerr << '[' << to_string(level) << "] " << name << ": " << message << '\n';
+        std::string line;
+        line.reserve(name.size() + message.size() + 12);
+        line.append("[").append(to_string(level)).append("] ").append(name).append(": ").append(message).append("\n");
+        write_stderr(line);
       } catch (...) {  // NOLINT(bugprone-empty-catch): stderr is gone; the file and the bus still have the line
       }
     }
@@ -489,7 +502,9 @@ struct LogHub::Impl {
                   spdlog::string_view_t(payload.data(), payload.size()));
       if (echo_stderr) {
         std::lock_guard lock(echo_mutex);
-        std::cerr << "[error] " << payload << '\n';
+        write_stderr("[error] ");
+        write_stderr(payload);
+        write_stderr("\n");
       }
 
       const auto deadline = std::chrono::steady_clock::now() + kCrashFlushTimeout;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <limits>
 #include <string_view>
 #include <tuple>
@@ -156,7 +157,19 @@ Result<void> FilePersister::save_extraction(const record::AnalysisRecord& r) {
 
 Result<void> FilePersister::save_analysis(const record::AnalysisRecord& r) {
   if (!safe_name(r.identity.identifier)) return fail(ErrorKind::Config, "bad identifier");
-  return write_atomic(analysis_path(r), record::to_json(r));
+  // As StorePersister says it: may run outside the run's scope, so the line
+  // names the run; the duration is real time (a read, never a wait).
+  const std::string attempted = "save " + run_name(r.identity);
+  const auto began = std::chrono::steady_clock::now();
+  const fs::path path = analysis_path(r);
+  auto written = write_atomic(path, record::to_json(r));
+  if (!written) {
+    log_error(log_, written.error(), attempted);
+  } else {
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+    log_.debug(attempted + ": wrote " + path.string() + " in " + std::to_string(ms.count()) + " ms");
+  }
+  return written;
 }
 
 Result<void> FilePersister::save_artifact(const std::string& uuid, const std::string& name,

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -16,6 +17,7 @@
 
 #include "elctl_fixture.hpp"
 #include "exp.hpp"
+#include "log_capture.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/core/events.hpp"
 #include "pychron/core/log_hub.hpp"
@@ -180,6 +182,76 @@ TEST_F(ElctlExpTest, RunTheExampleQueueOnTheSim) {
   EXPECT_EQ(from.code, 0) << from.err;
   EXPECT_TRUE(contains(from.out, "run 2 66001-3: success")) << from.out;
   EXPECT_FALSE(contains(from.out, "run 0 ")) << from.out;
+}
+
+// The example queue on the sim leaves its execution sequence in the process
+// log, in order, and every line the run thread wrote while a run was on names
+// that run.
+TEST_F(ElctlExpTest, ExecutionSequenceIsLogged) {
+  if (!pychron::scripting::scripting_enabled()) GTEST_SKIP() << "built without PYCHRON_SCRIPTING";
+  const pychron::testing::LogCapture capture;
+  ASSERT_TRUE(capture.ok());
+  const auto o = run_example_queue();
+  ASSERT_EQ(o.code, 0) << o.out << o.err;
+  const auto lines = capture.raw_lines();
+  std::string all;
+  for (const auto& l : lines) all += l + '\n';
+
+  // `<stamp> [level] [thread] run=<id> logger: message`
+  static const std::regex shape(R"(^\S+Z \[\w+\] \[([^\]]*)\] (?:run=(\S+) )?(\S+): (.*)$)");
+  struct Line {
+    std::string thread, run, logger, message;
+  };
+  std::vector<Line> parsed;
+  for (const auto& l : lines) {
+    std::smatch m;
+    if (std::regex_match(l, m, shape)) parsed.push_back({m[1].str(), m[2].str(), m[3].str(), m[4].str()});
+  }
+  const auto find = [&](std::size_t from, const auto& pred) {
+    for (std::size_t i = from; i < parsed.size(); ++i) {
+      if (pred(parsed[i])) return i;
+    }
+    return parsed.size();
+  };
+  const auto logger_is = [](const std::string& name) { return [name](const Line& l) { return l.logger == name; }; };
+
+  const auto queue_started = find(0, logger_is("trace.QueueStarted"));
+  ASSERT_LT(queue_started, parsed.size()) << all;
+  const auto run_started = find(queue_started, logger_is("trace.RunStarted"));
+  ASSERT_LT(run_started, parsed.size()) << all;
+  const auto script_start = find(run_started, [](const Line& l) {
+    return l.logger.starts_with("script.") && l.message.starts_with("start");
+  });
+  ASSERT_LT(script_start, parsed.size()) << all;
+  const auto& script = parsed[script_start].logger;
+  const auto host_call = find(script_start + 1, [&](const Line& l) {
+    return l.logger == script && !l.message.starts_with("start") && !l.message.starts_with("end");
+  });
+  ASSERT_LT(host_call, parsed.size()) << all;
+  const auto measured = find(host_call, [](const Line& l) {
+    return l.logger == "trace.RunStateChanged" && l.message.find("to=measuring") != std::string::npos;
+  });
+  ASSERT_LT(measured, parsed.size()) << all;
+  // The records folder (--data) is this process's store.
+  const auto saved = find(measured, [](const Line& l) {
+    return l.logger == "store" && l.message.starts_with("save ") && l.message.find(": wrote ") != std::string::npos;
+  });
+  ASSERT_LT(saved, parsed.size()) << all;
+  const auto run_finished = find(saved, logger_is("trace.RunFinished"));
+  ASSERT_LT(run_finished, parsed.size()) << all;
+  const auto queue_ended = find(run_finished, logger_is("trace.QueueEnded"));
+  ASSERT_LT(queue_ended, parsed.size()) << all;
+
+  // The run thread names the run on every line it wrote while the run was on.
+  const auto& first = parsed[script_start];
+  ASSERT_FALSE(first.run.empty()) << all;
+  EXPECT_EQ(first.thread, "run") << all;
+  const auto first_finished = find(run_started, logger_is("trace.RunFinished"));
+  for (std::size_t i = run_started; i < first_finished; ++i) {
+    if (parsed[i].thread == "run") {
+      EXPECT_EQ(parsed[i].run, first.run) << lines[i] << "\n" << all;
+    }
+  }
 }
 
 // A step heat stopped after its first step and resumed by a new process (a

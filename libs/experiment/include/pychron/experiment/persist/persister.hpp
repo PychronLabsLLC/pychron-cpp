@@ -104,6 +104,7 @@ class FilePersister final : public IAnalysisPersister {
   std::filesystem::path root_;
   std::mutex mutex_;
   std::map<std::string, int> issued_;  // identifier -> highest aliquot handed out
+  Logger log_ = process_logger("store");  // the records folder is this process's store
 };
 
 // Pending records, one JSON file per record uuid, written atomically.

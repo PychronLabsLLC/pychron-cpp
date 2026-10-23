@@ -5,6 +5,7 @@
 
 #include "cli.hpp"
 #include "exp.hpp"
+#include "log_tee.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/core/log_context.hpp"
 #include "pychron/core/log_dir.hpp"
@@ -24,7 +25,14 @@ int main(int argc, char** argv) {
   const pychron::SteadyClock clock;
   pychron::set_process_log_hub(
       elctl::open_process_log(args, clock, pychron::host_os(), pychron::process_env(), std::cerr));
-  const int code = elctl::run(args, elctl::Io{std::cin, std::cout, std::cerr});
+  int code = 0;
+  {
+    // What elctl tells the user on stderr is also in its log (an `error...`
+    // line at error, any other at warn). std::cerr has its own buffer back
+    // before the hub is unset.
+    const elctl::StreamTee tee(std::cerr, pychron::process_logger("elctl"));
+    code = elctl::run(args, elctl::Io{std::cin, std::cout, std::cerr});
+  }
   pychron::set_process_log_hub(nullptr);
   return code;
 }
