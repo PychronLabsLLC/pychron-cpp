@@ -222,6 +222,16 @@ Inner loop (keep waits short):
   - Count and facet statements join `derived_value` only when an age bound is
     set; page statement always joins, by primary key (`dv.name || '' = 'age'`
     without a bound).
+- Sim serve (spec `docs/superpowers/specs/2026-10-09-sim-serve-design.md`;
+  `elctl sim serve`, `--sim-endpoints`): simulated lab behind real sockets.
+  With an endpoints file, a transport that is not `kind = "sim"` or `link`
+  and has no entry fails the load (`make_transport`): nothing reaches a
+  configured address in a rehearsal. Real time only: `WireServer` refuses any
+  clock but `SteadyClock`; `--sim-endpoints` with `--sim` or `--sim-speed`
+  refused. How an emulator cuts one request from a stream
+  (`WireSim::request`) comes from driver's codec (same constant or function
+  encoder uses, e.g. `codec::proxr::request_length`), never second copy in
+  `libs/sim`.
 - `libs/ingest`, `libs/dvc`, `libs/experiment` do not reduce and gain no
   dependency on `reduction` or `processing`; import's derive pass is in
   `apps/elctl`, after walk ends.

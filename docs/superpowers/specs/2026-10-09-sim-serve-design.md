@@ -2,7 +2,8 @@
 
 Status: agreed 2026-10-13 (owner), as written; section 10's points are
 settled in the plan or measured in phase A / B. Built after executor
-hardening. Nothing implemented.
+hardening. Phase A implemented 2026-10-29
+(`docs/superpowers/plans/2026-10-29-sim-serve-phase-a.md`); B, C, D not.
 
 Date: 2026-10-09. Builds on `2026-10-06-lab-simulator-design.md` (gas model),
 `2026-10-06-virtual-clock-design.md` (time), `2026-10-03-installation-wizard-design.md`
@@ -79,33 +80,48 @@ pressures come back over the wire, as on hardware.
 ### 4.1 `WireSim` (`libs/sim`)
 
 ```cpp
+using RequestFramer = std::function<std::optional<std::size_t>(const Bytes&)>;
+RequestFramer framer(ReadSpec);           // frame_length(spec, buffer)
 struct WireSim {
   SimTransport::Hook hook;                // one request -> its reply (empty: none)
   SimTransport::Unsolicited unsolicited;  // may be empty
-  ReadSpec request;                       // how one request is cut from a stream
+  RequestFramer request;                  // length of first whole request; nullopt: incomplete
   std::function<void()> on_connect;       // may be empty (NGX banner)
-  std::string emulator;                   // driver kind answered as; "" = silent wire
+  bool close_after_reply = false;         // pychron_valves: one connection per command
+  std::string emulator;                   // driver kind(s) answered as, `+` between PLC kinds; "" = silent wire
 };
 WireSim SimSystem::wire_for_transport(std::string_view transport, const config::SystemConfig&);
 ```
 
 - `hook_for_transport` stays, returns `wire_for_transport(...).hook`.
-- `request`: each emulator declares framing of requests it receives
-  (terminator, or Modbus MBAP length). Value comes from that driver's own
-  codec, same constant, not second copy. UDP ignores it: one datagram, one
+- `request`: each emulator declares framing of requests it receives. Value
+  comes from that driver's own codec, same constant or function, not second
+  copy. A function, not a `ReadSpec`: ProxR request is 2 or 3 bytes by opcode
+  (`codec::proxr::request_length`), MaxiGauge ENQ is 1 unterminated byte after
+  a CRLF line (`codec::maxigauge::request_length`). Terminated kinds and
+  Modbus MBAP through `framer(ReadSpec)`. UDP ignores it: one datagram, one
   request.
+- `close_after_reply`: pychron_valves driver opens one connection per command
+  and reads reply until peer closes (`ReadSpec::until_close()`).
 
 ### 4.2 Line sim without the line (`libs/systems`)
 
 ```cpp
-struct LineSim { std::unique_ptr<sim::SimSystem> system; std::vector<Diagnostic> notes; };
+struct LineSimNote { LogLevel level; std::string message; };
+struct LineSim { std::unique_ptr<sim::SimSystem> system; std::vector<LineSimNote> notes; };
 Result<LineSim> build_line_sim(const config::SystemConfig&, const canvas::Canvas*,
                                const Clock&, LineSimOptions);
+SimFileBeside sim_file_beside(const std::filesystem::path& line, bool has_canvas);
 ```
 
 `topology_of`, `sim.toml` lookup and `build_error` check move out of
 `ExtractionLine` into this. `ExtractionLine` calls it: one path builds the
-simulated lab, for both.
+simulated lab, for both. Notes carry a level (`config::Diagnostic` has none):
+what line logged at info or warn.
+
+Serving a whole line is `LineServer` (`libs/systems` `line_server.hpp`):
+`build_line_sim`, transport kinds of 4.4, notes, shared-address rule, then
+`WireServer`. `elctl sim serve` prints it; phase C's doctor reuses it.
 
 ### 4.3 Listeners (`libs/transport`)
 
@@ -119,7 +135,7 @@ Asio stays private to `libs/transport`, as now.
 class WireServer {
  public:
   struct Options { std::string bind = "127.0.0.1"; std::uint16_t port_base = 0; const Clock* clock; };
-  Result<void> add(std::string transport, Protocol, WireSim);   // Protocol: Tcp | Udp
+  Result<void> add(std::string transport, WireProtocol, WireSim);  // Tcp | Udp, endpoints.hpp
   Result<Endpoints> start();   // all-or-nothing, like ExtractionLine::start()
   void stop();
 };
@@ -164,7 +180,7 @@ Removed on clean stop.
 ### 4.7 Commands
 
 ```
-elctl sim serve --config <extraction_line.toml> [--spectrometer <file>]
+elctl sim serve --config <extraction_line.toml> [--canvas <canvas.toml>] [--spectrometer <file>]
                 [--bind ADDR] [--advertise HOST] [--port-base N]
                 [--endpoints FILE] [--replay DIR]
 elctl doctor --rehearse [--install NAME]
@@ -173,6 +189,8 @@ elctl doctor --replay DIR [--install NAME]
 
 - `sim serve` prints table (transport, protocol, port, emulator), notes
   below, then runs until interrupted. `elctl sim` alone stays the REPL.
+- `--canvas`: default install's canvas, else `canvas.toml` beside line. Gas
+  model needs it, as `ExtractionLine::load` does.
 - `doctor --rehearse`: serve in-process on OS-assigned ports, run `--probe`
   steps against it, stop. Checks: every non-`sim` transport has emulator
   (WARN `no emulator for driver kind '<kind>'`: silent wire), connect and
@@ -293,8 +311,13 @@ Each phase lands alone. A then C give doctor for line-only installs.
   acquisition needs `thermo_qtegra_sim` and `SimSystem`'s Qtegra valve hook
   merged. Size unknown until read.
 - `chromium` and NGX unsolicited streams over 20 ms poll: enough for
-  drivers' timeouts? Measure in phase A / B tests.
+  drivers' timeouts? Phase A: no line kind sends unsolicited input
+  (`ngx_valves` has no banner on a line transport, `chromium` none), so
+  nothing to measure; `WireServerSteady.UnsolicitedArrivesWithoutRequest`
+  holds the poll. Measure with NGX acquisition in phase B.
 - Whether `pychron-ui` should start serve itself (menu item) or leave it to
   `elctl`. Left to `elctl` here.
 - Endpoints file beside line's file is inside install root: `doctor`'s
-  managed-file report must ignore it.
+  managed-file report must ignore it. Settled phase A: report checks only
+  files of install's manifest (missing, edited; `libs/setup` `doctor.cpp`),
+  never a file it does not list.

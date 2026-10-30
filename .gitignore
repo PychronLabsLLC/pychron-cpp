@@ -13,6 +13,9 @@ cmake-build-*/
 # machine-local config overrides (site hosts and ports)
 *.local.toml
 
+# where a running `elctl sim serve` answers, written beside the line it serves
+sim-endpoints.toml
+
 # python tooling
 .venv/
 __pycache__/

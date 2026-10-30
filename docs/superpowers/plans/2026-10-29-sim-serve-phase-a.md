@@ -399,16 +399,15 @@ struct LineSim {
 // The caller still checks build_error() again once it has made the hooks.
 Result<LineSim> build_line_sim(const config::SystemConfig& config, const canvas::Canvas* canvas,
                                const Clock& clock, LineSimOptions options);
-// load()'s rule: `[sim] file` relative to the line, else sim.toml beside it (only with a canvas).
-// Returns {file to read, file skipped}.
-std::pair<std::optional<std::filesystem::path>, std::filesystem::path>
-resolve_sim_file(const std::filesystem::path& system_file, const config::SystemConfig& config, bool has_canvas);
+// load()'s rule for a line whose config names no `[sim] file`: sim.toml beside it, read only with a canvas.
+struct SimFileBeside { std::optional<std::filesystem::path> read; std::filesystem::path skipped; };
+SimFileBeside sim_file_beside(const std::filesystem::path& system_file, bool has_canvas);
 }
 ```
 
 `topology_of`, `role_of`, `share_a_volume`, `pipe_between`, `kPipeMark` move to `line_sim.cpp`. `ExtractionLine::build_sim()` becomes a call plus logging each note at its level; its messages stay word for word.
 
-- [ ] **Step 1: Failing tests**: `BuildsExampleLine` (example config + canvas: system has the canvas's volumes, `spectrometer_volume()` set); `TildeInValveNameRefused`; `NotesSayValvesWithoutPhysics` (a dangling valve → an info note naming it); `ResolveSimFileBesideOnlyWithCanvas`.
+- [ ] **Step 1: Failing tests**: `BuildsExampleLine` (example config + canvas: system has the canvas's volumes, `spectrometer_volume()` set); `TildeInValveNameRefused`; `NotesSayValvesWithoutPhysics` (a dangling valve → an info note naming it); `SimFileBesideOnlyWithCanvas`.
 - [ ] **Step 2–4:** fail, move, pass. Every existing `pychron_systems_tests` and integration sim test passes unchanged (spec 7: that is the check).
 - [ ] **Step 5: Commit** — `refactor(systems): build_line_sim, the simulated lab without the line`
 

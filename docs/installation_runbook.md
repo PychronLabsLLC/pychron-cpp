@@ -383,7 +383,30 @@ CDD unprotected.
    (`ngx_host`, `ngx_port`, `ngx_user` for an NGX.) Files nobody edited are
    rewritten; an edited file is kept and the new version is left beside it as
    `<file>.new` to merge by hand.
-3. Check without and then with a connection:
+3. Rehearse the extraction line's configuration before connecting
+   anything. Serve the line's simulated lab, then drive it through the real
+   transports with the line's own config:
+
+   ```bash
+   elctl --install argus sim serve
+   ```
+
+   In a second terminal, with the endpoints file `sim serve` names:
+
+   ```bash
+   elctl --install argus --sim-endpoints <endpoints file> state
+   ```
+
+   ```bash
+   elctl --install argus --sim-endpoints <endpoints file> scan --for 30s
+   ```
+
+   and open and close each valve with `open` and `close`. A transport `sim
+   serve` lists as a silent wire has a driver no emulator answers; a gauge or
+   valve that does not answer has a wrong channel or address. The
+   spectrometer is not served yet, so `exp run` is not rehearsed this way.
+   See "The simulated lab on the wire" in [simulator.md](simulator.md).
+4. Check without and then with a connection:
 
    ```bash
    elctl doctor --install argus --strict
@@ -396,7 +419,7 @@ CDD unprotected.
    `--strict` fails on warnings, so it fails while a placeholder or a
    fully simulated line remains. `--probe` opens each TCP transport and runs
    the drivers' connect step.
-4. Start the instrument on a new database. The runs made in simulation are
+5. Start the instrument on a new database. The runs made in simulation are
    in the install's database, as airs and blanks under the same identifiers
    the instrument will use (`a-01`, `ba-01`, ... as the data window shows
    them). Each is marked as simulated, but the next real air would continue
@@ -407,7 +430,7 @@ CDD unprotected.
    one. An install whose database is on a shared server never had simulated
    runs written to it (a simulated session writes record files there unless
    it is started with `--sim-save`), so there is nothing to remove.
-5. For a Thermo instrument, follow "Running against a Thermo instrument" in
+6. For a Thermo instrument, follow "Running against a Thermo instrument" in
    [dev_setup.md](dev_setup.md) and the bring-up checklist in section 8 of
    [the Qtegra driver spec](superpowers/specs/2026-10-01-qtegra-driver-design.md).
    Turn on the wire trace for first contact.

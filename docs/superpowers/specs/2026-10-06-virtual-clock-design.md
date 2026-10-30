@@ -394,6 +394,11 @@ the only one. Tests that relied on the fallback use a `VirtualClock`.
 - the log hub (record stamps, the flusher, the crash flush); the vision live
   feed; `process.cpp` (an outside program's timeout); `asio_stream.hpp` (a
   real socket or serial port);
+- sim serve (`libs/transport` `listener.cpp`, `libs/sim` `wire_server.cpp`,
+  sim serve spec 4.4): the listeners' accept, receive and read waits, and a
+  connection's 20 ms poll for unsolicited input, are on real sockets.
+  `WireServer` refuses any clock but a `SteadyClock`; its threads are
+  participants all the same, which on that clock costs nothing;
 - TCP keepalive (kernel): `tcp_transport.cpp` turns it on (idle 10 s,
   interval 5 s, count 3 where the platform allows); the kernel times the
   probes, so a dead peer is found on real time;

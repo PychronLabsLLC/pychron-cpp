@@ -725,6 +725,74 @@ link is down nothing reaches the script or the hook, so a scripted step
 waits for the link to come back. Nothing in the program sets a link down: it
 is for tests of what happens when one goes.
 
+## The simulated lab on the wire
+
+`--sim` replaces every transport with an in-process one, so what an install
+says about its hardware (hosts, ports, which driver on which wire, addresses
+and channels) is never used until the instrument is connected. `elctl sim
+serve` puts the simulated lab behind real sockets instead: one listener per
+transport of the line's config, each answering as the device its driver
+expects. The program is then started on the unchanged hardware config with
+`--sim-endpoints`, and its real TCP and UDP transports, framing and recovery
+talk to the simulated lab as they will to the instrument.
+
+```bash
+elctl -c lab/extraction_line.toml sim serve
+```
+
+It prints where each transport is served and writes `sim-endpoints.toml`
+beside the line's file. In a second terminal:
+
+```bash
+elctl -c lab/extraction_line.toml --sim-endpoints lab/sim-endpoints.toml exp run queue.toml
+```
+
+or `pychron-ui --sim-endpoints lab/sim-endpoints.toml` with the install.
+Interrupting `sim serve` stops it and removes the file. Each start is the
+lab of `sim.toml` with every valve closed: a client reads valves back from
+it, as from the instrument.
+
+| Transport kind | Served as |
+|---|---|
+| `tcp`, `modbus_tcp` | TCP |
+| `udp` | UDP |
+| `serial` | TCP; baud, parity and port name are not exercised |
+| `sim` | not served: in-process in the client, not joined to the served gas |
+| `link` | not served: follows the transport it names |
+| `modbus_rtu` | not served (not supported) |
+
+Driver kinds answered by an emulator: `proxr_relay`, `agilent_switch`,
+`qtegra_valves`, `qtegra_gauges`, `pychron_valves`, `ngx_valves`,
+`pfeiffer_maxigauge`, `varian_xgs600`, `gp_microion`, `plc2000_valves`,
+`plc2000_gauges`, `plc2000_heater`, `lakeshore`, `chromium`. A transport whose
+driver has none is a silent wire (the driver sees timeouts), and `sim serve`
+says so.
+
+Options: `--config` and `--canvas` (default: the install's, or the files the
+global options name, and a `canvas.toml` beside the line), `--bind <addr>`
+(default `127.0.0.1`), `--advertise <host>` (the host written to the file,
+for a client on another machine), `--port-base <n>` (ports `n`, `n+1`, ... in
+order of transport name; default: the system chooses), `--endpoints <file>`.
+
+Rules:
+
+- With `--sim-endpoints`, a transport that is not `kind = "sim"` or `link`
+  and has no entry in the file fails the load: nothing reaches a configured
+  address during a rehearsal.
+- The file names the line it serves; a client loading another file refuses
+  it. `--sim-endpoints-any` skips that check, for a copy of the line at
+  another path (a container).
+- `--sim-endpoints` with `--sim`, or with `--sim-speed`, is refused: the
+  served lab runs in real time.
+- The emulators accept any login and have no authentication. Binding beyond
+  loopback opens ports that move nothing real but answer anyone who can reach
+  them; `sim serve` warns when it does.
+
+Not exercised: serial settings, timing, and each vendor's quirks beyond what
+its emulator models. Not served yet: the spectrometer (its transports must
+stay `kind = "sim"` in a rehearsal; one on the wire fails the load for want of
+an entry), and answers recorded from the real instrument (`--replay`).
+
 ## Limits and approximations
 
 - Everything under [what is not modelled](#what-is-modelled-and-what-is-not).

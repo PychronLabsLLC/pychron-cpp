@@ -11,15 +11,15 @@ namespace pychron::testing {
 
 // True for what a session writes beside a lab or a site keeps for itself:
 // <lab>/data, <lab>/notifications.toml, any stage_corrections, snapshots or
-// camera_scales folder, any *.state.toml or *.local.toml file. `rel` is
-// relative to the lab.
+// camera_scales folder, any *.state.toml or *.local.toml file, a
+// sim-endpoints.toml. `rel` is relative to the lab.
 [[nodiscard]] inline bool is_lab_runtime_state(const std::filesystem::path& rel) {
   if (rel == "data" || rel == "notifications.toml") return true;
   for (const auto& part : rel) {
     if (part == "stage_corrections" || part == "snapshots" || part == "camera_scales") return true;
   }
   const std::string name = rel.filename().string();
-  return name.ends_with(".state.toml") || name.ends_with(".local.toml");
+  return name.ends_with(".state.toml") || name.ends_with(".local.toml") || name == "sim-endpoints.toml";
 }
 
 // Copies the lab at `from` to `to` (created; an existing file there is
