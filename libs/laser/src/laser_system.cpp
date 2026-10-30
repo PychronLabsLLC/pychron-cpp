@@ -509,9 +509,14 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
   if (runner_ != nullptr) {
-    runner_->set_vision({frames_.get(), &*camera_, clock_, [this] { return hole_room_; }});
+    runner_->set_vision({frames_.get(), &*camera_, clock_, [this] { return hole_room_; }, step_observer_});
   }
   return {};
+}
+
+void LaserSystem::set_step_observer(std::function<void(const vision::DragonflyStep&)> fn) {
+  Gate gate(gate_);
+  step_observer_ = std::move(fn);
 }
 
 Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,

@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -43,6 +44,7 @@
 #include "pychron/laser/tray_camera.hpp"
 #include "pychron/laser/tray_map.hpp"
 #include "pychron/vision/autocenter.hpp"
+#include "pychron/vision/dragonfly.hpp"
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/frame.hpp"
 #include "pychron/vision/source.hpp"
@@ -145,6 +147,10 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // attach_viewer(), for a `clock` that is not the system's: the one given at
   // construction or, when none was, real time (any SteadyClock).
   Result<void> attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
+  // Told of each look a pattern that follows the glow takes. Set before
+  // attach_camera(), which hands it to the runner; empty (the default): nobody
+  // is told.
+  void set_step_observer(std::function<void(const vision::DragonflyStep&)> fn);
   // A camera for looking only: view() shows its picture and what the finder
   // makes of it; a hole move is not centered by it and a pattern cannot
   // follow the glow with it. For a camera that does not follow this stage
@@ -305,6 +311,7 @@ class LaserSystem final : public extraction::IExtractionDevice,
   const CorrectionStore* correction_store_ = nullptr;
   std::optional<CameraConfig> camera_;
   std::unique_ptr<vision::IFrameSource> frames_;
+  std::function<void(const vision::DragonflyStep&)> step_observer_;
   bool centers_ = false;  // the camera may move the stage (attach_camera)
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;

@@ -345,6 +345,7 @@ Result<bool> PatternRunner::follow() {
     return lose_the_camera(step.error().what);
   }
   f.stale = 0;
+  if (vision_.on_step) vision_.on_step(*step);
   using Action = vision::DragonflyStep::Action;
   if (step->action == Action::Done) return go_home();
   if (step->reason == vision::DragonflyStep::Reason::Invalid) {

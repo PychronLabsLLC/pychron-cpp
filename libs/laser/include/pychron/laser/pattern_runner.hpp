@@ -44,6 +44,7 @@
 #include "pychron/core/clock.hpp"
 #include "pychron/laser/camera.hpp"
 #include "pychron/laser/pattern.hpp"
+#include "pychron/vision/dragonfly.hpp"
 #include "pychron/vision/finder.hpp"
 #include "pychron/vision/source.hpp"
 
@@ -58,6 +59,9 @@ struct PatternVision {
   // How far from where it starts a pattern may roam before it reaches the
   // neighbouring holes (mm); 0 or less: not known, no limit beyond its own.
   std::function<double()> room_mm;
+  // Told of each look the follower takes, right after it is decided. Empty:
+  // nobody is told. It runs on the thread that polls the runner.
+  std::function<void(const vision::DragonflyStep&)> on_step;
   explicit operator bool() const noexcept { return frames != nullptr && camera != nullptr && clock != nullptr; }
 };
 

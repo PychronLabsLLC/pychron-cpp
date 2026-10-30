@@ -57,8 +57,10 @@ struct Rig : LaserHarness {
   CorrectionStore corrections{lab.dir / "stage_corrections"};
   Shutter* shutter = nullptr;
 
-  explicit Rig(CameraConfig camera = glow_camera(0.3, -0.2), const char* hole = "3") {
+  explicit Rig(const CameraConfig& camera =glow_camera(0.3, -0.2), const char* hole = "3",
+               std::function<void(const vision::DragonflyStep&)> observer = {}) {
     system.set_corrections(corrections);
+    system.set_step_observer(std::move(observer));
     auto frames = std::make_unique<Shutter>(std::make_unique<SimTrayCamera>(camera, system.sight(), clock));
     shutter = frames.get();
     EXPECT_TRUE(system.attach_camera(camera, std::move(frames), clock));
@@ -103,6 +105,20 @@ struct Rig : LaserHarness {
 double apart(StageXY a, StageXY b) { return std::hypot(a.x - b.x, a.y - b.y); }
 
 }  // namespace
+
+TEST(Dragonfly, TellsItsObserverEachLook) {
+  int looks = 0, tracks = 0, deadbands = 0;
+  Rig rig(glow_camera(0.3, -0.2), "3", [&](const vision::DragonflyStep& step) {
+    ++looks;
+    if (step.reason == vision::DragonflyStep::Reason::Track) ++tracks;
+    if (step.reason == vision::DragonflyStep::Reason::Deadband) ++deadbands;
+  });
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  ASSERT_TRUE(rig.run_for(8));
+  EXPECT_GT(looks, 2);
+  EXPECT_GE(tracks, 1);
+  EXPECT_GE(deadbands, 1);
+}
 
 TEST(Dragonfly, FollowsAnOffsetGrain) {
   Rig rig;
