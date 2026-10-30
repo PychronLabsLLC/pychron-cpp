@@ -12,6 +12,7 @@
 
 #include <map>
 
+#include "pychron/codecs/thermo_qtegra.hpp"
 #include "pychron/sim/gas.hpp"
 
 #include "pychron/devices/heater.hpp"
@@ -1581,4 +1582,71 @@ TEST(SimCryoTrap, WhatPassesDoesNotDependOnHowOftenTheLineIsAsked) {
   const double once = passed(120s);
   EXPECT_GT(once, 0.0);
   EXPECT_NEAR(often, once, once * 1e-9);
+}
+
+TEST(SimSystem, JoinQtegraBothDriversOnOneModel) {
+  // One Qtegra PC answering the line's valves and gauges (and, under sim
+  // serve, the spectrometer): each driver joined to one model.
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.qtegra]
+kind = "sim"
+[drivers.switch_controller]
+kind = "qtegra_valves"
+transport = "qtegra"
+[drivers.ms_gauges]
+kind = "qtegra_gauges"
+transport = "qtegra"
+parameters = ["Ion Gauge MS Readback"]
+[[valves]]
+name = "A"
+actuator = "switch_controller"
+address = "Valve 1_1 Set"
+[[gauges]]
+name = "MS_IG"
+driver = "ms_gauges"
+channel = 1
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto model = std::make_shared<spectrometer::QtegraSimModel>();
+  sim.join_qtegra(*model, cfg->drivers.at("switch_controller"), *cfg);
+  sim.join_qtegra(*model, cfg->drivers.at("ms_gauges"), *cfg);
+  auto hook = spectrometer::qtegra_sim_hook(model);
+  hook(to_bytes("Open Valve 1_1 Set\r"));
+  EXPECT_TRUE(sim.valve_open("A"));
+  const auto reading = hook(to_bytes("GetParameter Ion Gauge MS Readback\r"));
+  EXPECT_EQ(reading, codec::qtegra::encode_number(*sim.gauge_reading("MS_IG"))) << to_string(reading);
+}
+
+TEST(SimSystem, JoinNgxMovesValves) {
+  auto cfg = config::load_system_config_from_string(R"(
+[system]
+name = "t"
+[transports.ngx]
+kind = "sim"
+[drivers.ngx_valves]
+kind = "ngx_valves"
+transport = "ngx"
+[[valves]]
+name = "A"
+actuator = "ngx_valves"
+address = "1"
+inverted = true
+)",
+                                                    "t.toml");
+  ASSERT_TRUE(cfg) << cfg.error().what;
+  ManualClock clock;
+  SimSystem sim(clock, three_volumes(), quiet());
+  auto model = std::make_shared<spectrometer::NgxSimModel>();
+  model->banner_pending = false;
+  sim.join_ngx(*model, cfg->drivers.at("ngx_valves"), *cfg);
+  auto hook = spectrometer::ngx_sim_hook(model);
+  hook(to_bytes("CloseValve 1\r"));
+  EXPECT_TRUE(sim.valve_open("A"));  // inverted
+  hook(to_bytes("OpenValve 1\r"));
+  EXPECT_FALSE(sim.valve_open("A"));
 }

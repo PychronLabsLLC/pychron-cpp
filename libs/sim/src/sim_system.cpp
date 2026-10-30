@@ -602,47 +602,12 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
     return hook;
   }
 
-  if (driver.kind == "qtegra_gauges") {
-    // A Qtegra whose parameters[n-1] reads the gauge on channel n.
-    std::vector<std::string> parameters;
-    if (const auto* array = driver.options["parameters"].as_array())
-      for (const auto& p : *array) parameters.push_back(p.value_or(std::string{}));
-    std::map<std::string, std::string> by_parameter;
-    {
-      std::lock_guard lock(mutex_);
-      advance_locked();
-      for (const auto& g : system.gauges) {
-        if (g.driver != driver.name || g.channel < 1 || std::cmp_greater(g.channel, parameters.size()))
-          continue;
-        by_parameter[parameters[static_cast<std::size_t>(g.channel - 1)]] = g.name;
-        add_gauge_volume_locked(g.name);
-      }
-    }
+  if (driver.kind == "qtegra_gauges" || driver.kind == "qtegra_valves") {
+    // A Qtegra answering this driver's commands only. On a kind = "link"
+    // transport the spectrometer's simulator answers instead, and the line's
+    // model does not follow (sim serve joins the two: join_qtegra).
     auto model = std::make_shared<spectrometer::QtegraSimModel>();
-    model->parameter_source = [this, by_parameter = std::move(by_parameter)](
-                                  const std::string& name) -> std::optional<double> {
-      auto it = by_parameter.find(name);
-      if (it == by_parameter.end()) return std::nullopt;
-      auto p = gauge_reading(it->second);
-      return p ? std::optional<double>(*p) : std::nullopt;
-    };
-    return spectrometer::qtegra_sim_hook(std::move(model));
-  }
-
-  if (driver.kind == "qtegra_valves") {
-    // A Qtegra RemoteControl answering valve commands only; its Open/Close
-    // move the line's valves (by Qtegra name). On a kind = "link" transport
-    // the spectrometer's simulator answers instead, and the line's model
-    // does not follow.
-    std::map<std::string, std::pair<std::string, bool>> by_name;  // valve, inverted
-    for (const auto& v : system.valves)
-      if (v.actuator == driver.name) by_name[v.address] = {v.name, v.inverted};
-    for (const auto& s : system.switches)
-      if (s.actuator == driver.name) by_name[s.address] = {s.name, s.inverted};
-    auto model = std::make_shared<spectrometer::QtegraSimModel>();
-    model->on_valve = [this, by_name = std::move(by_name)](const std::string& name, bool open) {
-      if (auto it = by_name.find(name); it != by_name.end()) set_valve(it->second.first, open != it->second.second);
-    };
+    join_qtegra(*model, driver, system);
     return spectrometer::qtegra_sim_hook(std::move(model));
   }
 
@@ -657,25 +622,10 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
   if (driver.kind == "ngx_valves") {
     // The NGX simulator answers (Login, SAB, valves); actuations move the
     // simulated line's valves.
-    std::map<std::string, std::pair<std::string, bool>> by_address;  // name, inverted
-    for (const auto& v : system.valves)
-      if (v.actuator == driver.name) by_address[v.address] = {v.name, v.inverted};
-    for (const auto& s : system.switches)
-      if (s.actuator == driver.name) by_address[s.address] = {s.name, s.inverted};
     auto model = std::make_shared<spectrometer::NgxSimModel>();
     model->banner_pending = false;  // no event source on a line transport
-    auto inner = spectrometer::ngx_sim_hook(model);
-    return [this, model, inner = std::move(inner), by_address = std::move(by_address)](const Bytes& tx) {
-      Bytes reply = inner(tx);
-      std::string cmd = to_string(tx);
-      while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n' || cmd.back() == '#')) cmd.pop_back();
-      for (const auto* verb : {"OpenValve ", "CloseValve "}) {
-        if (!cmd.starts_with(verb)) continue;
-        if (auto it = by_address.find(cmd.substr(std::string(verb).size())); it != by_address.end())
-          set_valve(it->second.first, cmd.starts_with("OpenValve ") != it->second.second);
-      }
-      return reply;
-    };
+    join_ngx(*model, driver, system);
+    return spectrometer::ngx_sim_hook(std::move(model));
   }
 
   if (driver.kind == "pfeiffer_maxigauge") {
@@ -775,6 +725,66 @@ SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const
   }
 
   return [](const Bytes&) { return Bytes{}; };
+}
+
+void SimSystem::join_qtegra(spectrometer::QtegraSimModel& model, const config::DriverConfig& driver,
+                            const config::SystemConfig& system) {
+  if (driver.kind == "qtegra_gauges") {
+    // parameters[n-1] reads the gauge on channel n.
+    std::vector<std::string> parameters;
+    if (const auto* array = driver.options["parameters"].as_array())
+      for (const auto& p : *array) parameters.push_back(p.value_or(std::string{}));
+    std::map<std::string, std::string> by_parameter;
+    {
+      std::lock_guard lock(mutex_);
+      advance_locked();
+      for (const auto& g : system.gauges) {
+        if (g.driver != driver.name || g.channel < 1 || std::cmp_greater(g.channel, parameters.size()))
+          continue;
+        by_parameter[parameters[static_cast<std::size_t>(g.channel - 1)]] = g.name;
+        add_gauge_volume_locked(g.name);
+      }
+    }
+    model.parameter_source = [this, before = std::move(model.parameter_source),
+                              by_parameter = std::move(by_parameter)](const std::string& name) -> std::optional<double> {
+      if (auto it = by_parameter.find(name); it != by_parameter.end()) {
+        auto p = gauge_reading(it->second);
+        return p ? std::optional<double>(*p) : std::nullopt;
+      }
+      return before ? before(name) : std::nullopt;
+    };
+    return;
+  }
+  if (driver.kind == "qtegra_valves") {
+    // Open/Close of a valve's Qtegra name move the line's valve.
+    std::map<std::string, std::pair<std::string, bool>> by_name;  // valve, inverted
+    for (const auto& v : system.valves)
+      if (v.actuator == driver.name) by_name[v.address] = {v.name, v.inverted};
+    for (const auto& s : system.switches)
+      if (s.actuator == driver.name) by_name[s.address] = {s.name, s.inverted};
+    model.on_valve = [this, before = std::move(model.on_valve), by_name = std::move(by_name)](const std::string& name,
+                                                                                               bool open) {
+      if (before) before(name, open);
+      if (auto it = by_name.find(name); it != by_name.end()) set_valve(it->second.first, open != it->second.second);
+    };
+  }
+}
+
+void SimSystem::join_ngx(spectrometer::NgxSimModel& model, const config::DriverConfig& driver,
+                         const config::SystemConfig& system) {
+  if (driver.kind != "ngx_valves") return;
+  std::map<std::string, std::pair<std::string, bool>> by_address;  // name, inverted
+  for (const auto& v : system.valves)
+    if (v.actuator == driver.name) by_address[v.address] = {v.name, v.inverted};
+  for (const auto& s : system.switches)
+    if (s.actuator == driver.name) by_address[s.address] = {s.name, s.inverted};
+  model.on_command = [this, before = std::move(model.on_command), by_address = std::move(by_address)](
+                         const std::string& verb, const std::string& args) {
+    if (before) before(verb, args);
+    if (verb != "OpenValve" && verb != "CloseValve") return;
+    if (auto it = by_address.find(args); it != by_address.end())
+      set_valve(it->second.first, (verb == "OpenValve") != it->second.second);
+  };
 }
 
 extraction::ChromiumSim* SimSystem::chromium(std::string_view driver) const {

@@ -67,6 +67,8 @@
 #include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/devices/extraction/chromium_sim.hpp"
 #include "pychron/devices/pychron_valve_server_sim.hpp"
+#include "pychron/devices/spectrometer/ngx_sim.hpp"
+#include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/devices/proxr_board_sim.hpp"
 #include "pychron/sim/gas.hpp"
 #include "pychron/sim/gas_network.hpp"
@@ -298,6 +300,17 @@ class SimSystem {
   // framing). `emulator` names the kind answered as: "" for a silent wire and
   // for a transport no driver uses (whose hook is then empty).
   WireSim wire_for_transport(std::string_view transport, const config::SystemConfig& system);
+
+  // The line's drivers answered by an emulator another owns (a spectrometer's
+  // PC, sim serve): a qtegra_valves driver's Open/Close move its valves, a
+  // qtegra_gauges driver's parameters read its gauges, an ngx_valves driver's
+  // actuations move its valves. Each chains with what the model was given
+  // before, so several drivers follow one model. Other kinds: nothing. Set
+  // before the model is used; this system must outlive it.
+  void join_qtegra(spectrometer::QtegraSimModel& model, const config::DriverConfig& driver,
+                   const config::SystemConfig& system);
+  void join_ngx(spectrometer::NgxSimModel& model, const config::DriverConfig& driver,
+                const config::SystemConfig& system);
 
   // The Chromium simulator hook_for built for the driver named `driver`;
   // null if there is none. For tests and tools that look at what the
