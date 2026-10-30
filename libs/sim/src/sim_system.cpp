@@ -24,7 +24,17 @@
 #include "pychron/devices/modbus_device_sim.hpp"
 #include "pychron/devices/plc2000_heater.hpp"
 #include "pychron/devices/plc2000_valves.hpp"
+#include "pychron/codecs/agilent.hpp"
+#include "pychron/codecs/chromium.hpp"
+#include "pychron/codecs/isotopx_ngx.hpp"
+#include "pychron/codecs/lakeshore.hpp"
+#include "pychron/codecs/maxigauge.hpp"
+#include "pychron/codecs/microion.hpp"
 #include "pychron/codecs/modbus.hpp"
+#include "pychron/codecs/proxr.hpp"
+#include "pychron/codecs/pychron_tx.hpp"
+#include "pychron/codecs/thermo_qtegra.hpp"
+#include "pychron/codecs/varian_xgs600.hpp"
 #include "pychron/devices/spectrometer/ngx_sim.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/devices/types.hpp"
@@ -37,6 +47,29 @@ double seconds(Duration d) { return std::chrono::duration<double>(d).count(); }
 
 bool is_plc_kind(std::string_view kind) {
   return kind == "plc2000_valves" || kind == "plc2000_gauges" || kind == "plc2000_heater";
+}
+
+// How a simulated `driver` cuts one request from what its driver writes:
+// the driver's codec's framing. Empty for a kind with no emulator.
+RequestFramer request_framer(const config::DriverConfig& driver) {
+  const std::string& kind = driver.kind;
+  if (kind == "proxr_relay") return codec::proxr::request_length;
+  if (kind == "pfeiffer_maxigauge") return codec::maxigauge::request_length;
+  if (kind == "qtegra_valves" || kind == "qtegra_gauges") return framer(codec::qtegra::request_spec());
+  if (kind == "agilent_switch") return framer(ReadSpec::until(codec::agilent::kTerminator));
+  if (kind == "pychron_valves") return framer(ReadSpec::until(codec::pychron_tx::kTerminator));
+  if (kind == "ngx_valves") {
+    // The driver's own `send_terminator`, as NgxLink appends it.
+    const auto terminator =
+        driver.options["send_terminator"].value_or(std::string(codec::ngx::kDefaultSendTerminator));
+    return framer(ReadSpec::until(terminator.empty() ? std::string(codec::ngx::kDefaultSendTerminator) : terminator));
+  }
+  if (kind == "varian_xgs600") return framer(ReadSpec::until(codec::varian_xgs600::kTerminator));
+  if (kind == "gp_microion") return framer(ReadSpec::until(codec::microion::kTerminator));
+  if (kind == "lakeshore") return framer(ReadSpec::until(codec::lakeshore::kTerminator));
+  if (kind == "chromium") return framer(ReadSpec::until(codec::chromium::kCommandTerminator));
+  if (is_plc_kind(kind)) return framer(ReadSpec::modbus_tcp());
+  return {};
 }
 
 // The canvas gives cc and the network holds litres: the one place they meet.
@@ -459,23 +492,48 @@ std::optional<ModbusDeviceSim> SimSystem::plc_device(const config::DriverConfig&
 }
 
 SimTransport::Hook SimSystem::hook_for_transport(std::string_view transport, const config::SystemConfig& system) {
+  return wire_for_transport(transport, system).hook;
+}
+
+WireSim SimSystem::wire_for_transport(std::string_view transport, const config::SystemConfig& system) {
+  WireSim wire;
+  wire.request = framer(ReadSpec::until_any("\r\n"));
   std::vector<const config::DriverConfig*> drivers;
   for (const auto& [name, d] : system.drivers)
     if (d.transport == transport) drivers.push_back(&d);
-  if (drivers.empty()) return {};
+  if (drivers.empty()) return wire;
   if (drivers.size() > 1) {
     // One PLC serving several drivers answers for all of them.
     std::vector<ModbusDeviceSim> parts;
+    std::vector<std::string> kinds;
     for (const auto* d : drivers) {
       if (!is_plc_kind(d->kind)) {
         parts.clear();
         break;
       }
       if (auto part = plc_device(*d, system)) parts.push_back(std::move(*part));
+      if (std::ranges::find(kinds, d->kind) == kinds.end()) kinds.push_back(d->kind);
     }
-    if (!parts.empty()) return modbus_bus_hook(std::move(parts));
+    if (!parts.empty()) {
+      wire.hook = modbus_bus_hook(std::move(parts));
+      wire.request = framer(ReadSpec::modbus_tcp());
+      for (const auto& kind : kinds) wire.emulator += (wire.emulator.empty() ? "" : "+") + kind;
+      return wire;
+    }
   }
-  return hook_for(*drivers.front(), system);
+  const config::DriverConfig& driver = *drivers.front();
+  wire.hook = hook_for(driver, system);
+  if (!wire.hook) {
+    // A heater whose options do not parse: nothing answers.
+    wire.hook = [](const Bytes&) { return Bytes{}; };
+    return wire;
+  }
+  if (auto request = request_framer(driver)) {
+    wire.request = std::move(request);
+    wire.emulator = driver.kind;
+  }
+  wire.close_after_reply = driver.kind == "pychron_valves";
+  return wire;
 }
 
 SimTransport::Hook SimSystem::hook_for(const config::DriverConfig& driver, const config::SystemConfig& system) {

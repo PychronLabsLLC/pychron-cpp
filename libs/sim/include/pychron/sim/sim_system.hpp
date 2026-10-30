@@ -71,6 +71,7 @@
 #include "pychron/sim/gas.hpp"
 #include "pychron/sim/gas_network.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
+#include "pychron/sim/wire_sim.hpp"
 #include "pychron/transport/sim_transport.hpp"
 
 namespace pychron::sim {
@@ -292,6 +293,11 @@ class SimSystem {
   // plc2000_heater) and there are several, one PLC answering for all of
   // them (modbus_bus_hook). A heater on a shared PLC cannot be set offline.
   SimTransport::Hook hook_for_transport(std::string_view transport, const config::SystemConfig& system);
+  // The same emulator in the form sim serve puts on a socket: hook_for_transport's
+  // hook, and how one request is cut from what the driver writes (its codec's
+  // framing). `emulator` names the kind answered as: "" for a silent wire and
+  // for a transport no driver uses (whose hook is then empty).
+  WireSim wire_for_transport(std::string_view transport, const config::SystemConfig& system);
 
   // The Chromium simulator hook_for built for the driver named `driver`;
   // null if there is none. For tests and tools that look at what the
