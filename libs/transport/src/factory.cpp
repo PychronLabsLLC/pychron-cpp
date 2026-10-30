@@ -45,37 +45,52 @@ Result<std::unique_ptr<Transport>> make_transport(const config::TransportConfig&
   options.bus = context.bus;
 
   std::unique_ptr<Transport> transport;
-  switch (config.kind) {
-    case config::TransportKind::Sim:
-      transport = SimTransport::hooked(context.sim_hook ? context.sim_hook : [](const Bytes&) { return Bytes{}; },
-                                       std::move(options));
-      break;
-    case config::TransportKind::Serial:
-      if (const auto* p = std::get_if<config::SerialParams>(&config.params))
-        transport = std::make_unique<SerialTransport>(serial_settings(*p), std::move(options));
-      break;
-    case config::TransportKind::Tcp:
-      if (const auto* p = std::get_if<config::TcpParams>(&config.params))
-        transport = std::make_unique<TcpTransport>(TcpSettings{p->host, static_cast<std::uint16_t>(p->port)},
-                                                   std::move(options));
-      break;
-    case config::TransportKind::Udp:
-      if (const auto* p = std::get_if<config::UdpParams>(&config.params))
-        transport = std::make_unique<UdpTransport>(UdpSettings{p->host, static_cast<std::uint16_t>(p->port)},
-                                                   std::move(options));
-      break;
-    case config::TransportKind::ModbusTcp:
-      // A TCP stream; the Modbus framing is the driver's codec (codec::modbus).
-      if (const auto* p = std::get_if<config::ModbusTcpParams>(&config.params))
-        transport = std::make_unique<TcpTransport>(
-            TcpSettings{p->tcp.host, static_cast<std::uint16_t>(p->tcp.port)}, std::move(options));
-      break;
-    case config::TransportKind::ModbusRtu:
-      return fail(ErrorKind::Config, "modbus_rtu transports are not supported yet", config.name);
-    case config::TransportKind::Link:
-      if (const auto* p = std::get_if<config::LinkParams>(&config.params))
-        return std::unique_ptr<Transport>(std::make_unique<LinkTransport>(config.name, p->link));
-      break;
+  const bool served = context.endpoints != nullptr && config.kind != config::TransportKind::Sim &&
+                      config.kind != config::TransportKind::Link;
+  if (served) {
+    const auto entry = context.endpoints->find(config.name);
+    if (entry == context.endpoints->end())
+      return fail(ErrorKind::Config, "transport '" + config.name + "' has no entry in the sim endpoints file",
+                  config.name);
+    const Endpoint& e = entry->second;
+    if (e.protocol == WireProtocol::Udp) {
+      transport = std::make_unique<UdpTransport>(UdpSettings{e.host, e.port}, std::move(options));
+    } else {
+      transport = std::make_unique<TcpTransport>(TcpSettings{e.host, e.port}, std::move(options));
+    }
+  } else {
+    switch (config.kind) {
+      case config::TransportKind::Sim:
+        transport = SimTransport::hooked(context.sim_hook ? context.sim_hook : [](const Bytes&) { return Bytes{}; },
+                                         std::move(options));
+        break;
+      case config::TransportKind::Serial:
+        if (const auto* p = std::get_if<config::SerialParams>(&config.params))
+          transport = std::make_unique<SerialTransport>(serial_settings(*p), std::move(options));
+        break;
+      case config::TransportKind::Tcp:
+        if (const auto* p = std::get_if<config::TcpParams>(&config.params))
+          transport = std::make_unique<TcpTransport>(TcpSettings{p->host, static_cast<std::uint16_t>(p->port)},
+                                                     std::move(options));
+        break;
+      case config::TransportKind::Udp:
+        if (const auto* p = std::get_if<config::UdpParams>(&config.params))
+          transport = std::make_unique<UdpTransport>(UdpSettings{p->host, static_cast<std::uint16_t>(p->port)},
+                                                     std::move(options));
+        break;
+      case config::TransportKind::ModbusTcp:
+        // A TCP stream; the Modbus framing is the driver's codec (codec::modbus).
+        if (const auto* p = std::get_if<config::ModbusTcpParams>(&config.params))
+          transport = std::make_unique<TcpTransport>(
+              TcpSettings{p->tcp.host, static_cast<std::uint16_t>(p->tcp.port)}, std::move(options));
+        break;
+      case config::TransportKind::ModbusRtu:
+        return fail(ErrorKind::Config, "modbus_rtu transports are not supported yet", config.name);
+      case config::TransportKind::Link:
+        if (const auto* p = std::get_if<config::LinkParams>(&config.params))
+          return std::unique_ptr<Transport>(std::make_unique<LinkTransport>(config.name, p->link));
+        break;
+    }
   }
   if (!transport) return fail(ErrorKind::Config, "transport parameters do not match its kind", config.name);
 

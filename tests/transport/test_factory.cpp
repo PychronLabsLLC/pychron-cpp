@@ -3,10 +3,14 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "pychron/core/config/logging_config.hpp"
 #include "pychron/core/signal_bus.hpp"
+#include "pychron/transport/endpoints.hpp"
+#include "pychron/transport/listener.hpp"
 #include "pychron/transport/serial_transport.hpp"
 #include "pychron/transport/tcp_transport.hpp"
 #include "pychron/transport/udp_transport.hpp"
@@ -222,4 +226,77 @@ TEST(TransportFactory, UntracedTransportWithoutHubIsNotWrapped) {
   auto t = make_transport(cfg("bare", config::TransportKind::Sim, config::SimParams{}), ctx);
   ASSERT_TRUE(t);
   EXPECT_EQ(dynamic_cast<TraceRecorder*>(t->get()), nullptr);
+}
+
+namespace {
+
+std::map<std::string, Endpoint> served(std::string name, WireProtocol protocol, std::uint16_t port) {
+  return {{std::move(name), Endpoint{"127.0.0.1", port, protocol, "agilent_switch"}}};
+}
+
+}  // namespace
+
+TEST(TransportFactory, EndpointOverridesTcp) {
+  auto listener = TcpListener::bind("127.0.0.1", 0);
+  ASSERT_TRUE(listener);
+  const auto endpoints = served("net", WireProtocol::Tcp, (*listener)->port());
+  TransportContext ctx;
+  ctx.endpoints = &endpoints;
+  // TEST-NET-1: nothing answers there, so only the endpoint can.
+  auto t = make_transport(cfg("net", config::TransportKind::Tcp, config::TcpParams{"192.0.2.1", 4001}), ctx);
+  ASSERT_TRUE(t) << t.error().what;
+  auto* tcp = dynamic_cast<TcpTransport*>(t->get());
+  ASSERT_NE(tcp, nullptr);
+  EXPECT_EQ(tcp->settings().host, "127.0.0.1");
+  EXPECT_EQ(tcp->settings().port, (*listener)->port());
+  EXPECT_TRUE((*t)->open());
+}
+
+TEST(TransportFactory, SerialBecomesTcp) {
+  const auto endpoints = served("valve_bus", WireProtocol::Tcp, 47001);
+  TransportContext ctx;
+  ctx.endpoints = &endpoints;
+  config::SerialParams sp;
+  sp.port = "/dev/null-port";
+  auto t = make_transport(cfg("valve_bus", config::TransportKind::Serial, sp), ctx);
+  ASSERT_TRUE(t) << t.error().what;
+  auto* tcp = dynamic_cast<TcpTransport*>(t->get());
+  ASSERT_NE(tcp, nullptr);
+  EXPECT_EQ(tcp->settings().port, 47001);
+}
+
+TEST(TransportFactory, UdpEntryGivesUdp) {
+  const auto endpoints = served("plc", WireProtocol::Udp, 47002);
+  TransportContext ctx;
+  ctx.endpoints = &endpoints;
+  auto t = make_transport(
+      cfg("plc", config::TransportKind::ModbusTcp, config::ModbusTcpParams{config::TcpParams{"10.0.0.9", 502}}), ctx);
+  ASSERT_TRUE(t) << t.error().what;
+  auto* udp = dynamic_cast<UdpTransport*>(t->get());
+  ASSERT_NE(udp, nullptr);
+  EXPECT_EQ(udp->settings().host, "127.0.0.1");
+  EXPECT_EQ(udp->settings().port, 47002);
+}
+
+TEST(TransportFactory, MissingEntryIsConfigError) {
+  const std::map<std::string, Endpoint> endpoints;
+  TransportContext ctx;
+  ctx.endpoints = &endpoints;
+  auto t = make_transport(cfg("net", config::TransportKind::Tcp, config::TcpParams{"10.0.0.5", 4001}), ctx);
+  ASSERT_FALSE(t);
+  EXPECT_EQ(t.error().kind, ErrorKind::Config);
+  EXPECT_NE(t.error().what.find("transport 'net' has no entry in the sim endpoints file"), std::string::npos)
+      << t.error().what;
+}
+
+TEST(TransportFactory, SimAndLinkIgnoreEndpoints) {
+  const std::map<std::string, Endpoint> endpoints;
+  TransportContext ctx;
+  ctx.endpoints = &endpoints;
+  ctx.sim_hook = [](const Bytes& tx) { return tx; };
+  auto sim = make_transport(cfg("gauges", config::TransportKind::Sim, config::SimParams{}), ctx);
+  ASSERT_TRUE(sim) << sim.error().what;
+  EXPECT_NE(dynamic_cast<SimTransport*>(sim->get()), nullptr);
+  auto link = make_transport(cfg("shared", config::TransportKind::Link, config::LinkParams{"gauges"}), ctx);
+  EXPECT_TRUE(link) << link.error().what;
 }
