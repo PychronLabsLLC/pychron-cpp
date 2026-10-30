@@ -27,7 +27,7 @@
 //   - An unprotected counter seeing more than its overload threshold latches
 //     `overloaded`; a protected detector or a blanked beam sees no gas and
 //     reads baseline plus noise. A baseline never overloads a counter.
-// Time comes from the injected Clock. Randomness is keyed (keyed_noise.hpp,
+// Time comes from the injected Clock. Randomness is keyed (core/keyed_noise.hpp,
 // lab simulator spec section 5.3): the noise on a reading is a function of
 // the seed, the detector and the instant of the reading (nanoseconds since
 // the model was built), not the next draw of a generator the detectors

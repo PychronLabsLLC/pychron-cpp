@@ -30,6 +30,7 @@ add_executable(pychron_core_tests
   test_process_log.cpp
   test_event_recorder.cpp
   test_http.cpp
+  test_keyed_noise.cpp
 )
 
 target_link_libraries(pychron_core_tests PRIVATE pychron::core GTest::gtest_main)

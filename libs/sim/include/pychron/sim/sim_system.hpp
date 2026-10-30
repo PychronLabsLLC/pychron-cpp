@@ -30,7 +30,7 @@
 //     gives a little back (ion consumption and memory, spec section 5.1).
 //   - Gauge readings add Gaussian noise (relative, `Settings::noise`) that
 //     is a function of the seed, the volume and the time of the reading
-//     (keyed_noise.hpp), not of how many readings came before.
+//     (core/keyed_noise.hpp), not of how many readings came before.
 // The network is solved exactly between valve events, so advancing lazily to
 // clock.now() on every query is exact, however often anything polls.
 //

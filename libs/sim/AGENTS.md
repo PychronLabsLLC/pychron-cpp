@@ -5,10 +5,10 @@ only this component's. Kept compressed, as that file is.
 
 - Simulated lab's physics is `libs/sim` `GasNetwork` on `LinearFlow`: gas by
   species in volumes, solved exactly between valve events, pure and
-  clock-free (standard library and `core/error.hpp` only). `SimSystem` holds
+  clock-free (standard library, `core/error.hpp` and `core/keyed_noise.hpp` only). `SimSystem` holds
   the clock, the mutex and the device sims and moves the network to
   `clock.now()` on each query. Noise on a reading is keyed by (seed, name,
-  time) (`keyed_noise.hpp`: `keyed_gauss` for Faradays and gauges,
+  time) (`core/keyed_noise.hpp`: `keyed_gauss` for Faradays and gauges,
   `keyed_poisson` for counters, one key for one of the two), so a simulated
   run gives same numbers every time: no code draws simulator noise from a
   shared generator or a `<random>` distribution. Gas enters through

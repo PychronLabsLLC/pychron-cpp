@@ -15,7 +15,7 @@
 
 #include "pychron/sim/gas.hpp"
 #include "pychron/sim/gas_network.hpp"
-#include "pychron/sim/keyed_noise.hpp"
+#include "pychron/core/keyed_noise.hpp"
 
 #include "pychron/devices/gp_microion.hpp"
 #include "pychron/devices/pfeiffer_maxigauge.hpp"

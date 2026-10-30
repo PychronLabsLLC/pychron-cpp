@@ -1,4 +1,4 @@
-#include "pychron/sim/keyed_noise.hpp"
+#include "pychron/core/keyed_noise.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -10,9 +10,9 @@
 
 namespace {
 
-using pychron::sim::keyed_bits;
-using pychron::sim::keyed_gauss;
-using pychron::sim::keyed_poisson;
+using pychron::keyed_bits;
+using pychron::keyed_gauss;
+using pychron::keyed_poisson;
 
 TEST(KeyedNoise, SameKeySameDraw) {
   EXPECT_EQ(keyed_bits(0x5eed, "bone", 42), keyed_bits(0x5eed, "bone", 42));

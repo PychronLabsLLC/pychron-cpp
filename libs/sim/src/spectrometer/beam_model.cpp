@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <utility>
 
-#include "pychron/sim/keyed_noise.hpp"
+#include "pychron/core/keyed_noise.hpp"
 
 namespace pychron::sim {
 

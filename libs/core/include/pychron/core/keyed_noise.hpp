@@ -58,7 +58,7 @@
 #include <numbers>
 #include <string_view>
 
-namespace pychron::sim {
+namespace pychron {
 
 namespace keyed_noise_detail {
 
@@ -135,4 +135,4 @@ inline std::int64_t keyed_poisson(std::uint64_t seed, std::string_view key, std:
   return static_cast<std::int64_t>(std::min(value, keyed_noise_detail::kPoissonMost));
 }
 
-}  // namespace pychron::sim
+}  // namespace pychron
