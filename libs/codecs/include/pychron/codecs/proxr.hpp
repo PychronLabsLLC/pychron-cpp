@@ -14,7 +14,9 @@
 // 0..255 maps to bank index/8 + 1, relay index%8 (pychron's convention).
 // Reference: pychron hardware/ncd/relay.py, NCD "ProXR Command Set" manual.
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "pychron/codecs/codec.hpp"
 #include "pychron/core/error.hpp"
@@ -48,6 +50,12 @@ Result<Command> select_bank(int bank);
 Result<Command> relay_on(int relay);
 Result<Command> relay_off(int relay);
 Result<Command> read_relay(int relay);
+
+// Length of the first whole request at the start of `buffer` (what a
+// simulated board cuts from a stream; nullopt while incomplete): 3 bytes for
+// select_bank, 2 for every other command. Bytes before a kPrefix are a
+// request of their own, up to that prefix, which no board answers.
+std::optional<std::size_t> request_length(const Bytes& buffer);
 
 // Reply to select_bank / relay_on / relay_off: exactly 'U'.
 Result<void> decode_ack(const Bytes& reply);

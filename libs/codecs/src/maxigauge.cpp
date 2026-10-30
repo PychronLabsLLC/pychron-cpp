@@ -91,6 +91,11 @@ Command read_all_pressures() { return Command::ascii("PRX" + std::string(kTermin
 
 Command read_units() { return Command::ascii("UNI" + std::string(kTerminator), line_reply()); }
 
+std::optional<std::size_t> request_length(const Bytes& buffer) {
+  if (!buffer.empty() && buffer.front() == kEnq) return 1;
+  return frame_length(line_reply(), buffer);
+}
+
 Command enquiry() { return Command{Bytes{kEnq}, line_reply()}; }
 
 Result<void> decode_ack(const Bytes& reply) {

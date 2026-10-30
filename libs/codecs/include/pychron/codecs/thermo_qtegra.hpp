@@ -51,6 +51,9 @@ std::string_view terminator_text(Terminator t) noexcept;
 
 // Reply framing: complete at the first CR or LF (leading CR/LF absorbed).
 const ReadSpec& reply_spec() noexcept;
+// Request framing, for a simulated Qtegra cutting commands from a stream:
+// the same, so every Terminator a driver may be set to ends a command.
+const ReadSpec& request_spec() noexcept;
 
 // Legal Qtegra integration times (pychron QTEGRA_INTEGRATION_TIMES),
 // 0.065536 s * 2^n, n in 0..10.

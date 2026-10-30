@@ -12,6 +12,8 @@
 // The driver sequences the two exchanges; this codec only knows the bytes.
 // Values are in the gauge's configured unit (UNI), never converted here.
 
+#include <cstddef>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -63,6 +65,11 @@ Command read_all_pressures();
 Command read_units();
 // ENQ: asks the gauge to transmit the data for the last acknowledged mnemonic.
 Command enquiry();
+
+// Length of the first whole request at the start of `buffer` (what a
+// simulated gauge cuts from a stream; nullopt while incomplete): an ENQ is
+// one byte with no terminator, anything else a line up to kTerminator.
+std::optional<std::size_t> request_length(const Bytes& buffer);
 
 // --- host side: replies ----------------------------------------------------
 

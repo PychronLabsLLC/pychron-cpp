@@ -164,6 +164,8 @@ const ReadSpec& reply_spec() noexcept {
   return spec;
 }
 
+const ReadSpec& request_spec() noexcept { return reply_spec(); }
+
 double snap_integration_time(double seconds) noexcept {
   if (!std::isfinite(seconds)) return kIntegrationTimes.front();
   double best = kIntegrationTimes.front();

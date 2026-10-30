@@ -405,3 +405,11 @@ TEST(QtegraCodec, ValveStateIsTrueOrFalseOnly) {
     expect_protocol(q::decode_valve_state(to_bytes(bad)));
   }
 }
+
+TEST(ThermoQtegraCodec, RequestSpecFramesEveryTerminatorOption) {
+  const auto& spec = q::request_spec();
+  EXPECT_EQ(frame_length(spec, to_bytes("Open V1\r")), 8U);
+  EXPECT_EQ(frame_length(spec, to_bytes("Open V1\n")), 8U);
+  EXPECT_EQ(frame_length(spec, to_bytes("Open V1\r\n")), 8U);
+  EXPECT_EQ(frame_length(spec, to_bytes("Open V1")), std::nullopt);
+}

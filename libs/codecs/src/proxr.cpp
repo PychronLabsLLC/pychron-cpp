@@ -1,5 +1,6 @@
 #include "pychron/codecs/proxr.hpp"
 
+#include <algorithm>
 #include <string>
 
 namespace pychron::codec::proxr {
@@ -34,6 +35,18 @@ Result<Command> select_bank(int bank) {
     return fail(ErrorKind::Config, "ProXR bank " + std::to_string(bank) + " outside 1.." + std::to_string(kBanks));
   }
   return Command{Bytes{kPrefix, kSelectBank, static_cast<std::uint8_t>(bank)}, ReadSpec::fixed(1)};
+}
+
+std::optional<std::size_t> request_length(const Bytes& buffer) {
+  if (buffer.empty()) return std::nullopt;
+  if (buffer.front() != kPrefix) {
+    const auto prefix = std::find(buffer.begin(), buffer.end(), kPrefix);
+    return static_cast<std::size_t>(prefix - buffer.begin());
+  }
+  if (buffer.size() < 2) return std::nullopt;
+  const std::size_t length = buffer[1] == kSelectBank ? 3 : 2;
+  if (buffer.size() < length) return std::nullopt;
+  return length;
 }
 
 Result<Command> relay_on(int relay) { return relay_command(kRelayOnBase, relay); }

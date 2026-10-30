@@ -236,3 +236,13 @@ TEST(MaxiGaugeGaugeSide, RequestsMatchHostEncoding) {
   EXPECT_EQ(mg::decode_request(mg::read_units().tx)->kind, mg::Request::Kind::Units);
   EXPECT_EQ(mg::decode_request(mg::enquiry().tx)->kind, mg::Request::Kind::Enquiry);
 }
+
+TEST(MaxiGaugeCodec, RequestLengthLineOrEnq) {
+  using mg::request_length;
+  EXPECT_EQ(request_length(Bytes{}), std::nullopt);
+  EXPECT_EQ(request_length(to_bytes("PR1\r")), std::nullopt);
+  EXPECT_EQ(request_length(to_bytes("PR1\r\n")), 5U);
+  EXPECT_EQ(request_length(Bytes{mg::kEnq}), 1U);
+  EXPECT_EQ(request_length(Bytes{mg::kEnq, 'P'}), 1U);
+  EXPECT_EQ(request_length(mg::enquiry().tx), 1U);
+}

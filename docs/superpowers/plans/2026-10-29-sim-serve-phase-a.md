@@ -69,7 +69,7 @@ Request framing by kind (from the codecs; Task 5 wires it):
 |---|---|
 | `proxr_relay` | `codec::proxr::request_length` |
 | `agilent_switch` | `ReadSpec::until(codec::agilent::kTerminator)` |
-| `qtegra_valves`, `qtegra_gauges` | `codec::thermo_qtegra::request_spec()` (= `until_any("\r\n")`: driver's `terminator` option may be cr, lf or crlf) |
+| `qtegra_valves`, `qtegra_gauges` | `codec::qtegra::request_spec()` (= `until_any("\r\n")`: driver's `terminator` option may be cr, lf or crlf) |
 | `pychron_valves` | `ReadSpec::until(codec::pychron_tx::kTerminator)`, `close_after_reply = true` |
 | `ngx_valves` | `ReadSpec::until(<driver's send_terminator option, else codec::isotopx_ngx::kDefaultSendTerminator>)` |
 | `pfeiffer_maxigauge` | `codec::maxigauge::request_length` |
@@ -91,7 +91,7 @@ Request framing by kind (from the codecs; Task 5 wires it):
 - Test: `tests/codecs/test_proxr.cpp`, `test_maxigauge.cpp`, `test_thermo_qtegra.cpp` (whichever exist under those names; else the codec's test file)
 
 **Interfaces:**
-- Produces: `std::optional<std::size_t> codec::proxr::request_length(const Bytes& buffer)`; `std::optional<std::size_t> codec::maxigauge::request_length(const Bytes& buffer)`; `const ReadSpec& codec::thermo_qtegra::request_spec() noexcept`. Each: length of the whole first request at the start of `buffer`, nullopt while incomplete.
+- Produces: `std::optional<std::size_t> codec::proxr::request_length(const Bytes& buffer)`; `std::optional<std::size_t> codec::maxigauge::request_length(const Bytes& buffer)`; `const ReadSpec& codec::qtegra::request_spec() noexcept`. Each: length of the whole first request at the start of `buffer`, nullopt while incomplete.
 
 - [ ] **Step 1: Failing tests**
 
@@ -121,7 +121,7 @@ TEST(MaxiGaugeCodec, RequestLengthLineOrEnq) {
   EXPECT_EQ(request_length(Bytes{codec::maxigauge::kEnq, 'P'}), 1U);
 }
 TEST(ThermoQtegraCodec, RequestSpecFramesEveryTerminatorOption) {
-  const auto& spec = codec::thermo_qtegra::request_spec();
+  const auto& spec = codec::qtegra::request_spec();
   EXPECT_EQ(frame_length(spec, to_bytes("Open V1\r")), 8U);
   EXPECT_EQ(frame_length(spec, to_bytes("Open V1\n")), 8U);
   EXPECT_EQ(frame_length(spec, to_bytes("Open V1\r\n")), 8U);
