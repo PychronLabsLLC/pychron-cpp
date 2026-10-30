@@ -744,6 +744,10 @@ class Laser {
   Result<extraction::IExtractionDevice*> open() {
     systems::ExtractionLine::Options options;
     options.force_sim = g_.sim;
+    if (!g_.sim_endpoints.empty()) {
+      options.sim_endpoints = g_.sim_endpoints;
+      options.sim_endpoints_any = g_.sim_endpoints_any;
+    }
     options.state_file = line_state_file(g_.config);
     auto line = systems::ExtractionLine::load(g_.config, std::nullopt, options);
     if (!line) return fail(line.error());

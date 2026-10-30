@@ -39,6 +39,7 @@
 #include "pychron/systems/spectrometer/bringup.hpp"
 #include "pychron/setup/installer.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
+#include "pychron/transport/endpoints.hpp"
 
 namespace elctl {
 
@@ -339,6 +340,10 @@ class Exp {
     systems::ExtractionLine::Options line_options;
     line_options.clock = sim_clock.get();
     line_options.force_sim = g_.sim;
+    if (!g_.sim_endpoints.empty()) {
+      line_options.sim_endpoints = g_.sim_endpoints;
+      line_options.sim_endpoints_any = g_.sim_endpoints_any;
+    }
     line_options.state_file = line_state_file(g_.config);
     line_options.log_hub = process_log_hub();  // null without one: the line builds its own
     line_options.link_defaults = lab_.executor.link_defaults();  // executor.toml [links]
@@ -404,6 +409,15 @@ class Exp {
       }
       spectrometer::SpectrometerAssembler::Options assembly;
       assembly.link_defaults = lab_.executor.link_defaults();
+      if (!g_.sim_endpoints.empty()) {
+        // The line's file is what the endpoints serve, already checked by the line.
+        auto served = load_sim_endpoints(g_.sim_endpoints, g_.config, true);
+        if (!served) {
+          complain("error: " + served.error().what);
+          return kFailed;
+        }
+        assembly.sim_endpoints = std::make_shared<const std::map<std::string, Endpoint>>(std::move(served->transports));
+      }
       auto assembled = spectrometer::SpectrometerAssembler::assemble(
           std::move(data), spectrometer::SpectrometerContext{clock, (*line)->scheduler(), (*line)->bus()},
           std::move(assembly));
@@ -687,6 +701,8 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
   // queues/ directory, then in the folder itself.
   if (!globals.lab.empty()) a.queue_file = lab::find_queue(a.queue_file, globals.lab);
   if (a.resume && a.from) return usage("--from and --resume are exclusive");
+  if (a.sim_speed > 0 && !globals.sim_endpoints.empty())
+    return usage("--sim-endpoints runs in real time; --sim-speed is refused");
   if (a.sim_speed > 0 && !globals.sim) return usage("--sim-speed needs --sim");
   if (a.lab.empty()) a.lab = lab::lab_for_queue(a.queue_file);
   a.state = state_dir_for(a.lab);

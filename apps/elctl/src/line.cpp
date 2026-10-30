@@ -103,6 +103,7 @@ Result<std::unique_ptr<Line>> Line::build(config::SystemConfig config, LineOptio
     context.bus = &line->bus_;
     context.trace_dir = options.trace_dir.string();
     context.log_hub = line->log_hub_;
+    context.endpoints = options.sim_endpoints.get();
     if (tc.kind == config::TransportKind::Sim) {
       // The first driver on the wire decides which device model answers.
       auto driver = std::find_if(cfg.drivers.begin(), cfg.drivers.end(),

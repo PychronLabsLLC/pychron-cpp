@@ -48,6 +48,7 @@
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/systems/heater_ops.hpp"
+#include "pychron/transport/endpoints.hpp"
 #include "trace_settings.hpp"
 
 namespace elctl {
@@ -188,6 +189,8 @@ constexpr const char* kUsageText =
     "Options:\n"
     "  -c, --config <file>         system config (default: extraction_line.toml)\n"
     "  --sim                       run every transport as kind = \"sim\"\n"
+    "  --sim-endpoints <file>      drive a line served by 'elctl sim serve' (its endpoints file)\n"
+    "  --sim-endpoints-any         take an endpoints file that serves another copy of the line\n"
     "  --domain <id>               the kind of data reduction to run: arar or noble_gas\n"
     "                              (default: the install's domain, else arar)\n";
 
@@ -198,6 +201,8 @@ struct Globals {
   bool config_given = false;
   bool sim = false;
   std::optional<std::string> install;  // --install NAME (site config)
+  fs::path sim_endpoints;               // --sim-endpoints FILE; empty: none
+  bool sim_endpoints_any = false;       // --sim-endpoints-any
   std::string domain = "arar";         // the install's domain; --domain ID over it
   ExpGlobals exp;                      // defaults --install fills in
 };
@@ -492,6 +497,11 @@ class Session {
     if (!cfg) return fail(cfg.error());
     LineOptions options;
     options.force_sim = g_.sim;
+    if (!g_.sim_endpoints.empty()) {
+      auto served = load_sim_endpoints(g_.sim_endpoints, g_.config, g_.sim_endpoints_any);
+      if (!served) return fail(served.error());
+      options.sim_endpoints = std::make_shared<const std::map<std::string, Endpoint>>(std::move(served->transports));
+    }
     options.trace = load_trace_settings(g_.config);
     options.trace_dir = trace_dir(g_.config);
     auto line = Line::build(std::move(*cfg), options);
@@ -806,6 +816,14 @@ int run(const std::vector<std::string>& args, Io io) {
       domain_flag = args[++i];
     } else if (a == "--sim") {
       globals.sim = true;
+    } else if (a == "--sim-endpoints") {
+      if (i + 1 >= args.size()) {
+        io.err << "elctl: --sim-endpoints needs a file\n" << kUsageLine;
+        return kUsage;
+      }
+      globals.sim_endpoints = args[++i];
+    } else if (a == "--sim-endpoints-any") {
+      globals.sim_endpoints_any = true;
     } else if (a == "-h" || a == "--help") {
       io.out << kUsageText;
       return kOk;
@@ -867,6 +885,14 @@ int run(const std::vector<std::string>& args, Io io) {
     }
   }
   if (domain_flag) globals.domain = *domain_flag;
+  if (!globals.sim_endpoints.empty() && globals.sim) {
+    io.err << "elctl: --sim-endpoints cannot be used with --sim (or a simulation install): the one drives a "
+              "served lab over the wire, the other simulates every transport in-process\n"
+           << kUsageLine;
+    return kUsage;
+  }
+  globals.exp.sim_endpoints = globals.sim_endpoints;
+  globals.exp.sim_endpoints_any = globals.sim_endpoints_any;
   Session session(std::move(globals), io);
   if (!session.choose_domain()) return kUsage;
   return session.execute(std::vector<std::string>(args.begin() + static_cast<std::ptrdiff_t>(i), args.end()));

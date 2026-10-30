@@ -125,3 +125,53 @@ TEST_F(SimServeCmd, UnknownSubcommandIsUsage) {
   const auto o = run({"sim", "dance"});
   EXPECT_EQ(o.code, elctl::kUsage);
 }
+
+TEST_F(SimServeCmd, ReadAndOpenOverEndpoints) {
+  Served s;
+  serve(s, {});
+  const auto file = path("sim-endpoints.toml").string();
+  ASSERT_TRUE(appears(file));
+
+  const auto read = run({"--sim-endpoints", file, "read", "CG1"});
+  EXPECT_EQ(read.code, elctl::kOk) << read.out << read.err;
+  EXPECT_TRUE(contains(read.out, "CG1")) << read.out;
+  EXPECT_TRUE(contains(read.out, "torr")) << read.out;
+
+  const auto opened = run({"--sim-endpoints", file, "open", "B"});
+  EXPECT_EQ(opened.code, elctl::kOk) << opened.out << opened.err;
+  EXPECT_TRUE(contains(opened.out, "B open")) << opened.out;
+  // Another process reads the valve back from the served lab.
+  const auto state = run({"--sim-endpoints", file, "state"});
+  EXPECT_EQ(state.code, elctl::kOk) << state.err;
+  bool b_open = false;
+  std::istringstream lines(state.out);
+  for (std::string line; std::getline(lines, line);)
+    if (line.starts_with("B ") && contains(line, "open")) b_open = true;
+  EXPECT_TRUE(b_open) << state.out;
+
+  s.stop = true;
+  s.thread.join();
+}
+
+TEST_F(SimServeCmd, SimEndpointsWithSimRefused) {
+  const auto o = run({"--sim", "--sim-endpoints", path("sim-endpoints.toml").string(), "list"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "cannot be used with --sim")) << o.err;
+}
+
+TEST_F(SimServeCmd, SimEndpointsWithSimSpeedRefused) {
+  const auto o = run({"--sim-endpoints", path("sim-endpoints.toml").string(), "exp", "run", path("q.toml").string(),
+                      "--sim-speed", "10"});
+  EXPECT_EQ(o.code, elctl::kUsage);
+  EXPECT_TRUE(contains(o.err, "--sim-speed is refused")) << o.err;
+}
+
+TEST_F(SimServeCmd, MissingEntryFailsTheCommand) {
+  pychron::SimEndpoints endpoints;
+  endpoints.config = fs::weakly_canonical(path("extraction_line.toml"));
+  endpoints.host = "127.0.0.1";
+  ASSERT_TRUE(pychron::write_sim_endpoints(path("ep.toml"), endpoints));
+  const auto o = run({"--sim-endpoints", path("ep.toml").string(), "read", "CG1"});
+  EXPECT_NE(o.code, elctl::kOk);
+  EXPECT_TRUE(contains(o.err, "has no entry in the sim endpoints file")) << o.err;
+}

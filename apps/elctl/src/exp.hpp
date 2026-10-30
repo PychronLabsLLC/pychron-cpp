@@ -43,6 +43,10 @@ namespace elctl {
 struct ExpGlobals {
   std::filesystem::path config;
   bool sim = false;
+  // --sim-endpoints: a line served by `elctl sim serve` (empty: none);
+  // --sim-endpoints-any skips the check that it serves `config`.
+  std::filesystem::path sim_endpoints;
+  bool sim_endpoints_any = false;
   // From --install: used where the corresponding exp option is not given.
   std::filesystem::path lab, spectrometer, canvas, data;
   // The install's database url, password included (empty: none, or built without the store).

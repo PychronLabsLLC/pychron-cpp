@@ -14,6 +14,7 @@
 // `plc2000_heater`. SimSystem replaces these later.
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +33,7 @@
 #include "pychron/systems/event_log.hpp"
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/switch_manager.hpp"
+#include "pychron/transport/endpoints.hpp"
 #include "pychron/transport/transport.hpp"
 #include "trace_settings.hpp"
 
@@ -39,6 +41,9 @@ namespace elctl {
 
 struct LineOptions {
   bool force_sim = false;  // treat every transport as kind = "sim"
+  // A line served by `elctl sim serve`: transports connect where it answers
+  // (pychron::make_transport, TransportContext::endpoints). Null: as configured.
+  std::shared_ptr<const std::map<std::string, pychron::Endpoint>> sim_endpoints;
   TraceSettings trace;     // transports to record, on top of config `trace = true`
   std::filesystem::path trace_dir = "traces";
 };
