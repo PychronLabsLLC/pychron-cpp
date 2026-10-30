@@ -108,7 +108,6 @@ TrackSummary summarize(std::span<const TrackScore> runs) {
   if (runs.empty()) return out;
   const auto n = static_cast<double>(runs.size());
   out.worst = runs.front();
-  double lost = 0, moves = 0;
   for (const TrackScore& r : runs) {
     out.mean.on_pct += r.on_pct / n;
     out.mean.rms_mm += r.rms_mm / n;
@@ -120,8 +119,8 @@ TrackSummary summarize(std::span<const TrackScore> runs) {
     out.mean.hold_pct += r.hold_pct / n;
     out.mean.sat_pct += r.sat_pct / n;
     out.mean.search_pct += r.search_pct / n;
-    lost += r.lost / n;
-    moves += r.moves / n;
+    out.mean.lost += r.lost / n;
+    out.mean.moves += r.moves / n;
     TrackScore& w = out.worst;
     w.on_pct = std::min(w.on_pct, r.on_pct);
     w.heat_pct = std::min(w.heat_pct, r.heat_pct);
@@ -136,8 +135,6 @@ TrackSummary summarize(std::span<const TrackScore> runs) {
     w.sat_pct = std::max(w.sat_pct, r.sat_pct);
     w.search_pct = std::max(w.search_pct, r.search_pct);
   }
-  out.mean.lost = static_cast<int>(std::lround(lost));
-  out.mean.moves = static_cast<int>(std::lround(moves));
   return out;
 }
 

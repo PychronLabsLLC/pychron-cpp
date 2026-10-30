@@ -13,9 +13,9 @@ namespace pychron::laser {
 
 struct TrackScore {
   double on_pct = 0, rms_mm = 0, max_mm = 0, lock_s = 0;
-  int lost = 0;
+  double lost = 0;  // a count; a mean over runs keeps its fraction
   double back_s = 0;
-  int moves = 0;
+  double moves = 0;  // a count; see lost
   double heat_pct = 0, track_pct = 0, hold_pct = 0, sat_pct = 0, search_pct = 0;
 };
 
@@ -52,7 +52,7 @@ class TrackScorer {
 
   long n_ = 0, n_on_ = 0;
   double sum_sq_ = 0, max_mm_ = 0, heat_sum_ = 0;
-  int moves_ = 0;
+  double moves_ = 0;
   long track_ = 0, hold_ = 0, sat_ = 0, search_ = 0;
 };
 
@@ -61,8 +61,7 @@ struct TrackSummary {
 };
 
 // Mean over runs, and the worst of each column: the lowest on_pct and
-// heat_pct, the highest of every other field. Integer fields of the mean are
-// rounded. No runs: zeros.
+// heat_pct, the highest of every other field. No runs: zeros.
 [[nodiscard]] TrackSummary summarize(std::span<const TrackScore> runs);
 
 }  // namespace pychron::laser

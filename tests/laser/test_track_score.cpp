@@ -29,7 +29,7 @@ TEST(TrackScorer, AlwaysOn) {
   const TrackScore r = s.finish(30);
   EXPECT_DOUBLE_EQ(r.on_pct, 100.0);
   EXPECT_NEAR(r.lock_s, 1.0, 1e-9);
-  EXPECT_EQ(r.lost, 0);
+  EXPECT_DOUBLE_EQ(r.lost, 0);
   EXPECT_DOUBLE_EQ(r.back_s, 0.0);
 }
 
@@ -39,7 +39,7 @@ TEST(TrackScorer, NeverOn) {
   const TrackScore r = s.finish(30);
   EXPECT_DOUBLE_EQ(r.on_pct, 0.0);
   EXPECT_DOUBLE_EQ(r.lock_s, 30.0);
-  EXPECT_EQ(r.lost, 0);
+  EXPECT_DOUBLE_EQ(r.lost, 0);
   EXPECT_NEAR(r.rms_mm, kOff, 1e-9);
   EXPECT_DOUBLE_EQ(r.max_mm, kOff);
 }
@@ -50,7 +50,7 @@ TEST(TrackScorer, ABriefMissIsNoLoss) {
   run(s, 10, 10.5, kOff);
   run(s, 10.5, 30, kOn);
   const TrackScore r = s.finish(30);
-  EXPECT_EQ(r.lost, 0);
+  EXPECT_DOUBLE_EQ(r.lost, 0);
   EXPECT_NEAR(r.lock_s, 1.0, 1e-9);
   EXPECT_DOUBLE_EQ(r.back_s, 0.0);
 }
@@ -61,7 +61,7 @@ TEST(TrackScorer, ALossIsDatedFromGoingOff) {
   run(s, 10, 13, kOff);
   run(s, 13, 30, kOn);
   const TrackScore r = s.finish(30);
-  EXPECT_EQ(r.lost, 1);
+  EXPECT_DOUBLE_EQ(r.lost, 1);
   EXPECT_NEAR(r.back_s, 4.0, 1e-9);  // off at 10, on again at 13, locked at 14
 }
 
@@ -70,7 +70,7 @@ TEST(TrackScorer, NeverBackCountsTheRest) {
   run(s, 0, 10, kOn);
   run(s, 10, 30, kOff);
   const TrackScore r = s.finish(30);
-  EXPECT_EQ(r.lost, 1);
+  EXPECT_DOUBLE_EQ(r.lost, 1);
   EXPECT_NEAR(r.back_s, 20.0, 1e-9);
 }
 
@@ -92,7 +92,7 @@ TEST(TrackScorer, ReasonsAreBinned) {
   EXPECT_NEAR(r.sat_pct, 100.0 / 6, 1e-9);
   EXPECT_NEAR(r.search_pct, 100.0 / 6, 1e-9);
   EXPECT_NEAR(r.track_pct + r.hold_pct + r.sat_pct + r.search_pct, 100.0, 1e-9);
-  EXPECT_EQ(r.moves, 2);
+  EXPECT_DOUBLE_EQ(r.moves, 2);
 }
 
 TEST(TrackScorer, HeatIsAgainstFullHeat) {
@@ -127,12 +127,16 @@ TEST(TrackSummary, MeanAndWorst) {
   const TrackSummary s = summarize(runs);
   EXPECT_DOUBLE_EQ(s.mean.on_pct, 70.0);
   EXPECT_DOUBLE_EQ(s.mean.heat_pct, 70.0);
-  EXPECT_EQ(s.mean.lost, 2);
-  EXPECT_EQ(s.mean.moves, 6);
+  EXPECT_DOUBLE_EQ(s.mean.lost, 2);
+  EXPECT_DOUBLE_EQ(s.mean.moves, 6);
   EXPECT_DOUBLE_EQ(s.worst.on_pct, 50.0);
   EXPECT_DOUBLE_EQ(s.worst.heat_pct, 60.0);
-  EXPECT_EQ(s.worst.lost, 3);
+  EXPECT_DOUBLE_EQ(s.worst.lost, 3);
   EXPECT_DOUBLE_EQ(s.worst.rms_mm, 0.6);
-  EXPECT_EQ(s.worst.moves, 8);
-  EXPECT_EQ(summarize({}).worst.lost, 0);
+  EXPECT_DOUBLE_EQ(s.worst.moves, 8);
+  EXPECT_DOUBLE_EQ(summarize({}).worst.lost, 0);
+  TrackScore none, one;
+  one.lost = 1;
+  const std::array pair{none, one};
+  EXPECT_DOUBLE_EQ(summarize(pair).mean.lost, 0.5);
 }
