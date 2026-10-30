@@ -61,8 +61,9 @@ struct GrainTruth {
 
 class GrainModel {
  public:
-  GrainModel(GrainParams params, std::uint64_t seed, double hole_radius_mm);
-  // Runs whole ticks over dt. Beam goes straight from where last call left it
+  // start_mm: where grain lies, from hole's center. hole_radius_mm <= 0: no clamp.
+  GrainModel(GrainParams params, std::uint64_t seed, double hole_radius_mm, Vec2 start_mm);
+  // Runs whole ticks over dt. beam_mm from hole's center. Beam goes straight from where last call left it
   // to beam_mm, output constant. Remainder of a tick carried to next call.
   void advance(Duration dt, Vec2 beam_mm, double output_percent);
   std::vector<GlowLobe> lobes() const;
@@ -134,7 +135,8 @@ Rules:
 `keyed_noise.hpp` moves to `libs/core`
 (`pychron/core/keyed_noise.hpp`, namespace `pychron`), since `libs/laser`
 cannot reach `libs/sim`. Its includers and `libs/sim/AGENTS.md` follow.
-`tests/sim/test_keyed_noise.cpp` moves to `tests/core`.
+`tests/sim/test_keyed_noise.cpp` moves to `tests/core` (its list of sources is
+explicit).
 
 ## 4. Rendering
 
@@ -159,7 +161,8 @@ Config error (two grains); `grain_offset_mm` still places it.
   hole, new grain. Stage cannot do this during a dragonfly (hole's room).
 - Each grab: dt since last grab; beam = stage + `config.map().to_mm(aim_offset_px)`;
   output = `sight.output_percent` while `firing`, else 0.
-- Firing: glow at hole's real position + `grain_offset_mm` + model. No hole in
+- `grain_offset_mm` is `start_mm`; beam passed from hole's real position.
+- Firing: glow at hole's real position + model's lobes. No hole in
   view: dark, as today. Not firing: tray picture, as today; model cools
   unseen.
 - `void set_grain_seed(std::uint64_t)`, before first grab; default 1. Frame
@@ -175,7 +178,9 @@ No new thread: model is state of `grab()`, as `crept_` is.
 `PatternVision` gains
 `std::function<void(const vision::DragonflyStep&)> on_step`, called from
 `follow()` after each `Dragonfly::step` that returned a step. Default empty.
-Nothing else in runner changes.
+Nothing else in runner changes. `LaserSystem::set_step_observer(fn)`, called
+before `attach_camera`, is how a caller reaches it: `attach_camera` builds the
+`PatternVision`.
 
 ## 7. Bench
 
@@ -184,7 +189,7 @@ Nothing else in runner changes.
 
 ```
 elctl laser track <scenario.toml> [--seeds N] [--trace <file>]
-                  [--frames <dir>] [--frames-seed S]
+                  [--frames <dir>] [--frames-seed S] [--check]
 ```
 
 Needs no `-c`, no `--sim`, no lab. Constructs own simulator in scratch
@@ -214,6 +219,13 @@ aggressiveness = [0.5, 1, 2]
 
 Every combination of `[sweep.*]`, each on same seeds. Scenario unknown key:
 Config error. More than 10000 runs: Config error before anything runs.
+
+No second reader of grain or pattern keys. For each combination, bench writes
+scenario's tables as `cameras.toml` text for `CameraLibrary::parse` and a
+pattern file for `PatternLibrary::load`, so ranges and unknown keys are theirs.
+Every combination is loaded before first run: bad value in a sweep refused
+before any time is spent. `--trace` and `--frames` targets checked writable at
+same point.
 
 Run: one thread, `ManualClock`, as `tests/laser/test_dragonfly.cpp`. Stage to
 hole; enable; `extract(output_percent, Percent)`; fire; `execute_pattern`;
@@ -246,6 +258,7 @@ error printed.
 `--trace`: CSV, one row per poll, all runs: `combo, seed, t_s, beam_x, beam_y,
 grain_x, grain_y, heat, brightness, reason, saturation` (reason, saturation
 empty at poll with no look). Decimal text locale-free.
+`--check`: every check, no run.
 `--frames`: every frame of first combination's `--frames-seed` run (default
 `seed`) as `<dir>/<nnnnn>.png` through `vision::write_png`.
 Files are `mark_as_user_file`d.
