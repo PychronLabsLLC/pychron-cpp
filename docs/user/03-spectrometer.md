@@ -716,7 +716,10 @@ What that means in practice:
   Thermo instrument", and the driver spec's bring-up checklist before
   connecting ([dev setup](../dev_setup.md);
   [driver spec](../superpowers/specs/2026-10-01-qtegra-driver-design.md)). In
-  short: the example's field tables, deflection coefficients, `cdd_voltage`,
+  short: `RemoteControlServer.cs` must be the current one, run with
+  `Config.use_udp = false` (the driver uses TCP only), and `channels` must be
+  detector names it reports; otherwise connecting fails and says why. The
+  example's field tables, deflection coefficients, `cdd_voltage`,
   `nominal_hv` and protection thresholds are **simulation placeholders**;
   replace them with the instrument's real calibration before any magnet move,
   because detector protection on a move is planned from the field table and a

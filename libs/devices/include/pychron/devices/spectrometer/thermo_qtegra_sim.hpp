@@ -1,7 +1,11 @@
 #pragma once
 
 // Stateful simulated Qtegra RemoteControlServer for SimTransport::hooked(),
-// so tests run the real QtegraSpectrometer against a small in-memory model.
+// so tests run the real QtegraSpectrometer against a small in-memory model. It
+// answers as RemoteControlServer does on a KeepAlive connection: replies end in
+// LF, errors read "Error: ...", KeepAlive and Describe are answered. It does not
+// see connections, so it never refuses a second KeepAlive and never closes a
+// connection that did not start with one.
 
 #include <functional>
 #include <map>
@@ -34,10 +38,15 @@ struct QtegraSimModel {
   // its set name's value.
   std::map<std::string, double> params;
   double integration_s = 1.048576;
-  // By detector name; GetData reports them tagged, in name order (an ERROR
-  // reply when empty).
+  // By detector name; GetData reports them tagged, in name order ("Error: no
+  // data" when empty).
   std::map<std::string, double> intensities;
   std::string data_override;  // when non-empty, GetData replies with this line verbatim
+  // Detector names Describe lists. Empty: the default detectors and every name
+  // in `intensities`.
+  std::vector<std::string> detectors;
+  bool tag_data = true;           // Describe's tag_data
+  std::string describe_override;  // when non-empty, Describe replies with this line verbatim
   const Clock* clock = nullptr;
   // Every command received, in order, as "Verb" or "Verb arg,arg" (arguments
   // trimmed, no terminator).
@@ -50,7 +59,7 @@ struct QtegraSimModel {
   // When set (before use), GetParameter asks it first; a value from it wins
   // over `params`. For readbacks that follow a model, e.g. a gauge.
   std::function<std::optional<double>(const std::string& name)> parameter_source;
-  // When set (before use), GetData reports what it gives (an ERROR reply when
+  // When set (before use), GetData reports what it gives ("Error: no data" when
   // that is empty), given the integration time; it wins over `intensities` and
   // loses to `data_override`. Called with `mutex` held.
   std::function<std::map<std::string, double>(double integration_s)> data_source;
@@ -59,7 +68,8 @@ struct QtegraSimModel {
   std::function<void(const std::string& verb, const std::vector<std::string>& args)> on_command;
 };
 
-// Commands it does not know, or cannot parse, answer "ERROR: ...".
+// Commands it does not know answer "Error: Invalid Command"; a command it
+// cannot parse "Error: invalid number in <command>".
 SimTransport::Hook qtegra_sim_hook(std::shared_ptr<QtegraSimModel> model);
 
 }  // namespace pychron::spectrometer

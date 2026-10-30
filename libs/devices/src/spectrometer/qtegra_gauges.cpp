@@ -39,7 +39,7 @@ DriverSchema QtegraGauges::schema() {
           {{"parameters", KeyType::StringArray, true,
             "Qtegra parameter names, e.g. [\"Ion Gauge MS Readback\"]; channel 1 is the first"},
            {"link", KeyType::String, false,
-            "on its own tcp/udp transport: the name its connection is registered under; default: the driver name"},
+            "on its own tcp transport: the name its connection is registered under; default: the driver name"},
            {"terminator", KeyType::String, false,
             "on its own transport: write terminator cr (default), lf or crlf; a shared link uses the owner's"}}};
 }

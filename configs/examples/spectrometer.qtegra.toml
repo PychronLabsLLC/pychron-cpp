@@ -44,6 +44,7 @@ timeout_ms = 2000
 kind = "thermo_qtegra"
 transport = "qtegra"
 roles = ["positioner", "source", "acquirer", "detector_control", "beam_blank"]
+# Each must be a detector RemoteControlServer's Describe lists, or connect fails.
 channels = ["H2", "H1", "AX", "L1", "L2", "CDD"]
 # Magnet DAC limits (volts) the driver enforces at the wire.
 limit_min = 0.0

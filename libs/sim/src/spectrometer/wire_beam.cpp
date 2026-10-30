@@ -33,7 +33,7 @@ void follow_qtegra(BeamModel& beam, const std::string& verb, const std::vector<s
   } else if (verb == "ProtectDetector" && args.size() == 2) {
     (void)beam.protect(args[0], args[1] == "On");
   } else if (verb == "BlankBeam" && args.size() == 1) {
-    beam.blank(args[0] == "True");
+    beam.blank(args[0] == "true");
   } else if (verb == "SetParameter" && args.size() == 2) {
     const auto v = number(args[1]);
     const auto canonical = q::canonical_name(args[0]);
@@ -70,6 +70,7 @@ void follow_ngx(BeamModel& beam, const std::string& verb, const std::string& arg
 void feed_qtegra_from_beam(spectrometer::QtegraSimModel& model, const std::shared_ptr<BeamModel>& beam) {
   beam->set_hv(beam->nominal_hv());
   model.hv = beam->nominal_hv();
+  model.detectors = beam->detector_names();
   model.data_source = [beam](double integration_s) {
     std::map<std::string, double> data;
     for (const auto& name : beam->detector_names()) {

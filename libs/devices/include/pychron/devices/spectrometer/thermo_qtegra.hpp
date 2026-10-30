@@ -47,8 +47,10 @@ struct QtegraOptions {
 // May each command be sent twice (Repeat, link.hpp)? Through the
 // QtegraLink's Link.
 //
-//   Safe    every command (spec section 9)
-//   Unsafe  none
+//   Safe    every command but ProtectDetector (spec section 9)
+//   Unsafe  ProtectDetector: RemoteControlServer saves the deflection on On, so
+//           a second On would save 2000 and the later Off restore that. It is
+//           the Unsafe part of a Safe call that sends Ping first.
 class QtegraSpectrometer final : public Device,
                                  public IConnectable,
                                  public IMassPositioner,
@@ -70,14 +72,16 @@ class QtegraSpectrometer final : public Device,
   // Successful reconnects since construction.
   std::uint64_t reconnects() const noexcept { return link_->reconnects(); }
 
-  // IConnectable: GetIntegrationTime; a numeric reply is success and seeds
-  // the cached integration period. Never reconnects.
+  // IConnectable: opens the link's session (KeepAlive, Describe), then checks
+  // that every one of `channels` is a detector Describe lists (Config if not,
+  // naming the missing and the known) and reads GetIntegrationTime, whose
+  // numeric reply seeds the cached integration period. Never reconnects.
   Result<void> connect() override;
 
   // IMassPositioner (magnet DAC volts).
   Axis native_axis() const override { return Axis::Dac; }
   // Setters here and in the blank / detector roles accept any reply that is
-  // not an explicit ERROR (pychron ignores these replies).
+  // not an explicit Error (pychron ignores these replies).
   Result<void> set(double value) override;
   Result<double> read() override;
   Result<bool> moving() override;
@@ -124,9 +128,9 @@ class QtegraSpectrometer final : public Device,
   // The wire read in next() runs without the acquirer mutex, so stop() never
   // waits for a transport timeout; a frame whose read was in flight when
   // stop() was called, or when configure() changed the period, is dropped
-  // (that next() returns nullopt). A reply that names some of `channels`
-  // is a frame with the others absent; one that names none of them is
-  // Protocol, quoting the reply.
+  // (that next() returns nullopt), and so does "Error: no data", before the
+  // first scan. A reply that names some of `channels` is a frame with the
+  // others absent; one that names none of them is Protocol, quoting the reply.
   std::vector<ChannelId> channels() const override { return options_.channels; }
   bool integrates() const override { return true; }
   Result<void> configure(Duration integration) override;
@@ -137,13 +141,14 @@ class QtegraSpectrometer final : public Device,
  private:
   // The connect step on the bare transport. It is also the link's reconnect
   // handshake, so it must never go through the link's exchange.
-  Result<void> handshake(Transport& transport);
+  Result<void> handshake(Transport& transport, const codec::qtegra::ServerInfo& server);
+  Result<void> check_detectors(const codec::qtegra::ServerInfo& server) const;
   // One command as a Safe Device::call through the link; `decode` turns its
   // reply into the result inside the call, so the call is observed once.
   template <class T>
   Result<T> command(std::string_view what, Result<codec::Command> cmd,
                     const std::function<Result<T>(const Bytes&)>& decode);
-  // For the setters whose reply pychron ignores: any reply but ERROR is success.
+  // For the setters whose reply pychron ignores: any reply but Error is success.
   Result<void> command_ack(std::string_view what, Result<codec::Command> cmd);
   // For SetHV / SetParameter: the reply must be "OK".
   Result<void> command_ok(std::string_view what, Result<codec::Command> cmd);

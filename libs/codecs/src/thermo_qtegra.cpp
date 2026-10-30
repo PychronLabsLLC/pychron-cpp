@@ -3,7 +3,10 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <limits>
+#include <nlohmann/json.hpp>
 
 namespace pychron::codec::qtegra {
 
@@ -63,6 +66,13 @@ Result<void> check_name(std::string_view name) {
   return {};
 }
 
+// protocol.json's `word`: a name RCS reads up to the next space.
+Result<void> check_word(std::string_view name) {
+  if (auto ok = check_name(name); !ok) return ok;
+  if (name.find(' ') != std::string_view::npos) return config_error("space in name \"" + std::string(name) + "\"");
+  return {};
+}
+
 Result<Command> with_name(std::string_view verb, std::string_view name, Terminator term) {
   if (auto ok = check_name(name); !ok) return fail(ok.error());
   return simple(std::string(verb) + " " + std::string(name), term);
@@ -99,11 +109,18 @@ std::string lower(std::string s) {
   return s;
 }
 
-// Trimmed reply body (pychron strips replies); "ERROR..." is a Protocol error.
+Unexpected<Error> device_error(const std::string& text, const Bytes& reply) {
+  Error error = protocol_error("device error: " + text, reply).error();
+  if (lower(text) == "error: no data") error.code = kNoData;
+  return fail(std::move(error));
+}
+
+// Trimmed reply body (pychron strips replies); "Error..." in any case is a
+// Protocol error holding the message.
 Result<std::string> body(const Bytes& reply) {
   const std::string raw = to_string(reply);
   std::string text(trim(raw));
-  if (text.starts_with("ERROR")) return protocol_error("device error: " + text, reply);
+  if (lower(text).starts_with("error")) return device_error(text, reply);
   return text;
 }
 
@@ -112,8 +129,14 @@ Result<std::string> body(const Bytes& reply) {
 Result<std::string> data_body(const Bytes& reply) {
   const std::string raw = to_string(reply);
   std::string text(trim(raw));
-  if (text.find("ERROR") != std::string::npos) return protocol_error("device error: " + text, reply);
+  if (lower(text).find("error") != std::string::npos) return device_error(text, reply);
   return text;
+}
+
+// `key` of a Describe object when it is a string, else empty.
+std::string text_field(const nlohmann::json& object, const char* key) {
+  const auto it = object.find(key);
+  return it != object.end() && it->is_string() ? it->get<std::string>() : std::string{};
 }
 
 std::vector<std::string> split_csv(const std::string& s) {
@@ -160,11 +183,14 @@ std::string_view terminator_text(Terminator t) noexcept {
 }
 
 const ReadSpec& reply_spec() noexcept {
-  static const ReadSpec spec = ReadSpec::until_any("\r\n");
+  static const ReadSpec spec = ReadSpec::until("\n");
   return spec;
 }
 
-const ReadSpec& request_spec() noexcept { return reply_spec(); }
+const ReadSpec& request_spec() noexcept {
+  static const ReadSpec spec = ReadSpec::until_any("\r\n");
+  return spec;
+}
 
 double snap_integration_time(double seconds) noexcept {
   if (!std::isfinite(seconds)) return kIntegrationTimes.front();
@@ -225,19 +251,18 @@ bool verified_name(std::string_view hardware) noexcept {
 
 Result<void> validate_name(std::string_view name) { return check_name(name); }
 
+Result<Command> keep_alive(Terminator t) { return simple("KeepAlive", t); }
+Result<Command> describe(Terminator t) { return simple("Describe", t); }
+Result<Command> ping(Terminator t) { return simple("Ping", t); }
 Result<Command> set_magnet_dac(double dac, Terminator t) { return with_number("SetMagnetDAC", dac, t); }
 Result<Command> get_magnet_dac(Terminator t) { return simple("GetMagnetDAC", t); }
 Result<Command> get_magnet_moving(Terminator t) { return simple("GetMagnetMoving", t); }
 Result<Command> blank_beam(bool blank, Terminator t) {
-  return simple(blank ? "BlankBeam True" : "BlankBeam False", t);
+  return simple(blank ? "BlankBeam true" : "BlankBeam false", t);
 }
 Result<Command> protect_detector(std::string_view detector, bool protect, Terminator t) {
-  if (auto ok = check_name(detector); !ok) return fail(ok.error());
+  if (auto ok = check_word(detector); !ok) return fail(ok.error());
   return simple("ProtectDetector " + std::string(detector) + (protect ? ",On" : ",Off"), t);
-}
-Result<Command> protect_detector_parameter(std::string_view detector, bool protect, Terminator t) {
-  if (auto ok = check_name(detector); !ok) return fail(ok.error());
-  return simple("SetParameter ProtectDetector," + std::string(detector) + (protect ? ",On" : ",Off"), t);
 }
 Result<Command> set_deflection(std::string_view d, double v, Terminator t) {
   return with_name_number("SetDeflection", d, v, t);
@@ -264,17 +289,79 @@ Result<Command> get_parameter(std::string_view n, Terminator t) { return with_na
 Result<Command> get_parameters(std::span<const std::string> names, Terminator t) {
   return with_name_list("GetParameters", names, t);
 }
-Result<Command> set_y_symmetry(double v, Terminator t) { return with_number("SetYSymmetry", v, t); }
-Result<Command> set_z_symmetry(double v, Terminator t) { return with_number("SetZSymmetry", v, t); }
-Result<Command> set_extraction_lens(double v, Terminator t) { return with_number("SetExtractionLens", v, t); }
-Result<Command> get_extraction_symmetry(Terminator t) { return simple("GetExtractionSymmetry", t); }
-Result<Command> set_sub_cup_configuration(std::string_view name, Terminator t) {
-  return with_name("SetSubCupConfiguration", name, t);
+Result<Command> set_y_symmetry(double v, Terminator t) { return set_parameter("Y-Symmetry Set", v, t); }
+Result<Command> set_z_symmetry(double v, Terminator t) { return set_parameter("Z-Symmetry Set", v, t); }
+Result<Command> set_extraction_lens(double v, Terminator t) { return set_parameter("Extraction Lens Set", v, t); }
+Result<Command> get_extraction_symmetry(Terminator t) { return get_parameter("Extraction Symmetry Set", t); }
+Result<Command> activate_cup_configuration(std::string_view cup, std::string_view sub_cup, Terminator t) {
+  if (auto ok = check_word(cup); !ok) return fail(ok.error());
+  if (auto ok = check_word(sub_cup); !ok) return fail(ok.error());
+  return simple("ActivateCupConfiguration " + std::string(cup) + " " + std::string(sub_cup), t);
 }
-Result<Command> reset(Terminator t) { return simple("Reset", t); }
 Result<Command> open_valve(std::string_view n, Terminator t) { return with_name("Open", n, t); }
 Result<Command> close_valve(std::string_view n, Terminator t) { return with_name("Close", n, t); }
 Result<Command> get_valve_state(std::string_view n, Terminator t) { return with_name("GetValveState", n, t); }
+
+Result<ServerInfo> decode_describe(const Bytes& reply) {
+  const std::string raw = to_string(reply);
+  if (lower(std::string(trim(raw))) == "error: invalid command") {
+    return protocol_error("RemoteControlServer has no Describe: it is older than protocol " +
+                              std::to_string(kProtocolVersion) + "; install the current RemoteControlServer.cs",
+                          reply);
+  }
+  auto b = body(reply);
+  if (!b) return fail(b.error());
+  const auto json = nlohmann::json::parse(*b, nullptr, false);
+  if (json.is_discarded() || !json.is_object()) return protocol_error("Describe reply is not JSON", reply);
+  const auto protocol = json.find("protocol");
+  if (protocol == json.end() || !protocol->is_number_integer()) {
+    return protocol_error("Describe reply has no integer protocol", reply);
+  }
+  const auto tag_data = json.find("tag_data");
+  if (tag_data == json.end() || !tag_data->is_boolean()) return protocol_error("Describe reply has no tag_data", reply);
+  const auto detectors = json.find("detectors");
+  if (detectors == json.end() || !detectors->is_array()) return protocol_error("Describe reply has no detectors", reply);
+
+  ServerInfo server;
+  const auto version = protocol->get<std::int64_t>();
+  if (version < 0 || version > std::numeric_limits<int>::max()) {
+    return protocol_error("Describe reply has a protocol out of range", reply);
+  }
+  server.protocol = static_cast<int>(version);
+  server.tag_data = tag_data->get<bool>();
+  server.version = text_field(json, "version");
+  server.instrument = text_field(json, "instrument");
+  server.transport = text_field(json, "transport");
+  for (const auto& detector : *detectors) {
+    if (!detector.is_object() || text_field(detector, "name").empty()) {
+      return protocol_error("Describe reply has a detector with no name", reply);
+    }
+    server.detectors.push_back({text_field(detector, "id"), text_field(detector, "name")});
+  }
+  if (const auto features = json.find("features"); features != json.end() && features->is_array()) {
+    for (const auto& feature : *features) {
+      if (feature.is_string()) server.features.push_back(feature.get<std::string>());
+    }
+  }
+  return server;
+}
+
+Result<void> check_server(const ServerInfo& server) {
+  if (server.protocol > kProtocolVersion) {
+    return protocol_error("RemoteControlServer speaks protocol " + std::to_string(server.protocol) +
+                          ", newer than the " + std::to_string(kProtocolVersion) +
+                          " this driver knows: update pychron");
+  }
+  if (server.protocol < kProtocolVersion) {
+    return protocol_error("RemoteControlServer speaks protocol " + std::to_string(server.protocol) +
+                          ", older than the " + std::to_string(kProtocolVersion) +
+                          " this driver knows: install the current RemoteControlServer.cs");
+  }
+  if (!server.tag_data) {
+    return protocol_error("RemoteControlServer sends GetData without detector names: set Config.tag_data = true");
+  }
+  return {};
+}
 
 Result<void> decode_ok(const Bytes& reply) {
   auto b = body(reply);
@@ -365,18 +452,27 @@ Result<Request> decode_request(const Bytes& tx) {
   return request;
 }
 
-Bytes encode_ok() { return to_bytes("OK\r\n"); }
-Bytes encode_number(double v) { return to_bytes(format_number(v) + "\r\n"); }
-Bytes encode_bool(bool v) { return to_bytes(v ? "True\r\n" : "False\r\n"); }
-Bytes encode_error(std::string_view message) { return to_bytes("ERROR: " + std::string(message) + "\r\n"); }
+Bytes encode_ok() { return to_bytes("OK\n"); }
+Bytes encode_number(double v) { return to_bytes(format_number(v) + "\n"); }
+Bytes encode_bool(bool v) { return to_bytes(v ? "True\n" : "False\n"); }
+Bytes encode_error(std::string_view message) { return to_bytes("Error: " + std::string(message) + "\n"); }
+Bytes encode_describe(const ServerInfo& server) {
+  nlohmann::json detectors = nlohmann::json::array();
+  for (const auto& detector : server.detectors) detectors.push_back({{"id", detector.id}, {"name", detector.name}});
+  const nlohmann::json json = {{"protocol", server.protocol},   {"version", server.version},
+                               {"instrument", server.instrument}, {"transport", server.transport},
+                               {"tag_data", server.tag_data},   {"features", server.features},
+                               {"detectors", detectors}};
+  return to_bytes(json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n");
+}
 Bytes encode_data(std::span<const std::pair<std::string, double>> pairs) {
   std::string text;
   for (const auto& [tag, value] : pairs) {
     if (!text.empty()) text += ',';
     text += tag + "," + format_number(value);
   }
-  return to_bytes(text + "\r\n");
+  return to_bytes(text + "\n");
 }
-Bytes encode_line(std::string_view text) { return to_bytes(std::string(text) + "\r\n"); }
+Bytes encode_line(std::string_view text) { return to_bytes(std::string(text) + "\n"); }
 
 }  // namespace pychron::codec::qtegra

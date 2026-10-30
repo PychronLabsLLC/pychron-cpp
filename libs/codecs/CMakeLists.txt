@@ -13,5 +13,7 @@ target_include_directories(pychron_codecs PUBLIC
 target_compile_features(pychron_codecs PUBLIC cxx_std_20)
 # Codecs need Bytes/ReadSpec vocabulary only; they never open a transport.
 target_link_libraries(pychron_codecs PUBLIC pychron::transport)
+# Qtegra's Describe reply is JSON; it stays behind the codec's interface.
+target_link_libraries(pychron_codecs PRIVATE nlohmann_json::nlohmann_json)
 
 pychron_set_warnings(pychron_codecs)

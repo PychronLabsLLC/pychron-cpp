@@ -12,9 +12,13 @@ Implements unit `thermo_qtegra_driver` from
 The Isotopx NGX driver is deliberately not here: it shares one socket between
 acquisition events, magnet commands and valve actuation, and gets its own spec
 (see `2026-10-01-ngx-driver-notes.md`).
-Wire ground truth: legacy pychron Python (`~/Programming/pychron/pychron`):
+Wire ground truth, since 2026-10-30: `PROTOCOL.md` and `protocol.json` of the
+qtegra repository (RemoteControlServer.cs, protocol 1, version 20.2), copy at
+`tests/traces/thermo/protocol.json`. Section 5.4 says what follows from it.
+Before that date: legacy pychron Python (`~/Programming/pychron/pychron`):
 `spectrometer/thermo/**`, `hardware/thermo_spectrometer_controller.py`,
-`hardware/core/communicators/ethernet_communicator.py`.
+`hardware/core/communicators/ethernet_communicator.py`. Where this spec and
+`PROTOCOL.md` disagree, `PROTOCOL.md` wins.
 
 ## 1. Goal
 
@@ -40,9 +44,8 @@ In scope:
 
 Out of scope: the Isotopx NGX driver and everything only it needs (secret
 config keys, trace redaction, non-blocking transport reads, valve actuation
-over the spectrometer link); UDP transport; reconnect-per-command;
-`SetIonCounterVoltage`, `Reset`, sub-cup configuration and any other command
-pychron's Python never sends on the paths below; the `NoIntensityChange`
+over the spectrometer link); UDP to RemoteControlServer (5.4); reconnect-per-command;
+any command the driver does not need on the paths below; the `NoIntensityChange`
 heuristic; AF demagnetisation; trap-current ramping; `elctl` spectrometer
 commands; a general transport-level reconnect.
 
@@ -55,7 +58,8 @@ commands; a general transport-level reconnect.
 | Unverified commands | Left out | Never send an instrument a command no reference implementation sends. |
 | Frame timestamps | Host monotonic time at reply | `GetData` carries no time; the engine's stale guard uses its own clock. |
 | Connection | One persistent TCP connection | The C++ transport is persistent. pychron reconnects per command by default; see Risks. |
-| Wire terminator | Config key defaulting to what pychron sends (`\r`) | No bench capture exists. |
+| Wire terminator | Config key defaulting to `\r`, unchanged | RemoteControlServer ends a command at CR, LF or CRLF; `\r` is what legacy clients send. |
+| Standard path | TCP with `KeepAlive` | No gRPC gateway. See 5.4. |
 
 ## 4. Infrastructure
 
@@ -150,13 +154,14 @@ All wire text comes from `pychron::codec::qtegra`.
 
 ### 5.2 Behaviour
 
-- **connect():** `GetIntegrationTime`; a numeric reply is success and seeds the
-  cached integration period.
-- **Every command** is one `exchange(cmd.tx, *cmd.reply)` wrapped in the
-  `Reconnector` and `observe(...)`.
+- **connect():** the session of 5.4, then `GetIntegrationTime`; a numeric reply
+  is success and seeds the cached integration period.
+- **Every command** is one `exchange(cmd.tx, *cmd.reply)` through the
+  `QtegraLink`'s `Link` and `observe(...)`. All are `Repeat::Safe` but
+  `ProtectDetector`: see 5.4.
 - **Setter replies:** `SetMagnetDAC`, `BlankBeam`, `ProtectDetector`,
   `SetDeflection`, `SetGain` and `SetIntegrationTime` accept any reply that is
-  not an explicit `ERROR` (pychron ignores these replies); an `ERROR` reply is
+  not an explicit `Error` (pychron ignores these replies); an `Error` reply is
   `Protocol`. `SetHV` and `SetParameter` expect `ok`. A setter that gets no
   reply is a `Timeout`: the driver cannot tell a silent success from a dead
   link.
@@ -177,12 +182,12 @@ All wire text comes from `pychron::codec::qtegra`.
   `SetMagnetDAC` (a set whose reply timed out was still delivered, a
   `GetMagnetMoving` error, or `max_wait`), the protocol waits the configured
   settle time (`[magnet].settle_ms`), or the caller's settle if that is longer,
-  before `BlankBeam False` and `ProtectDetector Off`. This holds for every
+  before `BlankBeam false` and `ProtectDetector Off`. This holds for every
   move, including sweep steps and experiment peak hops, which pass a zero
   settle because they settle themselves after a successful move. An error
   before any set cleans up at once. The normal path is unchanged: poll
   `GetMagnetMoving`, and settle only if motion was never reported.
-- **Beam blank:** `BlankBeam True|False`.
+- **Beam blank:** `BlankBeam true|false`.
 - **Detector control:** caps `Gain | Deflection | Protect`. `protect` sends
   `ProtectDetector <det>,On|Off` (the magnet-move form). `set_deflection` /
   `read_deflection` and `set_gain` / `read_gain` use the per-detector commands.
@@ -235,8 +240,10 @@ All wire text comes from `pychron::codec::qtegra`.
     `span = snapped period`, one value per configured channel that the reply
     names; channels the reply omits are simply absent (the engine reports them
     as no data). Names in the reply that are not configured channels are
-    ignored; names match case-sensitively. A reply containing `ERROR`, an
-    empty reply, an odd field count, a non-numeric, `nan` or `inf` value, or
+    ignored; names match case-sensitively. `Error: no data` (no scan yet) is
+    no frame: `next()` returns nullopt, the period is used up, and the engine's
+    health check reports a scan that never starts. Any other reply containing
+    `Error`, in any case, an empty reply, an odd field count, a non-numeric, `nan` or `inf` value, or
     a duplicate name is `Protocol`. So is a well-formed reply that names none
     of the configured channels (wrong case, other detector names, untagged
     values with an even field count): it is never delivered as an empty
@@ -256,6 +263,99 @@ model (DAC, moving-until time, blank, per-detector protect/deflection/gain, HV,
 named parameters, integration time, per-channel intensities), so conformance
 and parity tests run against the real driver. The model also logs every
 command it receives, in order, for tests that check a sequence.
+
+Answers as RemoteControlServer on a `KeepAlive` connection: replies end in LF,
+`Error: ...`, `Error: Invalid Command` for unknown command, `KeepAlive`,
+`Describe` (`detectors`, `tag_data`, `describe_override` in the model), and every
+command the codec can send. Hook sees bytes, not connections: never refuses
+second `KeepAlive`, never closes connection that did not start with one.
+`StrictRcs` in `tests/devices/spectrometer/test_qtegra_link.cpp` enforces that
+rule on top of it.
+
+### 5.4 RemoteControlServer session (2026-10-30)
+
+What the driver does to talk to current RemoteControlServer (RCS). Read from
+RCS source and `PROTOCOL.md`; never run against RCS in Qtegra.
+
+Session. Owned by `QtegraLink`, not spectrometer driver: `qtegra_valves` or
+`qtegra_gauges` alone on a connection need it too.
+
+1. `KeepAlive`, expects `OK`. Without it RCS closes after one reply, and that
+   reply has no line ending. Failure says to check RCS version and
+   `Config.use_udp`, kind unchanged.
+2. `Describe`, one line of JSON, parsed with nlohmann-json (`decode_describe`).
+3. `check_server`: see below.
+4. Owner's handshake: channels check, `GetIntegrationTime`.
+
+Rules:
+
+- `KeepAlive` anywhere but first on connection is RCS error, so link tracks it.
+  Session opens before first command on connection, whoever sends it, and from
+  `connect()` and `Link::probe()`. On session already open, `KeepAlive` is not
+  sent; `Describe` and owner's handshake are repeated.
+- Transient error (Timeout, Io, NotConnected) ends session; next one starts with
+  `KeepAlive`. Every reconnect does.
+- A definite refusal keeps `KeepAlive` state, so next try repeats the refusal
+  and not RCS's complaint about second `KeepAlive`. Caller's command is not sent
+  while session is refused: each attempt repeats `Describe` (and owner's
+  handshake only as far as its own check) and returns the refusal.
+- Idle 60 s (`Config.tcp_idle_timeout`) closes connection. Next command gets
+  `Io`; `Link` reconnects and repeats. No periodic ping.
+- Session state needs no generation: every `exchange()` runs inside `Link::call`'s
+  transport transaction and a reconnect is one transaction, so a command never
+  spans two connections.
+
+Refused at connect, never carried on with:
+
+| Condition | Error |
+|---|---|
+| `protocol` > `kProtocolVersion` (1) | `Protocol`, "update pychron" |
+| `protocol` < 1 | `Protocol`, install current script |
+| `Error: Invalid Command` to `Describe` (RCS older than `Describe`) | `Protocol`, install current script. No fallback: older RCS has no contract this driver can check |
+| `tag_data` false | `Protocol`: `decode_data` needs names; set `Config.tag_data = true` |
+| channel not in `detectors[].name` | `Config`, naming missing and known |
+
+A detector not in `channels` is fine: `GetData` extra names already ignored.
+
+Framing. Reply ends at LF only (`reply_spec`, `ReadSpec::until("\n")`): `lines`
+replies hold CRs. `request_spec` stays CR or LF, for simulators. Write terminator
+stays `\r` by default: RCS treats CR, LF, CRLF alike, config and legacy bytes
+unchanged.
+
+Errors. `Error` in any case is device error in `body()` and `data_body()`; message
+kept in `Error::what`. `Error: no data` has `Error::code` `kNoData`.
+
+Commands RCS lacks, replaced:
+
+| Was | Now |
+|---|---|
+| `SetYSymmetry v` | `SetParameter Y-Symmetry Set,v` |
+| `SetZSymmetry v` | `SetParameter Z-Symmetry Set,v` |
+| `SetExtractionLens v` | `SetParameter Extraction Lens Set,v` |
+| `GetExtractionSymmetry` | `GetParameter Extraction Symmetry Set` |
+| `SetSubCupConfiguration n` | removed; `activate_cup_configuration(cup, sub_cup)` sends `ActivateCupConfiguration <cup> <sub_cup>`, no driver path yet |
+| `Reset` | removed: no equivalent |
+| `SetParameter ProtectDetector,<det>,On` | removed: `Error: invalid number`. `ProtectDetector <det>,On` |
+| `BlankBeam True` | `BlankBeam true`: contract enum (RCS lower-cases, so old form also worked) |
+
+`SetIonCounterVoltage`: in contract, sets `CDD Supply Set`. Kept.
+
+`ProtectDetector` is never resent. RCS `On` saves current deflection, then sets
+2000: second `On` saves 2000, later `Off` restores 2000 and detector stays
+deflected. `protect()` is one Safe call of `Ping`, then `ProtectDetector` with
+`Resend::Never`: connection dropped while idle fails at `Ping` and is repaired,
+so first move after idle does not abort; lost reply to `ProtectDetector` itself is
+error with `kOutcomeUnknown`. `BlankBeam` is safe: RCS guards it with `IsBLANKED`.
+
+UDP. Not supported. RCS UDP replies have no line ending; `KeepAlive` is TCP only.
+`make_qtegra_link` refuses `UdpTransport` with `Config`. Needs datagram framing
+in `read_frame` first. `legacy_line` still writes `kind = "udp"` for a Qtegra
+actuator with no `kind=`; such a config fails at create with that error.
+
+Contract test: `tests/codecs/test_thermo_qtegra_contract.cpp` checks every encoder
+against `tests/traces/thermo/protocol.json`, name and argument shape, and reads
+codec source so a new verb cannot skip it. Replace the copy when qtegra's
+`protocol.json` changes (copied from qtegra `develop` at 1f2f856).
 
 ## 6. Config and examples
 
@@ -279,7 +379,7 @@ command it receives, in order, for tests that check a sequence.
   integration) never touch the wire. Magnet limits are enforced twice: by the
   facade (positioner limits and `[magnet].limits`, stricter bound wins) and
   again by the driver's own `limit_min`/`limit_max`.
-- Protocol errors (bad reply, `ERROR`) are returned with the reply text. A
+- Protocol errors (bad reply, `Error: ...`) are returned with the reply text. A
   `GetData` reply that matches no configured channel is one of them.
 - Only verified parameter names are writable; a write to an unverified or
   read-only parameter is `Config` and never touches the wire.
@@ -293,7 +393,9 @@ command it receives, in order, for tests that check a sequence.
   to a successful move. If the cleanup itself then fails, the first error is returned and
   the detector may be left protected or the beam blanked.
 - There is no source ramping: HV and trap current change in a single step.
-- Io / NotConnected: one reconnect attempt (4.2), then the error.
+- Timeout / Io / NotConnected: the `Link` reconnects and repeats a Safe command
+  until its call window passes, then returns the error (executor hardening spec).
+  An Unsafe command is not repeated: its error has code `outcome_unknown`.
 - `next()` errors reach the engine, which raises its existing alarm and keeps
   polling; the scan status shows the error until Restart clears it, and
   readings resume without a Restart once the link is back.
@@ -301,28 +403,45 @@ command it receives, in order, for tests that check a sequence.
 
 ## 8. Risks (cannot be removed without an instrument)
 
-1. No hardware capture exists; every wire detail is from reading pychron's
-   Python. Synthetic traces are marked SYNTHETIC.
-2. pychron reconnects per Qtegra command by default; this driver keeps one
-   connection. If RemoteControlServer requires a fresh connection per command,
-   a `reconnect_per_command` key is the follow-up.
-3. pychron's default transport is UDP. Supported since 2026-10-05 (`kind = "udp"`), one datagram per command; not yet tried on an instrument.
-4. Source parameter units and ranges are unknown; ranges are nominal.
+1. No hardware capture exists, and RemoteControlServer has never been run in
+   Qtegra with `KeepAlive` or `Describe`. Every wire detail is from reading
+   `PROTOCOL.md` and RCS source. Synthetic traces are marked SYNTHETIC.
+2. RCS serves UDP or TCP, not both (`Config.use_udp`, default true, port 1069).
+   This driver needs `use_udp = false`, and then UDP clients (Mass Spec, legacy
+   pychron) cannot reach that server.
+3. Source parameter units and ranges are unknown; ranges are nominal. Names such
+   as `Extraction Symmetry Set` must be in the instrument's hardware database
+   (`CheckParameters`).
+4. A repeated `SetMagnetDAC` during a stepped move answers `Error: magnet is
+   moving`. After a lost reply and reconnect the repeat can get that error for
+   a move that did start.
+5. The driver never sends `ProtectDetector On` twice for one call. Two `protect(det, true)` calls in a row still reach RCS; the second
+   overwrites the saved deflection.
 
 Bring-up checklist (manual, first contact with the instrument):
 
-1. Confirm what Qtegra replies to each setter (a setter that gets no reply
-   fails with a timeout).
-2. Record a trace with `trace = true`.
-3. Confirm the terminator.
-4. Confirm whether RemoteControlServer accepts one persistent connection.
-5. Confirm the `GetData` layout and detector names.
-6. Confirm one integration change and one magnet move.
-7. Confirm how soon `GetMagnetMoving` reports motion after `SetMagnetDAC`
+1. In `RemoteControlServer.cs` set `Config.use_udp = false`; leave
+   `Config.tag_data = true`.
+2. Set `channels` to detector names RCS reports. Run `Describe`:
+   `detectors[].name`. Argus CDDs may be `L2(CDD)`, not `CDD`.
+3. Check parameter names: `CheckParameters Y-Symmetry Set,Z-Symmetry Set,Extraction Lens Set,...`
+   or `tools/smoke_test.py --parameters` in the qtegra repository.
+4. Record a trace with `trace = true`. Check `connect()` sends `KeepAlive`,
+   `Describe`, `GetIntegrationTime` and that replies end in LF.
+5. Leave it idle over 60 s, send a command: expect one reconnect and success.
+6. Confirm what Qtegra replies to each setter (a setter that gets no reply
+   fails with a timeout). Check how long `SetIntegrationTime` takes against
+   `timeout_ms`.
+7. Confirm the `GetData` layout and detector names; `Error: no data` before the
+   monitor scan starts.
+8. Confirm one integration change and one magnet move, and one move large
+   enough to be stepped.
+9. Confirm how soon `GetMagnetMoving` reports motion after `SetMagnetDAC`
    (the move protocol polls it immediately and settles only if motion was
    never reported; legacy pychron settles first).
-8. Commit the trace under `tests/traces/thermo/` and replace the synthetic
-   one.
+10. Confirm `ProtectDetector` On then Off restores the deflection.
+11. Commit the trace under `tests/traces/thermo/` and replace the synthetic
+    one.
 
 ## 9. Testing
 
@@ -350,7 +469,11 @@ Driver:
   hook with a `ManualClock`.
 - Replay of a synthetic trace under `tests/traces/thermo/`.
 - Cadence without drift; settle after an integration change; missing and
-  extra names in `GetData`; `ERROR` reply; reconnect then `connect()`.
+  extra names in `GetData`; `Error` reply, any case; `Error: no data`;
+  reconnect then `connect()`.
+- Session (5.4): `KeepAlive` first on every connection, no second one on an open
+  session, refusals, owner-less link, UDP refused.
+- Contract: every encoder against `protocol.json`.
 
 System:
 

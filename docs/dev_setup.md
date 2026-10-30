@@ -304,15 +304,28 @@ lack it) on every platform path.
 
 The `thermo_qtegra` driver (Argus, Helix, through Qtegra's
 RemoteControlServer) has never been run against an instrument. Every wire
-detail comes from reading pychron's Python, and the tests run against a
-simulated wire only. Expect the first contact to find differences, and treat
-magnet moves, HV and detector protection as untested until you have watched
-them work.
+detail comes from `PROTOCOL.md` and `protocol.json` in the qtegra repository,
+and the tests run against a simulated wire only. Expect the first contact to
+find differences, and treat magnet moves, HV and detector protection as
+untested until you have watched them work.
+
+The driver talks to RemoteControlServer over TCP only, on one connection that
+starts with `KeepAlive`, and needs the current `RemoteControlServer.cs`
+(protocol 1): an older one is refused at connect. That script serves either UDP
+or TCP, so set `Config.use_udp = false` in it first. While it is set, clients
+that use UDP (Mass Spec, legacy pychron) cannot reach it. UDP is not supported
+here, because its replies have no line ending: a `thermo_qtegra`, `qtegra_valves`
+or `qtegra_gauges` driver on a `kind = "udp"` transport is refused.
 
 1. Copy `configs/examples/spectrometer.qtegra.toml`, `molecular_weights.toml`
    and `tables/` into a directory of your own, and copy
    `spectrometer.qtegra.local.toml.example` there as
    `spectrometer.qtegra.local.toml` (`*.local.toml` is git-ignored).
+
+   Set `channels` under `[drivers.qtegra]` to detector names the server reports
+   (`Describe`, `detectors[].name`; on an Argus a CDD may be `L2(CDD)`): a
+   channel it does not list is refused at connect, with the names it does list
+   in the error.
 
    The copied field tables, the detectors' deflection coefficients,
    `cdd_voltage`, `nominal_hv` and the protection and saturation thresholds
@@ -350,9 +363,9 @@ them work.
    loads, so an instrument that cannot be reached is a load failure (the
    error goes to the log dock).
 5. Work through the bring-up checklist in section 8 of
-   `docs/superpowers/specs/2026-10-01-qtegra-driver-design.md`. Its first
-   item is what Qtegra replies to each setter: a setter that gets no reply
-   fails with a timeout.
+   `docs/superpowers/specs/2026-10-01-qtegra-driver-design.md`. Section 5.4 of
+   it says what the driver expects of RemoteControlServer. A setter that gets
+   no reply fails with a timeout.
 
 Build trees are 0.5-0.7 GB each; keep a few GB free, more when running
 parallel agent waves (each agent worktree builds its own tree).

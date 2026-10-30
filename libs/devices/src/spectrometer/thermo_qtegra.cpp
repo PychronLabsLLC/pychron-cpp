@@ -74,7 +74,7 @@ QtegraSpectrometer::QtegraSpectrometer(std::string name, Transport& transport, Q
       clock_(clock != nullptr ? *clock : steady_),
       link_(std::make_shared<QtegraLink>(transport, options_.terminator, clock_)),
       params_(source_specs()) {
-  link_->set_handshake([this](Transport& t) { return handshake(t); });
+  link_->set_handshake([this](Transport& t, const q::ServerInfo& server) { return handshake(t, server); });
 }
 
 QtegraSpectrometer::QtegraSpectrometer(std::string name, QtegraLinkHandle handle, QtegraOptions options,
@@ -85,7 +85,7 @@ QtegraSpectrometer::QtegraSpectrometer(std::string name, QtegraLinkHandle handle
       handle_(std::move(handle)),
       link_(*handle_->get()),
       params_(source_specs()) {
-  link_->set_handshake([this](Transport& t) { return handshake(t); });
+  link_->set_handshake([this](Transport& t, const q::ServerInfo& server) { return handshake(t, server); });
 }
 
 // A borrower may still hold the link: stop it calling back into this driver.
@@ -97,7 +97,8 @@ DriverSchema QtegraSpectrometer::schema() {
           "beam blank on one transport",
           {legacy::kRolesKey,
            {"channels", KeyType::StringArray, false,
-            "detector names as Qtegra reports them in GetData; default H2 H1 AX L1 L2 CDD"},
+            "detector names as Qtegra reports them in GetData, each one of the detectors Describe lists; default H2 H1 "
+            "AX L1 L2 CDD"},
            {"limit_min", KeyType::Float, false, "lower magnet DAC limit in volts; default 0"},
            {"limit_max", KeyType::Float, false, "upper magnet DAC limit in volts; default 10"},
            {"terminator", KeyType::String, false, "write terminator: cr (default), lf or crlf"},
@@ -136,7 +137,7 @@ Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const Dri
   }
   if (dynamic_cast<const LinkTransport*>(&args.transport) != nullptr) {
     return fail(ErrorKind::Config,
-                "thermo_qtegra owns its Qtegra connection: give it a tcp or udp transport, not kind = \"link\"");
+                "thermo_qtegra owns its Qtegra connection: give it a tcp transport, not kind = \"link\"");
   }
   static const SteadyClock steady;
   auto handle = make_qtegra_link(args.transport, o["link"].value_or(args.name), options.terminator,
@@ -145,7 +146,8 @@ Result<std::unique_ptr<QtegraSpectrometer>> QtegraSpectrometer::create(const Dri
   return std::make_unique<QtegraSpectrometer>(args.name, std::move(*handle), std::move(options), args.clock);
 }
 
-Result<void> QtegraSpectrometer::handshake(Transport& transport) {
+Result<void> QtegraSpectrometer::handshake(Transport& transport, const q::ServerInfo& server) {
+  if (auto ok = check_detectors(server); !ok) return ok;
   auto cmd = q::get_integration_time(options_.terminator);
   if (!cmd) return fail(std::move(cmd).error());
   auto reply = transport.exchange(cmd->tx, *cmd->reply);
@@ -154,6 +156,20 @@ Result<void> QtegraSpectrometer::handshake(Transport& transport) {
   if (!seconds) return fail(std::move(seconds).error());
   integration_s_.store(*seconds);
   return {};
+}
+
+Result<void> QtegraSpectrometer::check_detectors(const q::ServerInfo& server) const {
+  std::string missing;
+  for (const auto& channel : options_.channels) {
+    const auto named = [&](const q::Detector& detector) { return detector.name == channel; };
+    if (std::ranges::any_of(server.detectors, named)) continue;
+    missing += (missing.empty() ? "" : ", ") + channel;
+  }
+  if (missing.empty()) return {};
+  std::string known;
+  for (const auto& detector : server.detectors) known += (known.empty() ? "" : ", ") + detector.name;
+  return fail(ErrorKind::Config, "thermo_qtegra: channels " + missing + " are not detectors of " + server.instrument +
+                                     ", which has: " + known);
 }
 
 template <class T>
@@ -221,7 +237,25 @@ Result<void> QtegraSpectrometer::blank(bool on) { return command_ack("blank", q:
 Result<void> QtegraSpectrometer::protect(const ChannelId& channel, bool on) {
   const Operation op = begin("protect");
   if (auto ok = check_channel(channel); !ok) return observe(op, std::move(ok));
-  return command_ack("protect", q::protect_detector(channel, on, options_.terminator));
+  auto ping = q::ping(options_.terminator);
+  if (!ping) return observe(op, Result<void>(fail(std::move(ping).error())));
+  auto protect = q::protect_detector(channel, on, options_.terminator);
+  if (!protect) return observe(op, Result<void>(fail(std::move(protect).error())));
+  QtegraLink& link = *link_;
+  // Ping is the Safe part: a connection the server dropped while idle fails
+  // there and is repaired, and ProtectDetector then goes out on a connection
+  // just shown to be up. A transient failure of that command is Unsafe.
+  return call<void>("protect",
+      &link.link(),
+      [&](Resend resend) -> Result<void> {
+        auto alive = link.exchange(*ping, resend);
+        if (!alive) return fail(std::move(alive).error());
+        if (auto ok = q::decode_ok(*alive); !ok) return ok;
+        auto reply = link.exchange(*protect, Resend::Never);
+        if (!reply) return fail(outcome_unknown_if_transient(std::move(reply).error()));
+        return q::decode_ack(*reply);
+      },
+      Repeat::Safe);
 }
 
 Result<void> QtegraSpectrometer::set_deflection(const ChannelId& channel, double value) {
@@ -399,7 +433,12 @@ Result<std::optional<Frame>> QtegraSpectrometer::next(Duration timeout) {
   // frame is made inside the call, which observes its outcome once.
   return command<std::optional<Frame>>("next", q::get_data(options_.terminator), [&](const Bytes& reply) -> Next {
     auto data = q::decode_data(reply);
-    if (!data) return fail(std::move(data).error());
+    if (!data) {
+      // No scan yet: no frame, as when the period has not come round. The
+      // engine's health check reports a scan that never starts.
+      if (data.error().code == q::kNoData) return std::optional<Frame>{};
+      return fail(std::move(data).error());
+    }
 
     Frame frame;
     frame.ts = clock_.now();

@@ -341,8 +341,8 @@ TEST_F(QtegraSystem, MoveProtocolProtectsAndBlanks) {
       sequence.push_back(c);
     }
   }
-  EXPECT_EQ(sequence, (std::vector<std::string>{"ProtectDetector CDD,On", "BlankBeam True", "SetMagnetDAC",
-                                                "BlankBeam False", "ProtectDetector CDD,Off"}));
+  EXPECT_EQ(sequence, (std::vector<std::string>{"ProtectDetector CDD,On", "BlankBeam true", "SetMagnetDAC",
+                                                "BlankBeam false", "ProtectDetector CDD,Off"}));
   std::lock_guard lock(model_->mutex);
   EXPECT_DOUBLE_EQ(model_->dac, 5.0);
   EXPECT_FALSE(model_->blank);

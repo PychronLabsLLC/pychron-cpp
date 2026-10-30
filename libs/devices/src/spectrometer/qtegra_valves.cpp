@@ -23,7 +23,7 @@ DriverSchema QtegraValves::schema() {
           "valves through Thermo Qtegra RemoteControl (legacy QtegraGPActuator); valve address = the Qtegra valve "
           "name; on a kind = \"link\" transport it shares thermo_qtegra's connection",
           {{"link", KeyType::String, false,
-            "on its own tcp/udp transport: the name its connection is registered under; default: the driver name"},
+            "on its own tcp transport: the name its connection is registered under; default: the driver name"},
            {"terminator", KeyType::String, false,
             "on its own transport: write terminator cr (default), lf or crlf; a shared link uses the owner's"}}};
 }

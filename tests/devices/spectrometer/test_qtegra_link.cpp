@@ -6,12 +6,14 @@
 
 #include <atomic>
 #include <thread>
+#include <utility>
 
 #include "pychron/devices/capabilities.hpp"
 #include "pychron/devices/driver_registry.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "pychron/transport/link_transport.hpp"
+#include "pychron/transport/udp_transport.hpp"
 #include "spectrometer/legacy/sim_util.hpp"
 
 using namespace pychron;
@@ -50,6 +52,42 @@ class Flaky final : public Transport {
 
  private:
   Transport& inner_;
+};
+
+// RemoteControlServer's rule for a connection: KeepAlive answered "OK" only as
+// its first command; any other first command closes it after an unterminated
+// reply; KeepAlive after that is an error. `open()` is a new connection.
+class StrictRcs final : public Transport {
+ public:
+  explicit StrictRcs(Transport& inner) : inner_(inner) {}
+  const std::string& name() const override { return inner_.name(); }
+  Result<void> open() override {
+    first_ = true;
+    return inner_.open();
+  }
+  void close() override { inner_.close(); }
+  Result<Bytes> exchange(Bytes tx, ReadSpec rs, Duration timeout, Resend resend) override {
+    const bool keep_alive = to_string(tx).starts_with("KeepAlive");
+    const bool first = std::exchange(first_, false);
+    if (keep_alive && !first) return to_bytes("Error: KeepAlive must be the first command on a TCP connection\n");
+    if (first && !keep_alive) {
+      ++lost_;
+      first_ = true;
+      return fail(ErrorKind::Io, "connection closed by peer", inner_.name());
+    }
+    return inner_.exchange(std::move(tx), std::move(rs), timeout, resend);
+  }
+  Result<void> write(Bytes tx) override { return inner_.write(std::move(tx)); }
+  Result<Bytes> read(ReadSpec rs, Duration timeout) override { return inner_.read(std::move(rs), timeout); }
+  Result<void> transaction(std::function<Result<void>()> body) override { return inner_.transaction(std::move(body)); }
+  Health health() const override { return inner_.health(); }
+
+  int lost() const { return lost_; }
+
+ private:
+  Transport& inner_;
+  bool first_ = true;
+  int lost_ = 0;
 };
 
 struct Rig {
@@ -147,7 +185,8 @@ TEST(QtegraLink, ABorrowersDroppedConnectionRunsTheOwnersHandshake) {
   EXPECT_EQ((*link)->reconnects(), 1u);
   std::lock_guard lock(rig.model->mutex);
   ASSERT_GE(rig.model->commands.size(), 2u);
-  // Reopened, the owner's connect step, then the borrower's command.
+  // Reopened, a new session with the owner's connect step, then the borrower's
+  // command.
   EXPECT_EQ(rig.model->commands[rig.model->commands.size() - 2], "GetIntegrationTime");
   EXPECT_EQ(rig.model->commands.back(), "GetMagnetDAC");
 }
@@ -202,4 +241,63 @@ TEST(QtegraLink, AnOwnerGoneMidUseNeverCallsBackIntoIt) {
   std::lock_guard lock(rig.model->mutex);
   EXPECT_EQ(rig.model->commands.back(), "GetMagnetDAC");
   for (const auto& c : rig.model->commands) EXPECT_NE(c, "GetIntegrationTime");
+}
+
+// The session belongs to the link, not to the spectrometer: a valve driver alone
+// on a connection gets KeepAlive first too.
+TEST(QtegraLink, ALinkWithNoOwnerStillOpensASession) {
+  Rig rig;
+  StrictRcs rcs(*rig.sim);
+  QtegraLink link(rcs, codec::qtegra::kDefaultTerminator, kClock);
+  EXPECT_EQ(text(link.ask("GetMagnetDAC")), "0");
+  EXPECT_EQ(text(link.ask("GetMagnetDAC")), "0");
+  EXPECT_EQ(rcs.lost(), 0);
+  EXPECT_EQ(link.reconnects(), 0u);
+  std::lock_guard lock(rig.model->mutex);
+  EXPECT_EQ(rig.model->commands, (std::vector<std::string>{"KeepAlive", "Describe", "GetMagnetDAC", "GetMagnetDAC"}));
+}
+
+TEST(QtegraLink, ASecondConnectOnOneConnectionSendsNoSecondKeepAlive) {
+  Rig rig;
+  StrictRcs rcs(*rig.sim);
+  auto owner = make_spectrometer(rcs, "link = \"twice_link\"");
+  ASSERT_TRUE(owner) << owner.error().what;
+  auto* connectable = dynamic_cast<IConnectable*>(owner->get());
+  ASSERT_NE(connectable, nullptr);
+  ASSERT_TRUE(connectable->connect());
+  ASSERT_TRUE(connectable->connect());
+  std::lock_guard lock(rig.model->mutex);
+  EXPECT_EQ(rig.model->commands,
+            (std::vector<std::string>{"KeepAlive", "Describe", "GetIntegrationTime", "Describe", "GetIntegrationTime"}));
+}
+
+TEST(QtegraLink, ProbingAnOpenSessionSendsNoSecondKeepAlive) {
+  Rig rig;
+  StrictRcs rcs(*rig.sim);
+  QtegraLink link(rcs, codec::qtegra::kDefaultTerminator, kClock);
+  ASSERT_TRUE(link.handshake());
+  ASSERT_TRUE(link.link().probe());
+}
+
+TEST(QtegraLink, EveryNewConnectionStartsWithKeepAlive) {
+  Rig rig;
+  StrictRcs rcs(*rig.sim);
+  Flaky flaky(rcs);
+  QtegraLink link(flaky, codec::qtegra::kDefaultTerminator, kClock);
+  ASSERT_TRUE(link.handshake());
+  flaky.fail_exchanges = 1;  // a command finds the connection gone
+  EXPECT_EQ(text(link.ask("GetMagnetDAC")), "0");
+  EXPECT_EQ(link.reconnects(), 1u);
+  EXPECT_EQ(rcs.lost(), 0);
+  std::lock_guard lock(rig.model->mutex);
+  EXPECT_EQ(rig.model->commands,
+            (std::vector<std::string>{"KeepAlive", "Describe", "KeepAlive", "Describe", "GetMagnetDAC"}));
+}
+
+TEST(QtegraLink, UdpIsRefusedWhenTheLinkIsMade) {
+  UdpTransport udp(UdpSettings{"127.0.0.1", 1069}, TransportOptions{});
+  auto handle = make_qtegra_link(udp, "udp_link", codec::qtegra::kDefaultTerminator, kClock);
+  ASSERT_FALSE(handle);
+  EXPECT_EQ(handle.error().kind, ErrorKind::Config);
+  EXPECT_NE(handle.error().what.find("Config.use_udp"), std::string::npos) << handle.error().what;
 }

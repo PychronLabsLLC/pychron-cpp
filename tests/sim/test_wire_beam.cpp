@@ -67,7 +67,7 @@ TEST(WireBeam, QtegraSettingsMoveTheBeam) {
   EXPECT_DOUBLE_EQ(beam->detector("H1")->deflection, 10.0);
   ask(hook, "ProtectDetector H1,On");
   EXPECT_TRUE(beam->detector("H1")->protect);
-  ask(hook, "BlankBeam True");
+  ask(hook, "BlankBeam true");
   EXPECT_TRUE(beam->blanked());
 }
 

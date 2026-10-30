@@ -9,12 +9,19 @@
 // which the transport's queue runs whole, so a valve command never lands
 // between an acquisition's GetData and its reply.
 //
+// A connection is good for one exchange unless its first command is KeepAlive,
+// and KeepAlive anywhere else is an error, so the link keeps the session: before
+// the first command on a connection, whoever sends it, it opens one (KeepAlive,
+// then Describe, then the owner's handshake), and a transient failure ends it.
+// RemoteControlServer closes a session idle for 60 s; the next command then
+// repairs it like any other drop.
+//
 // A dropped connection is repaired by the link's `Link`: a transient error
-// (Timeout, Io, NotConnected) reopens the transport with backoff, runs the
-// owner's handshake and repeats the command until it succeeds or the call
-// window passes. Every Qtegra command is a read or sets an absolute target,
-// so every one is Repeat::Safe (executor hardening spec, section 9).
-// Borrowers trigger the same repair.
+// (Timeout, Io, NotConnected) reopens the transport with backoff, opens a
+// session and repeats the command until it succeeds or the call window passes.
+// Every Qtegra command but ProtectDetector is a read or sets an absolute target
+// and is Repeat::Safe (executor hardening spec, section 9; ProtectDetector:
+// thermo_qtegra.hpp). Borrowers trigger the same repair.
 
 #include <cstdint>
 #include <functional>
@@ -36,8 +43,9 @@ namespace pychron::spectrometer {
 class QtegraLink {
  public:
   static constexpr std::string_view kLabel = "Qtegra";
-  // Runs on the bare transport after a reconnect (and from connect()).
-  using Handshake = std::function<Result<void>(Transport&)>;
+  // Runs on the bare transport when a session opens, and from connect(), with
+  // what the server said about itself.
+  using Handshake = std::function<Result<void>(Transport&, const codec::qtegra::ServerInfo&)>;
 
   // `transport` must outlive the link and be opened by its owner.
   QtegraLink(Transport& transport, codec::qtegra::Terminator terminator, const Clock& clock,
@@ -45,22 +53,23 @@ class QtegraLink {
   QtegraLink(const QtegraLink&) = delete;
   QtegraLink& operator=(const QtegraLink&) = delete;
 
-  // The owner's connect step, run by the Link after every reopen (its
-  // Link::set_connect is this link's, set once). Replacing it waits for a
-  // running one to end, so an owner clears it in its destructor and nothing
-  // calls into a dead owner afterwards. Empty: reconnect only reopens the
-  // transport.
+  // The owner's connect step, run after KeepAlive and Describe (Link's connect
+  // step is this link's, set once). Replacing it waits for a running one to
+  // end, so an owner clears it in its destructor and nothing calls into a dead
+  // owner afterwards. Empty: a session is KeepAlive and Describe alone.
   void set_handshake(Handshake handshake);
 
-  // The handshake on the bare transport, in one transaction, never through
-  // the reconnect path.
+  // Opens the session on the bare transport, in one transaction, never through
+  // the reconnect path. On a session already open it sends no KeepAlive: it
+  // repeats Describe and the owner's handshake.
   Result<void> handshake();
 
   // One command and its reply on the bare transport: what a driver's op
   // sends inside Device::call(&link(), ...), with the Resend it is given.
+  // Opens the session first when there is none.
   Result<Bytes> exchange(const codec::Command& command, Resend resend);
   // `text` sent with the link's terminator as a Safe call through link();
-  // the reply framed by CR or LF.
+  // the reply framed by LF.
   Result<Bytes> ask(std::string_view text);
 
   // The recovery every driver on this connection calls through.
@@ -71,8 +80,11 @@ class QtegraLink {
   std::uint64_t reconnects() const noexcept { return link_.reconnects(); }
 
  private:
-  // The Link's connect step: the owner's handshake, if any, under its mutex.
+  // The Link's connect step: opens the session, under handshake_mutex_.
   Result<void> run_handshake(Transport& transport);
+  // handshake_mutex_ held: KeepAlive unless it has been said on this
+  // connection, Describe and its checks, the owner's handshake.
+  Result<void> open_session(Transport& transport);
 
   Transport& transport_;
   const codec::qtegra::Terminator terminator_;
@@ -81,6 +93,12 @@ class QtegraLink {
   // a transport transaction, never the other way round.
   ClockMutex handshake_mutex_;
   Handshake handshake_;
+  // Under handshake_mutex_. KeepAlive was answered on this connection, and it
+  // must not be sent again until the connection is new. Kept through a definite
+  // refusal (a server too new), so that the next try hears that refusal again
+  // and not RemoteControlServer's complaint about a second KeepAlive.
+  bool keep_alive_ = false;
+  bool session_open_ = false;  // Describe and the owner's handshake passed too
   Link link_;  // last: its connect step uses the members above
 };
 
@@ -88,7 +106,9 @@ using QtegraLinkRegistry = LinkRegistry<QtegraLink>;
 using QtegraLinkHandle = LinkHandle<QtegraLink>;
 
 // The link a driver should use: its own on a real transport, registered under
-// `name`, or the registered one when `transport` is a LinkTransport.
+// `name`, or the registered one when `transport` is a LinkTransport. Config
+// error on a UdpTransport: RemoteControlServer's UDP replies have no line
+// ending, and KeepAlive is TCP only.
 Result<QtegraLinkHandle> make_qtegra_link(Transport& transport, const std::string& name,
                                           codec::qtegra::Terminator terminator, const Clock& clock,
                                           LinkPolicy policy = {});

@@ -1,27 +1,35 @@
 #pragma once
 
-// Thermo Qtegra RemoteControlServer ASCII line protocol. See CONVENTIONS.md.
-// Wire format follows the production pychron Python driver
-// (pychron/spectrometer/thermo/*, hardware/core/communicators/*):
+// Thermo Qtegra RemoteControlServer (RCS) ASCII line protocol. See
+// CONVENTIONS.md. The contract is PROTOCOL.md and protocol.json in the qtegra
+// repository; tests/traces/thermo/protocol.json is a copy, and a test fails
+// when an encoder here sends what that file does not define.
 //
-//   host -> "SetMagnetDAC 4.5\r"     command, args space/comma separated,
-//                                    write terminator "\r" by default
-//   srv  -> "OK\r\n"                 (decode_ok; "ok" in any case)
-//   srv  -> "ERROR: <message>"       rejected command (Protocol error)
+// Standard path: one TCP connection, KeepAlive as its first command.
+//
+//   host -> "KeepAlive\r"            first on every connection, or RCS closes
+//                                    the connection after one reply
+//   srv  -> "OK\n"
+//   host -> "Describe\r"
+//   srv  -> "{\"protocol\":1,...}\n"  one line of JSON (decode_describe)
+//   host -> "SetMagnetDAC 4.5\r"     command, args space/comma separated
+//   srv  -> "OK\n"                   (decode_ok; "ok" in any case)
+//   srv  -> "Error: <message>\n"     rejected command (Protocol error, any
+//                                    case)
 //   host -> "GetMagnetDAC\r"
-//   srv  -> "4.5\r\n"                (decode_number)
+//   srv  -> "4.5\n"                  (decode_number)
 //   host -> "GetData\r"
-//   srv  -> "H2,0.0012,H1,0.0034"    tagged pairs      (decode_data)
-//   srv  -> "0.0012,0.0034,..."      untagged, fixed detector order
+//   srv  -> "H2,0.0012,H1,0.0034\n"  tagged pairs      (decode_data)
+//   srv  -> "0.0012,0.0034,...\n"    untagged, fixed detector order
 //   host -> "GetDeflections H1,AX\r"
-//   srv  -> "12.5,-3"                bare CSV in request order
+//   srv  -> "12.5,-3\n"              bare CSV in request order
 //                                    (decode_named_values)
 //
-// Python does not frame replies by a terminator; it strips the reply. Replies
-// here are framed by CR or LF (`reply_spec()`, ReadSpec::until_any) and every
-// decoder trims surrounding whitespace, so "\r", "\n" and "\r\n" all work.
+// RCS ends a command at CR, LF or CRLF and a reply at LF only: a `lines` reply
+// holds CRs (`reply_spec()`). Over UDP, and on a TCP connection without
+// KeepAlive, replies have no line ending at all; neither is supported here.
 //
-// Booleans are sent as "True"/"False" (BlankBeam); boolean replies accept
+// Booleans are sent as "true"/"false" (BlankBeam); boolean replies accept
 // pychron's to_bool vocabulary. Detector protection uses "On"/"Off". Numbers
 // are sent in Python str(float) form (shortest round trip). Hardware parameter
 // names are the Qtegra names ("Y-Symmetry Set"); the map is keyed by the
@@ -49,11 +57,19 @@ enum class Terminator { CR, LF, CRLF };
 inline constexpr Terminator kDefaultTerminator = Terminator::CR;
 std::string_view terminator_text(Terminator t) noexcept;
 
-// Reply framing: complete at the first CR or LF (leading CR/LF absorbed).
+// Reply framing on a KeepAlive connection: complete at the first LF. A CR is
+// data (`lines` replies); a "\r\n" ending still frames, and decoders trim it.
 const ReadSpec& reply_spec() noexcept;
 // Request framing, for a simulated Qtegra cutting commands from a stream:
-// the same, so every Terminator a driver may be set to ends a command.
+// complete at the first CR or LF (leading CR/LF absorbed), as RCS reads them,
+// so every Terminator a driver may be set to ends a command.
 const ReadSpec& request_spec() noexcept;
+
+// The protocol version this driver speaks (Describe's `protocol`).
+inline constexpr int kProtocolVersion = 1;
+// Error::code of GetData's "Error: no data": no scan has arrived yet, which is
+// not a failure of the request.
+inline constexpr const char* kNoData = "qtegra_no_data";
 
 // Legal Qtegra integration times (pychron QTEGRA_INTEGRATION_TIMES),
 // 0.065536 s * 2^n, n in 0..10.
@@ -102,30 +118,33 @@ inline constexpr std::array<std::string_view, 6> kDefaultDetectorOrder{"H2", "H1
 
 // --- host side ---------------------------------------------------------------
 // Names (detectors, parameters, configurations) must be non-empty and free of
-// ',' and control characters; otherwise Config. Numeric arguments must be
-// finite. Every encoder appends `term`.
+// ',' and control characters; otherwise Config. Where protocol.json types a
+// name `word` (ProtectDetector, ActivateCupConfiguration) it may hold no space
+// either. Numeric arguments must be finite. Every encoder appends `term`.
 
 // The name rule above, for checking configured names before first use.
 Result<void> validate_name(std::string_view name);
 
+// First command on a connection, and only there: RCS answers it anywhere else
+// with an error.
+Result<Command> keep_alive(Terminator term = kDefaultTerminator);
+Result<Command> describe(Terminator term = kDefaultTerminator);
+Result<Command> ping(Terminator term = kDefaultTerminator);
 Result<Command> set_magnet_dac(double dac, Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_dac(Terminator term = kDefaultTerminator);
 Result<Command> get_magnet_moving(Terminator term = kDefaultTerminator);
 Result<Command> blank_beam(bool blank, Terminator term = kDefaultTerminator);
-// "ProtectDetector <det>,On|Off": the form ThermoMagnet.set_dac sends around a
-// magnet move (magnet/base.py). The manager path (ThermoSpectrometerManager.
-// protect_detector -> Spectrometer.set_parameter) instead sends
-// "SetParameter ProtectDetector,<det>,On|Off"; see protect_detector_parameter.
+// "ProtectDetector <det>,On|Off". Not idempotent on RCS: On saves the deflection
+// and sets 2000, so a second On saves 2000 and a later Off restores that. Never
+// send it twice: see QtegraSpectrometer::protect.
 Result<Command> protect_detector(std::string_view detector, bool protect, Terminator term = kDefaultTerminator);
-Result<Command> protect_detector_parameter(std::string_view detector, bool protect,
-                                           Terminator term = kDefaultTerminator);
 Result<Command> set_deflection(std::string_view detector, double volts, Terminator term = kDefaultTerminator);
 Result<Command> get_deflection(std::string_view detector, Terminator term = kDefaultTerminator);
 // "GetDeflections H1,AX,..."; reply via decode_named_values(reply, detectors).
 Result<Command> get_deflections(std::span<const std::string> detectors, Terminator term = kDefaultTerminator);
 Result<Command> set_gain(std::string_view detector, double gain, Terminator term = kDefaultTerminator);
 Result<Command> get_gain(std::string_view detector, Terminator term = kDefaultTerminator);
-// Not seen in pychron Python; unverified.
+// RCS sets "CDD Supply Set".
 Result<Command> set_ion_counter_voltage(double volts, Terminator term = kDefaultTerminator);
 // Seconds; snapped to a legal value before encoding.
 Result<Command> set_integration_time(double seconds, Terminator term = kDefaultTerminator);
@@ -138,16 +157,17 @@ Result<Command> set_parameter(std::string_view hardware_name, double value, Term
 Result<Command> get_parameter(std::string_view hardware_name, Terminator term = kDefaultTerminator);
 // "GetParameters name1,name2"; reply via decode_named_values(reply, names).
 Result<Command> get_parameters(std::span<const std::string> hardware_names, Terminator term = kDefaultTerminator);
-// Source lens commands (ThermoSource setters, source/base.py).
+// Source lens parameters. RCS has no command of their own (legacy pychron's
+// SetYSymmetry, SetZSymmetry, SetExtractionLens, GetExtractionSymmetry): each
+// is SetParameter or GetParameter of its hardware name.
 Result<Command> set_y_symmetry(double value, Terminator term = kDefaultTerminator);
 Result<Command> set_z_symmetry(double value, Terminator term = kDefaultTerminator);
 Result<Command> set_extraction_lens(double value, Terminator term = kDefaultTerminator);
-// Helix z-symmetry readback (HelixSource.read_z_symmetry).
 Result<Command> get_extraction_symmetry(Terminator term = kDefaultTerminator);
-// "SetSubCupConfiguration <name>" (ThermoSpectrometer sub_cup_configuration).
-Result<Command> set_sub_cup_configuration(std::string_view name, Terminator term = kDefaultTerminator);
-// Not seen in pychron Python; unverified.
-Result<Command> reset(Terminator term = kDefaultTerminator);
+// "ActivateCupConfiguration <cup> <sub_cup>". RCS has no SetSubCupConfiguration
+// and no Reset, so neither is encoded here.
+Result<Command> activate_cup_configuration(std::string_view cup, std::string_view sub_cup,
+                                           Terminator term = kDefaultTerminator);
 
 // Valves through Qtegra (legacy ASCIIGPActuator / QtegraGPActuator):
 // "Open <name>", "Close <name>" answered "OK"; "GetValveState <name>"
@@ -159,12 +179,38 @@ Result<Command> get_valve_state(std::string_view name, Terminator term = kDefaul
 
 // --- decoders ------------------------------------------------------------------
 // Replies are trimmed of surrounding whitespace (CR/LF/space/tab). A reply
-// starting with "ERROR" is a Protocol error (GetData: containing "ERROR").
+// starting with "Error", in any case, is a Protocol error holding the message
+// (GetData: containing it).
+
+// What Describe says about the server.
+struct Detector {
+  std::string id;    // "CUP 1"
+  std::string name;  // "H1", as GetData tags it
+};
+struct ServerInfo {
+  int protocol = 0;
+  std::string version;     // of the script
+  std::string instrument;  // "HelixSFT"
+  std::string transport;   // "tcp" or "udp"
+  bool tag_data = false;   // GetData sends name,value pairs
+  std::vector<std::string> features;
+  std::vector<Detector> detectors;
+};
+
+// The one-line JSON. "Error: Invalid Command" means an RCS older than Describe,
+// and is a Protocol error saying so; so is any other error, a reply that is not
+// JSON, and a missing or mistyped `protocol`, `tag_data` or `detectors`.
+Result<ServerInfo> decode_describe(const Bytes& reply);
+// Protocol error unless this driver can use `server`: a protocol other than
+// kProtocolVersion (newer: replies may differ in ways not handled here; older:
+// a version before any this driver knows), or GetData without tags, which
+// decode_data must have to attribute a value to a detector.
+Result<void> check_server(const ServerInfo& server);
 
 Result<void> decode_ok(const Bytes& reply);
 // Acknowledgement of a command whose reply pychron ignores (SetMagnetDAC,
 // BlankBeam, ProtectDetector, SetDeflection, SetGain): any reply, including
-// an empty line, is success; only "ERROR..." is a Protocol error.
+// an empty line, is success; only "Error..." is a Protocol error.
 Result<void> decode_ack(const Bytes& reply);
 Result<double> decode_number(const Bytes& reply);
 // pychron to_bool, case-insensitive: true/t/yes/y/1/ok/open -> true,
@@ -176,7 +222,8 @@ Result<bool> decode_valve_state(const Bytes& reply);
 // Bare CSV of floats, one per requested name in the same order; returns the
 // values paired with `names`. Count mismatch is a Protocol error.
 Result<Pairs> decode_named_values(const Bytes& reply, std::span<const std::string> names);
-// GetData, tagged: "tag,value,tag,value,...". Tags are returned exactly as
+// GetData, tagged: "tag,value,tag,value,...". "Error: no data" is a Protocol
+// error with code kNoData. Tags are returned exactly as
 // sent (case included). An empty body, an unpaired or empty field, a value
 // that is not a finite number and a repeated tag are each a Protocol error:
 // a ruling pending a bench capture, so that no value is ever attributed to a
@@ -198,11 +245,12 @@ struct Request {
 };
 Result<Request> decode_request(const Bytes& tx);
 
-// Replies end with "\r\n".
+// Replies end with "\n", as on a KeepAlive connection.
 Bytes encode_ok();                             // "OK"
 Bytes encode_number(double v);                 // format_number(v)
 Bytes encode_bool(bool v);                     // "True" / "False"
-Bytes encode_error(std::string_view message);  // "ERROR: <message>"
+Bytes encode_error(std::string_view message);  // "Error: <message>"
+Bytes encode_describe(const ServerInfo& server);  // one line of JSON
 // Tagged GetData reply: "tag,value,tag,value,...".
 Bytes encode_data(std::span<const std::pair<std::string, double>> pairs);
 // `text` as a reply line, unchanged: for replies no encoder here would produce.

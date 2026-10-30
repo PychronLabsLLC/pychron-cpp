@@ -78,8 +78,8 @@ TEST(QtegraValves, SpeakLegacyQtegraValveCommands) {
   ASSERT_TRUE(v.read(ValveAddress{"Valve 1_9 Set"}));
   ASSERT_TRUE(v.close(ValveAddress{"Valve 1_9 Set"}));
   std::lock_guard lock(rig.model->mutex);
-  EXPECT_EQ(rig.model->commands, (std::vector<std::string>{"Open Valve 1_9 Set", "GetValveState Valve 1_9 Set",
-                                                            "Close Valve 1_9 Set"}));
+  EXPECT_EQ(rig.model->commands, (std::vector<std::string>{"KeepAlive", "Describe", "Open Valve 1_9 Set",
+                                                            "GetValveState Valve 1_9 Set", "Close Valve 1_9 Set"}));
   EXPECT_FALSE(rig.model->valves.at("Valve 1_9 Set"));
 }
 

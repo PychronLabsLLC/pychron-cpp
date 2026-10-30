@@ -13,8 +13,8 @@ namespace q = pychron::codec::qtegra;
 
 namespace {
 
-// Replies are framed by CR or LF (pychron strips replies, no read terminator).
-const ReadSpec kReply = ReadSpec::until_any("\r\n");
+// Replies end in LF on a KeepAlive connection; CR is data in a `lines` reply.
+const ReadSpec kReply = ReadSpec::until("\n");
 
 // Default write terminator is "\r" (pychron Communicator.write_terminator).
 codec::Command cmd(std::string_view s) { return codec::Command::ascii(std::string(s) + "\r", kReply); }
@@ -40,12 +40,10 @@ TEST(QtegraCodec, EncodesEveryCommand) {
   EXPECT_EQ(*q::set_magnet_dac(4.5), cmd("SetMagnetDAC 4.5"));
   EXPECT_EQ(*q::get_magnet_dac(), cmd("GetMagnetDAC"));
   EXPECT_EQ(*q::get_magnet_moving(), cmd("GetMagnetMoving"));
-  EXPECT_EQ(*q::blank_beam(true), cmd("BlankBeam True"));
-  EXPECT_EQ(*q::blank_beam(false), cmd("BlankBeam False"));
+  EXPECT_EQ(*q::blank_beam(true), cmd("BlankBeam true"));
+  EXPECT_EQ(*q::blank_beam(false), cmd("BlankBeam false"));
   EXPECT_EQ(*q::protect_detector("H1", true), cmd("ProtectDetector H1,On"));
   EXPECT_EQ(*q::protect_detector("H1", false), cmd("ProtectDetector H1,Off"));
-  EXPECT_EQ(*q::protect_detector_parameter("H1", true), cmd("SetParameter ProtectDetector,H1,On"));
-  EXPECT_EQ(*q::protect_detector_parameter("H1", false), cmd("SetParameter ProtectDetector,H1,Off"));
   EXPECT_EQ(*q::set_deflection("CDD", 120), cmd("SetDeflection CDD,120"));
   EXPECT_EQ(*q::get_deflection("CDD"), cmd("GetDeflection CDD"));
   EXPECT_EQ(*q::get_deflections(dets), cmd("GetDeflections H1,AX,CDD"));
@@ -59,12 +57,14 @@ TEST(QtegraCodec, EncodesEveryCommand) {
   EXPECT_EQ(*q::set_parameter("Y-Symmetry Set", -1.25), cmd("SetParameter Y-Symmetry Set,-1.25"));
   EXPECT_EQ(*q::get_parameter("Y-Symmetry Set"), cmd("GetParameter Y-Symmetry Set"));
   EXPECT_EQ(*q::get_parameters(params), cmd("GetParameters Y-Symmetry Set,Trap Voltage Readback"));
-  EXPECT_EQ(*q::set_y_symmetry(-12.5), cmd("SetYSymmetry -12.5"));
-  EXPECT_EQ(*q::set_z_symmetry(3), cmd("SetZSymmetry 3"));
-  EXPECT_EQ(*q::set_extraction_lens(85.25), cmd("SetExtractionLens 85.25"));
-  EXPECT_EQ(*q::get_extraction_symmetry(), cmd("GetExtractionSymmetry"));
-  EXPECT_EQ(*q::set_sub_cup_configuration("B"), cmd("SetSubCupConfiguration B"));
-  EXPECT_EQ(*q::reset(), cmd("Reset"));
+  EXPECT_EQ(*q::keep_alive(), cmd("KeepAlive"));
+  EXPECT_EQ(*q::describe(), cmd("Describe"));
+  EXPECT_EQ(*q::ping(), cmd("Ping"));
+  EXPECT_EQ(*q::set_y_symmetry(-12.5), cmd("SetParameter Y-Symmetry Set,-12.5"));
+  EXPECT_EQ(*q::set_z_symmetry(3), cmd("SetParameter Z-Symmetry Set,3"));
+  EXPECT_EQ(*q::set_extraction_lens(85.25), cmd("SetParameter Extraction Lens Set,85.25"));
+  EXPECT_EQ(*q::get_extraction_symmetry(), cmd("GetParameter Extraction Symmetry Set"));
+  EXPECT_EQ(*q::activate_cup_configuration("Ar", "Ar_CDD"), cmd("ActivateCupConfiguration Ar Ar_CDD"));
 }
 
 TEST(QtegraCodec, WriteTerminatorIsSelectable) {
@@ -76,13 +76,11 @@ TEST(QtegraCodec, WriteTerminatorIsSelectable) {
   EXPECT_EQ(*q::get_data()->reply, q::reply_spec());
 }
 
-TEST(QtegraCodec, ReplySpecFramesOnCrOrLf) {
+TEST(QtegraCodec, ReplySpecFramesOnLf) {
   const auto& spec = q::reply_spec();
-  EXPECT_EQ(frame_length(spec, to_bytes("OK\r")), 3u);
   EXPECT_EQ(frame_length(spec, to_bytes("OK\n")), 3u);
-  EXPECT_EQ(frame_length(spec, to_bytes("OK\r\n")), 3u);
-  // The LF of a CRLF reply is absorbed by the next frame.
-  EXPECT_EQ(frame_length(spec, to_bytes("\n4.5\r\n")), 5u);
+  EXPECT_EQ(frame_length(spec, to_bytes("OK\r\n")), 4u);
+  EXPECT_FALSE(frame_length(spec, to_bytes("OK\r")).has_value());
   EXPECT_FALSE(frame_length(spec, to_bytes("4.5")).has_value());
 }
 
@@ -110,7 +108,9 @@ TEST(QtegraCodec, BadArgumentsAreConfigErrors) {
   expect_config(q::set_integration_time(NAN));
   expect_config(q::get_deflections(none));
   expect_config(q::get_parameters(bad));
-  expect_config(q::set_sub_cup_configuration(""));
+  expect_config(q::activate_cup_configuration("", "B"));
+  expect_config(q::activate_cup_configuration("A", "B C"));
+  expect_config(q::protect_detector("H 1", true));
   expect_config(q::set_y_symmetry(NAN));
 }
 
@@ -288,11 +288,11 @@ TEST(QtegraCodec, DecodeDataTaggedEdgeReplies) {
 
 TEST(QtegraCodec, EncodeDataAndLine) {
   const q::Pairs pairs{{"H2", 0.0012}, {"H1", -3.4e-3}, {"CDD", 153.0}};
-  EXPECT_EQ(to_string(q::encode_data(pairs)), "H2,0.0012,H1,-0.0034,CDD,153\r\n");
+  EXPECT_EQ(to_string(q::encode_data(pairs)), "H2,0.0012,H1,-0.0034,CDD,153\n");
   auto back = q::decode_data(q::encode_data(pairs));
   ASSERT_TRUE(back);
   EXPECT_EQ(*back, pairs);
-  EXPECT_EQ(to_string(q::encode_line("H1,nan")), "H1,nan\r\n");
+  EXPECT_EQ(to_string(q::encode_line("H1,nan")), "H1,nan\n");
 }
 
 TEST(QtegraCodec, DecodeDataUntagged) {
@@ -355,12 +355,124 @@ TEST(QtegraCodec, DecodeRequestSplitsVerbAndArguments) {
   expect_protocol(q::decode_request(to_bytes("\r")));
 }
 
+TEST(QtegraCodec, ReplyEndsAtLfOnlyAndARequestAtEither) {
+  // A `lines` reply holds CRs: framed by CR it would be cut at the first one.
+  EXPECT_EQ(frame_length(q::reply_spec(), to_bytes("Ar\rAr_CDD\n")), 10U);
+  EXPECT_EQ(frame_length(q::reply_spec(), to_bytes("Ar\r")), std::nullopt);
+  EXPECT_EQ(frame_length(q::reply_spec(), to_bytes("OK\r\n")), 4U);
+  EXPECT_EQ(frame_length(q::request_spec(), to_bytes("GetData\r")), 8U);
+  EXPECT_EQ(frame_length(q::request_spec(), to_bytes("GetData\n")), 8U);
+}
+
+TEST(QtegraCodec, AnErrorInAnyCaseKeepsItsMessage) {
+  for (std::string_view reply : {"Error: could not read Trap Set\n", "ERROR: could not read Trap Set\r\n",
+                                 "error: could not read Trap Set"}) {
+    for (const auto& r : {q::decode_ok(to_bytes(reply)), q::decode_ack(to_bytes(reply))}) {
+      ASSERT_FALSE(r) << reply;
+      EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+      EXPECT_NE(r.error().what.find("could not read Trap Set"), std::string::npos) << r.error().what;
+    }
+    auto number = q::decode_number(to_bytes(reply));
+    ASSERT_FALSE(number) << reply;
+    EXPECT_NE(number.error().what.find("device error"), std::string::npos) << number.error().what;
+    auto data = q::decode_data(to_bytes(reply));
+    ASSERT_FALSE(data) << reply;
+    EXPECT_NE(data.error().what.find("could not read Trap Set"), std::string::npos) << data.error().what;
+    EXPECT_TRUE(data.error().code.empty());
+  }
+}
+
+TEST(QtegraCodec, NoDataIsToldFromOtherErrors) {
+  for (std::string_view reply : {"Error: no data\n", "ERROR: NO DATA\n"}) {
+    auto tagged = q::decode_data(to_bytes(reply));
+    ASSERT_FALSE(tagged) << reply;
+    EXPECT_EQ(tagged.error().kind, ErrorKind::Protocol);
+    EXPECT_EQ(tagged.error().code, q::kNoData);
+  }
+  const std::array<std::string_view, 1> order{"H1"};
+  auto untagged = q::decode_data(to_bytes("Error: no data\n"), order);
+  ASSERT_FALSE(untagged);
+  EXPECT_EQ(untagged.error().code, q::kNoData);
+}
+
+TEST(QtegraCodec, DescribeIsDecoded) {
+  auto server = q::decode_describe(to_bytes(
+      "{\"protocol\":1,\"version\":\"20.2\",\"instrument\":\"HelixSFT\",\"transport\":\"tcp\",\"tag_data\":true,"
+      "\"features\":[\"keepalive\",\"describe\"],"
+      "\"detectors\":[{\"id\":\"CUP 1\",\"name\":\"H1\"},{\"id\":\"CDD 0\",\"name\":\"CDD\"}]}\n"));
+  ASSERT_TRUE(server) << server.error().what;
+  EXPECT_EQ(server->protocol, 1);
+  EXPECT_EQ(server->version, "20.2");
+  EXPECT_EQ(server->instrument, "HelixSFT");
+  EXPECT_EQ(server->transport, "tcp");
+  EXPECT_TRUE(server->tag_data);
+  EXPECT_EQ(server->features, (std::vector<std::string>{"keepalive", "describe"}));
+  ASSERT_EQ(server->detectors.size(), 2U);
+  EXPECT_EQ(server->detectors[0].id, "CUP 1");
+  EXPECT_EQ(server->detectors[1].name, "CDD");
+  EXPECT_TRUE(q::check_server(*server));
+}
+
+TEST(QtegraCodec, DescribeRoundTrips) {
+  q::ServerInfo server;
+  server.protocol = 1;
+  server.version = "sim";
+  server.instrument = "Argus";
+  server.transport = "tcp";
+  server.tag_data = true;
+  server.features = {"keepalive"};
+  server.detectors = {{"CUP 1", "L2(CDD)"}};
+  const Bytes line = q::encode_describe(server);
+  EXPECT_EQ(frame_length(q::reply_spec(), line), line.size());
+  auto back = q::decode_describe(line);
+  ASSERT_TRUE(back) << back.error().what;
+  EXPECT_EQ(back->detectors[0].name, "L2(CDD)");
+  EXPECT_EQ(back->features, server.features);
+}
+
+TEST(QtegraCodec, AServerWithoutDescribeIsToldApart) {
+  auto r = q::decode_describe(to_bytes("Error: Invalid Command\n"));
+  ASSERT_FALSE(r);
+  EXPECT_EQ(r.error().kind, ErrorKind::Protocol);
+  EXPECT_NE(r.error().what.find("no Describe"), std::string::npos) << r.error().what;
+}
+
+TEST(QtegraCodec, BadDescribeRepliesAreProtocol) {
+  expect_protocol(q::decode_describe(to_bytes("Error: unknown section x\n")));
+  expect_protocol(q::decode_describe(to_bytes("not json\n")));
+  expect_protocol(q::decode_describe(to_bytes("[1]\n")));
+  expect_protocol(q::decode_describe(to_bytes("{\"tag_data\":true,\"detectors\":[]}\n")));
+  expect_protocol(q::decode_describe(to_bytes("{\"protocol\":\"1\",\"tag_data\":true,\"detectors\":[]}\n")));
+  expect_protocol(q::decode_describe(to_bytes("{\"protocol\":4294967297,\"tag_data\":true,\"detectors\":[]}\n")));
+  expect_protocol(q::decode_describe(to_bytes("{\"protocol\":1,\"detectors\":[]}\n")));
+  expect_protocol(q::decode_describe(to_bytes("{\"protocol\":1,\"tag_data\":true}\n")));
+  expect_protocol(q::decode_describe(to_bytes("{\"protocol\":1,\"tag_data\":true,\"detectors\":[{}]}\n")));
+}
+
+TEST(QtegraCodec, CheckServerRefusesWhatTheDriverCannotUse) {
+  q::ServerInfo server;
+  server.protocol = q::kProtocolVersion;
+  server.tag_data = true;
+  EXPECT_TRUE(q::check_server(server));
+  server.protocol = q::kProtocolVersion + 1;
+  auto newer = q::check_server(server);
+  expect_protocol(newer);
+  EXPECT_NE(newer.error().what.find("update pychron"), std::string::npos) << newer.error().what;
+  server.protocol = q::kProtocolVersion - 1;
+  expect_protocol(q::check_server(server));
+  server.protocol = q::kProtocolVersion;
+  server.tag_data = false;
+  auto untagged = q::check_server(server);
+  expect_protocol(untagged);
+  EXPECT_NE(untagged.error().what.find("Config.tag_data"), std::string::npos) << untagged.error().what;
+}
+
 TEST(QtegraCodec, ServerRepliesRoundTripThroughDecoders) {
-  EXPECT_EQ(q::encode_ok(), to_bytes("OK\r\n"));
-  EXPECT_EQ(q::encode_number(4.5), to_bytes("4.5\r\n"));
-  EXPECT_EQ(q::encode_bool(true), to_bytes("True\r\n"));
-  EXPECT_EQ(q::encode_bool(false), to_bytes("False\r\n"));
-  EXPECT_EQ(q::encode_error("bad"), to_bytes("ERROR: bad\r\n"));
+  EXPECT_EQ(q::encode_ok(), to_bytes("OK\n"));
+  EXPECT_EQ(q::encode_number(4.5), to_bytes("4.5\n"));
+  EXPECT_EQ(q::encode_bool(true), to_bytes("True\n"));
+  EXPECT_EQ(q::encode_bool(false), to_bytes("False\n"));
+  EXPECT_EQ(q::encode_error("bad"), to_bytes("Error: bad\n"));
   EXPECT_TRUE(q::decode_ok(q::encode_ok()));
   EXPECT_DOUBLE_EQ(*q::decode_number(q::encode_number(1.048576)), 1.048576);
   EXPECT_TRUE(*q::decode_bool(q::encode_bool(true)));

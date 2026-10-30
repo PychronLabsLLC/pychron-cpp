@@ -21,11 +21,13 @@
 #include "pychron/devices/spectrometer/thermo_qtegra.hpp"
 #include "pychron/devices/spectrometer/thermo_qtegra_sim.hpp"
 #include "spectrometer/legacy/sim_util.hpp"
+#include "spectrometer/qtegra_session.hpp"
 #include "virtual_time.hpp"
 
 using namespace pychron;
 using namespace pychron::spectrometer;
 using namespace legacy_test;
+using namespace qtegra_test;
 
 namespace {
 
@@ -90,13 +92,13 @@ TEST_F(QtegraAcquire, NextBeforeStartIsConfig) {
   ASSERT_FALSE(r);
   EXPECT_EQ(r.error().kind, ErrorKind::Config);
   EXPECT_EQ(r.error().device, "argus");
-  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r"}));
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"KeepAlive\r", "Describe\r", "GetIntegrationTime\r"}));
 }
 
 TEST_F(QtegraAcquire, ConnectSeedsCachedIntegration) {
   // 0.5 s snaps to the 0.524288 s the instrument reported at connect.
   ASSERT_TRUE(q.configure(500ms));
-  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r"}));
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"KeepAlive\r", "Describe\r", "GetIntegrationTime\r"}));
   // No change, so no settling: a frame is due at once and spans that period.
   ASSERT_TRUE(q.start());
   EXPECT_EQ(frame().span, kHalf);
@@ -104,18 +106,19 @@ TEST_F(QtegraAcquire, ConnectSeedsCachedIntegration) {
 
 TEST_F(QtegraAcquire, ConfigureSnapsAndSendsOnlyOnChange) {
   ASSERT_TRUE(q.configure(1s));
-  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "SetIntegrationTime 1.048576\r"}));
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"KeepAlive\r", "Describe\r", "GetIntegrationTime\r",
+                                                          "SetIntegrationTime 1.048576\r"}));
   ASSERT_TRUE(q.configure(1s));
   ASSERT_TRUE(q.configure(1100ms));  // snaps to the same period
-  EXPECT_EQ(sim->written().size(), 2U);
+  EXPECT_EQ(sim->written().size(), 4U);
   std::lock_guard lock(model->mutex);
   EXPECT_DOUBLE_EQ(model->integration_s, 1.048576);
 }
 
 TEST_F(QtegraAcquire, ConfigureErrorReplyIsProtocolAndIsRetriedNextTime) {
-  auto scripted = open_scripted({step("GetIntegrationTime\r", "0.524288\r\n"),
-                                 step("SetIntegrationTime 1.048576\r", "ERROR: busy\r\n"),
-                                 step("SetIntegrationTime 1.048576\r", "OK\r\n")});
+  auto scripted = open_scripted(session_steps("\r", "0.524288\n"));
+  scripted->expect(step("SetIntegrationTime 1.048576\r", "Error: busy\n"));
+  scripted->expect(step("SetIntegrationTime 1.048576\r", "OK\n"));
   QtegraSpectrometer driver("argus", *scripted, {}, &clock);
   ASSERT_TRUE(driver.connect());
   auto r = driver.configure(1s);
@@ -132,7 +135,7 @@ TEST_F(QtegraAcquire, NonPositiveIntegrationIsConfig) {
     ASSERT_FALSE(r);
     EXPECT_EQ(r.error().kind, ErrorKind::Config);
   }
-  EXPECT_EQ(sim->written().size(), 1U);
+  EXPECT_EQ(sim->written().size(), 3U);
 }
 
 TEST_F(QtegraAcquire, NotDueReturnsNulloptWithoutTraffic) {
@@ -306,10 +309,24 @@ TEST_F(QtegraAcquire, ExtraDetectorIgnored) {
   EXPECT_EQ(frame().values, (std::vector<std::pair<ChannelId, double>>{{"H1", 1.5}}));
 }
 
+TEST_F(QtegraAcquire, NoDataYetIsNoFrameAndNoError) {
+  override_data("Error: no data");
+  ASSERT_TRUE(q.start());
+  auto r = q.next(Duration::zero());
+  ASSERT_TRUE(r) << to_string(r.error());
+  EXPECT_FALSE(*r);
+  EXPECT_EQ(q.health().state, DeviceState::Ok);
+  // It used up its period: the first scan is read at the next one.
+  expect_not_due();
+  override_data("H1,1.5");
+  clock.advance(kHalf);
+  EXPECT_EQ(frame().values, (std::vector<std::pair<ChannelId, double>>{{"H1", 1.5}}));
+}
+
 TEST_F(QtegraAcquire, ErrorReplyIsProtocolAndConsumesSeq) {
   ASSERT_TRUE(q.start());
   const auto first = frame().seq;
-  override_data("ERROR: no data");
+  override_data("Error: could not read scan");
   clock.advance(kHalf);
   auto r = q.next(Duration::zero());
   ASSERT_FALSE(r);
@@ -340,8 +357,9 @@ TEST_F(QtegraAcquire, NoReplyIsRepeatedAfterAReconnect) {
   auto r = q.next(Duration::zero());
   ASSERT_TRUE(r) << to_string(r.error());
   EXPECT_TRUE(r->has_value());
-  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"GetIntegrationTime\r", "GetData\r",
-                                                          "GetIntegrationTime\r", "GetData\r"}));
+  EXPECT_EQ(written_text(*sim), (std::vector<std::string>{"KeepAlive\r", "Describe\r", "GetIntegrationTime\r", "GetData\r",
+                                                          "KeepAlive\r", "Describe\r", "GetIntegrationTime\r",
+                                                          "GetData\r"}));
   EXPECT_EQ(q.reconnects(), 1U);
 }
 
@@ -719,12 +737,13 @@ TEST_F(QtegraBlockedRead, ConfigureDuringBlockedNextDropsTheFrameAndSettles) {
 
   ASSERT_TRUE(blocked) << to_string(blocked.error());
   EXPECT_FALSE(blocked->has_value());
-  EXPECT_EQ(sim->written().size(), 3U);  // GetIntegrationTime, GetData, SetIntegrationTime
+  // KeepAlive, Describe, GetIntegrationTime, GetData, SetIntegrationTime
+  EXPECT_EQ(sim->written().size(), 5U);
   clock.advance(2 * kOne - kTick);
   auto early = q.next(Duration::zero());
   ASSERT_TRUE(early) << to_string(early.error());
   EXPECT_FALSE(early->has_value());
-  EXPECT_EQ(sim->written().size(), 3U);
+  EXPECT_EQ(sim->written().size(), 5U);
   clock.advance(kTick);
   auto settled = q.next(Duration::zero());
   ASSERT_TRUE(settled && settled->has_value());
