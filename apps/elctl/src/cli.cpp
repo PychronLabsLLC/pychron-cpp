@@ -21,6 +21,7 @@
 #include "earthbank.hpp"
 #include "entry.hpp"
 #include "exp.hpp"
+#include "sim_serve.hpp"
 #include "data_source.hpp"
 #include "db.hpp"
 #include "domain.hpp"
@@ -180,6 +181,9 @@ constexpr const char* kUsageText =
     "  trace [on|off [transport...]]\n"
     "                              record transport traffic to <config dir>/traces for replay\n"
     "  sim                         interactive session against simulated hardware\n"
+    "  sim serve [--bind <addr>] [--port-base <n>] [--endpoints <file>] ...\n"
+    "                              serve the line's simulated lab on sockets, one per transport,\n"
+    "                              for a client run with --sim-endpoints\n"
     "\n"
     "Options:\n"
     "  -c, --config <file>         system config (default: extraction_line.toml)\n"
@@ -303,7 +307,14 @@ class Session {
     if (cmd == "heater") return heater(args);
     if (cmd == "scan") return scan(args);
     if (cmd == "trace") return trace(args);
-    if (cmd == "sim") return repl();
+    if (cmd == "sim") {
+      if (args.empty()) return repl();
+      if (args.front() != "serve") return usage("unknown sim command '" + args.front() + "'");
+      if (in_repl_) return usage("sim serve is not run from a sim session");
+      interrupt_count() = 0;
+      return sim_serve_command(std::vector<std::string>(args.begin() + 1, args.end()), g_.config, g_.exp.canvas,
+                               io_, [] { return interrupt_count() > 0; });
+    }
     return usage("unknown command '" + cmd + "'");
   }
 
