@@ -15,6 +15,7 @@ add_library(pychron_transport
   src/udp_transport.cpp
   src/factory.cpp
   src/listener.cpp
+  src/endpoints.cpp
 )
 add_library(pychron::transport ALIAS pychron_transport)
 

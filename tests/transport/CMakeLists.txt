@@ -11,6 +11,7 @@ add_executable(pychron_transport_tests
   test_serial_transport.cpp
   test_factory.cpp
   test_listener.cpp
+  test_endpoints.cpp
 )
 
 target_link_libraries(pychron_transport_tests PRIVATE pychron::transport asio::asio GTest::gtest_main)
