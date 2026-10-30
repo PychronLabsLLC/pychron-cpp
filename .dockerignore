@@ -1,0 +1,9 @@
+# Docker build context (packaging/sim): sources only, not build trees or worktrees of many gigabytes.
+build
+build-*
+.claude
+.git
+.worktrees
+**/__pycache__
+docs
+packaging/sim/endpoints

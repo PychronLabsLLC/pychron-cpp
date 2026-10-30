@@ -10,3 +10,7 @@ only this component's. Kept compressed, as that file is.
   (`docs/installation_runbook.md` section 1.4). Something the programs newly
   need under hardened runtime (a device, a kind of library) is an
   entitlement in `packaging/macos/entitlements.plist`.
+- `packaging/sim`: `elctl sim serve` in a Linux image. Not in CI, so a change
+  to `elctl`'s build options or to `sim serve`'s flags is tried there by hand
+  (`README.md` beside it). Published ports stay on host loopback by default:
+  emulators have no authentication.

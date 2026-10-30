@@ -4,7 +4,8 @@ Status: agreed 2026-10-13 (owner), as written; section 10's points are
 settled in the plan or measured in phase A / B. Built after executor
 hardening. Phase A implemented 2026-10-29
 (`docs/superpowers/plans/2026-10-29-sim-serve-phase-a.md`), phase B 2026-10-30
-(`docs/superpowers/plans/2026-10-29-sim-serve-phase-b.md`); C, D not.
+(`docs/superpowers/plans/2026-10-29-sim-serve-phase-b.md`), phase D 2026-10-30
+(`packaging/sim`); C not.
 
 Date: 2026-10-09. Builds on `2026-10-06-lab-simulator-design.md` (gas model),
 `2026-10-06-virtual-clock-design.md` (time), `2026-10-03-installation-wizard-design.md`
@@ -258,7 +259,10 @@ C. Doctor: `--rehearse`, `--replay`. `sim serve --replay`.
 
 D. Container: `packaging/sim/` Dockerfile and compose file, Linux image of
    `elctl`, `--bind 0.0.0.0 --port-base 47000 --advertise <host>`. Not in CI.
-   Docs only say how; nothing depends on it.
+   Docs only say how; nothing depends on it. Compose publishes on host's
+   loopback unless `SIM_PUBLISH_ADDRESS` says otherwise (section 5's rule;
+   binding `0.0.0.0` inside container alone exposes nothing). `STOPSIGNAL
+   SIGINT`: endpoints file removed on `docker stop`.
 
 Each phase lands alone. A then C give doctor for line-only installs.
 

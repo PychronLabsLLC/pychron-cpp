@@ -1,0 +1,29 @@
+# The simulated lab on the wire, in a container. See README.md.
+#
+#   PYCHRON_LAB=/path/to/lab docker compose -f packaging/sim/compose.yaml up --build
+#
+# PYCHRON_LAB          folder holding extraction_line.toml (and canvas.toml,
+#                      sim.toml, spectrometer.toml and tables/ if there are any)
+# SIM_ENDPOINTS_DIR    where sim-endpoints.toml appears (default ./endpoints)
+# SIM_ADVERTISE        host clients connect to (default 127.0.0.1)
+# SIM_PUBLISH_ADDRESS  host address the ports are published on (default
+#                      127.0.0.1: the emulators have no authentication)
+# SIM_UID, SIM_GID     who the file is written as (default 1000)
+services:
+  sim:
+    build:
+      context: ../..
+      dockerfile: packaging/sim/Dockerfile
+    image: pychron-sim
+    user: "${SIM_UID:-1000}:${SIM_GID:-1000}"
+    environment:
+      SIM_ADVERTISE: "${SIM_ADVERTISE:-127.0.0.1}"
+      SIM_PORT_BASE: "47000"
+    volumes:
+      - "${PYCHRON_LAB:?set PYCHRON_LAB to the lab folder}:/lab:ro"
+      - "${SIM_ENDPOINTS_DIR:-./endpoints}:/endpoints"
+    ports:
+      # One port per served transport, from 47000: 32 here.
+      - "${SIM_PUBLISH_ADDRESS:-127.0.0.1}:47000-47031:47000-47031/tcp"
+      - "${SIM_PUBLISH_ADDRESS:-127.0.0.1}:47000-47031:47000-47031/udp"
+    stop_signal: SIGINT

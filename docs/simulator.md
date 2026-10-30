@@ -800,6 +800,11 @@ Rules:
   loopback opens ports that move nothing real but answer anyone who can reach
   them; `sim serve` warns when it does.
 
+`packaging/sim` runs all this in a Linux container, for a machine with no
+build of `elctl`, or the lab on another host; its README says how. The client
+then needs `--sim-endpoints-any`, since the server knows the files by their
+paths in the container.
+
 Not exercised: serial settings, timing, and each vendor's quirks beyond what
 its emulator models. Not served yet: answers recorded from the real
 instrument (`--replay`), and spectrometer drivers other than `thermo_qtegra`
