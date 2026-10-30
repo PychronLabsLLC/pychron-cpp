@@ -22,91 +22,13 @@
 #include "pychron/sim/sim_system.hpp"
 #include "pychron/systems/canvas/cross_validate.hpp"
 #include "pychron/systems/heater_ops.hpp"
+#include "pychron/systems/line_sim.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/transport/factory.hpp"
 
 namespace pychron::systems {
 
 namespace {
-
-// What a stage is to the gas in it.
-sim::SimRole role_of(canvas::SourceKind kind) {
-  switch (kind) {
-    case canvas::SourceKind::Pump: return sim::SimRole::Pump;
-    case canvas::SourceKind::Getter: return sim::SimRole::Getter;
-    case canvas::SourceKind::Tank: return sim::SimRole::Tank;
-    case canvas::SourceKind::Pipette: return sim::SimRole::Pipette;
-    case canvas::SourceKind::Spectrometer: return sim::SimRole::Spectrometer;
-    case canvas::SourceKind::Laser:
-    case canvas::SourceKind::None: return sim::SimRole::Plain;
-  }
-  return sim::SimRole::Plain;
-}
-
-// The pipe between two valves joined directly: named for the two, in byte
-// order (as std::string compares: "B" before "a"), so that it is the one
-// name whichever valve is asked. `kPipeMark` is in no valve's name
-// (build_sim refuses one), so two pairs cannot make one name.
-constexpr char kPipeMark = '~';
-std::string pipe_between(const std::string& a, const std::string& b) {
-  return a < b ? a + kPipeMark + b : b + kPipeMark + a;
-}
-
-// Whether two valves are both joined to one volume: the two valve ends of a
-// tee (or of a cross) whose other end is that volume. The junction is then
-// the volume's, and there is no pipe of their own between the valves.
-bool share_a_volume(const NetworkGraph& graph, const std::string& a, const std::string& b) {
-  const auto beside_b = graph.neighbors(b);
-  for (const auto& n : graph.neighbors(a)) {
-    if (!graph.is_valve(n) && beside_b.contains(n)) return true;
-  }
-  return false;
-}
-
-// Sim topology from the canvas plumbing. Every volume of the graph (a stage,
-// a pipette, a gauge) is a volume, with the stage's size (cc) where it gives
-// one and its kind as its role; a `[[pipette]]` is a pipette, wired as it is
-// drawn, and a `[[gauge]]` a gauge.
-//
-// A canvas draws pipe straight from one valve to the next. A valve stands
-// between two volumes, so each such pair gets the pipe as a small volume of
-// its own, `<a>~<b>`, between them (after the canvas's volumes: one drawn
-// with that name is the volume). The exception is a pair that a tee joins
-// to each other and to one volume: both are on that volume already.
-sim::SimTopology topology_of(const NetworkGraph& graph, const canvas::Canvas& canvas) {
-  sim::SimTopology t;
-  for (const auto& v : graph.volumes()) {
-    sim::SimVolume volume{v};  // no size: the simulator's default for its role
-    for (const auto& g : canvas.gauges) {
-      if (g.name == v) volume.role = sim::SimRole::Gauge;
-    }
-    for (const auto& s : canvas.stages) {
-      if (s.name != v) continue;
-      if (s.volume) volume.cc = *s.volume;
-      volume.role = role_of(canvas::source_kind(s));
-    }
-    for (const auto& p : canvas.pipettes) {
-      if (p.name == v) volume.role = sim::SimRole::Pipette;
-    }
-    t.volumes.push_back(std::move(volume));
-  }
-  for (const auto& v : graph.valves()) t.valves.push_back(v);
-  for (const auto& n : graph.volumes()) {
-    for (const auto& m : graph.neighbors(n)) t.edges.emplace_back(n, m);
-  }
-  for (const auto& n : graph.valves()) {
-    for (const auto& m : graph.neighbors(n)) {
-      if (!graph.is_valve(m)) {
-        t.edges.emplace_back(n, m);
-      } else if (!share_a_volume(graph, n, m)) {
-        const std::string pipe = pipe_between(n, m);
-        if (n < m) t.volumes.push_back({pipe, 0.0, sim::SimRole::Pipe});  // once for the pair
-        t.edges.emplace_back(n, pipe);
-      }
-    }
-  }
-  return t;
-}
 
 const char* state_name(ValveState s) {
   switch (s) {
@@ -146,18 +68,9 @@ Result<std::unique_ptr<ExtractionLine>> ExtractionLine::load(const std::filesyst
   }
   std::filesystem::path skipped;
   if (!options.sim_file && config->sim.file.empty()) {
-    // Not named: the sim.toml beside the line, if the lab has one. Its names
-    // are the canvas's, so it is the lab's only when the canvas is loaded;
-    // without, a simulated line says that it left the file alone.
-    const auto beside = std::filesystem::path(system_file).parent_path() / "sim.toml";
-    std::error_code ec;
-    if (std::filesystem::is_regular_file(beside, ec)) {
-      if (canvas) {
-        options.sim_file = beside;
-      } else {
-        skipped = beside;
-      }
-    }
+    auto beside = sim_file_beside(system_file, canvas.has_value());
+    options.sim_file = std::move(beside.read);
+    skipped = std::move(beside.skipped);
   }
   std::unique_ptr<ExtractionLine> line(new ExtractionLine(std::move(*config), std::move(canvas), std::move(options)));
   line->sim_beside_skipped_ = std::move(skipped);
@@ -304,74 +217,18 @@ Result<void> ExtractionLine::build() {
   return {};
 }
 
-// The simulated lab behind the sim transports: the canvas as volumes with
-// roles, the simulator's numbers from `Options::sim` with a sim.toml over
-// them, a warning of a second spectrometer, and one line at info naming the
-// valves that carry no gas (a drawing may well leave a valve's far side off).
-// Config error on a canvas valve with `~` in its name, and on what the
-// sim.toml refuses.
+// The simulated lab behind the sim transports (build_line_sim), with what it
+// has to say logged here.
 Result<void> ExtractionLine::build_sim() {
-  const sim::SimTopology topology = network_ ? topology_of(*network_, *canvas_) : sim::SimTopology{};
-  // A pipe is named `<a>~<b>`: with the mark in a valve's own name, valves
-  // `A`, `B~C` and `A~B`, `C` would make one pipe name between them.
-  for (const auto& valve : topology.valves) {
-    if (valve.find(kPipeMark) != std::string::npos) {
-      return fail(ErrorKind::Config, "sim: valve '" + valve + "': a valve's name may not contain '" +
-                                         std::string(1, kPipeMark) +
-                                         "' on a simulated line (the pipe between two valves joined directly is "
-                                         "named '<a>~<b>')");
-    }
-  }
-
-  // The same line file serves a tool that loads no canvas (elctl laser): the
-  // lab its sim file describes is not there to be given numbers. Said once,
-  // for the file `[sim] file` names and for the one beside the line alike.
-  std::filesystem::path file;
-  std::filesystem::path skipped;
-  if (options_.sim_file) {
-    file = *options_.sim_file;
-  } else if (!config_.sim.file.empty()) {
-    (canvas_ ? file : skipped) = std::filesystem::path(config_.source_file).parent_path() / config_.sim.file;
-  } else {
-    skipped = sim_beside_skipped_;
-  }
-  if (!skipped.empty()) {
-    log(LogLevel::Info, "sim: " + skipped.generic_string() + " not read: the line was loaded without its canvas");
-  }
-  if (!file.empty()) {
-    // A gauge off the canvas is a volume of its own once its controller is
-    // simulated, so the file may name one.
-    sim::SimTopology known = topology;
-    for (const auto& g : config_.gauges) known.volumes.push_back({g.name, 0.0, sim::SimRole::Gauge});
-    auto settings = sim::load_sim_settings(file, known, std::move(options_.sim));
-    if (!settings) return fail(settings.error());
-    options_.sim = std::move(*settings);
-  }
-  // A cryotrap's cryostat is a Lake Shore driver of this line.
-  for (const auto& trap : options_.sim.cryo_traps) {
-    const auto driver = config_.drivers.find(trap.cryostat);
-    if (driver == config_.drivers.end() || driver->second.kind != "lakeshore")
-      return fail(ErrorKind::Config, (options_.sim.file.empty() ? std::string("sim settings") : options_.sim.file) +
-                                         ": cryo_trap on '" + trap.volume + "': cryostat '" + trap.cryostat +
-                                         "' is not a lakeshore driver of " + config_.source_file);
-  }
-
-  sim_ = std::make_unique<sim::SimSystem>(*clock_, topology, options_.sim);
-
-  const auto source = sim_->spectrometer_volume();
-  for (const auto& v : topology.volumes) {
-    if (v.role == sim::SimRole::Spectrometer && source && v.name != *source) {
-      log(LogLevel::Warn, "sim: stage '" + v.name + "' is a second spectrometer; the simulated source is '" +
-                              *source + "'");
-    }
-  }
-  if (const auto without = sim_->valves_without_physics(); !without.empty()) {
-    std::string said = "sim: " + std::to_string(without.size()) + " valve(s) carry no gas in the simulation: ";
-    for (std::size_t i = 0; i < without.size(); ++i) {
-      said += (i == 0 ? "" : ", ") + without[i].first + " (" + without[i].second + ")";
-    }
-    log(LogLevel::Info, std::move(said));
-  }
+  LineSimOptions sim_options;
+  sim_options.sim = std::move(options_.sim);
+  sim_options.sim_file = options_.sim_file;
+  sim_options.sim_beside_skipped = sim_beside_skipped_;
+  auto built = build_line_sim(config_, canvas_ ? &*canvas_ : nullptr, *clock_, std::move(sim_options));
+  if (!built) return fail(built.error());
+  for (auto& note : built->notes) log(note.level, std::move(note.message));
+  sim_ = std::move(built->system);
+  options_.sim = sim_->settings();
   return {};
 }
 
