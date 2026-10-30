@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -136,6 +137,41 @@ TEST(TrackBench, ATrackerThatDoesNotFollowScoresWorse) {
   ASSERT_NE(still, nullptr);
   ASSERT_NE(following, nullptr);
   EXPECT_GT(following->summary.mean.on_pct, still->summary.mean.on_pct);
+}
+
+TEST(TrackBench, ABoolSweepValueIsLabelledTrueOrFalse) {
+  // No dragonfly key is a bool yet, so the combination is refused; its label says which.
+  expect_refused(text(1, 1, "[sweep.pattern]\nsingle_pass = [true, false]\n"), "pattern.single_pass=true");
+  expect_refused(text(1, 1, "[sweep.pattern]\nsingle_pass = [false]\n"), "pattern.single_pass=false");
+}
+
+TEST(TrackBench, ALossOpenAtTheEndCountsToTheDurationNotTheTripHome) {
+  // A grain that goes dark for good almost at once: the beam starts on it,
+  // locks, then searches away and never finds it again. The stage's trip home follows the duration.
+  constexpr double kDuration = 20;
+  const TempDir temp;
+  TrackOptions options;
+  options.trace = temp.dir / "trace.csv";
+  const auto combos = run(text(kDuration, 1,
+                               "[grain]\ndropouts_per_s = 0.15\ndropout_s = 60\n"),
+                          options);
+  ASSERT_EQ(combos.size(), 1U);
+  const TrackSummary& s = combos[0].summary;
+  ASSERT_EQ(s.mean.lost, 1.0);
+  // When it went off: the first poll of the stretch that runs to the end.
+  double went_off = -1;
+  std::istringstream trace(read_file(options.trace));
+  std::string line;
+  std::getline(trace, line);
+  while (std::getline(trace, line)) {
+    const auto f = split(line, ',');
+    ASSERT_EQ(f.size(), 11U) << line;
+    const bool off = std::hypot(std::stod(f[3]) - std::stod(f[5]), std::stod(f[4]) - std::stod(f[6])) > 0.4;
+    if (!off) went_off = -1;
+    else if (went_off < 0) went_off = std::stod(f[2]);
+  }
+  ASSERT_GE(went_off, 0);
+  EXPECT_LE(s.mean.back_s, kDuration - went_off + 0.05);
 }
 
 TEST(TrackBench, EveryCombinationOnTheSameSeeds) {

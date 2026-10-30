@@ -170,6 +170,7 @@ std::string value_text(const toml::node& node) {
     const auto end = std::to_chars(buffer.data(), buffer.data() + buffer.size(), f->get()).ptr;
     return {buffer.data(), end};
   }
+  if (const auto* b = node.as_boolean()) return b->get() ? "true" : "false";
   std::ostringstream out;
   out.imbue(std::locale::classic());
   node.visit([&out](const auto& value) { out << value; });
@@ -530,7 +531,7 @@ Run run_one(const TrackTables& t, const Stock& stock, const fs::path& dir, std::
   const auto disabled = rig.system.disable();
   if (!out.error && !stopped) out.error = to_string(stopped.error());
   if (!out.error && !disabled) out.error = to_string(disabled.error());
-  out.score = scorer.finish(end_s);
+  out.score = scorer.finish(std::min(end_s, t.duration_s));
   return out;
 }
 
