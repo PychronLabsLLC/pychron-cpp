@@ -119,7 +119,8 @@ Result<SpectrometerRoles> SpectrometerAssembler::bind(const cfg::SpectrometerCon
 
 Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(const cfg::TransportConfig& c,
                                                                             const SpectrometerContext& context,
-                                                                            const std::filesystem::path& trace_dir) {
+                                                                            const std::filesystem::path& trace_dir,
+                                                                            const std::map<std::string, Endpoint>* endpoints) {
   config::TransportConfig tc;
   tc.name = c.name;
   tc.loc = c.loc;
@@ -162,6 +163,7 @@ Result<std::unique_ptr<Transport>> SpectrometerAssembler::default_transport(cons
   tctx.clock = &context.clock;
   tctx.bus = &context.bus;
   tctx.trace_dir = trace_dir.string();
+  tctx.endpoints = endpoints;
   if (c.trace) {
     std::error_code ec;
     std::filesystem::create_directories(trace_dir, ec);
@@ -193,9 +195,9 @@ Result<std::unique_ptr<Spectrometer>> SpectrometerAssembler::assemble(cfg::Spect
                                                                       SpectrometerContext context, Options options) {
   if (auto diags = cfg::validate(data.config, data.tables); !diags.empty()) return fail(config::to_error(diags));
   if (!options.make_transport) {
-    options.make_transport = [dir = options.spectrometer.trace_dir](const cfg::TransportConfig& tc,
-                                                                    const SpectrometerContext& ctx) {
-      return default_transport(tc, ctx, dir);
+    options.make_transport = [dir = options.spectrometer.trace_dir, endpoints = options.sim_endpoints](
+                                 const cfg::TransportConfig& tc, const SpectrometerContext& ctx) {
+      return default_transport(tc, ctx, dir, endpoints.get());
     };
   }
   if (!options.make_driver) options.make_driver = default_driver;

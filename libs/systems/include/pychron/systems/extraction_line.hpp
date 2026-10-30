@@ -67,6 +67,7 @@
 #include "pychron/systems/gauge_scanner.hpp"
 #include "pychron/systems/network_graph.hpp"
 #include "pychron/systems/switch_manager.hpp"
+#include "pychron/transport/endpoints.hpp"
 #include "pychron/transport/transport.hpp"
 
 namespace pychron::systems {
@@ -102,6 +103,12 @@ struct ExtractionLineOptions {
   // records go to "extraction_line" and "scheduler"; the line shares
   // ownership, so the hub outlives its transports.
   std::shared_ptr<LogHub> log_hub;
+  // A line served by `elctl sim serve`: the endpoints file it wrote. Every
+  // transport but kind "sim" and "link" then connects where the file says
+  // (one it does not list fails the load), and the file must serve this
+  // line's own config unless sim_endpoints_any. Refused with force_sim.
+  std::optional<std::filesystem::path> sim_endpoints;
+  bool sim_endpoints_any = false;
   // Each transport's link recovers with this where its
   // [transports.<name>.recovery] does not say otherwise: the lab's
   // executor.toml [links].

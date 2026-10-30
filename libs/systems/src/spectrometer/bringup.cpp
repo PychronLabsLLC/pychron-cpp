@@ -116,6 +116,7 @@ Result<std::unique_ptr<Spectrometer>> load_spectrometer_for_app(cfg::Spectromete
   }
   SpectrometerAssembler::Options assembly;
   assembly.link_defaults = options.link_defaults;
+  assembly.sim_endpoints = options.sim_endpoints;
   auto spec = SpectrometerAssembler::assemble(std::move(data), ctx, std::move(assembly));
   // The line's gas and baselines, now that the drivers have given the beam
   // its detectors.

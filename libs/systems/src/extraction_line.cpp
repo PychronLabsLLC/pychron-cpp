@@ -111,6 +111,17 @@ Result<void> ExtractionLine::build() {
     switches_logger_.emplace(log_hub_->logger("switches"));
   }
 
+  std::optional<SimEndpoints> endpoints;
+  if (options_.sim_endpoints) {
+    if (options_.force_sim) {
+      return fail(ErrorKind::Config, "--sim-endpoints and --sim cannot be used together: the one drives a served "
+                                     "lab over the wire, the other simulates every transport in-process");
+    }
+    auto loaded = load_sim_endpoints(*options_.sim_endpoints, config_.source_file, options_.sim_endpoints_any);
+    if (!loaded) return fail(loaded.error());
+    endpoints = std::move(*loaded);
+  }
+
   const bool any_sim =
       options_.force_sim || std::any_of(config_.transports.begin(), config_.transports.end(), [](const auto& t) {
         return t.second.kind == config::TransportKind::Sim;
@@ -138,6 +149,7 @@ Result<void> ExtractionLine::build() {
     context.bus = &bus_;
     context.trace_dir = options_.trace_dir.string();
     context.log_hub = log_hub_;
+    if (endpoints) context.endpoints = &endpoints->transports;
     if (tc.kind == config::TransportKind::Sim) {
       context.sim_hook = sim_->hook_for_transport(name, config_);
     }

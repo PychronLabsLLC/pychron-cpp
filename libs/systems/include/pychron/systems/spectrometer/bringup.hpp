@@ -11,14 +11,17 @@
 // no line reads the beam's fixed argon, as it always did.
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "pychron/core/config/system_config.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/sim/spectrometer/beam_model.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
+#include "pychron/transport/endpoints.hpp"
 
 namespace pychron::sim {
 class SimSystem;
@@ -54,6 +57,8 @@ struct SpectrometerBringup {
   // The lab's link recovery (executor.toml [links]) where a transport's
   // [transports.<name>.recovery] does not say otherwise.
   LinkPolicy link_defaults{};
+  // A line served by sim serve (AssemblerOptions::sim_endpoints). Null: as configured.
+  std::shared_ptr<const std::map<std::string, Endpoint>> sim_endpoints{};
 };
 
 // True when nothing in the config can reach hardware: every declared

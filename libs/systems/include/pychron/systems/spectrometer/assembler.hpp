@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -21,6 +22,7 @@
 #include "pychron/systems/spectrometer/config.hpp"
 #include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/systems/spectrometer/spectrometer.hpp"
+#include "pychron/transport/endpoints.hpp"
 #include "pychron/transport/transport.hpp"
 
 namespace pychron::spectrometer {
@@ -39,6 +41,10 @@ struct AssemblerOptions {
   // What a transport's [transports.<name>.recovery] does not say: the lab's
   // executor.toml [links].
   LinkPolicy link_defaults;
+  // A line served by sim serve (endpoints.hpp), for the default transports:
+  // each but kind "sim" and "link" connects to its entry, and one with none
+  // fails. Null: as configured.
+  std::shared_ptr<const std::map<std::string, Endpoint>> sim_endpoints;
 };
 
 class SpectrometerAssembler {
@@ -59,7 +65,8 @@ class SpectrometerAssembler {
 
   static Result<std::unique_ptr<Transport>> default_transport(const cfg::TransportConfig& config,
                                                               const SpectrometerContext& context,
-                                                              const std::filesystem::path& trace_dir = "traces");
+                                                              const std::filesystem::path& trace_dir = "traces",
+                                                              const std::map<std::string, Endpoint>* endpoints = nullptr);
   static Result<std::unique_ptr<Device>> default_driver(const cfg::DriverConfig& config, Transport& transport,
                                                         const SpectrometerContext& context, Link* link = nullptr);
 };
