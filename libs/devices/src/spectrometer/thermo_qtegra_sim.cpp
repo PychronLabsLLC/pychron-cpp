@@ -113,8 +113,9 @@ Bytes respond(QtegraSimModel& m, const Bytes& tx, std::optional<std::pair<std::s
   }
   if (verb == "GetData" && args.empty()) {
     if (!m.data_override.empty()) return q::encode_line(m.data_override);
-    if (m.intensities.empty()) return q::encode_error("no data");
-    return q::encode_data(q::Pairs(m.intensities.begin(), m.intensities.end()));
+    const std::map<std::string, double> data = m.data_source ? m.data_source(m.integration_s) : m.intensities;
+    if (data.empty()) return q::encode_error("no data");
+    return q::encode_data(q::Pairs(data.begin(), data.end()));
   }
   return q::encode_error("unknown command " + verb);
 }
@@ -126,6 +127,9 @@ SimTransport::Hook qtegra_sim_hook(std::shared_ptr<QtegraSimModel> model) {
     std::optional<std::pair<std::string, bool>> moved;
     Bytes reply = respond(*model, tx, moved);
     if (moved && model->on_valve) model->on_valve(moved->first, moved->second);
+    if (model->on_command) {
+      if (const auto request = q::decode_request(tx)) model->on_command(request->verb, request->args);
+    }
     return reply;
   };
 }

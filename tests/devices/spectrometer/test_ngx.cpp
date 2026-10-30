@@ -736,3 +736,37 @@ TEST_F(NgxLinkSteady, TeardownWithAReplyOutstandingReturns) {
 
   EXPECT_LT(std::chrono::steady_clock::now() - real_start, 5s);
 }
+
+TEST(NgxSim, ValuesAtFeedsAcqLines) {
+  ManualClock clock;
+  auto model = std::make_shared<NgxSimModel>();
+  model->clock = &clock;
+  model->banner_pending = false;
+  model->values = {9.0, 9.0};
+  model->values_at = [](TimePoint) { return std::vector<double>{1.0, 2.0}; };
+  auto hook = ngx_sim_hook(model);
+  auto events = ngx_sim_events(model);
+  hook(to_bytes("StartAcq 1,run\r"));
+  clock.advance(std::chrono::seconds(1));
+  const std::string lines = to_string(events());
+  const auto acq = lines.find("#EVENT:ACQ,");
+  ASSERT_NE(acq, std::string::npos) << lines;
+  const auto end = lines.find('#', acq + 1);
+  // The instrument's order: reversed.
+  const std::string tail = "," + codec::ngx::format_float(2.0) + "," + codec::ngx::format_float(1.0);
+  EXPECT_EQ(lines.substr(end - tail.size(), tail.size()), tail) << lines;
+}
+
+TEST(NgxSim, OnCommandSeesSetMass) {
+  auto model = std::make_shared<NgxSimModel>();
+  std::string verb, args;
+  model->on_command = [&, model](const std::string& v, const std::string& a) {
+    const std::lock_guard lock(model->mutex);  // not held by the hook here
+    verb = v;
+    args = a;
+  };
+  auto hook = ngx_sim_hook(model);
+  hook(to_bytes("SetMass 39.96\r"));
+  EXPECT_EQ(verb, "SetMass");
+  EXPECT_EQ(args, "39.96");
+}

@@ -35,7 +35,8 @@ std::string clock_text(TimePoint t) {
 
 std::string event_line(const NgxSimModel& m, bool baseline, TimePoint at) {
   std::string line = std::string("#EVENT:") + (baseline ? "ACQ.B," : "ACQ,") + m.run->rcs_id + ",SIM,SIM," + clock_text(at);
-  for (double value : std::views::reverse(m.values)) line += "," + ngx::format_float(value);
+  const std::vector<double> values = m.values_at ? m.values_at(at) : m.values;
+  for (double value : std::views::reverse(values)) line += "," + ngx::format_float(value);
   return line + "#\r\n";
 }
 
@@ -141,19 +142,27 @@ std::string NgxSimModel::due_locked() {
 
 SimTransport::Hook ngx_sim_hook(std::shared_ptr<NgxSimModel> model) {
   return [model](const Bytes& tx) -> Bytes {
-    std::lock_guard lock(model->mutex);
     const std::string cmd = strip(::pychron::to_string(tx));
-    model->commands.push_back(cmd);
-    std::string reply = reply_for(*model, cmd) + model->reply_terminator;
-    if (!model->event_before_next_reply.empty()) {
-      reply = std::exchange(model->event_before_next_reply, std::string{}) + reply;
+    Bytes out;
+    {
+      std::lock_guard lock(model->mutex);
+      model->commands.push_back(cmd);
+      std::string reply = reply_for(*model, cmd) + model->reply_terminator;
+      if (!model->event_before_next_reply.empty()) {
+        reply = std::exchange(model->event_before_next_reply, std::string{}) + reply;
+      }
+      if (model->hold_replies > 0) {
+        --model->hold_replies;
+        model->held.push_back(reply);
+      } else {
+        out = to_bytes(reply);
+      }
     }
-    if (model->hold_replies > 0) {
-      --model->hold_replies;
-      model->held.push_back(reply);
-      return {};
+    if (model->on_command) {
+      const auto [verb, args] = verb_args(cmd);
+      model->on_command(verb, args);
     }
-    return to_bytes(reply);
+    return out;
   };
 }
 

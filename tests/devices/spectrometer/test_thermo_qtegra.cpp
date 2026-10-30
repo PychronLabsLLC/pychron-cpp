@@ -856,3 +856,34 @@ TEST(QtegraSimHook, UnknownOrMalformedCommandAnswersError) {
     EXPECT_NE(reply.error().what.find("device error"), std::string::npos) << tx;
   }
 }
+
+TEST(QtegraSim, DataSourceWinsOverIntensities) {
+  auto model = std::make_shared<QtegraSimModel>();
+  model->intensities = {{"AX", 1.0}};
+  double asked = 0.0;
+  model->data_source = [&asked](double integration_s) {
+    asked = integration_s;
+    return std::map<std::string, double>{{"H1", 5.0}};
+  };
+  auto hook = qtegra_sim_hook(model);
+  const auto reply = to_string(hook(to_bytes("GetData\r")));
+  EXPECT_NE(reply.find("H1"), std::string::npos) << reply;
+  EXPECT_EQ(reply.find("AX"), std::string::npos) << reply;
+  EXPECT_DOUBLE_EQ(asked, model->integration_s);
+  model->data_source = [](double) { return std::map<std::string, double>{}; };
+  EXPECT_NE(to_string(hook(to_bytes("GetData\r"))).find("ERROR"), std::string::npos);
+}
+
+TEST(QtegraSim, OnCommandSeesSettings) {
+  auto model = std::make_shared<QtegraSimModel>();
+  std::vector<std::pair<std::string, std::vector<std::string>>> seen;
+  model->on_command = [&seen, model](const std::string& verb, const std::vector<std::string>& args) {
+    const std::lock_guard lock(model->mutex);  // not held by the hook here
+    seen.emplace_back(verb, args);
+  };
+  auto hook = qtegra_sim_hook(model);
+  hook(to_bytes("SetMagnetDAC 4.2\r"));
+  ASSERT_EQ(seen.size(), 1U);
+  EXPECT_EQ(seen[0].first, "SetMagnetDAC");
+  EXPECT_EQ(seen[0].second, std::vector<std::string>{"4.2"});
+}

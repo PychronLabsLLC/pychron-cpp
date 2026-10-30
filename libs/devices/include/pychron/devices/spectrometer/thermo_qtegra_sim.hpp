@@ -50,6 +50,13 @@ struct QtegraSimModel {
   // When set (before use), GetParameter asks it first; a value from it wins
   // over `params`. For readbacks that follow a model, e.g. a gauge.
   std::function<std::optional<double>(const std::string& name)> parameter_source;
+  // When set (before use), GetData reports what it gives (an ERROR reply when
+  // that is empty), given the integration time; it wins over `intensities` and
+  // loses to `data_override`. Called with `mutex` held.
+  std::function<std::map<std::string, double>(double integration_s)> data_source;
+  // When set (before use), called after each command was answered, outside
+  // `mutex`, with its verb and arguments: for whoever follows the settings.
+  std::function<void(const std::string& verb, const std::vector<std::string>& args)> on_command;
 };
 
 // Commands it does not know, or cannot parse, answer "ERROR: ...".

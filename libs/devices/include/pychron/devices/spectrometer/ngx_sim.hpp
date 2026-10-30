@@ -10,6 +10,7 @@
 // order, as the instrument sends them.
 
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,9 @@ struct NgxSimModel {
 
   // Acquisition: values in channel order.
   std::vector<double> values;
+  // When set (before use), an ACQ line's values at its instant, in channel
+  // order; wins over `values`. Called with `mutex` held.
+  std::function<std::vector<double>(TimePoint)> values_at;
   bool emit_acq_b = true;
   std::string start_acq_reply = "E00";
   struct Run {
@@ -67,6 +71,10 @@ struct NgxSimModel {
 
   // Every command received, without terminator, in order.
   std::vector<std::string> commands;
+  // When set (before use), called after each command was answered, outside
+  // `mutex`, with its verb and its arguments (trimmed): for whoever follows
+  // the settings and the valves.
+  std::function<void(const std::string& verb, const std::string& args)> on_command;
 
   // Due events and released replies, for the event source (caller holds mutex).
   std::string due_locked();
