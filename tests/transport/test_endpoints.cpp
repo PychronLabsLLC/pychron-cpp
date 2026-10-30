@@ -118,3 +118,49 @@ TEST(SimEndpoints, DefaultPathIsBesideTheLine) {
   EXPECT_EQ(default_sim_endpoints_path(fs::path("lab") / "extraction_line.toml"),
             fs::path("lab") / "sim-endpoints.toml");
 }
+
+TEST_F(SimEndpointsTest, SpectrometerSectionRoundTrips) {
+  const auto file = dir_ / "sim-endpoints.toml";
+  auto written = sample(dir_ / "extraction_line.toml");
+  written.spectrometer = dir_ / "spectrometer.toml";
+  // A spectrometer transport may share a line transport's name.
+  written.spectrometer_transports["gauges"] = Endpoint{"127.0.0.1", 40300, WireProtocol::Tcp, "thermo_qtegra"};
+  ASSERT_TRUE(write_sim_endpoints(file, written));
+  auto read = read_sim_endpoints(file);
+  ASSERT_TRUE(read) << read.error().what;
+  EXPECT_EQ(*read, written);
+}
+
+TEST_F(SimEndpointsTest, NoSpectrometerSectionReadsAsBefore) {
+  const auto file = dir_ / "sim-endpoints.toml";
+  ASSERT_TRUE(write_sim_endpoints(file, sample(dir_ / "extraction_line.toml")));
+  auto read = read_sim_endpoints(file);
+  ASSERT_TRUE(read);
+  EXPECT_TRUE(read->spectrometer.empty());
+  EXPECT_TRUE(read->spectrometer_transports.empty());
+}
+
+TEST_F(SimEndpointsTest, LoadSpectrometerEndpointsRefusesOtherFile) {
+  std::ofstream(dir_ / "spectrometer.toml") << "";
+  std::ofstream(dir_ / "other.toml") << "";
+  auto endpoints = sample(dir_ / "extraction_line.toml");
+  endpoints.spectrometer = dir_ / "spectrometer.toml";
+  endpoints.spectrometer_transports["qtegra"] = Endpoint{"127.0.0.1", 40300, WireProtocol::Tcp, "thermo_qtegra"};
+  const auto file = dir_ / "sim-endpoints.toml";
+  ASSERT_TRUE(write_sim_endpoints(file, endpoints));
+  auto refused = load_spectrometer_endpoints(file, dir_ / "other.toml", false);
+  ASSERT_FALSE(refused);
+  EXPECT_NE(refused.error().what.find("--sim-endpoints-any"), std::string::npos) << refused.error().what;
+  auto any = load_spectrometer_endpoints(file, dir_ / "other.toml", true);
+  ASSERT_TRUE(any);
+  EXPECT_EQ(any->at("qtegra").port, 40300);
+  EXPECT_TRUE(load_spectrometer_endpoints(file, dir_ / "spectrometer.toml", false));
+}
+
+TEST_F(SimEndpointsTest, LoadSpectrometerEndpointsRefusesFileServingNone) {
+  const auto file = dir_ / "sim-endpoints.toml";
+  ASSERT_TRUE(write_sim_endpoints(file, sample(dir_ / "extraction_line.toml")));
+  auto refused = load_spectrometer_endpoints(file, dir_ / "spectrometer.toml", true);
+  ASSERT_FALSE(refused);
+  EXPECT_NE(refused.error().what.find("serves no spectrometer"), std::string::npos) << refused.error().what;
+}

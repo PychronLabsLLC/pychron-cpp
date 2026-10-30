@@ -24,6 +24,52 @@ fs::path canonical_or_absolute(const fs::path& p) {
   return fs::absolute(p, ec).lexically_normal();
 }
 
+// The endpoints under `key` (`transports` or `spectrometer_transports`), each
+// on `host`.
+Result<std::map<std::string, Endpoint>> read_table(const fs::path& file, const toml::table& t, const std::string& key,
+                                                   const std::string& host) {
+  std::map<std::string, Endpoint> out;
+  const auto* transports = t[key].as_table();
+  if (transports == nullptr) return out;
+  for (const auto& [name_key, node] : *transports) {
+    const std::string name = key + "." + std::string(name_key.str());
+    const auto* entry = node.as_table();
+    if (entry == nullptr) return refused(file, name + " is not a table");
+    Endpoint e;
+    e.host = host;
+    const auto protocol = (*entry)["protocol"].value<std::string>().value_or("");
+    if (protocol == "tcp") {
+      e.protocol = WireProtocol::Tcp;
+    } else if (protocol == "udp") {
+      e.protocol = WireProtocol::Udp;
+    } else {
+      std::string why = name;
+      why += ": protocol '";
+      why += protocol;
+      why += "' is not tcp or udp";
+      return refused(file, why);
+    }
+    const auto port = (*entry)["port"].value<std::int64_t>();
+    if (!port || *port < 1 || *port > 65535) return refused(file, name + ": port outside 1..65535");
+    e.port = static_cast<std::uint16_t>(*port);
+    e.emulator = (*entry)["emulator"].value_or(std::string{});
+    out.emplace(std::string(name_key.str()), std::move(e));
+  }
+  return out;
+}
+
+toml::table write_table(const std::map<std::string, Endpoint>& endpoints) {
+  toml::table transports;
+  for (const auto& [name, e] : endpoints) {
+    toml::table entry;
+    entry.insert("protocol", protocol_name(e.protocol));
+    entry.insert("port", static_cast<std::int64_t>(e.port));
+    entry.insert("emulator", e.emulator);
+    transports.insert(name, std::move(entry));
+  }
+  return transports;
+}
+
 }  // namespace
 
 Result<SimEndpoints> read_sim_endpoints(const fs::path& file) {
@@ -43,31 +89,14 @@ Result<SimEndpoints> read_sim_endpoints(const fs::path& file) {
   if (!host || host->empty()) return refused(file, "has no `host`");
   out.host = *host;
 
-  if (const auto* transports = t["transports"].as_table()) {
-    for (const auto& [key, node] : *transports) {
-      const std::string name(key.str());
-      const auto* entry = node.as_table();
-      if (entry == nullptr) return refused(file, "transports." + name + " is not a table");
-      Endpoint e;
-      e.host = out.host;
-      const auto protocol = (*entry)["protocol"].value<std::string>().value_or("");
-      if (protocol == "tcp") {
-        e.protocol = WireProtocol::Tcp;
-      } else if (protocol == "udp") {
-        e.protocol = WireProtocol::Udp;
-      } else {
-        std::string why = "transports." + name;
-        why += ": protocol '";
-        why += protocol;
-        why += "' is not tcp or udp";
-        return refused(file, why);
-      }
-      const auto port = (*entry)["port"].value<std::int64_t>();
-      if (!port || *port < 1 || *port > 65535) return refused(file, "transports." + name + ": port outside 1..65535");
-      e.port = static_cast<std::uint16_t>(*port);
-      e.emulator = (*entry)["emulator"].value_or(std::string{});
-      out.transports.emplace(name, std::move(e));
-    }
+  auto line = read_table(file, t, "transports", out.host);
+  if (!line) return fail(line.error());
+  out.transports = std::move(*line);
+  if (const auto spectrometer = t["spectrometer"].value<std::string>(); spectrometer && !spectrometer->empty()) {
+    out.spectrometer = *spectrometer;
+    auto served = read_table(file, t, "spectrometer_transports", out.host);
+    if (!served) return fail(served.error());
+    out.spectrometer_transports = std::move(*served);
   }
   return out;
 }
@@ -76,15 +105,11 @@ Result<void> write_sim_endpoints(const fs::path& file, const SimEndpoints& endpo
   toml::table t;
   t.insert("config", endpoints.config.generic_string());
   t.insert("host", endpoints.host);
-  toml::table transports;
-  for (const auto& [name, e] : endpoints.transports) {
-    toml::table entry;
-    entry.insert("protocol", protocol_name(e.protocol));
-    entry.insert("port", static_cast<std::int64_t>(e.port));
-    entry.insert("emulator", e.emulator);
-    transports.insert(name, std::move(entry));
+  t.insert("transports", write_table(endpoints.transports));
+  if (!endpoints.spectrometer.empty()) {
+    t.insert("spectrometer", endpoints.spectrometer.generic_string());
+    t.insert("spectrometer_transports", write_table(endpoints.spectrometer_transports));
   }
-  t.insert("transports", std::move(transports));
 
   std::ostringstream text;
   text << "# Written by elctl sim serve while it runs; removed when it stops. Not edited by hand.\n" << t << '\n';
@@ -122,6 +147,25 @@ Result<SimEndpoints> load_sim_endpoints(const fs::path& file, const fs::path& lo
                              loaded.generic_string() + "); --sim-endpoints-any skips this check");
   }
   return endpoints;
+}
+
+Result<std::map<std::string, Endpoint>> load_spectrometer_endpoints(const fs::path& file,
+                                                                    const fs::path& loaded_spectrometer, bool any) {
+  auto endpoints = read_sim_endpoints(file);
+  if (!endpoints) return fail(endpoints.error());
+  if (endpoints->spectrometer.empty()) {
+    return refused(file, "serves no spectrometer; start sim serve with --spectrometer " +
+                             loaded_spectrometer.generic_string());
+  }
+  if (!any) {
+    const auto served = canonical_or_absolute(endpoints->spectrometer);
+    const auto loaded = canonical_or_absolute(loaded_spectrometer);
+    if (served != loaded) {
+      return refused(file, "serves the spectrometer " + served.generic_string() + ", not the one loaded here (" +
+                               loaded.generic_string() + "); --sim-endpoints-any skips this check");
+    }
+  }
+  return std::move(endpoints->spectrometer_transports);
 }
 
 fs::path default_sim_endpoints_path(const fs::path& line_file) {
