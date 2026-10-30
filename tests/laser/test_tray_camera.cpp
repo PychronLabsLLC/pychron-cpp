@@ -3,6 +3,7 @@
 
 #include "pychron/laser/tray_camera.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <random>
@@ -354,4 +355,251 @@ TEST(MakeFrameSource, SimAndRecorded) {
   EXPECT_EQ(missing.error().kind, ErrorKind::Config);
   EXPECT_NE(missing.error().what.find("no-such"), std::string::npos) << missing.error().what;
   fs::remove_all(lab);
+}
+
+namespace {
+// FNV-1a over the pixels of a frame, folded into a running hash.
+std::uint64_t fold(std::uint64_t h, const vision::Frame& frame) {
+  for (const auto v : frame.data) {
+    h ^= v;
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+}  // namespace
+
+// Without a [sim.grain] table the camera draws what it drew before the grain
+// model: the hash was recorded on the code before that change, with noise on
+// so the noise path is held too.
+TEST(SimTrayCamera, NoGrainTableIsTodaysPicture) {
+  ManualClock clock;
+  TraySight sight = sight_at(15, 20);
+  CameraConfig c = config(0.1, -0.05);
+  c.sim_noise = 0.02;
+  c.sim_grain_offset_mm = {0.2, 0.1};
+  c.sim_glow_drift_mm_per_s = {0.02, -0.01};
+  SimTrayCamera camera(c, [&] { return sight; }, clock);
+  std::uint64_t h = 14695981039346656037ULL;
+  const auto take = [&] {
+    auto frame = camera.grab();
+    ASSERT_TRUE(frame);
+    h = fold(h, *frame);
+  };
+  take();  // the tray
+  sight.firing = true;
+  sight.output_percent = 20;
+  take();
+  clock.advance(3s);
+  take();
+  sight.stage = {15.1, 20.05};
+  clock.advance(2s);
+  take();
+  sight.firing = false;
+  take();
+  EXPECT_EQ(h, 9287573347953853465ULL);
+}
+
+// The simulated grain (the dragonfly grain simulator design, section 5).
+namespace {
+
+CameraConfig grain_config(const vision::GrainParams& grain, double gx = 0, double gy = 0) {
+  CameraConfig c = config();
+  c.sim_grain = grain;
+  c.sim_grain_offset_mm = {gx, gy};
+  return c;
+}
+
+TraySight firing_at(double x, double y, double percent = 20) {
+  TraySight s = sight_at(x, y);
+  s.firing = true;
+  s.output_percent = percent;
+  return s;
+}
+
+// Grabs every 100 ms for `seconds` of the clock.
+void run(SimTrayCamera& camera, ManualClock& clock, double seconds) {
+  for (int i = 0; i < static_cast<int>(seconds * 10); ++i) {
+    ASSERT_TRUE(camera.grab());
+    clock.advance(100ms);
+  }
+}
+
+std::uint64_t hash_of(const vision::Frame& frame) { return fold(14695981039346656037ULL, frame); }
+
+}  // namespace
+
+TEST(SimTrayCamera, GrainGlowsWhereTheModelSays) {
+  ManualClock clock;
+  TraySight sight = firing_at(15, 20);  // the beam on the hole's center
+  SimTrayCamera camera(grain_config({}, 0.2, 0.1), [&] { return sight; }, clock);
+  run(camera, clock, 5);
+  auto frame = camera.grab();
+  ASSERT_TRUE(frame);
+  const auto view = camera.observe();
+  ASSERT_TRUE(view);
+  EXPECT_NEAR(view->grain_mm.x, 15.2, 1e-9);
+  EXPECT_NEAR(view->grain_mm.y, 20.1, 1e-9);
+  EXPECT_GT(view->truth.heat, 0.8);
+  int bx = 0, by = 0;
+  std::uint16_t best = 0;
+  for (int y = 0; y < frame->height; ++y) {
+    for (int x = 0; x < frame->width; ++x) {
+      if (frame->at(x, y) > best) {
+        best = frame->at(x, y);
+        bx = x;
+        by = y;
+      }
+    }
+  }
+  EXPECT_NEAR(bx, 99.5 + 0.2 * 23, 1.0);
+  EXPECT_NEAR(by, 99.5 - 0.1 * 23, 1.0);  // image y is down
+}
+
+TEST(SimTrayCamera, BeamParkedOffTheGrainGoesDark) {
+  ManualClock clock;
+  TraySight sight = firing_at(17, 20);  // 2 mm from the hole, which is still in view
+  SimTrayCamera camera(grain_config({}, 0.2, 0.1), [&] { return sight; }, clock);
+  run(camera, clock, 10);
+  auto frame = camera.grab();
+  ASSERT_TRUE(frame);
+  const auto top = *std::max_element(frame->data.begin(), frame->data.end());
+  EXPECT_LT(top, 0.05 * 255);  // the background is 0.02
+  const auto view = camera.observe();
+  ASSERT_TRUE(view);
+  EXPECT_LT(view->truth.heat, 1e-3);
+}
+
+TEST(SimTrayCamera, ObserveMovesTheModelWithoutDrawing) {
+  ManualClock clock;
+  TraySight sight = firing_at(15, 20);
+  SimTrayCamera camera(grain_config({}), [&] { return sight; }, clock);
+  auto first = camera.grab();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->seq, 1u);
+  clock.advance(500ms);
+  const auto early = camera.observe();
+  ASSERT_TRUE(early);
+  clock.advance(500ms);
+  const auto later = camera.observe();
+  ASSERT_TRUE(later);
+  EXPECT_GT(early->truth.heat, 0);
+  EXPECT_GT(later->truth.heat, early->truth.heat);
+  EXPECT_NEAR(later->beam_mm.x, 15, 1e-12);
+  auto second = camera.grab();
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second->seq, 2u);  // the looks drew nothing
+}
+
+TEST(SimTrayCamera, ObserveWithoutAGrainTableIsEmpty) {
+  ManualClock clock;
+  TraySight sight = firing_at(15, 20);
+  SimTrayCamera camera(config(), [&] { return sight; }, clock);
+  EXPECT_FALSE(camera.observe());
+  TraySight bare;  // no tray, no holes
+  SimTrayCamera none(grain_config({}), [&] { return bare; }, clock);
+  EXPECT_FALSE(none.observe());
+}
+
+TEST(SimTrayCamera, ObserveThenGrabEqualsGrab) {
+  vision::GrainParams p;
+  p.flicker = 0.3;
+  p.flares_per_s = 2;
+  p.lobes = 3;
+  p.lobe_spread_mm = 0.2;
+  p.lobe_wander_mm_per_rt_s = 0.2;
+  p.wander_mm_per_rt_s = 0.1;
+  p.jumps_per_s = 0.5;
+  p.dropouts_per_s = 0.3;
+  ManualClock clock_a, clock_b;
+  TraySight sight_a = firing_at(15, 20), sight_b = firing_at(15, 20);
+  CameraConfig c = grain_config(p, 0.1, 0);
+  c.sim_noise = 0.02;
+  SimTrayCamera a(c, [&] { return sight_a; }, clock_a);
+  SimTrayCamera b(c, [&] { return sight_b; }, clock_b);
+  for (int i = 0; i < 30; ++i) {
+    auto fa = a.grab();
+    auto fb = b.grab();
+    ASSERT_TRUE(fa);
+    ASSERT_TRUE(fb);
+    EXPECT_EQ(hash_of(*fa), hash_of(*fb)) << "grab " << i;
+    clock_a.advance(130ms);
+    clock_b.advance(70ms);
+    ASSERT_TRUE(b.observe());  // b looks in between; the beam does not move
+    clock_b.advance(60ms);
+  }
+}
+
+TEST(SimTrayCamera, ANewHoleIsANewGrain) {
+  vision::GrainParams p;
+  p.wander_mm_per_rt_s = 1;
+  p.jumps_per_s = 2;
+  ManualClock clock;
+  TraySight sight = firing_at(10, 20);  // the first hole
+  SimTrayCamera camera(grain_config(p, 0.1, 0.05), [&] { return sight; }, clock);
+  ASSERT_TRUE(camera.observe());
+  clock.advance(5s);
+  const auto first = camera.observe();
+  ASSERT_TRUE(first);
+  EXPECT_GT(first->truth.heat, 0.5);
+  EXPECT_GT(std::hypot(first->truth.center_mm.x - 0.1, first->truth.center_mm.y - 0.05), 1e-6);  // it moved
+  sight = firing_at(20, 20);  // the third
+  const auto other = camera.observe();
+  ASSERT_TRUE(other);
+  EXPECT_DOUBLE_EQ(other->truth.heat, 0);
+  EXPECT_NEAR(other->grain_mm.x, 20.1, 1e-9);
+  EXPECT_NEAR(other->grain_mm.y, 20.05, 1e-9);
+  clock.advance(2s);
+  sight = firing_at(10, 20);  // and back to the first
+  const auto back = camera.observe();
+  ASSERT_TRUE(back);
+  EXPECT_DOUBLE_EQ(back->truth.heat, 0);
+  EXPECT_NEAR(back->truth.center_mm.x, 0.1, 1e-12);
+  EXPECT_NEAR(back->truth.center_mm.y, 0.05, 1e-12);
+}
+
+TEST(SimTrayCamera, GrainSeedsDiffer) {
+  vision::GrainParams p;
+  p.lobes = 3;
+  p.lobe_spread_mm = 0.3;
+  p.flares_per_s = 2;
+  p.flicker = 0.3;
+  const auto frames_of = [&](std::uint64_t seed) {
+    ManualClock clock;
+    TraySight sight = firing_at(15, 20);
+    CameraConfig c = grain_config(p, 0.05, 0);
+    c.sim_noise = 0;  // only the model can make a difference
+    SimTrayCamera camera(c, [&] { return sight; }, clock);
+    camera.set_grain_seed(seed);
+    std::uint64_t h = 0;
+    for (int i = 0; i < 20; ++i) {
+      auto frame = camera.grab();
+      EXPECT_TRUE(frame);
+      h = h * 31 + hash_of(*frame);
+      clock.advance(100ms);
+    }
+    return h;
+  };
+  EXPECT_EQ(frames_of(1), frames_of(1));
+  EXPECT_EQ(frames_of(2), frames_of(2));
+  EXPECT_NE(frames_of(1), frames_of(2));
+}
+
+TEST(SimTrayCamera, AimOffsetIsWhereTheBeamIs) {
+  CameraConfig c = grain_config({}, 0.2, 0.1);
+  c.aim_offset_px = {23, 0};  // the beam is about 1 mm from the image's center
+  const vision::Vec2 aim = c.map().to_mm({23, 0});
+  ASSERT_GT(std::hypot(aim.x, aim.y), 0.5);
+  const auto heat_with_stage_at = [&](double x, double y) {
+    ManualClock clock;
+    TraySight sight = firing_at(x, y);
+    SimTrayCamera camera(c, [&] { return sight; }, clock);
+    run(camera, clock, 5);
+    const auto view = camera.observe();
+    EXPECT_TRUE(view);
+    return view->truth.heat;
+  };
+  // the aim point is on the grain
+  EXPECT_GT(heat_with_stage_at(15.2 - aim.x, 20.1 - aim.y), 0.9);
+  // the stage is centered on the grain, so the aim point is about 1 mm away
+  EXPECT_LT(heat_with_stage_at(15.2, 20.1), 0.2);
 }

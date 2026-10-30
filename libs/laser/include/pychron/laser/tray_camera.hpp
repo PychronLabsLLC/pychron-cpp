@@ -24,6 +24,7 @@
 #include "pychron/core/error.hpp"
 #include "pychron/laser/calibration.hpp"
 #include "pychron/laser/camera.hpp"
+#include "pychron/vision/grain.hpp"
 #include "pychron/vision/source.hpp"
 #include "pychron/vision/synth.hpp"
 
@@ -40,6 +41,13 @@ struct TraySight {
 };
 using TraySightFn = std::function<TraySight()>;
 
+// Where the simulated grain really is, and the beam, in stage mm.
+struct GrainView {
+  StageXY grain_mm;
+  StageXY beam_mm;
+  vision::GrainTruth truth;  // relative to the hole's center
+};
+
 class SimTrayCamera final : public vision::IFrameSource {
  public:
   // `sight` is asked at every grab; `clock` stamps the frames. Both must
@@ -55,7 +63,32 @@ class SimTrayCamera final : public vision::IFrameSource {
   // Of the hole in the most recent frame; not visible when there was none.
   vision::Truth last_truth() const { return truth_; }
 
+  // With a [sim.grain] table (CameraConfig::sim_grain) the glow is a
+  // vision::GrainModel that heats where the beam is, flares and moves
+  // (the dragonfly grain simulator design, section 5). The beam is the stage
+  // plus the aim offset. A new nearest hole is a new grain, its seed mixed
+  // with the hole's index.
+  //
+  // The seed of the grain, before the first grab; 1 until then.
+  void set_grain_seed(std::uint64_t seed) { grain_seed_ = seed; }
+  // Runs the model up to the clock's now without drawing a frame, and says
+  // where the grain and the beam are. Empty without a [sim.grain] table or
+  // with no hole in the tray. A grab after it gives the frame it would have
+  // given without it.
+  std::optional<GrainView> observe();
+
  private:
+  struct Nearest {
+    const StageXY* hole = nullptr;  // in the sight's list
+    std::size_t index = 0;
+    double distance_mm = 0;
+  };
+  static Nearest nearest_hole(const TraySight& sight, StageXY error);
+  // Brings the model to `now` for the hole nearest the stage: made new when
+  // that is another hole than the model's. The hole's real position (stage
+  // mm) is `real`. One place for grab() and observe(), so both move the
+  // model by the same dt.
+  void advance_grain(const TraySight& sight, StageXY real, std::size_t index, TimePoint now);
   CameraConfig config_;
   TraySightFn sight_;
   const Clock& clock_;
@@ -63,6 +96,10 @@ class SimTrayCamera final : public vision::IFrameSource {
   std::uint64_t seq_ = 0;
   StageXY crept_{};                      // how far the grain has drifted under the beam
   std::optional<TimePoint> lit_since_;   // the last grab with the beam on
+  std::optional<vision::GrainModel> grain_;
+  std::size_t grain_hole_ = 0;           // index of the hole grain_ lies in
+  TimePoint grain_at_{};                 // how far grain_ has been run
+  std::uint64_t grain_seed_ = 1;
 };
 
 // A live source (opencv, pylon) comes behind a vision::LiveFeed, which goes

@@ -22,6 +22,19 @@
 //   glow_drift_mm_per_s = [0.01, 0]   how it creeps while heated
 //   glow_sigma_mm = 0.3               the size of the glow
 //
+//   [co2.sim.grain]           a grain that heats under the beam, flares,
+//                             wanders and jumps (the dragonfly grain
+//                             simulator design, section 3). Present: it
+//                             replaces glow_sigma_mm and glow_drift_mm_per_s,
+//                             which then are a Config error;
+//                             grain_offset_mm still places the grain. Every
+//                             key is optional and its default is off:
+//   # beam_radius_mm, reference_output_percent, heat_tau_s, cool_tau_s,
+//   # glow_exponent, glow_peak, lobes, lobe_sigma_mm, lobe_spread_mm,
+//   # lobe_wander_mm_per_rt_s, lobe_life_s, flicker, flicker_tau_s,
+//   # flares_per_s, flare_gain, flare_tau_s, dropouts_per_s, dropout_s,
+//   # creep_mm_per_s, wander_mm_per_rt_s, jumps_per_s, jump_mm
+//
 //   [co2.autocenter]
 //   tolerance_mm = 0.03
 //   max_iterations = 4
@@ -68,6 +81,7 @@
 #include "pychron/laser/calibration.hpp"
 #include "pychron/vision/calibration.hpp"
 #include "pychron/vision/camera_backend.hpp"
+#include "pychron/vision/grain.hpp"
 
 namespace pychron::laser {
 
@@ -111,6 +125,9 @@ struct CameraConfig {
   StageXY sim_grain_offset_mm{};
   StageXY sim_glow_drift_mm_per_s{};
   double sim_glow_sigma_mm = 0.3;
+  // Present: the grain is a vision::GrainModel (sim_glow_sigma_mm and
+  // sim_glow_drift_mm_per_s are then unused, and refused together with it).
+  std::optional<vision::GrainParams> sim_grain;
 
   double tolerance_mm = 0.03;
   double max_step_mm = 0.5;

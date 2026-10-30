@@ -456,3 +456,80 @@ TEST(Dragonfly, ACameraLostIsSaidEvenIfThePatternIsStoppedAfter) {
   const std::string note = rig.runner().last_note();
   EXPECT_NE(note.find("camera"), std::string::npos) << note;
 }
+
+// A grain that heats where the beam is, from [sim.grain]. The closed loop:
+// the tracker is followed against the model's own truth.
+namespace {
+
+CameraConfig grain_camera(const vision::GrainParams& grain, double gx, double gy) {
+  CameraConfig c = camera_config(0, 0);
+  c.sim_grain = grain;
+  c.sim_grain_offset_mm = {gx, gy};
+  return c;
+}
+
+// Rig's start (hole 3, beam on at 20 %), over a harness that keeps its
+// SimTrayCamera, so the test can ask where the grain really is.
+struct GrainRig : CameraHarness {
+  explicit GrainRig(CameraConfig seen) : CameraHarness(std::move(seen)) {
+    EXPECT_TRUE(system.move_to_position("3", false));
+    EXPECT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
+    EXPECT_TRUE(system.enable());
+    EXPECT_TRUE(system.extract(20, ExtractUnits::Percent));
+    EXPECT_TRUE(system.laser()->fire_laser());
+  }
+  IPatternRunner& runner() { return *system.pattern_runner(); }
+  Result<bool> poll() {  // as Rig::run_for: one poll, then 100 ms of clock
+    auto busy = runner().running();
+    if (busy && *busy) clock.advance(100ms);
+    return busy;
+  }
+};
+
+}  // namespace
+
+TEST(Dragonfly, FollowsAGrainThatJumps) {
+  vision::GrainParams p;
+  p.jumps_per_s = 0.2;
+  p.jump_mm = 0.15;
+  GrainRig rig(grain_camera(p, 0.1, 0));
+  ASSERT_NE(rig.sim_camera, nullptr);
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  std::optional<StageXY> last_grain;
+  std::optional<TimePoint> jumped;  // the jump the beam has yet to get back from
+  int jumps = 0;
+  for (;;) {
+    auto busy = rig.poll();
+    ASSERT_TRUE(busy) << busy.error().what;
+    if (!*busy) break;
+    const auto view = rig.sim_camera->observe();
+    ASSERT_TRUE(view);
+    const TimePoint now = rig.clock.now();
+    if (last_grain && apart(view->grain_mm, *last_grain) > 0.05) {  // a jump, not a creep: nothing else moves it
+      ++jumps;
+      jumped = now;
+    }
+    last_grain = view->grain_mm;
+    if (jumped && apart(view->beam_mm, view->grain_mm) <= 0.12) jumped.reset();
+    if (jumped) {
+      EXPECT_LE(now - *jumped, Duration(5s)) << "after the jump at " << jumps;
+    }
+  }
+  EXPECT_GE(jumps, 2);  // the seed gives it something to follow
+}
+
+TEST(Dragonfly, ReacquiresAfterADropout) {
+  vision::GrainParams p;
+  p.dropouts_per_s = 0.1;
+  p.dropout_s = 2;
+  GrainRig rig(grain_camera(p, 0.1, 0));
+  const TimePoint started = rig.clock.now();
+  ASSERT_TRUE(rig.runner().execute_pattern("track"));
+  Result<bool> busy = true;
+  while (busy && *busy && rig.clock.now() - started < Duration(600s)) busy = rig.poll();
+  ASSERT_TRUE(busy) << busy.error().what;
+  EXPECT_FALSE(*busy);
+  EXPECT_EQ(rig.runner().last_note(), "");
+  EXPECT_GE(rig.clock.now() - started, Duration(20s));
+  EXPECT_LT(rig.clock.now() - started, Duration(23s));
+}

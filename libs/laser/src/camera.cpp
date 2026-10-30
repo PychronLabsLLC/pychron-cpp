@@ -140,6 +140,37 @@ class Reader {
   std::set<std::string, std::less<>> seen_;
 };
 
+// [<device>.sim.grain]: each key with its range (the dragonfly grain
+// simulator design, section 3).
+void read_grain(Reader& g, vision::GrainParams& p) {
+  g.number("beam_radius_mm", p.beam_radius_mm, 0, 100, true);
+  g.number("reference_output_percent", p.reference_output_percent, 0, 100, true);
+  g.number("heat_tau_s", p.heat_tau_s, 0.01, 60);
+  g.number("cool_tau_s", p.cool_tau_s, 0.01, 60);
+  g.number("glow_exponent", p.glow_exponent, 1, 12);
+  g.number("glow_peak", p.glow_peak, 0, 5, true);
+  g.whole("lobes", p.lobes, 1, 16);
+  g.number("lobe_sigma_mm", p.lobe_sigma_mm, 0, 100, true);
+  g.number("lobe_spread_mm", p.lobe_spread_mm, 0, 100);
+  g.number("lobe_wander_mm_per_rt_s", p.lobe_wander_mm_per_rt_s, 0, 10);
+  g.number("lobe_life_s", p.lobe_life_s, 0, 600);
+  if (g.ok() && p.lobe_life_s != 0 && p.lobe_life_s < 0.1) g.fail("lobe_life_s", "must be 0 or from 0.1 to 600");
+  g.number("flicker", p.flicker, 0, 1);
+  g.number("flicker_tau_s", p.flicker_tau_s, 0.01, 60);
+  g.number("flares_per_s", p.flares_per_s, 0, 50);
+  g.number("flare_gain", p.flare_gain, 1, 100);
+  g.number("flare_tau_s", p.flare_tau_s, 0.01, 60);
+  g.number("dropouts_per_s", p.dropouts_per_s, 0, 50);
+  g.number("dropout_s", p.dropout_s, 0.01, 60);
+  StageXY creep{p.creep_mm_per_s.x, p.creep_mm_per_s.y};
+  g.pair("creep_mm_per_s", creep);
+  p.creep_mm_per_s = {creep.x, creep.y};
+  g.number("wander_mm_per_rt_s", p.wander_mm_per_rt_s, 0, 10);
+  g.number("jumps_per_s", p.jumps_per_s, 0, 50);
+  g.number("jump_mm", p.jump_mm, 0, 100, true);
+  g.finish();
+}
+
 // Empty when `table` is a camera; else what is wrong with it.
 std::string read_camera(const toml::table& table, CameraConfig& c) {
   Reader r(table, c.device);
@@ -175,6 +206,17 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
     s.pair("grain_offset_mm", c.sim_grain_offset_mm);
     s.pair("glow_drift_mm_per_s", c.sim_glow_drift_mm_per_s);
     s.number("glow_sigma_mm", c.sim_glow_sigma_mm, 0, 100, true);
+    if (const toml::table* grain = s.sub("grain")) {
+      // Two grains would be drawn: the old keys describe the first.
+      for (const char* old : {"glow_sigma_mm", "glow_drift_mm_per_s"}) {
+        if (sim->contains(old)) s.fail(old, std::string("cannot be set with ") + c.device + ".sim.grain, which is the grain");
+      }
+      Reader g(*grain, c.device + ".sim.grain");
+      vision::GrainParams params;
+      read_grain(g, params);
+      s.adopt(g);
+      c.sim_grain = params;
+    }
     s.finish();
     r.adopt(s);
   }

@@ -67,6 +67,35 @@ noise = 0.01
 grain_offset_mm = [0.2, 0.1]
 glow_drift_mm_per_s = [0.0, 0.0]
 
+# A grain that heats under the beam, flares, wanders and jumps, instead of
+# the steady glow above (glow_sigma_mm and glow_drift_mm_per_s then cannot be
+# set; grain_offset_mm still places the grain). Every key is optional and its
+# default is off. The numbers are judgement, not measurement: they test a
+# tracker against stated behaviour, they prove nothing about a real grain.
+# [co2.sim.grain]
+# beam_radius_mm = 0.4             overlap's width
+# reference_output_percent = 20    output where heat reaches 1
+# heat_tau_s = 0.5                 lag rising
+# cool_tau_s = 1.0                 lag falling
+# glow_exponent = 4                how steeply glow follows heat
+# glow_peak = 0.6                  peak at heat 1
+# lobes = 1                        lobe slots, 1 to 16
+# lobe_sigma_mm = 0.3              size of one lobe
+# lobe_spread_mm = 0               how far lobes sit from the grain's center
+# lobe_wander_mm_per_rt_s = 0      a lobe's random walk
+# lobe_life_s = 0                  mean life of a lobe; 0: they never die
+# flicker = 0                      brightness's slow flutter, 0 to 1
+# flicker_tau_s = 0.3
+# flares_per_s = 0                 mean rate of flares
+# flare_gain = 3                   brightness multiple at a flare's top
+# flare_tau_s = 0.3
+# dropouts_per_s = 0               mean rate of the glow going dark
+# dropout_s = 0.5                  how long dark
+# creep_mm_per_s = [0, 0]          steady creep at heat 1
+# wander_mm_per_rt_s = 0           the grain's random walk at heat 1
+# jumps_per_s = 0                  mean rate, while heat is 0.5 or more
+# jump_mm = 0.3                    mean size of a jump
+
 [co2.autocenter]
 tolerance_mm = 0.03
 max_iterations = 4

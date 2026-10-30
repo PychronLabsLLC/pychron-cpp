@@ -385,3 +385,82 @@ TEST(CameraUse, ACameraForLookingNeverClosesTheLoop) {
     }
   }
 }
+
+TEST(CameraLibrary, ReadsSimGrain) {
+  const auto lib = parse(R"toml(
+[co2.sim.grain]
+flares_per_s = 1
+lobes = 5
+creep_mm_per_s = [0.01, -0.02]
+lobe_life_s = 4
+jump_mm = 0.2
+)toml");
+  ASSERT_TRUE(lib.problems().empty()) << lib.problems().front();
+  const CameraConfig* c = lib.find("co2");
+  ASSERT_NE(c, nullptr);
+  ASSERT_TRUE(c->sim_grain);
+  EXPECT_DOUBLE_EQ(c->sim_grain->flares_per_s, 1);
+  EXPECT_EQ(c->sim_grain->lobes, 5);
+  EXPECT_DOUBLE_EQ(c->sim_grain->creep_mm_per_s.x, 0.01);
+  EXPECT_DOUBLE_EQ(c->sim_grain->creep_mm_per_s.y, -0.02);
+  EXPECT_DOUBLE_EQ(c->sim_grain->lobe_life_s, 4);
+  EXPECT_DOUBLE_EQ(c->sim_grain->jump_mm, 0.2);
+  EXPECT_DOUBLE_EQ(c->sim_grain->heat_tau_s, 0.5);  // a default stays
+
+  const auto none = parse("[co2]\n[co2.sim]\nnoise = 0.02\n");
+  ASSERT_NE(none.find("co2"), nullptr);
+  EXPECT_FALSE(none.find("co2")->sim_grain);
+  const auto empty = parse("[co2.sim.grain]\n");  // a table with no keys is still a grain
+  ASSERT_NE(empty.find("co2"), nullptr);
+  EXPECT_TRUE(empty.find("co2")->sim_grain);
+}
+
+TEST(CameraLibrary, SimGrainRangesAndUnknownKeys) {
+  struct Bad {
+    const char* text;
+    const char* key;
+  };
+  const std::vector<Bad> bad = {
+      {"[co2.sim.grain]\nlobes = 17\n", "co2.sim.grain.lobes"},
+      {"[co2.sim.grain]\nlobes = 0\n", "co2.sim.grain.lobes"},
+      {"[co2.sim.grain]\nlobes = 2.5\n", "co2.sim.grain.lobes"},
+      {"[co2.sim.grain]\nbeam_radius_mm = 0\n", "co2.sim.grain.beam_radius_mm"},
+      {"[co2.sim.grain]\nheat_tau_s = 0.001\n", "co2.sim.grain.heat_tau_s"},
+      {"[co2.sim.grain]\nglow_exponent = 0.5\n", "co2.sim.grain.glow_exponent"},
+      {"[co2.sim.grain]\nlobe_life_s = 0.05\n", "co2.sim.grain.lobe_life_s"},
+      {"[co2.sim.grain]\nlobe_life_s = 601\n", "co2.sim.grain.lobe_life_s"},
+      {"[co2.sim.grain]\nlobe_life_s = -1\n", "co2.sim.grain.lobe_life_s"},
+      {"[co2.sim.grain]\nflicker = 1.5\n", "co2.sim.grain.flicker"},
+      {"[co2.sim.grain]\nflares_per_s = 51\n", "co2.sim.grain.flares_per_s"},
+      {"[co2.sim.grain]\ncreep_mm_per_s = [1]\n", "co2.sim.grain.creep_mm_per_s"},
+      {"[co2.sim.grain]\nwander_mm_per_rt_s = 11\n", "co2.sim.grain.wander_mm_per_rt_s"},
+      {"[co2.sim.grain]\njump_mm = 0\n", "co2.sim.grain.jump_mm"},
+      {"[co2.sim.grain]\nwobble = 1\n", "co2.sim.grain.wobble"},
+      {"[co2.sim]\ngrain = 3\n", "co2.sim.grain"},
+  };
+  for (const auto& b : bad) {
+    const auto lib = parse(b.text);
+    ASSERT_EQ(lib.problems().size(), 1u) << b.text;
+    EXPECT_NE(lib.problems().front().find(b.key), std::string::npos) << lib.problems().front();
+    EXPECT_EQ(lib.find("co2"), nullptr) << b.text;
+  }
+  // 0 is the other value lobe_life_s may take; 0.1 and 600 are its ends
+  for (const char* life : {"0", "0.1", "600"}) {
+    const auto lib = parse(std::string("[co2.sim.grain]\nlobe_life_s = ") + life + "\n");
+    EXPECT_TRUE(lib.problems().empty()) << life;
+  }
+}
+
+TEST(CameraLibrary, GrainAndOldGlowKeysConflict) {
+  for (const char* old : {"glow_sigma_mm = 0.3", "glow_drift_mm_per_s = [0.01, 0]"}) {
+    const auto lib = parse(std::string("[co2.sim]\n") + old + "\n[co2.sim.grain]\nflares_per_s = 1\n");
+    ASSERT_EQ(lib.problems().size(), 1u) << old;
+    const std::string& why = lib.problems().front();
+    EXPECT_NE(why.find("grain"), std::string::npos) << why;
+    EXPECT_NE(why.find(std::string(old).substr(0, std::string(old).find(' '))), std::string::npos) << why;
+    EXPECT_EQ(lib.find("co2"), nullptr);
+  }
+  // grain_offset_mm still places the grain
+  const auto ok = parse("[co2.sim]\ngrain_offset_mm = [0.2, 0.1]\n[co2.sim.grain]\n");
+  EXPECT_TRUE(ok.problems().empty());
+}
