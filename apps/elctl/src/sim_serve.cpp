@@ -12,7 +12,9 @@
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/canvas/loader.hpp"
 #include "pychron/systems/line_server.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
 #include "pychron/transport/endpoints.hpp"
+#include "exp.hpp"
 
 namespace elctl {
 
@@ -24,6 +26,7 @@ using namespace pychron;
 
 constexpr const char* kServeUsage =
     "usage: elctl sim serve [--config <extraction_line.toml>] [--canvas <canvas.toml>]\n"
+    "                       [--spectrometer <spectrometer.toml> | --no-spectrometer]\n"
     "                       [--bind <addr>] [--advertise <host>] [--port-base <n>] [--endpoints <file>]\n";
 
 int usage(Io io, const std::string& message) {
@@ -42,8 +45,10 @@ void print_table(const systems::LineServer& server, std::ostream& out) {
   out << std::left << std::setw(22) << "transport" << std::setw(10) << "protocol" << std::setw(7) << "port"
       << "emulator\n";
   for (const auto& s : server.served()) {
-    out << std::setw(22) << s.name << std::setw(10) << protocol_name(s.protocol) << std::setw(7) << s.port
-        << (s.emulator.empty() ? "(silent)" : s.emulator) << '\n';
+    out << std::setw(22) << (s.spectrometer ? s.name + " (spectrometer)" : s.name) << std::setw(10)
+        << protocol_name(s.protocol) << std::setw(7) << s.port << (s.emulator.empty() ? "(silent)" : s.emulator);
+    if (!s.shares.empty()) out << ", shares " << s.shares;
+    out << '\n';
   }
   for (const auto& name : server.in_process()) {
     out << std::setw(22) << name << std::setw(10) << "-" << std::setw(7) << "-" << "in-process, not joined\n";
@@ -57,16 +62,26 @@ void print_table(const systems::LineServer& server, std::ostream& out) {
 }  // namespace
 
 int sim_serve_command(const std::vector<std::string>& args, const fs::path& line_file, const fs::path& install_canvas,
-                      Io io, const std::function<bool()>& stop) {
+                      const fs::path& install_spectrometer, Io io, const std::function<bool()>& stop) {
   fs::path line = line_file;
   std::optional<fs::path> canvas_file;
   if (!install_canvas.empty()) canvas_file = install_canvas;
   std::optional<fs::path> endpoints_file;
+  std::optional<fs::path> spectrometer_file;
+  {
+    std::error_code ec;
+    if (!install_spectrometer.empty() && fs::is_regular_file(install_spectrometer, ec))
+      spectrometer_file = install_spectrometer;
+  }
   systems::LineServerOptions options;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& a = args[i];
     const bool has_value = i + 1 < args.size();
-    if (a == "--config" || a == "--canvas" || a == "--bind" || a == "--advertise" || a == "--port-base" ||
+    if (a == "--no-spectrometer") {
+      spectrometer_file.reset();
+      continue;
+    }
+    if (a == "--config" || a == "--canvas" || a == "--spectrometer" || a == "--bind" || a == "--advertise" || a == "--port-base" ||
         a == "--endpoints") {
       if (!has_value) return usage(io, a + " needs a value");
       const std::string& v = args[++i];
@@ -74,6 +89,8 @@ int sim_serve_command(const std::vector<std::string>& args, const fs::path& line
         line = v;
       } else if (a == "--canvas") {
         canvas_file = v;
+      } else if (a == "--spectrometer") {
+        spectrometer_file = v;
       } else if (a == "--bind") {
         options.bind = v;
       } else if (a == "--advertise") {
@@ -115,6 +132,19 @@ int sim_serve_command(const std::vector<std::string>& args, const fs::path& line
     auto beside = systems::sim_file_beside(line, canvas_model.has_value());
     options.sim.sim_file = std::move(beside.read);
     options.sim.sim_beside_skipped = std::move(beside.skipped);
+  }
+  if (spectrometer_file) {
+    auto tables = spectrometer_table_root(*spectrometer_file);
+    if (!tables) {
+      io.err << "error: " << to_string(tables.error()) << '\n';
+      return kFailed;
+    }
+    auto data = spectrometer::cfg::load_spectrometer(*spectrometer_file, *tables);
+    if (!data) {
+      io.err << "error: " << to_string(data.error()) << '\n';
+      return kFailed;
+    }
+    options.spectrometer = std::move(*data);
   }
   if (!is_loopback(options.bind)) {
     io.err << "warning: serving on " << options.bind

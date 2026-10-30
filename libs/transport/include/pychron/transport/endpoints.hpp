@@ -69,6 +69,12 @@ Result<SimEndpoints> load_sim_endpoints(const std::filesystem::path& file,
 Result<std::map<std::string, Endpoint>> load_spectrometer_endpoints(const std::filesystem::path& file,
                                                                     const std::filesystem::path& loaded_spectrometer,
                                                                     bool any);
+// What a client's spectrometer connects to: the spectrometer section when the
+// file serves one (checked as load_spectrometer_endpoints), else none, so a
+// spectrometer transport on the wire has no entry and fails its load.
+Result<std::map<std::string, Endpoint>> client_spectrometer_endpoints(const std::filesystem::path& file,
+                                                                      const std::filesystem::path& loaded_spectrometer,
+                                                                      bool any);
 // sim-endpoints.toml beside the line's file.
 std::filesystem::path default_sim_endpoints_path(const std::filesystem::path& line_file);
 

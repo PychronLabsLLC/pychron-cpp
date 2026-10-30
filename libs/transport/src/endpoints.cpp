@@ -168,6 +168,14 @@ Result<std::map<std::string, Endpoint>> load_spectrometer_endpoints(const fs::pa
   return std::move(endpoints->spectrometer_transports);
 }
 
+Result<std::map<std::string, Endpoint>> client_spectrometer_endpoints(const fs::path& file,
+                                                                      const fs::path& loaded_spectrometer, bool any) {
+  auto endpoints = read_sim_endpoints(file);
+  if (!endpoints) return fail(endpoints.error());
+  if (endpoints->spectrometer.empty()) return std::map<std::string, Endpoint>{};
+  return load_spectrometer_endpoints(file, loaded_spectrometer, any);
+}
+
 fs::path default_sim_endpoints_path(const fs::path& line_file) {
   return line_file.parent_path() / "sim-endpoints.toml";
 }

@@ -626,13 +626,11 @@ int main(int argc, char** argv) {
     auto fed = pychron::spectrometer::BeamFeed::LineGas;
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
       if (!table_root) return pychron::fail(table_root.error());
-      // The line, loaded above, has checked that the file serves it.
       std::shared_ptr<const std::map<std::string, pychron::Endpoint>> served_endpoints;
       if (cli->sim_endpoints) {
-        auto served = pychron::load_sim_endpoints(*cli->sim_endpoints, system_file, true);
+        auto served = pychron::client_spectrometer_endpoints(*cli->sim_endpoints, file, cli->sim_endpoints_any);
         if (!served) return pychron::fail(served.error());
-        served_endpoints =
-            std::make_shared<const std::map<std::string, pychron::Endpoint>>(std::move(served->transports));
+        served_endpoints = std::make_shared<const std::map<std::string, pychron::Endpoint>>(std::move(*served));
       }
       auto data = pychron::spectrometer::cfg::load_spectrometer(file, spectrometer_tables);
       if (!data) return pychron::fail(data.error());

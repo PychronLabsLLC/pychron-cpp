@@ -318,7 +318,7 @@ class Session {
       if (in_repl_) return usage("sim serve is not run from a sim session");
       interrupt_count() = 0;
       return sim_serve_command(std::vector<std::string>(args.begin() + 1, args.end()), g_.config, g_.exp.canvas,
-                               io_, [] { return interrupt_count() > 0; });
+                               g_.exp.spectrometer, io_, [] { return interrupt_count() > 0; });
     }
     return usage("unknown command '" + cmd + "'");
   }

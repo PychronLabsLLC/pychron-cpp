@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "pychron/core/error.hpp"
 #include "cli.hpp"
 
 namespace pychron {
@@ -62,6 +63,9 @@ struct ExpGlobals {
 // user's examples folder (setup::lab_state_dir). Said once in the process
 // log when it is not the folder.
 std::filesystem::path state_dir_for(const std::filesystem::path& folder);
+// Where the field tables of the spectrometer file `spectrometer` are read
+// (setup::field_table_root of its folder).
+pychron::Result<std::filesystem::path> spectrometer_table_root(const std::filesystem::path& spectrometer);
 // The line's state file for `config`: <stem>.state.toml in
 // state_dir_for(its folder).
 std::filesystem::path line_state_file(const std::filesystem::path& config);

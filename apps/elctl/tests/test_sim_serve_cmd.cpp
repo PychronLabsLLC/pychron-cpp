@@ -42,11 +42,21 @@ class SimServeCmd : public elctl::testing::ElctlTest {
     int code = -1;
   };
 
-  void serve(Served& s, std::vector<std::string> args) {
-    s.thread = std::thread([this, &s, args = std::move(args)] {
-      s.code = elctl::sim_serve_command(args, path("extraction_line.toml"), {}, elctl::Io{s.in, s.out, s.err},
-                                        [&s] { return s.stop.load(); });
+  void serve(Served& s, std::vector<std::string> args, const fs::path& install_spectrometer = {}) {
+    s.thread = std::thread([this, &s, args = std::move(args), install_spectrometer] {
+      s.code = elctl::sim_serve_command(args, path("extraction_line.toml"), {}, install_spectrometer,
+                                        elctl::Io{s.in, s.out, s.err}, [&s] { return s.stop.load(); });
     });
+  }
+
+  // The example's Qtegra spectrometer and its tables, copied beside the line.
+  fs::path qtegra_spectrometer() const {
+    const fs::path examples = PYCHRON_EXAMPLE_CONFIGS_DIR;
+    fs::copy_file(examples / "spectrometer.qtegra.toml", path("spectrometer.toml"),
+                  fs::copy_options::overwrite_existing);
+    fs::copy(examples / "tables", path("tables"),
+             fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    return path("spectrometer.toml");
   }
 
   // Waits (real time, at most 5 s) for `file` to be there.
@@ -174,4 +184,43 @@ TEST_F(SimServeCmd, MissingEntryFailsTheCommand) {
   const auto o = run({"--sim-endpoints", path("ep.toml").string(), "read", "CG1"});
   EXPECT_NE(o.code, elctl::kOk);
   EXPECT_TRUE(contains(o.err, "has no entry in the sim endpoints file")) << o.err;
+}
+
+TEST_F(SimServeCmd, ServesTheSpectrometerWhenGiven) {
+  Served s;
+  serve(s, {"--spectrometer", qtegra_spectrometer().string()});
+  const auto file = path("sim-endpoints.toml");
+  ASSERT_TRUE(appears(file));
+  auto endpoints = pychron::read_sim_endpoints(file);
+  s.stop = true;
+  s.thread.join();
+  ASSERT_TRUE(endpoints) << endpoints.error().what;
+  EXPECT_EQ(endpoints->spectrometer, fs::weakly_canonical(path("spectrometer.toml")));
+  EXPECT_TRUE(endpoints->spectrometer_transports.contains("qtegra"));
+  EXPECT_EQ(s.code, elctl::kOk) << s.err.str();
+  EXPECT_TRUE(contains(s.out.str(), "qtegra (spectrometer)")) << s.out.str();
+}
+
+TEST_F(SimServeCmd, NoSpectrometerLeavesItOut) {
+  Served s;
+  serve(s, {"--no-spectrometer"}, qtegra_spectrometer());
+  const auto file = path("sim-endpoints.toml");
+  ASSERT_TRUE(appears(file));
+  auto endpoints = pychron::read_sim_endpoints(file);
+  s.stop = true;
+  s.thread.join();
+  ASSERT_TRUE(endpoints) << endpoints.error().what;
+  EXPECT_TRUE(endpoints->spectrometer.empty());
+}
+
+TEST_F(SimServeCmd, InstallSpectrometerServedByDefault) {
+  Served s;
+  serve(s, {}, qtegra_spectrometer());
+  const auto file = path("sim-endpoints.toml");
+  ASSERT_TRUE(appears(file));
+  auto endpoints = pychron::read_sim_endpoints(file);
+  s.stop = true;
+  s.thread.join();
+  ASSERT_TRUE(endpoints) << endpoints.error().what;
+  EXPECT_FALSE(endpoints->spectrometer.empty());
 }

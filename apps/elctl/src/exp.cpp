@@ -410,13 +410,12 @@ class Exp {
       spectrometer::SpectrometerAssembler::Options assembly;
       assembly.link_defaults = lab_.executor.link_defaults();
       if (!g_.sim_endpoints.empty()) {
-        // The line's file is what the endpoints serve, already checked by the line.
-        auto served = load_sim_endpoints(g_.sim_endpoints, g_.config, true);
+        auto served = client_spectrometer_endpoints(g_.sim_endpoints, a_.spectrometer, g_.sim_endpoints_any);
         if (!served) {
           complain("error: " + served.error().what);
           return kFailed;
         }
-        assembly.sim_endpoints = std::make_shared<const std::map<std::string, Endpoint>>(std::move(served->transports));
+        assembly.sim_endpoints = std::make_shared<const std::map<std::string, Endpoint>>(std::move(*served));
       }
       auto assembled = spectrometer::SpectrometerAssembler::assemble(
           std::move(data), spectrometer::SpectrometerContext{clock, (*line)->scheduler(), (*line)->bus()},
@@ -606,6 +605,11 @@ ExampleDirs example_dirs() {
 
 }  // namespace
 
+pychron::Result<fs::path> spectrometer_table_root(const fs::path& spectrometer) {
+  const ExampleDirs dirs = example_dirs();
+  return pychron::setup::field_table_root(spectrometer.parent_path(), dirs.examples, dirs.user);
+}
+
 fs::path state_dir_for(const fs::path& folder) {
   const fs::path where = folder.empty() ? fs::path(".") : folder;
   const ExampleDirs dirs = example_dirs();
@@ -709,8 +713,7 @@ int exp_command(const std::vector<std::string>& args, const ExpGlobals& globals,
   if (a.data.empty()) a.data = a.state / "data";
   if (a.spectrometer.empty() && fs::exists(a.lab / "spectrometer.toml")) a.spectrometer = a.lab / "spectrometer.toml";
   if (!a.spectrometer.empty()) {
-    const ExampleDirs dirs = example_dirs();
-    auto tables = pychron::setup::field_table_root(a.spectrometer.parent_path(), dirs.examples, dirs.user);
+    auto tables = spectrometer_table_root(a.spectrometer);
     if (!tables) {
       io.err << "error: " << tables.error().what << '\n';
       return kFailed;

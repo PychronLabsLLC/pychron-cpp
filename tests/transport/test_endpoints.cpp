@@ -164,3 +164,19 @@ TEST_F(SimEndpointsTest, LoadSpectrometerEndpointsRefusesFileServingNone) {
   ASSERT_FALSE(refused);
   EXPECT_NE(refused.error().what.find("serves no spectrometer"), std::string::npos) << refused.error().what;
 }
+
+TEST_F(SimEndpointsTest, ClientSpectrometerEndpointsEmptyWhenNoneServed) {
+  const auto file = dir_ / "sim-endpoints.toml";
+  ASSERT_TRUE(write_sim_endpoints(file, sample(dir_ / "extraction_line.toml")));
+  auto none = client_spectrometer_endpoints(file, dir_ / "spectrometer.toml", false);
+  ASSERT_TRUE(none) << none.error().what;
+  EXPECT_TRUE(none->empty());
+  auto endpoints = sample(dir_ / "extraction_line.toml");
+  endpoints.spectrometer = dir_ / "spectrometer.toml";
+  endpoints.spectrometer_transports["qtegra"] = Endpoint{"127.0.0.1", 40300, WireProtocol::Tcp, "thermo_qtegra"};
+  ASSERT_TRUE(write_sim_endpoints(file, endpoints));
+  EXPECT_FALSE(client_spectrometer_endpoints(file, dir_ / "other.toml", false));
+  auto served = client_spectrometer_endpoints(file, dir_ / "other.toml", true);
+  ASSERT_TRUE(served);
+  EXPECT_EQ(served->size(), 1U);
+}
