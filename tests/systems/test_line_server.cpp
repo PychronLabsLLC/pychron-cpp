@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -12,6 +13,8 @@
 #include "hardware_style.hpp"
 #include "pychron/core/config/loader.hpp"
 #include "pychron/systems/canvas/loader.hpp"
+#include "pychron/systems/spectrometer/data_dir.hpp"
+#include "pychron/transport/tcp_transport.hpp"
 
 namespace {
 
@@ -160,4 +163,153 @@ TEST(LineServerSteady, EndpointsCarryAdvertise) {
   const auto endpoints = (*server)->endpoints();
   EXPECT_EQ(endpoints.host, "10.1.2.3");
   for (const auto& [name, e] : endpoints.transports) EXPECT_EQ(e.host, "10.1.2.3") << name;
+}
+
+namespace {
+
+std::optional<spectrometer::cfg::SpectrometerData> example_spectrometer(const std::string& file) {
+  auto data = spectrometer::cfg::load_spectrometer(kExamples / file);
+  EXPECT_TRUE(data) << data.error().what;
+  if (!data) return std::nullopt;
+  return std::move(*data);
+}
+
+const ServedTransport* served_named(const LineServer& server, const std::string& name, bool spectrometer) {
+  for (const auto& s : server.served())
+    if (s.name == name && s.spectrometer == spectrometer) return &s;
+  return nullptr;
+}
+
+constexpr const char* kQtegraValves = R"(
+[system]
+name = "t"
+[transports.ms_pc]
+kind = "tcp"
+host = "192.168.0.10"
+port = 1069
+[drivers.ms_valves]
+kind = "qtegra_valves"
+transport = "ms_pc"
+[[valves]]
+name = "V1"
+actuator = "ms_valves"
+address = "Valve 1"
+)";
+
+}  // namespace
+
+TEST(LineServerSteady, ServesQtegraSpectrometer) {
+  const SteadyClock clock;
+  auto canvas = canvas::load_canvas(kExamples / "canvas.toml");
+  ASSERT_TRUE(canvas);
+  LineServerOptions options = example_options();
+  options.spectrometer = example_spectrometer("spectrometer.qtegra.toml");
+  ASSERT_TRUE(options.spectrometer);
+  auto server = LineServer::start(example(true), &*canvas, clock, std::move(options));
+  ASSERT_TRUE(server) << server.error().what;
+  const auto* qtegra = served_named(**server, "qtegra", true);
+  ASSERT_NE(qtegra, nullptr);
+  EXPECT_EQ(qtegra->emulator, "thermo_qtegra");
+  EXPECT_NE(qtegra->port, 0);
+  ASSERT_NE((*server)->beam(), nullptr);
+  EXPECT_TRUE((*server)->beam()->has_detector("H1"));
+  const auto endpoints = (*server)->endpoints();
+  EXPECT_EQ(endpoints.spectrometer, fs::weakly_canonical(kExamples / "spectrometer.qtegra.toml"));
+  EXPECT_EQ(endpoints.spectrometer_transports.at("qtegra").port, qtegra->port);
+  EXPECT_FALSE(has_note(**server, LogLevel::Warn, "not joined to the line"));
+}
+
+TEST(LineServerSteady, ServesNgxSpectrometer) {
+  const SteadyClock clock;
+  LineServerOptions options;
+  options.spectrometer = example_spectrometer("spectrometer.ngx.toml");
+  ASSERT_TRUE(options.spectrometer);
+  auto server = LineServer::start(from_text("[system]\nname = \"t\"\n"), nullptr, clock, std::move(options));
+  ASSERT_TRUE(server) << server.error().what;
+  const auto* ngx = served_named(**server, "ngx", true);
+  ASSERT_NE(ngx, nullptr);
+  EXPECT_EQ(ngx->emulator, "isotopx_ngx");
+  EXPECT_TRUE(has_note(**server, LogLevel::Warn, "not joined to the line"));
+}
+
+TEST(LineServerSteady, QtegraLineAndSpectrometerShareOnePort) {
+  const SteadyClock clock;
+  LineServerOptions options;
+  options.spectrometer = example_spectrometer("spectrometer.qtegra.toml");
+  ASSERT_TRUE(options.spectrometer);
+  auto server = LineServer::start(from_text(kQtegraValves), nullptr, clock, std::move(options));
+  ASSERT_TRUE(server) << server.error().what;
+  const auto* line = served_named(**server, "ms_pc", false);
+  const auto* spec = served_named(**server, "qtegra", true);
+  ASSERT_NE(line, nullptr);
+  ASSERT_NE(spec, nullptr);
+  EXPECT_EQ(line->port, spec->port);
+  EXPECT_EQ(spec->shares, "ms_pc");
+  EXPECT_EQ(line->emulator, "qtegra_valves+thermo_qtegra");
+}
+
+TEST(LineServerSteady, LinkTransportJoinsNgx) {
+  const SteadyClock clock;
+  LineServerOptions options;
+  options.spectrometer = example_spectrometer("spectrometer.ngx.toml");
+  ASSERT_TRUE(options.spectrometer);
+  auto server = LineServer::start(from_text(R"(
+[system]
+name = "t"
+[transports.ngx_link]
+kind = "link"
+link = "ngx"
+[drivers.ngx_valves]
+kind = "ngx_valves"
+transport = "ngx_link"
+)"),
+                                  nullptr, clock, std::move(options));
+  ASSERT_TRUE(server) << server.error().what;
+  const auto* ngx = served_named(**server, "ngx", true);
+  ASSERT_NE(ngx, nullptr);
+  EXPECT_EQ(ngx->emulator, "isotopx_ngx+ngx_valves");
+  EXPECT_EQ(served_named(**server, "ngx_link", false), nullptr);  // borrows, is not served
+}
+
+TEST(LineServerSteady, MixedVendorsOnOneAddressRefused) {
+  const SteadyClock clock;
+  LineServerOptions options;
+  options.spectrometer = example_spectrometer("spectrometer.qtegra.toml");
+  ASSERT_TRUE(options.spectrometer);
+  auto server = LineServer::start(from_text(R"(
+[system]
+name = "t"
+[transports.relays]
+kind = "tcp"
+host = "192.168.0.10"
+port = 1069
+[drivers.relay]
+kind = "proxr_relay"
+transport = "relays"
+)"),
+                                  nullptr, clock, std::move(options));
+  ASSERT_FALSE(server);
+  EXPECT_EQ(server.error().kind, ErrorKind::Config);
+  EXPECT_NE(server.error().what.find("'relays' and 'qtegra (spectrometer)'"), std::string::npos)
+      << server.error().what;
+}
+
+TEST(LineServerSteady, NgxBannerOnEveryConnection) {
+  const SteadyClock clock;
+  LineServerOptions options;
+  options.spectrometer = example_spectrometer("spectrometer.ngx.toml");
+  ASSERT_TRUE(options.spectrometer);
+  auto server = LineServer::start(from_text("[system]\nname = \"t\"\n"), nullptr, clock, std::move(options));
+  ASSERT_TRUE(server) << server.error().what;
+  const auto port = served_named(**server, "ngx", true)->port;
+  for (int i = 0; i < 2; ++i) {
+    TransportOptions o;
+    o.name = "client";
+    o.timeout = std::chrono::seconds(5);
+    TcpTransport client({"127.0.0.1", port}, o);
+    ASSERT_TRUE(client.open()) << i;
+    auto banner = client.read(ReadSpec::until("\n"));
+    ASSERT_TRUE(banner) << i << ": " << banner.error().what;
+    EXPECT_NE(to_string(*banner).find("NGX"), std::string::npos) << to_string(*banner);
+  }
 }
