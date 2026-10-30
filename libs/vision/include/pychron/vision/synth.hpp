@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "pychron/vision/frame.hpp"
 #include "pychron/vision/types.hpp"
@@ -30,6 +31,13 @@ struct HoleScene {
   std::uint32_t seed = 1;
 };
 
+// One round hot spot of a glow.
+struct GlowLobe {
+  Vec2 at_mm{};  // relative to the hole's center in a model; stage mm in a GlowScene
+  double sigma_mm = 0.3;
+  double peak = 0;  // fraction of depth; above 1 saturates
+};
+
 struct GlowScene {
   int width = 200, height = 200;
   std::uint16_t pixel_depth = 255;
@@ -38,6 +46,10 @@ struct GlowScene {
   double sigma_mm = 0.3;    // clamped to >= 1e-3 px so a zero width cannot give NaN
   double elongation = 1.0;  // x sigma = elongation * sigma; clamped to >= 1e-3
   double peak = 1.0;        // fraction of depth; >1 saturates
+  // Not empty: the glow is the sum of these round Gaussians over background
+  // and noise, and glow_mm, sigma_mm, elongation and peak are not used.
+  // Truth is then the peak-weighted center of the lobes.
+  std::vector<GlowLobe> lobes;
   double background = 0.02, noise = 0.0;
   bool crosshair = false;
   std::uint32_t seed = 1;

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "pychron/core/clock.hpp"
+#include "pychron/vision/synth.hpp"
 #include "pychron/vision/types.hpp"
 
 namespace pychron::vision {
@@ -44,12 +45,6 @@ struct GrainParams {
   double jump_mm = 0.3;
 };
 
-struct GlowLobe {
-  Vec2 at_mm{};  // relative to the hole's center
-  double sigma_mm = 0.3;
-  double peak = 0;  // fraction of depth; above 1 saturates
-};
-
 struct GrainTruth {
   Vec2 center_mm{};       // relative to the hole's center
   double heat = 0;        // 1: at reference_output_percent, beam centered
@@ -68,6 +63,8 @@ class GrainModel {
   // that is not finite, changes nothing.
   void advance(Duration dt, Vec2 beam_mm, double output_percent);
 
+  // The lobes of light, relative to the hole's center: one a slot, their
+  // peaks summing to the brightness while none is dying or rising.
   std::vector<GlowLobe> lobes() const;
   GrainTruth truth() const;
   // Ticks run so far, idle ones included.
@@ -78,6 +75,18 @@ class GrainModel {
   void step(Vec2 beam_mm, double output_percent);
   double brightness() const;
   double uniform(const char* key) const noexcept;
+  double slot_uniform(const char* key, int slot) const noexcept;
+  Vec2 draw_place(int slot) const noexcept;
+  void step_lobes();
+
+  // One slot of light. share is drawn once; fade (0 to 1) is how much of it
+  // shows while the slot dies and rises again.
+  struct Slot {
+    Vec2 offset{};  // from the grain's center
+    double share = 1;
+    double fade = 1;
+    enum class Phase { Alive, Dying, Rising } phase = Phase::Alive;
+  };
 
   GrainParams params_;
   std::uint64_t seed_;
@@ -91,6 +100,7 @@ class GrainModel {
   std::int64_t dark_left_ = 0;
   std::int64_t tick_ = 0;
   Duration carry_{};
+  std::vector<Slot> slots_;
 };
 
 }  // namespace pychron::vision

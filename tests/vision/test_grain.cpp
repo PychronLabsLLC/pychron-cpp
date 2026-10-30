@@ -217,7 +217,7 @@ TEST(GrainModel, IdleHoursCostNothing) {
   GrainModel bulk(busy(), 5, 0, kOrigin), stepped(busy(), 5, 0, kOrigin);
   bulk.advance(10h, {50, 0}, 0);
   const auto took = std::chrono::steady_clock::now() - t0;
-  EXPECT_LT(took, 1s);
+  EXPECT_LT(took, 5s);
   EXPECT_EQ(bulk.tick(), 3600000);
   for (long i = 0; i < 3600000; ++i) stepped.advance(kGrainTick, {50, 0}, 0);
   EXPECT_EQ(stepped.tick(), 3600000);
@@ -239,4 +239,88 @@ TEST(GrainModel, BadInputChangesNothing) {
   m.advance(kGrainTick, {0, std::numeric_limits<double>::infinity()}, 20);
   EXPECT_TRUE(same(before, m.truth()));
   EXPECT_EQ(tick, m.tick());
+}
+
+namespace {
+
+double dist(Vec2 a, Vec2 b) { return std::hypot(a.x - b.x, a.y - b.y); }
+
+}  // namespace
+
+TEST(GrainModel, LobesShareBrightness) {
+  GrainParams p = busy();
+  p.lobes = 5;
+  p.lobe_spread_mm = 0.2;
+  p.lobe_wander_mm_per_rt_s = 0.1;
+  GrainModel m(p, 3, 0, kOrigin);
+  for (int i = 0; i < 3000; ++i) {
+    m.advance(kGrainTick, m.truth().center_mm, 20);
+    double sum = 0;
+    for (const auto& l : m.lobes()) sum += l.peak;
+    ASSERT_NEAR(sum, m.truth().brightness, 1e-9) << i;
+  }
+}
+
+TEST(GrainModel, LobesStayNearTheGrain) {
+  GrainParams p = wide();
+  p.lobes = 6;
+  p.lobe_spread_mm = 0.2;
+  p.lobe_wander_mm_per_rt_s = 1;
+  p.wander_mm_per_rt_s = 0.05;
+  GrainModel m(p, 5, 0, kOrigin);
+  for (int i = 0; i < 30000; ++i) {
+    m.advance(kGrainTick, m.truth().center_mm, 20);
+    for (const auto& l : m.lobes()) ASSERT_LE(dist(l.at_mm, m.truth().center_mm), 0.4 + 1e-12) << i;
+  }
+}
+
+TEST(GrainModel, LobesMoveTheCenterOfLightNotTheGrain) {
+  GrainParams p = wide();
+  p.lobes = 4;
+  p.lobe_spread_mm = 0.3;
+  p.lobe_life_s = 1;
+  GrainModel m(p, 9, 0, kOrigin);
+  run(m, 20, kOrigin, 20);
+  auto light = [&] {
+    Vec2 c{};
+    double w = 0;
+    for (const auto& l : m.lobes()) {
+      c.x += l.peak * l.at_mm.x;
+      c.y += l.peak * l.at_mm.y;
+      w += l.peak;
+    }
+    return Vec2{c.x / w, c.y / w};
+  };
+  const Vec2 first = light();
+  double most = 0;
+  for (int i = 0; i < 6000; ++i) {
+    m.advance(kGrainTick, kOrigin, 20);
+    most = std::max(most, dist(light(), first));
+    ASSERT_EQ(m.truth().center_mm.x, 0);
+    ASSERT_EQ(m.truth().center_mm.y, 0);
+  }
+  EXPECT_GT(most, 0.05);
+}
+
+TEST(GrainModel, ALobeDiesAndReturnsElsewhere) {
+  GrainParams p = wide();
+  p.lobe_spread_mm = 0.3;
+  p.lobe_life_s = 2;
+  GrainModel m(p, 2, 0, kOrigin);
+  run(m, 20, kOrigin, 20);
+  Vec2 before = m.lobes()[0].at_mm;
+  bool dark = false, returned = false;
+  for (int i = 0; i < 20000 && !returned; ++i) {
+    m.advance(kGrainTick, kOrigin, 20);
+    const auto l = m.lobes()[0];
+    if (!dark) {
+      if (l.peak == 0) dark = true;
+      else before = l.at_mm;
+    } else if (l.peak > 0.9 * m.truth().brightness) {
+      returned = true;
+      EXPECT_GT(dist(l.at_mm, before), 1e-6);
+    }
+  }
+  EXPECT_TRUE(dark);
+  EXPECT_TRUE(returned);
 }

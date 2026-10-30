@@ -126,7 +126,53 @@ void darken_hole(Frame& f, const HoleScene& s, Vec2 stage_mm) {
   }
 }
 
+namespace {
+
+// A glow of several round lobes. Truth is their peak-weighted center (the
+// plain mean when none is lit), radius the first lobe's sigma.
+std::pair<Frame, Truth> render_lobes(const GlowScene& s, Vec2 stage_mm) {
+  Frame f = Frame::make(s.width, s.height, s.pixel_depth);
+  struct Spot {
+    Vec2 at;
+    double inv_two_sigma2;
+    double peak;
+  };
+  std::vector<Spot> spots;
+  spots.reserve(s.lobes.size());
+  double sum_peak = 0, wx = 0, wy = 0, mx = 0, my = 0;
+  for (const GlowLobe& l : s.lobes) {
+    const Vec2 at = target_px(f.width, f.height, l.at_mm, stage_mm, s.px_per_mm);
+    const double sigma = std::max(l.sigma_mm * s.px_per_mm, kMinSigmaPx);
+    spots.push_back({at, 1.0 / (2 * sigma * sigma), l.peak});
+    sum_peak += l.peak;
+    wx += l.peak * at.x;
+    wy += l.peak * at.y;
+    mx += at.x;
+    my += at.y;
+  }
+  const auto n = static_cast<double>(spots.size());
+  const Vec2 t = sum_peak > 0 ? Vec2{wx / sum_peak, wy / sum_peak} : Vec2{mx / n, my / n};
+  Noise noise(s.seed, s.noise);
+  for (int y = 0; y < f.height; ++y) {
+    for (int x = 0; x < f.width; ++x) {
+      double level = s.background;
+      for (const Spot& k : spots) {
+        const double dx = x - k.at.x, dy = y - k.at.y;
+        level += k.peak * std::exp(-(dx * dx + dy * dy) * k.inv_two_sigma2);
+      }
+      if (s.crosshair && on_crosshair(x, y, f.width, f.height)) level = std::max(level, 0.6);
+      f.at(x, y) = quantise(level + noise.next(), s.pixel_depth);
+    }
+  }
+  const double radius = std::max(s.lobes.front().sigma_mm * s.px_per_mm, kMinSigmaPx);
+  const bool visible = inside(f, t);
+  return {std::move(f), Truth{t, radius, visible}};
+}
+
+}  // namespace
+
 std::pair<Frame, Truth> render(const GlowScene& s, Vec2 stage_mm) {
+  if (!s.lobes.empty()) return render_lobes(s, stage_mm);
   Frame f = Frame::make(s.width, s.height, s.pixel_depth);
   const Vec2 t = target_px(f.width, f.height, s.glow_mm, stage_mm, s.px_per_mm);
   const double sigma = std::max(s.sigma_mm * s.px_per_mm, kMinSigmaPx);

@@ -257,3 +257,85 @@ TEST(Synth, DarkenHoleDrawsOneMoreHoleWhereTheDarkerPixelWins) {
   darken_hole(same, s, {std::nan(""), 0.0});
   EXPECT_EQ(same.data, frame.data);
 }
+
+namespace {
+
+// Where a frame is brightest within a window around a pixel.
+Vec2 brightest_near(const Frame& f, Vec2 px, int r) {
+  Vec2 best = px;
+  int top = -1;
+  for (int y = static_cast<int>(px.y) - r; y <= static_cast<int>(px.y) + r; ++y)
+    for (int x = static_cast<int>(px.x) - r; x <= static_cast<int>(px.x) + r; ++x) {
+      const int v = f.view().at(x, y);
+      if (v > top) {
+        top = v;
+        best = {static_cast<double>(x), static_cast<double>(y)};
+      }
+    }
+  return best;
+}
+
+}  // namespace
+
+TEST(Synth, NoLobesIsTheOldGlowExactly) {
+  GlowScene s;
+  s.glow_mm = {0.1, -0.05};
+  s.sigma_mm = 0.25;
+  s.elongation = 1.5;
+  s.peak = 0.7;
+  ASSERT_TRUE(s.lobes.empty());
+  const auto [f, truth] = render(s, {0.02, 0.01});
+  const double cx = (s.width - 1) / 2.0 + (0.1 - 0.02) * s.px_per_mm;
+  const double cy = (s.height - 1) / 2.0 - (-0.05 - 0.01) * s.px_per_mm;
+  const double sy = 0.25 * s.px_per_mm, sx = 1.5 * sy;
+  for (int y = 0; y < f.height; ++y)
+    for (int x = 0; x < f.width; ++x) {
+      const double dx = x - cx, dy = y - cy;
+      const double level = s.background + s.peak * std::exp(-(dx * dx / (sx * sx) + dy * dy / (sy * sy)) / 2.0);
+      ASSERT_EQ(f.view().at(x, y), static_cast<int>(std::round(std::clamp(level, 0.0, 1.0) * s.pixel_depth)))
+          << x << ',' << y;
+    }
+  EXPECT_NEAR(truth.center_px.x, cx, 1e-9);
+}
+
+TEST(Synth, LobesDrawWhereTheySay) {
+  GlowScene s;
+  s.lobes = {{{-0.5, 0.2}, 0.1, 0.8}, {{0.4, -0.3}, 0.1, 0.4}};
+  s.background = 0;
+  const auto [f, truth] = render(s, {0, 0});
+  for (const GlowLobe& l : s.lobes) {
+    const Vec2 px{(s.width - 1) / 2.0 + l.at_mm.x * s.px_per_mm, (s.height - 1) / 2.0 - l.at_mm.y * s.px_per_mm};
+    const Vec2 got = brightest_near(f, px, 6);
+    EXPECT_NEAR(got.x, px.x, 0.5);
+    EXPECT_NEAR(got.y, px.y, 0.5);
+  }
+  const double w = 0.8 + 0.4;
+  const double ex = (s.width - 1) / 2.0 + (0.8 * -0.5 + 0.4 * 0.4) / w * s.px_per_mm;
+  const double ey = (s.height - 1) / 2.0 - (0.8 * 0.2 + 0.4 * -0.3) / w * s.px_per_mm;
+  EXPECT_NEAR(truth.center_px.x, ex, 0.5);
+  EXPECT_NEAR(truth.center_px.y, ey, 0.5);
+  EXPECT_TRUE(truth.visible);
+}
+
+TEST(Synth, LobesAboveDepthSaturate) {
+  GlowScene s;
+  s.lobes = {{{0, 0}, 0.2, 2.0}};
+  auto [f, truth] = render(s, {0, 0});
+  EXPECT_EQ(f.view().at(100, 100), s.pixel_depth);
+}
+
+TEST(Synth, LobeSizeIsOwn) {
+  GlowScene s;
+  s.background = 0;
+  s.lobes = {{{-1.2, 0}, 0.2, 0.9}, {{1.2, 0}, 0.4, 0.9}};
+  const auto f = render(s, {0, 0}).first;
+  auto half_width = [&](double mm) {
+    const int cx = static_cast<int>(std::lround((s.width - 1) / 2.0 + mm * s.px_per_mm)), cy = (s.height - 1) / 2;
+    const double half = f.view().at(cx, cy) / 2.0;
+    int n = 0;
+    for (int x = cx; x < s.width && f.view().at(x, cy) >= half; ++x) ++n;
+    for (int x = cx - 1; x >= 0 && f.view().at(x, cy) >= half; --x) ++n;
+    return n;
+  };
+  EXPECT_NEAR(static_cast<double>(half_width(1.2)) / half_width(-1.2), 2.0, 0.2);
+}
