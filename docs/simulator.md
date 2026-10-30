@@ -764,9 +764,21 @@ it, as from the instrument.
 Driver kinds answered by an emulator: `proxr_relay`, `agilent_switch`,
 `qtegra_valves`, `qtegra_gauges`, `pychron_valves`, `ngx_valves`,
 `pfeiffer_maxigauge`, `varian_xgs600`, `gp_microion`, `plc2000_valves`,
-`plc2000_gauges`, `plc2000_heater`, `lakeshore`, `chromium`. A transport whose
-driver has none is a silent wire (the driver sees timeouts), and `sim serve`
-says so.
+`plc2000_gauges`, `plc2000_heater`, `lakeshore`, `chromium`, and on the
+spectrometer `thermo_qtegra` and `isotopx_ngx`. A transport whose driver has
+none is a silent wire (the driver sees timeouts), and `sim serve` says so.
+
+The spectrometer is served too: the install's spectrometer file, or the one
+`--spectrometer <file>` names (`--no-spectrometer` serves the line alone).
+Its Qtegra or NGX PC answers from a simulated beam built from the file's field
+table and detectors and fed by the served line's gas, as a simulated
+spectrometer is in-process: put air in the source and an air shot reads an
+air shot. One PC reached by several transports (the line's valves on the
+Qtegra PC at the spectrometer's address, or a line transport of `kind =
+"link"` borrowing the NGX driver's link) is one emulator, so those valves move
+the served line; transports of different makers at one address are refused.
+The table shows each spectrometer transport with `(spectrometer)` after its
+name, and `shares <name>` where it shares another's port.
 
 Options: `--config` and `--canvas` (default: the install's, or the files the
 global options name, and a `canvas.toml` beside the line), `--bind <addr>`
@@ -789,9 +801,9 @@ Rules:
   them; `sim serve` warns when it does.
 
 Not exercised: serial settings, timing, and each vendor's quirks beyond what
-its emulator models. Not served yet: the spectrometer (its transports must
-stay `kind = "sim"` in a rehearsal; one on the wire fails the load for want of
-an entry), and answers recorded from the real instrument (`--replay`).
+its emulator models. Not served yet: answers recorded from the real
+instrument (`--replay`), and spectrometer drivers other than `thermo_qtegra`
+and `isotopx_ngx` (legacy ones are silent wires).
 
 ## Limits and approximations
 

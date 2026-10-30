@@ -231,7 +231,10 @@ Inner loop (keep waits short):
   refused. How an emulator cuts one request from a stream
   (`WireSim::request`) comes from driver's codec (same constant or function
   encoder uses, e.g. `codec::proxr::request_length`), never second copy in
-  `libs/sim`.
+  `libs/sim`. Spectrometer PC (Qtegra, NGX) served as one emulator for every
+  transport reaching it (same address, or line `link` transport); lock order
+  emulator model, then `BeamModel`, then `SimSystem`; beam never calls an
+  emulator.
 - `libs/ingest`, `libs/dvc`, `libs/experiment` do not reduce and gain no
   dependency on `reduction` or `processing`; import's derive pass is in
   `apps/elctl`, after walk ends.

@@ -401,11 +401,16 @@ CDD unprotected.
    elctl --install argus --sim-endpoints <endpoints file> scan --for 30s
    ```
 
-   and open and close each valve with `open` and `close`. A transport `sim
-   serve` lists as a silent wire has a driver no emulator answers; a gauge or
-   valve that does not answer has a wrong channel or address. The
-   spectrometer is not served yet, so `exp run` is not rehearsed this way.
-   See "The simulated lab on the wire" in [simulator.md](simulator.md).
+   and open and close each valve with `open` and `close`. Then run a queue
+   against it, spectrometer and all:
+
+   ```bash
+   elctl --install argus --sim-endpoints <endpoints file> exp run queues/<queue>.toml
+   ```
+
+   A transport `sim serve` lists as a silent wire has a driver no emulator
+   answers; a gauge or valve that does not answer has a wrong channel or
+   address. See "The simulated lab on the wire" in [simulator.md](simulator.md).
 4. Check without and then with a connection:
 
    ```bash

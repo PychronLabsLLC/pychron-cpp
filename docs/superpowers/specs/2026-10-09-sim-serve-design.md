@@ -3,7 +3,8 @@
 Status: agreed 2026-10-13 (owner), as written; section 10's points are
 settled in the plan or measured in phase A / B. Built after executor
 hardening. Phase A implemented 2026-10-29
-(`docs/superpowers/plans/2026-10-29-sim-serve-phase-a.md`); B, C, D not.
+(`docs/superpowers/plans/2026-10-29-sim-serve-phase-a.md`), phase B 2026-10-30
+(`docs/superpowers/plans/2026-10-29-sim-serve-phase-b.md`); C, D not.
 
 Date: 2026-10-09. Builds on `2026-10-06-lab-simulator-design.md` (gas model),
 `2026-10-06-virtual-clock-design.md` (time), `2026-10-03-installation-wizard-design.md`
@@ -165,6 +166,13 @@ port = 40213
 emulator = "agilent_switch"       # "" = silent wire
 ```
 
+With a spectrometer served (phase B): `spectrometer = "<abs path>"` and
+`[spectrometer_transports.<name>]` entries as above, by spectrometer file's
+own names (may equal a line transport's). Client's spectrometer reads that
+section (`client_spectrometer_endpoints`), checked against file it loaded
+unless `--sim-endpoints-any`; file without section: no entry for any
+spectrometer transport on wire.
+
 Default path: `sim-endpoints.toml` beside the line's file; `--endpoints <file>`.
 Removed on clean stop.
 
@@ -180,7 +188,8 @@ Removed on clean stop.
 ### 4.7 Commands
 
 ```
-elctl sim serve --config <extraction_line.toml> [--canvas <canvas.toml>] [--spectrometer <file>]
+elctl sim serve --config <extraction_line.toml> [--canvas <canvas.toml>]
+                [--spectrometer <file> | --no-spectrometer]
                 [--bind ADDR] [--advertise HOST] [--port-base N]
                 [--endpoints FILE] [--replay DIR]
 elctl doctor --rehearse [--install NAME]
@@ -309,12 +318,20 @@ Each phase lands alone. A then C give doctor for line-only installs.
 
 - Phase B shared Qtegra port: one emulator object for valves, gauges and
   acquisition needs `thermo_qtegra_sim` and `SimSystem`'s Qtegra valve hook
-  merged. Size unknown until read.
+  merged. Settled phase B: small. `QtegraSimModel` already had valve,
+  gauge and data seams; it gained `data_source` and `on_command`, NGX
+  `values_at` and `on_command`; `SimSystem::join_qtegra` / `join_ngx` attach
+  line drivers, `feed_qtegra_from_beam` / `feed_ngx_from_beam` the beam.
+  Shared also: line `kind = "link"` transport borrowing spectrometer
+  driver's link (in-process its valves are not joined to gas; served, they
+  are).
 - `chromium` and NGX unsolicited streams over 20 ms poll: enough for
   drivers' timeouts? Phase A: no line kind sends unsolicited input
   (`ngx_valves` has no banner on a line transport, `chromium` none), so
   nothing to measure; `WireServerSteady.UnsolicitedArrivesWithoutRequest`
-  holds the poll. Measure with NGX acquisition in phase B.
+  holds the poll. Phase B: NGX acquisition over serve (ACQ events polled every
+  20 ms, one per second) completes within driver's timeouts
+  (`SimServeSpectrometerSteady.NgxAirShotReadsAboveBlank`). Settled.
 - Whether `pychron-ui` should start serve itself (menu item) or leave it to
   `elctl`. Left to `elctl` here.
 - Endpoints file beside line's file is inside install root: `doctor`'s
