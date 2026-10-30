@@ -5,6 +5,7 @@
 //   [extraction_line.toml [canvas.toml] | --install <name> | --setup | --examples]
 //   [--sim] [--spectrometer <file>] [--lab <dir>] [--data <dir>] [--queue <file>]
 //   [--sim-speed <x>] [--db <url>] [--sim-save]
+//   [--sim-endpoints <file> [--sim-endpoints-any]]
 //   [--laser [--device <name>]]
 //   --version | --self-test | --write-icons <dir>
 
@@ -28,7 +29,11 @@ struct CommandLine {
   std::optional<std::filesystem::path> queue;  // opened in the experiment window
   double sim_speed = 0;                        // 0: real time; else simulated, this many times faster
   std::optional<std::string> db;  // DVC store url: View > Data browses it instead of the records
-  bool sim_save = false;  // a simulated session may save its runs to the database (database_choice.hpp)
+  bool sim_save = false;
+  // A line served by `elctl sim serve`: its endpoints file. Refused with --sim
+  // and --sim-speed (serve is real time).
+  std::optional<std::filesystem::path> sim_endpoints;
+  bool sim_endpoints_any = false;  // take a file serving another copy of the line  // a simulated session may save its runs to the database (database_choice.hpp)
   std::optional<std::string> install;  // an install from the site config
   bool setup = false;                  // run the setup wizard first
   bool examples = false;               // the shipped example configs (development)
@@ -46,6 +51,8 @@ struct CommandLine {
 // --install, --setup, --examples, --device without --laser, or --laser with
 // --queue or --spectrometer. --sim-speed without --sim is not refused here: an
 // install can be one set up for simulation, which main() knows and this does not.
+// --sim-endpoints with --sim or --sim-speed is refused here; with an install set
+// up for simulation, by main().
 Result<CommandLine> parse_command_line(const QStringList& args);
 
 }  // namespace pychron::ui

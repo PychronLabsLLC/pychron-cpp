@@ -140,6 +140,7 @@
 #include "update_ui.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/earthbank/http.hpp"
+#include "pychron/transport/endpoints.hpp"
 #include "pychron/update/update.hpp"
 
 namespace {
@@ -461,6 +462,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "pychron-ui: --sim-speed needs --sim\n");
     return 2;
   }
+  if (cli->sim_endpoints && sim) {
+    std::fprintf(stderr, "pychron-ui: --sim-endpoints cannot be used with an install set up for simulation\n");
+    return 2;
+  }
   // The process log hub, before anything that can say something: on the
   // simulated clock when there is one (made here, so the hub is on it from its
   // first record), else the computer's. Declared before the line and
@@ -533,6 +538,8 @@ int main(int argc, char** argv) {
 
   pychron::systems::ExtractionLine::Options options;
   options.force_sim = sim;
+  options.sim_endpoints = cli->sim_endpoints;
+  options.sim_endpoints_any = cli->sim_endpoints_any;
   options.log_hub = hub;
   if (sim_clock) options.clock = sim_clock.get();
   const std::vector<fs::path>& files = cli->files;
@@ -619,6 +626,14 @@ int main(int argc, char** argv) {
     auto fed = pychron::spectrometer::BeamFeed::LineGas;
     auto loaded = [&]() -> pychron::Result<std::unique_ptr<pychron::spectrometer::Spectrometer>> {
       if (!table_root) return pychron::fail(table_root.error());
+      // The line, loaded above, has checked that the file serves it.
+      std::shared_ptr<const std::map<std::string, pychron::Endpoint>> served_endpoints;
+      if (cli->sim_endpoints) {
+        auto served = pychron::load_sim_endpoints(*cli->sim_endpoints, system_file, true);
+        if (!served) return pychron::fail(served.error());
+        served_endpoints =
+            std::make_shared<const std::map<std::string, pychron::Endpoint>>(std::move(served->transports));
+      }
       auto data = pychron::spectrometer::cfg::load_spectrometer(file, spectrometer_tables);
       if (!data) return pychron::fail(data.error());
       simulation = pychron::spectrometer::is_simulated(*data);
@@ -631,7 +646,8 @@ int main(int argc, char** argv) {
               .require_sim = sim,
               .line_sim = (*line)->sim(),
               .fed = &fed,
-              .link_defaults = link_defaults});
+              .link_defaults = link_defaults,
+              .sim_endpoints = served_endpoints});
     }();
     if (loaded && fed == pychron::spectrometer::BeamFeed::FixedGas) {
       std::fprintf(stderr, "pychron-ui: the simulated spectrometer is not joined to the line: %s\n",

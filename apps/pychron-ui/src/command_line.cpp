@@ -32,6 +32,12 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
       auto v = value();
       if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--db needs a database url");
       cli.db = v->toStdString();
+    } else if (arg == QStringLiteral("--sim-endpoints")) {
+      auto v = value();
+      if (!v || v->isEmpty()) return fail(ErrorKind::Config, "--sim-endpoints needs a file");
+      cli.sim_endpoints = std::filesystem::path(v->toStdString());
+    } else if (arg == QStringLiteral("--sim-endpoints-any")) {
+      cli.sim_endpoints_any = true;
     } else if (arg == QStringLiteral("--sim-save")) {
       cli.sim_save = true;
     } else if (arg == QStringLiteral("--install")) {
@@ -74,6 +80,13 @@ Result<CommandLine> parse_command_line(const QStringList& args) {
     } else {
       cli.files.emplace_back(arg.toStdString());
     }
+  }
+  if (cli.sim_endpoints && cli.sim) {
+    return fail(ErrorKind::Config, "--sim-endpoints cannot be used with --sim: the one drives a served lab over the "
+                                   "wire, the other simulates every transport in-process");
+  }
+  if (cli.sim_endpoints && cli.sim_speed > 0) {
+    return fail(ErrorKind::Config, "--sim-endpoints runs in real time; --sim-speed is refused");
   }
   if (cli.device && !cli.laser) return fail(ErrorKind::Config, "--device needs --laser");
   if (cli.laser && (cli.queue || cli.spectrometer_file)) {

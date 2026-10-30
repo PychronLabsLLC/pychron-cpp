@@ -35,6 +35,29 @@ class TestCommandLine : public QObject {
     QCOMPARE(QString::fromStdString(bare.error().what), QStringLiteral("--db needs a database url"));
   }
 
+  void simEndpointsParsed() {
+    auto cli = parse_command_line({QStringLiteral("--sim-endpoints"), QStringLiteral("lab/sim-endpoints.toml"),
+                                   QStringLiteral("--sim-endpoints-any")});
+    QVERIFY(cli.has_value());
+    QCOMPARE(cli->sim_endpoints.value_or(Path()), Path("lab/sim-endpoints.toml"));
+    QVERIFY(cli->sim_endpoints_any);
+    QVERIFY(!parse_command_line({}).value().sim_endpoints.has_value());
+    QVERIFY(!parse_command_line({QStringLiteral("--sim-endpoints")}).has_value());
+  }
+
+  void simEndpointsWithSimRefused() {
+    auto cli = parse_command_line({QStringLiteral("--sim"), QStringLiteral("--sim-endpoints"), QStringLiteral("e.toml")});
+    QVERIFY(!cli.has_value());
+    QVERIFY(QString::fromStdString(cli.error().what).contains(QStringLiteral("cannot be used with --sim")));
+  }
+
+  void simEndpointsWithSimSpeedRefused() {
+    auto cli = parse_command_line(
+        {QStringLiteral("--sim-endpoints"), QStringLiteral("e.toml"), QStringLiteral("--sim-speed"), QStringLiteral("10")});
+    QVERIFY(!cli.has_value());
+    QVERIFY(QString::fromStdString(cli.error().what).contains(QStringLiteral("--sim-speed is refused")));
+  }
+
   void bareSpectrometerIsUsageError() {
     auto cli = parse_command_line({QStringLiteral("--spectrometer")});
     QVERIFY(!cli.has_value());
