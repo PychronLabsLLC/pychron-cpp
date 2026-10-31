@@ -1,5 +1,8 @@
 # Steady: a grain that glows evenly, stays put and heats with the beam. The
 # baseline: what the tracker costs when nothing goes wrong. Stresses nothing.
+# The grain starts a little off the beam, so the baseline proves following and
+# shows the start-up cost: the first search begins while the glow is still
+# building.
 #
 # Run: elctl laser track configs/examples/track/steady.toml
 # The model's numbers are judgement, not measurements: this compares tracker
@@ -8,6 +11,7 @@
 output_percent = 20
 duration = 30
 seeds = 20
+grain_offset_mm = [0.1, -0.1]
 
 [grain]
 # no behaviours: every key at its default

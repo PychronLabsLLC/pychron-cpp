@@ -1,7 +1,6 @@
 # Cooling: the grain heats slowly, cools quickly and creeps while it is hot,
 # so a beam that falls behind sees the glow go dim. Stresses the tracker's
-# recovery from a dim grain. Slower heating than here (heat_tau_s of 0.8) and
-# the first search leaves the grain before the glow has built.
+# recovery from a dim grain.
 #
 # Run: elctl laser track configs/examples/track/cooling.toml
 # The model's numbers are judgement, not measurements: this compares tracker

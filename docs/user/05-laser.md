@@ -595,10 +595,15 @@ and the worst of its runs:
 A run that ended in a pattern error is counted, and its row says `failed N`
 with the first error. `--seeds N` replaces the scenario's number of runs;
 `--trace <file>` writes a CSV of every poll of every run (beam, grain, heat,
-brightness, why the tracker moved); `--frames <dir>` writes every frame the
+brightness, why the tracker moved; its `combo` is the number of the combination in
+the order the table's labels expand, first sweep slowest, counted from 0, and the
+table's labels are not repeated in it); `--frames <dir>` writes every frame the
 tracker saw in one run as PNG files, the first combination's first run unless
 `--frames-seed S` names another (a seed that is not among the runs is
-refused); `--check` does every check and runs nothing.
+refused); `--check` reads the scenario and checks every
+combination loads, and runs nothing. It does not start a pattern, so a setting
+that is refused only when a pattern starts (a `target_radius` of less than a
+pixel, say) passes `--check` and shows as `failed N` in the table.
 
 Read these numbers as a comparison, not a measurement. The grain's heating,
 glow and motion are the program's judgement of what a grain might do, not
@@ -607,12 +612,10 @@ kind of misbehaviour better, and which kind of misbehaviour a setting cannot
 follow. It says nothing about how a real grain behaves, and a setting that
 wins here still has to be tried on one.
 
-Two things the bench shows already. The tracker's search for the glow starts
-while the glow is still building; with the grain off the beam's first position
-that costs about half a second off the grain at the start of a run. And on the
-`cooling` scenario a grain that heats more slowly than the defaults
-(`heat_tau_s` of 0.8 or more) is left behind for good: the first search
-carries the beam away before there is a glow to follow.
+One thing the bench shows already: the tracker's search for the glow starts
+while the glow is still building. With the grain a little off the beam's first
+position, as in `steady`, that costs about half a second off the grain at the
+start of every run, so `steady` reads about 98 %, not 100.
 
 ### 8.4 The pattern maker
 

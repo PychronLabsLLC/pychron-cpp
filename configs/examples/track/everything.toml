@@ -1,4 +1,4 @@
-# Everything: all of the behaviours above at once. The hardest case; when a
+# Everything: all of the behaviours of the other scenarios at once. The hardest case; when a
 # setting fails here and not in the others, those say which behaviour it
 # cannot take.
 #

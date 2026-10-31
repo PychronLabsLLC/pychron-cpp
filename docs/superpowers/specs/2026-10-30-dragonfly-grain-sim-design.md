@@ -42,12 +42,12 @@ Two parts, each its own plan:
 ## 3. Grain model
 
 `libs/vision/include/pychron/vision/grain.hpp`, `libs/vision/src/grain.cpp`.
-Standard library, `core/keyed_noise.hpp`, `vision/types.hpp` only.
+Standard library, `core/keyed_noise.hpp`, `core/clock.hpp`, `vision/synth.hpp` (`GlowLobe` lives there), `vision/types.hpp` only.
 
 ```cpp
 struct GrainParams { /* table below */ };
 
-struct GlowLobe {
+struct GlowLobe {  // declared in synth.hpp, shown here for its fields
   Vec2 at_mm{};  // relative to hole's center
   double sigma_mm = 0.3;
   double peak = 0;  // fraction of depth; >1 saturates
@@ -202,8 +202,8 @@ Scenario:
 
 ```toml
 output_percent = 20
-duration = 30         # s
-seeds = 20            # runs of each combination
+duration = 30         # s, (0, 3600]
+seeds = 20            # runs of each combination, 1 to 10000
 seed = 1              # first; then seed + 1, ...
 poll_ms = 100         # 10 to 1000
 grain_offset_mm = [0.1, -0.1]
@@ -258,7 +258,8 @@ error printed. Run still going at duration + 30 s simulated is stopped and count
 
 `--trace`: CSV, one row per poll, all runs: `combo, seed, t_s, beam_x, beam_y,
 grain_x, grain_y, heat, brightness, reason, saturation` (reason, saturation
-empty at poll with no look). Decimal text locale-free.
+empty at poll with no look). `combo` is expansion order of sweeps (first slowest, from 0); no label column.
+Decimal text locale-free.
 `--check`: every check, no run.
 `--frames-seed` not among runs (`seed` to `seed + seeds - 1`): Config error before anything runs.
 `--frames`: every frame of first combination's `--frames-seed` run (default
