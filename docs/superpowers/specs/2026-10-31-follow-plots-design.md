@@ -169,7 +169,7 @@ struct FollowSample {
 
 `LaserBridge` sets follow observer in constructor and clears it, under gate, before anything observer points at goes.
 
-Hand-off, as `Video` box of bridge: shared box with own mutex, `std::vector<laser::FollowSample> pending`, `posted` flag. Observer appends under mutex and posts one queued call only if none posted; queued call captures nothing but box's pointer. Main thread takes pending, emits `followSamples(std::vector<pychron::laser::FollowSample>)`. Pending capped 4096 rows; oldest dropped.
+Hand-off: `FollowMailbox` (`follow_mailbox.{hpp,cpp}`), Qt-free, held by `std::shared_ptr` observer captures. `add` appends under own mutex, drops oldest past 4096 rows, says whether a post is needed. Observer posts one queued call only then; queued call carries nothing. Main thread `take`s rows, emits `followSamples(std::vector<pychron::laser::FollowSample>)`.
 
 Runs for every dragonfly on this system, whoever started it (Follow (simulated), pattern run, queue).
 
