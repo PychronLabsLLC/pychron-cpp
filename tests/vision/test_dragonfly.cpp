@@ -104,6 +104,29 @@ TEST(Dragonfly, TracksTowardTheAimPointNotTheImageCenter) {
   EXPECT_LT(len({rig.stage.pos.x + aim_mm.x - rig.scene.glow_mm.x, rig.stage.pos.y + aim_mm.y - rig.scene.glow_mm.y}), 0.06);
 }
 
+TEST(Dragonfly, EveryStepSaysWhereTheFenceIs) {
+  auto p = params();
+  p.perimeter_radius_mm = 1.25;
+  p.total_duration = std::chrono::seconds(1);
+  SimpleFinder finder;
+  Dragonfly d(finder, good_map(), kScale, p);
+  d.start(kT0, {3, 4});
+  const auto frame = Frame::make(200, 200, 255);
+  const FrameView view = frame.view();
+  const auto seen = d.step({&view, 1}, kT0 + std::chrono::milliseconds(100), {3, 4});
+  ASSERT_TRUE(seen);
+  EXPECT_DOUBLE_EQ(seen->start_mm.x, 3);
+  EXPECT_DOUBLE_EQ(seen->start_mm.y, 4);
+  EXPECT_DOUBLE_EQ(seen->perimeter_mm, 1.25);
+  const auto over = d.step({&view, 1}, kT0 + std::chrono::seconds(2), {3, 4});
+  ASSERT_TRUE(over);
+  EXPECT_EQ(over->reason, Reason::Elapsed);
+  EXPECT_DOUBLE_EQ(over->perimeter_mm, 1.25);
+  const auto no_frames = d.step({}, kT0 + std::chrono::milliseconds(200), {3, 4});
+  ASSERT_TRUE(no_frames);
+  EXPECT_DOUBLE_EQ(no_frames->perimeter_mm, 1.25);
+}
+
 TEST(Dragonfly, HoldsWhenSaturated) {
   GlowScene s = glow_at({0.2, 0}, 2.0);
   s.sigma_mm = 0.6;

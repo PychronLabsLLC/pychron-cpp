@@ -130,6 +130,28 @@ class FollowPlotModelTest : public QObject {
     QVERIFY(std::isfinite(r->first) && std::isfinite(r->second));
   }
 
+  void the_latest_row_gives_the_fence() {
+    FollowPlotModel m;
+    QVERIFY(!m.fence().has_value());
+    FollowSample s = sample(0.0);
+    m.append(s);
+    QVERIFY(!m.fence().has_value());  // no perimeter: no fence
+    s.step.elapsed_s = 1;
+    s.step.start_mm = {7, 8};
+    s.step.perimeter_mm = 0.5;
+    m.append(s);
+    QVERIFY(m.fence().has_value());
+    QCOMPARE(m.fence()->x, 7.0);
+    QCOMPARE(m.fence()->y, 8.0);
+    QCOMPARE(m.fence()->radius_mm, 0.5);
+    s.step.elapsed_s = 2;
+    s.step.perimeter_mm = 0.25;
+    m.append(s);
+    QCOMPARE(m.fence()->radius_mm, 0.25);
+    m.clear();
+    QVERIFY(!m.fence().has_value());
+  }
+
   void clear_empties_the_lines() {
     FollowPlotModel m;
     m.append(sample(3.0));

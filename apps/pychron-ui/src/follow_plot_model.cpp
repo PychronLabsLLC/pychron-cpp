@@ -29,6 +29,7 @@ void FollowPlotModel::append(const laser::FollowSample& s) {
   v.fill(kNaN);
   auto put = [&v](FollowLine line, double value) { v[static_cast<std::size_t>(line)] = value; };
 
+  if (step.perimeter_mm > 0) fence_ = FollowFence{step.start_mm.x, step.start_mm.y, step.perimeter_mm};
   put(FollowLine::StageX, step.stage_mm.x);
   put(FollowLine::StageY, step.stage_mm.y);
   if (step.seen) {
@@ -61,6 +62,7 @@ bool FollowPlotModel::has(FollowLine line) const { return any_[static_cast<std::
 void FollowPlotModel::clear() {
   for (auto& r : rings_) r.clear();
   any_.fill(false);
+  fence_.reset();
   latest_x_ = 0;
   empty_ = true;
 }

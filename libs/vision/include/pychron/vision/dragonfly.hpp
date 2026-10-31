@@ -44,6 +44,8 @@ struct DragonflyStep {
   Vec2 stage_mm{};                    // stage position given to step()
   double elapsed_s = 0;               // since start()
   std::optional<DragonflySeen> seen;  // unset: no blob in any frame
+  Vec2 start_mm{};                    // the fence's center: the stage at start()
+  double perimeter_mm = 0;            // the fence's radius
 };
 
 // Keeps a glowing sample under the aim point. Takes frames, returns a

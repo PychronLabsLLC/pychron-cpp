@@ -57,6 +57,8 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   if (started_) {
     out.stage_mm = stage_pos_mm;
     out.elapsed_s = std::chrono::duration<double>(now - start_time_).count();
+    out.start_mm = start_pos_;
+    out.perimeter_mm = params_.perimeter_radius_mm;
   }
 
   // Every Hold carries `current`, so it must be finite: positions that are

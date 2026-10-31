@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 
 #include "pychron/core/time_series_ring.hpp"
 #include "pychron/laser/laser_system.hpp"
@@ -31,6 +32,13 @@ enum class FollowLine {
 };
 inline constexpr std::size_t kFollowLines = 10;
 
+// The circle a run's stage is held inside, stage mm.
+struct FollowFence {
+  double x = 0;
+  double y = 0;
+  double radius_mm = 0;
+};
+
 class FollowPlotModel {
  public:
   static constexpr double kSpanSeconds = 600;  // ten minutes
@@ -43,11 +51,14 @@ class FollowPlotModel {
   // point grain's true size, which the view leaves out.
   bool has(FollowLine line) const;
   double latest_x() const { return latest_x_; }  // 0 when empty
+  // Of the latest row that gives one: the radius in force, not the pattern's own.
+  const std::optional<FollowFence>& fence() const { return fence_; }
   void clear();
 
  private:
   std::array<TimeSeriesRing, kFollowLines> rings_;
   std::array<bool, kFollowLines> any_{};
+  std::optional<FollowFence> fence_;
   double latest_x_ = 0;
   bool empty_ = true;
 };
