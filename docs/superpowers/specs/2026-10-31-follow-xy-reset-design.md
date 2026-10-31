@@ -34,7 +34,7 @@ std::optional<FollowFence> fence() const;   // of latest row whose perimeter_mm 
 
 XY plot:
 
-- `QCPCurve` per track (not `QCPGraph`: x not monotonic), keyed by time. Stage: `StageX`/`StageY`, slot 0. Grain: `GrainX`/`GrainY`, slot 1. NaN in either coordinate: break.
+- `QCPCurve` per track (not `QCPGraph`: x not monotonic), keyed by time. Stage: `StageX`/`StageY`, slot 0. Grain: `GrainX`/`GrainY`, slot 1. Row with coordinate missing left out, track joins across it (`QCPCurve` not promised to break at NaN).
 - Marker at latest finite point of each track.
 - Fence: `QCPCurve`, 73 points closed, slot 2, dashed.
 - Equal scale always: y axis `setScaleRatio(x axis, 1)`. Circle stays circle, whatever window shape.
@@ -66,7 +66,27 @@ Rules:
 void draw_grain(Frame& f, const HoleScene& s, std::span<const Vec2> outline_mm, Vec2 stage_mm, double level = 0.5);
 ```
 
-Rule: autocenter still centers hole with grain in it. `test_laser_autocenter` gains that case. Hole finder not changed to pass it; level chosen so finder sees hole, or fill-free alternative named in this section.
+Rule: autocenter still centers hole with grain in it. `test_laser_autocenter` gains that case. Hole finder not changed to pass it.
+
+### 4a. Machined steel
+
+Developer, mid-build: sim holes too black against too even a grey; real holes never completely black, often crescents under binary threshold; tray between holes looks like machined stainless steel at 10-50x.
+
+`[<device>.sim] surface = "plain" | "machined"`, default `plain`: frames, hashes, fixtures unchanged. `CameraConfig::sim_machined`.
+
+```cpp
+struct MachinedSurface { int side = 0; std::vector<float> level; };
+MachinedSurface make_machined_surface(double px_per_mm, std::uint32_t seed);
+void render_machined(Frame&, const HoleScene&, const MachinedSurface&, std::span<const Vec2> holes_mm, Vec2 stage_mm);
+```
+
+- Surface: 1024 px tile, made once, fixed to stage, read by reflection (no seam): cutter marks 8 degrees off y, patches, sparse pits, thin scratches.
+- Hole: floor shadow 0.17, lit part 0.47 (tray 0.56). Lit part = circle of hole's radius shifted 0.2 to 0.55 radius along light, amount per hole, same every look. Threshold between leaves crescent. Bright chamfer on wall facing lamp.
+- Lamp: frame falloff 14 % at corners, slight gradient.
+- Beam on: picture stays the glow.
+- Cold grain drawn at 0.8 on steel.
+
+`SimpleFinder` rejects crescent (circularity): on steel Center holes fails and stage stays where it was sent. Pinned by `Autocenter.ACrescentMovesTheStageNowhereWrong`. Finder not changed here: its own task. Section 4's autocenter rule holds for `plain`.
 
 ## 5. Reset
 
@@ -76,7 +96,7 @@ Rule: autocenter still centers hole with grain in it. `test_laser_autocenter` ga
 
 `LaserWindow`: button `Reset simulation`, objectName `pattern_reset_sim`, beside Follow (simulated), absent on real laser. Enabled as Follow is minus output test: `can_drive && !busy && !following_`. Passes Center holes box. On success `follow_model_.clear()` and plots refreshed.
 
-Stage untouched when no hole known. Beam state untouched: disabled while following; a hand-fired beam stays on.
+Stage untouched when no hole known: a jog or a move to coordinates forgets the hole. Beam state untouched: disabled while following; a hand-fired beam stays on.
 
 ## 6. Camera pane
 

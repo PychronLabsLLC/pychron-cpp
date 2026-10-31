@@ -415,6 +415,16 @@ jump_mm = 0.2
   EXPECT_TRUE(empty.find("co2")->sim_grain);
 }
 
+TEST(CameraLibrary, ReadsTheSimSurface) {
+  const auto machined = parse("[co2.sim]\nsurface = \"machined\"\n");
+  ASSERT_TRUE(machined.problems().empty()) << machined.problems().front();
+  EXPECT_TRUE(machined.find("co2")->sim_machined);
+  const auto plain = parse("[co2.sim]\nsurface = \"plain\"\n");
+  ASSERT_TRUE(plain.problems().empty()) << plain.problems().front();
+  EXPECT_FALSE(plain.find("co2")->sim_machined);
+  EXPECT_FALSE(parse("[co2.sim]\nsurface = \"glass\"\n").problems().empty());
+}
+
 TEST(CameraLibrary, SimGrainRangesAndUnknownKeys) {
   struct Bad {
     const char* text;

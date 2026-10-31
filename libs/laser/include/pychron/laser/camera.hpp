@@ -122,6 +122,9 @@ struct CameraConfig {
   double sim_noise = 0.01;
   int sim_width = 200;
   int sim_height = 200;
+  // The tray as machined stainless steel, its holes lit from one side; with
+  // no such key the plain grey tray and round dark holes.
+  bool sim_machined = false;
   // While the simulated laser fires the camera sees the sample glow: this
   // far from its hole's center, creeping this fast as it is heated.
   StageXY sim_grain_offset_mm{};

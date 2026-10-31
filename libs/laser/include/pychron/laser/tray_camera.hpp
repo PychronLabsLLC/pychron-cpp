@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -66,8 +67,11 @@ class SimTrayCamera final : public vision::IFrameSource {
   // With a [sim.grain] table (CameraConfig::sim_grain) the glow is a
   // vision::GrainModel that heats where the beam is, flares and moves
   // (the dragonfly grain simulator design, section 5). The beam is the stage
-  // plus the aim offset. A new nearest hole is a new grain, its seed mixed
-  // with the hole's index.
+  // plus the aim offset. Each hole has its own grain, its seed mixed with the
+  // hole's index, made when the hole first comes into view. Only the nearest
+  // hole's is under the beam; a grain left behind stays as it was left, and
+  // cools. With the beam off the grains in view lie in their holes, drawn at
+  // their shape now (a point grain has none to draw).
   //
   // The seed of the grain, before the first grab; 1 until then.
   void set_grain_seed(std::uint64_t seed) { grain_seed_ = seed; }
@@ -76,16 +80,23 @@ class SimTrayCamera final : public vision::IFrameSource {
   // with no hole in the tray. A grab after it gives the frame it would have
   // given without it while the beam is still.
   std::optional<GrainView> observe();
+  // Every grain back in its hole as it was first made, by the same seed.
+  void reset_grains();
 
  private:
+  struct HeldGrain {
+    vision::GrainModel model;
+    TimePoint at;  // how far it has been run
+  };
   struct Nearest {
     const StageXY* hole = nullptr;  // in the sight's list
     std::size_t index = 0;
     double distance_mm = 0;
   };
   static Nearest nearest_hole(const TraySight& sight, StageXY error);
-  // Brings the model to `now` for the hole nearest the stage: made new when
-  // that is another hole than the model's. The hole's real position (stage
+  HeldGrain& grain_of(const TraySight& sight, std::size_t index, TimePoint now);
+  // Brings the grain of the hole nearest the stage to `now`. The time since it
+  // was last nearest it spent with no beam. The hole's real position (stage
   // mm) is `real`. One place for grab() and observe(), so both move the
   // model by the same dt.
   void advance_grain(const TraySight& sight, StageXY real, std::size_t index, TimePoint now);
@@ -96,9 +107,9 @@ class SimTrayCamera final : public vision::IFrameSource {
   std::uint64_t seq_ = 0;
   StageXY crept_{};                      // how far the grain has drifted under the beam
   std::optional<TimePoint> lit_since_;   // the last grab with the beam on
-  std::optional<vision::GrainModel> grain_;
-  std::size_t grain_hole_ = 0;           // index of the hole grain_ lies in
-  TimePoint grain_at_{};                 // how far grain_ has been run
+  std::optional<vision::MachinedSurface> steel_;  // made at the first look
+  std::map<std::size_t, HeldGrain> grains_;  // by hole index
+  std::optional<std::size_t> under_beam_;    // the grain last nearest the stage
   std::uint64_t grain_seed_ = 1;
 };
 

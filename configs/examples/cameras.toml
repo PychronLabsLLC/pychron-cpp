@@ -61,6 +61,8 @@ timeout_ms = 1000
 # has to find
 tray_error_mm = [0.15, -0.10]
 noise = 0.01
+# "machined": the tray as stainless steel, its holes lit from one side
+# surface = "machined"
 # while the simulated laser fires the camera sees the sample glow: this far
 # from its hole's center, creeping this fast as it is heated (what a
 # dragonfly pattern follows)

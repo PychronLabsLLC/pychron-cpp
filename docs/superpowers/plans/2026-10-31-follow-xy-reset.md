@@ -60,6 +60,16 @@
 - [ ] Run `pychron_vision_tests`, `pychron_laser_tests`: pass. If autocenter fails, change `level`, and record the value in spec section 4.
 - [ ] Commit `feat(laser): a simulated grain lies in its hole with the beam off`.
 
+### Task 2a: Machined steel
+
+**Files:**
+- Modify: `libs/vision/include/pychron/vision/synth.hpp`, `libs/vision/src/synth.cpp`, `libs/laser/include/pychron/laser/camera.hpp`, `libs/laser/src/camera.cpp`, `libs/laser/src/tray_camera.cpp`, `docs/user/07-configuration-reference.md`, `configs/examples/cameras.toml`
+- Test: `tests/vision/test_synth.cpp`, `tests/laser/test_camera.cpp`, `tests/laser/test_laser_autocenter.cpp`
+
+- [ ] Write tests: same seed same steel; hole never black; threshold leaves crescent; tray not one grey; steel moves with stage; `surface` read and a bad word refused; crescent leaves stage nowhere wrong.
+- [ ] Implement as spec section 4a.
+- [ ] Commit `feat(laser): a simulated tray of machined steel`.
+
 ### Task 3: Reset
 
 **Files:**

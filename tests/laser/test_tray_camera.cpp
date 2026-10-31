@@ -584,12 +584,111 @@ TEST(SimTrayCamera, ANewHoleIsANewGrain) {
   EXPECT_NEAR(other->grain_mm.x, 20.1, 1e-9);
   EXPECT_NEAR(other->grain_mm.y, 20.05, 1e-9);
   clock.advance(2s);
-  sight = firing_at(10, 20);  // and back to the first
+  sight = firing_at(10, 20);  // and back to the first: as it was left, cooler
   const auto back = camera.observe();
   ASSERT_TRUE(back);
-  EXPECT_DOUBLE_EQ(back->truth.heat, 0);
+  EXPECT_LT(back->truth.heat, first->truth.heat);
+  EXPECT_GT(back->truth.heat, 0);
+  EXPECT_GT(std::hypot(back->truth.center_mm.x - 0.1, back->truth.center_mm.y - 0.05), 1e-6);  // not a new one
+}
+
+namespace {
+
+vision::GrainParams sized_grain() {
+  vision::GrainParams p;
+  p.grain_radius_mm = 0.25;
+  p.grain_sides = 6;
+  p.grain_irregularity = 0;
+  return p;
+}
+
+}  // namespace
+
+TEST(SimTrayCamera, AGrainLiesInItsHoleWithTheBeamOff) {
+  ManualClock clock;
+  TraySight sight = sight_at(10, 20);
+  SimTrayCamera bare(config(), [&] { return sight; }, clock);
+  SimTrayCamera with(grain_config(sized_grain()), [&] { return sight; }, clock);
+  auto empty = bare.grab();
+  auto grain = with.grab();
+  ASSERT_TRUE(empty);
+  ASSERT_TRUE(grain);
+  const int cx = empty->width / 2, cy = empty->height / 2;
+  EXPECT_GT(grain->at(cx, cy), empty->at(cx, cy) + 40);  // lighter than the empty hole
+  EXPECT_EQ(grain->at(0, 0), empty->at(0, 0));           // the tray is the tray
+}
+
+TEST(SimTrayCamera, APointGrainDrawsNothing) {
+  ManualClock clock;
+  const TraySight sight = sight_at(10, 20);
+  SimTrayCamera bare(config(), [&] { return sight; }, clock);
+  SimTrayCamera with(grain_config(vision::GrainParams{}), [&] { return sight; }, clock);
+  auto empty = bare.grab();
+  auto grain = with.grab();
+  ASSERT_TRUE(empty);
+  ASSERT_TRUE(grain);
+  EXPECT_EQ(empty->at(empty->width / 2, empty->height / 2), grain->at(grain->width / 2, grain->height / 2));
+}
+
+TEST(SimTrayCamera, AMeltedGrainStaysMeltedWhenTheStageComesBack) {
+  auto p = sized_grain();
+  p.melt_mm_per_s = 0.05;
+  p.min_radius_mm = 0.05;
+  ManualClock clock;
+  TraySight sight = firing_at(10, 20);
+  SimTrayCamera camera(grain_config(p), [&] { return sight; }, clock);
+  ASSERT_TRUE(camera.observe());
+  clock.advance(3s);
+  const auto melted = camera.observe();
+  ASSERT_TRUE(melted);
+  EXPECT_LT(melted->truth.radius_mm, 0.25);
+  sight = firing_at(20, 20);
+  ASSERT_TRUE(camera.observe());
+  sight = sight_at(10, 20);
+  const auto back = camera.observe();
+  ASSERT_TRUE(back);
+  EXPECT_DOUBLE_EQ(back->truth.radius_mm, melted->truth.radius_mm);
+}
+
+TEST(SimTrayCamera, ALongAbsenceCostsNothingAndMovesNothing) {
+  vision::GrainParams p = sized_grain();
+  p.wander_mm_per_rt_s = 1;
+  ManualClock clock;
+  TraySight sight = sight_at(10, 20);
+  SimTrayCamera camera(grain_config(p, 0.1, 0.05), [&] { return sight; }, clock);
+  ASSERT_TRUE(camera.observe());
+  sight = sight_at(20, 20);
+  ASSERT_TRUE(camera.observe());
+  clock.advance(24h);
+  sight = sight_at(10, 20);
+  const auto back = camera.observe();
+  ASSERT_TRUE(back);
   EXPECT_NEAR(back->truth.center_mm.x, 0.1, 1e-12);
   EXPECT_NEAR(back->truth.center_mm.y, 0.05, 1e-12);
+}
+
+TEST(SimTrayCamera, AResetPutsEveryGrainBack) {
+  auto p = sized_grain();
+  p.melt_mm_per_s = 0.05;
+  p.min_radius_mm = 0.05;
+  p.creep_mm_per_s = {0.05, 0};
+  ManualClock clock;
+  TraySight sight = firing_at(10, 20);
+  SimTrayCamera camera(grain_config(p, 0.1, 0.05), [&] { return sight; }, clock);
+  const auto start = camera.observe();
+  ASSERT_TRUE(start);
+  clock.advance(3s);
+  const auto after = camera.observe();
+  ASSERT_TRUE(after);
+  EXPECT_GT(after->truth.center_mm.x, start->truth.center_mm.x);
+  EXPECT_LT(after->truth.radius_mm, start->truth.radius_mm);
+
+  camera.reset_grains();
+  const auto again = camera.observe();
+  ASSERT_TRUE(again);
+  EXPECT_DOUBLE_EQ(again->truth.center_mm.x, start->truth.center_mm.x);
+  EXPECT_DOUBLE_EQ(again->truth.radius_mm, start->truth.radius_mm);
+  EXPECT_DOUBLE_EQ(again->truth.heat, 0);
 }
 
 TEST(SimTrayCamera, GrainSeedsDiffer) {

@@ -129,6 +129,36 @@ TEST(Autocenter, ConvergesOnTheTrueHoleAndSaves) {
   EXPECT_EQ(h.system.corrections().size(), 1u);
 }
 
+TEST(Autocenter, ConvergesOnAHoleWithAGrainInIt) {
+  CameraConfig seen = camera_config();
+  vision::GrainParams grain;
+  grain.grain_radius_mm = 0.25;
+  seen.sim_grain = grain;
+  seen.sim_grain_offset_mm = {0.1, 0.05};
+  CountedHarness h(seen);
+  ASSERT_TRUE(h.system.move_to_position("3", true));
+  auto done = h.drive();
+  ASSERT_TRUE(done) << done.error().what;
+  EXPECT_EQ(h.system.last_autocenter().result, Outcome::Converged);
+  EXPECT_NEAR(h.at().x, kTrueX, 0.03);
+  EXPECT_NEAR(h.at().y, kTrueY, 0.03);
+}
+
+// A hole in steel is a crescent to a threshold, which SimpleFinder takes for
+// nothing round. Centering then fails; it must not end anywhere else.
+TEST(Autocenter, ACrescentMovesTheStageNowhereWrong) {
+  CameraConfig seen = camera_config();
+  seen.sim_machined = true;
+  CountedHarness h(seen);
+  ASSERT_TRUE(h.system.move_to_position("3", true));
+  auto done = h.drive();
+  ASSERT_TRUE(done) << done.error().what;
+  EXPECT_NE(h.system.last_autocenter().result, Outcome::None);
+  const bool on_the_hole = std::hypot(h.at().x - kTrueX, h.at().y - kTrueY) < 0.03;
+  const bool where_it_began = std::hypot(h.at().x - 15, h.at().y - 20) < 0.03;
+  EXPECT_TRUE(on_the_hole || where_it_began) << h.at().x << ", " << h.at().y;
+}
+
 TEST(Autocenter, TheNextMoveStartsAtTheCorrection) {
   CameraHarness h;
   ASSERT_TRUE(h.system.move_to_position("3", true));

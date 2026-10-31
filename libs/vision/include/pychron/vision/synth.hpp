@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -81,5 +82,30 @@ std::pair<Frame, Truth> render(const GlowScene& scene, Vec2 stage_mm);
 // around the hole are touched (a tray of holes costs no more frames); its
 // noise, shadow and glint are not drawn.
 void darken_hole(Frame& frame, const HoleScene& scene, Vec2 stage_mm);
+// A tray as a camera sees it at 10 to 50x: machined stainless steel, never one
+// grey. Cutter marks run nearly one way, over patches, pits and a few
+// scratches. `level` is a fraction of depth, row by row, side x side; a tray
+// bigger than that is read by reflecting, so it has no seam. The same scale
+// and seed give the same steel.
+struct MachinedSurface {
+  int side = 0;  // px
+  std::vector<float> level;
+};
+MachinedSurface make_machined_surface(double px_per_mm, std::uint32_t seed);
+
+// The frame the scene gives over that steel, with the holes (stage mm) in it,
+// the surface fixed to the stage. Light comes in low from one side: a hole's
+// floor is never black, part of it is lit nearly as bright as the tray, and
+// what stays dark is a crescent against the wall nearest the lamp, whose
+// opposite wall catches a bright rim. How much is lit differs hole to hole.
+void render_machined(Frame& frame, const HoleScene& scene, const MachinedSurface& surface,
+                     std::span<const Vec2> holes_mm, Vec2 stage_mm);
+
+// A cold grain lying in a hole, seen by the lamp and not by its own glow: its
+// outline (stage mm) filled at `level`, a fraction of depth brighter than the
+// hole and darker than the tray, with a 1 px soft edge. The tray and the hole
+// are the scene's; only the scale and the depth are used.
+void draw_grain(Frame& frame, const HoleScene& scene, std::span<const Vec2> outline_mm, Vec2 stage_mm,
+                double level = 0.5);
 
 }  // namespace pychron::vision

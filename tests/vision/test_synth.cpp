@@ -394,6 +394,116 @@ TEST(GlowBody, NoBodyRendersAsBefore) {
   EXPECT_EQ(a.second.radius_px, b.second.radius_px);
 }
 
+namespace {
+
+// A hole in the middle of a frame of machined steel, with no noise.
+Frame machined_frame(Vec2 stage = {0, 0}, std::uint32_t seed = 3) {
+  HoleScene s;
+  s.noise = 0;
+  s.hole_radius_mm = 1.5;
+  const MachinedSurface steel = make_machined_surface(s.px_per_mm, seed);
+  Frame f = Frame::make(s.width, s.height, s.pixel_depth);
+  const std::vector<Vec2> holes{{0, 0}};
+  render_machined(f, s, steel, holes, stage);
+  return f;
+}
+
+}  // namespace
+
+TEST(MachinedTray, TheSameSeedIsTheSameSteel) {
+  const auto a = make_machined_surface(23, 7);
+  const auto b = make_machined_surface(23, 7);
+  const auto c = make_machined_surface(23, 8);
+  EXPECT_EQ(a.level, b.level);
+  EXPECT_NE(a.level, c.level);
+}
+
+TEST(MachinedTray, AHoleIsNeverBlack) {
+  Frame f = machined_frame();
+  const double r = 1.5 * 23;
+  int lowest = 255;
+  for (int y = 0; y < f.height; ++y) {
+    for (int x = 0; x < f.width; ++x) {
+      if (std::hypot(x - 99.5, y - 99.5) < r - 3) lowest = std::min<int>(lowest, f.at(x, y));
+    }
+  }
+  EXPECT_GT(lowest, 0.08 * 255);
+}
+
+TEST(MachinedTray, AThresholdLeavesACrescent) {
+  Frame f = machined_frame();
+  const double r = 1.5 * 23;
+  double dark = 0, sum_x = 0, sum_y = 0, area = 0;
+  for (int y = 0; y < f.height; ++y) {
+    for (int x = 0; x < f.width; ++x) {
+      if (std::hypot(x - 99.5, y - 99.5) >= r) continue;
+      area += 1;
+      if (f.at(x, y) >= 0.32 * 255) continue;
+      dark += 1;
+      sum_x += x - 99.5;
+      sum_y += y - 99.5;
+    }
+  }
+  ASSERT_GT(dark, 0);
+  EXPECT_LT(dark / area, 0.7);  // not the whole hole
+  EXPECT_GT(std::hypot(sum_x / dark, sum_y / dark), 0.2 * r);  // and to one side of it
+}
+
+TEST(MachinedTray, TheSteelBetweenHolesIsNotOneGrey) {
+  Frame f = machined_frame();
+  std::vector<double> levels;
+  for (int y = 0; y < 30; ++y) {
+    for (int x = 0; x < 30; ++x) levels.push_back(f.at(x, y));
+  }
+  double mean = 0;
+  for (const double v : levels) mean += v / static_cast<double>(levels.size());
+  double squares = 0;
+  for (const double v : levels) squares += (v - mean) * (v - mean) / static_cast<double>(levels.size());
+  EXPECT_GT(std::sqrt(squares), 0.015 * 255);
+}
+
+TEST(MachinedTray, TheSteelMovesWithTheStage) {
+  HoleScene s;
+  s.noise = 0;
+  const MachinedSurface steel = make_machined_surface(s.px_per_mm, 3);
+  Frame at = Frame::make(s.width, s.height, s.pixel_depth);
+  Frame moved = Frame::make(s.width, s.height, s.pixel_depth);
+  render_machined(at, s, steel, {}, {1, 0});
+  render_machined(moved, s, steel, {}, {1 + 10 / s.px_per_mm, 0});
+  double following = 0, staying = 0;
+  for (int y = 60; y < 140; ++y) {
+    for (int x = 60; x < 140; ++x) {
+      following += std::abs(static_cast<double>(moved.at(x, y)) - at.at(x + 10, y));
+      staying += std::abs(static_cast<double>(moved.at(x, y)) - at.at(x, y));
+    }
+  }
+  EXPECT_LT(following, 0.4 * staying);
+}
+
+TEST(ColdGrain, FillsItsOutlineAndNothingElse) {
+  HoleScene s;
+  Frame f = render(s, {0, 0}).first;
+  Frame before = f;
+  const std::vector<Vec2> square{{-0.25, -0.25}, {0.25, -0.25}, {0.25, 0.25}, {-0.25, 0.25}};
+  draw_grain(f, s, square, {0, 0}, 0.5);
+  EXPECT_EQ(f.at(100, 100), 128);  // inside, over the dark hole
+  EXPECT_EQ(f.at(0, 0), before.at(0, 0));  // the tray, away from it
+  const int edge = 100 + static_cast<int>(0.25 * s.px_per_mm) + 3;
+  EXPECT_EQ(f.at(edge, 100), before.at(edge, 100));  // the hole beside it
+}
+
+TEST(ColdGrain, IsCutAtTheFrame) {
+  HoleScene s;
+  Frame f = render(s, {0, 0}).first;
+  const std::vector<Vec2> beyond{{3.5, 3.5}, {30, 3.5}, {30, 30}, {3.5, 30}};
+  draw_grain(f, s, beyond, {0, 0}, 0.5);
+  EXPECT_EQ(f.at(199, 0), 128);
+  const std::vector<Vec2> too_few{{0, 0}, {1, 0}};
+  const Frame before = f;
+  draw_grain(f, s, too_few, {0, 0}, 0.9);
+  EXPECT_EQ(f.data, before.data);
+}
+
 TEST(GlowBody, TruthWeighsTheBody) {
   GlowScene s;
   s.lobes = {{{1.0, 0}, 0.1, 0.5}};
