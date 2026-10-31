@@ -241,6 +241,8 @@ void FollowPlotView::refresh_plane() {
 void FollowPlotView::fit_plane() {
   const QRect shown = xy_->axisRect()->rect();
   if (shown.width() <= 0 || shown.height() <= 0) return;
+  const QCPRange was_x = xy_->xAxis->range();
+  const QCPRange was_y = xy_->yAxis->range();
   setting_plane_ = true;
   if (auto_plane_) {
     // The scale that shows all of it both ways; the longer way shows more.
@@ -251,6 +253,11 @@ void FollowPlotView::fit_plane() {
     xy_->yAxis->setScaleRatio(xy_->xAxis, 1.0);
   }
   setting_plane_ = false;
+  // The ticks of this replot are already made, for the ranges it began with.
+  const auto moved = [](const QCPRange& a, const QCPRange& b) {
+    return std::abs(a.lower - b.lower) + std::abs(a.upper - b.upper) > 1e-9 * (a.size() + b.size());
+  };
+  if (moved(was_x, xy_->xAxis->range()) || moved(was_y, xy_->yAxis->range())) xy_->replot(QCustomPlot::rpQueuedReplot);
 }
 
 void FollowPlotView::refresh() {

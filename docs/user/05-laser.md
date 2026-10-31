@@ -676,20 +676,36 @@ marks where the grain really is. With hot spots the two differ, which is the
 point of them. The steady glow has no such truth and shows no cross; nor does
 a grain outside the picture.
 
-**Plots** (next to Stop, on any laser with a camera) opens a window of five
-strips on one shared time axis, seconds since the dragonfly began: stage x,
-stage y, beam deviation, luminosity and grain size. The first two plot where
-the stage was against where the grain really was; the others plot what the
-finder saw ("seen") against the truth ("true"). The truth exists only on a
-simulated grain, so on a real laser those lines are left out, and so is the
-true size of a point grain. A gap in a line is a step where nothing was seen
-(a miss, or a search). Luminosity can pass 1 in the truth, where the glow is
-brighter than a picture can show. The plots are filled by every dragonfly on
-the laser, whoever started it, so a run begun before the window was opened
-shows whole; a new run clears the last one. Drag or scroll on a strip to zoom
-all five in time, which stops the time axis following the run until the next
-run starts. A driver that runs its own patterns leaves the plots empty.
+**Plots** (next to Stop, on any laser with a camera) opens a window with two
+halves. On the left the tray from above, on one scale both ways: where the stage
+has been, where the grain really was, a dot at each one's latest place, and the
+dashed fence, the circle the dragonfly keeps the stage inside: the pattern's
+`perimeter_radius` about where it started, less if the hole has less room. On the
+right three strips on one shared time axis, seconds since the dragonfly began:
+beam deviation, luminosity and grain size, what the finder saw ("seen") against
+the truth ("true"). The truth exists only on a simulated grain, so on a real
+laser the grain's track and the true lines are left out, and so is the true size
+of a point grain. A gap in a strip is a step where nothing was seen (a miss, or a
+search). Luminosity can pass 1 in the truth, where the glow is brighter than a
+picture can show. The plots are filled by every dragonfly on the laser, whoever
+started it, so a run begun before the window was opened shows whole; a new run
+clears the last one. Drag or scroll on a strip to zoom all three in time, and on
+the tray view to zoom in place: either stops that side following the run until
+the next run starts. A driver that runs its own patterns leaves the plots empty.
 Colours follow the plot palette in Preferences.
+
+A grain with a size lies in its hole with the beam off, and every grain keeps
+what happened to it when the stage goes to another hole: a melted grain is still
+melted when you come back. **Reset simulation**, beside the button, puts every
+grain back as it was first made, returns the stage to the hole it was last sent
+to (centering it if Center holes is ticked) and clears the plots. After a jog
+the stage stays where it is.
+
+`surface = "machined"` under `[<laser>.sim]` draws the tray as stainless steel
+at this magnification, with holes lit from one side: their floors are never
+black, and part of each is nearly as bright as the tray, so a threshold leaves a
+crescent. The hole finder does not take a crescent for a hole, so Center holes
+fails on this surface and the stage stays where it was sent.
 
 The button exists only when the driver is simulated and the camera's `source`
 is `sim`: a real laser does not have it, and on one a dragonfly runs from a
