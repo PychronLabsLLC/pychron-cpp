@@ -30,6 +30,7 @@ add_library(pychron_ui_lib STATIC
   src/health_bar.cpp
   src/main_window.cpp
   src/no_database_persister.cpp
+  src/follow_plot_model.cpp
   src/strip_chart_model.cpp
   src/intensities_model.cpp
   src/spectrometer_bridge.cpp
@@ -136,6 +137,7 @@ add_library(pychron_ui_lib STATIC
   src/health_bar.hpp
   src/main_window.hpp
   src/no_database_persister.hpp
+  src/follow_plot_model.hpp
   src/strip_chart_model.hpp
   src/intensities_model.hpp
   src/spectrometer_bridge.hpp
