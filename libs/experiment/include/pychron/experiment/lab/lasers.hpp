@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -62,6 +63,9 @@ class Lasers {
 
   laser::LaserSystem* find(std::string_view device);  // null: no such device
   std::vector<std::string> names() const;             // sorted
+  // Whether the device's driver is simulated; false for one there is not.
+  // Fixed once built.
+  bool simulated(std::string_view device) const;
   // What the lab asks of a device that cannot be done here: a camera that
   // cannot be used to center holes on it. Fixed once built.
   std::vector<std::string> problems() const;
@@ -88,6 +92,7 @@ class Lasers {
   // calibrations.
   std::map<std::string, std::unique_ptr<laser::LaserSystem>, std::less<>> systems_;
   std::map<std::string, std::string, std::less<>> problems_;
+  std::set<std::string, std::less<>> simulated_;
   std::vector<std::string> notes_;
 
   mutable std::mutex mutex_;

@@ -29,6 +29,8 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
     if (device == nullptr) continue;
     auto system = std::make_unique<laser::LaserSystem>(name, *device, lab.trays, *lab.calibrations, &lab.patterns,
                                                        &line.clock());
+    const bool sim = simulated ? simulated(name) : line.sim() != nullptr && line.sim()->chromium(name) != nullptr;
+    if (sim) simulated_.insert(name);
     // Where holes were found before, and (if the lab gives the device a
     // camera) the means to find them again.
     system->set_corrections(*lab.corrections);
@@ -58,7 +60,6 @@ Lasers::Lasers(const Lab& lab, systems::ExtractionLine& line, std::function<bool
       if (camera->use == laser::CameraUse::View) notes_.push_back("camera of " + name + ": " + scale_trouble);
       else problems_.insert_or_assign(name, "camera of " + name + ": " + scale_trouble);
     } else if (camera != nullptr && camera->source != laser::CameraSource::Recorded) {
-      const bool sim = simulated ? simulated(name) : line.sim() != nullptr && line.sim()->chromium(name) != nullptr;
       // What a live camera that did not open says; empty when it did, and
       // for the others.
       const auto unopened = [](vision::IFrameSource& frames) {
@@ -108,6 +109,8 @@ laser::LaserSystem* Lasers::find(std::string_view device) {
   const auto it = systems_.find(device);
   return it == systems_.end() ? nullptr : it->second.get();
 }
+
+bool Lasers::simulated(std::string_view device) const { return simulated_.contains(device); }
 
 std::vector<std::string> Lasers::names() const {
   std::vector<std::string> out;

@@ -549,3 +549,29 @@ TEST(Dragonfly, ReacquiresAfterADropout) {
   EXPECT_GE(rig.clock.now() - started, Duration(20s));
   EXPECT_LT(rig.clock.now() - started, Duration(23s));
 }
+
+// The laser window draws the grain's truth beside what the finder sees.
+TEST(GrainPx, IsWhereTheFrameShowsTheGrain) {
+  for (const bool flipped : {false, true}) {
+    CameraConfig camera = grain_camera(vision::GrainParams{}, 0.25, -0.15);
+    camera.flip_x = flipped;
+    GrainRig rig(camera);
+    (void)rig.system.picture();  // the grain is made at its first look
+    rig.clock.advance(3s);
+    auto seen = rig.system.picture();
+    ASSERT_TRUE(seen) << seen.error().what;
+    const vision::Truth truth = rig.sim_camera->last_truth();
+    ASSERT_TRUE(truth.visible);
+    const auto px = rig.system.grain_px(*seen);
+    ASSERT_TRUE(px.has_value());
+    EXPECT_NEAR(px->x, truth.center_px.x, 0.5);
+    EXPECT_NEAR(px->y, truth.center_px.y, 0.5);
+  }
+}
+
+TEST(GrainPx, NoGrainTableNoTruth) {
+  CameraHarness rig;
+  auto seen = rig.system.picture();
+  ASSERT_TRUE(seen) << seen.error().what;
+  EXPECT_FALSE(rig.system.grain_px(*seen).has_value());
+}

@@ -24,6 +24,7 @@ struct CameraStageMap {
   double residual_mm = 0;             // RMS fit error from solve(); 0 otherwise
 
   Vec2 to_mm(Vec2 px) const;
+  Vec2 to_px(Vec2 mm) const;  // to_mm undone; a map that is not valid() gives nonsense
   bool valid() const;  // finite and |det| > 1e-12
 
   // Diagonal map of 1/px_per_mm; a flipped axis is negated. The synthetic

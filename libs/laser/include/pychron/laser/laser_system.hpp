@@ -107,6 +107,9 @@ struct CameraView {
   int age_ms = 0;
   double fps = 0;
   std::string trouble;
+  // A simulated grain: where it really is in the frame, which is not what
+  // the finder sees. LaserSystem::grain_px() gives it; nothing else sets it.
+  std::optional<StageXY> grain_px;
 };
 
 class LaserSystem final : public extraction::IExtractionDevice,
@@ -188,6 +191,12 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // The picture alone, with nothing looked for in it: cheap enough to show
   // as video. Its target and targets are empty.
   Result<CameraView> picture();
+  // Where a simulated grain really is in `seen`'s frame (it may be outside
+  // it): the truth to hold what the finder sees against. Empty for any camera
+  // but a SimTrayCamera with a [sim.grain] table. It runs the grain to the
+  // clock's now: the grain is state of the camera's grabs, and both are under
+  // the gate. Asks the driver what the camera asks at a grab.
+  std::optional<StageXY> grain_px(const CameraView& seen);
   // The camera's pixel scale as measured (camera_scale.hpp): used from now
   // on instead of what its configuration says. Nothing with no camera.
   void set_measured_scale(const ScaleMeasurement& measured);

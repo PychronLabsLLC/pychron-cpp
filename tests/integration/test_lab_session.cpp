@@ -762,6 +762,9 @@ TEST_F(SharedLasersSessionTest, ACameraThatCannotBeUsedHereIsAProblem) {
   ASSERT_NE(real.problem_of("co2"), nullptr);
   EXPECT_EQ(real.problems().size(), 1u);
   EXPECT_FALSE(real.find("co2")->has_camera());
+  EXPECT_FALSE(real.simulated("co2"));
+  EXPECT_TRUE(lasers_->simulated("co2"));
+  EXPECT_FALSE(lasers_->simulated("bone_gauge")) << "not a laser here";
 }
 
 TEST_F(SharedLasersSessionTest, OnlyOneDrivesAtATime) {

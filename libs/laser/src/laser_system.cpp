@@ -354,6 +354,17 @@ Result<CameraView> LaserSystem::picture() {
   return frame_now(false);
 }
 
+std::optional<StageXY> LaserSystem::grain_px(const CameraView& seen) {
+  Gate gate(gate_);
+  auto* sim = dynamic_cast<SimTrayCamera*>(frames_.get());
+  if (sim == nullptr) return std::nullopt;
+  const auto grain = sim->observe();
+  if (!grain) return std::nullopt;
+  const vision::Vec2 from_beam =
+      camera_->map().to_px({grain->grain_mm.x - grain->beam_mm.x, grain->grain_mm.y - grain->beam_mm.y});
+  return StageXY{seen.aim_px.x + from_beam.x, seen.aim_px.y + from_beam.y};
+}
+
 Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
   CameraView seen;
   bool firing = false;

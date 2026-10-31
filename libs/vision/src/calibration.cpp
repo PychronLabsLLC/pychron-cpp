@@ -24,6 +24,11 @@ Vec2 CameraStageMap::to_mm(Vec2 px) const {
   return {m[0][0] * px.x + m[0][1] * px.y, m[1][0] * px.x + m[1][1] * px.y};
 }
 
+Vec2 CameraStageMap::to_px(Vec2 mm) const {
+  const double det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+  return {(m[1][1] * mm.x - m[0][1] * mm.y) / det, (m[0][0] * mm.y - m[1][0] * mm.x) / det};
+}
+
 bool CameraStageMap::valid() const {
   for (const auto& row : m)
     for (double v : row)

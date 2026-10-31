@@ -57,6 +57,19 @@ TEST(CameraStageMap, FromScaleFlipsNegateAxes) {
   EXPECT_EQ(map.to_mm({0, 10}).y, 1.0);
 }
 
+TEST(CameraStageMap, ToPxUndoesToMm) {
+  CameraStageMap sheared;
+  sheared.m[0][0] = 0.04;
+  sheared.m[0][1] = 0.01;
+  sheared.m[1][0] = -0.02;
+  sheared.m[1][1] = 0.05;
+  for (const auto& map : {CameraStageMap::from_scale(23.0, false, true), CameraStageMap::from_scale(23.0, true, false), sheared}) {
+    const Vec2 px = map.to_px(map.to_mm({12.5, -7.25}));
+    EXPECT_NEAR(px.x, 12.5, 1e-9);
+    EXPECT_NEAR(px.y, -7.25, 1e-9);
+  }
+}
+
 TEST(CameraStageMap, SolveRecoversRotationFlipAndScale) {
   const double th = 17.0 * std::numbers::pi / 180.0;
   const double c = std::cos(th) / 31.0, s = std::sin(th) / 31.0;
