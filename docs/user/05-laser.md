@@ -546,9 +546,75 @@ fails part way, the stage returns to where the pattern began and, by the
 camera's `on_failure`, holds there for the rest of the duration (and says so)
 or the run fails. A dragonfly cannot be run by hand (`elctl laser pattern`
 never fires the laser, so there is no glow, and the window lists it as "runs
-from a queue"). It is proven on the simulated camera only.
+from a queue"); `elctl laser track` (section 8.3) runs it against a simulated
+grain. It is proven on the simulated camera only.
 
-### 8.3 The pattern maker
+### 8.3 Trying a dragonfly against a simulated grain
+
+`elctl laser track` runs the dragonfly against a simulated grain and scores
+how well it kept the beam on it, so that settings can be compared without a
+laser, a lab or a line: it needs no `-c` and touches no configured device.
+It builds a simulator of its own in a scratch folder, runs the real dragonfly
+on it, and removes the folder afterwards.
+
+```bash
+elctl laser track configs/examples/track/hot_spots.toml
+elctl laser track configs/examples/track/jumpy.toml --seeds 5 --trace jumpy.csv
+```
+
+A **scenario** is a small TOML file. `configs/examples/track/` has six, each a
+grain that misbehaves in one way, so that a tracker's failure can be pinned on
+one cause: `steady` (nothing goes wrong), `hot_spots` (several wandering
+lobes of glow), `flicker` (flutter, flares, dropouts), `jumpy`, `cooling` (the
+grain cools and creeps) and `everything`. A scenario gives the `output_percent`
+the laser fires at, the `duration` of a run in seconds, and how many `seeds`
+(runs) to score; a `[grain]` table with the keys of `[<laser>.sim.grain]` (see
+[the configuration reference](07-configuration-reference.md#camerastoml)), a
+`[pattern]` table with the keys of a dragonfly pattern file, and a `[camera]`
+table (`settle_ms`, `frames_per_step`, `noise`, `px_per_mm`, `width`,
+`height`). To compare settings, a `[sweep.pattern]`, `[sweep.grain]` or
+`[sweep.camera]` table lists several values of a key; every combination is run
+on the same seeds, so the same flares and jumps happen at the same times
+whatever the setting. A scenario with a mistake in it, or more than 10000 runs
+in all, is refused before anything runs.
+
+The result is one block per combination, best first by `on%`, with the mean
+and the worst of its runs:
+
+| Column | Meaning |
+|---|---|
+| `on%` | the share of the run the beam was on the grain (within `beam_radius_mm` of its center) |
+| `rms`, `max` | distance from beam to grain, mm |
+| `lock_s` | time to the first lock, one second unbroken on the grain; a run that never locked counts as the whole duration |
+| `lost` | how many times it was lost after locking, one second unbroken off the grain |
+| `back_s` | how long it took to lock again after a loss; a loss still open at the end counts to the end of the duration |
+| `moves` | stage moves |
+| `heat%` | how hot the grain was kept, against the beam dead on it |
+| `track%`, `hold%`, `sat%`, `search%` | how the tracker spent its looks: following the glow, holding still (inside the deadband, or nothing to follow), holding for a glow too bright, searching |
+
+A run that ended in a pattern error is counted, and its row says `failed N`
+with the first error. `--seeds N` replaces the scenario's number of runs;
+`--trace <file>` writes a CSV of every poll of every run (beam, grain, heat,
+brightness, why the tracker moved); `--frames <dir>` writes every frame the
+tracker saw in one run as PNG files, the first combination's first run unless
+`--frames-seed S` names another (a seed that is not among the runs is
+refused); `--check` does every check and runs nothing.
+
+Read these numbers as a comparison, not a measurement. The grain's heating,
+glow and motion are the program's judgement of what a grain might do, not
+fitted to a real one; the bench shows which of two settings follows a given
+kind of misbehaviour better, and which kind of misbehaviour a setting cannot
+follow. It says nothing about how a real grain behaves, and a setting that
+wins here still has to be tried on one.
+
+Two things the bench shows already. The tracker's search for the glow starts
+while the glow is still building; with the grain off the beam's first position
+that costs about half a second off the grain at the start of a run. And on the
+`cooling` scenario a grain that heats more slowly than the defaults
+(`heat_tau_s` of 0.8 or more) is left behind for good: the first search
+carries the beam away before there is a glow to follow.
+
+### 8.4 The pattern maker
 
 In the laser window, **Patterns tab > Pattern maker...** opens a form for
 making a pattern: choose the **Kind** and the **Name** (what a queue calls it)

@@ -1,0 +1,36 @@
+# Everything: all of the behaviours above at once. The hardest case; when a
+# setting fails here and not in the others, those say which behaviour it
+# cannot take.
+#
+# Run: elctl laser track configs/examples/track/everything.toml
+# The model's numbers are judgement, not measurements: this compares tracker
+# settings against each other and says nothing about real grains.
+
+output_percent = 20
+duration = 30
+seeds = 20
+
+[grain]
+lobes = 3
+lobe_sigma_mm = 0.25
+lobe_spread_mm = 0.3
+lobe_wander_mm_per_rt_s = 0.1
+lobe_life_s = 5
+flicker = 0.4
+flicker_tau_s = 0.3
+flares_per_s = 0.2
+flare_gain = 4
+flare_tau_s = 0.3
+dropouts_per_s = 0.1
+dropout_s = 0.6
+jumps_per_s = 0.2
+jump_mm = 0.5
+heat_tau_s = 0.7
+cool_tau_s = 0.3
+creep_mm_per_s = [0.25, 0.1]
+wander_mm_per_rt_s = 0.05
+
+# The settings compared; add keys to [sweep.pattern], [sweep.grain] or
+# [sweep.camera] to compare more, each value a run on the same seeds.
+[sweep.pattern]
+aggressiveness = [0.5, 1, 2]

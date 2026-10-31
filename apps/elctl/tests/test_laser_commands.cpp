@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -55,6 +56,33 @@ class LaserCmd : public ElctlTest {
     out << in.rdbuf();
     return out.str();
   }
+  // elctl laser track: the bench, which builds a simulator of its own.
+  static constexpr const char* kScenario = "output_percent = 20\nduration = 3\nseeds = 2\n";
+
+  fs::path scenario(const std::string& text = kScenario) const {
+    write("scenario.toml", text);
+    return path("scenario.toml");
+  }
+  // `elctl laser track ...` with no -c, from an empty directory.
+  Outcome track(std::vector<std::string> args) const {
+    const fs::path here = fs::current_path();
+    fs::create_directories(dir_ / "empty");
+    fs::current_path(dir_ / "empty");
+    std::vector<std::string> all{"laser", "track"};
+    all.insert(all.end(), args.begin(), args.end());
+    const auto o = run_raw(all);
+    fs::current_path(here);
+    return o;
+  }
+  // Every file under the lab, with its text.
+  std::map<std::string, std::string> lab_files() const {
+    std::map<std::string, std::string> out;
+    for (const auto& e : fs::recursive_directory_iterator(lab(""))) {
+      out[e.path().string()] = e.is_regular_file() ? slurp(e.path()) : "";
+    }
+    return out;
+  }
+
   // The laser PC is somewhere that will never answer: any attempt to open it fails.
   void unplug_the_laser() const {
     std::string text = slurp(lab("extraction_line.toml"));
@@ -620,6 +648,77 @@ TEST_F(LaserCameraCmd, SnapshotSavesAPicture) {
   const auto none = laser({"snapshot", "co2"}, true);
   EXPECT_EQ(none.code, 1);
   EXPECT_NE(none.err.find("no camera"), std::string::npos) << none.err;
+}
+
+TEST_F(LaserCmd, TrackPrintsItsTable) {
+  const auto o = track({scenario().string()});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("on%"), std::string::npos) << o.out;
+  EXPECT_NE(o.out.find("mean"), std::string::npos) << o.out;
+}
+
+TEST_F(LaserCmd, TrackNeedsNoLineOrLab) {
+  const auto o = track({scenario().string(), "--seeds", "1"});
+  EXPECT_EQ(o.code, 0) << o.err;
+  EXPECT_TRUE(o.err.empty()) << o.err;
+}
+
+TEST_F(LaserCmd, TrackIgnoresAConfiguredLine) {
+  unplug_the_laser();  // had it touched the configured laser, it would fail
+  const auto before = lab_files();
+  const auto o = laser({"track", scenario().string(), "--seeds", "1"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(o.out.find("on%"), std::string::npos) << o.out;
+  EXPECT_EQ(lab_files(), before);
+}
+
+TEST_F(LaserCmd, TrackWritesTraceAndFrames) {
+  const std::string text = std::string(kScenario) + "[camera]\nframes_per_step = 1\n";
+  const auto o = track({scenario(text).string(), "--trace", path("trace.csv").string(), "--frames",
+                        path("frames").string(), "--frames-seed", "2"});
+  ASSERT_EQ(o.code, 0) << o.err;
+  EXPECT_NE(slurp(path("trace.csv")).find("combo,seed,t_s"), std::string::npos);
+  EXPECT_TRUE(fs::exists(path("frames") / "00000.png"));
+  const auto refused = track({scenario().string(), "--frames", path("more").string(), "--frames-seed", "99"});
+  EXPECT_EQ(refused.code, 1);
+  EXPECT_NE(refused.err.find("99"), std::string::npos) << refused.err;
+}
+
+TEST_F(LaserCmd, TrackFlagsGoWithTrack) {
+  for (const char* flag : {"--seeds", "--trace", "--frames", "--frames-seed"}) {
+    const auto o = laser({"patterns", flag, "1"});
+    EXPECT_EQ(o.code, 2) << flag << o.err;
+    EXPECT_NE(o.err.find("track"), std::string::npos) << o.err;
+  }
+  const auto check = laser({"patterns", "--check"});
+  EXPECT_EQ(check.code, 2);
+  EXPECT_EQ(track({scenario().string(), "--seeds", "0"}).code, 2);
+  EXPECT_EQ(track({scenario().string(), "--seeds", "x"}).code, 2);
+  EXPECT_EQ(track({scenario().string(), "--frames-seed", "-1"}).code, 2);
+  EXPECT_EQ(track({}).code, 2);
+  EXPECT_EQ(track({"a.toml", "b.toml"}).code, 2);
+}
+
+TEST_F(LaserCmd, TrackBadScenarioFails) {
+  const auto missing = track({path("nothing.toml").string()});
+  EXPECT_EQ(missing.code, 1);
+  EXPECT_NE(missing.err.find("nothing.toml"), std::string::npos) << missing.err;
+  const auto bad = track({scenario("duration = 3\nsedes = 2\n").string()});
+  EXPECT_EQ(bad.code, 1);
+  EXPECT_NE(bad.err.find("scenario.toml"), std::string::npos) << bad.err;
+  EXPECT_NE(bad.err.find("sedes"), std::string::npos) << bad.err;
+}
+
+TEST_F(LaserCmd, EveryShippedScenarioIsGood) {
+  const fs::path dir = fs::path(PYCHRON_EXAMPLE_CONFIGS_DIR) / "track";
+  int found = 0;
+  for (const auto& e : fs::directory_iterator(dir)) {
+    if (e.path().extension() != ".toml") continue;
+    ++found;
+    const auto o = track({e.path().string(), "--check"});
+    EXPECT_EQ(o.code, 0) << e.path() << ": " << o.err;
+  }
+  EXPECT_EQ(found, 6);
 }
 
 }  // namespace

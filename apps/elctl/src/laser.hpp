@@ -13,6 +13,8 @@
 //   elctl ... laser look <device> [--tray <tray>]
 //   elctl ... laser patterns
 //   elctl ... laser pattern <device> <name> [--dry-run] [--timeout <seconds>]
+//   elctl laser track <scenario.toml> [--seeds N] [--trace <file>] [--frames <dir>]
+//                     [--frames-seed S] [--check]
 //
 // A calibration is a list of points: "the stage was at (x, y) when it was on
 // this hole". `point` takes the position from the device (jog the stage onto
@@ -30,6 +32,10 @@
 // laser: to see where the beam would go. goto and pattern stop the stage on
 // Ctrl-C and when --timeout runs out.
 //
+// `track` runs the dragonfly pattern against a simulated grain and scores it
+// (grain simulator design, section 7). It builds a simulator of its own and
+// needs no line config, lab or device; whatever -c names is left alone.
+//
 // --lab defaults to the install's lab, else the -c config's directory.
 
 #include <string>
@@ -37,8 +43,13 @@
 
 #include "cli.hpp"
 #include "exp.hpp"
+#include "pychron/laser/track_bench.hpp"
 
 namespace elctl {
+
+// `words` is {"track", <scenario>}. Prints the table; a bad scenario is an
+// error on stderr and kFailed.
+int laser_track(const std::vector<std::string>& words, const pychron::laser::TrackOptions& options, Io io);
 
 int laser_command(const std::vector<std::string>& args, const ExpGlobals& globals, Io io);
 

@@ -12,7 +12,10 @@
 #include <sstream>
 #include <thread>
 
+#include <cstdint>
+
 #include "pychron/laser/camera_scale.hpp"
+#include "pychron/laser/track_bench.hpp"
 #include "pychron/vision/camera_backend.hpp"
 #include "pychron/codecs/codec.hpp"
 #include "pychron/devices/extraction/interfaces.hpp"
@@ -60,7 +63,10 @@ constexpr const char* kLaserUsage =
     "  patterns                                          the lab's patterns: kind, points, length, time\n"
     "  pattern <device> <name> [--dry-run] [--timeout <s>]\n"
     "                                                    run a pattern about where the stage is (the laser is\n"
-    "                                                    not fired); --dry-run prints its points instead\n";
+    "                                                    not fired); --dry-run prints its points instead\n"
+    "  track <scenario.toml> [--seeds N] [--trace <file>] [--frames <dir>] [--frames-seed S] [--check]\n"
+    "                                                    run dragonfly against a simulated grain and score it;\n"
+    "                                                    needs no line, lab or device (--check: validate only)\n";
 
 // Locale-free fixed-point text.
 std::string num(double value, int places = 3) {
@@ -93,6 +99,8 @@ struct Args {
   std::optional<double> x, y, timeout, step;
   std::optional<std::string> tray;  // --tray, for look
   bool dry_run = false;
+  laser::TrackOptions track;  // --seeds, --trace, --frames, --frames-seed, --check
+  bool track_flag = false;    // any of them given
 };
 
 class Laser {
@@ -808,7 +816,28 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
   Args a;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& x = args[i];
-    if (x == "--lab" || x == "--x" || x == "--y" || x == "--timeout" || x == "--step") {
+    if (x == "--seeds" || x == "--frames-seed") {
+      if (i + 1 >= args.size()) return usage(x + " needs a value");
+      const std::string& v = args[++i];
+      const auto number = codec::parse_decimal(v);
+      const bool whole = number && *number == std::floor(*number) && *number < 1e9;
+      if (!whole) return usage(std::string(x).append(" needs a whole number, not '").append(v).append("'"));
+      if (x == "--seeds") {
+        if (*number < 1 || *number > 10000) return usage("--seeds is from 1 to 10000");
+        a.track.seeds = static_cast<int>(*number);
+      } else {
+        if (*number < 0) return usage("--frames-seed needs a number of 0 or more");
+        a.track.frames_seed = static_cast<std::uint64_t>(*number);
+      }
+      a.track_flag = true;
+    } else if (x == "--trace" || x == "--frames") {
+      if (i + 1 >= args.size()) return usage(x + " needs a value");
+      (x == "--trace" ? a.track.trace : a.track.frames) = args[++i];
+      a.track_flag = true;
+    } else if (x == "--check") {
+      a.track.check_only = true;
+      a.track_flag = true;
+    } else if (x == "--lab" || x == "--x" || x == "--y" || x == "--timeout" || x == "--step") {
       if (i + 1 >= args.size()) return usage(x + " needs a value");
       const std::string& v = args[++i];
       if (x == "--lab") {
@@ -834,6 +863,16 @@ int laser_command(const std::vector<std::string>& args, const ExpGlobals& global
     }
   }
   if (a.words.empty()) return usage("");
+  if (a.track_flag && a.words[0] != "track") {
+    return usage("--seeds, --trace, --frames, --frames-seed and --check go with track");
+  }
+  if (a.words[0] == "track") {
+    if (a.words.size() != 2) return usage("track needs <scenario.toml>");
+    if (a.x || a.y || a.timeout || a.step || a.tray || a.dry_run || !a.lab.empty()) {
+      return usage("track takes only --seeds, --trace, --frames, --frames-seed and --check");
+    }
+    return laser_track(a.words, a.track, io);  // its own simulator: no lab, no line, no device
+  }
   if (a.x.has_value() != a.y.has_value()) return usage("--x and --y go together");
   if (a.lab.empty()) a.lab = !globals.lab.empty() ? globals.lab : globals.config.parent_path();
   if (a.lab.empty()) a.lab = ".";

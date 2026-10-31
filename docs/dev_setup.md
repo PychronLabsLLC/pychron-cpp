@@ -713,7 +713,10 @@ the run's log) or the run fails. `elctl laser pattern` does not run a
 dragonfly (it never fires the laser, so there is no glow). As with autocenter,
 there is no live camera yet: this runs on the simulator, whose camera shows a
 glow at the sample while the simulated laser fires (`grain_offset_mm` and
-`glow_drift_mm_per_s` in `cameras.toml`).
+`glow_drift_mm_per_s` in `cameras.toml`, or a grain that heats under the beam
+and moves, `[co2.sim.grain]`). `elctl laser track <scenario.toml>` runs the
+dragonfly against such a grain and scores it, with no line, lab or device
+(`configs/examples/track/`, `docs/user/05-laser.md` section 8.3).
 
 Legacy patterns are Python pickles (`setupfiles/patterns/*.lp`). Export them
 once per lab; nothing in a pickle is run:

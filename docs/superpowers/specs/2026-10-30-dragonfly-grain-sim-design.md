@@ -1,7 +1,7 @@
 # Dragonfly grain simulator design
 
 Date: 2026-10-30
-Status: Draft
+Status: Part A implemented (§3 to §7, §9 Part A tests); Part B (§8) not built
 Owner: Jake Ross
 Builds on: `2026-10-04-laser-dragonfly-design.md` (§6 simulated glow, §4 runner),
 `2026-10-03-vision-design.md`, `libs/sim/AGENTS.md` (keyed noise).
@@ -68,6 +68,7 @@ class GrainModel {
   void advance(Duration dt, Vec2 beam_mm, double output_percent);
   std::vector<GlowLobe> lobes() const;
   GrainTruth truth() const;
+  std::int64_t tick() const noexcept;  // ticks run so far
 };
 ```
 
@@ -227,7 +228,7 @@ Every combination is loaded before first run: bad value in a sweep refused
 before any time is spent. `--trace` and `--frames` targets checked writable at
 same point.
 
-Run: one thread, `ManualClock`, as `tests/laser/test_dragonfly.cpp`. Stage to
+Run: one thread, `ManualClock`, as `tests/laser/test_dragonfly.cpp`. Bench's camera has `on_failure = "fail"`: camera that fails is failed run, not stage held still and scored. Stage to
 hole; enable; `extract(output_percent, Percent)`; fire; `execute_pattern`;
 each `poll_ms`: `running()`, `observe()`, score, advance clock. At end laser
 off.
@@ -246,19 +247,20 @@ mean % on grain:
 | `on%` | time on grain |
 | `rms`, `max` | beam to grain, mm |
 | `lock_s` | time to first lock; never locked counts as duration |
-| `lost` | losses |
-| `back_s` | mean loss to next lock; never back counts rest of run |
-| `moves` | stage moves |
+| `lost` | losses (double: mean over seeds keeps fraction) |
+| `back_s` | mean loss to next lock; never back counts rest of run, up to duration (not stage's trip home) |
+| `moves` | stage moves (double, as `lost`) |
 | `heat%` | mean heat ÷ heat of beam centered at this output |
 | `track%`, `hold%`, `sat%`, `search%` | looks by reason, from `on_step` (`Track` and `PerimeterClamp`; `Deadband` and `Miss`; `Saturated`; `Search`) |
 
 Pattern error or `Invalid` end: run counted, row marked `failed N`, first
-error printed.
+error printed. Run still going at duration + 30 s simulated is stopped and counts as failed run.
 
 `--trace`: CSV, one row per poll, all runs: `combo, seed, t_s, beam_x, beam_y,
 grain_x, grain_y, heat, brightness, reason, saturation` (reason, saturation
 empty at poll with no look). Decimal text locale-free.
 `--check`: every check, no run.
+`--frames-seed` not among runs (`seed` to `seed + seeds - 1`): Config error before anything runs.
 `--frames`: every frame of first combination's `--frames-seed` run (default
 `seed`) as `<dir>/<nnnnn>.png` through `vision::write_png`.
 Files are `mark_as_user_file`d.
@@ -299,7 +301,7 @@ Part A:
   Beam parked off grain goes dark; dragonfly follows a jumping grain.
 - `tests/laser/test_track_bench.cpp`:
   - same scenario twice: same table, same trace.
-  - `steady`: on% near 100.
+  - `steady`: on% above 95 at 20 s. Tracker's spiral search starts while glow is still building, costing about 0.5 s off grain at start when grain is off beam's first position; known finding, not tuned around. `failed` row on `steady` is fault.
   - `aggressiveness = 0` scores worse than 1 on a creeping grain.
   - `sweep` makes every combination on same seeds; 10001 runs refused.
 - `apps/elctl/tests`: verb, flags, bad scenario, `--frames` and `--trace`

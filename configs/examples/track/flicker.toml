@@ -1,0 +1,25 @@
+# Flicker: the glow's brightness flutters, flares to several times its level
+# and drops out for a moment. Stresses the saturation test, and what the
+# tracker does on a look that finds nothing.
+#
+# Run: elctl laser track configs/examples/track/flicker.toml
+# The model's numbers are judgement, not measurements: this compares tracker
+# settings against each other and says nothing about real grains.
+
+output_percent = 20
+duration = 30
+seeds = 20
+
+[grain]
+flicker = 0.4
+flicker_tau_s = 0.3
+flares_per_s = 0.2
+flare_gain = 4
+flare_tau_s = 0.3
+dropouts_per_s = 0.1
+dropout_s = 0.6
+
+# The settings compared; add keys to [sweep.pattern], [sweep.grain] or
+# [sweep.camera] to compare more, each value a run on the same seeds.
+[sweep.pattern]
+aggressiveness = [0.5, 1, 2]

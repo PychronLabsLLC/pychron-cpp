@@ -1,0 +1,20 @@
+# Jumpy: the grain jumps half a millimeter now and then while it is hot.
+# Stresses how fast the tracker catches up after a jump, and whether it loses
+# the grain for good.
+#
+# Run: elctl laser track configs/examples/track/jumpy.toml
+# The model's numbers are judgement, not measurements: this compares tracker
+# settings against each other and says nothing about real grains.
+
+output_percent = 20
+duration = 30
+seeds = 20
+
+[grain]
+jumps_per_s = 0.2
+jump_mm = 0.5
+
+# The settings compared; add keys to [sweep.pattern], [sweep.grain] or
+# [sweep.camera] to compare more, each value a run on the same seeds.
+[sweep.pattern]
+aggressiveness = [0.5, 1, 2]
