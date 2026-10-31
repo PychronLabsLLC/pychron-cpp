@@ -15,6 +15,7 @@
 #include <QtTest/QtTest>
 
 #include "camera_view.hpp"
+#include "follow_plot_view.hpp"
 #include "laser_fixture.hpp"
 #include "laser_window.hpp"
 #include "main_window.hpp"
@@ -510,6 +511,30 @@ class LaserWindowTest : public QObject {
     QVERIFY(queue.has_value());
     QTRY_VERIFY(!btn("measure_scale")->isEnabled());
     QVERIFY(btn("snapshot")->isEnabled());  // looking is always allowed
+  }
+
+  void plots_button_opens_the_view() {
+    auto* view = window_->findChild<FollowPlotView*>();
+    QVERIFY(view != nullptr);
+    QVERIFY(!view->isVisible());
+    QVERIFY(btn("pattern_plots")->isEnabled());
+    btn("pattern_plots")->click();
+    QVERIFY(view->isVisible());
+    QCOMPARE(view->windowTitle(), QStringLiteral("Follow plots"));
+  }
+
+  void a_run_before_opening_shows() {
+    auto* view = window_->findChild<FollowPlotView*>();
+    QVERIFY(view != nullptr);
+    std::vector<laser::FollowSample> rows(3);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      rows[i].step.elapsed_s = static_cast<double>(i);
+      rows[i].step.stage_mm = {1.0, 2.0};
+    }
+    emit bridge_->followSamples(rows);
+    QVERIFY(!view->isVisible());
+    btn("pattern_plots")->click();
+    QCOMPARE(view->point_count(FollowLine::StageX), 3);
   }
 
   void the_pattern_maker_button_is_offered_when_there_is_one() {

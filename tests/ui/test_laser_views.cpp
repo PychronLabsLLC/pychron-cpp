@@ -5,7 +5,12 @@
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
+#include <qcustomplot.h>
+
 #include "camera_view.hpp"
+#include "follow_plot_model.hpp"
+#include "follow_plot_view.hpp"
+#include "plot_style.hpp"
 #include "theme.hpp"
 #include "tray_view.hpp"
 
@@ -39,6 +44,34 @@ laser::CameraView seen(bool with_target) {
     v.target = t;
   }
   return v;
+}
+
+}  // namespace
+
+namespace {
+
+// A followed step: a grain at (3,4), a blob seen, `with_grain` off for a real laser.
+pychron::laser::FollowSample follow_sample(double t, bool with_grain = true) {
+  pychron::laser::FollowSample s;
+  s.step.stage_mm = {1 + t, 2};
+  s.step.elapsed_s = t;
+  s.step.saturation = 0.5;
+  s.step.reason = pychron::vision::DragonflyStep::Reason::Track;
+  s.step.seen = pychron::vision::DragonflySeen{{0.3, 0.4}, 3.0};
+  if (with_grain) {
+    pychron::laser::GrainView g;
+    g.grain_mm = {3, 4};
+    g.beam_mm = {0, 0};
+    g.truth.brightness = 0.7;
+    g.truth.radius_mm = 0.5;
+    s.grain = g;
+  }
+  return s;
+}
+
+int legend_entries(const pychron::ui::FollowPlotView& view, int strip) {
+  auto* legend = qobject_cast<QCPLegend*>(view.plot()->axisRect(strip)->insetLayout()->elementAt(0));
+  return legend != nullptr ? legend->itemCount() : -1;
 }
 
 }  // namespace
@@ -243,6 +276,94 @@ class LaserViewsTest : public QObject {
     QVERIFY(view.image().isNull());
     QCOMPARE(view.message(), QStringLiteral("co2 has no camera"));
     view.grab();
+  }
+
+  void follow_plot_has_five_strips() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    QCOMPARE(view.strip_count(), 5);
+    QCOMPARE(view.plot()->axisRectCount(), 5);
+    const QStringList titles = {QStringLiteral("Stage X (mm)"), QStringLiteral("Stage Y (mm)"),
+                                QStringLiteral("Beam deviation (mm)"), QStringLiteral("Luminosity"),
+                                QStringLiteral("Grain size (mm)")};
+    for (int i = 0; i < 5; ++i) QCOMPARE(view.plot()->axisRect(i)->axis(QCPAxis::atLeft)->label(), titles[i]);
+    QCOMPARE(view.windowTitle(), QStringLiteral("Follow plots"));
+    view.grab();  // empty model: nothing non-finite handed to the plot
+  }
+
+  void follow_plot_draws_the_model() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    for (int i = 0; i < 3; ++i) model.append(follow_sample(i * 0.5));
+    view.refresh();
+    QCOMPARE(view.point_count(pychron::ui::FollowLine::StageX), 3);
+    QCOMPARE(view.point_count(pychron::ui::FollowLine::GrainX), 3);
+    QVERIFY(view.line_visible(pychron::ui::FollowLine::SizeTrue));
+    QCOMPARE(legend_entries(view, 0), 2);
+    QCOMPARE(legend_entries(view, 4), 2);
+    view.grab();
+    view.resize(400, 500);
+    model.clear();
+    model.append(follow_sample(0));  // one row: a range of nothing
+    view.refresh();
+    const QCPRange x = view.plot()->axisRect(0)->axis(QCPAxis::atBottom)->range();
+    QVERIFY(std::isfinite(x.lower) && std::isfinite(x.upper) && x.upper > x.lower);
+    for (int i = 0; i < 5; ++i) {
+      const QCPRange y = view.plot()->axisRect(i)->axis(QCPAxis::atLeft)->range();
+      QVERIFY(std::isfinite(y.lower) && std::isfinite(y.upper) && y.upper > y.lower);
+    }
+  }
+
+  void follow_plot_hides_lines_with_no_values() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    for (int i = 0; i < 3; ++i) model.append(follow_sample(i * 0.5, false));
+    view.refresh();
+    QVERIFY(view.line_visible(pychron::ui::FollowLine::StageX));
+    QVERIFY(view.line_visible(pychron::ui::FollowLine::DeviationSeen));
+    QVERIFY(!view.line_visible(pychron::ui::FollowLine::GrainX));
+    QVERIFY(!view.line_visible(pychron::ui::FollowLine::SizeTrue));
+    QCOMPARE(legend_entries(view, 0), 1);
+    QCOMPARE(legend_entries(view, 2), 1);
+    view.grab();
+  }
+
+  void follow_plot_strips_share_time() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    for (int i = 0; i < 20; ++i) model.append(follow_sample(i));
+    view.refresh();
+    view.plot()->axisRect(0)->axis(QCPAxis::atBottom)->setRange(4, 9);
+    for (int i = 0; i < 5; ++i) {
+      const QCPRange r = view.plot()->axisRect(i)->axis(QCPAxis::atBottom)->range();
+      QCOMPARE(r.lower, 4.0);
+      QCOMPARE(r.upper, 9.0);
+    }
+    view.refresh();  // a zoom stays through new rows
+    QCOMPARE(view.plot()->axisRect(3)->axis(QCPAxis::atBottom)->range().lower, 4.0);
+  }
+
+  void follow_plot_follows_the_palette() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    model.append(follow_sample(0));
+    view.refresh();
+    using pychron::ui::plot_series_color;
+    QCOMPARE(view.plot()->graph(0)->pen().color(), plot_series_color(0));
+    QCOMPARE(view.plot()->graph(1)->pen().color(), plot_series_color(1));
+    QCOMPARE(view.plot()->graph(8)->pen().color(), plot_series_color(0));
+    QCOMPARE(view.plot()->graph(9)->pen().color(), plot_series_color(1));
+
+    const pychron::ui::PlotStyle before = pychron::ui::plot_style();  // NOLINT(performance-unnecessary-copy-initialization): a copy; set_plot_style replaces the original
+    pychron::ui::PlotStyle changed = before;
+    changed.series[0] = QColor(QStringLiteral("#123456"));
+    changed.series[1] = QColor(QStringLiteral("#654321"));
+    changed.plot_background = QColor(QStringLiteral("#eeeeee"));
+    pychron::ui::set_plot_style(changed);
+    QCOMPARE(view.plot()->graph(0)->pen().color(), QColor(QStringLiteral("#123456")));
+    QCOMPARE(view.plot()->graph(3)->pen().color(), QColor(QStringLiteral("#654321")));
+    QCOMPARE(view.plot()->axisRect(2)->backgroundBrush().color(), QColor(QStringLiteral("#eeeeee")));
+    pychron::ui::set_plot_style(before);
   }
 };
 

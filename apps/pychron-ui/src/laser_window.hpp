@@ -18,6 +18,7 @@
 #include <QMainWindow>
 #include <QString>
 
+#include "follow_plot_model.hpp"
 #include "laser_bridge.hpp"
 
 class QCheckBox;
@@ -31,6 +32,7 @@ class QTimer;
 namespace pychron::ui {
 
 class CameraView;
+class FollowPlotView;
 class TrayView;
 
 class LaserWindow : public QMainWindow {
@@ -121,6 +123,9 @@ class LaserWindow : public QMainWindow {
   QTableWidget* pattern_list_ = nullptr;
   QPushButton* pattern_run_ = nullptr;
   QPushButton* pattern_stop_ = nullptr;
+  QPushButton* pattern_plots_ = nullptr;
+  FollowPlotModel follow_model_;  // fed whether or not the view is open
+  FollowPlotView* follow_view_ = nullptr;  // hidden until Plots; a window of its own
   QPushButton* pattern_follow_ = nullptr;  // null unless the bridge offers it
   bool following_ = false;                 // from the click until its command has reported
   QPushButton* pattern_maker_ = nullptr;

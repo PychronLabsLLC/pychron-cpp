@@ -676,6 +676,19 @@ marks where the grain really is. With hot spots the two differ, which is the
 point of them. The steady glow has no such truth and shows no cross; nor does
 a grain outside the picture.
 
+**Plots** (next to Stop, on any laser with a camera) opens a window of five
+strips on one shared time axis, seconds since the dragonfly began: stage x,
+stage y, beam deviation, luminosity and grain size. The first two plot where
+the stage was against where the grain really was; the others plot what the
+finder saw ("seen") against the truth ("true"). The truth exists only on a
+simulated grain, so on a real laser those lines are left out, and so is the
+true size of a point grain. A gap in a line is a step where nothing was seen
+(a miss, or a search). Luminosity can pass 1 in the truth, where the glow is
+brighter than a picture can show. The plots are filled by every dragonfly on
+the laser, whoever started it, so a run begun before the window was opened
+shows whole; a new run clears the last one. Drag or scroll on a strip to zoom
+all five in time. Colours follow the plot palette in Preferences.
+
 The button exists only when the driver is simulated and the camera's `source`
 is `sim`: a real laser does not have it, and on one a dragonfly runs from a
 queue. What you see proves nothing about real grains (section 8.3).

@@ -27,6 +27,7 @@
 #include "camera_view.hpp"
 #include "pychron/laser/pattern.hpp"
 #include "error_report.hpp"
+#include "follow_plot_view.hpp"
 #include "theme.hpp"
 #include "tray_view.hpp"
 
@@ -372,6 +373,25 @@ QWidget* LaserWindow::build_patterns() {
   row->addWidget(pattern_run_);
   pattern_stop_ = button(tr("Stop"), "pattern_stop", page);
   row->addWidget(pattern_stop_);
+  // Plots of a followed run: a real laser has them too (seen lines only). The
+  // model is fed always, so a run started before the view opens shows whole.
+  follow_view_ = new FollowPlotView(follow_model_, this);
+  follow_view_->hide();
+  connect(&bridge_, &LaserBridge::followSamples, this, [this](const std::vector<laser::FollowSample>& samples) {
+    for (const auto& sample : samples) follow_model_.append(sample);
+    if (follow_view_->isVisible()) follow_view_->refresh();
+  });
+  pattern_plots_ = button(tr("Plots"), "pattern_plots", page);
+  pattern_plots_->setToolTip(tr("Plot what a followed pattern sees against the stage, and on a simulated grain "
+                                "against the truth"));
+  pattern_plots_->setEnabled(bridge_.has_camera());
+  row->addWidget(pattern_plots_);
+  connect(pattern_plots_, &QPushButton::clicked, this, [this] {
+    follow_view_->refresh();
+    follow_view_->show();
+    follow_view_->raise();
+    follow_view_->activateWindow();
+  });
   // Not there at all on a real laser.
   if (bridge_.offers_simulated_follow()) {
     pattern_follow_ = button(tr("Follow (simulated)"), "pattern_follow", page);
