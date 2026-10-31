@@ -4,66 +4,101 @@ Builds on `2026-10-30-dragonfly-grain-sim-design.md`.
 
 ## 1. Why
 
-Tune tracker by eye while Follow runs. Plots show what tracker measured at each step beside what sim knows true. Sim grain today is point: no size, so nothing true to set measured glow size against. Grain gets size.
+Tune tracker by eye while Follow runs. Plots show what tracker measured at each step beside what sim knows true. Sim grain today is point: no size, so nothing true to set measured glow size against. Grain gets size and shape: polygon until melted, then bead.
 
 ## 2. Scope
 
 Two parts, landed in this order:
 
-- A. Sized grain: `grain_radius_mm` in `vision::GrainModel`, config, bench, shipped scenario.
+- A. Sized grain: polygon outline, melting to round bead, glow drawn to outline, config, bench, shipped scenarios.
 - B. Plots: step data out of `Dragonfly`, `FollowSample` from `LaserSystem`, `LaserBridge` hand-off, plot window.
 
 Out of scope:
 
 - Recording to file, CSV export, replay.
 - Plots in `elctl laser track`.
-- Grain shape other than disk. Random radius per grain: radius is the config's.
+- Concave outlines, drawing outline on camera view. Random radius per grain: radius is the config's.
 - Changing tracker behaviour or finder.
 - Plots of hole centering, autocenter, non-dragonfly patterns.
 
 ## 3. Part A: sized grain
 
-### 3.1 Parameter
+### 3.1 Parameters
 
-`GrainParams::grain_radius_mm`, default `0`. Key `grain_radius_mm` in `[<device>.sim.grain]`, read in `libs/laser/src/camera.cpp`, range 0 to 100.
+Keys of `[<device>.sim.grain]`, fields of `GrainParams`, read in `libs/laser/src/camera.cpp`:
 
-Rule: `0` keeps today's point grain exactly. Same seed gives same numbers as before: no new keyed draw, no changed draw, when radius is 0.
+| Key | Default | Range | Meaning |
+|---|---|---|---|
+| `grain_radius_mm` | `0` | 0 to 100 | area-equivalent radius at start; 0: point grain |
+| `grain_sides` | `6` | 3 to 16 | corners of outline |
+| `grain_irregularity` | `0.3` | 0 to 0.6 | how far a corner's radius strays, fraction of mean |
+| `body_glow` | `0.4` | 0 to 1 | share of brightness spread evenly over grain; rest is lobes |
+| `melt_mm_per_s` | `0` | 0 to 10 | radius lost a second at full heat; 0: off |
+| `min_radius_mm` | `0.1` | 0 to 100 | radius melting stops at |
 
-### 3.2 What radius `r > 0` changes in `GrainModel`
+Rule: `grain_radius_mm = 0` keeps today's point grain exactly. Same seed gives same numbers as before: no new keyed draw, no changed draw, other keys above not used.
 
-- Heat: distance in overlap measured to grain's edge, not center: `d = max(0, hypot(beam - center) - r)`, then same Gaussian in `beam_radius_mm`. Beam anywhere on grain heats it fully.
+### 3.2 Outline
+
+Grains are polygonal until they melt. Radius above 0: grain is irregular polygon, fixed by seed at construction.
+
+- Corner `i` of `n = grain_sides`: angle `2 * pi * (i + 0.5 * (u - 0.5)) / n`, `u` keyed `grain.corner_angle`; radius `1 + grain_irregularity * (2 * v - 1)`, `v` keyed `grain.corner_radius`. Keyed by slot at tick 0: no other draw moves.
+- Unit shape: 8 points along each edge, scaled so its area is `pi`. Stored relative to grain's center.
+- Outline now (`m` = roundness, 3.3; `r` = radius now): each unit point `p` becomes `r * ((1 - m) * p + m * p / |p|)`.
+
+What radius above 0 changes in `GrainModel`:
+
+- Heat: beam's distance to outline: 0 with beam inside, else distance to nearest edge; same Gaussian in `beam_radius_mm`. Beam anywhere on grain heats it fully.
 - Lobe place: drawn even over disk of radius `r`; `lobe_spread_mm` ignored.
 - Lobe wander clamp: bound `r`, not `2 * lobe_spread_mm`.
 - Lobe width: `min(lobe_sigma_mm, r)`.
-- Hole clamp: center stays within `max(0, hole_radius_mm - r)`, so grain stays in hole. A `hole_radius_mm` of 0 or less still does not clamp.
+- Lobe peaks: sum to `(1 - body_glow) * brightness`.
+- Hole clamp: center stays within `max(0, hole_radius_mm - reach)`, `reach` farthest outline point from center. A `hole_radius_mm` of 0 or less still does not clamp.
+
+New `GrainModel::body()`: `std::optional<GlowBody>`, unset at radius 0: outline relative to hole's center, peak `body_glow * brightness`.
 
 ### 3.3 Melting
 
-`GrainParams::melt_mm_per_s`, default `0` (off), and `GrainParams::min_radius_mm`, default `0.1`. Keys of same names in `[<device>.sim.grain]`.
-
 Each tick, in motion step: `radius -= melt_mm_per_s * tick * min(heat, 1)`, floored at `min_radius_mm`. Radius only falls: cooling does not restore it. New grain (new nearest hole, so new `GrainModel`) starts at `grain_radius_mm`. Melting draws nothing, so changes no keyed draw.
 
-Every rule of 3.2 reads current radius, not `grain_radius_mm`. Lobes past new bound are clamped in as bound falls.
+Roundness `m = (grain_radius_mm - radius) / (grain_radius_mm - min_radius_mm)`, in 0 to 1. Without melting 0: polygon stays polygon. At floor 1: round bead. Grain rounds as it melts; it does not round further once cold.
+
+Every rule of 3.2 reads current radius and outline. Lobes past new bound are clamped in as bound falls.
 
 Config reader refuses, with key named:
 
 - `melt_mm_per_s` above 0 with `grain_radius_mm` 0: nothing to melt.
 - `melt_mm_per_s` above 0 with `min_radius_mm` not above 0: radius 0 would make lobe width 0.
-- `min_radius_mm` above `grain_radius_mm` when `melt_mm_per_s` above 0.
+- `min_radius_mm` not below `grain_radius_mm` when `melt_mm_per_s` above 0.
 
 Without melting `min_radius_mm` is not used.
 
-### 3.4 Truth
+### 3.4 Drawing and truth
 
-`GrainTruth::radius_mm`: current radius. Reaches `GrainView::truth` unchanged.
+`libs/vision` `synth.hpp`:
+
+```cpp
+// The body of a grain: light that fills an outline and stops at it.
+struct GlowBody {
+  std::vector<Vec2> outline_mm;  // relative to the hole's center in a model; stage mm in a GlowScene
+  double edge_mm = 0.03;         // width of the soft edge
+  double peak = 0;               // fraction of depth; above 1 saturates
+};
+```
+
+`GlowScene::body`, `std::optional<GlowBody>`. Set: `level = background + cover * (body.peak + sum of lobes)`, `cover` 1 inside outline, falling linearly to 0 over `edge_mm` outside it. So lobes stop at outline too and blob is grain's shape. `Truth` center weighs in body at outline's centroid with `body.peak`. Unset: render exactly as now. Pixels outside outline's box plus `edge_mm` skip the outline test.
+
+`SimTrayCamera::grab` shifts body by `scene.hole_mm`, as lobes, peak 0 with no hole in view; `lit` counts it.
+
+`GrainTruth::radius_mm`: area-equivalent radius of outline now (shoelace), 0 for point grain. Same definition as seen size in 4.1, so lines compare. Reaches `GrainView::truth` unchanged.
 
 ### 3.5 Score
 
-`TrackScorer` "on grain": distance <= beam radius + grain radius at that sample. `TrackScorer::add` takes current radius from `GrainTruth::radius_mm`; `track_bench.cpp` passes it. Radius 0: same scores as before.
+`TrackScorer` "on grain": distance to center <= beam radius + area-equivalent grain radius at that sample. `TrackScorer::add` takes current radius from `GrainTruth::radius_mm`; `track_bench.cpp` passes it. Radius 0: same scores as before.
 
 ### 3.6 Config and docs
 
-- New `configs/examples/track/big_grain.toml`: `grain_radius_mm = 0.5`, `lobes = 3`, rest as `hot_spots.toml`.
+- New `configs/examples/track/big_grain.toml`: `grain_radius_mm = 0.5`, `grain_sides = 6`, `lobes = 3`, rest as `hot_spots.toml`.
 - New `configs/examples/track/melting.toml`: as `big_grain.toml`, with `melt_mm_per_s = 0.03`, `min_radius_mm = 0.2`. `LaserCmd.EveryShippedScenarioIsGood` covers both.
 - Key commented in `configs/examples/cameras.toml` beside other grain keys.
 - `docs/user/05-laser.md` 8.3: keys and what they do.
@@ -166,7 +201,8 @@ Runs for every dragonfly on this system, whoever started it (Follow (simulated),
 
 ## 6. Tests
 
-- `tests/vision/test_grain.cpp`: radius 0 equal to old numbers; beam inside grain heats as centered; lobes stay within `r`; center stays `r` inside hole; truth carries radius; radius falls at `melt_mm_per_s` at full heat, slower at less, stops at `min_radius_mm`, does not rise when cold; lobes follow falling bound; melting changes no other draw.
+- `tests/vision/test_grain.cpp`: radius 0 equal to old numbers; seed fixes outline, area matches `grain_radius_mm`; beam inside polygon heats as centered, beam past flat edge less than past corner; lobes stay within `r`; center stays `reach` inside hole; truth carries radius; lobe and body peaks sum to brightness; roundness 0 unmelted, 1 at floor; radius falls at `melt_mm_per_s` at full heat, slower at less, stops at `min_radius_mm`, does not rise when cold; lobes follow falling bound; melting changes no other draw.
+- `tests/vision/test_synth.cpp`: body fills polygon and stops at edge; lobes cut at outline; no body renders as before; hexagon of radius 0.5 mm found in Glow mode with default dragonfly params.
 - `tests/vision`, dragonfly: `seen` set on hit, offset and area known from synthetic blob; unset on miss; set on Saturated hold with hits; decisions same.
 - `tests/laser`: config reads keys, range and the three melting refusals; scorer counts on grain to beam + grain radius; observer set after attach is heard; sample has grain on sim, none without `[sim.grain]`.
 - `tests/ui/test_follow_plot_model.cpp`: lines from a sample, NaN rules, reset on earlier `elapsed_s`, true lines absent on real.
