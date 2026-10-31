@@ -493,6 +493,16 @@ TEST(GrainMelt, ItLosesRadiusAtTheRateGivenAtFullHeat) {
   EXPECT_NEAR(before - m.truth().radius_mm, 0.1, 0.002);
 }
 
+TEST(GrainMelt, TruthIsTheOutlinesAreaMidMelt) {
+  GrainModel m(melty(), 1, 0, kOrigin);
+  run(m, 1.5, kOrigin, 100);
+  ASSERT_GT(m.truth().radius_mm, 0.2);
+  const auto& o = m.outline();
+  double area2 = 0;
+  for (std::size_t i = 0, j = o.size() - 1; i < o.size(); j = i++) area2 += o[j].x * o[i].y - o[i].x * o[j].y;
+  EXPECT_NEAR(m.truth().radius_mm, std::sqrt(std::abs(area2) / 2 / std::numbers::pi), 1e-9);
+}
+
 TEST(GrainMelt, ItLosesLessWhenCooler) {
   GrainModel m(melty(), 1, 0, kOrigin);
   run(m, 3, kOrigin, 10);
@@ -506,8 +516,10 @@ TEST(GrainMelt, ItLosesLessWhenCooler) {
 TEST(GrainMelt, ItStopsAtTheFloor) {
   GrainModel m(melty(), 1, 0, kOrigin);
   run(m, 60, kOrigin, 100);
-  EXPECT_NEAR(m.truth().radius_mm, 0.2, 1e-9);
-  EXPECT_GE(m.truth().radius_mm, 0.2);
+  // The bead's vertices lie on the floor; the area of that polygon is a hair under the circle's.
+  EXPECT_NEAR(m.truth().radius_mm, 0.2, 1e-3);
+  EXPECT_LE(m.truth().radius_mm, 0.2);
+  EXPECT_NEAR(farthest(m), 0.2, 1e-9);
 }
 
 TEST(GrainMelt, ItDoesNotGrowBackWhenCold) {

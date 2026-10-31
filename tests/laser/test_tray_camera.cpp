@@ -470,9 +470,9 @@ TEST(SimTrayCamera, ASizedGrainGlowsOverItsOutline) {
   // Lit is anything well above the background, dark 0.02: the body's own level or more.
   const auto bright = std::count_if(frame->data.begin(), frame->data.end(), [](auto v) { return v > 0.15 * 255; });
   const double mm2 = static_cast<double>(bright) / (23.0 * 23.0);
-  const double grain = std::numbers::pi * 0.25;
   const auto view = camera.observe();
   ASSERT_TRUE(view);
+  const double grain = std::numbers::pi * view->truth.radius_mm * view->truth.radius_mm;
   EXPECT_NEAR(mm2, grain, 0.25 * grain);
   EXPECT_NEAR(view->truth.radius_mm, 0.5, 1e-9);
 }
@@ -487,6 +487,7 @@ TEST(SimTrayCamera, ASizedGrainIsDarkWithNoHoleInView) {
   auto frame = camera.grab();
   ASSERT_TRUE(frame);
   EXPECT_LT(*std::max_element(frame->data.begin(), frame->data.end()), 0.05 * 255);
+  EXPECT_FALSE(camera.last_truth().visible);
 }
 
 TEST(SimTrayCamera, BeamParkedOffTheGrainGoesDark) {

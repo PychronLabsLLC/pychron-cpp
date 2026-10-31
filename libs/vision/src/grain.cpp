@@ -264,7 +264,15 @@ double GrainModel::brightness() const {
   return dark_left_ > 0 ? 0.0 : p.glow_peak * std::pow(heat_, p.glow_exponent) * std::exp(flutter_) * flare;
 }
 
-GrainTruth GrainModel::truth() const { return {center_, heat_, brightness(), radius_}; }
+GrainTruth GrainModel::truth() const {
+  // Area-equivalent radius of the outline now (shoelace); 0 for a point grain.
+  double area2 = 0;
+  for (std::size_t i = 0, j = shape_.size() - 1; i < shape_.size(); j = i++) {
+    area2 += shape_[j].x * shape_[i].y - shape_[i].x * shape_[j].y;
+  }
+  const double radius = shape_.empty() ? 0.0 : std::sqrt(std::abs(area2) / (2 * std::numbers::pi));
+  return {center_, heat_, brightness(), radius};
+}
 
 std::vector<GlowLobe> GrainModel::lobes() const {
   const bool sized = radius_ > 0;
