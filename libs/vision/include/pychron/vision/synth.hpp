@@ -38,6 +38,15 @@ struct GlowLobe {
   double peak = 0;  // fraction of depth; above 1 saturates
 };
 
+// The grain's whole body, glowing evenly: a polygon, brighter than the dark
+// around it, soft over edge_mm. Outline relative to the hole's center in a
+// model; stage mm once a scene has it.
+struct GlowBody {
+  std::vector<Vec2> outline_mm;
+  double edge_mm = 0.03;
+  double peak = 0;  // fraction of depth
+};
+
 struct GlowScene {
   int width = 200, height = 200;
   std::uint16_t pixel_depth = 255;

@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <numbers>
+#include <vector>
 
 using namespace std::chrono_literals;
 using pychron::vision::GrainModel;
@@ -323,4 +325,134 @@ TEST(GrainModel, ALobeDiesAndReturnsElsewhere) {
   }
   EXPECT_TRUE(dark);
   EXPECT_TRUE(returned);
+}
+
+namespace {
+
+GrainParams sized() {
+  GrainParams p;
+  p.grain_radius_mm = 0.5;
+  p.beam_radius_mm = 0.2;
+  return p;
+}
+
+bool same_outline(const std::vector<Vec2>& a, const std::vector<Vec2>& b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i)
+    if (a[i].x != b[i].x || a[i].y != b[i].y) return false;
+  return true;
+}
+
+double heat_after(const GrainParams& p, Vec2 beam, double seconds = 5) {
+  GrainModel m(p, 1, 0, kOrigin);
+  run(m, seconds, beam, 20);
+  return m.truth().heat;
+}
+
+}  // namespace
+
+TEST(GrainShape, TheSeedFixesTheOutline) {
+  GrainModel a(sized(), 1, 0, kOrigin), b(sized(), 1, 0, kOrigin), c(sized(), 2, 0, kOrigin);
+  EXPECT_FALSE(a.outline().empty());
+  EXPECT_TRUE(same_outline(a.outline(), b.outline()));
+  EXPECT_FALSE(same_outline(a.outline(), c.outline()));
+}
+
+TEST(GrainShape, ItsAreaIsTheRadiusGiven) {
+  for (double irregularity : {0.0, 0.6}) {
+    GrainParams p = sized();
+    p.grain_irregularity = irregularity;
+    GrainModel m(p, 7, 0, kOrigin);
+    EXPECT_NEAR(m.truth().radius_mm, 0.5, 1e-9);
+    const auto& o = m.outline();
+    double area = 0;
+    for (std::size_t i = 0; i < o.size(); ++i) {
+      const Vec2 a = o[i], b = o[(i + 1) % o.size()];
+      area += a.x * b.y - b.x * a.y;
+    }
+    EXPECT_NEAR(std::abs(area) / 2, std::numbers::pi * 0.25, 1e-9);
+  }
+}
+
+TEST(GrainShape, ItHasTheCornersAsked) {
+  for (int sides : {3, 6, 16}) {
+    GrainParams p = sized();
+    p.grain_sides = sides;
+    GrainModel m(p, 1, 0, kOrigin);
+    EXPECT_EQ(m.outline().size(), static_cast<std::size_t>(sides) * 8);
+  }
+}
+
+TEST(GrainShape, APointGrainHasNoOutline) {
+  GrainModel m(GrainParams{}, 1, 0, kOrigin);
+  EXPECT_TRUE(m.outline().empty());
+  EXPECT_FALSE(m.body().has_value());
+  EXPECT_EQ(m.truth().radius_mm, 0);
+}
+
+TEST(GrainShape, ABeamAnywhereOnItHeatsAsCentered) {
+  GrainModel probe(sized(), 3, 0, kOrigin);
+  const Vec2 q = probe.outline()[5];
+  const double centered = heat_after(sized(), kOrigin);
+  const double inside = heat_after(sized(), {0.3 * q.x, 0.3 * q.y});
+  EXPECT_NEAR(inside, centered, 1e-6);
+  (void)q;
+}
+
+TEST(GrainShape, ABeamPastTheEdgeHeatsLess) {
+  GrainModel probe(sized(), 1, 0, kOrigin);
+  const Vec2 q = probe.outline()[5];
+  EXPECT_LT(heat_after(sized(), {2 * q.x, 2 * q.y}), heat_after(sized(), kOrigin) - 0.05);
+}
+
+TEST(GrainShape, LobesStayWithinTheRadius) {
+  GrainParams p = sized();
+  p.lobes = 3;
+  p.lobe_wander_mm_per_rt_s = 2;
+  GrainModel m(p, 1, 0, kOrigin);
+  for (int i = 0; i < 6000; ++i) {
+    m.advance(kGrainTick, kOrigin, 20);
+    for (const auto& l : m.lobes()) {
+      const Vec2 c = m.truth().center_mm;
+      EXPECT_LE(std::hypot(l.at_mm.x - c.x, l.at_mm.y - c.y), 0.5 + 1e-9);
+    }
+  }
+}
+
+TEST(GrainShape, ItStaysInsideItsHole) {
+  GrainParams p = sized();
+  p.creep_mm_per_s = {0.05, 0.03};
+  GrainModel m(p, 1, 1.0, kOrigin);
+  for (int i = 0; i < 12000; ++i) {
+    m.advance(kGrainTick, m.truth().center_mm, 20);
+    const Vec2 c = m.truth().center_mm;
+    for (const Vec2& o : m.outline()) EXPECT_LE(std::hypot(c.x + o.x, c.y + o.y), 1.0 + 1e-9);
+  }
+  EXPECT_GT(std::hypot(m.truth().center_mm.x, m.truth().center_mm.y), 0.1);
+}
+
+TEST(GrainShape, AGrainBiggerThanItsHoleSitsAtTheCenter) {
+  GrainParams p = sized();
+  p.creep_mm_per_s = {0.5, 0.5};
+  GrainModel m(p, 1, 0.2, {0.1, 0.1});
+  run(m, 10, kOrigin, 20);
+  const GrainTruth t = m.truth();
+  EXPECT_EQ(t.center_mm.x, 0);
+  EXPECT_EQ(t.center_mm.y, 0);
+  EXPECT_TRUE(std::isfinite(t.heat) && std::isfinite(t.brightness));
+  for (const auto& l : m.lobes()) EXPECT_TRUE(std::isfinite(l.at_mm.x) && std::isfinite(l.at_mm.y));
+}
+
+TEST(GrainShape, BodyAndLobesShareTheBrightness) {
+  GrainParams p = sized();
+  p.lobes = 3;
+  GrainModel m(p, 1, 0, kOrigin);
+  run(m, 5, kOrigin, 20);
+  const double b = m.truth().brightness;
+  ASSERT_GT(b, 0);
+  ASSERT_TRUE(m.body().has_value());
+  double sum = m.body()->peak;
+  for (const auto& l : m.lobes()) sum += l.peak;
+  EXPECT_NEAR(sum, b, 1e-9 * b);
+  EXPECT_NEAR(m.body()->peak, 0.4 * b, 1e-9 * b);
 }

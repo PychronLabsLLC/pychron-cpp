@@ -7,6 +7,7 @@
 // gives the same grain whatever the frame rate.
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "pychron/core/clock.hpp"
@@ -43,12 +44,22 @@ struct GrainParams {
   double wander_mm_per_rt_s = 0;
   double jumps_per_s = 0;
   double jump_mm = 0.3;
+  // A grain with a size (docs/superpowers/specs/2026-10-31-follow-plots-design.md,
+  // section 3). Radius 0 is the point grain, and the other keys of this block
+  // are then not used.
+  double grain_radius_mm = 0;
+  int grain_sides = 6;
+  double grain_irregularity = 0.3;
+  double body_glow = 0.4;
+  double melt_mm_per_s = 0;
+  double min_radius_mm = 0.1;
 };
 
 struct GrainTruth {
   Vec2 center_mm{};       // relative to the hole's center
   double heat = 0;        // 1: at reference_output_percent, beam centered
   double brightness = 0;  // peak before lobes share it
+  double radius_mm = 0;   // area-equivalent; 0 for a point grain
 };
 
 class GrainModel {
@@ -67,6 +78,10 @@ class GrainModel {
   // peaks summing to the brightness while none is dying or rising.
   std::vector<GlowLobe> lobes() const;
   GrainTruth truth() const;
+  // The grain's outline relative to its own center; empty at radius 0.
+  const std::vector<Vec2>& outline() const noexcept { return shape_; }
+  // The body's glow, outline relative to the hole's center; unset at radius 0.
+  std::optional<GlowBody> body() const;
   // Ticks run so far, idle ones included.
   std::int64_t tick() const noexcept { return tick_; }
 
@@ -78,6 +93,8 @@ class GrainModel {
   double slot_uniform(const char* key, int slot) const noexcept;
   Vec2 draw_place(int slot) const noexcept;
   void step_lobes();
+  // Rebuilds shape_ and reach_ from radius_ and roundness_.
+  void reshape();
 
   // One slot of light. share is drawn once; fade (0 to 1) is how much of it
   // shows while the slot dies and rises again.
@@ -92,6 +109,11 @@ class GrainModel {
   std::uint64_t seed_;
   double hole_radius_mm_;
   Vec2 center_;
+  double radius_ = 0;
+  double roundness_ = 0;         // 0: polygon, 1: round bead
+  std::vector<Vec2> unit_;       // area pi, relative to the center
+  std::vector<Vec2> shape_;      // the outline now, relative to the center
+  double reach_ = 0;             // farthest point of shape_ from the center
   Vec2 beam_{};
   bool beam_known_ = false;
   double heat_ = 0;
