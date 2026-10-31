@@ -125,9 +125,16 @@ Result<vision::Frame> SimTrayCamera::grab() {
         if (!in_view) at.peak = 0;  // no hole in view: dark
         glow.lobes.push_back(at);
       }
+      if (auto body = grain_->body()) {
+        // As the lobes: from the hole's center, and dark with no hole in view.
+        for (vision::Vec2& p : body->outline_mm) p = {scene.hole_mm.x + p.x, scene.hole_mm.y + p.y};
+        if (!in_view) body->peak = 0;
+        glow.body = std::move(*body);
+      }
     }
     if (glow.lobes.empty()) glow.lobes.push_back({scene.hole_mm, config_.sim_grain->lobe_sigma_mm, 0.0});
-    const bool lit = std::any_of(glow.lobes.begin(), glow.lobes.end(), [](const auto& l) { return l.peak > 0; });
+    const bool lit = std::any_of(glow.lobes.begin(), glow.lobes.end(), [](const auto& l) { return l.peak > 0; }) ||
+                     (glow.body && glow.body->peak > 0);
     auto drawn = vision::render(glow, {sight.stage.x, sight.stage.y});
     frame = std::move(drawn.first);
     truth = drawn.second;

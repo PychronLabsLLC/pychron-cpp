@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
+#include "pychron/vision/finder.hpp"
+#include "pychron/vision/grain.hpp"
 #include "pychron/vision/source.hpp"
 #include "pychron/vision/synth.hpp"
 
@@ -338,4 +341,93 @@ TEST(Synth, LobeSizeIsOwn) {
     return n;
   };
   EXPECT_NEAR(static_cast<double>(half_width(1.2)) / half_width(-1.2), 2.0, 0.2);
+}
+
+// A grain's body: light that fills an outline and stops at it.
+namespace {
+
+GlowBody square_body(double half_mm, double peak) {
+  GlowBody b;
+  b.outline_mm = {{-half_mm, -half_mm}, {half_mm, -half_mm}, {half_mm, half_mm}, {-half_mm, half_mm}};
+  b.peak = peak;
+  return b;
+}
+
+}  // namespace
+
+TEST(GlowBody, ItFillsTheOutlineAndStopsAtIt) {
+  GlowScene s;
+  s.background = 0.1;
+  s.body = square_body(0.5, 0.6);  // 1 mm side
+  const auto [f, truth] = render(s, {0, 0});
+  EXPECT_NEAR(f.view().at(100, 100) / double(s.pixel_depth), 0.7, 0.01);
+  // 0.5 mm is 11.5 px from the center; a pixel 0.1 mm (2.3 px) past it is dark.
+  const int past = static_cast<int>(std::lround(99.5 + 0.6 * 23));
+  EXPECT_NEAR(f.view().at(past, 100) / double(s.pixel_depth), 0.1, 0.01);
+  EXPECT_NEAR(f.view().at(100, past) / double(s.pixel_depth), 0.1, 0.01);
+  EXPECT_NEAR(f.view().at(0, 0) / double(s.pixel_depth), 0.1, 0.01);
+  EXPECT_TRUE(truth.visible);
+}
+
+TEST(GlowBody, LobesAreCutAtTheOutline) {
+  GlowScene s;
+  s.background = 0.1;
+  s.lobes = {{{0, 0}, 1.0, 0.5}};
+  s.body = square_body(0.5, 0.0);
+  const auto f = render(s, {0, 0}).first;
+  const int past = static_cast<int>(std::lround(99.5 + 0.6 * 23));
+  EXPECT_NEAR(f.view().at(past, 100) / double(s.pixel_depth), 0.1, 0.01);
+  EXPECT_NEAR(f.view().at(100, past) / double(s.pixel_depth), 0.1, 0.01);
+  EXPECT_GT(f.view().at(100, 100) / double(s.pixel_depth), 0.5);
+}
+
+TEST(GlowBody, NoBodyRendersAsBefore) {
+  GlowScene s;
+  s.lobes = {{{-0.5, 0.2}, 0.1, 0.8}, {{0.4, -0.3}, 0.1, 0.4}};
+  s.noise = 0.02;
+  const auto a = render(s, {0.01, 0.02});
+  GlowScene t = s;
+  t.body.reset();
+  const auto b = render(t, {0.01, 0.02});
+  EXPECT_EQ(a.first.data, b.first.data);
+  EXPECT_EQ(a.second.center_px.x, b.second.center_px.x);
+  EXPECT_EQ(a.second.radius_px, b.second.radius_px);
+}
+
+TEST(GlowBody, TruthWeighsTheBody) {
+  GlowScene s;
+  s.lobes = {{{1.0, 0}, 0.1, 0.5}};
+  s.body = square_body(0.25, 0.5);
+  s.body->outline_mm = {{-0.25, -0.25}, {0.25, -0.25}, {0.25, 0.25}, {-0.25, 0.25}};
+  const auto truth = render(s, {0, 0}).second;
+  // Equal peaks: the center is halfway between the body (x 0) and the lobe (x 1 mm).
+  EXPECT_NEAR(truth.center_px.x, 99.5 + 0.5 * 23, 0.5);
+  EXPECT_NEAR(truth.center_px.y, 99.5, 0.5);
+}
+
+TEST(GlowBody, AHexagonIsFoundAsAGlow) {
+  GrainParams p;
+  p.grain_radius_mm = 0.5;
+  p.grain_sides = 6;
+  p.beam_radius_mm = 100;
+  GrainModel model(p, 7, 1.0, {0, 0});
+  for (int i = 0; i < 1000; ++i) model.advance(kGrainTick, {0, 0}, p.reference_output_percent);
+  ASSERT_NEAR(model.truth().heat, 1.0, 0.05);
+  const auto body = model.body();
+  ASSERT_TRUE(body.has_value());
+  GlowScene s;
+  s.body = body;
+  const auto frame = render(s, {0, 0}).first;
+  FinderParams fp;
+  fp.mode = FinderMode::Glow;
+  fp.expected_radius_px = 0.5 * s.px_per_mm;  // DragonflyParams::target_radius_mm default
+  fp.mask_radius_px = 1.05 * 2.0 * fp.expected_radius_px;
+  FinderDebug debug;
+  const auto found = SimpleFinder{}.find(frame.view(), fp, &debug);
+  ASSERT_EQ(found.size(), 1u) << "rejected radius " << debug.rejected_radius << " circularity "
+                              << debug.rejected_circularity << " edge " << debug.rejected_edge << " area "
+                              << debug.rejected_area << " threshold " << debug.threshold;
+  const double want = std::numbers::pi * 0.25 * s.px_per_mm * s.px_per_mm;
+  EXPECT_NEAR(found[0].area_px, want, 0.15 * want) << "radius " << found[0].radius_px << " circularity "
+                                                   << found[0].circularity;
 }

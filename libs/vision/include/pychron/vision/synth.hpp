@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -59,6 +60,10 @@ struct GlowScene {
   // and noise, and glow_mm, sigma_mm, elongation and peak are not used.
   // Truth is then the peak-weighted center of the lobes.
   std::vector<GlowLobe> lobes;
+  // Set: the glow is also this body (outline in stage mm), and lobes are cut
+  // at its outline. level = background + cover * (body.peak + lobes). Truth
+  // weighs the body in at the outline's centroid with body.peak. Unset: as before.
+  std::optional<GlowBody> body;
   double background = 0.02, noise = 0.0;
   bool crosshair = false;
   std::uint32_t seed = 1;

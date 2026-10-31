@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <numbers>
 #include <random>
 #include <vector>
 
@@ -455,6 +456,37 @@ TEST(SimTrayCamera, GrainGlowsWhereTheModelSays) {
   }
   EXPECT_NEAR(bx, 99.5 + 0.2 * 23, 1.0);
   EXPECT_NEAR(by, 99.5 - 0.1 * 23, 1.0);  // image y is down
+}
+
+TEST(SimTrayCamera, ASizedGrainGlowsOverItsOutline) {
+  vision::GrainParams p;
+  p.grain_radius_mm = 0.5;
+  ManualClock clock;
+  TraySight sight = firing_at(15, 20);
+  SimTrayCamera camera(grain_config(p), [&] { return sight; }, clock);
+  run(camera, clock, 5);
+  auto frame = camera.grab();
+  ASSERT_TRUE(frame);
+  // Lit is anything well above the background, dark 0.02: the body's own level or more.
+  const auto bright = std::count_if(frame->data.begin(), frame->data.end(), [](auto v) { return v > 0.15 * 255; });
+  const double mm2 = static_cast<double>(bright) / (23.0 * 23.0);
+  const double grain = std::numbers::pi * 0.25;
+  const auto view = camera.observe();
+  ASSERT_TRUE(view);
+  EXPECT_NEAR(mm2, grain, 0.25 * grain);
+  EXPECT_NEAR(view->truth.radius_mm, 0.5, 1e-9);
+}
+
+TEST(SimTrayCamera, ASizedGrainIsDarkWithNoHoleInView) {
+  vision::GrainParams p;
+  p.grain_radius_mm = 0.5;
+  ManualClock clock;
+  TraySight sight = firing_at(100, 100);  // far from every hole
+  SimTrayCamera camera(grain_config(p), [&] { return sight; }, clock);
+  run(camera, clock, 2);
+  auto frame = camera.grab();
+  ASSERT_TRUE(frame);
+  EXPECT_LT(*std::max_element(frame->data.begin(), frame->data.end()), 0.05 * 255);
 }
 
 TEST(SimTrayCamera, BeamParkedOffTheGrainGoesDark) {
