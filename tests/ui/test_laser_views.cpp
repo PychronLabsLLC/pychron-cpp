@@ -278,15 +278,14 @@ class LaserViewsTest : public QObject {
     view.grab();
   }
 
-  void follow_plot_has_five_strips() {
+  void follow_plot_has_three_strips() {
     pychron::ui::FollowPlotModel model;
     pychron::ui::FollowPlotView view(model);
-    QCOMPARE(view.strip_count(), 5);
-    QCOMPARE(view.plot()->axisRectCount(), 5);
-    const QStringList titles = {QStringLiteral("Stage X (mm)"), QStringLiteral("Stage Y (mm)"),
-                                QStringLiteral("Beam deviation (mm)"), QStringLiteral("Luminosity"),
+    QCOMPARE(view.strip_count(), 3);
+    QCOMPARE(view.plot()->axisRectCount(), 3);
+    const QStringList titles = {QStringLiteral("Beam deviation (mm)"), QStringLiteral("Luminosity"),
                                 QStringLiteral("Grain size (diameter, mm)")};
-    for (int i = 0; i < 5; ++i) QCOMPARE(view.plot()->axisRect(i)->axis(QCPAxis::atLeft)->label(), titles[i]);
+    for (int i = 0; i < 3; ++i) QCOMPARE(view.plot()->axisRect(i)->axis(QCPAxis::atLeft)->label(), titles[i]);
     QCOMPARE(view.windowTitle(), QStringLiteral("Follow plots"));
     view.grab();  // empty model: nothing non-finite handed to the plot
   }
@@ -300,7 +299,7 @@ class LaserViewsTest : public QObject {
     QCOMPARE(view.point_count(pychron::ui::FollowLine::GrainX), 3);
     QVERIFY(view.line_visible(pychron::ui::FollowLine::SizeTrue));
     QCOMPARE(legend_entries(view, 0), 2);
-    QCOMPARE(legend_entries(view, 4), 2);
+    QCOMPARE(legend_entries(view, 2), 2);
     view.grab();
     view.resize(400, 500);
     model.clear();
@@ -308,10 +307,54 @@ class LaserViewsTest : public QObject {
     view.refresh();
     const QCPRange x = view.plot()->axisRect(0)->axis(QCPAxis::atBottom)->range();
     QVERIFY(std::isfinite(x.lower) && std::isfinite(x.upper) && x.upper > x.lower);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 3; ++i) {
       const QCPRange y = view.plot()->axisRect(i)->axis(QCPAxis::atLeft)->range();
       QVERIFY(std::isfinite(y.lower) && std::isfinite(y.upper) && y.upper > y.lower);
     }
+  }
+
+  void follow_plane_shows_the_tracks_on_one_scale() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    view.resize(900, 500);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    for (int i = 0; i < 4; ++i) {
+      auto s = follow_sample(i * 0.5);
+      s.step.start_mm = {1, 2};
+      s.step.perimeter_mm = 3;
+      model.append(s);
+    }
+    view.refresh();
+    view.xy_plot()->replot();
+    QCOMPARE(view.fence_point_count(), pychron::ui::FollowPlotView::kFencePoints);
+    QCOMPARE(view.xy_plot()->legend->itemCount(), 3);
+    const auto* rect = view.xy_plot()->axisRect();
+    const double x_scale = rect->width() / view.xy_plot()->xAxis->range().size();
+    const double y_scale = rect->height() / view.xy_plot()->yAxis->range().size();
+    QVERIFY(std::abs(x_scale - y_scale) < 0.01 * x_scale);
+    QVERIFY(view.xy_plot()->xAxis->range().contains(-2));  // the fence's whole width
+    QVERIFY(view.xy_plot()->xAxis->range().contains(4));
+    QVERIFY(view.xy_plot()->yAxis->range().contains(5));   // and height
+    QVERIFY(view.xy_plot()->yAxis->range().contains(-1));
+    view.grab();
+    model.clear();
+    view.refresh();
+    QCOMPARE(view.fence_point_count(), 0);
+    QCOMPARE(view.point_count(pychron::ui::FollowLine::StageX), 0);
+    view.grab();
+  }
+
+  void follow_plane_joins_across_a_missing_row() {
+    pychron::ui::FollowPlotModel model;
+    pychron::ui::FollowPlotView view(model);
+    model.append(follow_sample(0));
+    model.append(follow_sample(1, false));  // no grain in this row
+    model.append(follow_sample(2));
+    view.refresh();
+    QCOMPARE(view.point_count(pychron::ui::FollowLine::StageX), 3);
+    QCOMPARE(view.point_count(pychron::ui::FollowLine::GrainX), 2);
+    view.grab();
   }
 
   void follow_plot_hides_lines_with_no_values() {
@@ -325,6 +368,7 @@ class LaserViewsTest : public QObject {
     QVERIFY(!view.line_visible(pychron::ui::FollowLine::SizeTrue));
     QCOMPARE(legend_entries(view, 0), 1);
     QCOMPARE(legend_entries(view, 2), 1);
+    QCOMPARE(view.xy_plot()->legend->itemCount(), 1);  // the stage alone
     view.grab();
   }
 
@@ -334,13 +378,13 @@ class LaserViewsTest : public QObject {
     for (int i = 0; i < 20; ++i) model.append(follow_sample(i));
     view.refresh();
     view.plot()->axisRect(0)->axis(QCPAxis::atBottom)->setRange(4, 9);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 3; ++i) {
       const QCPRange r = view.plot()->axisRect(i)->axis(QCPAxis::atBottom)->range();
       QCOMPARE(r.lower, 4.0);
       QCOMPARE(r.upper, 9.0);
     }
     view.refresh();  // a zoom stays through new rows
-    QCOMPARE(view.plot()->axisRect(3)->axis(QCPAxis::atBottom)->range().lower, 4.0);
+    QCOMPARE(view.plot()->axisRect(2)->axis(QCPAxis::atBottom)->range().lower, 4.0);
   }
 
   void follow_plot_follows_the_palette() {
@@ -351,8 +395,8 @@ class LaserViewsTest : public QObject {
     using pychron::ui::plot_series_color;
     QCOMPARE(view.plot()->graph(0)->pen().color(), plot_series_color(0));
     QCOMPARE(view.plot()->graph(1)->pen().color(), plot_series_color(1));
-    QCOMPARE(view.plot()->graph(8)->pen().color(), plot_series_color(0));
-    QCOMPARE(view.plot()->graph(9)->pen().color(), plot_series_color(1));
+    QCOMPARE(view.plot()->graph(4)->pen().color(), plot_series_color(0));
+    QCOMPARE(view.plot()->graph(5)->pen().color(), plot_series_color(1));
 
     const pychron::ui::PlotStyle before = pychron::ui::plot_style();  // NOLINT(performance-unnecessary-copy-initialization): a copy; set_plot_style replaces the original
     pychron::ui::PlotStyle changed = before;
