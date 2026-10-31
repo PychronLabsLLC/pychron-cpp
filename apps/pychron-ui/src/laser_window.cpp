@@ -174,6 +174,14 @@ void LaserWindow::build() {
   tabs->addTab(build_control(), tr("Control"));
   tabs->addTab(build_calibration(), tr("Calibration"));
   tabs->addTab(build_patterns(), tr("Patterns"));
+  // One height for every page, the tallest's. Left to itself the tab widget
+  // asks the page on show, whose wrapped text answers by the width, and the
+  // camera, the one stretching thing here, pays for it at each tab change.
+  int tallest = tabs->sizeHint().height();
+  for (int i = 0; i < tabs->count(); ++i) {
+    tallest = std::max(tallest, tabs->widget(i)->sizeHint().height() + tabs->tabBar()->sizeHint().height());
+  }
+  tabs->setFixedHeight(tallest);
   column->addWidget(tabs);
   split->addWidget(right);
   split->setStretchFactor(0, 3);

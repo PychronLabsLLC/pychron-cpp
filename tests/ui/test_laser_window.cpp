@@ -547,6 +547,24 @@ class LaserWindowTest : public QObject {
     QVERIFY(window_->findChild<QPushButton*>(QStringLiteral("pattern_reset_sim")) == nullptr);
   }
 
+  void the_camera_keeps_its_size_on_every_tab() {
+    build_to_follow();
+    window_->resize(1200, 800);
+    auto* tabs = window_->findChild<QTabWidget*>(QStringLiteral("tabs"));
+    auto* camera = window_->findChild<CameraView*>();
+    QVERIFY(tabs != nullptr && camera != nullptr);
+    QTest::qWait(50);
+    const QSize first = camera->size();
+    for (int round = 0; round < 2; ++round) {
+      for (int i = 0; i < tabs->count(); ++i) {
+        tabs->setCurrentIndex(i);
+        QTest::qWait(20);
+        QCOMPARE(camera->size(), first);
+        QVERIFY(tabs->currentWidget()->height() >= tabs->currentWidget()->minimumSizeHint().height());
+      }
+    }
+  }
+
   void a_run_before_opening_shows() {
     auto* view = window_->findChild<FollowPlotView*>();
     QVERIFY(view != nullptr);
