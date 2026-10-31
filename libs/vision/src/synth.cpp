@@ -206,7 +206,7 @@ MachinedSurface make_machined_surface(double px_per_mm, std::uint32_t seed) {
   constexpr double kTray = 0.56;
   constexpr double kCutterAngle = 0.14;  // radians off the frame's y axis
   const double scale = std::isfinite(px_per_mm) && px_per_mm > 0 ? px_per_mm / 23.0 : 1.0;
-  const auto px = [scale](double at_23) { return std::max(1, static_cast<int>(std::lround(at_23 * scale))); };
+  const auto px = [scale](double at_23) { return std::clamp(static_cast<int>(std::lround(at_23 * scale)), 1, 256); };
   std::mt19937 rng(seed);
 
   // Cutter marks: one row of values, swept along the cutter's way.

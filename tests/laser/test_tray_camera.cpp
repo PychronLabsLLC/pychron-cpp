@@ -620,7 +620,7 @@ TEST(SimTrayCamera, AGrainLiesInItsHoleWithTheBeamOff) {
 
 TEST(SimTrayCamera, APointGrainDrawsNothing) {
   ManualClock clock;
-  const TraySight sight = sight_at(10, 20);
+  TraySight sight = sight_at(10, 20);
   SimTrayCamera bare(config(), [&] { return sight; }, clock);
   SimTrayCamera with(grain_config(vision::GrainParams{}), [&] { return sight; }, clock);
   auto empty = bare.grab();
