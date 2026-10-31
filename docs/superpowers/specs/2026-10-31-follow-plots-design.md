@@ -94,7 +94,7 @@ struct GlowBody {
 
 ### 3.5 Score
 
-`TrackScorer` "on grain": distance to center <= beam radius + area-equivalent grain radius at that sample. `TrackScorer::add` takes current radius from `GrainTruth::radius_mm`; `track_bench.cpp` passes it. Radius 0: same scores as before.
+`TrackScorer` "on grain": distance to center <= beam radius + area-equivalent grain radius at that sample. `TrackScorer::sample` gains `grain_radius_mm`; `track_bench.cpp` passes `GrainTruth::radius_mm`. Radius 0: same scores as before.
 
 ### 3.6 Config and docs
 
