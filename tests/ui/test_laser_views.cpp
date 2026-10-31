@@ -47,6 +47,37 @@ class LaserViewsTest : public QObject {
   Q_OBJECT
 
  private slots:
+  void the_grain_is_a_cross_where_it_really_is() {
+    CameraView view;
+    view.resize(400, 400);
+    laser::CameraView with = seen(false);
+    with.grain_px = laser::StageXY{20, 70};
+    view.set_view(with);
+    QVERIFY(view.has_grain());
+    const QImage drawn = view.grab().toImage();
+    const QPointF at = view.to_widget({20, 70});
+    QVERIFY(close(drawn.pixelColor(at.toPoint()), theme().warning));
+    QVERIFY(close(drawn.pixelColor((at + QPointF(5, 0)).toPoint()), theme().warning));
+    QVERIFY(close(drawn.pixelColor((at + QPointF(0, -5)).toPoint()), theme().warning));
+    QVERIFY(!close(drawn.pixelColor((at + QPointF(5, 5)).toPoint()), theme().warning));
+
+    view.set_view(seen(false));
+    QVERIFY(!view.has_grain());
+    view.set_view(with);
+    view.set_failed(QStringLiteral("gone"));
+    QVERIFY(!view.has_grain());
+  }
+
+  void a_grain_off_the_picture_is_not_drawn_beside_it() {
+    CameraView view;
+    view.resize(400, 200);  // the frame is a square in the middle
+    laser::CameraView with = seen(false);
+    with.grain_px = laser::StageXY{-10, 50};
+    view.set_view(with);
+    const QImage drawn = view.grab().toImage();
+    QVERIFY(!close(drawn.pixelColor(view.to_widget({-10, 50}).toPoint()), theme().warning));
+  }
+
   void tray_maps_holes_to_scale() {
     const auto map = nine();
     TrayView view;

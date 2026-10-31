@@ -716,7 +716,10 @@ glow at the sample while the simulated laser fires (`grain_offset_mm` and
 `glow_drift_mm_per_s` in `cameras.toml`, or a grain that heats under the beam
 and moves, `[co2.sim.grain]`). `elctl laser track <scenario.toml>` runs the
 dragonfly against such a grain and scores it, with no line, lab or device
-(`configs/examples/track/`, `docs/user/05-laser.md` section 8.3).
+(`configs/examples/track/`, `docs/user/05-laser.md` section 8.3). To watch one
+instead, `pychron-ui --sim` has **Follow (simulated)** in the laser window's
+Patterns tab, with a cross at the grain's true center (section 8.5). It is
+offered only when the driver is simulated and the camera's `source` is `sim`.
 
 Legacy patterns are Python pickles (`setupfiles/patterns/*.lp`). Export them
 once per lab; nothing in a pickle is run:

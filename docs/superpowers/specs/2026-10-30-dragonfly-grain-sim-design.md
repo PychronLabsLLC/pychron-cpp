@@ -1,7 +1,7 @@
 # Dragonfly grain simulator design
 
 Date: 2026-10-30
-Status: Part A implemented (§3 to §7, §9 Part A tests); Part B (§8) not built
+Status: implemented
 Owner: Jake Ross
 Builds on: `2026-10-04-laser-dragonfly-design.md` (§6 simulated glow, §4 runner),
 `2026-10-03-vision-design.md`, `libs/sim/AGENTS.md` (keyed noise).
@@ -278,9 +278,17 @@ tracker's failure can be pinned on one cause. Added to install only if
 - Laser window gains "Follow (simulated)" for a dragonfly pattern, at output
   in its field. Only when device's driver is simulated and camera `source` is
   `sim`; on real laser button is absent. It enables, fires, runs pattern,
-  turns beam off at end, on stop, on any error.
+  turns beam off at end, on stop, on any error. One bridge command,
+  `LaserBridge::follow_simulated`: every stop reaches it through worker's
+  cancel. `end_extract()` and `disable()` both tried however it ended, so
+  laser left disabled even if enabled before. Command checks
+  `offers_simulated_follow()` again on worker; pattern that is no dragonfly
+  refused before anything is sent. Button live only at output above 0.
 - Overlay: cross at grain's true center, beside what finder sees, read from
-  `observe()`.
+  `observe()`, only while `looking()`: each `observe()` asks driver for sight
+  again. Reached through `LaserSystem::grain_px()`. `observe()` and `grab()`
+  both run model and share no mutex of their own: both are called under
+  system's gate, nowhere else. `CameraStageMap::to_px` gives frame's pixels.
 - `elctl laser pattern` stays as it is (never fires).
 
 ## 9. Testing
@@ -308,8 +316,9 @@ Part A:
 - `apps/elctl/tests`: verb, flags, bad scenario, `--frames` and `--trace`
   write files.
 
-No thread added: TSan not owed. Part B: `tests/ui`, button absent on real
-driver, beam off after stop and error.
+No thread added to Part A: TSan not owed. Part B: `tests/ui`, button absent on
+real driver, beam off after stop and error. Video thread now reaches `observe()`
+beside worker's `grab()`: laser UI suites run under TSan.
 
 Docs: `docs/user/05-laser.md` (bench, what it does not prove),
 `docs/user/07-configuration-reference.md` (row), `docs/dev_setup.md`,

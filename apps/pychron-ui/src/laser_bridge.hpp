@@ -25,6 +25,10 @@
 //
 // A bridge that goes while its laser fires closes the beam and disables the
 // laser, unless a queue is driving: nothing would be left to do it.
+//
+// Follow (simulated) (dragonfly grain simulator design, section 8): one
+// command that enables, fires, runs a dragonfly and turns the laser off again
+// however that ended. Only for a simulated driver with a simulated camera.
 
 #include <chrono>
 #include <functional>
@@ -82,6 +86,9 @@ class LaserBridge : public QObject {
   const laser::PatternLibrary& patterns() const { return deps_.lab.patterns; }
   bool has_camera() const;   // a picture to look at
   bool can_center() const;   // a camera that may move the stage
+  // A dragonfly may be run by hand here: the driver is simulated, the camera's
+  // source is `sim` and it may move the stage. Never on a real laser.
+  bool offers_simulated_follow() const;
 
   // Read from disk, as they are now; main thread.
   std::vector<laser::CalibrationPoint> calibration_points(const QString& tray) const;
@@ -104,6 +111,11 @@ class LaserBridge : public QObject {
   void stop_beam();                 // output 0, beam closed
   void run_pattern(const QString& name);
   void stop_pattern();
+  // Enables, fires at `percent` and follows the glow with dragonfly `name` for
+  // its duration; then output 0, beam closed, laser disabled, at the end, on
+  // any stop (each cancels it) and on any error. Refused, with nothing sent,
+  // unless offers_simulated_follow(), or for a pattern that is no dragonfly.
+  void follow_simulated(const QString& name, double percent);
   // A calibration point for `hole` of the current tray, at where the stage
   // is now. Points that do not solve are refused and the file is left.
   void add_calibration_point(const QString& hole);

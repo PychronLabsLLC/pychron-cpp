@@ -8,10 +8,12 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 
@@ -48,11 +50,16 @@ struct SimLaserLab {
   // `speed`: simulated seconds per real second. A test that stops a move
   // part way takes it slowly, so that the move cannot end first on a busy
   // machine: 40 mm at the stage's 5 mm/s is 1.6 s at 5x.
-  explicit SimLaserLab(double speed = 50) : clock(clock_options(speed)) {
+  // `prepare` changes the scratch copy before it is read; `simulated` says
+  // what the lasers are told of the driver (empty: the line is asked).
+  explicit SimLaserLab(double speed = 50, const std::function<void(const std::filesystem::path&)>& prepare = {},
+                       const std::function<bool(std::string_view)>& simulated = {})
+      : clock(clock_options(speed)) {
     namespace fs = std::filesystem;
     std::random_device rd;
     dir = fs::temp_directory_path() / ("pychron-ui-laser-" + std::to_string(rd()) + std::to_string(rd()));
     pychron::testing::copy_lab(PYCHRON_EXAMPLE_CONFIGS_DIR, dir);
+    if (prepare) prepare(dir);
     systems::ExtractionLine::Options options;
     options.clock = &clock;
     options.force_sim = true;
@@ -62,7 +69,7 @@ struct SimLaserLab {
     line = std::move(*loaded);
     if (auto started = line->start(); !started) qFatal("line did not start: %s", to_string(started.error()).c_str());
     lab = experiment::lab::load_lab({dir, dir / "extraction_line.toml", {}});
-    lasers = std::make_unique<experiment::lab::Lasers>(lab, *line);
+    lasers = std::make_unique<experiment::lab::Lasers>(lab, *line, simulated);
   }
   SimLaserLab(const SimLaserLab&) = delete;
   SimLaserLab& operator=(const SimLaserLab&) = delete;
@@ -86,6 +93,26 @@ struct SimLaserLab {
                            std::chrono::milliseconds(15)};
   }
 };
+
+// A dragonfly that outlasts any test (`watch`), for stopping part way.
+inline void add_long_dragonfly(const std::filesystem::path& dir) {
+  std::ifstream in(dir / "patterns" / "follow.toml");
+  std::string text, line;
+  while (std::getline(in, line)) text += (line.starts_with("duration") ? "duration = 3000" : line) + "\n";
+  std::ofstream(dir / "patterns" / "watch.toml") << text;
+}
+
+// The steady glow of the example camera replaced by a grain of every default.
+inline void add_grain(const std::filesystem::path& dir) {
+  const auto file = dir / "cameras.toml";
+  std::ifstream in(file);
+  std::string text, line;
+  while (std::getline(in, line)) {
+    if (!line.starts_with("glow_drift_mm_per_s")) text += line + "\n";
+  }
+  in.close();
+  std::ofstream(file) << text << "\n[co2.sim.grain]\n";
+}
 
 // The simulated stage is under way: past `x` mm. False if it never gets there.
 inline bool under_way(SimLaserLab& lab, double x = 1.0) {

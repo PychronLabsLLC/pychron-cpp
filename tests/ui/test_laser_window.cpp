@@ -1,6 +1,9 @@
 // LaserWindow on the example lab's simulated laser (laser window design,
 // sections 1 and 6).
 
+#include <functional>
+#include <string_view>
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -357,6 +360,97 @@ class LaserWindowTest : public QObject {
     btn("cal_remove")->click();
     settle();
     QTRY_COMPARE(points->rowCount(), 1);
+  }
+
+ private:
+  // Follow (simulated): the dragonfly grain simulator design, section 8.
+  void build_to_follow(const std::function<bool(std::string_view)>& simulated = {}) {
+    cleanup();
+    lab_ = std::make_unique<test::SimLaserLab>(50, test::add_long_dragonfly, simulated);
+    bridge_ = std::make_unique<LaserBridge>(lab_->deps());
+    window_ = std::make_unique<LaserWindow>(*bridge_, true);
+    window_->resize(1000, 700);
+    window_->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window_.get()));
+  }
+  // A spiral from the stage's corner would leave its travel at once.
+  void on_a_hole() {
+    choose_tray(QStringLiteral("example-9"));
+    bridge_->go_to(QStringLiteral("5"), false);
+    settle();
+  }
+  void choose_pattern(const QString& name) {
+    auto* list = the<QTableWidget>("pattern_list");
+    for (int row = 0; row < list->rowCount(); ++row) {
+      if (list->item(row, 0)->text() == name) {
+        list->selectRow(row);
+        return;
+      }
+    }
+    QFAIL("no such pattern");
+  }
+  bool laser_is_off() {
+    return !lab_->sim().firing() && !lab_->sim().enabled() && lab_->sim().output() == 0.0;
+  }
+  QPushButton* follow_button() { return window_->findChild<QPushButton*>(QStringLiteral("pattern_follow")); }
+
+ private slots:
+  void a_real_laser_has_no_follow_button() {
+    build_to_follow([](std::string_view) { return false; });
+    QVERIFY(follow_button() == nullptr);
+  }
+
+  void follow_is_live_for_a_dragonfly_with_an_output() {
+    build_to_follow();
+    QVERIFY(follow_button() != nullptr);
+    QVERIFY(!follow_button()->isEnabled());  // nothing chosen
+    choose_pattern(QStringLiteral("hexagon"));
+    the<QDoubleSpinBox>("output")->setValue(20);
+    QVERIFY(!follow_button()->isEnabled());  // not a dragonfly
+    choose_pattern(QStringLiteral("follow"));
+    QVERIFY(follow_button()->isEnabled());
+    the<QDoubleSpinBox>("output")->setValue(0);
+    QVERIFY(!follow_button()->isEnabled());  // no glow to follow
+  }
+
+  void following_fires_at_the_output_and_stop_turns_it_off() {
+    build_to_follow();
+    on_a_hole();
+    choose_pattern(QStringLiteral("watch"));
+    the<QDoubleSpinBox>("output")->setValue(20);
+    follow_button()->click();
+    QVERIFY(!follow_button()->isEnabled());  // at once: a second click would fire again
+    QTRY_VERIFY(lab_->sim().firing());
+    QCOMPARE(lab_->sim().output(), 20.0);
+    QTRY_VERIFY(text("beam").startsWith(QStringLiteral("FIRING")));
+    btn("pattern_stop")->click();
+    settle();
+    QVERIFY(laser_is_off());
+    QVERIFY2(text("status").contains(QStringLiteral("stop")), qPrintable(text("status")));
+    QTRY_VERIFY(follow_button()->isEnabled());
+  }
+
+  void a_follow_that_fails_says_so_and_is_off() {
+    build_to_follow();
+    on_a_hole();
+    choose_pattern(QStringLiteral("watch"));
+    the<QDoubleSpinBox>("output")->setValue(20);
+    for (int i = 0; i < 8; ++i) lab_->sim().fail_next("Stage.MoveTo", 4);  // the line's transport tries again
+    follow_button()->click();
+    settle();
+    QVERIFY(laser_is_off());
+    QTRY_VERIFY2(text("status").contains(QStringLiteral("pattern watch")), qPrintable(text("status")));
+  }
+
+  void a_window_closed_while_it_follows_leaves_the_laser_off() {
+    build_to_follow();
+    on_a_hole();
+    choose_pattern(QStringLiteral("watch"));
+    the<QDoubleSpinBox>("output")->setValue(20);
+    follow_button()->click();  // closed before any snapshot has said it fires
+    window_->close();
+    settle();
+    QVERIFY(laser_is_off());
   }
 
   void patterns_are_listed_with_length_and_time() {

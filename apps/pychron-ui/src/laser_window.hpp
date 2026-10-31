@@ -8,6 +8,10 @@
 // While a queue drives the lasers the window only watches: every control but
 // the emergency stop is disabled. After an emergency stop nothing drives
 // until Reset.
+//
+// On a simulated laser the Patterns tab has Follow (simulated), which runs a
+// dragonfly by hand at the output in the Control tab's field. A real laser has
+// no such button: a dragonfly there runs from a queue.
 
 #include <functional>
 
@@ -117,6 +121,8 @@ class LaserWindow : public QMainWindow {
   QTableWidget* pattern_list_ = nullptr;
   QPushButton* pattern_run_ = nullptr;
   QPushButton* pattern_stop_ = nullptr;
+  QPushButton* pattern_follow_ = nullptr;  // null unless the bridge offers it
+  bool following_ = false;                 // from the click until its command has reported
   QPushButton* pattern_maker_ = nullptr;
 };
 

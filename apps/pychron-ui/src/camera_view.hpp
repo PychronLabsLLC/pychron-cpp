@@ -3,8 +3,8 @@
 // CameraView (laser window design, section 6): what a laser's camera sees,
 // scaled to fit, with the aim point as a crosshair, the size a hole of the
 // tray should be as a faint circle about it, and the target the finder sees
-// outlined. A camera that fails keeps its last picture, greyed, under the
-// reason.
+// outlined. A simulated grain's true center is a cross beside it. A camera
+// that fails keeps its last picture, greyed, under the reason.
 
 #include <optional>
 
@@ -30,6 +30,7 @@ class CameraView : public QWidget {
   const QImage& image() const noexcept { return image_; }  // the frame, unscaled; null when there is none
   QString message() const { return message_; }
   bool has_target() const noexcept { return target_.has_value(); }
+  bool has_grain() const noexcept { return grain_.has_value(); }
   // A frame pixel's place in the widget.
   QPointF to_widget(const QPointF& frame_px) const;
 
@@ -50,6 +51,7 @@ class CameraView : public QWidget {
   QPointF aim_;
   double expected_radius_ = 0;
   std::optional<Target> target_;
+  std::optional<QPointF> grain_;  // frame pixels
   QString message_;
   bool stale_ = false;
 };

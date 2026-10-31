@@ -124,7 +124,9 @@ is on hole N now: calibration point".
 
 **Camera.** What the camera sees, with the aim point as a crosshair, a faint
 circle the size a hole should be, and the target the finder sees outlined
-while a hole is being centered. Under it is the frame rate. If the camera
+while a hole is being centered or a dragonfly follows. On a simulated grain a
+short cross also marks where the grain really is (section 8.5). Under it is
+the frame rate. If the camera
 stops, the last picture stays, greyed, with its age and the reason, and the
 window tries to reopen it every second. **Autocenter** centers the hole the
 stage was last sent to; **Snapshot** saves the picture.
@@ -544,10 +546,11 @@ A dragonfly needs a camera that follows the stage: a camera with `use =
 queue naming a dragonfly on a laser without one is not started. If the camera
 fails part way, the stage returns to where the pattern began and, by the
 camera's `on_failure`, holds there for the rest of the duration (and says so)
-or the run fails. A dragonfly cannot be run by hand (`elctl laser pattern`
+or the run fails. On a real laser a dragonfly cannot be run by hand (`elctl laser pattern`
 never fires the laser, so there is no glow, and the window lists it as "runs
-from a queue"); `elctl laser track` (section 8.3) runs it against a simulated
-grain. It is proven on the simulated camera only.
+from a queue"). On a simulated one, `elctl laser track` (section 8.3) runs it
+against a simulated grain and scores it, and the window's **Follow (simulated)**
+(section 8.5) lets you watch it. It is proven on the simulated camera only.
 
 ### 8.3 Trying a dragonfly against a simulated grain
 
@@ -633,6 +636,34 @@ The **Patterns tab** itself lists the lab's patterns with kind, length and
 time. **Run** runs the chosen pattern about where the stage is now, moving the
 stage only: the window does not fire the laser for the pattern. **Stop** stops
 it.
+
+### 8.5 Watching a dragonfly follow a simulated grain
+
+`elctl laser track` (section 8.3) gives a table; the laser window under
+`pychron-ui --sim` shows the same tracker at work. Give the lab's camera a grain
+(`[co2.sim.grain]` in `cameras.toml`, without `glow_drift_mm_per_s` or
+`glow_sigma_mm`; a scenario's `[grain]` table pastes in unchanged), or leave
+the steady glow to follow that instead.
+
+1. Put the stage on a hole. A search that spirals out from anywhere near the
+   end of the stage's travel leaves it, and the pattern fails.
+2. Set the **Output** on the Control tab.
+3. On the Patterns tab choose a dragonfly and press **Follow (simulated)**.
+
+The window enables the laser, fires at that output and runs the pattern for
+its `duration`. When the pattern ends, on **Stop** (either tab's), on an
+emergency stop, on any error, and when the window is closed, the beam closes,
+the output goes to 0 and the laser is disabled, even if it was enabled before
+you pressed the button. The error goes in the status line.
+
+While it follows, the picture outlines what the finder sees, and a short cross
+marks where the grain really is. With hot spots the two differ, which is the
+point of them. The steady glow has no such truth and shows no cross; nor does
+a grain outside the picture.
+
+The button exists only when the driver is simulated and the camera's `source`
+is `sim`: a real laser does not have it, and on one a dragonfly runs from a
+queue. What you see proves nothing about real grains (section 8.3).
 
 ## 9. Snapshots
 

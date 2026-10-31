@@ -1,11 +1,13 @@
 // LaserBridge on the example lab's simulated laser (laser window design,
 // section 5).
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -240,6 +242,197 @@ class LaserBridgeTest : public QObject {
     QCOMPARE(run->error().kind, ErrorKind::Cancelled);
     QVERIFY(heard_->ok("stop_pattern"));
     QCOMPARE(bridge_->state().activity, laser::LaserActivity::Idle);
+  }
+
+ private:
+  // Follow (simulated): the dragonfly grain simulator design, section 8.
+  void build_to_follow(const std::function<void(const std::filesystem::path&)>& prepare = {},
+                       const std::function<bool(std::string_view)>& simulated = {}) {
+    cleanup();
+    lab_ = std::make_unique<test::SimLaserLab>(
+        50,
+        [&prepare](const std::filesystem::path& dir) {
+          test::add_long_dragonfly(dir);
+          if (prepare) prepare(dir);
+        },
+        simulated);
+    bridge_ = std::make_unique<LaserBridge>(lab_->deps([this] { ++aborts_; }));
+    heard_ = std::make_unique<Heard>(*bridge_);
+    aborts_ = 0;
+  }
+  // A spiral from the stage's corner would leave its travel at once.
+  void on_a_hole() {
+    bridge_->set_tray(QStringLiteral("example-9"));
+    bridge_->go_to(QStringLiteral("5"), false);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("go_to"), qPrintable(heard_->why("go_to")));
+  }
+  bool ever_sent(const char* command) {
+    const auto log = lab_->sim().log();
+    return std::ranges::any_of(log, [command](const std::string& line) { return line.starts_with(command); });
+  }
+  bool laser_is_off() {
+    return !lab_->sim().firing() && !lab_->sim().enabled() && lab_->sim().output() == 0.0;
+  }
+
+  void following() {
+    build_to_follow();
+    on_a_hole();
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    QTRY_VERIFY(lab_->sim().firing());
+    QTRY_VERIFY(lab_->system().looking());
+  }
+  void stopped_and_off(const char* by) {
+    test::settle(*bridge_);
+    QCOMPARE(heard_->result("follow_simulated")->error().kind, ErrorKind::Cancelled);
+    QVERIFY(heard_->ok(by));
+    QVERIFY(laser_is_off());
+    QVERIFY(!lab_->system().looking());
+  }
+
+ private slots:
+  void a_simulated_laser_offers_to_follow() { QVERIFY(bridge_->offers_simulated_follow()); }
+
+  void a_real_laser_does_not_offer_to_follow_and_refuses_it() {
+    build_to_follow({}, [](std::string_view) { return false; });
+    QVERIFY(!bridge_->offers_simulated_follow());
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->why("follow_simulated").contains("simulated"), qPrintable(heard_->why("follow_simulated")));
+    QVERIFY(!lab_->sim().enabled());
+    QVERIFY(!ever_sent("Laser.Fire"));
+  }
+
+  void a_camera_for_looking_does_not_offer_to_follow() {
+    build_to_follow([](const std::filesystem::path& dir) {
+      const auto file = dir / "cameras.toml";
+      std::ifstream in(file);
+      std::stringstream text;
+      text << in.rdbuf();
+      in.close();
+      std::string cameras = text.str();
+      const auto at = cameras.find("\nuse = \"center\"");
+      QVERIFY(at != std::string::npos);
+      cameras.replace(at, 15, "\nuse = \"view\"");
+      std::ofstream(file) << cameras;
+    });
+    QVERIFY(bridge_->has_camera());
+    QVERIFY(!bridge_->offers_simulated_follow());
+  }
+
+  void only_a_dragonfly_is_followed() {
+    bridge_->follow_simulated(QStringLiteral("hexagon"), 20);
+    bridge_->follow_simulated(QStringLiteral("nope"), 20);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->why("follow_simulated").contains("not a dragonfly"), qPrintable(heard_->why("follow_simulated")));
+    QVERIFY(!ever_sent("Laser.Fire"));
+  }
+
+  void a_follow_fires_at_its_output_and_ends_off() {
+    on_a_hole();
+    bridge_->follow_simulated(QStringLiteral("follow"), 20);
+    QTRY_VERIFY(lab_->sim().firing());
+    QCOMPARE(lab_->sim().output(), 20.0);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("follow_simulated"), qPrintable(heard_->why("follow_simulated")));
+    QVERIFY(laser_is_off());
+  }
+
+  void stopping_the_pattern_turns_the_follow_off() {
+    following();
+    bridge_->stop_pattern();
+    stopped_and_off("stop_pattern");
+  }
+
+  void stopping_the_beam_turns_the_follow_off() {
+    following();
+    bridge_->stop_beam();
+    stopped_and_off("stop_beam");
+  }
+
+  void stopping_the_stage_turns_the_follow_off() {
+    following();
+    bridge_->stop_stage();
+    stopped_and_off("stop_stage");
+  }
+
+  void an_emergency_stop_turns_the_follow_off() {
+    following();
+    bridge_->emergency_stop();
+    stopped_and_off("emergency_stop");
+    QCOMPARE(aborts_, 1);
+  }
+
+  void a_bridge_that_goes_turns_the_follow_off() {
+    following();
+    heard_.reset();
+    bridge_.reset();
+    QVERIFY(laser_is_off());
+  }
+
+  void a_stage_that_fails_turns_the_follow_off() {
+    build_to_follow();
+    on_a_hole();
+    for (int i = 0; i < 8; ++i) lab_->sim().fail_next("Stage.MoveTo", 4);  // the line's transport tries again
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->why("follow_simulated").contains("pattern watch"), qPrintable(heard_->why("follow_simulated")));
+    QVERIFY(ever_sent("Laser.Fire"));
+    QVERIFY(laser_is_off());
+  }
+
+  void a_refused_fire_leaves_the_laser_off() {
+    build_to_follow();
+    lab_->sim().trip_interlock("Door");
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    test::settle(*bridge_);
+    QVERIFY(!heard_->why("follow_simulated").isEmpty());
+    QVERIFY(!lab_->sim().firing());
+    QVERIFY(!lab_->sim().enabled());
+  }
+
+  void a_beam_that_will_not_stop_is_closed_by_the_disable() {
+    following();
+    for (int i = 0; i < 2; ++i) lab_->sim().fail_next("Laser.Stop", 4);  // end_extract's own is refused
+    bridge_->stop_pattern();
+    test::settle(*bridge_);
+    QVERIFY(laser_is_off());
+  }
+
+  void the_grain_is_shown_only_while_something_looks_for_it() {
+    build_to_follow(test::add_grain);
+    on_a_hole();
+    int with = 0, without = 0;
+    connect(bridge_.get(), &LaserBridge::view, this,
+            [&with, &without](const laser::CameraView& seen) { ++(seen.grain_px ? with : without); });
+    bridge_->add_viewer();
+    QTRY_VERIFY(without > 0);
+    QCOMPARE(with, 0);
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    QTRY_VERIFY(with > 0);
+    bridge_->stop_pattern();
+    test::settle(*bridge_);
+    bridge_->remove_viewer();
+    QVERIFY(laser_is_off());
+  }
+
+  void no_grain_table_no_grain_shown() {
+    build_to_follow();
+    on_a_hole();
+    int with = 0, frames = 0;
+    connect(bridge_.get(), &LaserBridge::view, this, [&with, &frames](const laser::CameraView& seen) {
+      ++frames;
+      if (seen.grain_px) ++with;
+    });
+    bridge_->add_viewer();
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    QTRY_VERIFY(lab_->system().looking());
+    const int at = frames;
+    QTRY_VERIFY(frames > at + 2);
+    bridge_->stop_pattern();
+    test::settle(*bridge_);
+    bridge_->remove_viewer();
+    QCOMPARE(with, 0);
   }
 
   void an_unknown_pattern_is_refused() {

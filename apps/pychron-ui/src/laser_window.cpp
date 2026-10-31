@@ -372,6 +372,21 @@ QWidget* LaserWindow::build_patterns() {
   row->addWidget(pattern_run_);
   pattern_stop_ = button(tr("Stop"), "pattern_stop", page);
   row->addWidget(pattern_stop_);
+  // Not there at all on a real laser.
+  if (bridge_.offers_simulated_follow()) {
+    pattern_follow_ = button(tr("Follow (simulated)"), "pattern_follow", page);
+    pattern_follow_->setToolTip(tr("Enable, fire at the output on the Control tab and follow the glow; the laser goes "
+                                   "off at the end, on Stop and on any error"));
+    row->addWidget(pattern_follow_);
+    connect(pattern_follow_, &QPushButton::clicked, this, [this] {
+      const QString name = selected_pattern();
+      if (name.isEmpty()) return;
+      following_ = true;
+      refresh_enabled();
+      bridge_.follow_simulated(name, output_->value());
+    });
+    connect(output_, &QDoubleSpinBox::valueChanged, this, [this] { refresh_enabled(); });
+  }
   row->addStretch(1);
   pattern_maker_ = button(tr("Pattern maker…"), "pattern_maker", page);
   pattern_maker_->hide();
@@ -582,6 +597,9 @@ void LaserWindow::refresh_enabled() {
   pattern_run_->setToolTip(by_eye ? tr("A dragonfly follows the glow of a heated sample: it runs from a queue")
                                   : tr("Run the pattern about where the stage is now"));
   pattern_stop_->setEnabled(!watching);
+  if (pattern_follow_ != nullptr) {
+    pattern_follow_->setEnabled(can_drive && by_eye && !busy && !following_ && s.interlocks.empty() && output_->value() > 0);
+  }
 }
 
 // Qt's own destructor hides a window still shown, but this one's hideEvent
@@ -609,11 +627,15 @@ void LaserWindow::hideEvent(QHideEvent* event) {
 }
 
 void LaserWindow::closeEvent(QCloseEvent* event) {
-  if (!bridge_.watch_only() && bridge_.state().firing.value_or(false)) bridge_.stop_beam();
+  if (!bridge_.watch_only() && (following_ || bridge_.state().firing.value_or(false))) bridge_.stop_beam();
   QMainWindow::closeEvent(event);
 }
 
 void LaserWindow::on_finished(const QString& what, const Result<void>& result) {
+  if (what == QStringLiteral("follow_simulated")) {
+    following_ = false;
+    refresh_enabled();
+  }
   QString name = what;
   name.replace(QLatin1Char('_'), QLatin1Char(' '));
   if (result) {

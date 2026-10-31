@@ -45,6 +45,8 @@ void CameraView::set_view(const laser::CameraView& seen) {
   expected_radius_ = seen.expected_radius_px;
   target_.reset();
   if (seen.target) target_ = Target{QPointF(seen.target->center_px.x, seen.target->center_px.y), seen.target->radius_px};
+  grain_.reset();
+  if (seen.grain_px) grain_ = QPointF(seen.grain_px->x, seen.grain_px->y);
   message_.clear();
   stale_ = false;
   // A live camera that has stopped: this is its last picture, not now's.
@@ -60,12 +62,14 @@ void CameraView::set_failed(const QString& why) {
   message_ = why;
   stale_ = true;
   target_.reset();
+  grain_.reset();
   update();
 }
 
 void CameraView::clear(const QString& why) {
   image_ = QImage();
   target_.reset();
+  grain_.reset();
   message_ = why;
   stale_ = false;
   update();
@@ -125,6 +129,15 @@ void CameraView::paintEvent(QPaintEvent*) {
   p.setPen(QPen(t.error, 1));
   p.drawLine(QPointF(box.left(), aim.y()), QPointF(box.right(), aim.y()));
   p.drawLine(QPointF(aim.x(), box.top()), QPointF(aim.x(), box.bottom()));
+  if (grain_) {
+    // A short cross, not the aim's full lines: the grain may wander off the picture.
+    constexpr double kArm = 7;
+    const QPointF at = to_widget(*grain_);
+    p.setClipRect(box);
+    p.setPen(QPen(t.warning, 2));
+    p.drawLine(at - QPointF(kArm, 0), at + QPointF(kArm, 0));
+    p.drawLine(at - QPointF(0, kArm), at + QPointF(0, kArm));
+  }
 }
 
 }  // namespace pychron::ui

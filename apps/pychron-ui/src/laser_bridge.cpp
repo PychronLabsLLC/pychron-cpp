@@ -159,6 +159,8 @@ void LaserBridge::show() {
         seen->target = target;
         seen->targets = targets;
       }
+      // What the finder sees, beside where a simulated grain really is.
+      if (looking) seen->grain_px = system_.grain_px(*seen);
       // A camera that has stopped gives the same frame again: shown again
       // only when what is said about it changes.
       const int age_s = seen->trouble.empty() ? -1 : seen->age_ms / 1000;
@@ -268,6 +270,12 @@ const laser::TrayMap* LaserBridge::tray_map(const QString& name) const {
 bool LaserBridge::has_camera() const { return system_.has_camera(); }
 
 bool LaserBridge::can_center() const { return system_.can_center(); }
+
+bool LaserBridge::offers_simulated_follow() const {
+  const laser::CameraConfig* camera = deps_.lab.cameras.find(deps_.device);
+  return deps_.lasers.simulated(deps_.device) && camera != nullptr && camera->source == laser::CameraSource::Sim &&
+         system_.can_center() && system_.laser() != nullptr;
+}
 
 std::vector<laser::CalibrationPoint> LaserBridge::calibration_points(const QString& tray) const {
   auto stored = deps_.lab.calibrations->load(deps_.device, tray.toStdString());
@@ -468,6 +476,37 @@ void LaserBridge::stop_pattern() {
         return runner != nullptr ? runner->stop_pattern() : Result<void>{};
       },
       true);
+}
+
+void LaserBridge::follow_simulated(const QString& name, double percent) {
+  submit("follow_simulated", [this, name = name.toStdString(), percent]() -> Result<void> {
+    if (!offers_simulated_follow()) {
+      return fail(ErrorKind::Config, "only a simulated laser with a simulated camera is followed by hand", deps_.device);
+    }
+    const auto pattern = deps_.lab.patterns.find(name);
+    if (pattern == nullptr || !pattern->follows_glow()) {
+      return fail(ErrorKind::Config, "pattern " + name + " is not a dragonfly", deps_.device);
+    }
+    auto* runner = system_.pattern_runner();
+    auto* laser = system_.laser();
+    if (runner == nullptr) return fail(ErrorKind::Config, "the device runs no patterns", deps_.device);
+    const auto stopped = [this] { return worker_->cancel.load(); };
+    Result<void> followed = [&]() -> Result<void> {
+      if (auto on = system_.enable(); !on) return on;
+      if (stopped()) return cancelled();
+      if (auto set = system_.extract(percent, extraction::ExtractUnits::Percent); !set) return set;
+      if (stopped()) return cancelled();
+      if (auto fired = laser->fire_laser(); !fired) return fired;
+      if (stopped()) return cancelled();
+      if (auto started = runner->execute_pattern(name); !started) return started;
+      return wait([runner] { return runner->running(); }, [runner] { (void)runner->stop_pattern(); });
+    }();
+    // However it went. Each is tried: disabling closes the beam too.
+    auto closed = system_.end_extract();
+    auto disabled = system_.disable();
+    if (!followed) return followed;
+    return closed ? disabled : closed;
+  });
 }
 
 Result<void> LaserBridge::change_calibration(
