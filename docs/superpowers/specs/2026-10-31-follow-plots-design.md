@@ -37,19 +37,36 @@ Rule: `0` keeps today's point grain exactly. Same seed gives same numbers as bef
 - Lobe width: `min(lobe_sigma_mm, r)`.
 - Hole clamp: center stays within `max(0, hole_radius_mm - r)`, so grain stays in hole. A `hole_radius_mm` of 0 or less still does not clamp.
 
-### 3.3 Truth
+### 3.3 Melting
 
-`GrainTruth::radius_mm` (from `params_.grain_radius_mm`). Reaches `GrainView::truth` unchanged.
+`GrainParams::melt_mm_per_s`, default `0` (off), and `GrainParams::min_radius_mm`, default `0.1`. Keys of same names in `[<device>.sim.grain]`.
 
-### 3.4 Score
+Each tick, in motion step: `radius -= melt_mm_per_s * tick * min(heat, 1)`, floored at `min_radius_mm`. Radius only falls: cooling does not restore it. New grain (new nearest hole, so new `GrainModel`) starts at `grain_radius_mm`. Melting draws nothing, so changes no keyed draw.
 
-`TrackScorer` "on grain": distance <= beam radius + grain radius. Constructor takes `grain_radius_mm`; `track_bench.cpp` passes it from scenario's table. Radius 0: same scores as before.
+Every rule of 3.2 reads current radius, not `grain_radius_mm`. Lobes past new bound are clamped in as bound falls.
 
-### 3.5 Config and docs
+Config reader refuses, with key named:
 
-- New `configs/examples/track/big_grain.toml`: `grain_radius_mm = 0.5`, `lobes = 3`, rest as `hot_spots.toml`. `LaserCmd.EveryShippedScenarioIsGood` covers it.
+- `melt_mm_per_s` above 0 with `grain_radius_mm` 0: nothing to melt.
+- `melt_mm_per_s` above 0 with `min_radius_mm` not above 0: radius 0 would make lobe width 0.
+- `min_radius_mm` above `grain_radius_mm` when `melt_mm_per_s` above 0.
+
+Without melting `min_radius_mm` is not used.
+
+### 3.4 Truth
+
+`GrainTruth::radius_mm`: current radius. Reaches `GrainView::truth` unchanged.
+
+### 3.5 Score
+
+`TrackScorer` "on grain": distance <= beam radius + grain radius at that sample. `TrackScorer::add` takes current radius from `GrainTruth::radius_mm`; `track_bench.cpp` passes it. Radius 0: same scores as before.
+
+### 3.6 Config and docs
+
+- New `configs/examples/track/big_grain.toml`: `grain_radius_mm = 0.5`, `lobes = 3`, rest as `hot_spots.toml`.
+- New `configs/examples/track/melting.toml`: as `big_grain.toml`, with `melt_mm_per_s = 0.03`, `min_radius_mm = 0.2`. `LaserCmd.EveryShippedScenarioIsGood` covers both.
 - Key commented in `configs/examples/cameras.toml` beside other grain keys.
-- `docs/user/05-laser.md` 8.3: key and what it does.
+- `docs/user/05-laser.md` 8.3: keys and what they do.
 
 ## 4. Part B: plots
 
@@ -149,9 +166,9 @@ Runs for every dragonfly on this system, whoever started it (Follow (simulated),
 
 ## 6. Tests
 
-- `tests/vision/test_grain.cpp`: radius 0 equal to old numbers; beam inside grain heats as centered; lobes stay within `r`; center stays `r` inside hole; truth carries radius.
+- `tests/vision/test_grain.cpp`: radius 0 equal to old numbers; beam inside grain heats as centered; lobes stay within `r`; center stays `r` inside hole; truth carries radius; radius falls at `melt_mm_per_s` at full heat, slower at less, stops at `min_radius_mm`, does not rise when cold; lobes follow falling bound; melting changes no other draw.
 - `tests/vision`, dragonfly: `seen` set on hit, offset and area known from synthetic blob; unset on miss; set on Saturated hold with hits; decisions same.
-- `tests/laser`: config reads key, range refused; scorer counts on grain to beam + grain radius; observer set after attach is heard; sample has grain on sim, none without `[sim.grain]`.
+- `tests/laser`: config reads keys, range and the three melting refusals; scorer counts on grain to beam + grain radius; observer set after attach is heard; sample has grain on sim, none without `[sim.grain]`.
 - `tests/ui/test_follow_plot_model.cpp`: lines from a sample, NaN rules, reset on earlier `elapsed_s`, true lines absent on real.
 - `tests/ui/test_laser_bridge.cpp`: step reaches `followSamples` on main thread; bridge gone with observer live does not touch it.
 - `tests/ui/test_laser_window.cpp`: `pattern_plots` opens view; run before opening shows.
@@ -159,4 +176,4 @@ Runs for every dragonfly on this system, whoever started it (Follow (simulated),
 
 ## Open questions
 
-1. Grain radius fixed for a run (this spec), or shrinking as grain melts? Real grains melt to bead; fixed radius gives flat true line on size strip. Shrink would add `melt_mm_per_s` (radius lost per second at full heat) and floor `min_radius_mm`, both default off.
+None.
