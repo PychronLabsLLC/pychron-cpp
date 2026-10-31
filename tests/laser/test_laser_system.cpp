@@ -9,9 +9,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <random>
 #include <sstream>
@@ -415,4 +417,130 @@ TEST(LaserSystemClocks, ASystemGivenNoClockTakesOnlyACameraOnRealTime) {
 
   EXPECT_TRUE(system.attach_viewer(config, std::make_unique<SimTrayCamera>(config, system.sight(), real), real));
   EXPECT_TRUE(system.attach_camera(config, std::make_unique<SimTrayCamera>(config, system.sight(), real), real));
+}
+
+// A followed step, reported with the simulator's truth (follow plots design,
+// section 4.3).
+namespace {
+
+struct FollowRig : CameraHarness {
+  explicit FollowRig(const CameraConfig& seen) : CameraHarness(seen) {
+    EXPECT_TRUE(system.move_to_position("3", false));
+    EXPECT_TRUE(conformance::settles(*this, [&] { return system.moving(); }));
+    EXPECT_TRUE(system.enable());
+    EXPECT_TRUE(system.extract(20, ExtractUnits::Percent));
+    EXPECT_TRUE(system.laser()->fire_laser());
+  }
+  // Runs "track" for `seconds` of clock, polling as the executor does; calls
+  // `each` after every poll. False when a poll failed.
+  bool track(double seconds, const std::function<void()>& each = {}) {
+    if (!system.pattern_runner()->execute_pattern("track")) return false;
+    for (int i = 0; i < static_cast<int>(seconds * 10); ++i) {
+      auto busy = system.pattern_runner()->running();
+      if (!busy) return false;
+      if (!*busy) break;
+      if (each) each();
+      clock.advance(100ms);
+    }
+    return true;
+  }
+  std::vector<StageXY> targets() const {
+    std::vector<StageXY> out;
+    for (const auto& line : sim.log()) {
+      if (!line.starts_with("Stage.MoveTo ")) continue;
+      long long x = 0, y = 0;
+      char comma = 0;
+      std::istringstream in(line.substr(13));
+      in >> x >> comma >> y;
+      out.push_back({static_cast<double>(x) / 1000.0, static_cast<double>(y) / 1000.0});
+    }
+    return out;
+  }
+};
+
+CameraConfig plain_glow_camera() {
+  CameraConfig c = camera_config(0, 0);
+  c.sim_grain_offset_mm = {0.3, -0.2};
+  return c;
+}
+
+CameraConfig grain_glow_camera() {
+  CameraConfig c = plain_glow_camera();
+  c.sim_grain = vision::GrainParams{};
+  return c;
+}
+
+}  // namespace
+
+TEST(LaserSystemFollow, AnObserverSetAfterTheCameraIsHeard) {
+  FollowRig rig(plain_glow_camera());  // the camera is attached already
+  int looks = 0;
+  rig.system.set_step_observer([&](const vision::DragonflyStep&) { ++looks; });
+  ASSERT_TRUE(rig.track(6));
+  EXPECT_GT(looks, 2);
+}
+
+TEST(LaserSystemFollow, ASimulatedGrainIsInTheSample) {
+  FollowRig rig(grain_glow_camera());
+  std::vector<FollowSample> got;
+  // observe() asks the system's sight, which takes the gate again: this must
+  // not deadlock on the runner's thread.
+  rig.system.set_follow_observer([&](const FollowSample& s) { got.push_back(s); });
+  ASSERT_TRUE(rig.track(6));
+  ASSERT_GT(got.size(), 2U);
+  for (const auto& s : got) {
+    ASSERT_TRUE(s.grain);
+    EXPECT_TRUE(std::isfinite(s.grain->grain_mm.x));
+    EXPECT_TRUE(std::isfinite(s.grain->grain_mm.y));
+  }
+}
+
+TEST(LaserSystemFollow, NoGrainTableNoGrainInTheSample) {
+  FollowRig rig(plain_glow_camera());
+  int looks = 0, grains = 0;
+  rig.system.set_follow_observer([&](const FollowSample& s) {
+    ++looks;
+    if (s.grain) ++grains;
+  });
+  ASSERT_TRUE(rig.track(6));
+  EXPECT_GT(looks, 2);
+  EXPECT_EQ(grains, 0);
+}
+
+TEST(LaserSystemFollow, ClearingTheObserverStopsIt) {
+  FollowRig rig(grain_glow_camera());
+  int looks = 0, at_clear = -1;
+  rig.system.set_follow_observer([&](const FollowSample&) { ++looks; });
+  int polls = 0;
+  ASSERT_TRUE(rig.track(8, [&] {
+    if (++polls == 30) {
+      rig.system.set_follow_observer({});
+      at_clear = looks;
+    }
+  }));
+  ASSERT_GE(at_clear, 1);
+  EXPECT_EQ(looks, at_clear);
+}
+
+TEST(LaserSystemFollow, ObservingChangesNoStep) {
+  std::vector<StageXY> without, with;
+  {
+    FollowRig rig(grain_glow_camera());
+    ASSERT_TRUE(rig.track(8));
+    without = rig.targets();
+  }
+  int seen = 0;
+  {
+    FollowRig rig(grain_glow_camera());
+    rig.system.set_follow_observer([&](const FollowSample&) { ++seen; });
+    ASSERT_TRUE(rig.track(8));
+    with = rig.targets();
+  }
+  ASSERT_GT(seen, 2);
+  ASSERT_GT(without.size(), 2U);
+  ASSERT_EQ(with.size(), without.size());
+  for (std::size_t i = 0; i < with.size(); ++i) {
+    EXPECT_EQ(with[i].x, without[i].x) << i;
+    EXPECT_EQ(with[i].y, without[i].y) << i;
+  }
 }

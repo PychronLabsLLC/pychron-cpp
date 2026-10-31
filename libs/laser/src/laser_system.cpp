@@ -521,7 +521,8 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
   finder_ = std::make_unique<vision::SimpleFinder>();
   // The same eyes for a pattern that follows the glow.
   if (runner_ != nullptr) {
-    runner_->set_vision({frames_.get(), &*camera_, clock_, [this] { return hole_room_; }, step_observer_});
+    runner_->set_vision({frames_.get(), &*camera_, clock_, [this] { return hole_room_; },
+                          [this](const vision::DragonflyStep& step) { report_step(step); }});
   }
   return {};
 }
@@ -529,6 +530,22 @@ Result<void> LaserSystem::attach_camera(CameraConfig config, std::unique_ptr<vis
 void LaserSystem::set_step_observer(std::function<void(const vision::DragonflyStep&)> fn) {
   Gate gate(gate_);
   step_observer_ = std::move(fn);
+}
+
+void LaserSystem::set_follow_observer(std::function<void(const FollowSample&)> fn) {
+  Gate gate(gate_);
+  follow_observer_ = std::move(fn);
+}
+
+void LaserSystem::report_step(const vision::DragonflyStep& step) {
+  // The runner's thread. The gate is recursive, and held across the observer
+  // so that clearing one (under the gate) returns only when none is inside it.
+  Gate gate(gate_);
+  if (step_observer_) step_observer_(step);
+  if (!follow_observer_) return;
+  FollowSample sample{step, std::nullopt};
+  if (auto* sim = dynamic_cast<SimTrayCamera*>(frames_.get())) sample.grain = sim->observe();
+  follow_observer_(sample);
 }
 
 Result<void> LaserSystem::attach_viewer(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames,

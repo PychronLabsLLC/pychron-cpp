@@ -112,6 +112,13 @@ struct CameraView {
   std::optional<StageXY> grain_px;
 };
 
+// One look of a pattern that follows the glow, and, on a simulated grain, where
+// the grain and the beam really were (in stage mm) when it was taken.
+struct FollowSample {
+  vision::DragonflyStep step;
+  std::optional<GrainView> grain;  // simulated grain only
+};
+
 class LaserSystem final : public extraction::IExtractionDevice,
                           public extraction::IStage,
                           public extraction::ILaserDevice,
@@ -150,10 +157,14 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // attach_viewer(), for a `clock` that is not the system's: the one given at
   // construction or, when none was, real time (any SteadyClock).
   Result<void> attach_camera(CameraConfig config, std::unique_ptr<vision::IFrameSource> frames, const Clock& clock);
-  // Told of each look a pattern that follows the glow takes. Set before
-  // attach_camera(), which hands it to the runner; empty (the default): nobody
-  // is told.
+  // Told of each look a pattern that follows the glow takes, before or after
+  // attach_camera(); empty (the default): nobody is told. Called on the
+  // runner's thread, under the gate: it records, and calls no device.
   void set_step_observer(std::function<void(const vision::DragonflyStep&)> fn);
+  // The same looks, each with the simulated grain's truth (when the camera is
+  // a SimTrayCamera with a [sim.grain] table). Empty: none, and no sample is
+  // built.
+  void set_follow_observer(std::function<void(const FollowSample&)> fn);
   // A camera for looking only: view() shows its picture and what the finder
   // makes of it; a hole move is not centered by it and a pattern cannot
   // follow the glow with it. For a camera that does not follow this stage
@@ -320,7 +331,9 @@ class LaserSystem final : public extraction::IExtractionDevice,
   const CorrectionStore* correction_store_ = nullptr;
   std::optional<CameraConfig> camera_;
   std::unique_ptr<vision::IFrameSource> frames_;
-  std::function<void(const vision::DragonflyStep&)> step_observer_;
+  std::function<void(const vision::DragonflyStep&)> step_observer_;  // under the gate
+  std::function<void(const FollowSample&)> follow_observer_;         // under the gate
+  void report_step(const vision::DragonflyStep& step);
   bool centers_ = false;  // the camera may move the stage (attach_camera)
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;
