@@ -208,6 +208,10 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // clock's now: the grain is state of the camera's grabs, and both are under
   // the gate. Asks the driver what the camera asks at a grab.
   std::optional<StageXY> grain_px(const CameraView& seen);
+  // Every simulated grain back in its hole as first made. Nothing for any
+  // camera but a SimTrayCamera. Another tray's holes are other holes:
+  // set_tray() to it does the same.
+  void reset_simulated_grains();
   // The camera's pixel scale as measured (camera_scale.hpp): used from now
   // on instead of what its configuration says. Nothing with no camera.
   void set_measured_scale(const ScaleMeasurement& measured);

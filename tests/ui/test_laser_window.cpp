@@ -523,6 +523,30 @@ class LaserWindowTest : public QObject {
     QCOMPARE(view->windowTitle(), QStringLiteral("Follow plots"));
   }
 
+  void reset_simulation_clears_the_plots() {
+    build_to_follow();
+    auto* reset = window_->findChild<QPushButton*>(QStringLiteral("pattern_reset_sim"));
+    QVERIFY(reset != nullptr);
+    auto* view = window_->findChild<FollowPlotView*>();
+    std::vector<laser::FollowSample> rows(3);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      rows[i].step.elapsed_s = static_cast<double>(i);
+      rows[i].step.stage_mm = {1.0, 2.0};
+    }
+    emit bridge_->followSamples(rows);
+    btn("pattern_plots")->click();
+    QCOMPARE(view->point_count(FollowLine::StageX), 3);
+    QTRY_VERIFY(reset->isEnabled());
+    reset->click();
+    settle();
+    QTRY_COMPARE(view->point_count(FollowLine::StageX), 0);
+  }
+
+  void a_real_laser_has_no_reset_button() {
+    build_to_follow([](std::string_view) { return false; });
+    QVERIFY(window_->findChild<QPushButton*>(QStringLiteral("pattern_reset_sim")) == nullptr);
+  }
+
   void a_run_before_opening_shows() {
     auto* view = window_->findChild<FollowPlotView*>();
     QVERIFY(view != nullptr);

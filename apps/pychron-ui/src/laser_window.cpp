@@ -19,6 +19,7 @@
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
@@ -406,6 +407,11 @@ QWidget* LaserWindow::build_patterns() {
       bridge_.follow_simulated(name, output_->value());
     });
     connect(output_, &QDoubleSpinBox::valueChanged, this, [this] { refresh_enabled(); });
+    pattern_reset_sim_ = button(tr("Reset simulation"), "pattern_reset_sim", page);
+    pattern_reset_sim_->setToolTip(tr("Every grain back in its hole as it was first made, the stage back on the hole "
+                                      "it was last sent to, and the plots cleared"));
+    row->addWidget(pattern_reset_sim_);
+    connect(pattern_reset_sim_, &QPushButton::clicked, this, [this] { bridge_.reset_simulation(center_->isChecked()); });
   }
   row->addStretch(1);
   pattern_maker_ = button(tr("Pattern maker…"), "pattern_maker", page);
@@ -620,6 +626,7 @@ void LaserWindow::refresh_enabled() {
   if (pattern_follow_ != nullptr) {
     pattern_follow_->setEnabled(can_drive && by_eye && !busy && !following_ && s.interlocks.empty() && output_->value() > 0);
   }
+  if (pattern_reset_sim_ != nullptr) pattern_reset_sim_->setEnabled(can_drive && !busy && !following_);
 }
 
 // Qt's own destructor hides a window still shown, but this one's hideEvent
@@ -655,6 +662,10 @@ void LaserWindow::on_finished(const QString& what, const Result<void>& result) {
   if (what == QStringLiteral("follow_simulated")) {
     following_ = false;
     refresh_enabled();
+  }
+  if (what == QStringLiteral("reset_simulation") && result) {
+    follow_model_.clear();
+    follow_view_->refresh();
   }
   QString name = what;
   name.replace(QLatin1Char('_'), QLatin1Char(' '));

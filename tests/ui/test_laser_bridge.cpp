@@ -328,6 +328,37 @@ class LaserBridgeTest : public QObject {
     QVERIFY(!ever_sent("Laser.Fire"));
   }
 
+  void a_reset_is_refused_on_a_real_laser() {
+    build_to_follow({}, [](std::string_view) { return false; });
+    bridge_->reset_simulation(false);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->why("reset_simulation").contains("simulated"), qPrintable(heard_->why("reset_simulation")));
+  }
+
+  void a_reset_goes_back_to_the_last_hole() {
+    on_a_hole();
+    const auto hole = lab_->sim().position();
+    bridge_->follow_simulated(QStringLiteral("follow"), 20);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("follow_simulated"), qPrintable(heard_->why("follow_simulated")));
+    bridge_->reset_simulation(false);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("reset_simulation"), qPrintable(heard_->why("reset_simulation")));
+    QCOMPARE(lab_->sim().position().x, hole.x);
+    QCOMPARE(lab_->sim().position().y, hole.y);
+  }
+
+  void a_jog_means_no_hole_to_go_back_to() {
+    on_a_hole();
+    bridge_->jog(0.4, 0.3, 0);
+    test::settle(*bridge_);
+    const auto moved = lab_->sim().position();
+    bridge_->reset_simulation(false);
+    test::settle(*bridge_);
+    QVERIFY2(heard_->ok("reset_simulation"), qPrintable(heard_->why("reset_simulation")));
+    QCOMPARE(lab_->sim().position().x, moved.x);
+  }
+
   void a_follow_fires_at_its_output_and_ends_off() {
     on_a_hole();
     bridge_->follow_simulated(QStringLiteral("follow"), 20);

@@ -119,6 +119,10 @@ class LaserBridge : public QObject {
   // any stop (each cancels it) and on any error. Refused, with nothing sent,
   // unless offers_simulated_follow(), or for a pattern that is no dragonfly.
   void follow_simulated(const QString& name, double percent);
+  // Every simulated grain back in its hole as first made, and the stage back
+  // on the hole it was last sent to, centering it if `center`. Refused unless
+  // offers_simulated_follow().
+  void reset_simulation(bool center);
   // A calibration point for `hole` of the current tray, at where the stage
   // is now. Points that do not solve are refused and the file is left.
   void add_calibration_point(const QString& hole);

@@ -366,6 +366,11 @@ std::optional<StageXY> LaserSystem::grain_px(const CameraView& seen) {
   return StageXY{seen.aim_px.x + from_beam.x, seen.aim_px.y + from_beam.y};
 }
 
+void LaserSystem::reset_simulated_grains() {
+  Gate gate(gate_);
+  if (auto* sim = dynamic_cast<SimTrayCamera*>(frames_.get())) sim->reset_grains();
+}
+
 Result<CameraView> LaserSystem::view(bool fresh, bool any_size) {
   CameraView seen;
   bool firing = false;
@@ -962,8 +967,12 @@ Result<void> LaserSystem::set_tray(std::string_view tray) {
   if (correction_store_ != nullptr && status.state == CalibrationState::Ok) {
     if (auto loaded = correction_store_->load(*map, name_, status.fingerprint)) corrections = std::move(*loaded);
   }
+  auto* sim = dynamic_cast<SimTrayCamera*>(frames_.get());
   std::lock_guard lock(mutex_);
-  if (tray_ != map) last_hole_.clear();  // the same tray again: the stage is where it was
+  if (tray_ != map) {
+    last_hole_.clear();  // the same tray again: the stage is where it was
+    if (sim != nullptr) sim->reset_grains();
+  }
   tray_ = map;
   status_ = std::move(status);
   corrections_ = std::move(corrections);

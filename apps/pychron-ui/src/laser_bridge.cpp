@@ -523,6 +523,19 @@ void LaserBridge::follow_simulated(const QString& name, double percent) {
   });
 }
 
+void LaserBridge::reset_simulation(bool center) {
+  submit("reset_simulation", [this, center]() -> Result<void> {
+    if (!offers_simulated_follow()) {
+      return fail(ErrorKind::Config, "only a simulated laser with a simulated camera is reset", deps_.device);
+    }
+    system_.reset_simulated_grains();
+    const std::string hole = system_.snapshot().last_hole;
+    if (hole.empty()) return {};
+    if (auto started = system_.move_to_position(hole, center); !started) return started;
+    return wait([this] { return system_.moving(); }, [this] { (void)system_.stop(); });
+  });
+}
+
 Result<void> LaserBridge::change_calibration(
     const std::function<void(std::vector<laser::CalibrationPoint>&, double, double)>& edit) {
   const std::string tray = system_.tray();
