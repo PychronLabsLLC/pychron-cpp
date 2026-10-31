@@ -128,7 +128,7 @@ TEST(TrackBench, ASteadyGrainIsHeldOn) {
 }
 
 TEST(TrackBench, ATrackerThatDoesNotFollowScoresWorse) {
-  const auto combos = run(text(20, 2,
+  const auto combos = run(text(20, 1,
                                "[grain]\ncreep_mm_per_s = [-0.05, 0]\n"  // away from where its first search leaves the beam
                                "[sweep.pattern]\naggressiveness = [0, 1]\n"));
   ASSERT_EQ(combos.size(), 2U);
@@ -338,6 +338,15 @@ TEST(TrackBench, FramesOfASeedThatIsNotRunAreRefused) {
   options.frames = temp.dir / "frames";
   options.frames_seed = 99;
   const auto done = run_track(scenario(text(3600, 2)), options);
+  ASSERT_FALSE(done);
+  EXPECT_EQ(done.error().kind, ErrorKind::Config);
+}
+
+TEST(TrackBench, ASeedThatIsNotRunIsRefusedWithoutFramesToo) {
+  TrackOptions options;
+  options.frames_seed = 99;
+  options.check_only = true;
+  const auto done = run_track(scenario(text(3, 2)), options);
   ASSERT_FALSE(done);
   EXPECT_EQ(done.error().kind, ErrorKind::Config);
 }

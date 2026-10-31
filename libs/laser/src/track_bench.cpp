@@ -591,7 +591,7 @@ Result<std::vector<TrackCombo>> run_track(const TrackScenario& scenario, const T
     if (runs > kMaxRuns) return fail(ErrorKind::Config, "more than 10000 runs: seeds times every sweep's values");
   }
   const std::uint64_t frames_seed = options.frames_seed.value_or(t.seed);
-  if (!options.frames.empty() && (frames_seed < t.seed || frames_seed - t.seed >= static_cast<std::uint64_t>(seeds))) {
+  if (options.frames_seed && (frames_seed < t.seed || frames_seed - t.seed >= static_cast<std::uint64_t>(seeds))) {
     return fail(ErrorKind::Config, "--frames-seed: " + std::to_string(frames_seed) + " is not one of the seeds run");
   }
 
