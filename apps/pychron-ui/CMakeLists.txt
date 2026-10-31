@@ -110,6 +110,7 @@ add_library(pychron_ui_lib STATIC
   src/update_checker.cpp
   src/update_ui.cpp
   src/earthbank_publish_panel.cpp
+  src/follow_mailbox.cpp
   src/laser_bridge.cpp
   src/tray_view.cpp
   src/camera_view.cpp
@@ -214,6 +215,7 @@ add_library(pychron_ui_lib STATIC
   src/update_checker.hpp
   src/update_ui.hpp
   src/earthbank_publish_panel.hpp
+  src/follow_mailbox.hpp
   src/laser_bridge.hpp
   src/tray_view.hpp
   src/camera_view.hpp

@@ -41,6 +41,7 @@
 #include <QString>
 #include <QStringList>
 
+#include "follow_mailbox.hpp"
 #include "pychron/core/clock.hpp"
 #include "pychron/core/error.hpp"
 #include "pychron/experiment/lab/lab.hpp"
@@ -74,6 +75,8 @@ class LaserBridge : public QObject {
   Q_OBJECT
 
  public:
+  static constexpr std::size_t kMaxPendingSamples = FollowMailbox::kMaxPending;
+
   explicit LaserBridge(LaserBridgeDeps deps, QObject* parent = nullptr);
   ~LaserBridge() override;
   LaserBridge(const LaserBridge&) = delete;
@@ -145,6 +148,10 @@ class LaserBridge : public QObject {
   void snapshot(const pychron::laser::LaserSnapshot& state);
   void view(const pychron::laser::CameraView& seen);
   void viewFailed(const QString& why);
+  // The steps a followed pattern took since the last delivery, oldest first.
+  // At most kMaxPendingSamples wait for a main thread that has stalled; the
+  // newest are kept.
+  void followSamples(const std::vector<pychron::laser::FollowSample>& samples);
   void commandFinished(const QString& what, const pychron::Result<void>& result);
   void driverChanged(bool watch_only);
   void calibrationChanged();
@@ -157,6 +164,7 @@ class LaserBridge : public QObject {
   struct Video;
   void show();          // the video thread
   void deliver_view();  // main thread: the newest picture, if one is waiting
+  void deliver_follow();  // main thread: the followed steps waiting
   using Action = std::function<Result<void>()>;
 
   // Queues `action` under `what`. `driving`: it needs the Manual lease.
@@ -181,6 +189,8 @@ class LaserBridge : public QObject {
   laser::LaserSnapshot state_;
   bool watch_only_ = false;
   std::shared_ptr<Gate> gate_;
+  // Held by the system's observer too, so it outlives whichever ends last.
+  std::shared_ptr<FollowMailbox> follow_;
   std::unique_ptr<Worker> worker_;
   std::thread thread_;
   std::unique_ptr<Video> video_;

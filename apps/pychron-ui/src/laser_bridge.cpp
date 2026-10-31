@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <QMetaObject>
+#include <QMetaType>
 
 #include "error_report.hpp"
 #include "pychron/core/log_context.hpp"
@@ -84,6 +85,7 @@ LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
       video_clock_(deps_.video_clock != nullptr ? *deps_.video_clock : real_time_),
       system_(system_of(deps_)),
       gate_(std::make_shared<Gate>()),
+      follow_(std::make_shared<FollowMailbox>()),
       worker_(std::make_unique<Worker>()) {
   gate_->target = this;
   // What the window shows before the first poll comes back.
@@ -95,6 +97,12 @@ LaserBridge::LaserBridge(LaserBridgeDeps deps, QObject* parent)
     loop();
   });
   video_ = std::make_unique<Video>();
+  qRegisterMetaType<std::vector<laser::FollowSample>>();
+  // Runs on the runner's thread under the system's gate: it appends and posts,
+  // and never calls the system or waits.
+  system_.set_follow_observer([this, box = follow_](const laser::FollowSample& sample) {
+    if (box->add(sample)) post([this] { deliver_follow(); });
+  });
   if (system_.has_camera()) {
     // Held until the thread is a participant: time does not go past it first.
     auto hold = std::make_shared<Clock::Hold>(video_clock_);
@@ -222,7 +230,13 @@ void LaserBridge::deliver_view() {
   if (seen) emit view(*seen);
 }
 
+void LaserBridge::deliver_follow() {
+  auto samples = follow_->take();
+  if (!samples.empty()) emit followSamples(samples);
+}
+
 LaserBridge::~LaserBridge() {
+  system_.set_follow_observer({});  // before anything is told to quit
   {
     std::lock_guard lock(gate_->mutex);
     gate_->target = nullptr;

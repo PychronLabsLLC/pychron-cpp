@@ -399,6 +399,32 @@ class LaserBridgeTest : public QObject {
     QVERIFY(laser_is_off());
   }
 
+  void follow_reaches_the_main_thread() {
+    build_to_follow(test::add_grain);
+    on_a_hole();
+    std::vector<laser::FollowSample> rows;
+    bool on_main = true;
+    connect(bridge_.get(), &LaserBridge::followSamples, this,
+            [&rows, &on_main](const std::vector<laser::FollowSample>& got) {
+              on_main = on_main && QThread::currentThread() == QCoreApplication::instance()->thread();
+              rows.insert(rows.end(), got.begin(), got.end());
+            });
+    bridge_->follow_simulated(QStringLiteral("watch"), 20);
+    QTRY_VERIFY(rows.size() >= 2);
+    QVERIFY(on_main);
+    QVERIFY(rows.back().step.elapsed_s > rows.front().step.elapsed_s);
+    bridge_->stop_pattern();
+    test::settle(*bridge_);
+    QVERIFY(laser_is_off());
+  }
+
+  void a_bridge_gone_with_a_dragonfly_running_is_safe() {
+    following();
+    bridge_.reset();  // mid-Follow: the observer goes first, the worker next
+    heard_.reset();
+    QCoreApplication::processEvents();
+  }
+
   void the_grain_is_shown_only_while_something_looks_for_it() {
     build_to_follow(test::add_grain);
     on_a_hole();
