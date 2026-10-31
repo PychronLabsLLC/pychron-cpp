@@ -569,6 +569,23 @@ TEST(GrainPx, IsWhereTheFrameShowsTheGrain) {
   }
 }
 
+TEST(GrainPx, AMeasuredScaleDoesNotMoveIt) {
+  GrainRig rig(grain_camera(vision::GrainParams{}, 0.25, -0.15));
+  (void)rig.system.picture();
+  rig.clock.advance(3s);
+  ScaleMeasurement measured;
+  measured.px_per_mm = 11.5;
+  measured.map = vision::CameraStageMap::from_scale(11.5, false, true);
+  rig.system.set_measured_scale(measured);
+  auto seen = rig.system.picture();
+  ASSERT_TRUE(seen) << seen.error().what;
+  const vision::Truth truth = rig.sim_camera->last_truth();
+  const auto px = rig.system.grain_px(*seen);
+  ASSERT_TRUE(px.has_value());
+  EXPECT_NEAR(px->x, truth.center_px.x, 0.5);
+  EXPECT_NEAR(px->y, truth.center_px.y, 0.5);
+}
+
 TEST(GrainPx, NoGrainTableNoTruth) {
   CameraHarness rig;
   auto seen = rig.system.picture();

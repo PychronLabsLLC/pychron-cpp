@@ -360,8 +360,9 @@ std::optional<StageXY> LaserSystem::grain_px(const CameraView& seen) {
   if (sim == nullptr) return std::nullopt;
   const auto grain = sim->observe();
   if (!grain) return std::nullopt;
-  const vision::Vec2 from_beam =
-      camera_->map().to_px({grain->grain_mm.x - grain->beam_mm.x, grain->grain_mm.y - grain->beam_mm.y});
+  // The scale the simulated frame is drawn at, whatever has been measured.
+  const auto drawn = vision::CameraStageMap::from_scale(camera_->px_per_mm, camera_->flip_x, camera_->flip_y);
+  const vision::Vec2 from_beam = drawn.to_px({grain->grain_mm.x - grain->beam_mm.x, grain->grain_mm.y - grain->beam_mm.y});
   return StageXY{seen.aim_px.x + from_beam.x, seen.aim_px.y + from_beam.y};
 }
 
