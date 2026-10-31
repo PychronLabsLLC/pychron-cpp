@@ -396,6 +396,8 @@ TEST(SimTrayCamera, NoGrainTableIsTodaysPicture) {
   take();
   sight.firing = false;
   take();
+  // On a failure on one platform only, diff the frames (a boundary pixel,
+  // say) to find what differs; never record the hash again to get past it.
   EXPECT_EQ(h, 9287573347953853465ULL);
 }
 

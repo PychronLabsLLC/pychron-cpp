@@ -74,7 +74,7 @@ class SimTrayCamera final : public vision::IFrameSource {
   // Runs the model up to the clock's now without drawing a frame, and says
   // where the grain and the beam are. Empty without a [sim.grain] table or
   // with no hole in the tray. A grab after it gives the frame it would have
-  // given without it.
+  // given without it while the beam is still.
   std::optional<GrainView> observe();
 
  private:

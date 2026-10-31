@@ -50,10 +50,10 @@ std::optional<GrainView> SimTrayCamera::observe() {
   if (!config_.sim_grain) return std::nullopt;
   const TraySight sight = sight_ ? sight_() : TraySight{};
   const StageXY error = config_.sim_tray_error_mm;
-  const Nearest near = nearest_hole(sight, error);
-  if (near.hole == nullptr) return std::nullopt;
-  const StageXY real{near.hole->x + error.x, near.hole->y + error.y};
-  advance_grain(sight, real, near.index, clock_.now());
+  const Nearest nearest = nearest_hole(sight, error);
+  if (nearest.hole == nullptr) return std::nullopt;
+  const StageXY real{nearest.hole->x + error.x, nearest.hole->y + error.y};
+  advance_grain(sight, real, nearest.index, clock_.now());
   const vision::GrainTruth truth = grain_->truth();
   const vision::Vec2 aim = config_.map().to_mm({config_.aim_offset_px.x, config_.aim_offset_px.y});
   return GrainView{{real.x + truth.center_mm.x, real.y + truth.center_mm.y},
