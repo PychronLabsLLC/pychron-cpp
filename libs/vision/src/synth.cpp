@@ -163,7 +163,8 @@ std::vector<float> smooth_noise(std::size_t n, int radius, std::mt19937& rng) {
 // Value noise on a coarse lattice, about -1 to 1.
 class Blotches {
  public:
-  Blotches(int side, double cell_px, std::mt19937& rng) : cell_(cell_px), cells_(static_cast<int>(side / cell_px) + 3) {
+  Blotches(int side, double cell_px, std::mt19937& rng)
+      : cell_(std::max(cell_px, 2.0)), cells_(static_cast<int>(side / cell_) + 3) {
     values_.resize(static_cast<std::size_t>(cells_) * cells_);
     for (float& v : values_) v = static_cast<float>(2 * unit(rng) - 1);
   }
