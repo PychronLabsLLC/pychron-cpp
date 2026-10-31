@@ -182,6 +182,17 @@ void read_grain(Reader& g, vision::GrainParams& p) {
   g.finish();
 }
 
+}  // namespace
+
+double hole_fence_mm(double hole_radius_mm, double beam_diameter_mm) noexcept {
+  constexpr double kPastTheEdge = 1.0 / 3.0;  // of the beam's diameter
+  constexpr double kHeldStill = 1e-3;         // mm: a perimeter must be above 0
+  const double beam = beam_diameter_mm > 0 ? beam_diameter_mm : 0.0;
+  return std::max(hole_radius_mm - beam / 2 + kPastTheEdge * beam, kHeldStill);
+}
+
+namespace {
+
 // Empty when `table` is a camera; else what is wrong with it.
 std::string read_camera(const toml::table& table, CameraConfig& c) {
   Reader r(table, c.device);
@@ -204,6 +215,7 @@ std::string read_camera(const toml::table& table, CameraConfig& c) {
   int settle_ms = 200;
   r.whole("settle_ms", settle_ms, 0, 10000);
   c.settle = std::chrono::milliseconds(settle_ms);
+  r.number("beam_diameter_mm", c.beam_diameter_mm, 0, 1000);
   if (const auto frames = r.word("frames")) c.frames = *frames;
   if (r.ok() && c.source == CameraSource::Recorded && c.frames.empty()) {
     r.fail("frames", "a recorded source needs the directory of its frames");

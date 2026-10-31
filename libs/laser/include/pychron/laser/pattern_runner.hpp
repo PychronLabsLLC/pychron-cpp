@@ -56,8 +56,9 @@ struct PatternVision {
   vision::IFrameSource* frames = nullptr;
   const CameraConfig* camera = nullptr;
   const Clock* clock = nullptr;
-  // How far from where it starts a pattern may roam before it reaches the
-  // neighbouring holes (mm); 0 or less: not known, no limit beyond its own.
+  // How far from where it starts a pattern may roam on its hole: short of the
+  // neighbours, and as far as the beam may go over the hole's edge (mm); 0 or
+  // less: not known, no limit beyond its own.
   std::function<double()> room_mm;
   // Told of each look the follower takes, right after it is decided. Empty:
   // nobody is told. It runs on the thread that polls the runner.
@@ -82,6 +83,9 @@ class PatternRunner final : public extraction::IPatternRunner {
   // `duration_s`: how long the run heats for; a pattern that follows the
   // glow runs for that, or for its own duration when the run gives none.
   Result<void> execute_pattern_for(std::string_view pattern, double duration_s) override;
+  // In place of a dragonfly's perimeter_radius from the next run on, until
+  // set back; 0 or less: the pattern's own. The hole's room still limits it.
+  void set_fence_mm(double mm) noexcept { fence_mm_ = mm; }
   Result<bool> running() override;
   // Drops what is left and stops the stage where it is. A stage that cannot
   // stop finishes its current move; that is not an error.
@@ -121,6 +125,7 @@ class PatternRunner final : public extraction::IPatternRunner {
   std::string note_;           // of the last pattern that ended; taken once
 
   PatternVision vision_;
+  double fence_mm_ = 0;
   std::unique_ptr<vision::ITargetFinder> finder_;
   std::unique_ptr<Follow> follow_;  // the caller's thread only
 };

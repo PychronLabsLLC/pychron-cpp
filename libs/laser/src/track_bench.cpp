@@ -298,7 +298,7 @@ std::string labelled(const std::string& label, const std::string& why) {
 // Everything on disk a run needs. Every combination is read back by the real
 // loaders here, before the first run.
 Result<Stock> stock_up(const TrackTables& t, const fs::path& dir) {
-  if (auto tray = put(dir / "tray_maps" / "track.txt", "circle,1.0\n\n\n1,0,0\n2,5,0\n"); !tray) {
+  if (auto tray = put(dir / "tray_maps" / "track.txt", "circle,3.0\n\n\n1,0,0\n2,5,0\n"); !tray) {
     return fail(std::move(tray).error());
   }
   Stock stock;

@@ -680,7 +680,12 @@ a grain outside the picture.
 halves. On the left the tray from above, on one scale both ways: where the stage
 has been, where the grain really was, a dot at each one's latest place, and the
 dashed fence, the circle the dragonfly keeps the stage inside: the pattern's
-`perimeter_radius` about where it started, less if the hole has less room. On the
+`perimeter_radius` about where it started (or the **Fence** box on a simulated
+laser), less if the hole allows less. A hole allows the beam at most a third of
+its diameter past its edge, so the beam's center stays within hole radius minus
+beam radius plus a third of the beam's diameter, and short of the neighbours.
+The beam is `beam_diameter_mm` in `cameras.toml`, or a simulated grain's
+`beam_radius_mm` doubled; with neither its center stays in the hole. On the
 right three strips on one shared time axis, seconds since the dragonfly began:
 beam deviation, luminosity and grain size, what the finder saw ("seen") against
 the truth ("true"). The truth exists only on a simulated grain, so on a real

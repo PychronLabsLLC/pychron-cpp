@@ -412,9 +412,29 @@ QWidget* LaserWindow::build_patterns() {
       if (name.isEmpty()) return;
       following_ = true;
       refresh_enabled();
-      bridge_.follow_simulated(name, output_->value());
+      bridge_.follow_simulated(name, output_->value(), pattern_fence_->value());
     });
     connect(output_, &QDoubleSpinBox::valueChanged, this, [this] { refresh_enabled(); });
+    auto* fencing = new QHBoxLayout;
+    fencing->addWidget(new QLabel(tr("Fence"), page));
+    pattern_fence_ = new QDoubleSpinBox(page);
+    pattern_fence_->setObjectName(QStringLiteral("pattern_fence"));
+    pattern_fence_->setDecimals(2);
+    pattern_fence_->setRange(0.01, 1000);
+    pattern_fence_->setSingleStep(0.05);
+    pattern_fence_->setSuffix(tr(" mm"));
+    pattern_fence_->setToolTip(tr("How far the stage may go from where the follow starts. A hole lowers it: the beam "
+                                  "goes at most a third of its diameter past the hole's edge"));
+    fencing->addWidget(pattern_fence_);
+    pattern_fence_note_ = new QLabel(page);
+    pattern_fence_note_->setObjectName(QStringLiteral("pattern_fence_note"));
+    style::set_tone(pattern_fence_note_, style::Tone::Muted);
+    fencing->addWidget(pattern_fence_note_, 1);
+    v->addLayout(fencing);
+    connect(pattern_list_, &QTableWidget::itemSelectionChanged, this, [this] {
+      const auto pattern = bridge_.patterns().find(selected_pattern().toStdString());
+      if (pattern != nullptr && pattern->follows_glow()) pattern_fence_->setValue(pattern->perimeter_radius);
+    });
     pattern_reset_sim_ = button(tr("Reset simulation"), "pattern_reset_sim", page);
     pattern_reset_sim_->setToolTip(tr("Every grain back in its hole as it was first made, the stage back on the hole "
                                       "it was last sent to, and the plots cleared"));
@@ -635,6 +655,11 @@ void LaserWindow::refresh_enabled() {
     pattern_follow_->setEnabled(can_drive && by_eye && !busy && !following_ && s.interlocks.empty() && output_->value() > 0);
   }
   if (pattern_reset_sim_ != nullptr) pattern_reset_sim_->setEnabled(can_drive && !busy && !following_);
+  if (pattern_fence_ != nullptr) {
+    pattern_fence_->setEnabled(can_drive && by_eye && !busy && !following_);
+    pattern_fence_note_->setText(s.hole_room_mm > 0 ? tr("this hole allows %1 mm").arg(mm(s.hole_room_mm, 2))
+                                                    : tr("not on a hole: no limit but this"));
+  }
 }
 
 // Qt's own destructor hides a window still shown, but this one's hideEvent

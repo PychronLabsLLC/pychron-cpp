@@ -415,6 +415,26 @@ jump_mm = 0.2
   EXPECT_TRUE(empty.find("co2")->sim_grain);
 }
 
+TEST(HoleFence, TheBeamGoesAThirdOfItsDiameterPastTheEdge) {
+  EXPECT_DOUBLE_EQ(hole_fence_mm(0.5, 0.6), 0.5 - 0.3 + 0.2);
+  // There the beam's far edge is 0.2 mm, a third of 0.6, past the hole's.
+  EXPECT_DOUBLE_EQ(hole_fence_mm(0.5, 0.6) + 0.3 - 0.5, 0.6 / 3);
+  EXPECT_DOUBLE_EQ(hole_fence_mm(0.5, 0), 0.5);   // not known: its center in the hole
+  EXPECT_DOUBLE_EQ(hole_fence_mm(0.5, -1), 0.5);
+  EXPECT_GT(hole_fence_mm(0.1, 50), 0);           // a perimeter is above 0
+}
+
+TEST(CameraLibrary, ReadsTheBeamDiameter) {
+  const auto lib = parse("[co2]\nbeam_diameter_mm = 0.6\n[co2.sim.grain]\nbeam_radius_mm = 0.4\n");
+  ASSERT_TRUE(lib.problems().empty()) << lib.problems().front();
+  EXPECT_DOUBLE_EQ(lib.find("co2")->beam_mm(), 0.6);  // what is said wins
+  const auto grain = parse("[co2.sim.grain]\nbeam_radius_mm = 0.4\n");
+  ASSERT_TRUE(grain.problems().empty()) << grain.problems().front();
+  EXPECT_DOUBLE_EQ(grain.find("co2")->beam_mm(), 0.8);
+  EXPECT_DOUBLE_EQ(CameraConfig{}.beam_mm(), 0);
+  EXPECT_FALSE(parse("[co2]\nbeam_diameter_mm = -1\n").problems().empty());
+}
+
 TEST(CameraLibrary, ReadsTheSimSurface) {
   const auto machined = parse("[co2.sim]\nsurface = \"machined\"\n");
   ASSERT_TRUE(machined.problems().empty()) << machined.problems().front();

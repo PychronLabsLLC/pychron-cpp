@@ -886,6 +886,7 @@ follow the glow. A laser with no table has no camera. Example:
 | `source` | `sim`, `recorded`, `opencv`, `pylon` | `sim` | `pylon` is read and checked, but its driver is not in this build |
 | `use` | `center`, `view` | `center` | `view`: only a picture; nothing it sees moves the stage |
 | `px_per_mm` | number > 0 | 23.0 | picture scale |
+| `beam_diameter_mm` | number, 0 or more | 0 | the beam, mm: a dragonfly keeps it at most a third of its diameter past the hole's edge. 0: not known (a simulated grain's `beam_radius_mm` is used; with none the beam's center stays in the hole) |
 | `flip_x`, `flip_y` | true/false | false, true | which way the picture moves when the stage does |
 | `aim_offset_px` | `[x, y]` | `[0, 0]` | where the beam is, from the picture's centre |
 | `settle_ms` | 0 to 10000 | 200 | after a move, before a frame is trusted |

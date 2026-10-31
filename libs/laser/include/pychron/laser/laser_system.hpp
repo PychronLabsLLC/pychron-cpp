@@ -89,6 +89,7 @@ struct LaserSnapshot {
   LaserActivity activity = LaserActivity::Idle;
   std::string pattern_progress;  // "<name>, point <i> of <n>" while one runs
   std::string last_hole;         // the hole the stage was last sent to; empty once it is sent elsewhere
+  double hole_room_mm = 0;       // how far a dragonfly may go on that hole; 0: no hole, no limit
   AutocenterOutcome autocenter;  // how the last centering ended
   bool stopped = false;          // the emergency stop is latched
   std::string error;
@@ -165,6 +166,8 @@ class LaserSystem final : public extraction::IExtractionDevice,
   // a SimTrayCamera with a [sim.grain] table). Empty: none, and no sample is
   // built.
   void set_follow_observer(std::function<void(const FollowSample&)> fn);
+  // PatternRunner::set_fence_mm, of this system's own runner.
+  void set_follow_fence_mm(double mm);
   // A camera for looking only: view() shows its picture and what the finder
   // makes of it; a hole move is not centered by it and a pattern cannot
   // follow the glow with it. For a camera that does not follow this stage
@@ -342,9 +345,10 @@ class LaserSystem final : public extraction::IExtractionDevice,
   const Clock* clock_ = nullptr;
   std::unique_ptr<vision::ITargetFinder> finder_;
   std::unique_ptr<Centering> centering_;  // under the gate
-  // How far a pattern may roam from the hole the stage was last sent to
-  // before it reaches a neighbour (45% of the way to the nearest); 0: the
-  // stage is not known to be on a hole. Under the gate.
+  // How far a pattern may roam from the hole the stage was last sent to:
+  // short of a neighbour (45% of the way to the nearest) and within
+  // hole_fence_mm of its beam; 0: the stage is not known to be on a hole.
+  // Under the gate.
   double hole_room_ = 0;
 
   mutable std::mutex mutex_;  // everything below; never held across a driver call

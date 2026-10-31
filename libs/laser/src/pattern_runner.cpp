@@ -196,7 +196,8 @@ Result<void> PatternRunner::start_following(const Pattern& pattern, double run_d
                 device_);
   }
   // Never beyond the room its hole has: the beam is on.
-  double perimeter = pattern.perimeter_radius;
+  const double own_perimeter = fence_mm_ > 0 ? fence_mm_ : pattern.perimeter_radius;
+  double perimeter = own_perimeter;
   const double room = vision_.room_mm ? vision_.room_mm() : 0.0;
   if (room > 0 && room < perimeter) perimeter = room;
 
@@ -217,7 +218,7 @@ Result<void> PatternRunner::start_following(const Pattern& pattern, double run_d
   follow_ = std::make_unique<Follow>(*finder_, camera, params);
   follow_->center = {center->x, center->y};
   follow_->perimeter = perimeter;
-  follow_->own_perimeter = pattern.perimeter_radius;
+  follow_->own_perimeter = own_perimeter;
   follow_->velocity = pattern.velocity;
   follow_->duration_s = duration_s;
   follow_->ends = now + params.total_duration;

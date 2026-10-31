@@ -378,9 +378,10 @@ TEST(Dragonfly, WithNoDurationAnywhereItIsRefused) {
 }
 
 // The beam is on. With no glow to follow the search spirals outward: never
-// further than the room the hole has before its neighbours (45% of the way to
-// the nearest), whatever the pattern's own perimeter. Hole 7's neighbours are
-// 1.41 mm away.
+// further than the hole allows, short of its neighbours (45% of the way to the
+// nearest) and with the beam within a third of its diameter of the hole's edge,
+// whatever the pattern's own perimeter. Hole 7's neighbours are 1.41 mm away;
+// its radius, 0.5 mm with no beam known, is the nearer limit.
 TEST(Dragonfly, ItsPerimeterIsLimitedToTheRoomItsHoleHas) {
   Rig rig(glow_camera(0, 0), "7");  // (18, 28) on the stage
   rig.shutter->blank = true;        // nothing glows: it will search
@@ -390,10 +391,10 @@ TEST(Dragonfly, ItsPerimeterIsLimitedToTheRoomItsHoleHas) {
   ASSERT_TRUE(done) << done.error().what;
   const auto moves = rig.targets();
   ASSERT_GT(moves.size(), before + 3);
-  const double room = 0.45 * std::sqrt(2.0);
+  const double room = 0.5;
   for (std::size_t i = before; i < moves.size(); ++i) EXPECT_LE(apart(moves[i], {18, 28}), room + 0.001) << i;
   const std::string note = rig.runner().last_note();
-  EXPECT_NE(note.find("0.636"), std::string::npos) << note;              // said: it was held in
+  EXPECT_NE(note.find("0.500"), std::string::npos) << note;              // said: it was held in
   EXPECT_NE(note.find("glow was not seen"), std::string::npos) << note;  // and that it followed nothing
 }
 

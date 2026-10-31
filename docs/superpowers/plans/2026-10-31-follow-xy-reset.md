@@ -114,6 +114,16 @@
 - [ ] Run `pychron_ui_test_laser_window`: pass.
 - [ ] Commit `fix(ui): the camera keeps its size when the tab changes`.
 
+### Task 5a: Fence from hand, beam and hole
+
+**Files:**
+- Modify: `libs/laser/include/pychron/laser/camera.hpp`, `libs/laser/src/camera.cpp`, `libs/laser/include/pychron/laser/laser_system.hpp`, `libs/laser/src/laser_system.cpp`, `libs/laser/include/pychron/laser/pattern_runner.hpp`, `libs/laser/src/pattern_runner.cpp`, `apps/pychron-ui/src/laser_bridge.hpp`, `apps/pychron-ui/src/laser_bridge.cpp`, `apps/pychron-ui/src/laser_window.hpp`, `apps/pychron-ui/src/laser_window.cpp`, `docs/user/05-laser.md`, `docs/user/07-configuration-reference.md`
+- Test: `tests/laser/test_camera.cpp`, `tests/ui/test_laser_bridge.cpp`, `tests/ui/test_laser_window.cpp`
+
+- [ ] Write tests: `hole_fence_mm` values; `beam_mm()` order; a follow's perimeter is the box's value, capped by the hole; no limit off a hole; box follows the selected pattern; none on a real laser.
+- [ ] Implement as spec section 2a.
+- [ ] Commit `feat(laser): a dragonfly's fence follows the hole and the beam`.
+
 ### Task 6: Landing
 
 - [ ] `python3 tools/quality_check.py`, `python3 tools/compiler_sweep.py --build-dir build/dev-ui`, `ctest --preset dev-ui`.

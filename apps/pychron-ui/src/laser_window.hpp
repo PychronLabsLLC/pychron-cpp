@@ -128,6 +128,8 @@ class LaserWindow : public QMainWindow {
   FollowPlotView* follow_view_ = nullptr;  // hidden until Plots; a window of its own
   QPushButton* pattern_follow_ = nullptr;  // null unless the bridge offers it
   QPushButton* pattern_reset_sim_ = nullptr;  // as pattern_follow_
+  QDoubleSpinBox* pattern_fence_ = nullptr;   // as pattern_follow_
+  QLabel* pattern_fence_note_ = nullptr;      // as pattern_follow_
   bool following_ = false;                 // from the click until its command has reported
   QPushButton* pattern_maker_ = nullptr;
 };

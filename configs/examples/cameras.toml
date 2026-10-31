@@ -15,6 +15,9 @@
 # pylon: a Basler GigE or USB3 camera (see [co2.pylon]); read and checked
 # here, but its driver is not part of this build yet.
 source = "sim"
+# the beam, mm: a dragonfly keeps it at most a third of its diameter past the
+# hole's edge
+# beam_diameter_mm = 0.6
 # center: the camera may center holes and follow the glow. A live camera
 # does that only over a real laser, a simulated one only over a simulated
 # laser.

@@ -95,6 +95,12 @@ std::string_view to_string(CameraSource source) noexcept;
 enum class CameraUse { Center, View };
 enum class OnAutocenterFailure { Continue, Fail };
 
+// How far from a hole's center a beam of this diameter may go, in mm: at most a
+// third of its diameter past the hole's edge. The radius of a hole, half the
+// side of a square one. Above 0 whatever the beam; a beam of 0 or less is not
+// known, and its center stays in the hole.
+double hole_fence_mm(double hole_radius_mm, double beam_diameter_mm) noexcept;
+
 struct CameraConfig {
   std::string device;
   CameraSource source = CameraSource::Sim;
@@ -133,6 +139,15 @@ struct CameraConfig {
   // Present: the grain is a vision::GrainModel (sim_glow_sigma_mm and
   // sim_glow_drift_mm_per_s are then unused, and refused together with it).
   std::optional<vision::GrainParams> sim_grain;
+
+  // The beam's diameter (mm), which with the hole's size limits how far a
+  // dragonfly may move it. 0: not said.
+  double beam_diameter_mm = 0;
+  // That, or a simulated grain's beam; 0: not known.
+  double beam_mm() const noexcept {
+    if (beam_diameter_mm > 0) return beam_diameter_mm;
+    return sim_grain ? 2 * sim_grain->beam_radius_mm : 0.0;
+  }
 
   double tolerance_mm = 0.03;
   double max_step_mm = 0.5;

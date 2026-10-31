@@ -118,7 +118,8 @@ class LaserBridge : public QObject {
   // its duration; then output 0, beam closed, laser disabled, at the end, on
   // any stop (each cancels it) and on any error. Refused, with nothing sent,
   // unless offers_simulated_follow(), or for a pattern that is no dragonfly.
-  void follow_simulated(const QString& name, double percent);
+  // `fence_mm` above 0 stands in for the pattern's perimeter for this run.
+  void follow_simulated(const QString& name, double percent, double fence_mm = 0);
   // Every simulated grain back in its hole as first made, and the stage back
   // on the hole it was last sent to, centering it if `center`. Refused unless
   // offers_simulated_follow().

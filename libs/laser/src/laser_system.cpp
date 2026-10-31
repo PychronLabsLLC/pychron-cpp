@@ -237,6 +237,7 @@ LaserSnapshot LaserSystem::snapshot() {
                  : moving_.load()            ? LaserActivity::Moving
                                              : LaserActivity::Idle;
     s.stopped = stopped_.load();
+    s.hole_room_mm = hole_room_;
   }
   std::lock_guard lock(mutex_);
   if (tray_ != nullptr) s.tray = tray_->name();
@@ -537,6 +538,11 @@ void LaserSystem::set_step_observer(std::function<void(const vision::DragonflySt
   step_observer_ = std::move(fn);
 }
 
+void LaserSystem::set_follow_fence_mm(double mm) {
+  Gate gate(gate_);
+  if (runner_ != nullptr) runner_->set_fence_mm(mm);
+}
+
 void LaserSystem::set_follow_observer(std::function<void(const FollowSample&)> fn) {
   Gate gate(gate_);
   follow_observer_ = std::move(fn);
@@ -703,7 +709,8 @@ Result<void> LaserSystem::move_to_position(std::string_view position, bool autoc
       e.what = "hole " + std::string(position) + " on " + tray + ": " + e.what;
       return fail(std::move(e));
     }
-    hole_room_ = room;
+    const double fence = hole_fence_mm(hole_radius, camera_ ? camera_->beam_mm() : 0.0);
+    hole_room_ = room > 0 ? std::min(room, fence) : fence;
     moving_.store(true);
     {
       std::lock_guard lock(mutex_);
@@ -764,7 +771,8 @@ Result<void> LaserSystem::set_xy(double x, double y, double speed_mm_s) {
   auto stage = driver_stage();
   if (!stage) return fail(stage.error());
   if (auto ok = allowed(); !ok) return ok;
-  off_the_hole();
+  // A dragonfly's own moves stay about its hole and end back on it.
+  if (runner_ == nullptr || !runner_->following()) off_the_hole();
   auto moved = (*stage)->set_xy(x, y, speed_mm_s);
   if (moved) moving_.store(true);
   return moved;

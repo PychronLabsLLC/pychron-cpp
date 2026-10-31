@@ -28,6 +28,24 @@ struct FollowFence { double x, y, radius_mm; };
 std::optional<FollowFence> fence() const;   // of latest row whose perimeter_mm > 0; cleared by clear()
 ```
 
+### 2a. Fence set by hand, beam and hole
+
+Developer: fence adjustable, also controlled by beam size and hole size; beam never more than 1/3 out of hole's perimeter.
+
+Read as: at most 1/3 of beam diameter past hole's edge. Beam diameter `B`, hole radius `R` (half side on square):
+
+```cpp
+double hole_fence_mm(double hole_radius_mm, double beam_diameter_mm) noexcept;  // R - B/2 + B/3, at least 1e-3
+```
+
+- Radius in force = least of: what is asked (Fence box, else pattern's `perimeter_radius`), `hole_fence_mm`, 45 % of way to nearest neighbour. Applied to every dragonfly, queue's too.
+- Beam: `beam_diameter_mm` in device's table of `cameras.toml`, default 0; else simulated grain's `2 * beam_radius_mm`; else unknown, `B = 0`: beam's center stays in hole.
+- Fence center stays stage at start: on a hole that is hole's corrected position. Stage not sent to a hole (jog, coordinates): no hole limit.
+- A dragonfly's own moves keep the hole: before, each one cleared `last_hole_` and `hole_room_`, so a second follow on a hole had no limit and Reset simulation no hole to go back to.
+- `PatternRunner::set_fence_mm(double)`: in place of `perimeter_radius`, 0 pattern's. `LaserBridge::follow_simulated(name, percent, fence_mm)` sets it for one run, sets back after.
+- Window: `Fence` box `pattern_fence`, simulated laser only, set from pattern on selection; note `pattern_fence_note` says what hole allows (`LaserSnapshot::hole_room_mm`).
+- Real laser has no box: `perimeter_radius` in pattern's file adjusts it.
+
 ## 3. Follow plots
 
 `FollowPlotView`: two `QCustomPlot`s side by side. Left `xy_plot()`, right `plot()` with three strips (deviation, luminosity, size), `kStrips = 3`. Window default 980 x 620.

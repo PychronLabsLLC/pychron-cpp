@@ -328,6 +328,31 @@ class LaserBridgeTest : public QObject {
     QVERIFY(!ever_sent("Laser.Fire"));
   }
 
+  double perimeter_of_a_follow(double fence_mm) {
+    std::vector<laser::FollowSample> rows;
+    QObject guard;
+    connect(bridge_.get(), &LaserBridge::followSamples, &guard,
+            [&rows](const std::vector<laser::FollowSample>& got) { rows.insert(rows.end(), got.begin(), got.end()); });
+    bridge_->follow_simulated(QStringLiteral("follow"), 20, fence_mm);
+    test::settle(*bridge_);
+    QCoreApplication::processEvents();
+    return rows.empty() ? 0.0 : rows.front().step.perimeter_mm;
+  }
+
+  void the_fence_is_set_and_the_hole_limits_it() {
+    on_a_hole();
+    const double room = bridge_->state().hole_room_mm;
+    QVERIFY(room > 0);
+    const double held = perimeter_of_a_follow(0.5 * room);
+    QVERIFY(std::abs(held - 0.5 * room) < 1e-9);
+    const double capped = perimeter_of_a_follow(100);  // the second on this hole: it is still known
+    QVERIFY(std::abs(capped - room) < 1e-9);
+    QCOMPARE(bridge_->state().last_hole, std::string("5"));
+    bridge_->jog(0.1, 0, 0);
+    test::settle(*bridge_);
+    QTRY_COMPARE(bridge_->state().hole_room_mm, 0.0);  // off the hole, for all it knows
+  }
+
   void a_reset_is_refused_on_a_real_laser() {
     build_to_follow({}, [](std::string_view) { return false; });
     bridge_->reset_simulation(false);

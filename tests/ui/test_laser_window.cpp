@@ -523,6 +523,22 @@ class LaserWindowTest : public QObject {
     QCOMPARE(view->windowTitle(), QStringLiteral("Follow plots"));
   }
 
+  void the_fence_starts_at_the_patterns_perimeter() {
+    build_to_follow();
+    on_a_hole();
+    choose_pattern(QStringLiteral("follow"));
+    auto* fence = window_->findChild<QDoubleSpinBox*>(QStringLiteral("pattern_fence"));
+    QVERIFY(fence != nullptr);
+    QCOMPARE(fence->value(), bridge_->patterns().find("follow")->perimeter_radius);
+    QTRY_VERIFY(fence->isEnabled());
+    QTRY_VERIFY2(text("pattern_fence_note").contains(QStringLiteral("allows")), qPrintable(text("pattern_fence_note")));
+  }
+
+  void a_real_laser_has_no_fence_box() {
+    build_to_follow([](std::string_view) { return false; });
+    QVERIFY(window_->findChild<QDoubleSpinBox*>(QStringLiteral("pattern_fence")) == nullptr);
+  }
+
   void reset_simulation_clears_the_plots() {
     build_to_follow();
     auto* reset = window_->findChild<QPushButton*>(QStringLiteral("pattern_reset_sim"));

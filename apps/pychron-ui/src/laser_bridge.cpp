@@ -492,8 +492,8 @@ void LaserBridge::stop_pattern() {
       true);
 }
 
-void LaserBridge::follow_simulated(const QString& name, double percent) {
-  submit("follow_simulated", [this, name = name.toStdString(), percent]() -> Result<void> {
+void LaserBridge::follow_simulated(const QString& name, double percent, double fence_mm) {
+  submit("follow_simulated", [this, name = name.toStdString(), percent, fence_mm]() -> Result<void> {
     if (!offers_simulated_follow()) {
       return fail(ErrorKind::Config, "only a simulated laser with a simulated camera is followed by hand", deps_.device);
     }
@@ -505,6 +505,7 @@ void LaserBridge::follow_simulated(const QString& name, double percent) {
     auto* laser = system_.laser();
     if (runner == nullptr) return fail(ErrorKind::Config, "the device runs no patterns", deps_.device);
     const auto stopped = [this] { return worker_->cancel.load(); };
+    system_.set_follow_fence_mm(fence_mm);
     Result<void> followed = [&]() -> Result<void> {
       if (auto on = system_.enable(); !on) return on;
       if (stopped()) return cancelled();
@@ -515,6 +516,7 @@ void LaserBridge::follow_simulated(const QString& name, double percent) {
       if (auto started = runner->execute_pattern(name); !started) return started;
       return wait([runner] { return runner->running(); }, [runner] { (void)runner->stop_pattern(); });
     }();
+    system_.set_follow_fence_mm(0);  // a queue's run is its pattern's
     // However it went. Each is tried: disabling closes the beam too.
     auto closed = system_.end_extract();
     auto disabled = system_.disable();
