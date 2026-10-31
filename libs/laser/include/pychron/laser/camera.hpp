@@ -33,7 +33,9 @@
 //   # glow_exponent, glow_peak, lobes, lobe_sigma_mm, lobe_spread_mm,
 //   # lobe_wander_mm_per_rt_s, lobe_life_s, flicker, flicker_tau_s,
 //   # flares_per_s, flare_gain, flare_tau_s, dropouts_per_s, dropout_s,
-//   # creep_mm_per_s, wander_mm_per_rt_s, jumps_per_s, jump_mm
+//   # creep_mm_per_s, wander_mm_per_rt_s, jumps_per_s, jump_mm,
+//   # grain_radius_mm, grain_sides, grain_irregularity, body_glow,
+//   # melt_mm_per_s, min_radius_mm
 //
 //   [co2.autocenter]
 //   tolerance_mm = 0.03

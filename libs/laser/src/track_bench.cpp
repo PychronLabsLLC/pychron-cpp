@@ -499,7 +499,7 @@ std::optional<std::string> follow(Rig& rig, const TrackTables& t, const Combinat
       const auto view = rig.camera->observe();
       if (!view) return "the camera shows no grain";
       scorer.sample(now_s, std::hypot(view->grain_mm.x - view->beam_mm.x, view->grain_mm.y - view->beam_mm.y),
-                    view->truth.heat);
+                    view->truth.heat, view->truth.radius_mm);
       if (trace != nullptr) trace_row(*trace, combo, seed, now_s, *view, step);
     }
     if (now_s > t.duration_s + kDeadmanS) {

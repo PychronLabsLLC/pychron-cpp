@@ -168,6 +168,17 @@ void read_grain(Reader& g, vision::GrainParams& p) {
   g.number("wander_mm_per_rt_s", p.wander_mm_per_rt_s, 0, 10);
   g.number("jumps_per_s", p.jumps_per_s, 0, 50);
   g.number("jump_mm", p.jump_mm, 0, 100, true);
+  g.number("grain_radius_mm", p.grain_radius_mm, 0, 100);
+  g.whole("grain_sides", p.grain_sides, 3, 16);
+  g.number("grain_irregularity", p.grain_irregularity, 0, 0.6);
+  g.number("body_glow", p.body_glow, 0, 1);
+  g.number("melt_mm_per_s", p.melt_mm_per_s, 0, 10);
+  g.number("min_radius_mm", p.min_radius_mm, 0, 100);
+  if (g.ok() && p.melt_mm_per_s > 0) {
+    if (p.grain_radius_mm <= 0) g.fail("melt_mm_per_s", "needs grain_radius_mm above 0: a point grain has nothing to melt");
+    else if (p.min_radius_mm <= 0) g.fail("min_radius_mm", "must be above 0 when melt_mm_per_s is above 0");
+    else if (p.min_radius_mm >= p.grain_radius_mm) g.fail("min_radius_mm", "must be below grain_radius_mm when melting");
+  }
   g.finish();
 }
 

@@ -1,0 +1,26 @@
+# A melting grain: as big_grain, but the grain shrinks and rounds to a bead
+# while the beam heats it. Stresses the tracker on a target that gets smaller.
+#
+# Run: elctl laser track configs/examples/track/melting.toml
+# The model's numbers are judgement, not measurements: this compares tracker
+# settings against each other and says nothing about real grains.
+
+output_percent = 20
+duration = 30
+seeds = 20
+
+[grain]
+grain_radius_mm = 0.5
+grain_sides = 6
+lobes = 3
+melt_mm_per_s = 0.03
+min_radius_mm = 0.2
+lobe_sigma_mm = 0.25
+lobe_spread_mm = 0.3
+lobe_wander_mm_per_rt_s = 0.1
+lobe_life_s = 5
+
+# The settings compared; add keys to [sweep.pattern], [sweep.grain] or
+# [sweep.camera] to compare more, each value a run on the same seeds.
+[sweep.pattern]
+aggressiveness = [0.5, 1, 2]

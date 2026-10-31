@@ -718,7 +718,7 @@ TEST_F(LaserCmd, EveryShippedScenarioIsGood) {
     const auto o = track({e.path().string(), "--check"});
     EXPECT_EQ(o.code, 0) << e.path() << ": " << o.err;
   }
-  EXPECT_EQ(found, 6);
+  EXPECT_EQ(found, 8);
 }
 
 }  // namespace

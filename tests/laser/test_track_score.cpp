@@ -140,3 +140,14 @@ TEST(TrackSummary, MeanAndWorst) {
   const std::array pair{none, one};
   EXPECT_DOUBLE_EQ(summarize(pair).mean.lost, 0.5);
 }
+
+TEST(TrackScorer, TheGrainsRadiusCountsAsOn) {
+  // beam radius 0.4, beam 0.7 from the center: off a point grain, on one of radius 0.5
+  TrackScorer big(0.4, 1.0, 30), point(0.4, 1.0, 30);
+  for (int i = 0; i < 100; ++i) {
+    big.sample(i / 10.0, 0.7, 1.0, 0.5);
+    point.sample(i / 10.0, 0.7, 1.0);
+  }
+  EXPECT_DOUBLE_EQ(big.finish(10).on_pct, 100.0);
+  EXPECT_DOUBLE_EQ(point.finish(10).on_pct, 0.0);
+}

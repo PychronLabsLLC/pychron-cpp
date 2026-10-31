@@ -19,14 +19,15 @@ struct TrackScore {
   double heat_pct = 0, track_pct = 0, hold_pct = 0, sat_pct = 0, search_pct = 0;
 };
 
-// On grain: distance <= beam radius. Locked: on grain for 1 s unbroken. Lost:
+// On grain: distance <= beam radius + the grain's area-equivalent radius. Locked: on grain for 1 s unbroken. Lost:
 // after a lock, off grain for 1 s unbroken, dated from when it went off.
 class TrackScorer {
  public:
   TrackScorer(double beam_radius_mm, double full_heat, double duration_s);
 
   // Every poll, t rising. Spacing of samples is free.
-  void sample(double t_s, double distance_mm, double heat);
+  // `grain_radius_mm` 0: a point grain.
+  void sample(double t_s, double distance_mm, double heat, double grain_radius_mm = 0);
   // The reason of a look the finder made (Elapsed and Invalid are not binned).
   void look(vision::DragonflyStep::Reason reason);
   void moved();

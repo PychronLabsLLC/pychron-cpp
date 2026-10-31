@@ -17,7 +17,7 @@ double pct(long part, long whole) {
 TrackScorer::TrackScorer(double beam_radius_mm, double full_heat, double duration_s)
     : radius_mm_(beam_radius_mm), full_heat_(full_heat), lock_s_(duration_s) {}
 
-void TrackScorer::sample(double t_s, double distance_mm, double heat) {
+void TrackScorer::sample(double t_s, double distance_mm, double heat, double grain_radius_mm) {
   using enum State;
   if (!any_) {
     any_ = true;
@@ -28,7 +28,7 @@ void TrackScorer::sample(double t_s, double distance_mm, double heat) {
   max_mm_ = std::max(max_mm_, distance_mm);
   heat_sum_ += full_heat_ > 0 ? heat / full_heat_ : 0.0;
 
-  if (distance_mm <= radius_mm_) {
+  if (distance_mm <= radius_mm_ + grain_radius_mm) {
     ++n_on_;
     off_run_ = false;
     if (!on_run_) {

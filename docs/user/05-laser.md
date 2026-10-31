@@ -565,11 +565,13 @@ elctl laser track configs/examples/track/hot_spots.toml
 elctl laser track configs/examples/track/jumpy.toml --seeds 5 --trace jumpy.csv
 ```
 
-A **scenario** is a small TOML file. `configs/examples/track/` has six, each a
+A **scenario** is a small TOML file. `configs/examples/track/` has eight, each a
 grain that misbehaves in one way, so that a tracker's failure can be pinned on
 one cause: `steady` (nothing goes wrong), `hot_spots` (several wandering
 lobes of glow), `flicker` (flutter, flares, dropouts), `jumpy`, `cooling` (the
-grain cools and creeps) and `everything`. A scenario gives the `output_percent`
+grain cools and creeps), `big_grain` (a grain about a millimetre across,
+wider than the beam), `melting` (the same grain, shrinking and rounding to a
+bead as the beam heats it) and `everything`. A scenario gives the `output_percent`
 the laser fires at, the `duration` of a run in seconds, and how many `seeds`
 (runs) to score; a `[grain]` table with the keys of `[<laser>.sim.grain]` (see
 [the configuration reference](07-configuration-reference.md#camerastoml)), a
@@ -586,7 +588,7 @@ and the worst of its runs:
 
 | Column | Meaning |
 |---|---|
-| `on%` | the share of the run the beam was on the grain (within `beam_radius_mm` of its center) |
+| `on%` | the share of the run the beam was on the grain (within `beam_radius_mm` of its center, plus the grain's radius when it has a size) |
 | `rms`, `max` | distance from beam to grain, mm |
 | `lock_s` | time to the first lock, one second unbroken on the grain; a run that never locked counts as the whole duration |
 | `lost` | how many times it was lost after locking, one second unbroken off the grain |
@@ -607,6 +609,19 @@ refused); `--check` reads the scenario and checks every
 combination loads, and runs nothing. It does not start a pattern, so a setting
 that is refused only when a pattern starts (a `target_radius` of less than a
 pixel, say) passes `--check` and shows as `failed N` in the table.
+
+A grain has no size unless it is given one. With `grain_radius_mm` above 0 it
+is an irregular polygon of that radius (the radius of a circle of the same
+area): `grain_sides` corners (3 to 16), each straying from the mean radius by
+up to `grain_irregularity` (0 to 0.6). Its glow fills the outline, `body_glow`
+(0 to 1) being the share of the brightness spread evenly over the grain, the
+rest staying in the lobes; the beam heats it fully anywhere on its body, and
+the lobes sit within it, not at `lobe_spread_mm`. The beam counts as on the
+grain while it is within `beam_radius_mm` plus that radius of its center. With
+`melt_mm_per_s` above 0 the grain loses that much radius a second at full
+heat, down to `min_radius_mm`, and rounds as it shrinks into a bead; cooling
+does not restore it. A radius of 0 with melting on, a `min_radius_mm` of 0 or
+one not below the radius are refused, naming the key.
 
 Read these numbers as a comparison, not a measurement. The grain's heating,
 glow and motion are the program's judgement of what a grain might do, not

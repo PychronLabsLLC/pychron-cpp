@@ -464,3 +464,63 @@ TEST(CameraLibrary, GrainAndOldGlowKeysConflict) {
   const auto ok = parse("[co2.sim]\ngrain_offset_mm = [0.2, 0.1]\n[co2.sim.grain]\n");
   EXPECT_TRUE(ok.problems().empty());
 }
+
+namespace {
+// The problems of a camera whose grain table is `body`; empty: it loads.
+std::string grain_problem(const std::string& body) {
+  const auto lib = parse("[co2.sim.grain]\n" + body);
+  return lib.problems().empty() ? std::string() : lib.problems().front();
+}
+}  // namespace
+
+TEST(CameraConfig, ReadsTheGrainsSize) {
+  const auto lib = parse(R"toml(
+[co2.sim.grain]
+grain_radius_mm = 0.5
+grain_sides = 8
+grain_irregularity = 0.2
+body_glow = 0.7
+melt_mm_per_s = 0.03
+min_radius_mm = 0.2
+)toml");
+  ASSERT_TRUE(lib.problems().empty()) << lib.problems().front();
+  const CameraConfig* c = lib.find("co2");
+  ASSERT_NE(c, nullptr);
+  ASSERT_TRUE(c->sim_grain);
+  EXPECT_DOUBLE_EQ(c->sim_grain->grain_radius_mm, 0.5);
+  EXPECT_EQ(c->sim_grain->grain_sides, 8);
+  EXPECT_DOUBLE_EQ(c->sim_grain->grain_irregularity, 0.2);
+  EXPECT_DOUBLE_EQ(c->sim_grain->body_glow, 0.7);
+  EXPECT_DOUBLE_EQ(c->sim_grain->melt_mm_per_s, 0.03);
+  EXPECT_DOUBLE_EQ(c->sim_grain->min_radius_mm, 0.2);
+}
+
+TEST(CameraConfig, RefusesAGrainOutOfRange) {
+  for (const char* key : {"grain_sides = 2", "grain_sides = 17", "grain_irregularity = 0.7", "body_glow = 1.5",
+                          "grain_radius_mm = 101", "melt_mm_per_s = 11", "min_radius_mm = -1"}) {
+    const std::string why = grain_problem(std::string(key) + "\n");
+    const std::string name = std::string(key).substr(0, std::string(key).find(' '));
+    ASSERT_FALSE(why.empty()) << key;
+    EXPECT_NE(why.find("co2.sim.grain." + name), std::string::npos) << why;
+  }
+}
+
+TEST(CameraConfig, RefusesMeltingNothing) {
+  const std::string why = grain_problem("melt_mm_per_s = 0.1\ngrain_radius_mm = 0\n");
+  ASSERT_FALSE(why.empty());
+  EXPECT_NE(why.find("melt_mm_per_s"), std::string::npos) << why;
+}
+
+TEST(CameraConfig, RefusesMeltingToNothing) {
+  const std::string why = grain_problem("melt_mm_per_s = 0.1\ngrain_radius_mm = 0.5\nmin_radius_mm = 0\n");
+  ASSERT_FALSE(why.empty());
+  EXPECT_NE(why.find("min_radius_mm"), std::string::npos) << why;
+}
+
+TEST(CameraConfig, RefusesAFloorAboveTheGrain) {
+  const std::string why = grain_problem("melt_mm_per_s = 0.1\ngrain_radius_mm = 0.5\nmin_radius_mm = 0.5\n");
+  ASSERT_FALSE(why.empty());
+  EXPECT_NE(why.find("min_radius_mm"), std::string::npos) << why;
+  // without melting the floor is not used
+  EXPECT_TRUE(grain_problem("grain_radius_mm = 0.5\nmin_radius_mm = 0.5\n").empty());
+}

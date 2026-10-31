@@ -443,3 +443,32 @@ TEST(TrackBench, LoadReadsAFile) {
   ASSERT_FALSE(missing);
   EXPECT_EQ(missing.error().kind, ErrorKind::Io);
 }
+
+namespace {
+// A shipped scenario, a single seed.
+std::vector<TrackCombo> run_shipped(const char* name) {
+  const fs::path file = fs::path(PYCHRON_TEST_DATA_DIR) / ".." / ".." / "configs" / "examples" / "track" / name;
+  auto loaded = load_track_scenario(file);
+  EXPECT_TRUE(loaded) << (loaded ? "" : loaded.error().what);
+  if (!loaded) return {};
+  TrackOptions options;
+  options.seeds = 1;
+  auto done = run_track(*loaded, options);
+  EXPECT_TRUE(done) << (done ? "" : done.error().what);
+  return done ? *done : std::vector<TrackCombo>{};
+}
+}  // namespace
+
+TEST(TrackBench, ABigGrainIsHeldOn) {
+  const auto combos = run_shipped("big_grain.toml");
+  ASSERT_FALSE(combos.empty());
+  EXPECT_EQ(combos.front().failed, 0) << combos.front().first_error;
+  EXPECT_GE(combos.front().summary.mean.on_pct, 95.0);
+}
+
+TEST(TrackBench, AMeltingGrainIsHeldOn) {
+  const auto combos = run_shipped("melting.toml");
+  ASSERT_FALSE(combos.empty());
+  EXPECT_EQ(combos.front().failed, 0) << combos.front().first_error;
+  EXPECT_GE(combos.front().summary.mean.on_pct, 90.0);
+}
