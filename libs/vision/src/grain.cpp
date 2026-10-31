@@ -213,6 +213,13 @@ void GrainModel::step(Vec2 beam_mm, double output_percent) {
   const double live = std::min(heat_, 1.0);
   center_.x += p.creep_mm_per_s.x * kTickS * live;
   center_.y += p.creep_mm_per_s.y * kTickS * live;
+  // Melting: radius only falls, and the grain rounds as it goes. It draws
+  // nothing, so no other keyed draw moves.
+  if (p.melt_mm_per_s > 0 && radius_ > p.min_radius_mm) {
+    radius_ = std::max(radius_ - p.melt_mm_per_s * kTickS * live, p.min_radius_mm);
+    roundness_ = std::clamp((p.grain_radius_mm - radius_) / (p.grain_radius_mm - p.min_radius_mm), 0.0, 1.0);
+    reshape();
+  }
   if (p.wander_mm_per_rt_s > 0) {
     const double s = p.wander_mm_per_rt_s * std::sqrt(kTickS) * live;
     center_.x += s * keyed_gauss(seed_, "grain.walk_x", tick_);

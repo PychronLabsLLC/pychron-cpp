@@ -456,3 +456,112 @@ TEST(GrainShape, BodyAndLobesShareTheBrightness) {
   EXPECT_NEAR(sum, b, 1e-9 * b);
   EXPECT_NEAR(m.body()->peak, 0.4 * b, 1e-9 * b);
 }
+
+namespace {
+
+GrainParams melty() {
+  GrainParams p = sized();
+  p.beam_radius_mm = 100;
+  p.melt_mm_per_s = 0.05;
+  p.min_radius_mm = 0.2;
+  return p;
+}
+
+double farthest(const GrainModel& m) {
+  double r = 0;
+  for (const Vec2& o : m.outline()) r = std::max(r, std::hypot(o.x, o.y));
+  return r;
+}
+
+double spread(const GrainModel& m) {
+  double lo = std::numeric_limits<double>::infinity(), hi = 0;
+  for (const Vec2& o : m.outline()) {
+    const double r = std::hypot(o.x, o.y);
+    lo = std::min(lo, r);
+    hi = std::max(hi, r);
+  }
+  return hi - lo;
+}
+
+}  // namespace
+
+TEST(GrainMelt, ItLosesRadiusAtTheRateGivenAtFullHeat) {
+  GrainModel m(melty(), 1, 0, kOrigin);
+  run(m, 1, kOrigin, 100);
+  const double before = m.truth().radius_mm;
+  run(m, 2, kOrigin, 100);
+  EXPECT_NEAR(before - m.truth().radius_mm, 0.1, 0.002);
+}
+
+TEST(GrainMelt, ItLosesLessWhenCooler) {
+  GrainModel m(melty(), 1, 0, kOrigin);
+  run(m, 3, kOrigin, 10);
+  const double before = m.truth().radius_mm;
+  run(m, 2, kOrigin, 10);
+  const double lost = before - m.truth().radius_mm;
+  EXPECT_GT(lost, 0);
+  EXPECT_LT(lost, 0.07);
+}
+
+TEST(GrainMelt, ItStopsAtTheFloor) {
+  GrainModel m(melty(), 1, 0, kOrigin);
+  run(m, 60, kOrigin, 100);
+  EXPECT_NEAR(m.truth().radius_mm, 0.2, 1e-9);
+  EXPECT_GE(m.truth().radius_mm, 0.2);
+}
+
+TEST(GrainMelt, ItDoesNotGrowBackWhenCold) {
+  GrainModel m(melty(), 1, 0, kOrigin);
+  run(m, 3, kOrigin, 100);
+  run(m, 40, kOrigin, 0);  // let the heat die away
+  const double r = m.truth().radius_mm;
+  run(m, 30, kOrigin, 0);
+  EXPECT_EQ(m.truth().radius_mm, r);
+  EXPECT_LT(r, 0.5);
+}
+
+TEST(GrainMelt, ItIsRoundAtTheFloor) {
+  GrainModel m(melty(), 1, 0, kOrigin);
+  run(m, 60, kOrigin, 100);
+  for (const Vec2& o : m.outline()) EXPECT_NEAR(std::hypot(o.x, o.y), 0.2, 1e-9);
+}
+
+TEST(GrainMelt, UnmeltedIsStillAPolygon) {
+  GrainParams p = melty();
+  p.melt_mm_per_s = 0;
+  GrainModel m(p, 1, 0, kOrigin);
+  const double start = spread(m);
+  EXPECT_GT(start, 1e-3);
+  run(m, 60, kOrigin, 100);
+  EXPECT_EQ(spread(m), start);
+  EXPECT_EQ(m.truth().radius_mm, 0.5);
+}
+
+TEST(GrainMelt, LobesFollowTheFallingBound) {
+  GrainParams p = melty();
+  p.lobes = 3;
+  p.lobe_wander_mm_per_rt_s = 2;
+  GrainModel m(p, 1, 0, kOrigin);
+  for (int i = 0; i < 6000; ++i) m.advance(kGrainTick, kOrigin, 100);
+  const Vec2 c = m.truth().center_mm;
+  for (const auto& l : m.lobes()) EXPECT_LE(std::hypot(l.at_mm.x - c.x, l.at_mm.y - c.y), 0.2 + 1e-9);
+  EXPECT_NEAR(farthest(m), 0.2, 1e-9);
+}
+
+TEST(GrainMelt, MeltingMovesNoDraw) {
+  GrainParams on = busy();
+  on.grain_radius_mm = 0.5;
+  on.beam_radius_mm = 100;
+  on.melt_mm_per_s = 0.05;
+  on.min_radius_mm = 0.2;
+  GrainParams off = on;
+  off.melt_mm_per_s = 0;
+  GrainModel a(on, 5, 0, kOrigin), b(off, 5, 0, kOrigin);
+  run(a, 10, kOrigin, 20);
+  run(b, 10, kOrigin, 20);
+  // Not bit for bit: the shape sets how far the beam is from the grain's
+  // edge, and a wide beam feels that only in the sixth decimal.
+  EXPECT_NEAR(a.truth().heat, b.truth().heat, 1e-5);
+  EXPECT_NEAR(a.truth().brightness, b.truth().brightness, 1e-5);
+  EXPECT_LT(a.truth().radius_mm, b.truth().radius_mm);
+}
