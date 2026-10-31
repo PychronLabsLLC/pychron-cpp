@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 
 #include "pychron/core/clock.hpp"
@@ -27,12 +28,22 @@ struct DragonflyParams {
   double target_radius_mm = 0.5;  // sizes the crop (2.5x diameter) and the mask (1.05x diameter)
 };
 
+// What the tracker measured in a step: the glow's offset from the aim point
+// (before aggressiveness) and the blob's mean area.
+struct DragonflySeen {
+  Vec2 offset_mm{};
+  double area_mm2 = 0;
+};
+
 struct DragonflyStep {
   enum class Action { Hold, Move, Done } action = Action::Hold;
   Vec2 target_mm{};  // offset from the start position, not from the current one
   double saturation = 0;
   enum class Reason { Saturated, Deadband, Track, Search, PerimeterClamp, Miss, Elapsed, Invalid } reason =
       Reason::Invalid;
+  Vec2 stage_mm{};                    // stage position given to step()
+  double elapsed_s = 0;               // since start()
+  std::optional<DragonflySeen> seen;  // unset: no blob in any frame
 };
 
 // Keeps a glowing sample under the aim point. Takes frames, returns a

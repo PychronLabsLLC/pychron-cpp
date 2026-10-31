@@ -1,6 +1,7 @@
 #include "pychron/vision/dragonfly.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <vector>
 
@@ -53,6 +54,10 @@ bool Dragonfly::params_ok() const {
 
 Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoint now, Vec2 stage_pos_mm) {
   Step out;
+  if (started_) {
+    out.stage_mm = stage_pos_mm;
+    out.elapsed_s = std::chrono::duration<double>(now - start_time_).count();
+  }
 
   // Every Hold carries `current`, so it must be finite: positions that are
   // finite but whose difference overflows are rejected here, once.
@@ -95,6 +100,7 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   struct Hit {
     Vec2 offset_px;
     double sat;
+    double area_px;
   };
   std::vector<Hit> hits;
   // Frames where the glow fills the mask: the finder's contrast gate finds no
@@ -119,7 +125,8 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
                    y0 + targets.front().center_px.y - ((f.height - 1) / 2.0 + params_.aim_offset_px.y)};
     if (!finite(off)) continue;
     const double s = saturation(targets.front());
-    hits.push_back({off, std::isfinite(s) ? std::clamp(s, 0.0, 1.0) : 0.0});
+    const double area = targets.front().area_px;
+    hits.push_back({off, std::isfinite(s) ? std::clamp(s, 0.0, 1.0) : 0.0, std::isfinite(area) ? area : 0.0});
   }
 
   auto project = [&](Vec2 t, Step::Reason& reason) {
@@ -191,22 +198,28 @@ Result<DragonflyStep> Dragonfly::step(std::span<const FrameView> frames, TimePoi
   for (double v : flooded) sat_sum += v;
   out.saturation = sat_sum / static_cast<double>(hits.size() + flooded.size());
 
+  // Only with hits: a mean over nothing is 0/0.
+  Vec2 mean_px{};
+  if (!hits.empty()) {
+    double wsum = 0, wx = 0, wy = 0, ux = 0, uy = 0, area_sum = 0;
+    for (const Hit& h : hits) {
+      wsum += h.sat;
+      wx += h.sat * h.offset_px.x;
+      wy += h.sat * h.offset_px.y;
+      ux += h.offset_px.x;
+      uy += h.offset_px.y;
+      area_sum += h.area_px;
+    }
+    const auto n = static_cast<double>(hits.size());
+    mean_px = wsum > 0 ? Vec2{wx / wsum, wy / wsum} : Vec2{ux / n, uy / n};
+    out.seen = DragonflySeen{map_.to_mm(mean_px), area_sum / n / (px_per_mm_ * px_per_mm_)};
+  }
+
   if (hits.empty() || out.saturation >= params_.saturation_threshold) {
     hold(Step::Reason::Saturated);
     reanchor(current);
     return out;
   }
-
-  double wsum = 0, wx = 0, wy = 0, ux = 0, uy = 0;
-  for (const Hit& h : hits) {
-    wsum += h.sat;
-    wx += h.sat * h.offset_px.x;
-    wy += h.sat * h.offset_px.y;
-    ux += h.offset_px.x;
-    uy += h.offset_px.y;
-  }
-  const auto n = static_cast<double>(hits.size());
-  const Vec2 mean_px = wsum > 0 ? Vec2{wx / wsum, wy / wsum} : Vec2{ux / n, uy / n};
 
   Vec2 corr = map_.to_mm(mean_px);
   corr = {corr.x * params_.aggressiveness, corr.y * params_.aggressiveness};

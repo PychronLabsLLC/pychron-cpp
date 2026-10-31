@@ -541,3 +541,73 @@ TEST(Dragonfly, BadParametersGiveInvalid) {
   ASSERT_TRUE(r3.has_value());
   EXPECT_EQ(r3->reason, Reason::Invalid);
 }
+
+TEST(Dragonfly, SaysWhatItSaw) {
+  Rig rig(glow_at({0.2, 0}), params());
+  const auto d = rig.step();
+  ASSERT_TRUE(d.seen.has_value());
+  EXPECT_NEAR(d.seen->offset_mm.x, 0.2, 0.02);
+  EXPECT_NEAR(d.seen->offset_mm.y, 0.0, 0.02);
+  EXPECT_GT(d.seen->area_mm2, 0.0);
+}
+
+TEST(Dragonfly, TheOffsetIsBeforeAggressiveness) {
+  DragonflyParams half = params();
+  half.aggressiveness = 0.5;
+  Rig a(glow_at({0.2, 0}), params());
+  Rig b(glow_at({0.2, 0}), half);
+  const auto full = a.step();
+  const auto damped = b.step();
+  ASSERT_TRUE(full.seen.has_value());
+  ASSERT_TRUE(damped.seen.has_value());
+  EXPECT_DOUBLE_EQ(damped.seen->offset_mm.x, full.seen->offset_mm.x);
+  EXPECT_DOUBLE_EQ(damped.seen->offset_mm.y, full.seen->offset_mm.y);
+}
+
+TEST(Dragonfly, SaysNothingSeenOnAMiss) {
+  Rig rig(glow_at({0, 0}, 0.0), params());
+  const auto d = rig.step();
+  EXPECT_EQ(d.reason, Reason::Miss);
+  EXPECT_FALSE(d.seen.has_value());
+}
+
+TEST(Dragonfly, SaysWhatItSawWhenSaturated) {
+  GlowScene s = glow_at({0.2, 0}, 2.0);
+  s.sigma_mm = 0.6;
+  Rig rig(s, params());
+  const auto d = rig.step();
+  EXPECT_EQ(d.reason, Reason::Saturated);
+  EXPECT_TRUE(d.seen.has_value());
+}
+
+TEST(Dragonfly, SaysWhereAndWhen) {
+  SimpleFinder finder;
+  Dragonfly df(finder, good_map(), kScale, params());
+  df.start(kT0, {1, 2});
+  GlowScene scene = glow_at({0, 0});
+  SimStage stage{{1, 2}};
+  std::uint64_t seq = 0;
+  auto set = render_frames(scene, stage, 1, seq);
+  const auto views = set.views();
+  const auto r = df.step(std::span<const FrameView>(views), kT0 + std::chrono::seconds(3), {1, 2});
+  ASSERT_TRUE(r.has_value());
+  EXPECT_DOUBLE_EQ(r->stage_mm.x, 1.0);
+  EXPECT_DOUBLE_EQ(r->stage_mm.y, 2.0);
+  EXPECT_DOUBLE_EQ(r->elapsed_s, 3.0);
+}
+
+TEST(Dragonfly, SeeingChangesNoDecision) {
+  Rig rig(glow_at({0, 0}), params());
+  int moves = 0;
+  for (int i = 1; i <= 40; ++i) {
+    rig.scene.glow_mm = {0.02 * i, 0};
+    const auto d = rig.step();
+    if (d.action == Action::Move) {
+      ++moves;
+      EXPECT_EQ(d.reason, Reason::Track);
+      EXPECT_TRUE(d.seen.has_value());
+    }
+  }
+  EXPECT_GT(moves, 0);
+  EXPECT_LT(len({rig.scene.glow_mm.x - rig.stage.pos.x, rig.scene.glow_mm.y - rig.stage.pos.y}), 0.05);
+}
