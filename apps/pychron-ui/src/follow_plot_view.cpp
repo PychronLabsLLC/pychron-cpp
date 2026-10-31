@@ -27,7 +27,7 @@ const std::array<StripSpec, FollowPlotView::kStrips>& strips() {
       {QT_TR_NOOP("Stage Y (mm)"), QT_TR_NOOP("stage"), QT_TR_NOOP("grain")},
       {QT_TR_NOOP("Beam deviation (mm)"), QT_TR_NOOP("seen"), QT_TR_NOOP("true")},
       {QT_TR_NOOP("Luminosity"), QT_TR_NOOP("seen"), QT_TR_NOOP("true")},
-      {QT_TR_NOOP("Grain size (mm)"), QT_TR_NOOP("seen"), QT_TR_NOOP("true")},
+      {QT_TR_NOOP("Grain size (diameter, mm)"), QT_TR_NOOP("seen"), QT_TR_NOOP("true")},
   }};
   return s;
 }

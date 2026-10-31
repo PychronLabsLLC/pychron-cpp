@@ -687,7 +687,10 @@ true size of a point grain. A gap in a line is a step where nothing was seen
 brighter than a picture can show. The plots are filled by every dragonfly on
 the laser, whoever started it, so a run begun before the window was opened
 shows whole; a new run clears the last one. Drag or scroll on a strip to zoom
-all five in time. Colours follow the plot palette in Preferences.
+all five in time, which stops the time axis following the run until the next
+run starts. A driver that runs its own patterns (a real Fusions controller's
+firmware-side runner) leaves the plots empty. Colours follow the plot palette
+in Preferences.
 
 The button exists only when the driver is simulated and the camera's `source`
 is `sim`: a real laser does not have it, and on one a dragonfly runs from a

@@ -36,7 +36,8 @@ void FollowPlotModel::append(const laser::FollowSample& s) {
     put(FollowLine::SizeSeen, 2 * std::sqrt(step.seen->area_mm2 / std::numbers::pi));
   }
   using Reason = vision::DragonflyStep::Reason;
-  if (step.reason != Reason::Miss && step.reason != Reason::Search)
+  if (step.reason != Reason::Miss && step.reason != Reason::Search && step.reason != Reason::Elapsed &&
+      step.reason != Reason::Invalid)
     put(FollowLine::LuminositySeen, step.saturation);
   if (s.grain) {
     const auto& g = *s.grain;

@@ -126,7 +126,7 @@ True size strip line hidden when radius is 0: point grain has no size to show.
 Seen values are NaN, drawn as break in line:
 
 - Beam deviation, size: when step has no `seen` (miss, search, frames flooded with no blob).
-- Luminosity: when reason is `Miss` or `Search`.
+- Luminosity: when reason is `Miss`, `Search`, `Elapsed` or `Invalid` (last two carry saturation 0: false point).
 
 Real laser: true lines all NaN, legend does not list them.
 

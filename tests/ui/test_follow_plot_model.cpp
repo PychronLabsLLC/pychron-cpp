@@ -81,7 +81,8 @@ class FollowPlotModelTest : public QObject {
   }
 
   void a_miss_breaks_luminosity() {
-    for (auto reason : {DragonflyStep::Reason::Miss, DragonflyStep::Reason::Search}) {
+    for (auto reason : {DragonflyStep::Reason::Miss, DragonflyStep::Reason::Search,
+                        DragonflyStep::Reason::Elapsed, DragonflyStep::Reason::Invalid}) {
       FollowPlotModel m;
       FollowSample s = sample(0.0);
       s.step.reason = reason;

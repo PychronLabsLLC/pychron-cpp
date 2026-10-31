@@ -285,7 +285,7 @@ class LaserViewsTest : public QObject {
     QCOMPARE(view.plot()->axisRectCount(), 5);
     const QStringList titles = {QStringLiteral("Stage X (mm)"), QStringLiteral("Stage Y (mm)"),
                                 QStringLiteral("Beam deviation (mm)"), QStringLiteral("Luminosity"),
-                                QStringLiteral("Grain size (mm)")};
+                                QStringLiteral("Grain size (diameter, mm)")};
     for (int i = 0; i < 5; ++i) QCOMPARE(view.plot()->axisRect(i)->axis(QCPAxis::atLeft)->label(), titles[i]);
     QCOMPARE(view.windowTitle(), QStringLiteral("Follow plots"));
     view.grab();  // empty model: nothing non-finite handed to the plot
