@@ -709,8 +709,10 @@ the stage stays where it is.
 `surface = "machined"` under `[<laser>.sim]` draws the tray as stainless steel
 at this magnification, with holes lit from one side: their floors are never
 black, and part of each is nearly as bright as the tray, so a threshold leaves a
-crescent. The hole finder does not take a crescent for a hole, so Center holes
-fails on this surface and the stage stays where it was sent.
+crescent. When a threshold gives no round hole, the finder looks for a ring of
+the hole's size that is darker inside than out, so Center holes works on this
+surface too, and on a real tray lit from one side. It lands up to about 0.15 mm
+toward the shadow of a hole's true center.
 
 The button exists only when the driver is simulated and the camera's `source`
 is `sim`: a real laser does not have it, and on one a dragonfly runs from a

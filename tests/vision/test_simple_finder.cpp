@@ -5,6 +5,7 @@
 #include <limits>
 
 #include "pychron/vision/finder.hpp"
+#include "pychron/vision/kernel.hpp"
 #include "pychron/vision/synth.hpp"
 
 using namespace pychron::vision;
@@ -271,4 +272,82 @@ TEST(SimpleFinder, ZeroPixelDepthFindsNothing) {
   FinderParams p;
   p.expected_radius_px = 10;
   EXPECT_TRUE(finder.find(f.view(), p).empty());
+}
+
+namespace {
+
+// A hole of machined steel, `off` mm from the middle of the frame, as a camera
+// sees it: the threshold leaves a crescent of it.
+Frame crescent_frame(Vec2 hole, Vec2 off, std::uint32_t seed, double noise = 0.01) {
+  HoleScene s;
+  s.noise = noise;
+  s.seed = seed;
+  s.hole_radius_mm = 1.0;
+  const MachinedSurface steel = make_machined_surface(s.px_per_mm, seed);
+  Frame f = Frame::make(s.width, s.height, s.pixel_depth);
+  const std::vector<Vec2> holes{hole};
+  render_machined(f, s, steel, holes, {hole.x - off.x, hole.y - off.y});
+  return f;
+}
+
+FinderParams crescent_params(double radius_px = 23) {
+  FinderParams p;
+  p.expected_radius_px = radius_px;
+  return p;
+}
+
+}  // namespace
+
+TEST(CrescentHole, IsFoundWhereItIsHoweverItIsLit) {
+  SimpleFinder finder;
+  for (std::uint32_t seed = 1; seed <= 3; ++seed) {
+    for (int i = 0; i < 9; ++i) {
+      const int row = i / 3;
+      const Vec2 hole{20.15 + 5.0 * (i % 3), 29.9 - 5.0 * row};
+      const Vec2 off{0.1, -0.15};
+      Frame f = crescent_frame(hole, off, seed);
+      const Vec2 truth{(f.width - 1) / 2.0 + off.x * 23, (f.height - 1) / 2.0 - off.y * 23};
+
+      const auto found = finder.find(f.view(), crescent_params());
+      ASSERT_FALSE(found.empty()) << "hole " << i << " seed " << seed;
+      // A threshold can pass a hole as round, a little toward the shadow; a
+      // target it finds stands, for what it does on recorded holes.
+      EXPECT_LT(dist(found[0].center_px, truth), 4.0) << "hole " << i << " seed " << seed;
+
+      // As a centering looks: a small crop about the aim, masked.
+      const int side = 59;
+      const int corner = (f.width - side) / 2;
+      const Frame part = crop(f.view(), Rect{corner, corner, side, side});
+      FinderParams masked = crescent_params();
+      masked.mask_radius_px = 0.5 * side;
+      const auto cropped = finder.find(part.view(), masked);
+      ASSERT_FALSE(cropped.empty()) << "hole " << i << " seed " << seed;
+      const Vec2 in_crop{cropped[0].center_px.x + corner, cropped[0].center_px.y + corner};
+      EXPECT_LT(dist(in_crop, truth), 4.0) << "hole " << i << " seed " << seed;
+    }
+  }
+}
+
+TEST(CrescentHole, SteelWithNoHoleGivesNothing) {
+  HoleScene s;
+  s.hole_radius_mm = 1.0;
+  SimpleFinder finder;
+  for (std::uint32_t seed = 1; seed <= 3; ++seed) {
+    const MachinedSurface steel = make_machined_surface(s.px_per_mm, seed);
+    Frame f = Frame::make(s.width, s.height, s.pixel_depth);
+    render_machined(f, s, steel, {}, {seed * 3.0, 1.0});
+    EXPECT_TRUE(finder.find(f.view(), crescent_params()).empty()) << seed;
+  }
+}
+
+TEST(CrescentHole, ACutHoleGivesNothing) {
+  SimpleFinder finder;
+  Frame f = crescent_frame({5, 5}, {4.0, 0}, 1);
+  EXPECT_TRUE(finder.find(f.view(), crescent_params()).empty());
+}
+
+TEST(CrescentHole, AHoleOfAnotherSizeGivesNothing) {
+  SimpleFinder finder;
+  Frame f = crescent_frame({5, 5}, {0, 0}, 1);
+  EXPECT_TRUE(finder.find(f.view(), crescent_params(46)).empty());
 }

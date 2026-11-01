@@ -104,7 +104,23 @@ void render_machined(Frame&, const HoleScene&, const MachinedSurface&, std::span
 - Beam on: picture stays the glow.
 - Cold grain drawn at 0.8 on steel.
 
-`SimpleFinder` rejects crescent (circularity): on steel Center holes fails and stage stays where it was sent. Pinned by `Autocenter.ACrescentMovesTheStageNowhereWrong`. Finder not changed here: its own task. Section 4's autocenter rule holds for `plain`.
+## 4b. Finding a crescent
+
+Developer, after steel: centering fails on holes 8 and 9. All nine fail with no saved correction: `SimpleFinder` rejects crescent (too small an area, too low a circularity). Holes 1 to 7 hid it behind corrections saved before steel.
+
+`SimpleFinder`, hole mode. Only when threshold pass gives no target and `expected_radius_px > 0`: `fit_ring`. Target found by threshold pass stands: plain tray and recorded holes unchanged. Tried and dropped: letting ring overrule threshold target. `hole_ac1_9` (recorded, with drawn circle and crosshair) goes 5.3 px off, past its 4 px.
+
+Free circle fit on rim edges dropped: half a rim gave radius 26 to 27 on 23 px hole, and edges on lamp side lie 3 px inside rim (chamfer), measured. Size known from tray map, so radius held.
+
+- Ring of expected radius, 72 samples. Contrast of sample: blurred view just outside minus just inside. Score: sum of contrasts above 0. Lit floor's edge has bright side inside, scores nothing.
+- Search coarse over allowed centers (step: blur radius, at least 2), contrast at blur + 2 px each way: finds rim from afar, scores alike for 2 px either way. Then step halved until at most 0.25 px, 5 x 5 about best, contrast at 2 px each way: places it.
+- Allowed: 3/4 of radius from center inside mask and frame. Centering starts 4 to 6 px off in crop of 29 px mask radius, so whole circle too much to ask.
+- Refused when: 2 x radius wider than view diagonal; no score; best within 1 px of edge of allowed (hole lies past it, cut); mean signed contrast round whole ring under 0.1 of depth (bare steel about 0); under 30 % of samples at half of top decile's contrast.
+- Target: `radius_px` = expected; `circularity`, `score` = share of samples; `area_px` = area of circle.
+
+Known limit: threshold pass can still pass lit hole as round, up to 4 px toward shadow (crop or frame). Ring's own result 1 to 2 px toward shadow: dark rim measures 23.5 to 24 px against 23.
+
+Rule: on steel, autocenter finds each hole. `Autocenter.ACrescentIsCentered` replaces `ACrescentMovesTheStageNowhereWrong`. No expected radius: no fit (`any_size` looks stay as they are).
 
 ## 5. Reset
 

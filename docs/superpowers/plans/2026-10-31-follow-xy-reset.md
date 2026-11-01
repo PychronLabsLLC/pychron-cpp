@@ -14,7 +14,7 @@
 
 - Colours of live plots come from `plot_style()` / `plot_series_color(slot)`.
 - With no `[sim.grain]` table frames stay byte for byte as they are.
-- The hole finder is not changed.
+- A target the threshold pass finds stands.
 - Nothing is reset, and no button is offered, on a real laser.
 - Camera access stays under the `LaserSystem` gate.
 
@@ -69,6 +69,17 @@
 - [ ] Write tests: same seed same steel; hole never black; threshold leaves crescent; tray not one grey; steel moves with stage; `surface` read and a bad word refused; crescent leaves stage nowhere wrong.
 - [ ] Implement as spec section 4a.
 - [ ] Commit `feat(laser): a simulated tray of machined steel`.
+
+### Task 2b: Finding a crescent
+
+**Files:**
+- Modify: `libs/vision/src/simple_finder.cpp`, `docs/user/05-laser.md`, `docs/user/07-configuration-reference.md`
+- Test: `tests/vision/test_simple_finder.cpp`, `tests/laser/test_laser_autocenter.cpp`
+
+- [ ] Write failing tests: crescents of many holes found within 4 px, with noise, on three steels, on the whole frame and in autocenter's masked crop; steel with no hole gives nothing; a hole cut by the frame gives nothing; a hole of twice the expected radius gives nothing; autocenter converges on a crescent with the stage on the true hole.
+- [ ] Implement as spec section 4b.
+- [ ] Run `pychron_vision_tests`, `pychron_laser_tests`: pass.
+- [ ] Commit `feat(vision): the finder finds a hole seen as a crescent`.
 
 ### Task 3: Reset
 

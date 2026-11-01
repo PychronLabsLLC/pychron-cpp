@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstddef>
 #include <numbers>
+#include <numeric>
+#include <optional>
 #include <utility>
 
 #include "pychron/vision/finder.hpp"
@@ -51,6 +53,107 @@ std::vector<std::size_t> flood(const std::vector<std::uint8_t>& mask, int w, int
       }
   }
   return out;
+}
+
+// A hole lit from one side is a crescent to a threshold, and half a rim says
+// little of a free circle. But the tray map gives the size, and the tray is
+// brighter than the floor just across the rim wherever the floor is dark. So
+// slide a ring of that size and take where outside most exceeds inside. The
+// lit floor's edge has its bright side inside and scores nothing, and on the
+// lamp's side the bright chamfer lies between the two samples.
+std::optional<Target> fit_ring(const FrameView& bv, const FinderParams& p, double depth, int blur_px) {
+  constexpr int kSamples = 72;
+  constexpr double kHeldIn = 0.75;         // of the radius, from the center: a hole cut in half says nothing
+  constexpr double kMinRimShare = 0.3;     // of the ring, that shows the rim
+  constexpr double kMinRimContrast = 0.1;  // of pixel_depth
+  constexpr double kCloseAcross = 2, kClearOfEdgePx = 1, kFinestStepPx = 0.25;
+  const double radius = p.expected_radius_px;
+  const int w = bv.width, h = bv.height;
+  if (radius * 2 > std::hypot(w, h)) return std::nullopt;
+
+  const auto level = [&bv, w, h](double x, double y) {
+    const double fx = std::clamp(x, 0.0, w - 1.0), fy = std::clamp(y, 0.0, h - 1.0);
+    const int x0 = std::min(static_cast<int>(fx), w - 2), y0 = std::min(static_cast<int>(fy), h - 2);
+    const double ax = fx - x0, ay = fy - y0;
+    return (1 - ay) * ((1 - ax) * bv.at(x0, y0) + ax * bv.at(x0 + 1, y0)) +
+           ay * ((1 - ax) * bv.at(x0, y0 + 1) + ax * bv.at(x0 + 1, y0 + 1));
+  };
+  std::array<Vec2, kSamples> around{};
+  for (int i = 0; i < kSamples; ++i) {
+    const double angle = 2 * std::numbers::pi * i / kSamples;
+    around[static_cast<std::size_t>(i)] = {std::cos(angle), std::sin(angle)};
+  }
+  const auto contrast = [&](Vec2 c, Vec2 u, double across) {
+    return level(c.x + u.x * (radius + across), c.y + u.y * (radius + across)) -
+           level(c.x + u.x * (radius - across), c.y + u.y * (radius - across));
+  };
+  const auto score = [&](Vec2 c, double across) {
+    double sum = 0;
+    for (const Vec2 u : around) sum += std::max(0.0, contrast(c, u, across));
+    return sum;
+  };
+  // Samples past the blur of the rim find it from afar, but score alike for a
+  // few pixels either way. Samples close in place it.
+  const double wide = blur_px + 2.0;
+  const double held_in = kHeldIn * radius;
+  const double cx = (w - 1) / 2.0, cy = (h - 1) / 2.0;
+  const auto may_be = [&](Vec2 c, double margin = 0) {
+    const double in = held_in + margin;
+    return c.x >= in && c.y >= in && c.x <= w - 1 - in && c.y <= h - 1 - in &&
+           (p.mask_radius_px <= 0 || std::hypot(c.x - cx, c.y - cy) + in <= p.mask_radius_px);
+  };
+
+  // Coarsely over the view, then finer about the best.
+  double step = std::max<double>(blur_px, 2);
+  Vec2 best;
+  double best_score = -1;
+  const int columns = static_cast<int>((w - 1 - 2 * held_in) / step), rows = static_cast<int>((h - 1 - 2 * held_in) / step);
+  for (int row = 0; row <= rows; ++row)
+    for (int column = 0; column <= columns; ++column) {
+      const Vec2 c{held_in + column * step, held_in + row * step};
+      if (!may_be(c)) continue;
+      if (const double s = score(c, wide); s > best_score) {
+        best_score = s;
+        best = c;
+      }
+    }
+  if (best_score <= 0) return std::nullopt;
+  best_score = score(best, kCloseAcross);
+  while (step > kFinestStepPx) {
+    step /= 2;
+    const Vec2 from = best;
+    for (int dy = -2; dy <= 2; ++dy)
+      for (int dx = -2; dx <= 2; ++dx) {
+        const Vec2 c{from.x + dx * step, from.y + dy * step};
+        if (!may_be(c)) continue;
+        if (const double s = score(c, kCloseAcross); s > best_score) {
+          best_score = s;
+          best = c;
+        }
+      }
+  }
+
+  // Against the edge of the search, the hole lies past it: cut.
+  if (!may_be(best, kClearOfEdgePx)) return std::nullopt;
+
+  std::array<double, kSamples> seen{};
+  for (std::size_t i = 0; i < seen.size(); ++i) seen[i] = contrast(best, around[i], wide);
+  // Round the whole ring: a hole is darker inside on the whole, bare steel not.
+  if (std::accumulate(seen.begin(), seen.end(), 0.0) / kSamples < kMinRimContrast * depth) return std::nullopt;
+  std::array<double, kSamples> sorted = seen;
+  const auto strong = sorted.begin() + kSamples * 9 / 10;
+  std::nth_element(sorted.begin(), strong, sorted.end());
+  const auto shown = std::count_if(seen.begin(), seen.end(), [&strong](double c) { return c >= *strong / 2; });
+  const double share = static_cast<double>(shown) / kSamples;
+  if (share < kMinRimShare) return std::nullopt;
+
+  Target t;
+  t.center_px = best;
+  t.radius_px = radius;
+  t.area_px = std::numbers::pi * radius * radius;
+  t.circularity = share;
+  t.score = share;
+  return t;
 }
 
 }  // namespace
@@ -229,6 +332,9 @@ std::vector<Target> SimpleFinder::find(const FrameView& view, const FinderParams
 
   std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) { return a.key < b.key; });
   for (const Ranked& r : ranked) out.push_back(r.t);
+  if (hole && out.empty() && p.expected_radius_px > 0) {
+    if (const auto ring = fit_ring(bv, p, depth, radius)) out.push_back(*ring);
+  }
   return out;
 }
 
